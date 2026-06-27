@@ -12,10 +12,37 @@ export interface Vec2 {
 
 export type ShipKind = "convoy" | "raider";
 
-export interface SystemView {
+// A resource deposit on a system (static geology, public). Richer/more valuable
+// toward the frontier — the distance/value gradient (§4).
+export interface Deposit {
+  resource: Commodity;
+  richness: number; // units/sec at full extraction
+  reserves: number | null; // null = renewable
+}
+
+// Static system geography + geology, sent once at join. Dynamic ownership/
+// stockpile arrives light-gated per tick in `SystemStateView`.
+export interface SystemInfo {
   id: EntityId;
   pos: Vec2;
   name: string;
+  deposits: Deposit[];
+  claim_cost: number;
+}
+
+// One commodity in a system's stockpile (whole units), shown only to its owner.
+export interface StockSlot {
+  commodity: Commodity;
+  units: number;
+}
+
+// Per-tick, light-gated dynamic state of a system. `owner` is null until a
+// rival's claim light arrives (own claims are instant); `stockpile` is present
+// only for the owner — a rival's holdings never leak.
+export interface SystemStateView {
+  id: EntityId;
+  owner: PlayerId | null;
+  stockpile: StockSlot[] | null;
 }
 
 export interface GalaxyInfo {
@@ -23,7 +50,7 @@ export interface GalaxyInfo {
   radius: number;
   c: number; // speed of light, sim units / s
   sensor_range: number; // detection radius each of your assets projects
-  systems: SystemView[];
+  systems: SystemInfo[];
 }
 
 export type Commodity = "fuel" | "ore" | "alloys" | "provisions" | "volatiles";
@@ -120,6 +147,8 @@ export type ClientMsg =
   | { type: "MarketBuy"; commodity: Commodity; units: number }
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
+  | { type: "ClaimSystem"; system_id: EntityId }
+  | { type: "ShipProduction"; system_id: EntityId }
   | { type: "Ping" };
 
 export type RaidOutcome =
@@ -162,6 +191,7 @@ export type ServerMsg =
       sim_time: number;
       command_center: Vec2;
       anchors: AnchorView[];
+      systems: SystemStateView[];
       ghosts: GhostView[];
       market: MarketView;
       wallet: WalletView;

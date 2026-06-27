@@ -22,6 +22,19 @@ const PRICE_FLOOR: f64 = 0.5;
 /// How strongly prices revert toward their base each drift step.
 const REVERSION: f64 = 0.02;
 
+/// The long-run base price of a commodity (what it reverts toward). Also the
+/// canonical "how valuable is this good" ranking used by galaxy generation to
+/// place richer/more-valuable deposits toward the frontier (§4).
+pub fn base_price(c: Commodity) -> f64 {
+    match c {
+        Commodity::Provisions => 6.0,
+        Commodity::Ore => 8.0,
+        Commodity::Fuel => 10.0,
+        Commodity::Volatiles => 18.0,
+        Commodity::Alloys => 26.0,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Market {
     /// Current standing price per commodity.
@@ -38,15 +51,8 @@ impl Default for Market {
 
 impl Market {
     pub fn new() -> Self {
-        let base: BTreeMap<Commodity, f64> = [
-            (Commodity::Fuel, 10.0),
-            (Commodity::Ore, 8.0),
-            (Commodity::Alloys, 26.0),
-            (Commodity::Provisions, 6.0),
-            (Commodity::Volatiles, 18.0),
-        ]
-        .into_iter()
-        .collect();
+        let base: BTreeMap<Commodity, f64> =
+            Commodity::ALL.into_iter().map(|c| (c, base_price(c))).collect();
         Market {
             prices: base.clone(),
             base,

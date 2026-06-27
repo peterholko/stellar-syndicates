@@ -94,6 +94,33 @@
       #readout b { color: var(--accent); font-weight: 700; }
       #readout .dim { color: var(--dim); }
 
+      /* System panel (claim / ship production) — left, above the readout */
+      #system-panel {
+        position: fixed; left: 14px; bottom: 120px;
+        display: none;
+        width: 230px;
+        padding: 11px 13px;
+        background: rgba(8, 12, 22, 0.9);
+        border: 1px solid #18233b; border-left: 2px solid #c99bff; border-radius: 6px;
+        font-size: 12px; line-height: 1.5; z-index: 6; backdrop-filter: blur(4px);
+      }
+      #system-panel .title { font-weight: 700; letter-spacing: 1px; margin-bottom: 7px; color: var(--ink); }
+      #system-panel .title .x { float: right; color: var(--dim); cursor: pointer; }
+      #system-panel .deps { margin-bottom: 8px; }
+      #system-panel .dep { color: var(--dim); font-size: 11px; }
+      #system-panel .dep b { color: var(--ink); }
+      #system-panel .srow { margin: 6px 0; }
+      #system-panel .srow.warn { color: var(--warn); }
+      #system-panel b { color: var(--accent); }
+      #system-panel button {
+        cursor: pointer; width: 100%; margin-top: 4px;
+        background: #1d1630; color: var(--ink); border: 1px solid #3a2f58; border-radius: 5px;
+        font: inherit; font-size: 12px; padding: 5px 8px;
+      }
+      #system-panel button:hover:not([disabled]) { background: #2a1f48; border-color: #c99bff; }
+      #system-panel button[disabled] { opacity: 0.45; cursor: not-allowed; }
+      #system-panel .hint { margin-top: 8px; font-size: 10px; line-height: 1.4; color: var(--dim); }
+
       /* Legend (bottom-right) */
       #legend {
         position: fixed; right: 14px; bottom: 14px;
@@ -192,16 +219,20 @@
     </div>
 
     <div id="readout">
-      Click one of your <b>ships</b> to select it. Then click empty space to move it,
-      or click a <span style="color:#ff7a6b">rival</span> to raid it. Press <b>R</b> to recall.
-      You command across light-minutes — orders and sightings both lag.
+      Click one of your <b>ships</b> to select it (move/raid/recall), or click a
+      <b>star system</b> to claim it and ship its production. Richer deposits lie
+      toward the dangerous frontier. You command across light-minutes — orders and
+      sightings both lag.
     </div>
 
+    <div id="system-panel"></div>
+
     <div id="legend">
-      <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships — delayed ghost + uncertainty (crisp only near HQ)</div>
-      <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — delayed ghost + uncertainty</div>
-      <div class="row"><span class="dim">no FTL tether: certainty = proximity to your HQ, friend or foe</span></div>
-      <div class="row"><span class="dim">select a ship · click rival = raid · R = recall · Δt = staleness</span></div>
+      <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / systems — delayed, crisp only near HQ</div>
+      <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
+      <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
+      <div class="row"><span class="dim">bigger glow = richer deposits (frontier &gt; core)</span></div>
+      <div class="row"><span class="dim">select ship/system · click rival = raid · R = recall · Δt = staleness</span></div>
     </div>
 
     <div id="join">

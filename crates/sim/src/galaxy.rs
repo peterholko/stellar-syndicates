@@ -5,18 +5,67 @@
 //! space, the hub fixed at the centre, homes distributed around a ring as
 //! bright spots. Resources/claims hang off systems in later milestones.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use crate::cargo::Commodity;
 use crate::ids::{EntityId, PlayerId};
+use crate::market::base_price;
 use crate::math::Vec2;
 use crate::rng::Rng;
 
-/// A procedurally-placed star system.
+/// A single extractable resource concentration on a star system (adapted from
+/// Stellar Charters' "deposits on bodies", simplified to hang directly off the
+/// system — no planet/body hierarchy yet). A claimed system's deposits produce
+/// their `resource` continuously into the system's stockpile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Deposit {
+    /// A commodity that already trades on the hub Exchange.
+    pub resource: Commodity,
+    /// Units produced per second at full extraction.
+    pub richness: f64,
+    /// Remaining reserves; `None` = renewable (never depletes). Finite deposits
+    /// run dry — kept simple for the alpha by generating renewable deposits.
+    pub reserves: Option<f64>,
+    /// 0..1 difficulty (deeper = harder). A field for later extractor-tier
+    /// gating; it does NOT gate anything yet.
+    pub accessibility: f64,
+}
+
+/// A procedurally-placed star system. `pos`, `name`, `deposits`, and `claim_cost`
+/// are static geography (known to all). `owner`/`claimed_at`/`stockpile` are
+/// *dynamic* state: a claim is an event at `pos`/`claimed_at`, so its reveal to
+/// rivals must respect light delay (enforced by the server's view filter), and a
+/// player's accumulated production is private to them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StarSystem {
     pub id: EntityId,
     pub pos: Vec2,
     pub name: String,
+    /// Resource deposits (static geology). Richer/more valuable toward the rim.
+    #[serde(default)]
+    pub deposits: Vec<Deposit>,
+    /// Credit cost to claim this system (scales with its production value).
+    #[serde(default)]
+    pub claim_cost: f64,
+    /// Owning corporation, once claimed (light-gated to rivals by the view filter).
+    #[serde(default)]
+    pub owner: Option<PlayerId>,
+    /// Sim time at which the system was claimed (None while unowned) — the event
+    /// time whose light gates the reveal of `owner` to other players.
+    #[serde(default)]
+    pub claimed_at: Option<f64>,
+    /// Production accumulated at the system, awaiting a convoy to the hub.
+    #[serde(default)]
+    pub stockpile: BTreeMap<Commodity, f64>,
+}
+
+impl StarSystem {
+    /// Whether this system can be claimed (no current owner).
+    pub fn is_unclaimed(&self) -> bool {
+        self.owner.is_none()
+    }
 }
 
 /// One of the pre-generated home-anchor slots arranged around a ring. Assigned
@@ -34,20 +83,88 @@ pub struct HomeSlot {
     pub claimed_at: Option<f64>,
 }
 
+/// Commodities ordered cheapest → most valuable (by base price). Deposits are
+/// drawn from this ladder biased by distance from the hub, so near-hub systems
+/// hold common/cheap resources and the frontier holds the valuable ones (§4).
+const VALUE_TIER: [Commodity; 5] = [
+    Commodity::Provisions,
+    Commodity::Ore,
+    Commodity::Fuel,
+    Commodity::Volatiles,
+    Commodity::Alloys,
+];
+
+/// Base extraction rate (units/sec) a deposit produces; scaled up toward the
+/// frontier. Tunable — balance is not the goal, a working loop is.
+const DEPOSIT_BASE_RICHNESS: f64 = 0.45;
+/// Claim cost = `CLAIM_BASE` + `CLAIM_VALUE_K` × the system's value-rate
+/// (Σ richness·base_price), so richer frontier systems cost more to claim.
+const CLAIM_BASE: f64 = 600.0;
+const CLAIM_VALUE_K: f64 = 45.0;
+
 /// Generate `count` star systems uniformly over the galaxy disk (area-uniform
-/// via the √u radius trick), keeping a clear margin around the hub.
+/// via the √u radius trick), keeping a clear margin around the hub. Each system
+/// gets resource deposits whose richness and value rise toward the rim — the
+/// GDD's distance/value gradient: the best production is out in the dangerous,
+/// fog-blind frontier (§4).
 pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
     let mut systems = Vec::with_capacity(count as usize);
     for _ in 0..count {
         // Area-uniform radius in [0.12R, 0.96R].
-        let r = radius * (0.12 + 0.84 * rng.next_f64().sqrt());
+        let u = rng.next_f64().sqrt();
+        let r = radius * (0.12 + 0.84 * u);
         let theta = rng.range(0.0, std::f64::consts::TAU);
         let pos = Vec2::from_polar(theta, r);
         let id = alloc();
         let name = system_name(rng);
-        systems.push(StarSystem { id, pos, name });
+        // Frontier factor in [0,1]: 0 at the inner margin, 1 at the rim.
+        let frontier = u; // == (r/radius - 0.12) / 0.84, monotonic in distance
+        let deposits = generate_deposits(rng, frontier);
+        let claim_cost = claim_cost_for(&deposits);
+        systems.push(StarSystem {
+            id,
+            pos,
+            name,
+            deposits,
+            claim_cost,
+            owner: None,
+            claimed_at: None,
+            stockpile: BTreeMap::new(),
+        });
     }
     systems
+}
+
+/// Deterministically generate a system's deposits from its frontier factor:
+/// more deposits, richer, and skewed toward valuable commodities the farther out
+/// it sits. Renewable (no depletion) for the alpha.
+fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
+    // 1 deposit near the hub, up to 3 at the rim.
+    let n = (1.0 + frontier * 2.0 + rng.range(0.0, 0.9)).floor().clamp(1.0, 3.0) as usize;
+    let mut deposits = Vec::with_capacity(n);
+    for _ in 0..n {
+        // Pick a commodity tier centred on the frontier (cheap near hub, valuable
+        // at the rim) with seeded spread.
+        let center = frontier * (VALUE_TIER.len() - 1) as f64;
+        let idx = (center + rng.range(-1.1, 1.1)).round().clamp(0.0, 4.0) as usize;
+        let resource = VALUE_TIER[idx];
+        // Richness rises toward the frontier, jittered.
+        let richness = DEPOSIT_BASE_RICHNESS * (0.5 + 1.7 * frontier) * rng.range(0.6, 1.4);
+        deposits.push(Deposit {
+            resource,
+            richness,
+            reserves: None, // renewable for the alpha
+            accessibility: frontier,
+        });
+    }
+    deposits
+}
+
+/// The credit cost to claim a system, from the total value-rate of its deposits
+/// (Σ richness·base_price). Richer/more-valuable frontier systems cost more.
+pub fn claim_cost_for(deposits: &[Deposit]) -> f64 {
+    let value_rate: f64 = deposits.iter().map(|d| d.richness * base_price(d.resource)).sum();
+    CLAIM_BASE + CLAIM_VALUE_K * value_rate
 }
 
 /// Generate `count` home-anchor slots evenly spaced around a ring at

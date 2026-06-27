@@ -22,6 +22,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M5 — Full multiplayer economy** | ✅ **Complete** | Hub Exchange (instant execution, lagged ticker), market + limit orders with uniform-price batch clearing, raidable trade convoys, buy/sell asymmetry, slow equity valuations. |
 | **M6 — Robust sessions, persistence, scale to 12** | ✅ **Complete** | Restart restores the galaxy from the latest snapshot; 12 players in one galaxy with the loop keeping up; corps persist + reconnect resumes. |
 | **M7 — Client polish** | ✅ **Complete** | Credits/equity in the HUD, the full delayed-map + market + raid UI tied together, and a run + play guide; the core loop is playable by multiple people. |
+| **System claims + resource production** | ✅ **Complete** | Star systems have resource **deposits** (richer/more valuable toward the frontier); players **claim** systems (credit cost), claimed systems **produce** over time, and that production **ships to the hub** in the same raidable convoys — so raiding now destroys real output. Ownership is light-gated to rivals; stockpiles stay private. |
 
 **All seven milestones of the build plan are complete** — plus three additive
 features layered on the core: the **signals animation** (the order's full round
@@ -350,6 +351,50 @@ resolved raid shows gold rings arriving home and the verdict revealed on arrival
 Each player sees these from their own command center / observed frame (the comet
 goes only to the issuing player; both signals are built from that player's
 command center + ghosts/report).
+
+### What System Claims + Resource Production delivers (verified) — the economic engine
+
+The economy finally has a SOURCE: goods come from systems players develop, not
+from nowhere. (Resource model adapted & simplified from Stellar Charters'
+*deposits-on-bodies* idea — system-level deposits, no planet/body hierarchy.)
+
+- **Resource deposits with a frontier gradient (§4):** every star system carries
+  1–3 **deposits** (`crates/sim/src/galaxy.rs`) — a commodity, a `richness`
+  (units/sec), renewable reserves. Generated deterministically from the seed so
+  richer/more valuable deposits concentrate toward the rim: the best production
+  is out in the dangerous, fog-blind frontier. *Proven on the wire: inner-third
+  systems value-rate ≈ 8 vs outer-third ≈ 62 — the frontier ~7× richer.*
+- **System claims (credit cost):** `ClaimSystem` is a normal command — the sim
+  charges the (value-scaled) `claim_cost` and transfers ownership in true space.
+  **Ownership is light-gated** exactly like a home-anchor claim
+  (`view::filter_systems`): you see your own claim instantly, a rival learns who
+  owns a system only once the claim's light reaches their command center. *Proven
+  on the wire: a rival learned a claim 36.5 s later — matching its 36.6 s light
+  delay — and never sees the owner's stockpile.*
+- **Continuous production (§5.1):** each claimed system accrues `richness·dt` of
+  its deposits into a private stockpile every tick — whether or not the owner is
+  logged in (it's in the deterministic sim). The owner sees their stockpile
+  (predictable from known rates); rivals never do.
+- **Production feeds the convoy/raid loop:** `ShipProduction` empties a system's
+  whole-unit stockpile into the SAME raidable convoys as M4/M5 — they fly the
+  frontier→hub crossing and sell on arrival at the price-on-arrival. So **raiding
+  a convoy now destroys real production output.** The loop closes: **claim →
+  produce → ship across fogged space → sell → expand**, with raiders preying on
+  the shipments.
+
+Server-authoritative & leak-free: static geology (deposits, claim cost) is sent
+once; dynamic ownership/stockpile flows through the per-player view filter and
+obeys the lightspeed law. Deterministic (seeded generation + accrual); claims,
+deposits, and stockpiles are part of the `World` snapshot, so they survive a
+restart (M6).
+
+**Verified:** sim tests (frontier-richer determinism, claim charge/ownership,
+accrual over time, production → raidable convoy that sells, raiding a production
+convoy) + the view light-gating test; the two-player wire smoke
+[`scripts/claims_smoke.mjs`](scripts/claims_smoke.mjs) (frontier gradient,
+charge, **light-gated ownership**, private stockpile, accrual, shipping); and
+in-browser (deposit/claim panel, the richness glow gradient, claiming a frontier
+system, live stockpile accrual, shipping a production convoy).
 
 ---
 

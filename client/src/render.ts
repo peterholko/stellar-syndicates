@@ -9,11 +9,28 @@
 // The command center is your vantage — the origin of everything you can see.
 
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { GalaxyInfo, GhostView, Vec2 } from "./protocol";
+import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
 
 const COL_HUB = 0x7fd4ff;
 const COL_SYSTEM = 0x4a5d7a;
+
+// Mirror of the sim's base prices: ranks how valuable a deposit is, for sizing
+// the frontier-richer glow and picking a system's dominant-resource tint.
+const COMMODITY_VALUE: Record<Commodity, number> = {
+  provisions: 6,
+  ore: 8,
+  fuel: 10,
+  volatiles: 18,
+  alloys: 26,
+};
+const COMMODITY_COLOR: Record<Commodity, number> = {
+  provisions: 0x7fdc8a,
+  ore: 0xb0894f,
+  fuel: 0xff9d5c,
+  volatiles: 0x6bd0ff,
+  alloys: 0xc99bff,
+};
 const COL_OWN = 0x4fc3ff;
 const COL_OTHER = 0xff7a6b;
 const COL_ANCHOR_OWN = 0x9be7ff;
@@ -26,6 +43,10 @@ const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
+// Grace before a server-dropped ghost's sprite is destroyed — bridges the brief
+// gap between a destroyed ship leaving the view and its destruction report
+// arriving to claim it as a doomed (held-until-its-ring-lands) ghost.
+const GHOST_GRACE_MS = 450;
 
 interface GhostSprite {
   container: Container;
@@ -34,6 +55,14 @@ interface GhostSprite {
   label: Text;
   ring: Graphics; // selection ring
   seen: boolean;
+  /// True on the frames this sprite was drawn as a DOOMED ghost (a destroyed ship
+  /// held until its result ring lands). When such a sprite goes unseen, the ring
+  /// has just arrived → remove it immediately (exact sync). A sprite the server
+  /// merely stopped sending gets a short grace instead, so the ~0.2 s gap between
+  /// a convoy's vanish and its destruction report can't blink it out.
+  wasDoomed: boolean;
+  /// Wall-ms this sprite first went unseen (for the grace), or null while seen.
+  unseenSince: number | null;
 }
 
 export class Renderer {
@@ -108,7 +137,7 @@ export class Renderer {
     this.cx = this.viewW / 2;
     this.cy = this.viewH / 2;
     this.drawBackground();
-    this.drawSystems();
+    // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
   }
 
   private drawStarfield(): void {
@@ -144,19 +173,58 @@ export class Renderer {
     this.bg.addChild(label);
   }
 
-  private drawSystems(): void {
+  /// Draw star systems with their resource geology and (light-gated) ownership.
+  /// A system's glow grows with its deposit value-rate, so the frontier visibly
+  /// out-produces the core (§4); the ring shows ownership — cyan (yours), red (a
+  /// rival, once their claim's light has reached you), or dim (unclaimed). Your
+  /// own systems also surface their accumulated production.
+  private drawSystems(state: ViewState): void {
     this.systemsLayer.removeChildren();
     if (!this.galaxy) return;
-    const labelStyle = new TextStyle({ fill: 0x55657f, fontFamily: "ui-monospace, monospace", fontSize: 8 });
+    const dynById = new Map(state.systems.map((s) => [s.id, s]));
     for (const sys of this.galaxy.systems) {
       const s = this.worldToScreen(sys.pos);
+      const dyn = dynById.get(sys.id);
+      const owner = dyn?.owner ?? null;
+      const mine = owner !== null && owner === state.playerId;
+      const rival = owner !== null && !mine;
+      const selected = state.selectedSystemId === sys.id;
+
+      // Value-rate → glow size; dominant resource → tint (the gradient made visible).
+      let valueRate = 0;
+      let topVal = -1;
+      let topColor = COL_SYSTEM;
+      for (const d of sys.deposits) {
+        const v = d.richness * (COMMODITY_VALUE[d.resource] ?? 1);
+        valueRate += v;
+        if (v > topVal) {
+          topVal = v;
+          topColor = COMMODITY_COLOR[d.resource] ?? COL_SYSTEM;
+        }
+      }
+      const glow = Math.min(3 + valueRate * 0.45, 18);
+      const ring = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
+
       const g = new Graphics();
-      g.circle(s.x, s.y, 2.2).fill({ color: COL_SYSTEM, alpha: 0.9 });
+      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 });
+      if (selected) g.circle(s.x, s.y, glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+      if (owner !== null) {
+        g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: ring, alpha: mine ? 0.95 : 0.8 });
+      }
+      g.circle(s.x, s.y, 2.2).fill({ color: ring, alpha: 0.95 });
       this.systemsLayer.addChild(g);
-      const t = new Text({ text: sys.name, style: labelStyle });
+
+      // Label: name; your own systems also show their top stockpiled good.
+      let txt = sys.name;
+      if (mine && dyn?.stockpile && dyn.stockpile.length) {
+        const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
+        txt = `${sys.name}  ◆${top.units} ${top.commodity}`;
+      }
+      const col = mine ? COL_OWN : rival ? COL_OTHER : 0x55657f;
+      const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
       t.anchor.set(0, 0.5);
-      t.position.set(s.x + 5, s.y);
-      t.alpha = 0.55;
+      t.position.set(s.x + glow + 2, s.y);
+      t.alpha = mine ? 0.95 : rival ? 0.78 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
     }
   }
@@ -258,15 +326,17 @@ export class Renderer {
       label.anchor.set(0, 0.5);
       container.addChild(cone, ring, body, label);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, label, ring, seen: true };
+      sp = { container, cone, body, label, ring, seen: true, wasDoomed: false, unseenSince: null };
       this.ghosts.set(id, sp);
     }
     return sp;
   }
 
-  private drawGhost(ghost: GhostView, state: ViewState, dt: number): { x: number; y: number } {
+  private drawGhost(ghost: GhostView, state: ViewState, dt: number, doomed = false): { x: number; y: number } {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
+    sp.wasDoomed = doomed;
+    sp.unseenSince = null;
 
     const px = ghost.pos.x + ghost.vel.x * dt;
     const py = ghost.pos.y + ghost.vel.y * dt;
@@ -375,17 +445,42 @@ export class Renderer {
     const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 
     this.drawSensorCoverage(state, dt);
+    this.drawSystems(state);
     this.drawRoutes(state);
     this.drawAnchors(state);
     this.drawCommandCenter(state);
 
     for (const sp of this.ghosts.values()) sp.seen = false;
     const screenById = new Map<string, { x: number; y: number }>();
+    const drawn = new Set<string>();
     for (const ghost of state.ghosts) {
       screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
+      drawn.add(ghost.id);
+    }
+    // Doomed ghosts: ships the server has already stopped sending (destroyed in
+    // true space) but whose destruction light hasn't yet reached this player —
+    // their result ring is still travelling home. Keep them flying on old light
+    // (dead-reckoned from the snapshot) so they vanish EXACTLY when the ring lands
+    // (the signal is dropped in updateSignals at that moment). Never double-draw a
+    // ship the server is still sending.
+    const nowMs = performance.now();
+    for (const sig of state.reportSignals) {
+      for (const d of sig.doomed) {
+        if (drawn.has(d.ghost.id)) continue;
+        const elapsed = (nowMs - d.capturedWallMs) / 1000;
+        const ext = { ...d.ghost, age: d.ghost.age + elapsed };
+        screenById.set(d.ghost.id, this.drawGhost(ext, state, elapsed, true));
+        drawn.add(d.ghost.id);
+      }
     }
     for (const [id, sp] of this.ghosts) {
-      if (!sp.seen) {
+      if (sp.seen) continue;
+      // A held DOOMED ghost going unseen means its result ring just landed — so it
+      // vanishes at that exact moment. A sprite the server merely stopped sending
+      // gets a brief grace, so the ~0.2 s gap between a convoy's vanish and its
+      // destruction report can't blink it out before the doomed hold takes over.
+      if (sp.unseenSince === null) sp.unseenSince = nowMs;
+      if (sp.wasDoomed || nowMs - sp.unseenSince > GHOST_GRACE_MS) {
         this.ghostsLayer.removeChild(sp.container);
         sp.container.destroy({ children: true });
         this.ghosts.delete(id);

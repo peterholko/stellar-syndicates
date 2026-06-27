@@ -56,6 +56,16 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
     },
 
+    /// A player claimed a star system at `pos` at this event's `time` (§4). Like
+    /// a home-anchor claim, ownership is revealed to rivals only when this event's
+    /// light reaches their command center (`time + |pos − cc|/c`) — the owner
+    /// knows instantly, rivals learn by light (the view filter enforces it).
+    SystemClaimed {
+        system: EntityId,
+        owner: PlayerId,
+        pos: crate::math::Vec2,
+    },
+
     /// A ship was destroyed at `pos` at this event's `time`. Drives the
     /// per-player **delayed** disappearance: the ship is gone from true space
     /// now, but each player keeps seeing its ghost until the light of this event
