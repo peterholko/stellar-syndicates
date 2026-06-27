@@ -55,6 +55,10 @@ struct Track {
     /// Current broadcast route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
+    /// If the ship was destroyed: (true time, true position) of the destruction.
+    /// The ship is gone from true space, but each viewer keeps seeing its ghost
+    /// until the light of this event reaches their command center (§6).
+    destroyed: Option<(f64, Vec2)>,
 }
 
 /// The view filter's state: every moving object's recent true-position history.
@@ -92,6 +96,7 @@ impl PositionHistory {
                 last_seen: now,
                 cargo: None,
                 route: None,
+                destroyed: None,
             });
             track.owner = ship.owner;
             track.kind = ship.kind;
@@ -113,11 +118,23 @@ impl PositionHistory {
             }
         }
         // Forget tracks for ships that have been gone longer than the horizon
-        // (their last light has passed). Keeps memory bounded as ships are
-        // destroyed in later milestones.
+        // (their last light has passed) — including destroyed ships once every
+        // viewer's light has reached the destruction. Keeps memory bounded.
         let horizon = self.horizon;
         self.tracks
             .retain(|_, t| now - t.last_seen <= horizon);
+    }
+
+    /// Mark a ship destroyed at true `time` and true `pos`. The ship is gone from
+    /// the simulation, but its track is kept so each player keeps seeing its
+    /// ghost until the light of the destruction reaches them (`view_for`).
+    pub fn mark_destroyed(&mut self, ship_id: EntityId, time: f64, pos: Vec2) {
+        if let Some(t) = self.tracks.get_mut(&ship_id) {
+            t.destroyed = Some((time, pos));
+            // Keep the track retained until the destruction's light has reached
+            // every possible viewer (horizon > max delay).
+            t.last_seen = time.max(t.last_seen);
+        }
     }
 
     /// Build the delayed/fogged view of all ships for a player, applying the
@@ -152,6 +169,14 @@ impl PositionHistory {
         let mut pre = Vec::new();
         let mut coverage = vec![cc]; // the command center is itself an asset
         for (id, track) in &self.tracks {
+            // Destroyed ships: the player keeps seeing the ghost (flying along on
+            // old light) until the destruction's light reaches their command
+            // center; only THEN does it vanish. Before that, serve it normally.
+            if let Some((dt, dpos)) = track.destroyed
+                && now >= dt + dpos.distance(cc) / c
+            {
+                continue; // the destruction has been observed — it's gone
+            }
             let Some(sample) = latest_observable(&track.samples, cc, c, now) else {
                 continue; // dark — no light from this object has arrived yet
             };
@@ -348,6 +373,7 @@ mod tests {
             last_seen: last,
             cargo,
             route: None,
+            destroyed: None,
         }
     }
 
@@ -572,6 +598,37 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
         assert_eq!(view.len(), 1, "own raider must always be visible");
         assert!(view[0].own);
+    }
+
+    /// A destroyed ship must NOT vanish from all views at once — each viewer
+    /// keeps seeing its ghost until the light of the destruction reaches them, so
+    /// a near and a far command center see it disappear at DIFFERENT times. There
+    /// is ONE destruction event; both observe it, asymmetrically.
+    #[test]
+    fn destroyed_ship_vanishes_per_viewer_by_light() {
+        let c = 300.0;
+        let dpos = Vec2::new(0.0, 0.0); // destroyed at the origin at t=10
+        let near = Vec2::new(300.0, 0.0); // 1 s of light from the destruction
+        let far = Vec2::new(6000.0, 0.0); // 20 s of light from the destruction
+        // The (convoy, so broadcast-visible) ship sat at the origin for t∈[0,10].
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 10.0 {
+            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO });
+            t += 0.1;
+        }
+        let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
+        hist.mark_destroyed(EntityId(1), 10.0, dpos);
+
+        // The near CC observes the destruction at 10 + 1 = 11.
+        assert_eq!(hist.view_for(VIEWER, near, c, 10.5).len(), 1, "near still sees it alive just before its light");
+        assert_eq!(hist.view_for(VIEWER, near, c, 11.5).len(), 0, "near sees it destroyed after the light arrives");
+
+        // The far CC observes it at 10 + 20 = 30 — so at t=25 it STILL sees the
+        // ship alive (flying on old light) while the near CC already saw it die.
+        assert_eq!(hist.view_for(VIEWER, far, c, 25.0).len(), 1, "far still sees the (already-dead) ship alive");
+        assert_eq!(hist.view_for(VIEWER, near, c, 25.0).len(), 0, "...while near has long since seen it destroyed");
+        assert_eq!(hist.view_for(VIEWER, far, c, 30.5).len(), 0, "far finally sees it destroyed when its light arrives");
     }
 
     /// A far rival raider is dark, but if the viewer has an OWN ship near it, the

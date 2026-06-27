@@ -184,14 +184,31 @@ function installInteraction(): void {
 // --- Delayed reports log -----------------------------------------------------
 function addReport(r: import("./protocol").RaidReport): void {
   const log = $("reports-log");
-  const intercepted = r.outcome === "intercepted";
-  let icon: string, cls: string, text: string;
-  if (r.you === "attacker") {
-    if (intercepted) { icon = "✓"; cls = "good"; text = "Your raider intercepted a rival convoy."; }
-    else { icon = "✗"; cls = "bad"; text = "Your target reached the hub — raid failed."; }
-  } else {
-    if (intercepted) { icon = "‼"; cls = "bad"; text = "Your convoy was lost to a raider."; }
-    else { icon = "✓"; cls = "good"; text = "Your convoy reached safety despite a raider."; }
+  const mine = r.you === "attacker" ? r.attacker_kind : r.target_kind; // your ship in this fight
+  const theirs = r.you === "attacker" ? r.target_kind : r.attacker_kind;
+  let icon = "◦", cls = "good", text = "";
+  // Win = your side came out ahead; loss = your ship died.
+  const yourShipDied =
+    r.outcome === "both_destroyed" ||
+    (r.you === "attacker" && r.outcome === "attacker_destroyed") ||
+    (r.you === "defender" && r.outcome === "target_destroyed");
+  const theirShipDied =
+    r.outcome === "both_destroyed" ||
+    (r.you === "attacker" && r.outcome === "target_destroyed") ||
+    (r.you === "defender" && r.outcome === "attacker_destroyed");
+  switch (r.outcome) {
+    case "both_destroyed":
+      icon = "✺"; cls = "bad"; text = `Your ${mine} and a rival ${theirs} destroyed each other.`; break;
+    case "both_survive":
+      icon = "≈"; cls = "good";
+      text = r.you === "attacker" ? `Your raid on a rival ${theirs} was driven off — both survived.` : `A raider attacked your ${mine} but was driven off.`; break;
+    case "escaped":
+      icon = "✗"; cls = "good";
+      text = r.you === "attacker" ? `Your target ${theirs} reached the hub — raid failed.` : `Your ${mine} reached the hub safely.`; break;
+    default:
+      if (yourShipDied && theirShipDied) { icon = "✺"; cls = "bad"; text = `Your ${mine} and a rival ${theirs} destroyed each other.`; }
+      else if (yourShipDied) { icon = "‼"; cls = "bad"; text = `Your ${mine} was destroyed by a rival ${theirs}.`; }
+      else { icon = "✓"; cls = "good"; text = `Your ${mine} destroyed a rival ${theirs}.`; }
   }
   const el = document.createElement("div");
   el.className = "report " + cls;

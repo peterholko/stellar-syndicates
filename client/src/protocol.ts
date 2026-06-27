@@ -119,15 +119,23 @@ export type ClientMsg =
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "Ping" };
 
-export type RaidOutcome = "intercepted" | "escaped";
+export type RaidOutcome =
+  | "target_destroyed"
+  | "attacker_destroyed"
+  | "both_destroyed"
+  | "both_survive"
+  | "escaped";
 
-// A delayed raid report (§8) — arrives on the recipient's own clock.
+// A delayed battle report (§8) — arrives on the recipient's own clock. One true
+// outcome (seeded); both sides observe the same result, light-delayed.
 export interface RaidReport {
   outcome: RaidOutcome;
   attacker: PlayerId;
   defender: PlayerId;
-  raider: EntityId;
-  convoy: EntityId;
+  attacker_ship: EntityId;
+  target_ship: EntityId;
+  attacker_kind: ShipKind;
+  target_kind: ShipKind;
   pos: Vec2;
   at_time: number;
   age: number; // light delay — how stale this news is

@@ -41,16 +41,30 @@ pub enum EventPayload {
     /// Something happened in the economy (§9).
     Trade(TradeEvent),
 
-    /// A raid resolved in true space (§8). Delivered to attacker and defender as
-    /// a *delayed report* — each learns it only when the light of the event at
-    /// `pos` reaches their command center, so they may learn it at different
-    /// times. Carries `pos`/`time` (the event timestamp is `Event.time`).
+    /// A battle resolved in true space at `pos` with ONE outcome (§8), decided by
+    /// the seeded RNG. Delivered to attacker and defender as a *delayed report* —
+    /// each learns the SAME outcome only when its light reaches their command
+    /// center, so they may learn it at different times.
     RaidResolved {
         attacker: PlayerId,
         defender: PlayerId,
-        raider: EntityId,
-        convoy: EntityId,
+        attacker_ship: EntityId,
+        target_ship: EntityId,
+        attacker_kind: ShipKind,
+        target_kind: ShipKind,
         outcome: RaidOutcome,
+        pos: crate::math::Vec2,
+    },
+
+    /// A ship was destroyed at `pos` at this event's `time`. Drives the
+    /// per-player **delayed** disappearance: the ship is gone from true space
+    /// now, but each player keeps seeing its ghost until the light of this event
+    /// reaches their command center (`time + |pos − cc|/c`). NEVER delete it from
+    /// all views at once — that would be FTL information (§6).
+    ShipDestroyed {
+        ship: EntityId,
+        owner: PlayerId,
+        kind: ShipKind,
         pos: crate::math::Vec2,
     },
 }
@@ -88,13 +102,33 @@ impl TradeEvent {
     }
 }
 
+/// The result of a battle (§8). One seeded roll per battle; both sides observe
+/// the same result, just light-delayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum RaidOutcome {
-    /// The raider reached the convoy — convoy lost.
-    Intercepted,
-    /// The convoy reached safety (the hub) before contact — raid failed.
+    /// The target was destroyed (the attacker won).
+    TargetDestroyed,
+    /// The attacker was destroyed (escort/duel went the other way).
+    AttackerDestroyed,
+    /// Both ships were destroyed.
+    BothDestroyed,
+    /// Both survived — the attacker was driven off.
+    BothSurvive,
+    /// (Convoy only) the target reached the hub before contact — no battle.
     Escaped,
+}
+
+impl RaidOutcome {
+    /// (attacker_destroyed, target_destroyed) for this outcome.
+    pub fn kills(self) -> (bool, bool) {
+        match self {
+            RaidOutcome::TargetDestroyed => (false, true),
+            RaidOutcome::AttackerDestroyed => (true, false),
+            RaidOutcome::BothDestroyed => (true, true),
+            RaidOutcome::BothSurvive | RaidOutcome::Escaped => (false, false),
+        }
+    }
 }
 
 impl Event {
