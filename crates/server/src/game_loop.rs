@@ -31,8 +31,9 @@ use crate::view::{self, PositionHistory, PriceHistory};
 /// updates: visibly live without flooding the socket.
 const BROADCAST_EVERY: u64 = 3;
 
-/// Default full-world snapshot cadence: every 20 s at the tick rate.
-pub const DEFAULT_SNAPSHOT_EVERY: u64 = 20 * TICK_HZ as u64;
+/// Default full-world snapshot cadence: every 10 s at the tick rate. Bounds how
+/// much progress a restart can lose (the snapshot is the restart basis, §14).
+pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
 
 struct GameLoop {
     world: World,

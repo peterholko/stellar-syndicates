@@ -20,8 +20,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
 | **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
 | **M5 — Full multiplayer economy** | ✅ **Complete** | Hub Exchange (instant execution, lagged ticker), market + limit orders with uniform-price batch clearing, raidable trade convoys, buy/sell asymmetry, slow equity valuations. |
-| M5 — Full multiplayer economy | ⬜ Not started | |
-| M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
+| **M6 — Robust sessions, persistence, scale to 12** | ✅ **Complete** | Restart restores the galaxy from the latest snapshot; 12 players in one galaxy with the loop keeping up; corps persist + reconnect resumes. |
 | M7 — Client polish | ⬜ Not started | |
 
 ### What M1 delivers (verified)
@@ -277,6 +276,28 @@ goods at market — held, in transit, and reserved in resting orders — plus
 buy-order escrow) is recomputed on a **slow cadence** (≈ every 60 s) to keep it
 readable, not noisy (§9), and shown in the market panel ("equity"). Verified the
 figure ≈ credits + inventory value.
+
+### What M6 delivers (verified) — robustness, persistence, scale
+
+- **Restart restores the galaxy from the latest snapshot (§14).** Snapshots (full
+  `World` JSON) are written off the hot path every ~10 s; on startup the server
+  loads the most recent one and resumes from it (else generates a fresh galaxy).
+  A reconnecting player resolves to the same corporation (the stable name hash),
+  now restored with its credits, inventory, ships, resting orders, and market.
+  Verified by `scripts/restart_smoke.sh`: a player buys fuel (credits 10000 →
+  8023), the world snapshots, the server is **killed and restarted**, and the
+  rejoining corp is restored at 8023. *(Restart transient: the per-player view
+  history is rebuilt fresh, so the galaxy re-illuminates over ~one light-crossing
+  as light propagates from the restored positions.)*
+- **Scale to 12 players in one galaxy.** Galaxy radius scales with player count
+  (§4); the single authoritative loop builds 12 distinct per-player delayed views
+  and keeps up. Verified by `scripts/scale_smoke.mjs` (run with `MAX_PLAYERS=12`):
+  12 distinct players each get a live ~10 Hz delayed view and `/status` reports
+  12 online — the loop isn't falling behind.
+- **Session robustness.** Corporations persist across disconnects and keep
+  running on their standing orders (ships patrol, trade convoys continue);
+  reconnecting with the same name resumes the corporation; half-open connections
+  are reaped by the M1 keepalive + idle timeout.
 
 M5 thus realises the §9 model: instant execution + lagged prices, market AND
 limit orders with uniform-price batch clearing, order-spawned **raidable** trade

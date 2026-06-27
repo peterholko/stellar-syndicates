@@ -9,6 +9,7 @@
 //! persistence behind a clean interface and continuing.
 
 use serde::Serialize;
+use sim::World;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tokio::sync::mpsc;
@@ -51,6 +52,10 @@ pub trait Persistence: Send + Sync {
         time: f64,
         world: &serde_json::Value,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+
+    /// Load the most recent full-world snapshot, if any — the basis for a
+    /// restart (§14: restart = load latest snapshot, continue forward).
+    fn load_latest_world(&self) -> impl std::future::Future<Output = Option<World>> + Send;
 }
 
 /// Real Postgres-backed persistence via sqlx.
@@ -99,6 +104,26 @@ impl Persistence for PgPersistence {
         .await?;
         Ok(())
     }
+
+    async fn load_latest_world(&self) -> Option<World> {
+        let row: Option<(serde_json::Value,)> =
+            sqlx::query_as("SELECT world FROM snapshots ORDER BY tick DESC LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
+        let value = row.map(|(v,)| v)?;
+        match serde_json::from_value::<World>(value) {
+            Ok(w) => {
+                info!(tick = w.tick, players = w.players.len(), "restored world from snapshot");
+                Some(w)
+            }
+            Err(e) => {
+                warn!(error = %e, "snapshot found but failed to deserialize; starting fresh");
+                None
+            }
+        }
+    }
 }
 
 /// In-memory stub: counts what it would have written and logs. Lets the whole
@@ -129,6 +154,10 @@ impl Persistence for NoopPersistence {
     ) -> anyhow::Result<()> {
         tracing::debug!(tick, "persistence(noop): snapshot dropped");
         Ok(())
+    }
+
+    async fn load_latest_world(&self) -> Option<World> {
+        None // no database — nothing to restore
     }
 }
 
@@ -169,6 +198,12 @@ impl Persistence for AnyPersistence {
             AnyPersistence::Noop(p) => p.save_snapshot(tick, time, world).await,
         }
     }
+    async fn load_latest_world(&self) -> Option<World> {
+        match self {
+            AnyPersistence::Pg(p) => p.load_latest_world().await,
+            AnyPersistence::Noop(p) => p.load_latest_world().await,
+        }
+    }
 }
 
 /// Bounded persistence backlog. If the database stalls, the game loop keeps
@@ -200,9 +235,10 @@ impl PersistenceHandle {
 }
 
 /// Connect to Postgres if `DATABASE_URL` is set and reachable, otherwise fall
-/// back to the no-op stub. Spawns the background persistence task and returns a
-/// handle for the game loop.
-pub async fn init_persistence() -> PersistenceHandle {
+/// back to the no-op stub. Runs migrations, **loads the latest world snapshot**
+/// (so the galaxy survives a restart, §14), spawns the background persistence
+/// task, and returns the handle plus any restored world.
+pub async fn init_persistence() -> (PersistenceHandle, Option<World>) {
     let backend = match std::env::var("DATABASE_URL") {
         Ok(url) if !url.trim().is_empty() => match connect_pg(&url).await {
             Ok(pool) => {
@@ -221,9 +257,12 @@ pub async fn init_persistence() -> PersistenceHandle {
         warn!(error = %e, "persistence: init failed, continuing without durable storage");
     }
 
+    // Restore the most recent snapshot, if any (the basis for a restart).
+    let restored = backend.load_latest_world().await;
+
     let (tx, rx) = mpsc::channel(PERSIST_CAPACITY);
     tokio::spawn(persistence_task(backend, rx));
-    PersistenceHandle { tx }
+    (PersistenceHandle { tx }, restored)
 }
 
 async fn connect_pg(url: &str) -> anyhow::Result<PgPool> {
