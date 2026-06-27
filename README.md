@@ -228,12 +228,22 @@ scripts/devdb.sh stop                 # or `nuke` to delete it entirely
 ## Tests
 
 ```bash
-cargo test                            # pure-core determinism + session unit tests
+cargo test                            # 27 unit tests: determinism, flip-and-burn
+                                      # physics, the lightspeed fairness invariant,
+                                      # command latency, raid resolution + recall,
+                                      # delayed-report delivery
 
-# end-to-end M1 checkpoint (server must be running on :8080):
+# end-to-end checkpoint smoke tests (server must be running on :8080):
 cargo run -p server &                 # in one shell
-node scripts/m1_smoke.mjs             # in another — asserts the M1 checkpoint
+node scripts/m1_smoke.mjs             # M1: per-player streams, join/leave (+/status)
+node scripts/m2_smoke.mjs             # M2: galaxy + flip-and-burn movement
+node scripts/m3_smoke.mjs             # M3: per-player lightspeed views, no leaks (~35s)
+node scripts/m4_smoke.mjs             # M4: raid → delayed reports on own clocks (~70s)
 ```
+
+The server also exposes `GET /status` (JSON: connection/session meta — kept off
+the per-player game view so presence can't leak faster than light) and
+`GET /healthz`.
 
 ---
 
@@ -247,12 +257,28 @@ client/            Pixi.js + Vite + TypeScript client
 scripts/           devdb.sh (local Postgres), m1_smoke.mjs (checkpoint test)
 ```
 
+## What's next
+
+- **M5 — the full multiplayer economy:** the hub Exchange (instant execution,
+  lagged prices), market + limit orders with periodic uniform-price batch
+  clearing, orders that spawn raidable delivery convoys, the buy/sell asymmetry,
+  and equity/valuations. *(Not started — the next milestone.)*
+- **M6 — robustness & scale to 12** (reconnect, persistence-driven restart,
+  view-filter performance) and **M7 — client polish**.
+
 ## Notes / known stubs
 
 - **Persistence stub:** without `DATABASE_URL` the event log/snapshots are
   dropped (logged, not stored). The Postgres path is real and verified; the stub
-  exists purely so the game runs without a database.
-- The client galaxy view is intentionally near-blank in M1 (starfield + live
-  tick). The real delayed/fogged map arrives in M2/M3.
-- Outbound per-connection queues are currently unbounded; M6 will bound them and
-  add reconnect/backpressure handling.
+  exists purely so the game runs without a database. Restart-from-snapshot is an
+  M6 task — the schema and write path exist; the load/replay path does not yet.
+- **Delayed reports** (raid outcomes) are marked delivered when handed to the
+  outbound queue. Reports are rare and the queue is almost never full, but M6
+  should make delivery reliable (re-deliver until acknowledged).
+- A **destroyed ship's ghost** lingers (frozen, ageing) in a viewer's delayed
+  picture until its last light passes the history horizon — this is correct (you
+  still see old light), and the delayed *report* tells you the truth; a tidier
+  "last-seen, now gone" treatment is polish for later.
+- **Balance is deliberately untuned** (per the design): ship speeds, galaxy size,
+  `c`, and raid radii are first-pass values chosen for legible delays, not
+  balance.
