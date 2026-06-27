@@ -28,7 +28,7 @@ pub use cargo::{Cargo, Commodity};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use event::{Event, EventPayload, RaidOutcome, TradeEvent};
-pub use galaxy::{HomeSlot, StarSystem};
+pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;

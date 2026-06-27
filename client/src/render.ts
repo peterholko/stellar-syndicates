@@ -9,11 +9,28 @@
 // The command center is your vantage — the origin of everything you can see.
 
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { GalaxyInfo, GhostView, Vec2 } from "./protocol";
+import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
 
 const COL_HUB = 0x7fd4ff;
 const COL_SYSTEM = 0x4a5d7a;
+
+// Mirror of the sim's base prices: ranks how valuable a deposit is, for sizing
+// the frontier-richer glow and picking a system's dominant-resource tint.
+const COMMODITY_VALUE: Record<Commodity, number> = {
+  provisions: 6,
+  ore: 8,
+  fuel: 10,
+  volatiles: 18,
+  alloys: 26,
+};
+const COMMODITY_COLOR: Record<Commodity, number> = {
+  provisions: 0x7fdc8a,
+  ore: 0xb0894f,
+  fuel: 0xff9d5c,
+  volatiles: 0x6bd0ff,
+  alloys: 0xc99bff,
+};
 const COL_OWN = 0x4fc3ff;
 const COL_OTHER = 0xff7a6b;
 const COL_ANCHOR_OWN = 0x9be7ff;
@@ -108,7 +125,7 @@ export class Renderer {
     this.cx = this.viewW / 2;
     this.cy = this.viewH / 2;
     this.drawBackground();
-    this.drawSystems();
+    // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
   }
 
   private drawStarfield(): void {
@@ -144,19 +161,58 @@ export class Renderer {
     this.bg.addChild(label);
   }
 
-  private drawSystems(): void {
+  /// Draw star systems with their resource geology and (light-gated) ownership.
+  /// A system's glow grows with its deposit value-rate, so the frontier visibly
+  /// out-produces the core (§4); the ring shows ownership — cyan (yours), red (a
+  /// rival, once their claim's light has reached you), or dim (unclaimed). Your
+  /// own systems also surface their accumulated production.
+  private drawSystems(state: ViewState): void {
     this.systemsLayer.removeChildren();
     if (!this.galaxy) return;
-    const labelStyle = new TextStyle({ fill: 0x55657f, fontFamily: "ui-monospace, monospace", fontSize: 8 });
+    const dynById = new Map(state.systems.map((s) => [s.id, s]));
     for (const sys of this.galaxy.systems) {
       const s = this.worldToScreen(sys.pos);
+      const dyn = dynById.get(sys.id);
+      const owner = dyn?.owner ?? null;
+      const mine = owner !== null && owner === state.playerId;
+      const rival = owner !== null && !mine;
+      const selected = state.selectedSystemId === sys.id;
+
+      // Value-rate → glow size; dominant resource → tint (the gradient made visible).
+      let valueRate = 0;
+      let topVal = -1;
+      let topColor = COL_SYSTEM;
+      for (const d of sys.deposits) {
+        const v = d.richness * (COMMODITY_VALUE[d.resource] ?? 1);
+        valueRate += v;
+        if (v > topVal) {
+          topVal = v;
+          topColor = COMMODITY_COLOR[d.resource] ?? COL_SYSTEM;
+        }
+      }
+      const glow = Math.min(3 + valueRate * 0.45, 18);
+      const ring = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
+
       const g = new Graphics();
-      g.circle(s.x, s.y, 2.2).fill({ color: COL_SYSTEM, alpha: 0.9 });
+      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 });
+      if (selected) g.circle(s.x, s.y, glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+      if (owner !== null) {
+        g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: ring, alpha: mine ? 0.95 : 0.8 });
+      }
+      g.circle(s.x, s.y, 2.2).fill({ color: ring, alpha: 0.95 });
       this.systemsLayer.addChild(g);
-      const t = new Text({ text: sys.name, style: labelStyle });
+
+      // Label: name; your own systems also show their top stockpiled good.
+      let txt = sys.name;
+      if (mine && dyn?.stockpile && dyn.stockpile.length) {
+        const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
+        txt = `${sys.name}  ◆${top.units} ${top.commodity}`;
+      }
+      const col = mine ? COL_OWN : rival ? COL_OTHER : 0x55657f;
+      const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
       t.anchor.set(0, 0.5);
-      t.position.set(s.x + 5, s.y);
-      t.alpha = 0.55;
+      t.position.set(s.x + glow + 2, s.y);
+      t.alpha = mine ? 0.95 : rival ? 0.78 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
     }
   }
@@ -375,6 +431,7 @@ export class Renderer {
     const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 
     this.drawSensorCoverage(state, dt);
+    this.drawSystems(state);
     this.drawRoutes(state);
     this.drawAnchors(state);
     this.drawCommandCenter(state);

@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, StarSystem, TradeEvent, Vec2};
+use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, TradeEvent, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +42,14 @@ pub enum ClientMsg {
 
     /// Place a resting limit order; it clears in the periodic batch (§9).
     PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+
+    /// Claim an unclaimed star system for its credit cost (§4). The server
+    /// attaches the issuing player; the sim resolves it in true space.
+    ClaimSystem { system_id: EntityId },
+
+    /// Ship a claimed system's accumulated production to the hub to sell (§9) —
+    /// spawns raidable convoys from the system.
+    ShipProduction { system_id: EntityId },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -121,6 +129,30 @@ pub struct RaidReport {
     pub you: Role,
 }
 
+/// One resource deposit on a system, as the client sees it (static geology,
+/// public knowledge — prospecting/fog of deposits is deferred). Lets the client
+/// render the frontier-richer gradient and the system's would-be production.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DepositView {
+    pub resource: Commodity,
+    /// Units produced per second at full extraction.
+    pub richness: f64,
+    /// Remaining reserves; `null` = renewable.
+    pub reserves: Option<f64>,
+}
+
+/// A star system as static geography + geology: position, name, deposits, and
+/// the credit cost to claim it. Sent once at join. Dynamic state (who owns it,
+/// how much it has stockpiled) is light-gated and lives in [`SystemStateView`].
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemInfo {
+    pub id: EntityId,
+    pub pos: Vec2,
+    pub name: String,
+    pub deposits: Vec<DepositView>,
+    pub claim_cost: f64,
+}
+
 /// Static galaxy geography, sent once at join. Never changes during a session
 /// (systems don't move), so it doesn't need to be in the per-tick stream.
 #[derive(Debug, Clone, Serialize)]
@@ -132,7 +164,26 @@ pub struct GalaxyInfo {
     /// Sensor detection radius each of the player's assets projects — lets the
     /// client draw its sensor coverage around its own ships + command center.
     pub sensor_range: f64,
-    pub systems: Vec<StarSystem>,
+    pub systems: Vec<SystemInfo>,
+}
+
+/// One commodity in a system's stockpile (whole units), shown only to the owner.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct StockSlot {
+    pub commodity: Commodity,
+    pub units: u32,
+}
+
+/// The DYNAMIC, per-tick, light-gated state of a star system (companion to the
+/// static [`SystemInfo`]). `owner` is revealed to rivals only once the claim's
+/// light has reached the viewer's command center — the owner sees their own claim
+/// instantly (§6). `stockpile` (accumulated production) is private: present only
+/// for the owner. No information about a rival's holdings ever leaks.
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemStateView {
+    pub id: EntityId,
+    pub owner: Option<PlayerId>,
+    pub stockpile: Option<Vec<StockSlot>>,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within
@@ -212,6 +263,9 @@ pub enum ServerMsg {
         command_center: Vec2,
         /// Home anchors; each owner is light-gated (see [`AnchorView`]).
         anchors: Vec<AnchorView>,
+        /// Star systems' dynamic state: ownership light-gated to rivals, stockpile
+        /// shown only to the owner (see [`SystemStateView`]).
+        systems: Vec<SystemStateView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
         /// The hub ticker, light-delayed (§9).

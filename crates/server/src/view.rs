@@ -27,9 +27,9 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, Vec2, World};
+use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, StarSystem, Vec2, World};
 
-use crate::protocol::{AnchorView, CargoView, GhostView};
+use crate::protocol::{AnchorView, CargoView, GhostView, StockSlot, SystemStateView};
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -342,6 +342,59 @@ pub fn filter_anchors(
         .collect()
 }
 
+/// Filter the dynamic, per-tick state of star systems for a player (§4, §6). A
+/// system's geography/geology (pos, name, deposits, claim cost) is public and
+/// sent once at join; here we light-gate the DYNAMIC state:
+///
+/// * **owner** — the viewer sees their OWN claim instantly, but a rival's
+///   ownership only once the claim's light has reached the viewer's command
+///   center (`claimed_at + |pos − cc|/c ≤ now`). Exactly the home-anchor rule —
+///   no faster-than-light presence/claim leak.
+/// * **stockpile** — a system's accumulated production is private: shown only to
+///   the owner (who can anyway predict it from the known deposit rates), never to
+///   rivals. So no information about a rival's holdings ever leaks.
+pub fn filter_systems(
+    systems: &[StarSystem],
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+) -> Vec<SystemStateView> {
+    systems
+        .iter()
+        .map(|sys| {
+            let own = sys.owner == Some(viewer);
+            let owner = match (sys.owner, sys.claimed_at) {
+                (Some(owner), _) if owner == viewer => Some(owner),
+                (Some(owner), Some(claimed_at)) => {
+                    let arrival = claimed_at + sys.pos.distance(cc) / c;
+                    if arrival <= now {
+                        Some(owner)
+                    } else {
+                        None // the claim's light hasn't reached this player yet
+                    }
+                }
+                _ => None,
+            };
+            // Only the owner sees the stockpile (whole units), and never rivals.
+            let stockpile = own.then(|| {
+                sys.stockpile
+                    .iter()
+                    .filter_map(|(commodity, amount)| {
+                        let units = amount.floor() as u32;
+                        (units >= 1).then_some(StockSlot { commodity: *commodity, units })
+                    })
+                    .collect()
+            });
+            SystemStateView {
+                id: sys.id,
+                owner,
+                stockpile,
+            }
+        })
+        .collect()
+}
+
 /// History of the hub's standing prices, so each player can be shown the prices
 /// **light-delayed** from the hub (§9). The Exchange ticker is a lightspeed
 /// broadcast; far from the hub you read an old copy. Mirrors [`PositionHistory`]
@@ -592,6 +645,53 @@ mod tests {
 
         // Positions are always present (static geography).
         assert_eq!(v10[1].pos, Vec2::new(6000.0, 0.0));
+    }
+
+    /// System ownership is light-gated exactly like anchors, and a system's
+    /// stockpile (accumulated production) is private to its owner — never leaked
+    /// to a rival, even once they can see the ownership (§4, §6).
+    #[test]
+    fn system_ownership_is_light_gated_and_stockpile_is_owner_only() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let me = PlayerId(7);
+        let rival = PlayerId(8);
+        let cc = Vec2::new(0.0, 0.0);
+        let mk = |id, pos, name: &str, owner, claimed_at, stock: &[(Commodity, f64)]| StarSystem {
+            id: EntityId(id),
+            pos,
+            name: name.into(),
+            deposits: vec![],
+            claim_cost: 1000.0,
+            owner,
+            claimed_at,
+            stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
+        };
+        let systems = vec![
+            mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
+            // Rival's claim 6000 su away → 20 s of light.
+            mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::Ore, 99.0)]),
+            mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
+        ];
+
+        // At t=10 s the rival's claim light (20 s) has NOT arrived.
+        let v10 = filter_systems(&systems, me, cc, c, 10.0);
+        assert_eq!(v10[0].owner, Some(me), "own claim is visible instantly");
+        assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
+        assert_eq!(v10[2].owner, None);
+        // My stockpile is shown (whole units); the rival's is never shown.
+        let mine = v10[0].stockpile.as_ref().expect("owner sees own stockpile");
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].commodity, Commodity::Alloys);
+        assert_eq!(mine[0].units, 12, "stockpile reported in whole units");
+        assert!(v10[1].stockpile.is_none(), "a rival's stockpile must never be shown");
+        assert!(v10[2].stockpile.is_none());
+
+        // At t=25 s the rival's claim light has arrived — ownership now visible…
+        let v25 = filter_systems(&systems, me, cc, c, 25.0);
+        assert_eq!(v25[1].owner, Some(rival));
+        // …but still NEVER their stockpile.
+        assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.

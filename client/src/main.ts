@@ -126,6 +126,25 @@ function installInteraction(): void {
       return;
     }
 
+    // Otherwise, did we click a star system? → open its claim / production panel.
+    let sysPick: string | null = null;
+    let bestS = 13;
+    if (state.galaxy) {
+      for (const sys of state.galaxy.systems) {
+        const s = renderer.worldToScreen(sys.pos);
+        const d = Math.hypot(s.x - sx, s.y - sy);
+        if (d < bestS) {
+          bestS = d;
+          sysPick = sys.id;
+        }
+      }
+    }
+    if (sysPick) {
+      state.selectedSystemId = sysPick;
+      updateSystemPanel();
+      return;
+    }
+
     if (!state.selectedShipId || !net) return;
     const sel = state.ghosts.find((x) => x.id === state.selectedShipId);
     if (!sel) return;
@@ -178,6 +197,68 @@ function installInteraction(): void {
       const m = $("market");
       m.style.display = m.style.display === "none" ? "block" : "none";
     }
+  });
+}
+
+// --- System panel: claim a system / ship its production (§4, §9) -------------
+// Shows the selected system's deposits (the frontier-richer geology) and, by
+// ownership: a Claim button if unclaimed, or stockpile + a Ship-to-hub button if
+// it's yours. A rival's system shows only that it's owned (their holdings never
+// leak). Refreshed each View so stockpile/credits stay live.
+function updateSystemPanel(): void {
+  const panel = $("system-panel");
+  const sid = state.selectedSystemId;
+  const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
+  if (!sid || !sys) {
+    panel.style.display = "none";
+    return;
+  }
+  const dyn = state.systems.find((s) => s.id === sid);
+  const owner = dyn?.owner ?? null;
+  const mine = owner !== null && owner === state.playerId;
+  const rival = owner !== null && !mine;
+  const credits = state.wallet?.credits ?? 0;
+
+  const deps = sys.deposits
+    .map((d) => `<div class="dep">${d.resource} · <b>${d.richness.toFixed(2)}</b>/s${d.reserves === null ? " · renewable" : ` · ${Math.round(d.reserves)} left`}</div>`)
+    .join("");
+
+  let action: string;
+  if (mine) {
+    const slots = dyn?.stockpile ?? [];
+    const stock = slots.length ? slots.map((s) => `${s.units} ${s.commodity}`).join(", ") : "—";
+    action =
+      `<div class="srow">Stockpile: <b>${stock}</b></div>` +
+      `<button id="ship-btn" ${slots.length ? "" : "disabled"}>Ship production → hub</button>`;
+  } else if (rival) {
+    action = `<div class="srow warn">Held by a rival corporation.</div>`;
+  } else {
+    const afford = credits >= sys.claim_cost;
+    action =
+      `<div class="srow">Claim cost: <b>${Math.round(sys.claim_cost).toLocaleString()}</b> cr</div>` +
+      `<button id="claim-btn" ${afford ? "" : "disabled"}>${afford ? "Claim system" : "Can't afford"}</button>`;
+  }
+
+  const tag = mine ? ' · <span style="color:#4fc3ff">YOURS</span>' : rival ? ' · <span style="color:#ff7a6b">rival</span>' : "";
+  const hint = rival
+    ? "ownership is light-delayed — what you see may already be stale"
+    : mine
+      ? "production ships across fogged space to the hub — raidable in transit"
+      : "richer, more valuable deposits lie toward the dangerous frontier";
+  panel.innerHTML =
+    `<div class="title">${sys.name}${tag} <span class="x" id="sys-close">✕</span></div>` +
+    `<div class="deps">${deps}</div>${action}<div class="hint">${hint}</div>`;
+  panel.style.display = "block";
+
+  document.getElementById("claim-btn")?.addEventListener("click", () => {
+    if (net) net.send({ type: "ClaimSystem", system_id: sid });
+  });
+  document.getElementById("ship-btn")?.addEventListener("click", () => {
+    if (net) net.send({ type: "ShipProduction", system_id: sid });
+  });
+  document.getElementById("sys-close")?.addEventListener("click", () => {
+    state.selectedSystemId = null;
+    updateSystemPanel();
   });
 }
 
@@ -334,9 +415,11 @@ function join(): void {
           state.simTime = msg.sim_time;
           state.commandCenter = msg.command_center;
           state.anchors = msg.anchors;
+          state.systems = msg.systems;
           state.ghosts = msg.ghosts;
           state.market = msg.market;
           state.wallet = msg.wallet;
+          updateSystemPanel();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;

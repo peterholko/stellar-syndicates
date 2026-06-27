@@ -2,7 +2,7 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, RaidReport, Vec2, WalletView } from "./protocol";
+import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, RaidReport, SystemStateView, Vec2, WalletView } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
@@ -52,6 +52,9 @@ export interface ViewState {
   galaxy: GalaxyInfo | null;
   commandCenter: Vec2 | null;
   anchors: AnchorView[];
+  /// Per-tick dynamic system state (ownership light-gated, stockpile owner-only),
+  /// keyed by system id, paired with the static `galaxy.systems` geology.
+  systems: SystemStateView[];
   ghosts: GhostView[];
   market: MarketView | null;
   wallet: WalletView | null;
@@ -61,6 +64,8 @@ export interface ViewState {
 
   // Interaction.
   selectedShipId: string | null;
+  /// Currently selected star system (for the claim / ship-production panel).
+  selectedSystemId: string | null;
   /// Client-side record of move orders the player issued (shipId → destination),
   /// purely for drawing the "commanded into the dark" line. The server never
   /// echoes orders back (that's internal truth).
@@ -83,11 +88,13 @@ export function initialState(): ViewState {
     galaxy: null,
     commandCenter: null,
     anchors: [],
+    systems: [],
     ghosts: [],
     market: null,
     wallet: null,
     lastViewWallMs: 0,
     selectedShipId: null,
+    selectedSystemId: null,
     orders: {},
     commandSignals: [],
     reportSignals: [],

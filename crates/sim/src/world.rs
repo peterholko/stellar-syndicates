@@ -191,6 +191,10 @@ impl World {
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
 
+        // 5b. Accrue production at every claimed system (§5.1 continuous progress)
+        //     — happens whether or not the owner is logged in.
+        self.accrue_production();
+
         // 6. Advance the clock; drift the market on a slow cadence so the price
         //    information lag is visible, and clear the limit-order book on the
         //    batch cadence (the uniform-price call auction, §9).
@@ -578,6 +582,98 @@ impl World {
                         limit_price,
                     }),
                 ));
+            }
+            Command::ClaimSystem { player_id, system_id } => {
+                self.apply_claim(*player_id, *system_id, events);
+            }
+            Command::ShipProduction { player_id, system_id } => {
+                self.apply_ship_production(*player_id, *system_id, events);
+            }
+        }
+    }
+
+    /// Claim an unclaimed system for the player, debiting the claim cost. Resolves
+    /// in true space at `self.time`; rivals learn of it only by light (the view
+    /// filter gates ownership). No-op if already owned or unaffordable.
+    fn apply_claim(&mut self, player_id: PlayerId, system_id: EntityId, events: &mut Vec<Event>) {
+        let now = self.time;
+        let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
+            return;
+        };
+        if sys.owner.is_some() {
+            return; // already claimed (the loser learns this rival's claim by light)
+        }
+        let (pos, cost) = (sys.pos, sys.claim_cost);
+        let Some(corp) = self.players.get(&player_id) else {
+            return;
+        };
+        if corp.credits < cost {
+            return; // can't afford the claim
+        }
+        if let Some(corp) = self.players.get_mut(&player_id) {
+            corp.credits -= cost;
+        }
+        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == system_id) {
+            sys.owner = Some(player_id);
+            sys.claimed_at = Some(now);
+        }
+        events.push(Event::new(
+            now,
+            EventPayload::SystemClaimed { system: system_id, owner: player_id, pos },
+        ));
+    }
+
+    /// Ship a claimed system's accumulated production to the hub: one raidable
+    /// convoy per stockpiled commodity (whole units), each selling on arrival.
+    fn apply_ship_production(&mut self, player_id: PlayerId, system_id: EntityId, events: &mut Vec<Event>) {
+        // Collect what to ship (and zero those stockpiles) without holding a
+        // borrow across the convoy spawn.
+        let mut shipments: Vec<(Cargo, Vec2)> = Vec::new();
+        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == system_id) {
+            if sys.owner != Some(player_id) {
+                return; // only the owner ships from their system
+            }
+            let pos = sys.pos;
+            for (commodity, amount) in sys.stockpile.iter_mut() {
+                let units = amount.floor() as u32;
+                if units >= 1 {
+                    *amount -= units as f64;
+                    shipments.push((Cargo { commodity: *commodity, units }, pos));
+                }
+            }
+        } else {
+            return;
+        }
+        for (cargo, pos) in shipments {
+            events.push(Event::new(
+                self.time,
+                EventPayload::Trade(TradeEvent::SellDispatched {
+                    player: player_id,
+                    commodity: cargo.commodity,
+                    units: cargo.units,
+                }),
+            ));
+            self.spawn_trade_convoy(player_id, pos, self.hub, cargo, TradeMission::SellAtHub);
+        }
+    }
+
+    /// Accrue production at every claimed system: each deposit adds `richness·DT`
+    /// units of its resource to the system's stockpile, drawing down finite
+    /// reserves (renewable deposits never deplete). Deterministic.
+    fn accrue_production(&mut self) {
+        for sys in &mut self.systems {
+            if sys.owner.is_none() {
+                continue;
+            }
+            for dep in &mut sys.deposits {
+                let mut amount = dep.richness * DT;
+                if let Some(reserves) = dep.reserves.as_mut() {
+                    amount = amount.min(*reserves);
+                    *reserves -= amount;
+                }
+                if amount > 0.0 {
+                    *sys.stockpile.entry(dep.resource).or_insert(0.0) += amount;
+                }
             }
         }
     }
@@ -1325,19 +1421,229 @@ mod tests {
 
     #[test]
     fn determinism_same_commands_same_state() {
+        let mut a = test_world();
+        let mut b = test_world();
+        // A system present identically in both deterministic galaxies.
+        let sysid = a.systems[0].id;
         let cmds = vec![
             Command::AddPlayer { id: PlayerId(1), name: "A".into() },
             Command::AddPlayer { id: PlayerId(2), name: "B".into() },
+            // Idempotent after the first tick — exercises the DYNAMIC new state
+            // (owner mutation + continuous production accrual) so replay equality
+            // covers it, not just the static seeded generation.
+            Command::ClaimSystem { player_id: PlayerId(1), system_id: sysid },
         ];
-        let mut a = test_world();
-        let mut b = test_world();
-        for _ in 0..300 {
+        for _ in 0..600 {
             a.step(&cmds);
             b.step(&cmds);
         }
+        // The dynamic paths actually ran (so the comparison is meaningful).
+        let sys_a = a.systems.iter().find(|s| s.id == sysid).unwrap();
+        assert_eq!(sys_a.owner, Some(PlayerId(1)), "claim path must have executed");
+        assert!(sys_a.stockpile.values().sum::<f64>() > 0.0, "accrual path must have executed");
         assert_eq!(
             serde_json::to_string(&a).unwrap(),
             serde_json::to_string(&b).unwrap()
         );
+    }
+
+    // ---- System claims + resource production (§4, §9) ----
+
+    /// A system's deposit value-rate: Σ richness · base_price — how much credit
+    /// value it produces per second.
+    fn value_rate(sys: &StarSystem) -> f64 {
+        sys.deposits.iter().map(|d| d.richness * crate::market::base_price(d.resource)).sum()
+    }
+
+    /// THE KEY DESIGN PROPERTY (§4): richer/more valuable deposits concentrate
+    /// toward the frontier. The outer third of systems must out-produce the inner
+    /// third — deterministically, from the seed.
+    #[test]
+    fn deposits_are_richer_toward_the_frontier() {
+        let w = test_world();
+        let mut by_dist: Vec<&StarSystem> = w.systems.iter().collect();
+        by_dist.sort_by(|a, b| a.pos.length().partial_cmp(&b.pos.length()).unwrap());
+        let third = by_dist.len() / 3;
+        assert!(third >= 1, "need enough systems to compare thirds");
+        let mean = |s: &[&StarSystem]| s.iter().map(|x| value_rate(x)).sum::<f64>() / s.len() as f64;
+        let inner = mean(&by_dist[..third]);
+        let outer = mean(&by_dist[by_dist.len() - third..]);
+        assert!(every_system_has_a_deposit(&w), "every system must have at least one deposit");
+        assert!(outer > inner * 1.5,
+            "frontier should out-produce the core: inner value-rate {inner:.1} vs outer {outer:.1}");
+    }
+
+    fn every_system_has_a_deposit(w: &World) -> bool {
+        w.systems.iter().all(|s| !s.deposits.is_empty())
+    }
+
+    /// Deposit generation is deterministic from the seed (replay-safe).
+    #[test]
+    fn deposit_generation_is_deterministic() {
+        let a = World::new(SimConfig::for_players(777, 6));
+        let b = World::new(SimConfig::for_players(777, 6));
+        assert_eq!(
+            serde_json::to_string(&a.systems).unwrap(),
+            serde_json::to_string(&b.systems).unwrap()
+        );
+        // A different seed yields a different galaxy.
+        let c = World::new(SimConfig::for_players(778, 6));
+        assert_ne!(
+            serde_json::to_string(&a.systems).unwrap(),
+            serde_json::to_string(&c.systems).unwrap()
+        );
+    }
+
+    /// Pick the richest (frontier) system — guaranteed to have valuable deposits.
+    fn richest_system(w: &World) -> EntityId {
+        w.systems
+            .iter()
+            .max_by(|a, b| value_rate(a).partial_cmp(&value_rate(b)).unwrap())
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn claim_charges_credits_and_transfers_ownership() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        let cost = w.systems.iter().find(|s| s.id == sysid).unwrap().claim_cost;
+        let credits0 = w.players[&id].credits;
+        assert!(cost > 0.0 && credits0 >= cost, "starting credits should afford a claim");
+
+        let ev = w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        let sys = w.systems.iter().find(|s| s.id == sysid).unwrap();
+        assert_eq!(sys.owner, Some(id), "claim should transfer ownership");
+        assert!(sys.claimed_at.is_some());
+        assert!((credits0 - w.players[&id].credits - cost).abs() < 1e-6, "claim should charge the cost");
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::SystemClaimed { system, .. } if system == sysid)));
+    }
+
+    #[test]
+    fn cannot_claim_an_owned_system_or_one_you_cannot_afford() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sysid = richest_system(&w);
+        w.step(&[Command::ClaimSystem { player_id: a, system_id: sysid }]);
+        let b_credits0 = w.players[&b].credits;
+        // B tries to claim A's system — no-op, no charge.
+        w.step(&[Command::ClaimSystem { player_id: b, system_id: sysid }]);
+        assert_eq!(w.systems.iter().find(|s| s.id == sysid).unwrap().owner, Some(a));
+        assert_eq!(w.players[&b].credits, b_credits0, "a failed claim must not charge");
+
+        // Drain B's credits, then a claim of an unclaimed system fails (no charge).
+        let unclaimed = w.systems.iter().find(|s| s.owner.is_none()).unwrap().id;
+        w.players.get_mut(&b).unwrap().credits = 0.0;
+        w.step(&[Command::ClaimSystem { player_id: b, system_id: unclaimed }]);
+        assert!(w.systems.iter().find(|s| s.id == unclaimed).unwrap().owner.is_none());
+    }
+
+    #[test]
+    fn claimed_system_accrues_production_over_time() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        // Unowned systems do NOT produce.
+        for _ in 0..(3 * crate::config::TICK_HZ) { w.step(&[]); }
+        assert!(w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.is_empty(),
+            "an unclaimed system must not produce");
+
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        let secs = 20u32;
+        for _ in 0..(secs * crate::config::TICK_HZ) { w.step(&[]); }
+
+        let sys = w.systems.iter().find(|s| s.id == sysid).unwrap();
+        let total: f64 = sys.stockpile.values().sum();
+        let expected: f64 = sys.deposits.iter().map(|d| d.richness).sum::<f64>() * secs as f64;
+        assert!(total > 0.0, "a claimed system must accrue production");
+        assert!((total - expected).abs() < expected * 0.02 + 1e-6,
+            "stockpile {total:.2} ≈ Σrichness × time {expected:.2}");
+    }
+
+    #[test]
+    fn shipping_production_spawns_a_raidable_convoy_that_sells() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
+        let stock_before: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.values().sum();
+        assert!(stock_before >= 1.0, "should have whole units to ship");
+
+        w.step(&[Command::ShipProduction { player_id: id, system_id: sysid }]);
+        // A production convoy is just a normal raidable trade convoy (Convoy kind,
+        // carrying cargo, selling at the hub) — spawned at the system.
+        let sys_pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        let convoy = w.ships.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub)).cloned();
+        let convoy = convoy.expect("ship-production should spawn a sell convoy");
+        assert_eq!(convoy.kind, ShipKind::Convoy, "production ships in raidable convoys");
+        assert!(convoy.cargo.is_some());
+        assert!(convoy.pos.distance(sys_pos) < 1.0, "production convoy departs from the system");
+        // The system's whole-unit stockpile was emptied into the convoy(s).
+        let remaining: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.values().sum();
+        assert!(remaining < 1.0, "shipping should empty the whole-unit stockpile");
+
+        // The full loop pays out: run until the convoy reaches the hub and sells.
+        let credits_before = w.players[&id].credits;
+        let mut sold = false;
+        for _ in 0..(400 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::Trade(TradeEvent::Sold { player, .. }) = e.payload
+                    && player == id
+                {
+                    sold = true;
+                }
+            }
+            if sold { break; }
+        }
+        assert!(sold, "the production convoy should reach the hub and sell");
+        assert!(w.players[&id].credits > credits_before, "selling production should pay credits");
+    }
+
+    #[test]
+    fn a_raider_can_destroy_a_production_convoy() {
+        let mut w = test_world();
+        let (def, atk) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: def, name: "Producer".into() },
+            Command::AddPlayer { id: atk, name: "Raider".into() },
+        ]);
+        let sysid = richest_system(&w);
+        w.step(&[Command::ClaimSystem { player_id: def, system_id: sysid }]);
+        for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
+        w.step(&[Command::ShipProduction { player_id: def, system_id: sysid }]);
+        let convoy = *w.ships.iter().find(|(_, s)| s.owner == def && s.mission == Some(TradeMission::SellAtHub)).unwrap().0;
+
+        // Park the attacker's raider right on the production convoy and commit.
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let cpos = w.ships[&convoy].pos;
+        {
+            let r = w.ships.get_mut(&raider).unwrap();
+            r.pos = cpos + Vec2::new(40.0, 0.0); // inside CONTACT_RADIUS
+            r.vel = Vec2::ZERO;
+            r.order = ShipOrder::Idle;
+        }
+        // Force the raider's command center near it so the commit applies promptly.
+        w.players.get_mut(&atk).unwrap().command_center = cpos;
+        let outcome = run_until_raid(&mut w, 30, |wld| {
+            if wld.ships.get(&raider).map(|s| matches!(s.order, ShipOrder::Intercept { .. })).unwrap_or(false) {
+                vec![]
+            } else {
+                vec![Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]
+            }
+        });
+        let outcome = outcome.expect("the raid on the production convoy should resolve");
+        // If the convoy was destroyed, its production output is gone — real stakes.
+        if outcome.kills().1 {
+            assert!(!w.ships.contains_key(&convoy), "a destroyed production convoy is gone");
+        }
     }
 }

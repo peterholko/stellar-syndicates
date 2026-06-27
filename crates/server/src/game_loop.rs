@@ -21,7 +21,8 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{
-    ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg, WalletView,
+    ClientMsg, DepositView, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg,
+    SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
@@ -156,7 +157,28 @@ impl GameLoop {
                             radius: self.world.config.galaxy_radius,
                             c: self.world.config.c,
                             sensor_range: self.world.config.sensor_range,
-                            systems: self.world.systems.clone(),
+                            // Static geography + geology (deposits, claim cost).
+                            // Dynamic ownership/stockpile comes light-gated in View.
+                            systems: self
+                                .world
+                                .systems
+                                .iter()
+                                .map(|s| SystemInfo {
+                                    id: s.id,
+                                    pos: s.pos,
+                                    name: s.name.clone(),
+                                    deposits: s
+                                        .deposits
+                                        .iter()
+                                        .map(|d| DepositView {
+                                            resource: d.resource,
+                                            richness: d.richness,
+                                            reserves: d.reserves,
+                                        })
+                                        .collect(),
+                                    claim_cost: s.claim_cost,
+                                })
+                                .collect(),
                         },
                     },
                 );
@@ -231,6 +253,16 @@ impl GameLoop {
                             units,
                             limit_price,
                         });
+                    }
+                }
+                ClientMsg::ClaimSystem { system_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ClaimSystem { player_id, system_id });
+                    }
+                }
+                ClientMsg::ShipProduction { system_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ShipProduction { player_id, system_id });
                     }
                 }
                 // Join is handled at the WebSocket layer before the loop ever
@@ -320,6 +352,7 @@ impl GameLoop {
             let cc = corp.command_center;
             let ghosts = self.history.view_for(player_id, cc, c, now);
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
+            let systems = view::filter_systems(&self.world.systems, player_id, cc, c, now);
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
@@ -366,6 +399,7 @@ impl GameLoop {
                     sim_time: now,
                     command_center: cc,
                     anchors,
+                    systems,
                     ghosts,
                     market,
                     wallet,
