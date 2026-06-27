@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::cargo::Cargo;
 use crate::command::Command;
-use crate::config::{SimConfig, DT};
+use crate::config::{SimConfig, DT, TICK_HZ};
 use crate::event::{Event, EventPayload, RaidOutcome, TradeEvent};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId};
+use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
 use crate::movement::intercept_step;
 use crate::ship::{Ship, ShipKind, ShipOrder, TradeMission};
@@ -62,6 +63,9 @@ const HUB_SAFE_RADIUS: f64 = 300.0;
 /// The market drifts once per this many ticks (≈ once a second at 30 Hz).
 const MARKET_UPDATE_TICKS: u64 = 30;
 
+/// The limit-order book clears once per this many ticks (≈ every 20 s).
+const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
+
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +87,10 @@ pub struct World {
     pub ships: BTreeMap<EntityId, Ship>,
     /// The shared hub Exchange (§9).
     pub market: crate::market::Market,
+    /// Resting limit orders, cleared in a periodic uniform-price call auction.
+    pub book: Vec<LimitOrder>,
+    /// Monotonic allocator for limit-order ids.
+    next_order_id: u64,
     /// Orders that have been issued but whose light has not yet reached the ship.
     pending_orders: Vec<PendingOrder>,
     /// Monotonic allocator for entity ids.
@@ -128,6 +136,8 @@ impl World {
             players: BTreeMap::new(),
             ships: BTreeMap::new(),
             market: crate::market::Market::new(),
+            book: Vec::new(),
+            next_order_id: 1,
             pending_orders: Vec::new(),
             next_entity_id,
             rng,
@@ -169,11 +179,15 @@ impl World {
         self.resolve_trade_arrivals(&mut events);
 
         // 6. Advance the clock; drift the market on a slow cadence so the price
-        //    information lag is visible.
+        //    information lag is visible, and clear the limit-order book on the
+        //    batch cadence (the uniform-price call auction, §9).
         self.tick += 1;
         self.time += DT;
         if self.tick.is_multiple_of(MARKET_UPDATE_TICKS) {
             self.market.drift(&mut self.rng);
+        }
+        if self.tick.is_multiple_of(BATCH_TICKS) {
+            self.clear_books(&mut events);
         }
 
         events
@@ -432,7 +446,132 @@ impl World {
                 let cargo = Cargo { commodity: *commodity, units };
                 self.spawn_trade_convoy(*player_id, home, self.hub, cargo, TradeMission::SellAtHub);
             }
+            Command::PlaceLimitOrder {
+                player_id,
+                side,
+                commodity,
+                units,
+                limit_price,
+            } => {
+                let units = *units;
+                let limit_price = *limit_price;
+                if units == 0 || limit_price <= 0.0 {
+                    return;
+                }
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                // Reserve resources up front so the order is funded when it clears.
+                match side {
+                    Side::Buy => {
+                        let reserve = units as f64 * limit_price;
+                        if corp.credits < reserve {
+                            return;
+                        }
+                        if let Some(c) = self.players.get_mut(player_id) {
+                            c.credits -= reserve;
+                        }
+                    }
+                    Side::Sell => {
+                        if corp.inventory.get(commodity).copied().unwrap_or(0) < units {
+                            return;
+                        }
+                        if let Some(c) = self.players.get_mut(player_id) {
+                            c.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                        }
+                    }
+                }
+                let id = self.next_order_id;
+                self.next_order_id += 1;
+                self.book.push(LimitOrder {
+                    id,
+                    player: *player_id,
+                    side: *side,
+                    commodity: *commodity,
+                    units,
+                    limit_price,
+                });
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::LimitPlaced {
+                        player: *player_id,
+                        side: *side,
+                        commodity: *commodity,
+                        units,
+                        limit_price,
+                    }),
+                ));
+            }
         }
+    }
+
+    /// Run the periodic uniform-price call auction over the limit-order book
+    /// (§9). Per commodity, everyone clears at one price; matched buys settle and
+    /// spawn a delivery convoy (refunding any over-reservation), matched sells
+    /// settle for credits. Resting (unmatched) orders carry to the next batch.
+    fn clear_books(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        for commodity in crate::cargo::Commodity::ALL {
+            let orders: Vec<LimitOrder> = self
+                .book
+                .iter()
+                .filter(|o| o.commodity == commodity)
+                .cloned()
+                .collect();
+            let Some(clearing) = clear_call_auction(&orders) else {
+                continue;
+            };
+            let price = clearing.price;
+            self.market.set_price(commodity, price);
+            for (oid, filled) in clearing.fills {
+                let Some(order) = self.book.iter().find(|o| o.id == oid).cloned() else {
+                    continue;
+                };
+                match order.side {
+                    Side::Buy => {
+                        // Refund the over-reservation; goods cross home; news.
+                        let refund = filled as f64 * (order.limit_price - price);
+                        let home = self.players.get(&order.player).map(|c| c.home);
+                        if let Some(c) = self.players.get_mut(&order.player) {
+                            c.credits += refund;
+                        }
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::LimitFilled {
+                                player: order.player,
+                                side: Side::Buy,
+                                commodity,
+                                units: filled,
+                                unit_price: price,
+                            }),
+                        ));
+                        if let Some(home) = home {
+                            let cargo = Cargo { commodity, units: filled };
+                            self.spawn_trade_convoy(order.player, self.hub, home, cargo, TradeMission::DeliverHome);
+                        }
+                    }
+                    Side::Sell => {
+                        if let Some(c) = self.players.get_mut(&order.player) {
+                            c.credits += filled as f64 * price;
+                        }
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::LimitFilled {
+                                player: order.player,
+                                side: Side::Sell,
+                                commodity,
+                                units: filled,
+                                unit_price: price,
+                            }),
+                        ));
+                    }
+                }
+                if let Some(o) = self.book.iter_mut().find(|o| o.id == oid) {
+                    o.units = o.units.saturating_sub(filled);
+                }
+            }
+        }
+        self.book.retain(|o| o.units > 0);
     }
 
     /// Spawn a raidable trade convoy that resolves its mission on arrival.
@@ -965,6 +1104,68 @@ mod tests {
         w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000 }]);
         assert_eq!(w.players[&id].credits, credits0);
         assert_eq!(w.ships.len(), ships0, "rejected buy must not spawn a convoy");
+    }
+
+    #[test]
+    fn limit_orders_clear_in_uniform_price_batch() {
+        use crate::cargo::Commodity::Ore;
+        let mut w = test_world();
+        let (buyer, seller) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: buyer, name: "Buy".into() },
+            Command::AddPlayer { id: seller, name: "Sell".into() },
+        ]);
+        let buyer_credits0 = w.players[&buyer].credits;
+        let seller_credits0 = w.players[&seller].credits;
+        let seller_ore0 = w.players[&seller].inventory[&Ore];
+
+        // A crossing pair: buyer pays up to 9, seller wants at least 7.
+        w.step(&[
+            Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: Ore, units: 50, limit_price: 7.0 },
+            Command::PlaceLimitOrder { player_id: buyer, side: Side::Buy, commodity: Ore, units: 50, limit_price: 9.0 },
+        ]);
+        // Reservations taken at placement.
+        assert_eq!(w.players[&seller].inventory[&Ore], seller_ore0 - 50);
+        assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 9.0)).abs() < 1e-6);
+        assert_eq!(w.book.len(), 2);
+
+        // Run until the next batch clears (≈ every 20 s).
+        let mut cleared = false;
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.book.is_empty() {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "the batch should have cleared the crossing orders");
+
+        // Uniform clearing price P* = 7 (max volume, lowest price). Seller is
+        // paid 50×7; buyer's over-reservation (50×2) is refunded → net 50×7.
+        assert!((w.players[&seller].credits - (seller_credits0 + 50.0 * 7.0)).abs() < 1e-6, "seller paid at uniform price");
+        assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 7.0)).abs() < 1e-6, "buyer settled at uniform price (over-reservation refunded)");
+        // The buyer's matched goods cross home as a delivery convoy.
+        assert!(w.ships.values().any(|s| s.owner == buyer && s.mission == Some(TradeMission::DeliverHome)));
+    }
+
+    #[test]
+    fn limit_orders_that_do_not_cross_rest() {
+        use crate::cargo::Commodity::Fuel;
+        let mut w = test_world();
+        let (buyer, seller) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: buyer, name: "Buy".into() },
+            Command::AddPlayer { id: seller, name: "Sell".into() },
+        ]);
+        // Buyer pays up to 6, seller wants 9 — they do NOT cross.
+        w.step(&[
+            Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: Fuel, units: 30, limit_price: 9.0 },
+            Command::PlaceLimitOrder { player_id: buyer, side: Side::Buy, commodity: Fuel, units: 30, limit_price: 6.0 },
+        ]);
+        for _ in 0..(25 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert_eq!(w.book.len(), 2, "non-crossing orders rest on the book");
     }
 
     #[test]

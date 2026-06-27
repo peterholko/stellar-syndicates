@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type Side, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -219,10 +219,17 @@ function buildMarketPanel(): void {
     const btn = (e.target as HTMLElement).closest("button");
     if (!btn || !net) return;
     const c = btn.getAttribute("data-c") as Commodity;
+    const side = btn.getAttribute("data-side") as Side;
     const qty = Math.max(1, Math.floor(Number((($("market-qty") as HTMLInputElement).value) || 0)));
-    net.send(btn.getAttribute("data-side") === "buy"
-      ? { type: "MarketBuy", commodity: c, units: qty }
-      : { type: "MarketSell", commodity: c, units: qty });
+    const limitOn = ($("market-limit-on") as HTMLInputElement).checked;
+    const limitPrice = Number(($("market-limit-price") as HTMLInputElement).value);
+    if (limitOn && limitPrice > 0) {
+      net.send({ type: "PlaceLimitOrder", side, commodity: c, units: qty, limit_price: limitPrice });
+    } else {
+      net.send(side === "buy"
+        ? { type: "MarketBuy", commodity: c, units: qty }
+        : { type: "MarketSell", commodity: c, units: qty });
+    }
   });
 }
 
@@ -239,6 +246,11 @@ function updateMarket(): void {
     if (pe) pe.textContent = priceOf.has(c) ? priceOf.get(c)!.toFixed(2) : "—";
     if (he) he.textContent = String(heldOf.get(c) ?? 0);
   }
+  const ordersEl = $("market-orders");
+  const orders = state.wallet.orders;
+  ordersEl.innerHTML = orders.length
+    ? "<b>resting:</b> " + orders.map((o) => `<span class="o ${o.side}">${o.side} ${o.units} ${o.commodity} @ ${o.limit_price.toFixed(1)}</span>`).join(" · ")
+    : "";
 }
 
 function addTradeNews(t: TradeEvent): void {
@@ -249,6 +261,8 @@ function addTradeNews(t: TradeEvent): void {
     case "Delivered": text = `Delivery arrived: +${t.units} ${t.commodity} in stores.`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${t.commodity} crossing to the hub.`; break;
     case "Sold": text = `Sold ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
+    case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${t.commodity} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
+    case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)}.`; break;
   }
   const el = document.createElement("div");
   el.className = "report good";

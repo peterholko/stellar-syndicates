@@ -154,6 +154,11 @@
       #market button.sell:hover { background: #402018; border-color: #6b3a2f; }
       #market .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; }
       #market .accent { color: var(--accent); }
+      #market-limit-price { width: 60px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
+      #market #market-orders { margin-top: 8px; font-size: 11px; line-height: 1.5; }
+      #market #market-orders .o { color: var(--ink); }
+      #market #market-orders .o.buy { color: #7fd0a0; }
+      #market #market-orders .o.sell { color: #e0a070; }
     </style>
   </head>
   <body>
@@ -175,11 +180,13 @@
     <div id="market">
       <div class="mhead"><b>HUB EXCHANGE</b> <span id="market-stale" class="dim"></span></div>
       <div class="mtop"><span id="market-credits" class="accent">—</span> · qty <input id="market-qty" type="number" value="50" min="1" /></div>
+      <div class="mtop"><label><input type="checkbox" id="market-limit-on" /> limit @</label> <input id="market-limit-price" type="number" step="0.1" placeholder="price" /></div>
       <table>
         <thead><tr><th class="name">commodity</th><th>price</th><th>held</th><th></th></tr></thead>
         <tbody id="market-rows"></tbody>
       </table>
-      <div class="mhint dim">Buy settles now; goods cross home (raidable). Sell ships goods to the hub, clears at price-on-arrival. Press <b>M</b> to toggle.</div>
+      <div id="market-orders" class="dim"></div>
+      <div class="mhint dim">Market: buy settles now (goods cross home, raidable); sell clears at price-on-arrival. Limit orders rest and clear in a periodic uniform-price batch (no snipe edge). Press <b>M</b> to toggle.</div>
     </div>
 
     <div id="readout">

@@ -30,7 +30,7 @@ pub use config::{SimConfig, DT, TICK_HZ};
 pub use event::{Event, EventPayload, RaidOutcome, TradeEvent};
 pub use galaxy::{HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
-pub use market::Market;
+pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
 pub use movement::{flip_and_burn, MoveStep};
 pub use rng::Rng;

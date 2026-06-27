@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, TradeEvent, Vec2};
+use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, StarSystem, TradeEvent, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -40,8 +40,21 @@ pub enum ClientMsg {
     /// the price-on-arrival.
     MarketSell { commodity: Commodity, units: u32 },
 
+    /// Place a resting limit order; it clears in the periodic batch (§9).
+    PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
+}
+
+/// One of the player's own resting limit orders.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct OrderView {
+    pub id: u64,
+    pub side: Side,
+    pub commodity: Commodity,
+    pub units: u32,
+    pub limit_price: f64,
 }
 
 /// A standing price the player reads off the (lagged) hub ticker.
@@ -68,11 +81,13 @@ pub struct InvSlot {
     pub units: u32,
 }
 
-/// The player's own treasury + holdings (their own local state — shown fresh).
+/// The player's own treasury + holdings + resting limit orders (own state,
+/// shown fresh).
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletView {
     pub credits: f64,
     pub inventory: Vec<InvSlot>,
+    pub orders: Vec<OrderView>,
 }
 
 /// Which side of a raid the recipient is on.

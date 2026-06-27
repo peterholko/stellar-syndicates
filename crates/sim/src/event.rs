@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cargo::Commodity;
 use crate::ids::{EntityId, PlayerId};
+use crate::market::Side;
 use crate::ship::ShipKind;
 
 /// A discrete thing that happened in the world at `time` (seconds).
@@ -67,6 +68,10 @@ pub enum TradeEvent {
     SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
     /// A sell convoy reached the hub and cleared at the price-on-arrival.
     Sold { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A limit order was placed and rests on the book.
+    LimitPlaced { player: PlayerId, side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+    /// A limit order (partially) cleared in the batch at the uniform price.
+    LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64 },
 }
 
 impl TradeEvent {
@@ -76,7 +81,9 @@ impl TradeEvent {
             TradeEvent::Bought { player, .. }
             | TradeEvent::Delivered { player, .. }
             | TradeEvent::SellDispatched { player, .. }
-            | TradeEvent::Sold { player, .. } => *player,
+            | TradeEvent::Sold { player, .. }
+            | TradeEvent::LimitPlaced { player, .. }
+            | TradeEvent::LimitFilled { player, .. } => *player,
         }
     }
 }

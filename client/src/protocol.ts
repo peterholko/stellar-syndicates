@@ -49,9 +49,20 @@ export interface InvSlot {
   units: number;
 }
 
+export type Side = "buy" | "sell";
+
+export interface OrderView {
+  id: number;
+  side: Side;
+  commodity: Commodity;
+  units: number;
+  limit_price: number;
+}
+
 export interface WalletView {
   credits: number;
   inventory: InvSlot[];
+  orders: OrderView[];
 }
 
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
@@ -59,7 +70,9 @@ export type TradeEvent =
   | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
   | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number }
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
-  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number };
+  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
+  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number };
 
 export interface AnchorView {
   pos: Vec2;
@@ -102,6 +115,7 @@ export type ClientMsg =
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number }
   | { type: "MarketSell"; commodity: Commodity; units: number }
+  | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "Ping" };
 
 export type RaidOutcome = "intercepted" | "escaped";

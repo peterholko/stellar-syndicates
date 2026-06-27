@@ -68,4 +68,16 @@ pub enum Command {
         commodity: crate::cargo::Commodity,
         units: u32,
     },
+
+    /// Place a resting limit order (§9). It clears in the periodic uniform-price
+    /// call auction — within a batch everyone clears at one price, so reacting
+    /// fastest confers no edge (the anti-sniping mechanism). Resources are
+    /// reserved when placed (credits for a buy, goods for a sell).
+    PlaceLimitOrder {
+        player_id: PlayerId,
+        side: crate::market::Side,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        limit_price: f64,
+    },
 }

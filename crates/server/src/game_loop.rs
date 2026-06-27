@@ -20,7 +20,9 @@ use tracing::{debug, info};
 use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
-use crate::protocol::{ClientMsg, GalaxyInfo, InvSlot, MarketView, PriceView, ServerMsg, WalletView};
+use crate::protocol::{
+    ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg, WalletView,
+};
 use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
 use crate::view::{self, PositionHistory, PriceHistory};
@@ -219,6 +221,17 @@ impl GameLoop {
                         self.pending.push(Command::MarketSell { player_id, commodity, units });
                     }
                 }
+                ClientMsg::PlaceLimitOrder { side, commodity, units, limit_price } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::PlaceLimitOrder {
+                            player_id,
+                            side,
+                            commodity,
+                            units,
+                            limit_price,
+                        });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -311,13 +324,27 @@ impl GameLoop {
                 .unwrap_or_default();
             let market = MarketView { prices, staleness };
 
-            // The player's own wallet — fresh (their local treasury + holdings).
+            // The player's own wallet — fresh (their local treasury + holdings +
+            // resting limit orders).
             let wallet = WalletView {
                 credits: corp.credits,
                 inventory: corp
                     .inventory
                     .iter()
                     .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
+                    .collect(),
+                orders: self
+                    .world
+                    .book
+                    .iter()
+                    .filter(|o| o.player == player_id)
+                    .map(|o| OrderView {
+                        id: o.id,
+                        side: o.side,
+                        commodity: o.commodity,
+                        units: o.units,
+                        limit_price: o.limit_price,
+                    })
                     .collect(),
             };
 

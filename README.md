@@ -19,7 +19,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
 | **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
 | **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
-| **M5 — Full multiplayer economy** | 🟡 **In progress** | 5a done: hub Exchange (instant execution, lagged ticker), market orders, order-spawned raidable convoys, buy/sell asymmetry. Limit orders + valuations next. |
+| **M5 — Full multiplayer economy** | 🟡 **In progress** | 5a+5b done: hub Exchange (instant execution, lagged ticker), market orders, raidable trade convoys, buy/sell asymmetry, **limit orders + uniform-price batch clearing**. Valuations next. |
 | M5 — Full multiplayer economy | ⬜ Not started | |
 | M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
 | M7 — Client polish | ⬜ Not started | |
@@ -262,8 +262,17 @@ buy settles instantly and spawns a delivery convoy; sell commits goods to a
 hub-bound convoy; delivery/sale resolve on arrival; browser-confirmed the market
 panel, trade news, and convoys crossing raidable space.
 
-**Still to come in M5:** limit orders + periodic uniform-price batch clearing
-(anti-sniping); equity / corporate valuations on a slow cadence.
+**Sub-step 5b — limit orders + batch clearing.** Limit orders rest on a per-
+commodity book (resources reserved at placement — credits for a buy, goods for a
+sell). Every ~20 s a **periodic uniform-price call auction** clears each book:
+all trades settle at one price, so reacting fastest confers no edge (the §9 anti-
+sniping mechanism). A matched buy settles and spawns a delivery convoy (refunding
+any over-reservation); a matched sell is paid; unmatched orders rest to the next
+batch. Client: a limit toggle + price in the market panel and a resting-orders
+list. Verified by `scripts/limit_smoke.mjs` + 2 sim tests (a crossing pair clears
+at the uniform price; non-crossing orders rest).
+
+**Still to come in M5:** equity / corporate valuations on a slow cadence.
 
 **Verified in-browser:** issuing an order shows the violet comet traveling from
 the command center to the ship's ghost (paced by the server's observed delay); a
