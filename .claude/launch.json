@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "stellar-server",
+      "runtimeExecutable": "target/debug/server",
+      "runtimeArgs": [],
+      "port": 8080
+    }
+  ]
+}

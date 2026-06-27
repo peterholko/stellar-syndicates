@@ -1,0 +1,20 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / client
+node_modules/
+client/dist/
+client/node_modules/
+
+# Local dev Postgres cluster (scripts/devdb.sh)
+/.devdb/
+
+# Env / secrets
+.env
+.env.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,284 @@
+# Stellar Syndicates
+
+An asynchronous, multiplayer (4–12 player) continuous-time 4X space strategy game
+about corporate trade and conflict across a wormhole-linked galaxy. Its defining
+mechanic is **lightspeed-delayed observation and command**: you never see the
+galaxy as it is *now*, only as the light that has reached your command center —
+and your orders cross space at the speed of light, arriving late.
+
+See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
+[`MULTIPLAYER_PROMPT.md`](MULTIPLAYER_PROMPT.md) for the milestone build plan.
+
+---
+
+## Status
+
+| Milestone | State | Notes |
+|-----------|-------|-------|
+| **M1 — Multiplayer architecture scaffold + sessions** | ✅ **Complete** | Full architecture skeleton, end-to-end, built for many players. |
+| **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
+| **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
+| **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
+| M5 — Full multiplayer economy | ⬜ Not started | |
+| M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
+| M7 — Client polish | ⬜ Not started | |
+
+### What M1 delivers (verified)
+
+- **Pure deterministic `sim` core** (`crates/sim`) — no I/O, no async, no DB. Takes
+  a `World` + `Command`s, returns the next state + `Event`s. Seeded RNG, fixed
+  timestep, fully unit-tested for determinism.
+- **Authoritative server** (`crates/server`) — a single Tokio game-loop task owns
+  the `World` and the session registry (lock-free by construction), ticking at
+  **30 Hz**.
+- **Multiplayer session layer from the start** — many concurrent WebSocket
+  connections, each mapped to a player identity (a stable hash of the corp name,
+  so reconnecting resumes the same corporation), join/leave handling, a
+  per-player outbound stream. A player may hold multiple connections; a
+  corporation only goes "offline" when its last connection drops.
+- **Per-player broadcast** — every connection receives its *own* message stream
+  from the authoritative loop (M1: a live tick + identity; from M3 this becomes
+  each player's delayed/fogged view).
+- **Postgres persistence off the hot path** (`sqlx`) — append-only event log +
+  periodic full-world snapshots, written from a dedicated task that the game loop
+  never awaits. Migrations in `crates/server/migrations`. **Falls back to an
+  in-memory stub if `DATABASE_URL` is unset or unreachable**, so the server runs
+  with zero database setup.
+- **Pixi.js client** (`client/`) — connects, identifies as a player, and renders
+  a galaxy canvas (starfield + the live authoritative tick) with a HUD showing
+  corp, id, tick, sim-time, players-online, and link status. Holds no
+  authoritative state and runs no game logic.
+
+**M1 checkpoint proven:** two+ clients connect simultaneously, each gets its own
+per-player stream and a live tick from the authoritative loop; joins/leaves are
+handled (online count rises and falls correctly). See
+[`scripts/m1_smoke.mjs`](scripts/m1_smoke.mjs).
+
+### What M2 delivers (verified)
+
+- **Continuous 2D galaxy in the pure core** — a central wormhole hub, seeded
+  procedurally-placed star systems (area-uniform), and a ring of home anchors
+  assigned to players on join. Galaxy radius scales with player count (§4).
+- **Flip-and-burn movement (§7)** — ships have position + velocity and move
+  under an acceleration-limited controller that always plans the arrival burn
+  (accelerate, flip, decelerate to arrive **at rest**; travel time ≈ 2·√(d/a)).
+  Convoy (slow/heavy) vs raider (fast/light) is just two parameters. All speeds
+  stay below `c`. Unit-tested for arrival-at-rest, travel time, the speed cap,
+  and determinism.
+- **Shared advancing world** — the game loop integrates movement each tick; each
+  player gets a `View` of ships + anchors (M2: true positions — explicitly
+  temporary until the M3 delay layer). On join a player gets a demo convoy +
+  raider that patrol, so the world is visibly alive.
+- **Pixi map** — renders the hub, systems (with designations), home anchors
+  (own highlighted), and ships as velocity-oriented markers, smoothly
+  extrapolated between server updates.
+
+**M2 checkpoint proven:** ships move with flip-and-burn; multiple clients see the
+same world advancing with identical positions. See
+[`scripts/m2_smoke.mjs`](scripts/m2_smoke.mjs).
+
+### What M3 delivers (verified) — the core
+
+- **Per-player lightspeed view filter** (`crates/server/src/view.rs`, a
+  first-class component): keeps every ship's recent true-position history and,
+  for each player, reconstructs what the light reaching THEIR command center
+  shows — every object at its *retarded* position (where it was when the
+  arriving light left it).
+- **The fairness guarantee, made exact.** A sample `(t, p)` is observable at a
+  command center `cc` iff `t + |p − cc|/c ≤ now`. Because ships move slower than
+  `c`, `arrival(t)` is strictly increasing, so the filter shows the unique latest
+  observable sample and nothing fresher — provably no leak. Verified by unit
+  tests *and* a wire-level smoke test that checks every ghost's staleness equals
+  its light-distance, plus an **adversarial multi-agent review** that hunted for
+  leaks. That review found two presence leaks (anchor-ownership and a global
+  player-count revealed instantly); **both are fixed** — anchor ownership is now
+  light-gated, and presence/ops state moved to a separate `/status` meta endpoint
+  outside the game view.
+- **Two fog regimes (§6):** your own ships are delayed-but-coherent (no
+  uncertainty); rivals are shown at a stale position with an **uncertainty cone**
+  (`age · max_speed` — how far they could have moved since the light left) and an
+  age label, fading with staleness.
+- **Command latency / the three clocks (§6):** a move order travels to the ship
+  at light speed (scheduled in the pure core), and the player learns the result
+  later still via their delayed view. The client shows the estimate from its
+  stale sighting — you command on old intel, and the real delay differs.
+- **Each player sees a genuinely different delayed galaxy.** Distant things are
+  stale; nearer things fresher; rivals are dark until their light arrives.
+
+**M3 checkpoint proven:** two players each see their own coherent delayed/fogged
+view; staleness equals light-distance on the wire; commands lag; no information
+(positions, presence, or counts) leaks between players' horizons. See
+[`scripts/m3_smoke.mjs`](scripts/m3_smoke.mjs).
+
+### What M4 delivers (verified) — player-vs-player raiding
+
+- **Intercept-commit (§8):** a player commits a raider to a target; the raider
+  pursues autonomously (`movement::intercept_step` solves the lead point) — no
+  real-time piloting. The commit is a novel command to a mobile asset, so it
+  travels at light speed: the raider begins pursuing only once the order reaches
+  it, and it chases the target's *true* position, not the stale ghost the player
+  committed on.
+- **Resolution in true space:** contact within `CONTACT_RADIUS` → convoy lost;
+  the convoy reaching the hub (`HUB_SAFE_RADIUS`) → escape.
+- **Delayed reports on each player's own clock (§14):** a per-player *event*
+  scheduler (`crates/server/src/reports.rs`) holds each raid outcome until its
+  light reaches that player's command center, so **attacker and defender learn
+  it at different times** — verified on the wire (e.g. attacker 19s stale,
+  defender 8s, each equal to its own light-distance).
+- **Recall can miss the window:** a recall is light-delayed too; if the raider
+  has already made contact, you are "commanding into the past" (deterministic
+  sim tests cover intercept, successful recall, and recall-too-late).
+- **Client:** select your raider, click a rival ghost to raid it, press **R** to
+  recall; delayed reports surface as a news log ("your convoy was lost — delayed
+  news, 25s old").
+
+**M4 checkpoint proven:** A raids B's convoy under honest delay; both learn the
+outcome as delayed news on their own clocks; recall can miss. See
+[`scripts/m4_smoke.mjs`](scripts/m4_smoke.mjs) (+ sim raid tests).
+
+---
+
+## Architecture (§14 of the design)
+
+```
+            ┌──────────────────────────────────────────────────────┐
+            │  server (Tokio)                                        │
+  client ───┤  ┌────────────┐   intents    ┌──────────────────────┐ │
+  (Pixi) ◄──┤  │ ws conn    │ ───────────► │ game loop (single     │ │
+   WS       │  │ (axum)     │ ◄─────────── │ owner of World +      │ │
+            │  └────────────┘  per-player   │ Sessions; 30 Hz tick) │ │
+            │       ▲          stream       └──────────┬───────────┘ │
+            │       │                                  │ events,      │
+            │       │                                  │ snapshots    │
+            │       │                          ┌───────▼───────────┐  │
+            │       │                          │ persistence task  │  │
+            │       │                          │ (sqlx → Postgres, │  │
+            │       │                          │  or no-op stub)   │  │
+            │       │                          └───────────────────┘  │
+            └───────┼──────────────────────────────────────────────┘
+                    │ uses (pure, no I/O)
+            ┌───────▼───────┐
+            │  sim crate    │  World + step(commands) -> events
+            │  (deterministic)
+            └───────────────┘
+```
+
+The pure core is the determinism guarantee and (later) the bot-balance oracle.
+Everything that touches the outside world lives outside it.
+
+---
+
+## Running it
+
+### Prerequisites
+- Rust (stable; built with 1.91)
+- Node 18+ (for the client; built with Node 24)
+- *(optional)* PostgreSQL 16 for durable persistence
+
+### 1. Build & run the server
+
+```bash
+# from the repo root
+cargo run -p server
+```
+
+The server listens on `:8080` (HTTP + WebSocket at `/ws`). With no `DATABASE_URL`
+it uses the in-memory persistence stub and prints a warning — that's fine for
+playing/testing.
+
+Environment knobs: `PORT` (default 8080), `GALAXY_SEED`, `MAX_PLAYERS` (default 4,
+sizes the galaxy), `DATABASE_URL`, `SNAPSHOT_EVERY_TICKS` (default 600 = 20 s),
+`RUST_LOG` (e.g. `info`).
+
+### 2. Run the client
+
+**Development (hot reload):**
+```bash
+cd client
+npm install
+npm run dev          # serves on http://localhost:5173, connects to ws://localhost:8080/ws
+```
+
+**Production (one command):** build the client once and the server serves it:
+```bash
+cd client && npm install && npm run build && cd ..
+cargo run -p server                # open http://localhost:8080
+```
+
+### 3. Multiple players
+
+Open the client in two or more browser tabs (or machines). Enter a **different
+corporation name** in each — each becomes a distinct player with its own stream.
+Reconnecting with the same name resumes that corporation.
+
+### Optional: durable persistence with Postgres
+
+A throwaway, isolated dev cluster (does **not** touch your system Postgres):
+
+```bash
+scripts/devdb.sh init                 # creates ./.devdb on port 5433 (trust auth)
+export DATABASE_URL="$(scripts/devdb.sh url)"
+cargo run -p server                   # now writes events + snapshots to Postgres
+# ...
+scripts/devdb.sh stop                 # or `nuke` to delete it entirely
+```
+
+---
+
+## Tests
+
+```bash
+cargo test                            # 27 unit tests: determinism, flip-and-burn
+                                      # physics, the lightspeed fairness invariant,
+                                      # command latency, raid resolution + recall,
+                                      # delayed-report delivery
+
+# end-to-end checkpoint smoke tests (server must be running on :8080):
+cargo run -p server &                 # in one shell
+node scripts/m1_smoke.mjs             # M1: per-player streams, join/leave (+/status)
+node scripts/m2_smoke.mjs             # M2: galaxy + flip-and-burn movement
+node scripts/m3_smoke.mjs             # M3: per-player lightspeed views, no leaks (~35s)
+node scripts/m4_smoke.mjs             # M4: raid → delayed reports on own clocks (~70s)
+```
+
+The server also exposes `GET /status` (JSON: connection/session meta — kept off
+the per-player game view so presence can't leak faster than light) and
+`GET /healthz`.
+
+---
+
+## Layout
+
+```
+crates/sim/        pure deterministic simulation core (no I/O)
+crates/server/     tokio + axum server: game loop, sessions, ws, persistence
+  migrations/      sqlx Postgres migrations
+client/            Pixi.js + Vite + TypeScript client
+scripts/           devdb.sh (local Postgres), m1_smoke.mjs (checkpoint test)
+```
+
+## What's next
+
+- **M5 — the full multiplayer economy:** the hub Exchange (instant execution,
+  lagged prices), market + limit orders with periodic uniform-price batch
+  clearing, orders that spawn raidable delivery convoys, the buy/sell asymmetry,
+  and equity/valuations. *(Not started — the next milestone.)*
+- **M6 — robustness & scale to 12** (reconnect, persistence-driven restart,
+  view-filter performance) and **M7 — client polish**.
+
+## Notes / known stubs
+
+- **Persistence stub:** without `DATABASE_URL` the event log/snapshots are
+  dropped (logged, not stored). The Postgres path is real and verified; the stub
+  exists purely so the game runs without a database. Restart-from-snapshot is an
+  M6 task — the schema and write path exist; the load/replay path does not yet.
+- **Delayed reports** (raid outcomes) are marked delivered when handed to the
+  outbound queue. Reports are rare and the queue is almost never full, but M6
+  should make delivery reliable (re-deliver until acknowledged).
+- A **destroyed ship's ghost** lingers (frozen, ageing) in a viewer's delayed
+  picture until its last light passes the history horizon — this is correct (you
+  still see old light), and the delayed *report* tells you the truth; a tidier
+  "last-seen, now gone" treatment is polish for later.
+- **Balance is deliberately untuned** (per the design): ship speeds, galaxy size,
+  `c`, and raid radii are first-pass values chosen for legible delays, not
+  balance.
