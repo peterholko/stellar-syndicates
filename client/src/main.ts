@@ -80,26 +80,79 @@ function installInteraction(): void {
       const g = state.ghosts.find((x) => x.id === picked)!;
       readout().innerHTML =
         `<b>${g.kind}</b> selected — last seen <b>${g.age.toFixed(1)}s</b> ago.<br>` +
-        `Click anywhere to order it there. Your order travels at light speed.`;
+        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
       return;
     }
 
-    if (state.selectedShipId && net) {
-      const g = state.ghosts.find((x) => x.id === state.selectedShipId);
-      if (!g) return;
-      const dest = renderer.screenToWorld(sx, sy);
-      net.send({ type: "MoveShip", ship_id: g.id, dest });
-      state.orders[g.id] = dest;
-      // Three clocks, estimated from the delayed sighting (you command on stale
-      // intel — the real delay differs, which is the point).
-      const out = g.age; // ≈ light delay command-center → ship
+    if (!state.selectedShipId || !net) return;
+    const sel = state.ghosts.find((x) => x.id === state.selectedShipId);
+    if (!sel) return;
+
+    // Did we click a RIVAL ghost? → commit a raid against it.
+    let enemy: string | null = null;
+    let bestE = 16;
+    for (const g of state.ghosts) {
+      if (g.own) continue;
+      const s = renderer.worldToScreen(g.pos);
+      const d = Math.hypot(s.x - sx, s.y - sy);
+      if (d < bestE) {
+        bestE = d;
+        enemy = g.id;
+      }
+    }
+    if (enemy) {
+      const tgt = state.ghosts.find((x) => x.id === enemy)!;
+      net.send({ type: "CommitRaid", raider_id: sel.id, target_id: tgt.id });
+      delete state.orders[sel.id];
       readout().innerHTML =
-        `Order away to <b>${g.kind}</b>. ` +
-        `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
-        `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+        `Raid committed: your <b>${sel.kind}</b> → rival <b>${tgt.kind}</b>. ` +
+        `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
+        `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
+        `<span class="dim">Press R to recall — it may arrive too late.</span>`;
+      return;
+    }
+
+    // Otherwise → move order to the clicked point.
+    const dest = renderer.screenToWorld(sx, sy);
+    net.send({ type: "MoveShip", ship_id: sel.id, dest });
+    state.orders[sel.id] = dest;
+    const out = sel.age; // ≈ light delay command-center → ship
+    readout().innerHTML =
+      `Order away to <b>${sel.kind}</b>. ` +
+      `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
+      `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
+      `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+  });
+
+  // Recall the selected raider (light-delayed; may miss the window).
+  window.addEventListener("keydown", (e) => {
+    if ((e.key === "r" || e.key === "R") && state.selectedShipId && net) {
+      net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
+      readout().innerHTML =
+        `Recall away to your raider — travels at light speed. ` +
+        `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
     }
   });
+}
+
+// --- Delayed reports log -----------------------------------------------------
+function addReport(r: import("./protocol").RaidReport): void {
+  const log = $("reports-log");
+  const intercepted = r.outcome === "intercepted";
+  let icon: string, cls: string, text: string;
+  if (r.you === "attacker") {
+    if (intercepted) { icon = "✓"; cls = "good"; text = "Your raider intercepted a rival convoy."; }
+    else { icon = "✗"; cls = "bad"; text = "Your target reached the hub — raid failed."; }
+  } else {
+    if (intercepted) { icon = "‼"; cls = "bad"; text = "Your convoy was lost to a raider."; }
+    else { icon = "✓"; cls = "good"; text = "Your convoy reached safety despite a raider."; }
+  }
+  const el = document.createElement("div");
+  el.className = "report " + cls;
+  el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>`;
+  log.prepend(el);
+  while (log.children.length > 6) log.removeChild(log.lastChild!);
+  setTimeout(() => el.classList.add("fade"), 12000);
 }
 
 // --- Networking ------------------------------------------------------------
@@ -148,6 +201,9 @@ function join(): void {
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
           state.lastViewWallMs = performance.now();
           state.link = "online";
+          break;
+        case "Report":
+          addReport(msg.report);
           break;
         case "Error":
           joinErr.textContent = msg.message;

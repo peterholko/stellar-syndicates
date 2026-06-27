@@ -31,4 +31,23 @@ pub enum Command {
         ship_id: EntityId,
         dest: Vec2,
     },
+
+    /// Commit one of the player's raiders to intercept a target ship (§8). Like
+    /// any novel command to a mobile asset, it travels at light speed: the
+    /// raider only begins pursuing once the order's outbound light reaches it.
+    /// The player commits on a *stale* sighting of the target; the raider then
+    /// pursues the target's TRUE position. Ignored unless the player owns the
+    /// raider and the target belongs to someone else.
+    CommitRaid {
+        player_id: PlayerId,
+        raider_id: EntityId,
+        target_id: EntityId,
+    },
+
+    /// Recall a raider (break off, return home). Also light-delayed — it may
+    /// arrive too late to matter ("commanding into the past").
+    RecallRaid {
+        player_id: PlayerId,
+        raider_id: EntityId,
+    },
 }

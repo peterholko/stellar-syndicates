@@ -64,6 +64,11 @@ pub enum ShipOrder {
         /// Sim time until which the ship holds at the current waypoint.
         dwell_until: f64,
     },
+    /// Autonomously pursue a target ship to intercept (§8). Resolved by the
+    /// world in true space (contact → convoy lost; target reaches safety →
+    /// raid fails). Pursuit steering lives in [`crate::movement::intercept_step`]
+    /// and is driven by the world (it needs the target's state).
+    Intercept { target: EntityId },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +133,9 @@ impl Ship {
                     *index = (*index + 1) % waypoints.len();
                 }
             }
+            // Interception is driven by the world (it needs the target's state),
+            // so there is nothing to do in the self-contained per-ship advance.
+            ShipOrder::Intercept { .. } => {}
         }
     }
 }

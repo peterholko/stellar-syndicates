@@ -18,7 +18,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M1 — Multiplayer architecture scaffold + sessions** | ✅ **Complete** | Full architecture skeleton, end-to-end, built for many players. |
 | **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
 | **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
-| M4 — Raiding loop (PvP) | ⬜ Not started | |
+| **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
 | M5 — Full multiplayer economy | ⬜ Not started | |
 | M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
 | M7 — Client polish | ⬜ Not started | |
@@ -109,6 +109,32 @@ same world advancing with identical positions. See
 view; staleness equals light-distance on the wire; commands lag; no information
 (positions, presence, or counts) leaks between players' horizons. See
 [`scripts/m3_smoke.mjs`](scripts/m3_smoke.mjs).
+
+### What M4 delivers (verified) — player-vs-player raiding
+
+- **Intercept-commit (§8):** a player commits a raider to a target; the raider
+  pursues autonomously (`movement::intercept_step` solves the lead point) — no
+  real-time piloting. The commit is a novel command to a mobile asset, so it
+  travels at light speed: the raider begins pursuing only once the order reaches
+  it, and it chases the target's *true* position, not the stale ghost the player
+  committed on.
+- **Resolution in true space:** contact within `CONTACT_RADIUS` → convoy lost;
+  the convoy reaching the hub (`HUB_SAFE_RADIUS`) → escape.
+- **Delayed reports on each player's own clock (§14):** a per-player *event*
+  scheduler (`crates/server/src/reports.rs`) holds each raid outcome until its
+  light reaches that player's command center, so **attacker and defender learn
+  it at different times** — verified on the wire (e.g. attacker 19s stale,
+  defender 8s, each equal to its own light-distance).
+- **Recall can miss the window:** a recall is light-delayed too; if the raider
+  has already made contact, you are "commanding into the past" (deterministic
+  sim tests cover intercept, successful recall, and recall-too-late).
+- **Client:** select your raider, click a rival ghost to raid it, press **R** to
+  recall; delayed reports surface as a news log ("your convoy was lost — delayed
+  news, 25s old").
+
+**M4 checkpoint proven:** A raids B's convoy under honest delay; both learn the
+outcome as delayed news on their own clocks; recall can miss. See
+[`scripts/m4_smoke.mjs`](scripts/m4_smoke.mjs) (+ sim raid tests).
 
 ---
 

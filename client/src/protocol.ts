@@ -58,7 +58,24 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
+  | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
+  | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "Ping" };
+
+export type RaidOutcome = "intercepted" | "escaped";
+
+// A delayed raid report (§8) — arrives on the recipient's own clock.
+export interface RaidReport {
+  outcome: RaidOutcome;
+  attacker: PlayerId;
+  defender: PlayerId;
+  raider: EntityId;
+  convoy: EntityId;
+  pos: Vec2;
+  at_time: number;
+  age: number; // light delay — how stale this news is
+  you: "attacker" | "defender";
+}
 
 // Server → client.
 export type ServerMsg =
@@ -79,4 +96,5 @@ export type ServerMsg =
       anchors: AnchorView[];
       ghosts: GhostView[];
     }
+  | { type: "Report"; report: RaidReport }
   | { type: "Error"; message: string };

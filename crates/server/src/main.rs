@@ -16,6 +16,7 @@
 mod game_loop;
 mod persistence;
 mod protocol;
+mod reports;
 mod session;
 mod view;
 mod ws;

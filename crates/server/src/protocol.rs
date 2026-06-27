@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{EntityId, PlayerId, ShipKind, StarSystem, Vec2};
+use sim::{EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -26,8 +26,41 @@ pub enum ClientMsg {
     /// speed to the ship (§6); the server attaches the issuing player.
     MoveShip { ship_id: EntityId, dest: Vec2 },
 
+    /// Commit one of the player's raiders to intercept a target ship (§8).
+    CommitRaid { raider_id: EntityId, target_id: EntityId },
+
+    /// Recall a raider (break off, return home). May arrive too late (§8).
+    RecallRaid { raider_id: EntityId },
+
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
+}
+
+/// Which side of a raid the recipient is on.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Attacker,
+    Defender,
+}
+
+/// A delayed report of a raid outcome (§8), tailored to the recipient. Delivered
+/// only once the light of the event has reached the player's command center, so
+/// attacker and defender may receive it at different times.
+#[derive(Debug, Clone, Serialize)]
+pub struct RaidReport {
+    pub outcome: RaidOutcome,
+    pub attacker: PlayerId,
+    pub defender: PlayerId,
+    pub raider: EntityId,
+    pub convoy: EntityId,
+    pub pos: Vec2,
+    /// Sim time at which the raid resolved.
+    pub at_time: f64,
+    /// How long ago (light delay, seconds) — you are learning this stale news.
+    pub age: f64,
+    /// The recipient's side.
+    pub you: Role,
 }
 
 /// Static galaxy geography, sent once at join. Never changes during a session
@@ -107,6 +140,9 @@ pub enum ServerMsg {
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
     },
+
+    /// A delayed raid report (§8) — arrives on the recipient's own clock.
+    Report { report: RaidReport },
 
     /// A protocol-level error (e.g. a malformed first message).
     Error { message: String },

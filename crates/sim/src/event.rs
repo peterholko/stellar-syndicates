@@ -35,6 +35,28 @@ pub enum EventPayload {
     /// A player's move order finally reached a ship (its outbound light arrived)
     /// and took effect.
     OrderApplied { ship_id: EntityId },
+
+    /// A raid resolved in true space (§8). Delivered to attacker and defender as
+    /// a *delayed report* — each learns it only when the light of the event at
+    /// `pos` reaches their command center, so they may learn it at different
+    /// times. Carries `pos`/`time` (the event timestamp is `Event.time`).
+    RaidResolved {
+        attacker: PlayerId,
+        defender: PlayerId,
+        raider: EntityId,
+        convoy: EntityId,
+        outcome: RaidOutcome,
+        pos: crate::math::Vec2,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RaidOutcome {
+    /// The raider reached the convoy — convoy lost.
+    Intercepted,
+    /// The convoy reached safety (the hub) before contact — raid failed.
+    Escaped,
 }
 
 impl Event {

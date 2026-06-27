@@ -21,6 +21,7 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{ClientMsg, GalaxyInfo, ServerMsg};
+use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
 use crate::view::{self, PositionHistory};
 
@@ -37,6 +38,9 @@ struct GameLoop {
     /// Per-player lightspeed view filter — keeps position history and builds
     /// each player's delayed/fogged view (§14).
     history: PositionHistory,
+    /// Delayed delivery of discrete reports (raid outcomes) — each player learns
+    /// them on their own clock (§8).
+    reports: ReportScheduler,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
     persistence: PersistenceHandle,
@@ -58,6 +62,7 @@ impl GameLoop {
             world,
             sessions: Sessions::new(),
             history,
+            reports: ReportScheduler::new(),
             pending: Vec::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
@@ -144,6 +149,20 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::CommitRaid { raider_id, target_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::CommitRaid {
+                            player_id,
+                            raider_id,
+                            target_id,
+                        });
+                    }
+                }
+                ClientMsg::RecallRaid { raider_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::RecallRaid { player_id, raider_id });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -161,6 +180,9 @@ impl GameLoop {
         // Record true positions into the view filter's history every tick so
         // the retarded-time boundary resolves at full temporal resolution.
         self.history.record(&self.world);
+        // Queue any discrete events (raid outcomes) for delayed per-player
+        // delivery.
+        self.reports.ingest(&events);
 
         // Off-hot-path: append events to the log.
         if !events.is_empty() {
@@ -190,16 +212,18 @@ impl GameLoop {
     /// computed from THAT player's command center (§6, §14). No player ever
     /// receives true positions or another player's view — the fairness
     /// guarantee, enforced by [`PositionHistory::view_for`].
-    fn broadcast(&self) {
+    fn broadcast(&mut self) {
         let c = self.world.config.c;
         let now = self.world.time;
+        let tick = self.world.tick;
 
         // Build each online player's view ONCE (shared across their
-        // connections). Everything — ships AND anchor ownership — is computed
-        // from THIS player's command center and light-gated. A connection whose
-        // corporation isn't in the world yet (AddPlayer not processed) simply
-        // gets no view this tick.
+        // connections), plus any delayed reports whose light has now reached
+        // them. Everything is computed from THIS player's command center and
+        // light-gated. A connection whose corporation isn't in the world yet
+        // (AddPlayer not processed) simply gets nothing this tick.
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
+        let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
         for player_id in self.sessions.online_players() {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
@@ -210,13 +234,20 @@ impl GameLoop {
             views.insert(
                 player_id,
                 ServerMsg::View {
-                    tick: self.world.tick,
+                    tick,
                     sim_time: now,
                     command_center: cc,
                     anchors,
                     ghosts,
                 },
             );
+            let due = self.reports.due_for(player_id, cc, c, now);
+            if !due.is_empty() {
+                reports.insert(
+                    player_id,
+                    due.into_iter().map(|r| ServerMsg::Report { report: r }).collect(),
+                );
+            }
         }
 
         for (_conn_id, info) in self.sessions.iter_conns() {
@@ -225,6 +256,11 @@ impl GameLoop {
                 // queue means the client is behind, so dropping this stale view
                 // is correct — the next supersedes it.
                 let _ = info.outbound.try_send(view.clone());
+            }
+            if let Some(reps) = reports.get(&info.player_id) {
+                for r in reps {
+                    let _ = info.outbound.try_send(r.clone());
+                }
             }
         }
     }

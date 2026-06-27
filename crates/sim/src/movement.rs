@@ -76,6 +76,80 @@ pub fn flip_and_burn(
     }
 }
 
+/// Time for a pursuer at constant speed `speed` to intercept a target moving at
+/// constant velocity, given the relative position (target − pursuer). Solves
+/// `|rel + target_vel·t| = speed·t` for the smallest positive `t`. Returns
+/// `None` if interception is impossible (target as fast or faster, opening).
+pub fn intercept_time(rel: Vec2, target_vel: Vec2, speed: f64) -> Option<f64> {
+    let a = target_vel.length_sq() - speed * speed;
+    let b = 2.0 * rel.dot(target_vel);
+    let c = rel.length_sq();
+
+    if a.abs() < 1e-9 {
+        // Linear case (target speed ≈ pursuer speed).
+        if b.abs() < 1e-9 {
+            return None;
+        }
+        let t = -c / b;
+        return if t > 0.0 { Some(t) } else { None };
+    }
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let sq = disc.sqrt();
+    let t1 = (-b - sq) / (2.0 * a);
+    let t2 = (-b + sq) / (2.0 * a);
+    // Smallest strictly-positive root.
+    let mut best = f64::INFINITY;
+    for t in [t1, t2] {
+        if t > 1e-9 && t < best {
+            best = t;
+        }
+    }
+    if best.is_finite() {
+        Some(best)
+    } else {
+        None
+    }
+}
+
+/// One tick of interception pursuit: aim at the predicted intercept point (or
+/// straight at the target if no solution) and burn toward it at full speed —
+/// no arrival deceleration (we mean to catch it, not park beside it).
+pub fn intercept_step(
+    pos: Vec2,
+    vel: Vec2,
+    target_pos: Vec2,
+    target_vel: Vec2,
+    accel: f64,
+    max_speed: f64,
+    dt: f64,
+) -> MoveStep {
+    let rel = target_pos - pos;
+    let lead = match intercept_time(rel, target_vel, max_speed) {
+        Some(t) => target_pos + target_vel * t,
+        None => target_pos, // can't solve → tail-chase straight at it
+    };
+    let dir = (lead - pos).normalized();
+    let desired = dir * max_speed;
+    let dv = desired - vel;
+    let dv_len = dv.length();
+    let max_dv = accel * dt;
+    let applied = if dv_len > max_dv && dv_len > 1e-12 {
+        dv * (max_dv / dv_len)
+    } else {
+        dv
+    };
+    let new_vel = vel + applied;
+    let new_pos = pos + new_vel * dt;
+    MoveStep {
+        pos: new_pos,
+        vel: new_vel,
+        arrived: false, // interception ends on contact, decided by the world
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

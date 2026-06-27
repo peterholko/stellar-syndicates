@@ -24,7 +24,7 @@ pub mod world;
 
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
-pub use event::{Event, EventPayload};
+pub use event::{Event, EventPayload, RaidOutcome};
 pub use galaxy::{HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use math::Vec2;

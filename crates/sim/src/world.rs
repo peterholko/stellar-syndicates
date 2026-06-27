@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::Command;
 use crate::config::{SimConfig, DT};
-use crate::event::{Event, EventPayload};
+use crate::event::{Event, EventPayload, RaidOutcome};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
+use crate::movement::intercept_step;
 use crate::ship::{Ship, ShipKind, ShipOrder};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
@@ -36,14 +37,22 @@ pub struct Corporation {
 }
 
 /// An order in flight: a player's command that has left their command center
-/// but not yet reached the ship (the outbound light-travel time of §6).
+/// but not yet reached the ship (the outbound light-travel time of §6). Carries
+/// the order to install once the light arrives (a move, a raid commit, or a
+/// recall-as-return-home).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrder {
     /// Sim time at which the order's light reaches the ship.
     apply_time: f64,
     ship_id: EntityId,
-    dest: Vec2,
+    new_order: ShipOrder,
 }
+
+/// Distance (sim units) at which a raider makes contact with its target.
+const CONTACT_RADIUS: f64 = 80.0;
+/// Distance from the hub within which a convoy is safe from raiders (§4: the hub
+/// is the shared commons).
+const HUB_SAFE_RADIUS: f64 = 300.0;
 
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
@@ -137,18 +146,113 @@ impl World {
         // 2. Deliver any orders whose outbound light has now reached the ship.
         self.deliver_due_orders(&mut events);
 
-        // 3. Integrate continuous movement. Ships advance under flip-and-burn
-        //    on their standing orders.
-        let time = self.time;
-        for ship in self.ships.values_mut() {
-            ship.advance(time, DT);
-        }
+        // 3. Integrate continuous movement (flip-and-burn, patrols, and raider
+        //    interception pursuit).
+        self.integrate_movement();
 
-        // 4. Advance the clock.
+        // 4. Resolve raids in true space (contact → convoy lost; convoy reaches
+        //    the hub → escape).
+        self.resolve_raids(&mut events);
+
+        // 5. Advance the clock.
         self.tick += 1;
         self.time += DT;
 
         events
+    }
+
+    /// Integrate every ship one tick. Interception is driven here (it needs the
+    /// target's state); all other orders use the self-contained per-ship
+    /// advance. Targets are read from a start-of-tick snapshot to avoid
+    /// borrow conflicts and keep the result order-independent.
+    fn integrate_movement(&mut self) {
+        let snapshot: BTreeMap<EntityId, (Vec2, Vec2)> = self
+            .ships
+            .iter()
+            .map(|(id, s)| (*id, (s.pos, s.vel)))
+            .collect();
+        let time = self.time;
+        let mut lost_target = Vec::new();
+        for (id, ship) in self.ships.iter_mut() {
+            if let ShipOrder::Intercept { target } = ship.order {
+                match snapshot.get(&target) {
+                    Some(&(tp, tv)) => {
+                        let step = intercept_step(
+                            ship.pos,
+                            ship.vel,
+                            tp,
+                            tv,
+                            ship.kind.accel(),
+                            ship.kind.max_speed(),
+                            DT,
+                        );
+                        ship.pos = step.pos;
+                        ship.vel = step.vel;
+                    }
+                    None => lost_target.push(*id), // target gone — break off
+                }
+            } else {
+                ship.advance(time, DT);
+            }
+        }
+        // Raiders whose target vanished return home.
+        for id in lost_target {
+            let home = self
+                .ships
+                .get(&id)
+                .and_then(|s| self.players.get(&s.owner))
+                .map(|c| c.home);
+            if let (Some(home), Some(ship)) = (home, self.ships.get_mut(&id)) {
+                ship.order = ShipOrder::MoveTo { dest: home };
+            }
+        }
+    }
+
+    /// Detect and apply raid resolutions: a raider within [`CONTACT_RADIUS`] of
+    /// its target intercepts it (convoy lost); a target within
+    /// [`HUB_SAFE_RADIUS`] of the hub escapes. Both produce a delayed report.
+    fn resolve_raids(&mut self, events: &mut Vec<Event>) {
+        let hub = self.hub;
+        let now = self.time;
+        let mut outcomes: Vec<(EntityId, EntityId, RaidOutcome, Vec2)> = Vec::new();
+        for (rid, ship) in &self.ships {
+            if let ShipOrder::Intercept { target } = ship.order
+                && let Some(t) = self.ships.get(&target)
+            {
+                if ship.pos.distance(t.pos) <= CONTACT_RADIUS {
+                    outcomes.push((*rid, target, RaidOutcome::Intercepted, ship.pos));
+                } else if t.pos.distance(hub) <= HUB_SAFE_RADIUS {
+                    outcomes.push((*rid, target, RaidOutcome::Escaped, t.pos));
+                }
+            }
+        }
+        for (rid, cid, outcome, pos) in outcomes {
+            let attacker = self.ships.get(&rid).map(|s| s.owner);
+            let defender = self.ships.get(&cid).map(|s| s.owner);
+            let (Some(attacker), Some(defender)) = (attacker, defender) else {
+                continue; // convoy already resolved by another raider this tick
+            };
+            events.push(Event::new(
+                now,
+                EventPayload::RaidResolved {
+                    attacker,
+                    defender,
+                    raider: rid,
+                    convoy: cid,
+                    outcome,
+                    pos,
+                },
+            ));
+            // Raider breaks off and returns home.
+            if let Some(home) = self.players.get(&attacker).map(|c| c.home)
+                && let Some(ship) = self.ships.get_mut(&rid)
+            {
+                ship.order = ShipOrder::MoveTo { dest: home };
+            }
+            if outcome == RaidOutcome::Intercepted {
+                self.ships.remove(&cid); // convoy lost
+            }
+        }
     }
 
     /// Apply orders whose light has reached the ship by `self.time`. Orders are
@@ -161,7 +265,7 @@ impl World {
             if self.pending_orders[i].apply_time <= now {
                 let po = self.pending_orders.remove(i);
                 if let Some(ship) = self.ships.get_mut(&po.ship_id) {
-                    ship.order = ShipOrder::MoveTo { dest: po.dest };
+                    ship.order = po.new_order;
                     events.push(Event::new(
                         now,
                         EventPayload::OrderApplied { ship_id: po.ship_id },
@@ -205,26 +309,57 @@ impl World {
                 ship_id,
                 dest,
             } => {
-                // Validate: the ship exists and the player owns it (no
-                // commanding someone else's fleet).
-                let Some(ship) = self.ships.get(ship_id) else {
+                self.schedule_for_owner(*player_id, *ship_id, ShipOrder::MoveTo { dest: *dest });
+            }
+            Command::CommitRaid {
+                player_id,
+                raider_id,
+                target_id,
+            } => {
+                // The target must exist and belong to someone else.
+                let Some(target) = self.ships.get(target_id) else {
                     return;
                 };
-                if ship.owner != *player_id {
-                    return;
+                if target.owner == *player_id {
+                    return; // no raiding your own ships
                 }
-                let Some(corp) = self.players.get(player_id) else {
+                self.schedule_for_owner(
+                    *player_id,
+                    *raider_id,
+                    ShipOrder::Intercept { target: *target_id },
+                );
+            }
+            Command::RecallRaid {
+                player_id,
+                raider_id,
+            } => {
+                let Some(home) = self.players.get(player_id).map(|c| c.home) else {
                     return;
                 };
-                // Outbound light-travel time from command center to the ship.
-                let delay = ship.pos.distance(corp.command_center) / self.config.c;
-                self.pending_orders.push(PendingOrder {
-                    apply_time: self.time + delay,
-                    ship_id: *ship_id,
-                    dest: *dest,
-                });
+                self.schedule_for_owner(*player_id, *raider_id, ShipOrder::MoveTo { dest: home });
             }
         }
+    }
+
+    /// Schedule an order to install on a ship the player owns, after the
+    /// outbound light-travel time from their command center to the ship (§6).
+    /// Ignored if the ship doesn't exist or the player doesn't own it.
+    fn schedule_for_owner(&mut self, player_id: PlayerId, ship_id: EntityId, new_order: ShipOrder) {
+        let Some(ship) = self.ships.get(&ship_id) else {
+            return;
+        };
+        if ship.owner != player_id {
+            return;
+        }
+        let Some(corp) = self.players.get(&player_id) else {
+            return;
+        };
+        let delay = ship.pos.distance(corp.command_center) / self.config.c;
+        self.pending_orders.push(PendingOrder {
+            apply_time: self.time + delay,
+            ship_id,
+            new_order,
+        });
     }
 
     /// Assign an unused home anchor to a player (or append one if the galaxy is
@@ -479,6 +614,105 @@ mod tests {
             assert_ne!(dest, Vec2::new(0.0, 0.0), "rival should not control this ship");
         }
         let _ = before;
+    }
+
+    fn find_ship(w: &World, owner: PlayerId, kind: ShipKind) -> EntityId {
+        *w.ships
+            .iter()
+            .find(|(_, s)| s.owner == owner && s.kind == kind)
+            .unwrap()
+            .0
+    }
+
+    /// Set up an attacker raider and a (stationary) defender convoy at chosen
+    /// offsets from the attacker's command center. Returns (raider, convoy).
+    fn raid_setup(w: &mut World, atk: PlayerId, def: PlayerId, raider_off: Vec2, convoy_off: Vec2) -> (EntityId, EntityId) {
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(w, atk, ShipKind::Raider);
+        let convoy = find_ship(w, def, ShipKind::Convoy);
+        {
+            let r = w.ships.get_mut(&raider).unwrap();
+            r.pos = cc + raider_off;
+            r.vel = Vec2::ZERO;
+            r.order = ShipOrder::Idle;
+        }
+        {
+            let c = w.ships.get_mut(&convoy).unwrap();
+            c.pos = cc + convoy_off;
+            c.vel = Vec2::ZERO;
+            c.order = ShipOrder::Idle; // sitting duck
+        }
+        (raider, convoy)
+    }
+
+    fn run_until_raid<F: FnMut(&World) -> Vec<Command>>(w: &mut World, max_secs: u32, mut each: F) -> Option<RaidOutcome> {
+        for _ in 0..(max_secs * crate::config::TICK_HZ) {
+            let cmds = each(w);
+            for e in w.step(&cmds) {
+                if let EventPayload::RaidResolved { outcome, .. } = e.payload {
+                    return Some(outcome);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn raid_intercepts_convoy() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // Raider near command center (small commit delay), convoy 300 su away.
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let outcome = run_until_raid(&mut w, 60, |_| vec![]);
+        assert_eq!(outcome, Some(RaidOutcome::Intercepted));
+        assert!(!w.ships.contains_key(&convoy), "convoy should be lost");
+    }
+
+    #[test]
+    fn recall_breaks_off_pursuit() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // Convoy far away so the chase is long; raider near CC so recall is fast.
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(100.0, 0.0), Vec2::new(2600.0, 0.0));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        // Let the commit land and the chase begin, then recall.
+        for _ in 0..(2 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        w.step(&[Command::RecallRaid { player_id: atk, raider_id: raider }]);
+        let outcome = run_until_raid(&mut w, 60, |_| vec![]);
+        assert_eq!(outcome, None, "recall should have broken off the raid");
+        assert!(w.ships.contains_key(&convoy), "convoy should survive a successful recall");
+        // Raider is no longer intercepting.
+        assert!(!matches!(w.ships[&raider].order, ShipOrder::Intercept { .. }));
+    }
+
+    #[test]
+    fn recall_can_arrive_too_late() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // Raider FAR from CC (big recall/commit delay) but right on top of the
+        // convoy (contact almost immediately once the commit lands).
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(4000.0, 0.0), Vec2::new(4180.0, 0.0));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        // Recall is issued, but its light (≈13 s away) can't beat the contact.
+        let mut recalled = false;
+        let outcome = run_until_raid(&mut w, 120, |w| {
+            if !recalled && w.time > 14.0 {
+                recalled = true;
+                vec![Command::RecallRaid { player_id: atk, raider_id: raider }]
+            } else {
+                vec![]
+            }
+        });
+        assert_eq!(outcome, Some(RaidOutcome::Intercepted), "recall should have arrived too late");
+        assert!(recalled, "test should have issued a recall");
+        assert!(!w.ships.contains_key(&convoy));
     }
 
     #[test]
