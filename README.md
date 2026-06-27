@@ -21,7 +21,12 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
 | **M5 — Full multiplayer economy** | ✅ **Complete** | Hub Exchange (instant execution, lagged ticker), market + limit orders with uniform-price batch clearing, raidable trade convoys, buy/sell asymmetry, slow equity valuations. |
 | **M6 — Robust sessions, persistence, scale to 12** | ✅ **Complete** | Restart restores the galaxy from the latest snapshot; 12 players in one galaxy with the loop keeping up; corps persist + reconnect resumes. |
-| M7 — Client polish | ⬜ Not started | |
+| **M7 — Client polish** | ✅ **Complete** | Credits/equity in the HUD, the full delayed-map + market + raid UI tied together, and a run + play guide; the core loop is playable by multiple people. |
+
+**All seven milestones of the build plan are complete** — plus three additive
+features layered on the core: the **signals animation** (the order's full round
+trip visualized), and the **two-tier information model** (Convention broadcast +
+sensor-range detection).
 
 ### What M1 delivers (verified)
 
@@ -457,6 +462,11 @@ node scripts/m3_smoke.mjs             # M3: per-player lightspeed views, no leak
 node scripts/m4_smoke.mjs             # M4: raid → delayed reports on own clocks (~70s)
 node scripts/sensor_smoke.mjs         # broadcast + sensor range: cargo gating, dark
                                       # raiders omitted out of coverage (~35s)
+node scripts/economy_smoke.mjs        # M5: lagged ticker, instant buy + delivery
+                                      # convoy, sell asymmetry (~25s)
+node scripts/limit_smoke.mjs          # M5: limit orders + uniform-price batch (~25s)
+node scripts/scale_smoke.mjs 12       # M6: 12 players, loop keeps up (run server with MAX_PLAYERS=12)
+bash  scripts/restart_smoke.sh        # M6: kill + restart restores the galaxy (needs the dev DB)
 ```
 
 The server also exposes `GET /status` (JSON: connection/session meta — kept off
@@ -475,21 +485,24 @@ client/            Pixi.js + Vite + TypeScript client
 scripts/           devdb.sh (local Postgres), m1_smoke.mjs (checkpoint test)
 ```
 
-## What's next
+## What's next (post-alpha, from the design)
 
-- **M5 — the full multiplayer economy:** the hub Exchange (instant execution,
-  lagged prices), market + limit orders with periodic uniform-price batch
-  clearing, orders that spawn raidable delivery convoys, the buy/sell asymmetry,
-  and equity/valuations. *(Not started — the next milestone.)*
-- **M6 — robustness & scale to 12** (reconnect, persistence-driven restart,
-  view-filter performance) and **M7 — client polish**.
+The seven-milestone build is done. Beyond it, GAME_DESIGN sketches: **warp-lane
+construction** (player-built public speed-up corridors via the mass-reduction
+model, §10), the **conquest / home-assault endgame** and victory condition (§11),
+and **depth** — research/tech, coherence as a contestable system, exploration,
+the settlement-key economy, the movable forward command center (§6.1) — and only
+then **balance** (via the bot simulator + human playtest).
 
 ## Notes / known stubs
 
 - **Persistence stub:** without `DATABASE_URL` the event log/snapshots are
-  dropped (logged, not stored). The Postgres path is real and verified; the stub
-  exists purely so the game runs without a database. Restart-from-snapshot is an
-  M6 task — the schema and write path exist; the load/replay path does not yet.
+  dropped (logged, not stored). The Postgres path is real and verified, and a
+  restart **restores the galaxy from the latest snapshot** (M6). The stub exists
+  so the game runs without a database. *(Restart transient: the per-player view
+  history rebuilds fresh, so the galaxy re-illuminates over ~one light-crossing.
+  Command-replay between snapshots — full event-sourcing — is a refinement; the
+  snapshot reload alone bounds restart loss to the ~10 s snapshot interval.)*
 - **Delayed reports** (raid outcomes) are marked delivered when handed to the
   outbound queue. Reports are rare and the queue is almost never full, but M6
   should make delivery reliable (re-deliver until acknowledged).
