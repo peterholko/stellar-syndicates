@@ -59,11 +59,25 @@ async function startRenderer(): Promise<void> {
 // delay is computed from truth or a client-side c.
 function updateSignals(): void {
   const estSimNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
-  // Outbound comets: progress from the server's sim-time window.
+  // Order round trip: comet OUT to the ship, then the response light coming
+  // BACK; dropped once that return light reaches the command center (which is
+  // when the ghost's new course becomes visible — so the gap is never dead).
   state.commandSignals = state.commandSignals.filter((s) => {
-    const span = s.arrive - s.depart;
-    s.progress = span > 1e-3 ? (estSimNow - s.depart) / span : 1;
-    return s.progress < 1; // drop once it reaches the ship's ghost
+    const outSpan = s.arrive - s.depart;
+    const backSpan = s.observe - s.arrive;
+    if (estSimNow < s.arrive) {
+      s.phase = "out";
+      s.pOut = outSpan > 1e-3 ? (estSimNow - s.depart) / outSpan : 1;
+      s.pBack = 0;
+    } else if (estSimNow < s.observe) {
+      s.phase = "back";
+      s.pOut = 1;
+      s.pBack = backSpan > 1e-3 ? (estSimNow - s.arrive) / backSpan : 1;
+    } else {
+      return false; // response light has arrived; the ghost now shows the change
+    }
+    s.remainingS = Math.max(0, s.observe - estSimNow);
+    return true;
   });
   // Inbound rings: progress over the server-provided light delay; reveal the
   // verdict on arrival at the command center.
@@ -229,14 +243,19 @@ function join(): void {
           state.link = "online";
           break;
         case "CommandSignal": {
-          // Your order is crossing space to your ship. Replace any in-flight
-          // comet for the same ship (a newer order supersedes).
+          // Your order is crossing space to your ship, and you'll see its
+          // response a round trip later. Replace any in-flight signal for the
+          // same ship (a newer order supersedes).
           state.commandSignals = state.commandSignals.filter((s) => s.shipId !== msg.ship_id);
           state.commandSignals.push({
             shipId: msg.ship_id,
             depart: msg.depart_time,
             arrive: msg.arrive_time,
-            progress: 0,
+            observe: msg.observe_time,
+            phase: "out",
+            pOut: 0,
+            pBack: 0,
+            remainingS: 0,
           });
           break;
         }

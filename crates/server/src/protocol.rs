@@ -144,20 +144,27 @@ pub enum ServerMsg {
     /// A delayed raid report (§8) — arrives on the recipient's own clock.
     Report { report: RaidReport },
 
-    /// Feedback that an order the player just issued is crossing space to one of
-    /// their ships (the violet outbound comet). Sent immediately to the issuing
-    /// player — confirming their own local action — and carrying the
-    /// authoritative timing: the order departs the command center at
-    /// `depart_time` and reaches the ship (as the player can observe it) at
-    /// `arrive_time`, both in sim-time. The client interpolates the comet
-    /// between the command center and the ship's GHOST over that window; it
-    /// computes no delay itself. `arrive_time − depart_time` is the player's
-    /// OBSERVED light delay to the ship (the same staleness as its ghost), so it
-    /// never reveals the ship's true distance.
+    /// Feedback for an order the player just issued — the full round trip of the
+    /// command (§6, the three clocks). Sent immediately to the issuing player
+    /// (confirming their own local action), carrying authoritative sim-times:
+    ///   * `depart_time` — the order leaves the command center;
+    ///   * `arrive_time` — it reaches the ship (as the player observes it): the
+    ///     violet comet travels command-center → ghost over this window;
+    ///   * `observe_time` — the light of the ship's resulting maneuver gets back
+    ///     to the command center, i.e. when the player will SEE the ship react.
+    ///     Between `arrive_time` and `observe_time` the client shows the return
+    ///     leg (the response light coming home), so the gap before the ghost
+    ///     visibly changes course is explained rather than dead.
+    ///
+    /// All three are derived from the player's OBSERVED light delay to the ship
+    /// (its ghost's staleness): `arrive − depart` and `observe − arrive` each
+    /// equal that one-way delay, so nothing reveals the ship's true distance.
+    /// The client only interpolates between these times.
     CommandSignal {
         ship_id: EntityId,
         depart_time: f64,
         arrive_time: f64,
+        observe_time: f64,
     },
 
     /// A protocol-level error (e.g. a malformed first message).

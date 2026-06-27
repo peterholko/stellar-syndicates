@@ -142,14 +142,27 @@ Two traveling signals make the lightspeed delay legible, as **client-side
 feedback driven entirely by server-authoritative timing** (the client computes no
 delay and never sees true positions):
 
-- **Outbound order comet** (violet): when you issue any order, a comet crosses
-  from your command center toward the commanded ship's **ghost**. The server
-  sends a `CommandSignal { ship_id, depart_time, arrive_time }` the moment it
-  accepts the order; `arrive − depart` is the player's *observed* light delay to
-  that ship (its ghost's staleness — so it reveals no true distance), and the
-  client interpolates the comet between the command center and the **live ghost**
-  over that sim-time window. Because the endpoint is the ghost the renderer
-  already draws, the comet meets it and cannot overshoot.
+- **Order round trip** (violet) — the three clocks of §6 made fully legible:
+  when you issue any order, the server sends a
+  `CommandSignal { ship_id, depart_time, arrive_time, observe_time }` the moment
+  it accepts the order. The client renders the whole round trip:
+  1. *Comet out* over `[depart, arrive]` — a violet comet crosses from your
+     command center to the commanded ship's **live ghost** (endpoint is the ghost
+     the renderer already draws, so it meets it and cannot overshoot).
+  2. *Order received* — a brief pulse at the ghost when the comet lands.
+  3. *Response light home* over `[arrive, observe]` — a faint violet pulse
+     travels back from the ship toward your command center, with a status label
+     **"RECEIVED · response light ~Xs"** counting down. This fills what used to be
+     a dead, unexplained gap: the ship hasn't visibly reacted yet *because the
+     light of its maneuver is still on its way home*.
+  4. At `observe`, the return light arrives and the ghost's new course becomes
+     visible — so the course change is explained (it coincides with the response
+     light landing), not mysterious.
+
+  `arrive − depart` and `observe − arrive` each equal the player's *observed*
+  one-way light delay to the ship (its ghost's staleness), so nothing reveals the
+  ship's true distance — the round trip is the player's honest estimate from their
+  delayed view, and the client only interpolates between the server's three times.
 - **Inbound result rings** (gold): when a raid report becomes observable (M4's
   per-player delivery already gates this by light), gold rings depart the
   resolution point and travel home to the command center, **revealing the verdict
@@ -161,9 +174,11 @@ prototype's bugs ("comet overshoots the ghost", "report leaves before you see th
 resolution") are structurally impossible. Smoothing/interpolation between
 server-provided endpoints and times is the only client-side computation.
 
-**Protocol addition:** `ServerMsg::CommandSignal` (server→client, to the issuing
-player only) in `crates/server/src/protocol.rs` + `client/src/protocol.ts`. The
-inbound rings needed no addition.
+**Protocol addition:** `ServerMsg::CommandSignal { ship_id, depart_time,
+arrive_time, observe_time }` (server→client, to the issuing player only) in
+`crates/server/src/protocol.rs` + `client/src/protocol.ts` — the three clock-times
+of the order's round trip. The inbound raid rings needed no addition (they reuse
+`RaidReport`'s `pos` + `age`).
 
 **Verified in-browser:** issuing an order shows the violet comet traveling from
 the command center to the ship's ghost (paced by the server's observed delay); a

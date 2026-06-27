@@ -10,12 +10,19 @@ export type LinkStatus = "connecting" | "online" | "offline";
 // pure rendering: the client only interpolates between server-provided endpoints
 // and times. `progress` (0..1) is recomputed each frame.
 
-// Outbound order comet: command center → the ship's ghost, paced by sim-time.
+// Order round-trip signal: comet out (command center → ghost) over
+// [depart, arrive], then the response light home (ghost → command center) over
+// [arrive, observe], when the ghost visibly changes course. Paced by sim-time.
 export interface CommandSignal {
   shipId: string;
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
-  progress: number;
+  observe: number; // sim-time the ship's response light reaches the command center
+  // Recomputed each frame:
+  phase: "out" | "back";
+  pOut: number; // 0..1 outbound progress
+  pBack: number; // 0..1 return progress
+  remainingS: number; // seconds until the response is observable
 }
 
 // Inbound result rings: resolution point → command center. Departs when the

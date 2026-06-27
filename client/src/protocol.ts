@@ -98,11 +98,13 @@ export type ServerMsg =
     }
   | { type: "Report"; report: RaidReport }
   | {
-      // Outbound order feedback: a comet crossing from the command center to one
-      // of your ships. The server owns the timing; the client only interpolates.
+      // Order round-trip feedback: comet out (command center → ship), then the
+      // response light coming home (ship → command center). The server owns all
+      // three clock-times; the client only interpolates.
       type: "CommandSignal";
       ship_id: EntityId;
       depart_time: number;
       arrive_time: number;
+      observe_time: number;
     }
   | { type: "Error"; message: string };

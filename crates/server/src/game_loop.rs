@@ -91,7 +91,10 @@ impl GameLoop {
         let cc = corp.command_center;
         let c = self.world.config.c;
         let now = self.world.time;
-        // Observed delay to the ship (falls back to ~0 if just spawned at home).
+        // Observed one-way light delay to the ship (its ghost staleness). Falls
+        // back to ~0 if just spawned at home. The order reaches the ship one
+        // delay out; the light of its maneuver returns one delay back — so the
+        // player sees the reaction after the full round trip (the three clocks).
         let age = self.history.observed_age(ship_id, cc, c, now).unwrap_or(0.0);
         self.sessions.send_to_player(
             player_id,
@@ -99,6 +102,7 @@ impl GameLoop {
                 ship_id,
                 depart_time: now,
                 arrive_time: now + age,
+                observe_time: now + 2.0 * age,
             },
         );
     }
