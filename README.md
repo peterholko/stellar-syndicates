@@ -385,9 +385,47 @@ cargo run -p server                # open http://localhost:8080
 
 ### 3. Multiple players
 
-Open the client in two or more browser tabs (or machines). Enter a **different
-corporation name** in each — each becomes a distinct player with its own stream.
-Reconnecting with the same name resumes that corporation.
+Open the client in two or more browser tabs (or machines, pointing at the same
+server). Enter a **different corporation name** in each — each becomes a distinct
+player commanding from its own home anchor, with its own delayed view.
+Reconnecting with the same name resumes that corporation (its ships, credits,
+inventory, and resting orders persist). Size the galaxy for the player count with
+`MAX_PLAYERS=12 cargo run -p server`.
+
+## Playing the game
+
+You command a chartered corporation from your **home anchor** — and you never see
+the galaxy as it *is*, only as the light that has reached your chair (§6). Every
+sighting shows where something *was*; every order crosses space at light speed.
+
+- **Read your delayed map.** Your own ships are crisp cyan (a coherent feed, just
+  late). Rivals are red **ghosts** at their last-known position, with an
+  uncertainty cone (how far they could have moved since the light left) and a
+  "Δ Ns" staleness label. Soft **teal bubbles** are your sensor coverage; outside
+  them you're blind to raiders. Convoys broadcast galaxy-wide (with their route);
+  cargo only shows for convoys inside your sensors. A pulsing red **⚠ RAIDER** is
+  your only warning of an attacker that has entered range.
+- **Command across the delay.** Click one of your ships to select it, then click
+  empty space to **move** it — a violet comet shows your order crossing to the
+  ship; then a return pulse + "RECEIVED · response light ~Ns" shows you waiting
+  for the light of its maneuver to come home (the ghost only changes course when
+  that light lands). The three clocks are always visible.
+- **Raid.** Select a raider, click a **rival ghost** to commit an intercept — it
+  pursues the rival's *true* position, not the stale ghost you saw. Press **R** to
+  recall (it may arrive too late). When a raid resolves, gold **report rings**
+  cross home and reveal the verdict on arrival — and the two players learn it on
+  *different* clocks.
+- **Trade (press M).** The **Hub Exchange** ticker is light-delayed, so you commit
+  to the *true* price, not the stale one you read. **Buy** settles now and a
+  delivery convoy crosses home (raidable). **Sell** ships goods to the hub first
+  and clears at the price-on-arrival (riskier). Or place **limit orders** (tick
+  "limit @", set a price) that rest and clear in a periodic uniform-price batch —
+  no sniping edge. Your credits, holdings, equity, and resting orders are in the
+  panel; credits + equity are also in the top HUD.
+
+The core loop: **command from home through honest lightspeed delay, trade on the
+shared Exchange, raid each other's convoys, and learn the outcomes as delayed
+news on your own clock.**
 
 ### Optional: durable persistence with Postgres
 

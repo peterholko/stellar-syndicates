@@ -23,6 +23,8 @@ function setHud(): void {
     state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
   $("hud-online").textContent = state.link === "online" ? String(state.corpsInView) : "—";
   $("hud-ships").textContent = state.link === "online" ? String(state.ghosts.length) : "—";
+  $("hud-credits").textContent = state.wallet ? `${Math.round(state.wallet.credits).toLocaleString()}` : "—";
+  $("hud-equity").textContent = state.wallet ? `${Math.round(state.wallet.valuation).toLocaleString()}` : "—";
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
     connecting: "connecting…",
