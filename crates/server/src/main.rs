@@ -17,13 +17,15 @@ mod game_loop;
 mod persistence;
 mod protocol;
 mod session;
+mod view;
 mod ws;
 
 use std::net::SocketAddr;
 
+use axum::extract::{FromRef, State};
 use axum::routing::get;
-use axum::Router;
-use tokio::sync::mpsc;
+use axum::{Json, Router};
+use tokio::sync::{mpsc, watch};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -32,7 +34,31 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use sim::{SimConfig, World};
 
-use crate::session::GameHandle;
+use crate::session::{GameHandle, ServerStatus};
+
+/// Shared HTTP state. `GameHandle` drives the game loop (`/ws`); the status
+/// receiver exposes session/ops meta (`/status`). Each handler extracts only
+/// the part it needs via `FromRef`.
+#[derive(Clone)]
+struct AppState {
+    game: GameHandle,
+    status: watch::Receiver<ServerStatus>,
+}
+
+impl FromRef<AppState> for GameHandle {
+    fn from_ref(s: &AppState) -> Self {
+        s.game.clone()
+    }
+}
+impl FromRef<AppState> for watch::Receiver<ServerStatus> {
+    fn from_ref(s: &AppState) -> Self {
+        s.status.clone()
+    }
+}
+
+async fn status_handler(State(rx): State<watch::Receiver<ServerStatus>>) -> Json<ServerStatus> {
+    Json(rx.borrow().clone())
+}
 
 fn env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key)
@@ -69,14 +95,27 @@ async fn main() -> anyhow::Result<()> {
     // Spawn the single authoritative game loop, owning the world.
     let snapshot_every = env_u64("SNAPSHOT_EVERY_TICKS", game_loop::DEFAULT_SNAPSHOT_EVERY);
     let (input_tx, input_rx) = mpsc::unbounded_channel();
+    let (status_tx, status_rx) = watch::channel(ServerStatus::default());
     let handle = GameHandle::new(input_tx);
-    tokio::spawn(game_loop::run(world, persistence, snapshot_every, input_rx));
+    tokio::spawn(game_loop::run(
+        world,
+        persistence,
+        snapshot_every,
+        status_tx,
+        input_rx,
+    ));
+
+    let state = AppState {
+        game: handle,
+        status: status_rx,
+    };
 
     // HTTP / WebSocket surface.
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/status", get(status_handler))
         .route("/ws", get(ws::ws_handler))
-        .with_state(handle)
+        .with_state(state)
         // Serve a production client build if present (one-command run); during
         // development the client is served by Vite on its own port instead.
         .fallback_service(ServeDir::new("client/dist"))

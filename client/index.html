@@ -76,6 +76,36 @@
       #hud .v.accent { color: var(--accent); }
       #hud .v.warn { color: var(--warn); }
       #hud .spacer { flex: 1; }
+
+      /* Command readout (bottom-left) */
+      #readout {
+        position: fixed; left: 14px; bottom: 14px;
+        display: none;
+        max-width: 360px;
+        padding: 10px 13px;
+        background: rgba(8, 12, 22, 0.82);
+        border: 1px solid #18233b;
+        border-left: 2px solid var(--accent);
+        border-radius: 6px;
+        font-size: 12px; line-height: 1.5;
+        z-index: 5;
+        backdrop-filter: blur(4px);
+      }
+      #readout b { color: var(--accent); font-weight: 700; }
+      #readout .dim { color: var(--dim); }
+
+      /* Legend (bottom-right) */
+      #legend {
+        position: fixed; right: 14px; bottom: 14px;
+        display: none;
+        padding: 9px 12px;
+        background: rgba(8, 12, 22, 0.78);
+        border: 1px solid #18233b; border-radius: 6px;
+        font-size: 11px; line-height: 1.7; color: var(--dim);
+        z-index: 5;
+      }
+      #legend .row { display: flex; align-items: center; gap: 7px; }
+      #legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
     </style>
   </head>
   <body>
@@ -86,10 +116,21 @@
       <div class="item"><span class="k">ID</span><span class="v" id="hud-id">—</span></div>
       <div class="item"><span class="k">Tick</span><span class="v" id="hud-tick">—</span></div>
       <div class="item"><span class="k">Sim&nbsp;t</span><span class="v" id="hud-time">—</span></div>
-      <div class="item"><span class="k">Players&nbsp;online</span><span class="v" id="hud-online">—</span></div>
-      <div class="item"><span class="k">Ships</span><span class="v" id="hud-ships">—</span></div>
+      <div class="item"><span class="k">Corps&nbsp;in&nbsp;view</span><span class="v" id="hud-online">—</span></div>
+      <div class="item"><span class="k">Contacts</span><span class="v" id="hud-ships">—</span></div>
       <div class="spacer"></div>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
+    </div>
+
+    <div id="readout">
+      Click one of your <b>ships</b> to select it, then click anywhere to command it.
+      You command across light-minutes — orders and sightings both lag.
+    </div>
+
+    <div id="legend">
+      <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships (coherent)</div>
+      <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals (delayed ghost + uncertainty)</div>
+      <div class="row"><span class="dim">Δt = how stale a sighting is</span></div>
     </div>
 
     <div id="join">

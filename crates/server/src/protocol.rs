@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{EntityId, HomeSlot, PlayerId, Ship, ShipKind, StarSystem, Vec2};
+use sim::{EntityId, PlayerId, ShipKind, StarSystem, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +21,10 @@ pub enum ClientMsg {
     /// hashed server-side into a stable [`PlayerId`] so reconnecting with the
     /// same name resumes the same corporation.
     Join { name: String },
+
+    /// Order one of the player's own ships to a destination. Travels at light
+    /// speed to the ship (§6); the server attaches the issuing player.
+    MoveShip { ship_id: EntityId, dest: Vec2 },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -37,27 +41,39 @@ pub struct GalaxyInfo {
     pub systems: Vec<StarSystem>,
 }
 
-/// A ship as shown to a player. Deliberately omits the ship's standing order —
-/// that is internal truth the client must not see (and M3 must not leak).
+/// A home anchor as a player perceives it. `pos` is static geography; `owner`
+/// is light-gated by the view filter — it is `None` to a player until the light
+/// of the claim event has reached their command center (a rival's presence must
+/// not be learned faster than light).
 #[derive(Debug, Clone, Serialize)]
-pub struct ShipView {
+pub struct AnchorView {
+    pub pos: Vec2,
+    pub owner: Option<PlayerId>,
+}
+
+/// A ship as a player perceives it: a delayed "ghost" — the position the light
+/// now arriving at their command center shows, plus how stale that is and how
+/// much the object could have moved since (§6). This is the ONLY ship
+/// information a player receives; never the true present state, never another
+/// player's view. Deliberately omits the ship's standing order (internal truth).
+#[derive(Debug, Clone, Serialize)]
+pub struct GhostView {
     pub id: EntityId,
     pub owner: PlayerId,
     pub kind: ShipKind,
+    /// Where the object was when the arriving light left it (retarded position).
     pub pos: Vec2,
+    /// Velocity at that retarded moment (for heading / dead-reckoning).
     pub vel: Vec2,
-}
-
-impl ShipView {
-    pub fn from_ship(s: &Ship) -> Self {
-        ShipView {
-            id: s.id,
-            owner: s.owner,
-            kind: s.kind,
-            pos: s.pos,
-            vel: s.vel,
-        }
-    }
+    /// Light delay in seconds — how stale this sighting is ("seen Xs ago").
+    pub age: f64,
+    /// Radius (sim units) the object could have moved since the light left:
+    /// `age · max_speed`. Zero for your own ships (a coherent, known-offset
+    /// feed — you know exactly where they were). Grows the uncertainty cone for
+    /// others.
+    pub uncertainty: f64,
+    /// True if this is one of the viewing player's own ships.
+    pub own: bool,
 }
 
 /// Messages pushed by the server to a single player's connection.
@@ -75,16 +91,21 @@ pub enum ServerMsg {
         galaxy: GalaxyInfo,
     },
 
-    /// The player's per-tick view of the world. In M2 these are TRUE positions
-    /// (movement verification); M3 makes them delayed and fogged.
+    /// The player's per-tick delayed/fogged view of the world, computed from
+    /// THEIR command center (§6). Every player receives a *different* one; none
+    /// receives true positions, another player's view, or any presence
+    /// information faster than light. (Deliberately carries no global
+    /// player-count — that would leak join/leave instantly; the client derives
+    /// "corps in view" from the fair, light-delayed ghosts it can see.)
     View {
         tick: u64,
         sim_time: f64,
-        players_online: usize,
-        /// All home anchors (with owners), so the client can mark homes.
-        anchors: Vec<HomeSlot>,
-        /// Ships visible to this player.
-        ships: Vec<ShipView>,
+        /// This player's command center — the origin of their light-cone.
+        command_center: Vec2,
+        /// Home anchors; each owner is light-gated (see [`AnchorView`]).
+        anchors: Vec<AnchorView>,
+        /// Ships as delayed ghosts from this player's vantage.
+        ghosts: Vec<GhostView>,
     },
 
     /// A protocol-level error (e.g. a malformed first message).

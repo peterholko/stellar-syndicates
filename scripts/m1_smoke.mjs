@@ -9,10 +9,14 @@
 //        override with SERVER_WS=...)
 
 const URL = process.env.SERVER_WS || "ws://127.0.0.1:8080/ws";
+const STATUS_URL = URL.replace(/^ws/, "http").replace(/\/ws$/, "/status");
 const fail = (m) => {
   console.error("FAIL:", m);
   process.exit(1);
 };
+// Session presence is meta/ops state on the /status endpoint — deliberately NOT
+// in the per-player game view (that would leak join/leave faster than light).
+const onlinePlayers = async () => (await (await fetch(STATUS_URL)).json()).online_players;
 
 function client(name) {
   const ws = new WebSocket(URL);
@@ -21,11 +25,8 @@ function client(name) {
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "Welcome") got.welcome = m;
-    else if (m.type === "View") {
-      got.ticks.push(m.tick);
-      got.lastOnline = m.players_online;
-      got.lastShips = m.ships;
-    } else if (m.type === "Error") got.errors.push(m.message);
+    else if (m.type === "View") got.ticks.push(m.tick);
+    else if (m.type === "Error") got.errors.push(m.message);
   });
   return { ws, got };
 }
@@ -61,17 +62,17 @@ const main = async () => {
     `B ticks ${b.got.ticks.at(0)}→${b.got.ticks.at(-1)} (${b.got.ticks.length})  (live ✓)`
   );
 
-  // Both see two players online.
-  if (a.got.lastOnline !== 2 || b.got.lastOnline !== 2)
-    fail(`expected players_online=2, got A=${a.got.lastOnline} B=${b.got.lastOnline}`);
-  console.log(`  players_online=2 on both streams ✓`);
+  // Session layer registered both (via the /status meta endpoint).
+  const online2 = await onlinePlayers();
+  if (online2 !== 2) fail(`expected /status online_players=2, got ${online2}`);
+  console.log(`  session layer reports 2 online (via /status meta endpoint) ✓`);
 
-  // Leave handling: close A; B should observe the count drop to 1.
+  // Leave handling: close A; the server should deregister it.
   a.ws.close();
   await sleep(1000);
-  if (b.got.lastOnline !== 1)
-    fail(`after A left, B should see players_online=1, saw ${b.got.lastOnline}`);
-  console.log(`  after A disconnected, B sees players_online=1 ✓`);
+  const online1 = await onlinePlayers();
+  if (online1 !== 1) fail(`after A left, expected online_players=1, got ${online1}`);
+  console.log(`  after A disconnected, session layer reports 1 online ✓`);
 
   b.ws.close();
   console.log("\nPASS — M1 checkpoint: simultaneous per-player streams, live ticks, join/leave handled.");

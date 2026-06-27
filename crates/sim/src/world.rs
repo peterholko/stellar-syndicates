@@ -35,6 +35,16 @@ pub struct Corporation {
     pub command_center: Vec2,
 }
 
+/// An order in flight: a player's command that has left their command center
+/// but not yet reached the ship (the outbound light-travel time of §6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingOrder {
+    /// Sim time at which the order's light reaches the ship.
+    apply_time: f64,
+    ship_id: EntityId,
+    dest: Vec2,
+}
+
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +64,8 @@ pub struct World {
     pub players: BTreeMap<PlayerId, Corporation>,
     /// All ships, keyed by id. `BTreeMap` keeps integration order deterministic.
     pub ships: BTreeMap<EntityId, Ship>,
+    /// Orders that have been issued but whose light has not yet reached the ship.
+    pending_orders: Vec<PendingOrder>,
     /// Monotonic allocator for entity ids.
     next_entity_id: u64,
     /// World RNG stream (continues past generation) for deterministic events.
@@ -96,6 +108,7 @@ impl World {
             home_slots,
             players: BTreeMap::new(),
             ships: BTreeMap::new(),
+            pending_orders: Vec::new(),
             next_entity_id,
             rng,
         }
@@ -121,18 +134,43 @@ impl World {
             self.apply(cmd, &mut events);
         }
 
-        // 2. Integrate continuous movement. Ships advance under flip-and-burn
+        // 2. Deliver any orders whose outbound light has now reached the ship.
+        self.deliver_due_orders(&mut events);
+
+        // 3. Integrate continuous movement. Ships advance under flip-and-burn
         //    on their standing orders.
         let time = self.time;
         for ship in self.ships.values_mut() {
             ship.advance(time, DT);
         }
 
-        // 3. Advance the clock.
+        // 4. Advance the clock.
         self.tick += 1;
         self.time += DT;
 
         events
+    }
+
+    /// Apply orders whose light has reached the ship by `self.time`. Orders are
+    /// processed in issue order, so a later order for the same ship overrides an
+    /// earlier one once both have arrived.
+    fn deliver_due_orders(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let mut i = 0;
+        while i < self.pending_orders.len() {
+            if self.pending_orders[i].apply_time <= now {
+                let po = self.pending_orders.remove(i);
+                if let Some(ship) = self.ships.get_mut(&po.ship_id) {
+                    ship.order = ShipOrder::MoveTo { dest: po.dest };
+                    events.push(Event::new(
+                        now,
+                        EventPayload::OrderApplied { ship_id: po.ship_id },
+                    ));
+                }
+            } else {
+                i += 1;
+            }
+        }
     }
 
     fn apply(&mut self, cmd: &Command, events: &mut Vec<Event>) {
@@ -162,14 +200,40 @@ impl World {
                 ));
                 self.spawn_starting_fleet(*id, home, events);
             }
+            Command::MoveShip {
+                player_id,
+                ship_id,
+                dest,
+            } => {
+                // Validate: the ship exists and the player owns it (no
+                // commanding someone else's fleet).
+                let Some(ship) = self.ships.get(ship_id) else {
+                    return;
+                };
+                if ship.owner != *player_id {
+                    return;
+                }
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                // Outbound light-travel time from command center to the ship.
+                let delay = ship.pos.distance(corp.command_center) / self.config.c;
+                self.pending_orders.push(PendingOrder {
+                    apply_time: self.time + delay,
+                    ship_id: *ship_id,
+                    dest: *dest,
+                });
+            }
         }
     }
 
     /// Assign an unused home anchor to a player (or append one if the galaxy is
     /// over capacity), returning its position.
     fn assign_home(&mut self, id: PlayerId) -> Vec2 {
+        let now = self.time;
         if let Some(slot) = self.home_slots.iter_mut().find(|s| s.owner.is_none()) {
             slot.owner = Some(id);
+            slot.claimed_at = Some(now);
             return slot.pos;
         }
         // Over capacity: place an extra anchor at a deterministic ring spot.
@@ -179,6 +243,7 @@ impl World {
         self.home_slots.push(HomeSlot {
             pos,
             owner: Some(id),
+            claimed_at: Some(now),
         });
         pos
     }
@@ -333,6 +398,87 @@ mod tests {
             .zip(&start)
             .any(|(s, &p0)| s.pos.distance(p0) > 10.0);
         assert!(moved, "ships should have moved from their start positions");
+    }
+
+    fn convoy_id(w: &World) -> EntityId {
+        *w.ships
+            .iter()
+            .find(|(_, s)| s.kind == ShipKind::Convoy)
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn move_order_applies_only_after_light_travel_delay() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Let the convoy travel away from its home (== command center) so the
+        // order has a non-trivial outbound delay.
+        for _ in 0..(20 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let cid = convoy_id(&w);
+        let cc = w.players[&id].command_center;
+        let ship_pos = w.ships[&cid].pos;
+        let expected_delay = ship_pos.distance(cc) / w.config.c;
+        assert!(expected_delay > 1.0, "convoy should be well away from home");
+
+        let issue_time = w.time;
+        let dest = Vec2::new(1234.0, -567.0);
+        w.step(&[Command::MoveShip {
+            player_id: id,
+            ship_id: cid,
+            dest,
+        }]);
+
+        // Step until just before the order's light arrives: still not a MoveTo.
+        while w.time < issue_time + expected_delay - DT {
+            w.step(&[]);
+            assert!(
+                !matches!(w.ships[&cid].order, ShipOrder::MoveTo { .. }),
+                "order applied too early at t={} (delay {})",
+                w.time,
+                expected_delay
+            );
+        }
+        // Step a little past the arrival: now it must be a MoveTo to `dest`.
+        for _ in 0..3 {
+            w.step(&[]);
+        }
+        match w.ships[&cid].order {
+            ShipOrder::MoveTo { dest: d } => assert_eq!(d, dest),
+            ref other => panic!("expected MoveTo after delay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cannot_command_another_players_ship() {
+        let mut w = test_world();
+        let owner = PlayerId(7);
+        let attacker = PlayerId(8);
+        w.step(&[Command::AddPlayer { id: owner, name: "Owner".into() }]);
+        w.step(&[Command::AddPlayer { id: attacker, name: "Rival".into() }]);
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        // Find a ship owned by `owner`.
+        let target = *w.ships.iter().find(|(_, s)| s.owner == owner).unwrap().0;
+        let before = format!("{:?}", w.ships[&target].order);
+        // Rival tries to command it; ignored, no pending order created.
+        w.step(&[Command::MoveShip {
+            player_id: attacker,
+            ship_id: target,
+            dest: Vec2::new(0.0, 0.0),
+        }]);
+        for _ in 0..(40 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        // It never became a MoveTo to (0,0) from the rival's command.
+        if let ShipOrder::MoveTo { dest } = w.ships[&target].order {
+            assert_ne!(dest, Vec2::new(0.0, 0.0), "rival should not control this ship");
+        }
+        let _ = before;
     }
 
     #[test]

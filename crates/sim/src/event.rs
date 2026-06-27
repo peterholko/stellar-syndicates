@@ -32,6 +32,9 @@ pub enum EventPayload {
         owner: PlayerId,
         kind: ShipKind,
     },
+    /// A player's move order finally reached a ship (its outbound light arrived)
+    /// and took effect.
+    OrderApplied { ship_id: EntityId },
 }
 
 impl Event {

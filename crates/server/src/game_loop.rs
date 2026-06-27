@@ -10,17 +10,19 @@
 //!      from M3: the delayed/fogged view);
 //!   4. hands events and periodic snapshots to the off-hot-path persistence task.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info};
 
-use sim::{Command, World, DT, TICK_HZ};
+use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
-use crate::protocol::{ClientMsg, GalaxyInfo, ServerMsg, ShipView};
-use crate::session::{ConnInfo, GameInput, Sessions};
+use crate::protocol::{ClientMsg, GalaxyInfo, ServerMsg};
+use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
+use crate::view::{self, PositionHistory};
 
 /// Push a per-player message every N sim ticks. At 30 Hz, N=3 → ~10 Hz network
 /// updates: visibly live without flooding the socket.
@@ -32,22 +34,45 @@ pub const DEFAULT_SNAPSHOT_EVERY: u64 = 20 * TICK_HZ as u64;
 struct GameLoop {
     world: World,
     sessions: Sessions,
+    /// Per-player lightspeed view filter — keeps position history and builds
+    /// each player's delayed/fogged view (§14).
+    history: PositionHistory,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
     persistence: PersistenceHandle,
     /// Take a snapshot every this many ticks.
     snapshot_every: u64,
+    /// Publishes server/ops status for the `/status` endpoint (meta channel).
+    status_tx: watch::Sender<ServerStatus>,
 }
 
 impl GameLoop {
-    fn new(world: World, persistence: PersistenceHandle, snapshot_every: u64) -> Self {
+    fn new(
+        world: World,
+        persistence: PersistenceHandle,
+        snapshot_every: u64,
+        status_tx: watch::Sender<ServerStatus>,
+    ) -> Self {
+        let history = PositionHistory::for_world(&world);
         GameLoop {
             world,
             sessions: Sessions::new(),
+            history,
             pending: Vec::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
+            status_tx,
         }
+    }
+
+    /// Publish current session/ops status (cheap; replaces the watched value).
+    fn publish_status(&self) {
+        let _ = self.status_tx.send(ServerStatus {
+            online_players: self.sessions.online_player_count(),
+            connections: self.sessions.connection_count(),
+            tick: self.world.tick,
+            sim_time: self.world.time,
+        });
     }
 
     fn handle_input(&mut self, input: GameInput) {
@@ -109,6 +134,16 @@ impl GameLoop {
                 ClientMsg::Ping => {
                     debug!(conn_id, "ping");
                 }
+                ClientMsg::MoveShip { ship_id, dest } => {
+                    // Attach the issuing player (the sim enforces ownership).
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MoveShip {
+                            player_id,
+                            ship_id,
+                            dest,
+                        });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -123,6 +158,10 @@ impl GameLoop {
         let commands = std::mem::take(&mut self.pending);
         let events = self.world.step(&commands);
 
+        // Record true positions into the view filter's history every tick so
+        // the retarded-time boundary resolves at full temporal resolution.
+        self.history.record(&self.world);
+
         // Off-hot-path: append events to the log.
         if !events.is_empty() {
             let payloads = events.iter().map(to_json).collect::<Vec<_>>();
@@ -135,6 +174,7 @@ impl GameLoop {
 
         if self.world.tick.is_multiple_of(BROADCAST_EVERY) {
             self.broadcast();
+            self.publish_status();
         }
 
         if self.world.tick.is_multiple_of(self.snapshot_every) {
@@ -146,29 +186,46 @@ impl GameLoop {
         }
     }
 
-    /// Push every connection its own per-player view. In M2 every player sees
-    /// the same TRUE world (movement verification); M3 makes each view delayed
-    /// and fogged, computed per player from their command center.
+    /// Push every connection its own per-player delayed/fogged view, each
+    /// computed from THAT player's command center (§6, §14). No player ever
+    /// receives true positions or another player's view — the fairness
+    /// guarantee, enforced by [`PositionHistory::view_for`].
     fn broadcast(&self) {
-        let players_online = self.sessions.online_player_count();
+        let c = self.world.config.c;
+        let now = self.world.time;
 
-        // M2: one shared true-world view. Built once and cloned per connection.
-        // (M3 will build a *different* view per player here.)
-        let anchors = self.world.home_slots.clone();
-        let ships: Vec<ShipView> = self.world.ships.values().map(ShipView::from_ship).collect();
+        // Build each online player's view ONCE (shared across their
+        // connections). Everything — ships AND anchor ownership — is computed
+        // from THIS player's command center and light-gated. A connection whose
+        // corporation isn't in the world yet (AddPlayer not processed) simply
+        // gets no view this tick.
+        let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
+        for player_id in self.sessions.online_players() {
+            let Some(corp) = self.world.players.get(&player_id) else {
+                continue;
+            };
+            let cc = corp.command_center;
+            let ghosts = self.history.view_for(player_id, cc, c, now);
+            let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
+            views.insert(
+                player_id,
+                ServerMsg::View {
+                    tick: self.world.tick,
+                    sim_time: now,
+                    command_center: cc,
+                    anchors,
+                    ghosts,
+                },
+            );
+        }
 
         for (_conn_id, info) in self.sessions.iter_conns() {
-            let msg = ServerMsg::View {
-                tick: self.world.tick,
-                sim_time: self.world.time,
-                players_online,
-                anchors: anchors.clone(),
-                ships: ships.clone(),
-            };
-            // Non-blocking: never let one slow client stall the authoritative
-            // loop. A full queue means the client is behind; dropping this
-            // (now-stale) view is correct — the next one supersedes it.
-            let _ = info.outbound.try_send(msg);
+            if let Some(view) = views.get(&info.player_id) {
+                // Non-blocking: never let one slow client stall the loop; a full
+                // queue means the client is behind, so dropping this stale view
+                // is correct — the next supersedes it.
+                let _ = info.outbound.try_send(view.clone());
+            }
         }
     }
 }
@@ -178,9 +235,10 @@ pub async fn run(
     world: World,
     persistence: PersistenceHandle,
     snapshot_every: u64,
+    status_tx: watch::Sender<ServerStatus>,
     mut rx: mpsc::UnboundedReceiver<GameInput>,
 ) {
-    let mut game = GameLoop::new(world, persistence, snapshot_every);
+    let mut game = GameLoop::new(world, persistence, snapshot_every, status_tx);
 
     let mut ticker = interval(Duration::from_secs_f64(DT));
     // If we ever fall behind, skip missed ticks rather than bursting to catch

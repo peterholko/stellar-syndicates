@@ -17,7 +17,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 |-----------|-------|-------|
 | **M1 — Multiplayer architecture scaffold + sessions** | ✅ **Complete** | Full architecture skeleton, end-to-end, built for many players. |
 | **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
-| M3 — Lightspeed information model (the core) | ⬜ Not started | |
+| **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
 | M4 — Raiding loop (PvP) | ⬜ Not started | |
 | M5 — Full multiplayer economy | ⬜ Not started | |
 | M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
@@ -76,6 +76,39 @@ handled (online count rises and falls correctly). See
 **M2 checkpoint proven:** ships move with flip-and-burn; multiple clients see the
 same world advancing with identical positions. See
 [`scripts/m2_smoke.mjs`](scripts/m2_smoke.mjs).
+
+### What M3 delivers (verified) — the core
+
+- **Per-player lightspeed view filter** (`crates/server/src/view.rs`, a
+  first-class component): keeps every ship's recent true-position history and,
+  for each player, reconstructs what the light reaching THEIR command center
+  shows — every object at its *retarded* position (where it was when the
+  arriving light left it).
+- **The fairness guarantee, made exact.** A sample `(t, p)` is observable at a
+  command center `cc` iff `t + |p − cc|/c ≤ now`. Because ships move slower than
+  `c`, `arrival(t)` is strictly increasing, so the filter shows the unique latest
+  observable sample and nothing fresher — provably no leak. Verified by unit
+  tests *and* a wire-level smoke test that checks every ghost's staleness equals
+  its light-distance, plus an **adversarial multi-agent review** that hunted for
+  leaks. That review found two presence leaks (anchor-ownership and a global
+  player-count revealed instantly); **both are fixed** — anchor ownership is now
+  light-gated, and presence/ops state moved to a separate `/status` meta endpoint
+  outside the game view.
+- **Two fog regimes (§6):** your own ships are delayed-but-coherent (no
+  uncertainty); rivals are shown at a stale position with an **uncertainty cone**
+  (`age · max_speed` — how far they could have moved since the light left) and an
+  age label, fading with staleness.
+- **Command latency / the three clocks (§6):** a move order travels to the ship
+  at light speed (scheduled in the pure core), and the player learns the result
+  later still via their delayed view. The client shows the estimate from its
+  stale sighting — you command on old intel, and the real delay differs.
+- **Each player sees a genuinely different delayed galaxy.** Distant things are
+  stale; nearer things fresher; rivals are dark until their light arrives.
+
+**M3 checkpoint proven:** two players each see their own coherent delayed/fogged
+view; staleness equals light-distance on the wire; commands lag; no information
+(positions, presence, or counts) leaks between players' horizons. See
+[`scripts/m3_smoke.mjs`](scripts/m3_smoke.mjs).
 
 ---
 

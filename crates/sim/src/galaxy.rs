@@ -21,10 +21,17 @@ pub struct StarSystem {
 
 /// One of the pre-generated home-anchor slots arranged around a ring. Assigned
 /// to a player on join; a player commands from their home anchor (§6).
+///
+/// `pos` is static geography (known to all). `owner`/`claimed_at` are *dynamic*
+/// state: a claim is an event at `pos` and time `claimed_at`, so its reveal to
+/// other players must respect light delay (enforced by the view filter), or it
+/// would leak a rival's presence faster than light.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HomeSlot {
     pub pos: Vec2,
     pub owner: Option<PlayerId>,
+    /// Sim time at which this slot was claimed (None while unowned).
+    pub claimed_at: Option<f64>,
 }
 
 /// Generate `count` star systems uniformly over the galaxy disk (area-uniform
@@ -56,7 +63,11 @@ pub fn generate_home_slots(rng: &mut Rng, radius: f64, ring_frac: f64, count: u3
         let ang_jitter = rng.range(-1.0, 1.0) * (std::f64::consts::TAU / count as f64) * 0.25;
         let r_jitter = base * rng.range(-0.08, 0.08);
         let pos = Vec2::from_polar(base_angle + ang_jitter, base + r_jitter);
-        slots.push(HomeSlot { pos, owner: None });
+        slots.push(HomeSlot {
+            pos,
+            owner: None,
+            claimed_at: None,
+        });
     }
     slots
 }

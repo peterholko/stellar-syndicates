@@ -15,11 +15,24 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 use sim::PlayerId;
 
 use crate::protocol::{ClientMsg, ServerMsg};
+
+/// Server/ops status — connection-level meta, NOT part of any player's
+/// fairness-bound game view. Exposed on the `/status` HTTP endpoint for
+/// monitoring and for verifying the session layer. Carrying this on the game
+/// `View` would leak join/leave timing faster than light (§6), so it lives here.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ServerStatus {
+    pub online_players: usize,
+    pub connections: usize,
+    pub tick: u64,
+    pub sim_time: f64,
+}
 
 /// Per-connection identifier, unique for the lifetime of the process.
 pub type ConnId = u64;
@@ -102,6 +115,11 @@ impl Sessions {
     /// Number of distinct players with at least one live connection.
     pub fn online_player_count(&self) -> usize {
         self.by_player.len()
+    }
+
+    /// All distinct players with at least one live connection.
+    pub fn online_players(&self) -> Vec<PlayerId> {
+        self.by_player.keys().copied().collect()
     }
 
     /// Number of live connections (may exceed player count).

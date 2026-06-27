@@ -30,12 +30,18 @@ export interface AnchorView {
   owner: PlayerId | null;
 }
 
-export interface ShipView {
+// A ship as the player perceives it — a delayed "ghost" (§6). `pos` is where
+// the object was when its arriving light left it; `age` is how stale that is;
+// `uncertainty` is how far it could have moved since (0 for own ships).
+export interface GhostView {
   id: EntityId;
   owner: PlayerId;
   kind: ShipKind;
   pos: Vec2;
   vel: Vec2;
+  age: number;
+  uncertainty: number;
+  own: boolean;
 }
 
 // Render a decimal-string PlayerId as the canonical "P<hex>" form used by the
@@ -51,6 +57,7 @@ export function formatId(id: PlayerId): string {
 // Client → server.
 export type ClientMsg =
   | { type: "Join"; name: string }
+  | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "Ping" };
 
 // Server → client.
@@ -68,8 +75,8 @@ export type ServerMsg =
       type: "View";
       tick: number;
       sim_time: number;
-      players_online: number;
+      command_center: Vec2;
       anchors: AnchorView[];
-      ships: ShipView[];
+      ghosts: GhostView[];
     }
   | { type: "Error"; message: string };
