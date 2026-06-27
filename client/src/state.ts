@@ -2,7 +2,7 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, PlayerId, RaidReport, Vec2 } from "./protocol";
+import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, RaidReport, Vec2, WalletView } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
@@ -53,6 +53,8 @@ export interface ViewState {
   commandCenter: Vec2 | null;
   anchors: AnchorView[];
   ghosts: GhostView[];
+  market: MarketView | null;
+  wallet: WalletView | null;
   /// Wall-clock ms when the last View arrived, for smooth extrapolation
   /// between the ~10 Hz server updates and the 60 fps render.
   lastViewWallMs: number;
@@ -82,6 +84,8 @@ export function initialState(): ViewState {
     commandCenter: null,
     anchors: [],
     ghosts: [],
+    market: null,
+    wallet: null,
     lastViewWallMs: 0,
     selectedShipId: null,
     orders: {},

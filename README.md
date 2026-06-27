@@ -19,6 +19,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
 | **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
 | **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
+| **M5 — Full multiplayer economy** | 🟡 **In progress** | 5a done: hub Exchange (instant execution, lagged ticker), market orders, order-spawned raidable convoys, buy/sell asymmetry. Limit orders + valuations next. |
 | M5 — Full multiplayer economy | ⬜ Not started | |
 | M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
 | M7 — Client polish | ⬜ Not started | |
@@ -225,6 +226,44 @@ broadcast galaxy-wide; cargo is present *iff* the convoy is within coverage; a
 dark raider well outside coverage is absent from the payload (no leak), and every
 visible rival raider is within coverage; browser-confirmed the coverage bubbles,
 routes, cargo reveal, and the threat contact appearing as a raider enters range.
+
+### What M5 delivers so far (sub-step 5a — the hub Exchange)
+
+The economic spine of §9, tied to the raiding loop:
+
+- **The hub Exchange** (`crates/sim/src/market.rs`): one shared market, a standing
+  price per commodity that **walks with flow** (buys lift, sells depress) and
+  **drifts** on a slow seeded random walk so there's always something to trade.
+- **Instant execution, lagged price information.** A market order settles *now*
+  at the true standing price (correlation is instant), but the **price ticker is
+  light-delayed** from the hub (the server's `PriceHistory` sends each player the
+  prices as of the light that has reached their command center). So you commit to
+  the *true* price, not the stale number you read — verified: the ticker showed
+  ≈10.00 while a buy filled at the drifted-true 10.42.
+- **Orders carry intent + destination, spawning raidable convoys.** A **buy**
+  settles instantly (credits debited) and spawns a delivery convoy **hub → home**
+  (price-certain, delivery-risky). A **sell** commits the goods *first* and spawns
+  a convoy **home → hub** that clears at the **price-on-arrival** (the §9 buy/sell
+  asymmetry — double uncertainty). Both convoys are ordinary `Convoy`s, so they
+  are **raidable in transit** (M4); a raided trade convoy's goods are simply lost.
+- **Credits + inventory** on each corporation; a **market panel** client UI
+  (prices, staleness, your wallet, Buy/Sell — press **M**) and an economy news log.
+- *(Nice lightspeed detail: a buy's delivery convoy spawns at the hub, ~16s of
+  light from home, so you don't even see your own inbound convoy until its light
+  arrives.)*
+
+**Protocol additions:** `ClientMsg::MarketBuy` / `MarketSell`; `View.market`
+(lagged `PriceView`s + `staleness`) and `View.wallet` (`credits` + `inventory`);
+`ServerMsg::Trade`. Sim: a `Market`, `Corporation.credits`/`inventory`, a
+`TradeMission` on ships, and `TradeEvent`s.
+
+**Verified** (`scripts/economy_smoke.mjs` + 3 sim trade tests): lagged ticker;
+buy settles instantly and spawns a delivery convoy; sell commits goods to a
+hub-bound convoy; delivery/sale resolve on arrival; browser-confirmed the market
+panel, trade news, and convoys crossing raidable space.
+
+**Still to come in M5:** limit orders + periodic uniform-price batch clearing
+(anti-sniping); equity / corporate valuations on a slow cadence.
 
 **Verified in-browser:** issuing an order shows the violet comet traveling from
 the command center to the ship's ghost (paced by the server's observed delay); a

@@ -33,6 +33,34 @@ export interface CargoView {
   units: number;
 }
 
+export interface PriceView {
+  commodity: Commodity;
+  price: number;
+}
+
+// The hub ticker, light-delayed from the hub (§9). `staleness` = how old.
+export interface MarketView {
+  prices: PriceView[];
+  staleness: number;
+}
+
+export interface InvSlot {
+  commodity: Commodity;
+  units: number;
+}
+
+export interface WalletView {
+  credits: number;
+  inventory: InvSlot[];
+}
+
+// Economy news (mirrors sim TradeEvent, tagged by `event`).
+export type TradeEvent =
+  | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number }
+  | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
+  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number };
+
 export interface AnchorView {
   pos: Vec2;
   owner: PlayerId | null;
@@ -72,6 +100,8 @@ export type ClientMsg =
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
+  | { type: "MarketBuy"; commodity: Commodity; units: number }
+  | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "Ping" };
 
 export type RaidOutcome = "intercepted" | "escaped";
@@ -107,8 +137,11 @@ export type ServerMsg =
       command_center: Vec2;
       anchors: AnchorView[];
       ghosts: GhostView[];
+      market: MarketView;
+      wallet: WalletView;
     }
   | { type: "Report"; report: RaidReport }
+  | { type: "Trade"; trade: TradeEvent }
   | {
       // Order round-trip feedback: comet out (command center → ship), then the
       // response light coming home (ship → command center). The server owns all

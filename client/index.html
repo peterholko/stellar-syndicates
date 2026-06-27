@@ -129,6 +129,31 @@
       #reports-log .report.good .ic { color: #5fd08a; }
       #reports-log .report.bad .ic { color: #ff6b6b; }
       #reports-log .report .dim { color: var(--dim); }
+
+      /* Hub Exchange panel (right side) */
+      #market {
+        position: fixed; top: 44px; right: 14px;
+        display: none;
+        width: 290px;
+        padding: 12px 14px;
+        background: rgba(8, 12, 22, 0.92);
+        border: 1px solid #1c2740; border-radius: 8px;
+        font-size: 12px; z-index: 7;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      }
+      #market .mhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+      #market .mhead b { letter-spacing: 1px; }
+      #market .mtop { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+      #market .mtop input { width: 56px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
+      #market table { width: 100%; border-collapse: collapse; }
+      #market td, #market th { text-align: right; padding: 3px 4px; font-variant-numeric: tabular-nums; }
+      #market th { color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+      #market td.name { text-align: left; color: var(--ink); }
+      #market button { cursor: pointer; background: #16233c; color: var(--ink); border: 1px solid #2a3a58; border-radius: 4px; font: inherit; font-size: 11px; padding: 2px 7px; }
+      #market button.buy:hover { background: #18402a; border-color: #2f6b46; }
+      #market button.sell:hover { background: #402018; border-color: #6b3a2f; }
+      #market .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; }
+      #market .accent { color: var(--accent); }
     </style>
   </head>
   <body>
@@ -146,6 +171,16 @@
     </div>
 
     <div id="reports-log"></div>
+
+    <div id="market">
+      <div class="mhead"><b>HUB EXCHANGE</b> <span id="market-stale" class="dim"></span></div>
+      <div class="mtop"><span id="market-credits" class="accent">—</span> · qty <input id="market-qty" type="number" value="50" min="1" /></div>
+      <table>
+        <thead><tr><th class="name">commodity</th><th>price</th><th>held</th><th></th></tr></thead>
+        <tbody id="market-rows"></tbody>
+      </table>
+      <div class="mhint dim">Buy settles now; goods cross home (raidable). Sell ships goods to the hub, clears at price-on-arrival. Press <b>M</b> to toggle.</div>
+    </div>
 
     <div id="readout">
       Click one of your <b>ships</b> to select it. Then click empty space to move it,

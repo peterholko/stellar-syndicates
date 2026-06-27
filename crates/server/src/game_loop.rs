@@ -20,10 +20,10 @@ use tracing::{debug, info};
 use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
-use crate::protocol::{ClientMsg, GalaxyInfo, ServerMsg};
+use crate::protocol::{ClientMsg, GalaxyInfo, InvSlot, MarketView, PriceView, ServerMsg, WalletView};
 use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
-use crate::view::{self, PositionHistory};
+use crate::view::{self, PositionHistory, PriceHistory};
 
 /// Push a per-player message every N sim ticks. At 30 Hz, N=3 → ~10 Hz network
 /// updates: visibly live without flooding the socket.
@@ -38,6 +38,9 @@ struct GameLoop {
     /// Per-player lightspeed view filter — keeps position history and builds
     /// each player's delayed/fogged view (§14).
     history: PositionHistory,
+    /// Lagged hub-price ticker history (§9) — each player reads prices delayed
+    /// by their light-distance from the hub.
+    prices: PriceHistory,
     /// Delayed delivery of discrete reports (raid outcomes) — each player learns
     /// them on their own clock (§8).
     reports: ReportScheduler,
@@ -58,10 +61,12 @@ impl GameLoop {
         status_tx: watch::Sender<ServerStatus>,
     ) -> Self {
         let history = PositionHistory::for_world(&world);
+        let prices = PriceHistory::for_world(&world);
         GameLoop {
             world,
             sessions: Sessions::new(),
             history,
+            prices,
             reports: ReportScheduler::new(),
             pending: Vec::new(),
             persistence,
@@ -204,6 +209,16 @@ impl GameLoop {
                         self.pending.push(Command::RecallRaid { player_id, raider_id });
                     }
                 }
+                ClientMsg::MarketBuy { commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MarketBuy { player_id, commodity, units });
+                    }
+                }
+                ClientMsg::MarketSell { commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MarketSell { player_id, commodity, units });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -221,9 +236,18 @@ impl GameLoop {
         // Record true positions into the view filter's history every tick so
         // the retarded-time boundary resolves at full temporal resolution.
         self.history.record(&self.world);
+        self.prices.record(&self.world);
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
         self.reports.ingest(&events);
+        // Route economy news to the owning player immediately (their own
+        // action / a delivery at their doorstep).
+        for ev in &events {
+            if let sim::EventPayload::Trade(te) = &ev.payload {
+                self.sessions
+                    .send_to_player(te.player(), ServerMsg::Trade { trade: *te });
+            }
+        }
 
         // Off-hot-path: append events to the log.
         if !events.is_empty() {
@@ -257,6 +281,7 @@ impl GameLoop {
         let c = self.world.config.c;
         let now = self.world.time;
         let tick = self.world.tick;
+        let hub = self.world.hub;
 
         // Build each online player's view ONCE (shared across their
         // connections), plus any delayed reports whose light has now reached
@@ -272,6 +297,30 @@ impl GameLoop {
             let cc = corp.command_center;
             let ghosts = self.history.view_for(player_id, cc, c, now);
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
+
+            // Lagged hub ticker: prices as of the light that has reached this
+            // player's command center from the hub.
+            let staleness = hub.distance(cc) / c;
+            let lagged = self.prices.at(now - staleness);
+            let prices = lagged
+                .map(|m| {
+                    m.iter()
+                        .map(|(commodity, price)| PriceView { commodity: *commodity, price: *price })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let market = MarketView { prices, staleness };
+
+            // The player's own wallet — fresh (their local treasury + holdings).
+            let wallet = WalletView {
+                credits: corp.credits,
+                inventory: corp
+                    .inventory
+                    .iter()
+                    .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
+                    .collect(),
+            };
+
             views.insert(
                 player_id,
                 ServerMsg::View {
@@ -280,6 +329,8 @@ impl GameLoop {
                     command_center: cc,
                     anchors,
                     ghosts,
+                    market,
+                    wallet,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

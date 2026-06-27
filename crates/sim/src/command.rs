@@ -50,4 +50,22 @@ pub enum Command {
         player_id: PlayerId,
         raider_id: EntityId,
     },
+
+    /// Buy at market on the hub Exchange (§9): instant settlement at the true
+    /// standing price (credits debited now), then a delivery convoy carries the
+    /// goods hub → home (raidable in transit). Price-certain, delivery-risky.
+    MarketBuy {
+        player_id: PlayerId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// Sell at market (§9): commit goods to the crossing FIRST — a convoy carries
+    /// them home → hub and sells at the price-on-arrival (not a locked launch
+    /// price). The seller faces double uncertainty (raid + unknown final price).
+    MarketSell {
+        player_id: PlayerId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
 }

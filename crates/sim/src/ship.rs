@@ -72,6 +72,16 @@ pub enum ShipOrder {
     Intercept { target: EntityId },
 }
 
+/// What a trade convoy does when it reaches its destination (§9). A buy spawns a
+/// delivery convoy (hub → home) that deposits cargo on arrival; a sell spawns a
+/// convoy (home → hub) that sells the cargo at the price-on-arrival.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeMission {
+    DeliverHome,
+    SellAtHub,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ship {
     pub id: EntityId,
@@ -83,6 +93,8 @@ pub struct Ship {
     /// Cargo carried (convoys only; raiders carry none). Broadcast withholds
     /// this — it is revealed by sensor range, not by the Convention.
     pub cargo: Option<Cargo>,
+    /// If set, this is a trade convoy that resolves on arrival (§9).
+    pub mission: Option<TradeMission>,
 }
 
 impl Ship {
@@ -102,6 +114,7 @@ impl Ship {
             vel: Vec2::ZERO,
             order,
             cargo,
+            mission: None,
         }
     }
 

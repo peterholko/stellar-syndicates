@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId } from "./protocol";
+import { formatId, type Commodity, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -164,13 +164,17 @@ function installInteraction(): void {
       `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
   });
 
-  // Recall the selected raider (light-delayed; may miss the window).
+  // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
   window.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
     if ((e.key === "r" || e.key === "R") && state.selectedShipId && net) {
       net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
+    } else if (e.key === "m" || e.key === "M") {
+      const m = $("market");
+      m.style.display = m.style.display === "none" ? "block" : "none";
     }
   });
 }
@@ -190,6 +194,65 @@ function addReport(r: import("./protocol").RaidReport): void {
   const el = document.createElement("div");
   el.className = "report " + cls;
   el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>`;
+  log.prepend(el);
+  while (log.children.length > 6) log.removeChild(log.lastChild!);
+  setTimeout(() => el.classList.add("fade"), 12000);
+}
+
+// --- Hub Exchange (§9) -------------------------------------------------------
+const COMMODITIES: Commodity[] = ["fuel", "ore", "alloys", "provisions", "volatiles"];
+
+function buildMarketPanel(): void {
+  const rows = $("market-rows");
+  rows.innerHTML = "";
+  for (const c of COMMODITIES) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="name">${c}</td>` +
+      `<td id="mp-price-${c}">—</td>` +
+      `<td id="mp-held-${c}">—</td>` +
+      `<td><button class="buy" data-c="${c}" data-side="buy">Buy</button> ` +
+      `<button class="sell" data-c="${c}" data-side="sell">Sell</button></td>`;
+    rows.appendChild(tr);
+  }
+  rows.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !net) return;
+    const c = btn.getAttribute("data-c") as Commodity;
+    const qty = Math.max(1, Math.floor(Number((($("market-qty") as HTMLInputElement).value) || 0)));
+    net.send(btn.getAttribute("data-side") === "buy"
+      ? { type: "MarketBuy", commodity: c, units: qty }
+      : { type: "MarketSell", commodity: c, units: qty });
+  });
+}
+
+function updateMarket(): void {
+  if (!state.market || !state.wallet) return;
+  $("market-credits").textContent = `${Math.round(state.wallet.credits).toLocaleString()} cr`;
+  const stale = state.market.staleness;
+  $("market-stale").textContent = stale > 0.5 ? `ticker ~${stale.toFixed(0)}s stale` : "ticker live";
+  const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
+  const heldOf = new Map(state.wallet.inventory.map((i) => [i.commodity, i.units]));
+  for (const c of COMMODITIES) {
+    const pe = document.getElementById(`mp-price-${c}`);
+    const he = document.getElementById(`mp-held-${c}`);
+    if (pe) pe.textContent = priceOf.has(c) ? priceOf.get(c)!.toFixed(2) : "—";
+    if (he) he.textContent = String(heldOf.get(c) ?? 0);
+  }
+}
+
+function addTradeNews(t: TradeEvent): void {
+  const log = $("reports-log");
+  let text = "";
+  switch (t.event) {
+    case "Bought": text = `Bought ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
+    case "Delivered": text = `Delivery arrived: +${t.units} ${t.commodity} in stores.`; break;
+    case "SellDispatched": text = `Sell convoy away: ${t.units} ${t.commodity} crossing to the hub.`; break;
+    case "Sold": text = `Sold ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
+  }
+  const el = document.createElement("div");
+  el.className = "report good";
+  el.innerHTML = `<span class="ic" style="color:#7fd4ff">◈</span> ${text}`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);
@@ -228,6 +291,8 @@ function join(): void {
           hud.style.display = "flex";
           $("readout").style.display = "block";
           $("legend").style.display = "block";
+          buildMarketPanel();
+          $("market").style.display = "block";
           void startRenderer();
           break;
         case "View":
@@ -236,11 +301,14 @@ function join(): void {
           state.commandCenter = msg.command_center;
           state.anchors = msg.anchors;
           state.ghosts = msg.ghosts;
+          state.market = msg.market;
+          state.wallet = msg.wallet;
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
           state.lastViewWallMs = performance.now();
           state.link = "online";
+          updateMarket();
           break;
         case "CommandSignal": {
           // Your order is crossing space to your ship, and you'll see its
@@ -273,6 +341,9 @@ function join(): void {
           });
           break;
         }
+        case "Trade":
+          addTradeNews(msg.trade);
+          break;
         case "Error":
           joinErr.textContent = msg.message;
           break;

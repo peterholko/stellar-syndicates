@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, Vec2};
+use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, TradeEvent, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -32,8 +32,47 @@ pub enum ClientMsg {
     /// Recall a raider (break off, return home). May arrive too late (§8).
     RecallRaid { raider_id: EntityId },
 
+    /// Buy at market on the hub Exchange (§9): instant settlement, then a
+    /// delivery convoy carries the goods home.
+    MarketBuy { commodity: Commodity, units: u32 },
+
+    /// Sell at market (§9): a convoy carries the goods to the hub and clears at
+    /// the price-on-arrival.
+    MarketSell { commodity: Commodity, units: u32 },
+
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
+}
+
+/// A standing price the player reads off the (lagged) hub ticker.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PriceView {
+    pub commodity: Commodity,
+    pub price: f64,
+}
+
+/// The hub Exchange as the player sees it — prices **light-delayed** from the
+/// hub (§9). `staleness` is how old the ticker is (the hub→command-center light
+/// delay); execution still happens at the true current price, so the displayed
+/// price is only a guide.
+#[derive(Debug, Clone, Serialize)]
+pub struct MarketView {
+    pub prices: Vec<PriceView>,
+    pub staleness: f64,
+}
+
+/// One commodity holding in the player's wallet.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct InvSlot {
+    pub commodity: Commodity,
+    pub units: u32,
+}
+
+/// The player's own treasury + holdings (their own local state — shown fresh).
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletView {
+    pub credits: f64,
+    pub inventory: Vec<InvSlot>,
 }
 
 /// Which side of a raid the recipient is on.
@@ -156,10 +195,18 @@ pub enum ServerMsg {
         anchors: Vec<AnchorView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
+        /// The hub ticker, light-delayed (§9).
+        market: MarketView,
+        /// The player's own credits + holdings (fresh).
+        wallet: WalletView,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.
     Report { report: RaidReport },
+
+    /// Economy news for this player (§9): a buy settled, a delivery arrived, a
+    /// sell was dispatched or cleared.
+    Trade { trade: TradeEvent },
 
     /// Feedback for an order the player just issued — the full round trip of the
     /// command (§6, the three clocks). Sent immediately to the issuing player

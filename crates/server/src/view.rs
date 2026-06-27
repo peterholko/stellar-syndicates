@@ -23,10 +23,11 @@
 //! first one with `arrival ≤ now` is the unique latest observable state. We show
 //! that one and nothing fresher — provably no leak.
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use sim::{Cargo, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, Vec2, World};
+use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, Vec2, World};
 
 use crate::protocol::{AnchorView, CargoView, GhostView};
 
@@ -256,6 +257,51 @@ pub fn filter_anchors(
             }
         })
         .collect()
+}
+
+/// History of the hub's standing prices, so each player can be shown the prices
+/// **light-delayed** from the hub (§9). The Exchange ticker is a lightspeed
+/// broadcast; far from the hub you read an old copy. Mirrors [`PositionHistory`]
+/// but for the (single, shared) hub.
+pub struct PriceHistory {
+    samples: VecDeque<(f64, BTreeMap<Commodity, f64>)>,
+    horizon: f64,
+}
+
+impl PriceHistory {
+    pub fn for_world(world: &World) -> Self {
+        let max_delay = (2.0 * world.config.galaxy_radius) / world.config.c;
+        PriceHistory {
+            samples: VecDeque::new(),
+            horizon: max_delay * 1.25 + 1.0,
+        }
+    }
+
+    pub fn record(&mut self, world: &World) {
+        let now = world.time;
+        self.samples.push_back((now, world.market.prices().clone()));
+        while let Some((t, _)) = self.samples.front() {
+            if now - t > self.horizon {
+                self.samples.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// The hub prices as of `target` sim-time (the latest sample whose time is
+    /// `≤ target`). Falls back to the oldest sample if `target` predates history.
+    pub fn at(&self, target: f64) -> Option<&BTreeMap<Commodity, f64>> {
+        let mut best: Option<&BTreeMap<Commodity, f64>> = None;
+        for (t, prices) in &self.samples {
+            if *t <= target {
+                best = Some(prices);
+            } else {
+                break;
+            }
+        }
+        best.or_else(|| self.samples.front().map(|(_, p)| p))
+    }
 }
 
 /// Is `p` within `range` of any sensor center?

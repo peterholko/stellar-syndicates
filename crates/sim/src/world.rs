@@ -11,14 +11,15 @@ use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cargo::Cargo;
 use crate::command::Command;
 use crate::config::{SimConfig, DT};
-use crate::event::{Event, EventPayload, RaidOutcome};
+use crate::event::{Event, EventPayload, RaidOutcome, TradeEvent};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
 use crate::movement::intercept_step;
-use crate::ship::{Ship, ShipKind, ShipOrder};
+use crate::ship::{Ship, ShipKind, ShipOrder, TradeMission};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -34,6 +35,10 @@ pub struct Corporation {
     /// are computed from here (§6). Equals `home` until the command center is
     /// relocated (a later milestone); kept separate so M3 can use it directly.
     pub command_center: Vec2,
+    /// Credits (the corporate treasury).
+    pub credits: f64,
+    /// Goods held at home, by commodity.
+    pub inventory: BTreeMap<crate::cargo::Commodity, u32>,
 }
 
 /// An order in flight: a player's command that has left their command center
@@ -54,6 +59,9 @@ const CONTACT_RADIUS: f64 = 80.0;
 /// is the shared commons).
 const HUB_SAFE_RADIUS: f64 = 300.0;
 
+/// The market drifts once per this many ticks (≈ once a second at 30 Hz).
+const MARKET_UPDATE_TICKS: u64 = 30;
+
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +81,8 @@ pub struct World {
     pub players: BTreeMap<PlayerId, Corporation>,
     /// All ships, keyed by id. `BTreeMap` keeps integration order deterministic.
     pub ships: BTreeMap<EntityId, Ship>,
+    /// The shared hub Exchange (§9).
+    pub market: crate::market::Market,
     /// Orders that have been issued but whose light has not yet reached the ship.
     pending_orders: Vec<PendingOrder>,
     /// Monotonic allocator for entity ids.
@@ -117,6 +127,7 @@ impl World {
             home_slots,
             players: BTreeMap::new(),
             ships: BTreeMap::new(),
+            market: crate::market::Market::new(),
             pending_orders: Vec::new(),
             next_entity_id,
             rng,
@@ -151,12 +162,19 @@ impl World {
         self.integrate_movement();
 
         // 4. Resolve raids in true space (contact → convoy lost; convoy reaches
-        //    the hub → escape).
+        //    the hub → escape). A raided trade convoy's goods are simply lost.
         self.resolve_raids(&mut events);
 
-        // 5. Advance the clock.
+        // 5. Resolve trade convoys that survived to their destination (§9).
+        self.resolve_trade_arrivals(&mut events);
+
+        // 6. Advance the clock; drift the market on a slow cadence so the price
+        //    information lag is visible.
         self.tick += 1;
         self.time += DT;
+        if self.tick.is_multiple_of(MARKET_UPDATE_TICKS) {
+            self.market.drift(&mut self.rng);
+        }
 
         events
     }
@@ -285,6 +303,12 @@ impl World {
                     return;
                 }
                 let home = self.assign_home(*id);
+                // Starting inventory: a stock of each commodity to sell, plus a
+                // treasury to buy with.
+                let inventory = crate::cargo::Commodity::ALL
+                    .into_iter()
+                    .map(|c| (c, 120u32))
+                    .collect();
                 self.players.insert(
                     *id,
                     Corporation {
@@ -293,6 +317,8 @@ impl World {
                         joined_tick: self.tick,
                         home,
                         command_center: home,
+                        credits: 10_000.0,
+                        inventory,
                     },
                 );
                 events.push(Event::new(
@@ -337,6 +363,146 @@ impl World {
                     return;
                 };
                 self.schedule_for_owner(*player_id, *raider_id, ShipOrder::MoveTo { dest: home });
+            }
+            Command::MarketBuy {
+                player_id,
+                commodity,
+                units,
+            } => {
+                let units = *units;
+                if units == 0 {
+                    return;
+                }
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                let home = corp.home;
+                let price = self.market.price(*commodity);
+                let cost = units as f64 * price;
+                if corp.credits < cost {
+                    return; // can't afford
+                }
+                // Instant settlement at the true standing price (§9).
+                let unit_price = self.market.execute_buy(*commodity, units);
+                if let Some(corp) = self.players.get_mut(player_id) {
+                    corp.credits -= units as f64 * unit_price;
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::Bought {
+                        player: *player_id,
+                        commodity: *commodity,
+                        units,
+                        unit_price,
+                    }),
+                ));
+                // Delivery convoy carries the goods home (raidable in transit).
+                let cargo = Cargo { commodity: *commodity, units };
+                self.spawn_trade_convoy(*player_id, self.hub, home, cargo, TradeMission::DeliverHome);
+            }
+            Command::MarketSell {
+                player_id,
+                commodity,
+                units,
+            } => {
+                let units = *units;
+                if units == 0 {
+                    return;
+                }
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
+                if have < units {
+                    return; // not enough goods
+                }
+                let home = corp.home;
+                // Commit goods to the crossing FIRST — price is decided on arrival.
+                if let Some(corp) = self.players.get_mut(player_id) {
+                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::SellDispatched {
+                        player: *player_id,
+                        commodity: *commodity,
+                        units,
+                    }),
+                ));
+                let cargo = Cargo { commodity: *commodity, units };
+                self.spawn_trade_convoy(*player_id, home, self.hub, cargo, TradeMission::SellAtHub);
+            }
+        }
+    }
+
+    /// Spawn a raidable trade convoy that resolves its mission on arrival.
+    fn spawn_trade_convoy(
+        &mut self,
+        owner: PlayerId,
+        spawn: Vec2,
+        dest: Vec2,
+        cargo: Cargo,
+        mission: TradeMission,
+    ) -> EntityId {
+        let id = self.alloc_entity_id();
+        let mut ship = Ship::new(
+            id,
+            owner,
+            ShipKind::Convoy,
+            spawn,
+            ShipOrder::MoveTo { dest },
+            Some(cargo),
+        );
+        ship.mission = Some(mission);
+        self.ships.insert(id, ship);
+        id
+    }
+
+    /// Resolve trade convoys that have reached their destination: deposit a
+    /// delivery, or clear a sale at the price-on-arrival (§9). Convoys raided in
+    /// transit were already removed (their goods/credits simply lost).
+    fn resolve_trade_arrivals(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let arrived: Vec<EntityId> = self
+            .ships
+            .iter()
+            .filter(|(_, s)| s.mission.is_some() && matches!(s.order, ShipOrder::Idle))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in arrived {
+            let ship = self.ships.remove(&id).unwrap();
+            let (Some(cargo), Some(mission)) = (ship.cargo, ship.mission) else {
+                continue;
+            };
+            match mission {
+                TradeMission::DeliverHome => {
+                    if let Some(corp) = self.players.get_mut(&ship.owner) {
+                        *corp.inventory.entry(cargo.commodity).or_insert(0) += cargo.units;
+                    }
+                    events.push(Event::new(
+                        now,
+                        EventPayload::Trade(TradeEvent::Delivered {
+                            player: ship.owner,
+                            commodity: cargo.commodity,
+                            units: cargo.units,
+                        }),
+                    ));
+                }
+                TradeMission::SellAtHub => {
+                    let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
+                    if let Some(corp) = self.players.get_mut(&ship.owner) {
+                        corp.credits += cargo.units as f64 * unit_price;
+                    }
+                    events.push(Event::new(
+                        now,
+                        EventPayload::Trade(TradeEvent::Sold {
+                            player: ship.owner,
+                            commodity: cargo.commodity,
+                            units: cargo.units,
+                            unit_price,
+                        }),
+                    ));
+                }
             }
         }
     }
@@ -723,6 +889,82 @@ mod tests {
         assert_eq!(outcome, Some(RaidOutcome::Intercepted), "recall should have arrived too late");
         assert!(recalled, "test should have issued a recall");
         assert!(!w.ships.contains_key(&convoy));
+    }
+
+    #[test]
+    fn market_buy_settles_now_and_delivers_later() {
+        use crate::cargo::Commodity::Fuel;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let credits0 = w.players[&id].credits;
+        let fuel0 = w.players[&id].inventory[&Fuel];
+        let price = w.market.price(Fuel);
+
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 50 }]);
+        // Instant settlement: credits debited now (≈ 50 × price).
+        let spent = credits0 - w.players[&id].credits;
+        assert!((spent - 50.0 * price).abs() < 1e-6, "buy should settle at the standing price");
+        // A delivery convoy spawned at the hub, carrying the goods.
+        let convoy = w.ships.values().find(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome));
+        assert!(convoy.is_some(), "buy should spawn a delivery convoy");
+        assert!(convoy.unwrap().pos.distance(w.hub) < 1.0, "delivery convoy starts at the hub");
+        // Inventory not yet increased (goods still in transit).
+        assert_eq!(w.players[&id].inventory[&Fuel], fuel0);
+
+        // Run until the convoy reaches home and deposits the goods.
+        for _ in 0..(220 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.players[&id].inventory[&Fuel] == fuel0 + 50 {
+                return;
+            }
+        }
+        panic!("delivery convoy never arrived");
+    }
+
+    #[test]
+    fn market_sell_commits_goods_and_clears_on_arrival() {
+        use crate::cargo::Commodity::Ore;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let credits0 = w.players[&id].credits;
+        let ore0 = w.players[&id].inventory[&Ore];
+
+        w.step(&[Command::MarketSell { player_id: id, commodity: Ore, units: 40 }]);
+        // Goods committed to the crossing now; credits unchanged until arrival.
+        assert_eq!(w.players[&id].inventory[&Ore], ore0 - 40);
+        assert_eq!(w.players[&id].credits, credits0);
+        let convoy = w.ships.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
+        assert!(convoy.is_some(), "sell should spawn a convoy toward the hub");
+
+        // Run until it reaches the hub and clears at the price-on-arrival.
+        for _ in 0..(260 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.players[&id].credits > credits0 {
+                return; // sold at arrival, credited
+            }
+        }
+        panic!("sell convoy never cleared");
+    }
+
+    #[test]
+    fn cannot_buy_without_credits_or_sell_without_goods() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let ships0 = w.ships.len();
+        // Sell more than held → ignored (no convoy, inventory unchanged).
+        let alloys0 = w.players[&id].inventory[&Alloys];
+        w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 99_999 }]);
+        assert_eq!(w.players[&id].inventory[&Alloys], alloys0);
+        assert_eq!(w.ships.len(), ships0, "rejected sell must not spawn a convoy");
+        // Buy beyond the treasury → ignored.
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000 }]);
+        assert_eq!(w.players[&id].credits, credits0);
+        assert_eq!(w.ships.len(), ships0, "rejected buy must not spawn a convoy");
     }
 
     #[test]
