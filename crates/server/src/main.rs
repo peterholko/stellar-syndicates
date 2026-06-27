@@ -81,17 +81,26 @@ async fn main() -> anyhow::Result<()> {
     let max_players = env_u64("MAX_PLAYERS", 4) as u32;
 
     let config = SimConfig::for_players(seed, max_players);
-    info!(
-        seed = config.seed,
-        galaxy_radius = config.galaxy_radius,
-        c = config.c,
-        max_players,
-        "initialising galaxy"
-    );
-    let world = World::new(config);
 
     // Persistence (off the hot path). Falls back to an in-memory stub if no DB.
-    let persistence = persistence::init_persistence().await;
+    // If a snapshot exists, the galaxy is restored from it (surviving a restart).
+    let (persistence, restored) = persistence::init_persistence().await;
+    let world = match restored {
+        Some(w) => {
+            info!(tick = w.tick, players = w.players.len(), "resuming galaxy from snapshot");
+            w
+        }
+        None => {
+            info!(
+                seed = config.seed,
+                galaxy_radius = config.galaxy_radius,
+                c = config.c,
+                max_players,
+                "initialising fresh galaxy"
+            );
+            World::new(config)
+        }
+    };
 
     // Spawn the single authoritative game loop, owning the world.
     let snapshot_every = env_u64("SNAPSHOT_EVERY_TICKS", game_loop::DEFAULT_SNAPSHOT_EVERY);

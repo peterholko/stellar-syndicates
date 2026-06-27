@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId } from "./protocol";
+import { formatId, type Commodity, type Side, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -23,6 +23,8 @@ function setHud(): void {
     state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
   $("hud-online").textContent = state.link === "online" ? String(state.corpsInView) : "—";
   $("hud-ships").textContent = state.link === "online" ? String(state.ghosts.length) : "—";
+  $("hud-credits").textContent = state.wallet ? `${Math.round(state.wallet.credits).toLocaleString()}` : "—";
+  $("hud-equity").textContent = state.wallet ? `${Math.round(state.wallet.valuation).toLocaleString()}` : "—";
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
     connecting: "connecting…",
@@ -59,11 +61,25 @@ async function startRenderer(): Promise<void> {
 // delay is computed from truth or a client-side c.
 function updateSignals(): void {
   const estSimNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
-  // Outbound comets: progress from the server's sim-time window.
+  // Order round trip: comet OUT to the ship, then the response light coming
+  // BACK; dropped once that return light reaches the command center (which is
+  // when the ghost's new course becomes visible — so the gap is never dead).
   state.commandSignals = state.commandSignals.filter((s) => {
-    const span = s.arrive - s.depart;
-    s.progress = span > 1e-3 ? (estSimNow - s.depart) / span : 1;
-    return s.progress < 1; // drop once it reaches the ship's ghost
+    const outSpan = s.arrive - s.depart;
+    const backSpan = s.observe - s.arrive;
+    if (estSimNow < s.arrive) {
+      s.phase = "out";
+      s.pOut = outSpan > 1e-3 ? (estSimNow - s.depart) / outSpan : 1;
+      s.pBack = 0;
+    } else if (estSimNow < s.observe) {
+      s.phase = "back";
+      s.pOut = 1;
+      s.pBack = backSpan > 1e-3 ? (estSimNow - s.arrive) / backSpan : 1;
+    } else {
+      return false; // response light has arrived; the ghost now shows the change
+    }
+    s.remainingS = Math.max(0, s.observe - estSimNow);
+    return true;
   });
   // Inbound rings: progress over the server-provided light delay; reveal the
   // verdict on arrival at the command center.
@@ -150,13 +166,17 @@ function installInteraction(): void {
       `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
   });
 
-  // Recall the selected raider (light-delayed; may miss the window).
+  // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
   window.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
     if ((e.key === "r" || e.key === "R") && state.selectedShipId && net) {
       net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
+    } else if (e.key === "m" || e.key === "M") {
+      const m = $("market");
+      m.style.display = m.style.display === "none" ? "block" : "none";
     }
   });
 }
@@ -176,6 +196,80 @@ function addReport(r: import("./protocol").RaidReport): void {
   const el = document.createElement("div");
   el.className = "report " + cls;
   el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>`;
+  log.prepend(el);
+  while (log.children.length > 6) log.removeChild(log.lastChild!);
+  setTimeout(() => el.classList.add("fade"), 12000);
+}
+
+// --- Hub Exchange (§9) -------------------------------------------------------
+const COMMODITIES: Commodity[] = ["fuel", "ore", "alloys", "provisions", "volatiles"];
+
+function buildMarketPanel(): void {
+  const rows = $("market-rows");
+  rows.innerHTML = "";
+  for (const c of COMMODITIES) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="name">${c}</td>` +
+      `<td id="mp-price-${c}">—</td>` +
+      `<td id="mp-held-${c}">—</td>` +
+      `<td><button class="buy" data-c="${c}" data-side="buy">Buy</button> ` +
+      `<button class="sell" data-c="${c}" data-side="sell">Sell</button></td>`;
+    rows.appendChild(tr);
+  }
+  rows.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !net) return;
+    const c = btn.getAttribute("data-c") as Commodity;
+    const side = btn.getAttribute("data-side") as Side;
+    const qty = Math.max(1, Math.floor(Number((($("market-qty") as HTMLInputElement).value) || 0)));
+    const limitOn = ($("market-limit-on") as HTMLInputElement).checked;
+    const limitPrice = Number(($("market-limit-price") as HTMLInputElement).value);
+    if (limitOn && limitPrice > 0) {
+      net.send({ type: "PlaceLimitOrder", side, commodity: c, units: qty, limit_price: limitPrice });
+    } else {
+      net.send(side === "buy"
+        ? { type: "MarketBuy", commodity: c, units: qty }
+        : { type: "MarketSell", commodity: c, units: qty });
+    }
+  });
+}
+
+function updateMarket(): void {
+  if (!state.market || !state.wallet) return;
+  $("market-credits").textContent =
+    `${Math.round(state.wallet.credits).toLocaleString()} cr · equity ${Math.round(state.wallet.valuation).toLocaleString()}`;
+  const stale = state.market.staleness;
+  $("market-stale").textContent = stale > 0.5 ? `ticker ~${stale.toFixed(0)}s stale` : "ticker live";
+  const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
+  const heldOf = new Map(state.wallet.inventory.map((i) => [i.commodity, i.units]));
+  for (const c of COMMODITIES) {
+    const pe = document.getElementById(`mp-price-${c}`);
+    const he = document.getElementById(`mp-held-${c}`);
+    if (pe) pe.textContent = priceOf.has(c) ? priceOf.get(c)!.toFixed(2) : "—";
+    if (he) he.textContent = String(heldOf.get(c) ?? 0);
+  }
+  const ordersEl = $("market-orders");
+  const orders = state.wallet.orders;
+  ordersEl.innerHTML = orders.length
+    ? "<b>resting:</b> " + orders.map((o) => `<span class="o ${o.side}">${o.side} ${o.units} ${o.commodity} @ ${o.limit_price.toFixed(1)}</span>`).join(" · ")
+    : "";
+}
+
+function addTradeNews(t: TradeEvent): void {
+  const log = $("reports-log");
+  let text = "";
+  switch (t.event) {
+    case "Bought": text = `Bought ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
+    case "Delivered": text = `Delivery arrived: +${t.units} ${t.commodity} in stores.`; break;
+    case "SellDispatched": text = `Sell convoy away: ${t.units} ${t.commodity} crossing to the hub.`; break;
+    case "Sold": text = `Sold ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
+    case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${t.commodity} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
+    case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)}.`; break;
+  }
+  const el = document.createElement("div");
+  el.className = "report good";
+  el.innerHTML = `<span class="ic" style="color:#7fd4ff">◈</span> ${text}`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);
@@ -214,6 +308,8 @@ function join(): void {
           hud.style.display = "flex";
           $("readout").style.display = "block";
           $("legend").style.display = "block";
+          buildMarketPanel();
+          $("market").style.display = "block";
           void startRenderer();
           break;
         case "View":
@@ -222,21 +318,29 @@ function join(): void {
           state.commandCenter = msg.command_center;
           state.anchors = msg.anchors;
           state.ghosts = msg.ghosts;
+          state.market = msg.market;
+          state.wallet = msg.wallet;
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
           state.lastViewWallMs = performance.now();
           state.link = "online";
+          updateMarket();
           break;
         case "CommandSignal": {
-          // Your order is crossing space to your ship. Replace any in-flight
-          // comet for the same ship (a newer order supersedes).
+          // Your order is crossing space to your ship, and you'll see its
+          // response a round trip later. Replace any in-flight signal for the
+          // same ship (a newer order supersedes).
           state.commandSignals = state.commandSignals.filter((s) => s.shipId !== msg.ship_id);
           state.commandSignals.push({
             shipId: msg.ship_id,
             depart: msg.depart_time,
             arrive: msg.arrive_time,
-            progress: 0,
+            observe: msg.observe_time,
+            phase: "out",
+            pOut: 0,
+            pBack: 0,
+            remainingS: 0,
           });
           break;
         }
@@ -254,6 +358,9 @@ function join(): void {
           });
           break;
         }
+        case "Trade":
+          addTradeNews(msg.trade);
+          break;
         case "Error":
           joinErr.textContent = msg.message;
           break;

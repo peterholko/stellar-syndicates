@@ -19,9 +19,14 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
 | **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
 | **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
-| M5 — Full multiplayer economy | ⬜ Not started | |
-| M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
-| M7 — Client polish | ⬜ Not started | |
+| **M5 — Full multiplayer economy** | ✅ **Complete** | Hub Exchange (instant execution, lagged ticker), market + limit orders with uniform-price batch clearing, raidable trade convoys, buy/sell asymmetry, slow equity valuations. |
+| **M6 — Robust sessions, persistence, scale to 12** | ✅ **Complete** | Restart restores the galaxy from the latest snapshot; 12 players in one galaxy with the loop keeping up; corps persist + reconnect resumes. |
+| **M7 — Client polish** | ✅ **Complete** | Credits/equity in the HUD, the full delayed-map + market + raid UI tied together, and a run + play guide; the core loop is playable by multiple people. |
+
+**All seven milestones of the build plan are complete** — plus three additive
+features layered on the core: the **signals animation** (the order's full round
+trip visualized), and the **two-tier information model** (Convention broadcast +
+sensor-range detection).
 
 ### What M1 delivers (verified)
 
@@ -142,14 +147,27 @@ Two traveling signals make the lightspeed delay legible, as **client-side
 feedback driven entirely by server-authoritative timing** (the client computes no
 delay and never sees true positions):
 
-- **Outbound order comet** (violet): when you issue any order, a comet crosses
-  from your command center toward the commanded ship's **ghost**. The server
-  sends a `CommandSignal { ship_id, depart_time, arrive_time }` the moment it
-  accepts the order; `arrive − depart` is the player's *observed* light delay to
-  that ship (its ghost's staleness — so it reveals no true distance), and the
-  client interpolates the comet between the command center and the **live ghost**
-  over that sim-time window. Because the endpoint is the ghost the renderer
-  already draws, the comet meets it and cannot overshoot.
+- **Order round trip** (violet) — the three clocks of §6 made fully legible:
+  when you issue any order, the server sends a
+  `CommandSignal { ship_id, depart_time, arrive_time, observe_time }` the moment
+  it accepts the order. The client renders the whole round trip:
+  1. *Comet out* over `[depart, arrive]` — a violet comet crosses from your
+     command center to the commanded ship's **live ghost** (endpoint is the ghost
+     the renderer already draws, so it meets it and cannot overshoot).
+  2. *Order received* — a brief pulse at the ghost when the comet lands.
+  3. *Response light home* over `[arrive, observe]` — a faint violet pulse
+     travels back from the ship toward your command center, with a status label
+     **"RECEIVED · response light ~Xs"** counting down. This fills what used to be
+     a dead, unexplained gap: the ship hasn't visibly reacted yet *because the
+     light of its maneuver is still on its way home*.
+  4. At `observe`, the return light arrives and the ghost's new course becomes
+     visible — so the course change is explained (it coincides with the response
+     light landing), not mysterious.
+
+  `arrive − depart` and `observe − arrive` each equal the player's *observed*
+  one-way light delay to the ship (its ghost's staleness), so nothing reveals the
+  ship's true distance — the round trip is the player's honest estimate from their
+  delayed view, and the client only interpolates between the server's three times.
 - **Inbound result rings** (gold): when a raid report becomes observable (M4's
   per-player delivery already gates this by light), gold rings depart the
   resolution point and travel home to the command center, **revealing the verdict
@@ -161,9 +179,138 @@ prototype's bugs ("comet overshoots the ghost", "report leaves before you see th
 resolution") are structurally impossible. Smoothing/interpolation between
 server-provided endpoints and times is the only client-side computation.
 
-**Protocol addition:** `ServerMsg::CommandSignal` (server→client, to the issuing
-player only) in `crates/server/src/protocol.rs` + `client/src/protocol.ts`. The
-inbound rings needed no addition.
+**Protocol addition:** `ServerMsg::CommandSignal { ship_id, depart_time,
+arrive_time, observe_time }` (server→client, to the issuing player only) in
+`crates/server/src/protocol.rs` + `client/src/protocol.ts` — the three clock-times
+of the order's round trip. The inbound raid rings needed no addition (they reuse
+`RaidReport`'s `pos` + `age`).
+
+### Two-tier information model (broadcast + sensor range)
+
+A second layer of "what each player is allowed to see" sits on top of the
+lightspeed delay — and it is enforced **in the view filter**, so it is part of
+the fairness guarantee, not a client effect. One law still governs everything:
+all information travels at `c`. Nothing here is instant.
+
+- **Tier 1 — broadcast (the Galactic Convention), galaxy-wide, light-delayed.**
+  Convoys broadcast identity + position + route, so every convoy (yours and
+  rivals') appears as a light-delayed ghost galaxy-wide. **Raiders do not
+  broadcast — they are dark.**
+- **Tier 2 — sensor range.** Each of a player's assets (every ship + the command
+  center) projects a `sensor_range` detection radius; coverage is their union.
+  Within coverage you learn more: a convoy's **cargo** is revealed, and a **dark
+  raider becomes visible**. Outside coverage, cargo is withheld and a rival
+  raider is **omitted from the view payload entirely** — your only warning of an
+  approaching raider is the moment it trips your sensors.
+
+**View-filter change & the no-leak choice** (`crates/server/src/view.rs`):
+`view_for` now (1) includes all convoys with route, (2) attaches cargo only when
+the convoy is within the viewer's coverage, and (3) includes a raider only when
+within coverage — otherwise it is *omitted server-side*, never sent-and-hidden.
+Detection is computed in the **command center's delayed composite frame**: an
+object is "in coverage" when its **delayed ghost** falls within `sensor_range` of
+an asset's **delayed ghost** (or the command center). This uses only light that
+has arrived, so it never reveals the true position of a dark ship (you still only
+see where it *was*), and it matches exactly what the client draws — a detected
+raider always appears inside a drawn coverage circle.
+
+**Protocol additions:** `GalaxyInfo.sensor_range`; `GhostView.route` (convoy
+broadcast waypoints) and `GhostView.cargo` (present only in range); a `CargoView`
++ `Commodity`. In the sim: a `sensor_range` config constant and an
+`Option<Cargo>` on ships (convoys carry demo cargo; raiders carry none).
+
+**Client visualizations:** soft teal **sensor-coverage** bubbles around your
+assets; convoy **routes** (waypoints + path, light-delayed); **cargo labels**
+shown when known (gold for an in-range rival's manifest — intel) and `cargo ?`
+when out of range; a detected rival raider rendered as a **pulsing red "⚠ RAIDER"
+threat contact**.
+
+**Verified** (`scripts/sensor_smoke.mjs` + 6 view-filter unit tests): convoys
+broadcast galaxy-wide; cargo is present *iff* the convoy is within coverage; a
+dark raider well outside coverage is absent from the payload (no leak), and every
+visible rival raider is within coverage; browser-confirmed the coverage bubbles,
+routes, cargo reveal, and the threat contact appearing as a raider enters range.
+
+### What M5 delivers so far (sub-step 5a — the hub Exchange)
+
+The economic spine of §9, tied to the raiding loop:
+
+- **The hub Exchange** (`crates/sim/src/market.rs`): one shared market, a standing
+  price per commodity that **walks with flow** (buys lift, sells depress) and
+  **drifts** on a slow seeded random walk so there's always something to trade.
+- **Instant execution, lagged price information.** A market order settles *now*
+  at the true standing price (correlation is instant), but the **price ticker is
+  light-delayed** from the hub (the server's `PriceHistory` sends each player the
+  prices as of the light that has reached their command center). So you commit to
+  the *true* price, not the stale number you read — verified: the ticker showed
+  ≈10.00 while a buy filled at the drifted-true 10.42.
+- **Orders carry intent + destination, spawning raidable convoys.** A **buy**
+  settles instantly (credits debited) and spawns a delivery convoy **hub → home**
+  (price-certain, delivery-risky). A **sell** commits the goods *first* and spawns
+  a convoy **home → hub** that clears at the **price-on-arrival** (the §9 buy/sell
+  asymmetry — double uncertainty). Both convoys are ordinary `Convoy`s, so they
+  are **raidable in transit** (M4); a raided trade convoy's goods are simply lost.
+- **Credits + inventory** on each corporation; a **market panel** client UI
+  (prices, staleness, your wallet, Buy/Sell — press **M**) and an economy news log.
+- *(Nice lightspeed detail: a buy's delivery convoy spawns at the hub, ~16s of
+  light from home, so you don't even see your own inbound convoy until its light
+  arrives.)*
+
+**Protocol additions:** `ClientMsg::MarketBuy` / `MarketSell`; `View.market`
+(lagged `PriceView`s + `staleness`) and `View.wallet` (`credits` + `inventory`);
+`ServerMsg::Trade`. Sim: a `Market`, `Corporation.credits`/`inventory`, a
+`TradeMission` on ships, and `TradeEvent`s.
+
+**Verified** (`scripts/economy_smoke.mjs` + 3 sim trade tests): lagged ticker;
+buy settles instantly and spawns a delivery convoy; sell commits goods to a
+hub-bound convoy; delivery/sale resolve on arrival; browser-confirmed the market
+panel, trade news, and convoys crossing raidable space.
+
+**Sub-step 5b — limit orders + batch clearing.** Limit orders rest on a per-
+commodity book (resources reserved at placement — credits for a buy, goods for a
+sell). Every ~20 s a **periodic uniform-price call auction** clears each book:
+all trades settle at one price, so reacting fastest confers no edge (the §9 anti-
+sniping mechanism). A matched buy settles and spawns a delivery convoy (refunding
+any over-reservation); a matched sell is paid; unmatched orders rest to the next
+batch. Client: a limit toggle + price in the market panel and a resting-orders
+list. Verified by `scripts/limit_smoke.mjs` + 2 sim tests (a crossing pair clears
+at the uniform price; non-crossing orders rest).
+
+**Sub-step 5c — equity valuations.** Each corporation's net worth (credits +
+goods at market — held, in transit, and reserved in resting orders — plus
+buy-order escrow) is recomputed on a **slow cadence** (≈ every 60 s) to keep it
+readable, not noisy (§9), and shown in the market panel ("equity"). Verified the
+figure ≈ credits + inventory value.
+
+### What M6 delivers (verified) — robustness, persistence, scale
+
+- **Restart restores the galaxy from the latest snapshot (§14).** Snapshots (full
+  `World` JSON) are written off the hot path every ~10 s; on startup the server
+  loads the most recent one and resumes from it (else generates a fresh galaxy).
+  A reconnecting player resolves to the same corporation (the stable name hash),
+  now restored with its credits, inventory, ships, resting orders, and market.
+  Verified by `scripts/restart_smoke.sh`: a player buys fuel (credits 10000 →
+  8023), the world snapshots, the server is **killed and restarted**, and the
+  rejoining corp is restored at 8023. *(Restart transient: the per-player view
+  history is rebuilt fresh, so the galaxy re-illuminates over ~one light-crossing
+  as light propagates from the restored positions.)*
+- **Scale to 12 players in one galaxy.** Galaxy radius scales with player count
+  (§4); the single authoritative loop builds 12 distinct per-player delayed views
+  and keeps up. Verified by `scripts/scale_smoke.mjs` (run with `MAX_PLAYERS=12`):
+  12 distinct players each get a live ~10 Hz delayed view and `/status` reports
+  12 online — the loop isn't falling behind.
+- **Session robustness.** Corporations persist across disconnects and keep
+  running on their standing orders (ships patrol, trade convoys continue);
+  reconnecting with the same name resumes the corporation; half-open connections
+  are reaped by the M1 keepalive + idle timeout.
+
+M5 thus realises the §9 model: instant execution + lagged prices, market AND
+limit orders with uniform-price batch clearing, order-spawned **raidable** trade
+convoys, the buy/sell asymmetry, and slow valuations. *(Documented
+simplifications: limit-order goods settle at the exchange rather than each
+spawning a crossing; the sell-news is shown promptly rather than light-delayed;
+home is treated as light-distance from the hub rather than a zero-lag coherence
+peak — all consistent, additive-friendly choices noted for later refinement.)*
 
 **Verified in-browser:** issuing an order shows the violet comet traveling from
 the command center to the ship's ghost (paced by the server's observed delay); a
@@ -243,9 +390,47 @@ cargo run -p server                # open http://localhost:8080
 
 ### 3. Multiple players
 
-Open the client in two or more browser tabs (or machines). Enter a **different
-corporation name** in each — each becomes a distinct player with its own stream.
-Reconnecting with the same name resumes that corporation.
+Open the client in two or more browser tabs (or machines, pointing at the same
+server). Enter a **different corporation name** in each — each becomes a distinct
+player commanding from its own home anchor, with its own delayed view.
+Reconnecting with the same name resumes that corporation (its ships, credits,
+inventory, and resting orders persist). Size the galaxy for the player count with
+`MAX_PLAYERS=12 cargo run -p server`.
+
+## Playing the game
+
+You command a chartered corporation from your **home anchor** — and you never see
+the galaxy as it *is*, only as the light that has reached your chair (§6). Every
+sighting shows where something *was*; every order crosses space at light speed.
+
+- **Read your delayed map.** Your own ships are crisp cyan (a coherent feed, just
+  late). Rivals are red **ghosts** at their last-known position, with an
+  uncertainty cone (how far they could have moved since the light left) and a
+  "Δ Ns" staleness label. Soft **teal bubbles** are your sensor coverage; outside
+  them you're blind to raiders. Convoys broadcast galaxy-wide (with their route);
+  cargo only shows for convoys inside your sensors. A pulsing red **⚠ RAIDER** is
+  your only warning of an attacker that has entered range.
+- **Command across the delay.** Click one of your ships to select it, then click
+  empty space to **move** it — a violet comet shows your order crossing to the
+  ship; then a return pulse + "RECEIVED · response light ~Ns" shows you waiting
+  for the light of its maneuver to come home (the ghost only changes course when
+  that light lands). The three clocks are always visible.
+- **Raid.** Select a raider, click a **rival ghost** to commit an intercept — it
+  pursues the rival's *true* position, not the stale ghost you saw. Press **R** to
+  recall (it may arrive too late). When a raid resolves, gold **report rings**
+  cross home and reveal the verdict on arrival — and the two players learn it on
+  *different* clocks.
+- **Trade (press M).** The **Hub Exchange** ticker is light-delayed, so you commit
+  to the *true* price, not the stale one you read. **Buy** settles now and a
+  delivery convoy crosses home (raidable). **Sell** ships goods to the hub first
+  and clears at the price-on-arrival (riskier). Or place **limit orders** (tick
+  "limit @", set a price) that rest and clear in a periodic uniform-price batch —
+  no sniping edge. Your credits, holdings, equity, and resting orders are in the
+  panel; credits + equity are also in the top HUD.
+
+The core loop: **command from home through honest lightspeed delay, trade on the
+shared Exchange, raid each other's convoys, and learn the outcomes as delayed
+news on your own clock.**
 
 ### Optional: durable persistence with Postgres
 
@@ -264,10 +449,10 @@ scripts/devdb.sh stop                 # or `nuke` to delete it entirely
 ## Tests
 
 ```bash
-cargo test                            # 27 unit tests: determinism, flip-and-burn
+cargo test                            # 33 unit tests: determinism, flip-and-burn
                                       # physics, the lightspeed fairness invariant,
                                       # command latency, raid resolution + recall,
-                                      # delayed-report delivery
+                                      # delayed-report delivery, two-tier sensor model
 
 # end-to-end checkpoint smoke tests (server must be running on :8080):
 cargo run -p server &                 # in one shell
@@ -275,6 +460,13 @@ node scripts/m1_smoke.mjs             # M1: per-player streams, join/leave (+/st
 node scripts/m2_smoke.mjs             # M2: galaxy + flip-and-burn movement
 node scripts/m3_smoke.mjs             # M3: per-player lightspeed views, no leaks (~35s)
 node scripts/m4_smoke.mjs             # M4: raid → delayed reports on own clocks (~70s)
+node scripts/sensor_smoke.mjs         # broadcast + sensor range: cargo gating, dark
+                                      # raiders omitted out of coverage (~35s)
+node scripts/economy_smoke.mjs        # M5: lagged ticker, instant buy + delivery
+                                      # convoy, sell asymmetry (~25s)
+node scripts/limit_smoke.mjs          # M5: limit orders + uniform-price batch (~25s)
+node scripts/scale_smoke.mjs 12       # M6: 12 players, loop keeps up (run server with MAX_PLAYERS=12)
+bash  scripts/restart_smoke.sh        # M6: kill + restart restores the galaxy (needs the dev DB)
 ```
 
 The server also exposes `GET /status` (JSON: connection/session meta — kept off
@@ -293,21 +485,24 @@ client/            Pixi.js + Vite + TypeScript client
 scripts/           devdb.sh (local Postgres), m1_smoke.mjs (checkpoint test)
 ```
 
-## What's next
+## What's next (post-alpha, from the design)
 
-- **M5 — the full multiplayer economy:** the hub Exchange (instant execution,
-  lagged prices), market + limit orders with periodic uniform-price batch
-  clearing, orders that spawn raidable delivery convoys, the buy/sell asymmetry,
-  and equity/valuations. *(Not started — the next milestone.)*
-- **M6 — robustness & scale to 12** (reconnect, persistence-driven restart,
-  view-filter performance) and **M7 — client polish**.
+The seven-milestone build is done. Beyond it, GAME_DESIGN sketches: **warp-lane
+construction** (player-built public speed-up corridors via the mass-reduction
+model, §10), the **conquest / home-assault endgame** and victory condition (§11),
+and **depth** — research/tech, coherence as a contestable system, exploration,
+the settlement-key economy, the movable forward command center (§6.1) — and only
+then **balance** (via the bot simulator + human playtest).
 
 ## Notes / known stubs
 
 - **Persistence stub:** without `DATABASE_URL` the event log/snapshots are
-  dropped (logged, not stored). The Postgres path is real and verified; the stub
-  exists purely so the game runs without a database. Restart-from-snapshot is an
-  M6 task — the schema and write path exist; the load/replay path does not yet.
+  dropped (logged, not stored). The Postgres path is real and verified, and a
+  restart **restores the galaxy from the latest snapshot** (M6). The stub exists
+  so the game runs without a database. *(Restart transient: the per-player view
+  history rebuilds fresh, so the galaxy re-illuminates over ~one light-crossing.
+  Command-replay between snapshots — full event-sourcing — is a refinement; the
+  snapshot reload alone bounds restart loss to the ~10 s snapshot interval.)*
 - **Delayed reports** (raid outcomes) are marked delivered when handed to the
   outbound queue. Reports are rare and the queue is almost never full, but M6
   should make delivery reliable (re-deliver until acknowledged).

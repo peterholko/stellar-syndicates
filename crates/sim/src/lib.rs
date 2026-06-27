@@ -11,25 +11,29 @@
 //! the per-player lightspeed view filter's delivery scheduling, rendering —
 //! lives in the `server` crate and the client, never here.
 
+pub mod cargo;
 pub mod command;
 pub mod config;
 pub mod event;
 pub mod galaxy;
 pub mod ids;
+pub mod market;
 pub mod math;
 pub mod movement;
 pub mod rng;
 pub mod ship;
 pub mod world;
 
+pub use cargo::{Cargo, Commodity};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
-pub use event::{Event, EventPayload, RaidOutcome};
+pub use event::{Event, EventPayload, RaidOutcome, TradeEvent};
 pub use galaxy::{HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
+pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
 pub use movement::{flip_and_burn, MoveStep};
 pub use rng::Rng;
-pub use ship::{Ship, ShipKind, ShipOrder};
+pub use ship::{Ship, ShipKind, ShipOrder, TradeMission};
 pub use world::{Corporation, World};
 

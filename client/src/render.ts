@@ -18,6 +18,8 @@ const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_REPORT = 0xffd24a; // inbound result rings (gold)
+const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
+const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
@@ -34,12 +36,15 @@ interface GhostSprite {
 export class Renderer {
   private app = new Application();
   private bg = new Container();
+  private sensorGfx = new Graphics();
+  private routesGfx = new Graphics();
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
   private ghostsLayer = new Container();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
+  private signalLabels = new Map<string, Text>();
   private ghosts = new Map<string, GhostSprite>();
 
   private galaxy: GalaxyInfo | null = null;
@@ -58,8 +63,10 @@ export class Renderer {
     mount.appendChild(this.app.canvas);
     this.app.stage.addChild(
       this.bg,
+      this.sensorGfx, // soft sensor coverage, under everything gameplay
       this.systemsLayer,
       this.anchorsLayer,
+      this.routesGfx, // convoy broadcast routes, under ghosts
       this.orderLayer,
       this.ghostsLayer,
       this.signalsLayer,
@@ -186,6 +193,42 @@ export class Renderer {
     this.anchorsLayer.addChild(g);
   }
 
+  /// Sensor coverage: a soft bubble around each of the player's assets (their
+  /// own ships + command center), radius = the server-provided sensor range.
+  /// The union shows where the player can detect raiders and read cargo — and,
+  /// by what it doesn't cover, where they are blind.
+  private drawSensorCoverage(state: ViewState, dt: number): void {
+    const g = this.sensorGfx;
+    g.clear();
+    if (!state.galaxy || !state.commandCenter) return;
+    const rPx = state.galaxy.sensor_range * this.scale;
+    const centers: { x: number; y: number }[] = [state.commandCenter];
+    for (const gh of state.ghosts) {
+      if (gh.own) centers.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt });
+    }
+    for (const c of centers) {
+      const s = this.worldToScreen(c);
+      g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: 0.045 }).stroke({ width: 1, color: COL_SENSOR, alpha: 0.14 });
+    }
+  }
+
+  /// Convoy broadcast routes: because convoys broadcast position + heading, show
+  /// their waypoints and the path between them (light-delayed like the rest).
+  private drawRoutes(state: ViewState): void {
+    const g = this.routesGfx;
+    g.clear();
+    for (const gh of state.ghosts) {
+      if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
+      const color = gh.own ? COL_OWN : COL_OTHER;
+      const pts = gh.route.map((w) => this.worldToScreen(w));
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      if (pts.length > 2) g.lineTo(pts[0].x, pts[0].y); // close the patrol loop
+      g.stroke({ width: 1, color, alpha: 0.2 });
+      for (const p of pts) g.circle(p.x, p.y, 2.4).stroke({ width: 1, color, alpha: 0.45 });
+    }
+  }
+
   private drawOrders(state: ViewState, ghostById: Map<string, { x: number; y: number }>): void {
     this.orderLayer.removeChildren();
     for (const [shipId, dest] of Object.entries(state.orders)) {
@@ -237,6 +280,12 @@ export class Renderer {
       const rPx = ghost.uncertainty * this.scale;
       sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
     }
+    // Detected rival raider = a threat contact (it's otherwise invisible). Make
+    // it unmistakable with a pulsing alert ring — this is your only warning.
+    if (!own && ghost.kind === "raider") {
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 230);
+      sp.cone.circle(0, 0, 13 + pulse * 7).stroke({ width: 1.6, color: COL_THREAT, alpha: 0.35 + 0.45 * pulse });
+    }
 
     // Selection ring.
     sp.ring.clear();
@@ -253,20 +302,35 @@ export class Renderer {
     if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
     sp.body.rotation = angle;
 
-    // Age label — disclosure of staleness. Shown for enemies and selection.
-    if (!own) {
-      sp.label.text = `Δ${ghost.age.toFixed(0)}s`;
-      sp.label.style.fill = COL_OTHER;
-      sp.label.alpha = 0.85;
-      sp.label.position.set(11, -10);
-    } else if (state.selectedShipId === ghost.id) {
-      sp.label.text = `Δ${ghost.age.toFixed(1)}s`;
-      sp.label.style.fill = COL_OWN;
-      sp.label.alpha = 0.85;
-      sp.label.position.set(11, -10);
-    } else {
-      sp.label.text = "";
+    // Label: threat warning for raiders, cargo manifest for convoys (shown only
+    // when known — i.e. within sensor range), staleness everywhere it matters.
+    const sel = state.selectedShipId === ghost.id;
+    let txt = "";
+    let col = COL_OTHER;
+    let lalpha = 0.85;
+    if (ghost.kind === "raider" && !own) {
+      txt = `⚠ RAIDER  Δ${ghost.age.toFixed(0)}s`;
+      col = COL_THREAT;
+      lalpha = 0.95;
+    } else if (ghost.kind === "convoy") {
+      const cargo = ghost.cargo ? `${ghost.cargo.commodity} ×${ghost.cargo.units}` : "cargo ?";
+      if (own) {
+        txt = cargo;
+        col = COL_OWN;
+        lalpha = sel ? 0.9 : 0.55;
+      } else {
+        txt = `${cargo}  Δ${ghost.age.toFixed(0)}s`;
+        col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
+        lalpha = 0.9;
+      }
+    } else if (own && sel) {
+      txt = `Δ${ghost.age.toFixed(1)}s`;
+      col = COL_OWN;
     }
+    sp.label.text = txt;
+    sp.label.style.fill = col;
+    sp.label.alpha = lalpha;
+    sp.label.position.set(11, -10);
 
     return s;
   }
@@ -275,10 +339,12 @@ export class Renderer {
     if (!state.galaxy) return;
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
 
+    const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
+
+    this.drawSensorCoverage(state, dt);
+    this.drawRoutes(state);
     this.drawAnchors(state);
     this.drawCommandCenter(state);
-
-    const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 
     for (const sp of this.ghosts.values()) sp.seen = false;
     const screenById = new Map<string, { x: number; y: number }>();
@@ -297,32 +363,86 @@ export class Renderer {
     this.drawSignals(state, dt);
   }
 
+  private signalLabel(id: string): Text {
+    let t = this.signalLabels.get(id);
+    if (!t) {
+      t = new Text({
+        text: "",
+        style: new TextStyle({ fill: COL_COMMAND, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "700", letterSpacing: 1 }),
+      });
+      t.anchor.set(0, 0.5);
+      this.signalsLayer.addChild(t);
+      this.signalLabels.set(id, t);
+    }
+    return t;
+  }
+
   /// Draw the traveling communication signals (server-timed; we only place them
-  /// at their interpolated `progress`). Violet comet = an order crossing to your
-  /// ship; gold rings = a result crossing home to you.
+  /// at their interpolated `progress`). Violet = an order's round trip (comet
+  /// out, then the response light home); gold rings = a raid result crossing
+  /// home to you.
   private drawSignals(state: ViewState, dt: number): void {
     const g = this.signalsGfx;
     g.clear();
     if (!state.commandCenter) return;
     const cc = this.worldToScreen(state.commandCenter);
 
-    // Outbound order comets: command center → the ship's GHOST.
+    // Order round trip: comet OUT to the ship, then the response light home.
+    const liveLabels = new Set<string>();
     for (const sig of state.commandSignals) {
       const ghost = state.ghosts.find((x) => x.id === sig.shipId);
       if (!ghost) continue;
-      const tg = this.worldToScreen({ x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
-      const p = Math.max(0, Math.min(1, sig.progress));
-      const hx = cc.x + (tg.x - cc.x) * p;
-      const hy = cc.y + (tg.y - cc.y) * p;
-      const d = norm(tg.x - hx, tg.y - hy); // heading toward the ship
-      dashedLine(g, cc.x, cc.y, hx, hy, 6, 7);
-      g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
-      for (let k = 1; k <= 4; k++) {
-        g.circle(hx - d.x * k * 6, hy - d.y * k * 6, 4.4 - k * 0.8).fill({ color: COL_COMMAND, alpha: 0.42 - k * 0.08 });
+      const gp = this.worldToScreen({ x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
+
+      if (sig.phase === "out") {
+        // Violet comet: command center → ghost.
+        const p = Math.max(0, Math.min(1, sig.pOut));
+        const hx = cc.x + (gp.x - cc.x) * p;
+        const hy = cc.y + (gp.y - cc.y) * p;
+        const d = norm(gp.x - hx, gp.y - hy);
+        dashedLine(g, cc.x, cc.y, hx, hy, 6, 7);
+        g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
+        for (let k = 1; k <= 4; k++) {
+          g.circle(hx - d.x * k * 6, hy - d.y * k * 6, 4.4 - k * 0.8).fill({ color: COL_COMMAND, alpha: 0.42 - k * 0.08 });
+        }
+        g.circle(hx, hy, 12).fill({ color: COL_COMMAND, alpha: 0.12 });
+        g.circle(hx, hy, 5).fill({ color: COL_COMMAND, alpha: 0.98 });
+        arrowhead(g, hx + d.x * 6, hy + d.y * 6, d.x, d.y, 9, COL_COMMAND, 0.98);
+      } else {
+        // Return leg: the order has reached the ship; now the light of its
+        // maneuver is travelling back. Fill the gap so the wait is explained.
+        const p = Math.max(0, Math.min(1, sig.pBack));
+
+        // "Order received" flash at the ghost (brief, at the hand-off).
+        if (p < 0.22) {
+          const f = p / 0.22;
+          g.circle(gp.x, gp.y, 6 + f * 22).stroke({ width: 2.4 * (1 - f), color: COL_COMMAND, alpha: 0.8 * (1 - f) });
+        }
+
+        // A faint, hollow violet pulse travelling ghost → command center.
+        const px = gp.x + (cc.x - gp.x) * p;
+        const py = gp.y + (cc.y - gp.y) * p;
+        const d = norm(cc.x - px, cc.y - py); // heading home
+        dashedLine(g, px, py, cc.x, cc.y, 5, 8);
+        g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
+        for (let k = 0; k < 2; k++) {
+          const ph = (p * 3 + k * 0.5) % 1;
+          g.circle(px, py, 4 + ph * 10).stroke({ width: 1.6 * (1 - ph), color: COL_COMMAND, alpha: 0.5 * (1 - ph) });
+        }
+        g.circle(px, py, 2).fill({ color: COL_COMMAND, alpha: 0.85 });
+        arrowhead(g, px + d.x * 9, py + d.y * 9, d.x, d.y, 6, COL_COMMAND, 0.85);
+
+        // Status label on the ship: the pause is the return-trip delay.
+        const label = this.signalLabel(sig.shipId);
+        label.text = `RECEIVED · response light ~${Math.ceil(sig.remainingS)}s`;
+        label.position.set(gp.x + 12, gp.y + 10);
+        label.visible = true;
+        liveLabels.add(sig.shipId);
       }
-      g.circle(hx, hy, 12).fill({ color: COL_COMMAND, alpha: 0.12 });
-      g.circle(hx, hy, 5).fill({ color: COL_COMMAND, alpha: 0.98 });
-      arrowhead(g, hx + d.x * 6, hy + d.y * 6, d.x, d.y, 9, COL_COMMAND, 0.98);
+    }
+    // Hide labels whose signal ended (the response light has arrived).
+    for (const [id, label] of this.signalLabels) {
+      if (!liveLabels.has(id)) label.visible = false;
     }
 
     // Inbound result rings: resolution point → command center.

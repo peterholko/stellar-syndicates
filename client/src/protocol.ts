@@ -22,8 +22,58 @@ export interface GalaxyInfo {
   hub: Vec2;
   radius: number;
   c: number; // speed of light, sim units / s
+  sensor_range: number; // detection radius each of your assets projects
   systems: SystemView[];
 }
+
+export type Commodity = "fuel" | "ore" | "alloys" | "provisions" | "volatiles";
+
+export interface CargoView {
+  commodity: Commodity;
+  units: number;
+}
+
+export interface PriceView {
+  commodity: Commodity;
+  price: number;
+}
+
+// The hub ticker, light-delayed from the hub (§9). `staleness` = how old.
+export interface MarketView {
+  prices: PriceView[];
+  staleness: number;
+}
+
+export interface InvSlot {
+  commodity: Commodity;
+  units: number;
+}
+
+export type Side = "buy" | "sell";
+
+export interface OrderView {
+  id: number;
+  side: Side;
+  commodity: Commodity;
+  units: number;
+  limit_price: number;
+}
+
+export interface WalletView {
+  credits: number;
+  valuation: number; // equity / net worth (slow §9 close)
+  inventory: InvSlot[];
+  orders: OrderView[];
+}
+
+// Economy news (mirrors sim TradeEvent, tagged by `event`).
+export type TradeEvent =
+  | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number }
+  | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
+  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
+  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number };
 
 export interface AnchorView {
   pos: Vec2;
@@ -42,6 +92,10 @@ export interface GhostView {
   age: number;
   uncertainty: number;
   own: boolean;
+  // Convoys broadcast a route (waypoints); raiders don't (null).
+  route: Vec2[] | null;
+  // Cargo present only when this convoy is within your sensor coverage.
+  cargo: CargoView | null;
 }
 
 // Render a decimal-string PlayerId as the canonical "P<hex>" form used by the
@@ -60,6 +114,9 @@ export type ClientMsg =
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
+  | { type: "MarketBuy"; commodity: Commodity; units: number }
+  | { type: "MarketSell"; commodity: Commodity; units: number }
+  | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "Ping" };
 
 export type RaidOutcome = "intercepted" | "escaped";
@@ -95,14 +152,19 @@ export type ServerMsg =
       command_center: Vec2;
       anchors: AnchorView[];
       ghosts: GhostView[];
+      market: MarketView;
+      wallet: WalletView;
     }
   | { type: "Report"; report: RaidReport }
+  | { type: "Trade"; trade: TradeEvent }
   | {
-      // Outbound order feedback: a comet crossing from the command center to one
-      // of your ships. The server owns the timing; the client only interpolates.
+      // Order round-trip feedback: comet out (command center → ship), then the
+      // response light coming home (ship → command center). The server owns all
+      // three clock-times; the client only interpolates.
       type: "CommandSignal";
       ship_id: EntityId;
       depart_time: number;
       arrive_time: number;
+      observe_time: number;
     }
   | { type: "Error"; message: string };

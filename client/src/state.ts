@@ -2,7 +2,7 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, PlayerId, RaidReport, Vec2 } from "./protocol";
+import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, RaidReport, Vec2, WalletView } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
@@ -10,12 +10,19 @@ export type LinkStatus = "connecting" | "online" | "offline";
 // pure rendering: the client only interpolates between server-provided endpoints
 // and times. `progress` (0..1) is recomputed each frame.
 
-// Outbound order comet: command center → the ship's ghost, paced by sim-time.
+// Order round-trip signal: comet out (command center → ghost) over
+// [depart, arrive], then the response light home (ghost → command center) over
+// [arrive, observe], when the ghost visibly changes course. Paced by sim-time.
 export interface CommandSignal {
   shipId: string;
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
-  progress: number;
+  observe: number; // sim-time the ship's response light reaches the command center
+  // Recomputed each frame:
+  phase: "out" | "back";
+  pOut: number; // 0..1 outbound progress
+  pBack: number; // 0..1 return progress
+  remainingS: number; // seconds until the response is observable
 }
 
 // Inbound result rings: resolution point → command center. Departs when the
@@ -46,6 +53,8 @@ export interface ViewState {
   commandCenter: Vec2 | null;
   anchors: AnchorView[];
   ghosts: GhostView[];
+  market: MarketView | null;
+  wallet: WalletView | null;
   /// Wall-clock ms when the last View arrived, for smooth extrapolation
   /// between the ~10 Hz server updates and the 60 fps render.
   lastViewWallMs: number;
@@ -75,6 +84,8 @@ export function initialState(): ViewState {
     commandCenter: null,
     anchors: [],
     ghosts: [],
+    market: null,
+    wallet: null,
     lastViewWallMs: 0,
     selectedShipId: null,
     orders: {},

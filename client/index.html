@@ -129,6 +129,36 @@
       #reports-log .report.good .ic { color: #5fd08a; }
       #reports-log .report.bad .ic { color: #ff6b6b; }
       #reports-log .report .dim { color: var(--dim); }
+
+      /* Hub Exchange panel (right side) */
+      #market {
+        position: fixed; top: 44px; right: 14px;
+        display: none;
+        width: 290px;
+        padding: 12px 14px;
+        background: rgba(8, 12, 22, 0.92);
+        border: 1px solid #1c2740; border-radius: 8px;
+        font-size: 12px; z-index: 7;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      }
+      #market .mhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+      #market .mhead b { letter-spacing: 1px; }
+      #market .mtop { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+      #market .mtop input { width: 56px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
+      #market table { width: 100%; border-collapse: collapse; }
+      #market td, #market th { text-align: right; padding: 3px 4px; font-variant-numeric: tabular-nums; }
+      #market th { color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+      #market td.name { text-align: left; color: var(--ink); }
+      #market button { cursor: pointer; background: #16233c; color: var(--ink); border: 1px solid #2a3a58; border-radius: 4px; font: inherit; font-size: 11px; padding: 2px 7px; }
+      #market button.buy:hover { background: #18402a; border-color: #2f6b46; }
+      #market button.sell:hover { background: #402018; border-color: #6b3a2f; }
+      #market .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; }
+      #market .accent { color: var(--accent); }
+      #market-limit-price { width: 60px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
+      #market #market-orders { margin-top: 8px; font-size: 11px; line-height: 1.5; }
+      #market #market-orders .o { color: var(--ink); }
+      #market #market-orders .o.buy { color: #7fd0a0; }
+      #market #market-orders .o.sell { color: #e0a070; }
     </style>
   </head>
   <body>
@@ -141,11 +171,25 @@
       <div class="item"><span class="k">Sim&nbsp;t</span><span class="v" id="hud-time">—</span></div>
       <div class="item"><span class="k">Corps&nbsp;in&nbsp;view</span><span class="v" id="hud-online">—</span></div>
       <div class="item"><span class="k">Contacts</span><span class="v" id="hud-ships">—</span></div>
+      <div class="item"><span class="k">Credits</span><span class="v accent" id="hud-credits">—</span></div>
+      <div class="item"><span class="k">Equity</span><span class="v" id="hud-equity">—</span></div>
       <div class="spacer"></div>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
     </div>
 
     <div id="reports-log"></div>
+
+    <div id="market">
+      <div class="mhead"><b>HUB EXCHANGE</b> <span id="market-stale" class="dim"></span></div>
+      <div class="mtop"><span id="market-credits" class="accent">—</span> · qty <input id="market-qty" type="number" value="50" min="1" /></div>
+      <div class="mtop"><label><input type="checkbox" id="market-limit-on" /> limit @</label> <input id="market-limit-price" type="number" step="0.1" placeholder="price" /></div>
+      <table>
+        <thead><tr><th class="name">commodity</th><th>price</th><th>held</th><th></th></tr></thead>
+        <tbody id="market-rows"></tbody>
+      </table>
+      <div id="market-orders" class="dim"></div>
+      <div class="mhint dim">Market: buy settles now (goods cross home, raidable); sell clears at price-on-arrival. Limit orders rest and clear in a periodic uniform-price batch (no snipe edge). Press <b>M</b> to toggle.</div>
+    </div>
 
     <div id="readout">
       Click one of your <b>ships</b> to select it. Then click empty space to move it,

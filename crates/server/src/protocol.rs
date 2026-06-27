@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, Vec2};
+use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, StarSystem, TradeEvent, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -32,8 +32,64 @@ pub enum ClientMsg {
     /// Recall a raider (break off, return home). May arrive too late (§8).
     RecallRaid { raider_id: EntityId },
 
+    /// Buy at market on the hub Exchange (§9): instant settlement, then a
+    /// delivery convoy carries the goods home.
+    MarketBuy { commodity: Commodity, units: u32 },
+
+    /// Sell at market (§9): a convoy carries the goods to the hub and clears at
+    /// the price-on-arrival.
+    MarketSell { commodity: Commodity, units: u32 },
+
+    /// Place a resting limit order; it clears in the periodic batch (§9).
+    PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
+}
+
+/// One of the player's own resting limit orders.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct OrderView {
+    pub id: u64,
+    pub side: Side,
+    pub commodity: Commodity,
+    pub units: u32,
+    pub limit_price: f64,
+}
+
+/// A standing price the player reads off the (lagged) hub ticker.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PriceView {
+    pub commodity: Commodity,
+    pub price: f64,
+}
+
+/// The hub Exchange as the player sees it — prices **light-delayed** from the
+/// hub (§9). `staleness` is how old the ticker is (the hub→command-center light
+/// delay); execution still happens at the true current price, so the displayed
+/// price is only a guide.
+#[derive(Debug, Clone, Serialize)]
+pub struct MarketView {
+    pub prices: Vec<PriceView>,
+    pub staleness: f64,
+}
+
+/// One commodity holding in the player's wallet.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct InvSlot {
+    pub commodity: Commodity,
+    pub units: u32,
+}
+
+/// The player's own treasury + holdings + resting limit orders (own state,
+/// shown fresh).
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletView {
+    pub credits: f64,
+    /// Equity / net worth, from the slow valuation close (§9).
+    pub valuation: f64,
+    pub inventory: Vec<InvSlot>,
+    pub orders: Vec<OrderView>,
 }
 
 /// Which side of a raid the recipient is on.
@@ -71,7 +127,18 @@ pub struct GalaxyInfo {
     pub radius: f64,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,
+    /// Sensor detection radius each of the player's assets projects — lets the
+    /// client draw its sensor coverage around its own ships + command center.
+    pub sensor_range: f64,
     pub systems: Vec<StarSystem>,
+}
+
+/// A convoy's cargo manifest, as revealed to a player whose sensors are within
+/// range (Tier 2). Absent from the ghost when out of sensor coverage.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CargoView {
+    pub commodity: Commodity,
+    pub units: u32,
 }
 
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
@@ -107,6 +174,12 @@ pub struct GhostView {
     pub uncertainty: f64,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
+    /// The convoy's broadcast route (waypoints), light-delayed like its
+    /// position. `None` for raiders (they don't broadcast).
+    pub route: Option<Vec<Vec2>>,
+    /// The convoy's cargo — present ONLY when this convoy is within the viewing
+    /// player's sensor coverage (Tier 2). `None` out of range, or for raiders.
+    pub cargo: Option<CargoView>,
 }
 
 /// Messages pushed by the server to a single player's connection.
@@ -139,25 +212,40 @@ pub enum ServerMsg {
         anchors: Vec<AnchorView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
+        /// The hub ticker, light-delayed (§9).
+        market: MarketView,
+        /// The player's own credits + holdings (fresh).
+        wallet: WalletView,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.
     Report { report: RaidReport },
 
-    /// Feedback that an order the player just issued is crossing space to one of
-    /// their ships (the violet outbound comet). Sent immediately to the issuing
-    /// player — confirming their own local action — and carrying the
-    /// authoritative timing: the order departs the command center at
-    /// `depart_time` and reaches the ship (as the player can observe it) at
-    /// `arrive_time`, both in sim-time. The client interpolates the comet
-    /// between the command center and the ship's GHOST over that window; it
-    /// computes no delay itself. `arrive_time − depart_time` is the player's
-    /// OBSERVED light delay to the ship (the same staleness as its ghost), so it
-    /// never reveals the ship's true distance.
+    /// Economy news for this player (§9): a buy settled, a delivery arrived, a
+    /// sell was dispatched or cleared.
+    Trade { trade: TradeEvent },
+
+    /// Feedback for an order the player just issued — the full round trip of the
+    /// command (§6, the three clocks). Sent immediately to the issuing player
+    /// (confirming their own local action), carrying authoritative sim-times:
+    ///   * `depart_time` — the order leaves the command center;
+    ///   * `arrive_time` — it reaches the ship (as the player observes it): the
+    ///     violet comet travels command-center → ghost over this window;
+    ///   * `observe_time` — the light of the ship's resulting maneuver gets back
+    ///     to the command center, i.e. when the player will SEE the ship react.
+    ///     Between `arrive_time` and `observe_time` the client shows the return
+    ///     leg (the response light coming home), so the gap before the ghost
+    ///     visibly changes course is explained rather than dead.
+    ///
+    /// All three are derived from the player's OBSERVED light delay to the ship
+    /// (its ghost's staleness): `arrive − depart` and `observe − arrive` each
+    /// equal that one-way delay, so nothing reveals the ship's true distance.
+    /// The client only interpolates between these times.
     CommandSignal {
         ship_id: EntityId,
         depart_time: f64,
         arrive_time: f64,
+        observe_time: f64,
     },
 
     /// A protocol-level error (e.g. a malformed first message).
