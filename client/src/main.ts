@@ -235,7 +235,8 @@ function buildMarketPanel(): void {
 
 function updateMarket(): void {
   if (!state.market || !state.wallet) return;
-  $("market-credits").textContent = `${Math.round(state.wallet.credits).toLocaleString()} cr`;
+  $("market-credits").textContent =
+    `${Math.round(state.wallet.credits).toLocaleString()} cr · equity ${Math.round(state.wallet.valuation).toLocaleString()}`;
   const stale = state.market.staleness;
   $("market-stale").textContent = stale > 0.5 ? `ticker ~${stale.toFixed(0)}s stale` : "ticker live";
   const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));

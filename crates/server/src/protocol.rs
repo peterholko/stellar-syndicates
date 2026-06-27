@@ -86,6 +86,8 @@ pub struct InvSlot {
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletView {
     pub credits: f64,
+    /// Equity / net worth, from the slow valuation close (§9).
+    pub valuation: f64,
     pub inventory: Vec<InvSlot>,
     pub orders: Vec<OrderView>,
 }

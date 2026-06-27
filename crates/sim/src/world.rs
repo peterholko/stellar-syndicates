@@ -40,6 +40,10 @@ pub struct Corporation {
     pub credits: f64,
     /// Goods held at home, by commodity.
     pub inventory: BTreeMap<crate::cargo::Commodity, u32>,
+    /// Equity / net worth, recomputed on a slow cadence (§9) to avoid
+    /// share-price noise: credits + goods (held, in-transit, and reserved in
+    /// resting orders) at market value + buy-order escrow.
+    pub valuation: f64,
 }
 
 /// An order in flight: a player's command that has left their command center
@@ -65,6 +69,9 @@ const MARKET_UPDATE_TICKS: u64 = 30;
 
 /// The limit-order book clears once per this many ticks (≈ every 20 s).
 const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
+
+/// Corporate valuations recompute once per this many ticks (the slow §9 close).
+const VALUATION_TICKS: u64 = 60 * TICK_HZ as u64;
 
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
@@ -188,6 +195,9 @@ impl World {
         }
         if self.tick.is_multiple_of(BATCH_TICKS) {
             self.clear_books(&mut events);
+        }
+        if self.tick.is_multiple_of(VALUATION_TICKS) {
+            self.recompute_valuations();
         }
 
         events
@@ -333,6 +343,7 @@ impl World {
                         command_center: home,
                         credits: 10_000.0,
                         inventory,
+                        valuation: 10_000.0,
                     },
                 );
                 events.push(Event::new(
@@ -343,6 +354,8 @@ impl World {
                     },
                 ));
                 self.spawn_starting_fleet(*id, home, events);
+                // Seed an accurate initial valuation (before the first close).
+                self.recompute_valuations();
             }
             Command::MoveShip {
                 player_id,
@@ -572,6 +585,39 @@ impl World {
             }
         }
         self.book.retain(|o| o.units > 0);
+    }
+
+    /// Recompute every corporation's equity (§9). Slow-cadence so the figure is
+    /// readable, not noisy. Net worth = liquid credits + all goods valued at the
+    /// current market price (held at home, in transit on trade convoys, and
+    /// reserved in resting sell orders) + credits escrowed by resting buy orders.
+    fn recompute_valuations(&mut self) {
+        let prices = self.market.prices().clone();
+        let value = |c: &crate::cargo::Commodity, u: u32| u as f64 * prices.get(c).copied().unwrap_or(0.0);
+
+        let mut transit: BTreeMap<PlayerId, f64> = BTreeMap::new();
+        for ship in self.ships.values() {
+            if ship.mission.is_some()
+                && let Some(cargo) = ship.cargo
+            {
+                *transit.entry(ship.owner).or_insert(0.0) += value(&cargo.commodity, cargo.units);
+            }
+        }
+        let mut reserved: BTreeMap<PlayerId, f64> = BTreeMap::new();
+        for o in &self.book {
+            let v = match o.side {
+                Side::Buy => o.units as f64 * o.limit_price, // credits in escrow
+                Side::Sell => value(&o.commodity, o.units),  // goods at market
+            };
+            *reserved.entry(o.player).or_insert(0.0) += v;
+        }
+        for (id, corp) in self.players.iter_mut() {
+            let inv: f64 = corp.inventory.iter().map(|(c, u)| value(c, *u)).sum();
+            corp.valuation = corp.credits
+                + inv
+                + transit.get(id).copied().unwrap_or(0.0)
+                + reserved.get(id).copied().unwrap_or(0.0);
+        }
     }
 
     /// Spawn a raidable trade convoy that resolves its mission on arrival.

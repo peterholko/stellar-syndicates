@@ -328,6 +328,7 @@ impl GameLoop {
             // resting limit orders).
             let wallet = WalletView {
                 credits: corp.credits,
+                valuation: corp.valuation,
                 inventory: corp
                     .inventory
                     .iter()

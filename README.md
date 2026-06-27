@@ -19,7 +19,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
 | **M3 — Lightspeed information model (the core)** | ✅ **Complete** | Per-player delayed/fogged views from each command center; fairness guarantee enforced & adversarially reviewed; command latency. |
 | **M4 — Raiding loop (PvP)** | ✅ **Complete** | Intercept-commit pursuit; resolution in true space; delayed reports on each player's own clock; recall can miss. |
-| **M5 — Full multiplayer economy** | 🟡 **In progress** | 5a+5b done: hub Exchange (instant execution, lagged ticker), market orders, raidable trade convoys, buy/sell asymmetry, **limit orders + uniform-price batch clearing**. Valuations next. |
+| **M5 — Full multiplayer economy** | ✅ **Complete** | Hub Exchange (instant execution, lagged ticker), market + limit orders with uniform-price batch clearing, raidable trade convoys, buy/sell asymmetry, slow equity valuations. |
 | M5 — Full multiplayer economy | ⬜ Not started | |
 | M6 — Robust sessions, persistence, scale to 12 | ⬜ Not started | |
 | M7 — Client polish | ⬜ Not started | |
@@ -272,7 +272,19 @@ batch. Client: a limit toggle + price in the market panel and a resting-orders
 list. Verified by `scripts/limit_smoke.mjs` + 2 sim tests (a crossing pair clears
 at the uniform price; non-crossing orders rest).
 
-**Still to come in M5:** equity / corporate valuations on a slow cadence.
+**Sub-step 5c — equity valuations.** Each corporation's net worth (credits +
+goods at market — held, in transit, and reserved in resting orders — plus
+buy-order escrow) is recomputed on a **slow cadence** (≈ every 60 s) to keep it
+readable, not noisy (§9), and shown in the market panel ("equity"). Verified the
+figure ≈ credits + inventory value.
+
+M5 thus realises the §9 model: instant execution + lagged prices, market AND
+limit orders with uniform-price batch clearing, order-spawned **raidable** trade
+convoys, the buy/sell asymmetry, and slow valuations. *(Documented
+simplifications: limit-order goods settle at the exchange rather than each
+spawning a crossing; the sell-news is shown promptly rather than light-delayed;
+home is treated as light-distance from the hub rather than a zero-lag coherence
+peak — all consistent, additive-friendly choices noted for later refinement.)*
 
 **Verified in-browser:** issuing an order shows the violet comet traveling from
 the command center to the ship's ghost (paced by the server's observed delay); a

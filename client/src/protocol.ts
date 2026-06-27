@@ -61,6 +61,7 @@ export interface OrderView {
 
 export interface WalletView {
   credits: number;
+  valuation: number; // equity / net worth (slow §9 close)
   inventory: InvSlot[];
   orders: OrderView[];
 }
