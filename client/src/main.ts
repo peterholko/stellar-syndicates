@@ -46,10 +46,36 @@ async function startRenderer(): Promise<void> {
   rendererReady = true;
   installInteraction();
   const frame = () => {
+    updateSignals();
     renderer.update(state);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+}
+
+// Advance the traveling-signal visualizations each frame. This is the ONLY
+// client-side timing computation: interpolating progress between server-provided
+// endpoints/times (and revealing a report's verdict when its ring arrives). No
+// delay is computed from truth or a client-side c.
+function updateSignals(): void {
+  const estSimNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+  // Outbound comets: progress from the server's sim-time window.
+  state.commandSignals = state.commandSignals.filter((s) => {
+    const span = s.arrive - s.depart;
+    s.progress = span > 1e-3 ? (estSimNow - s.depart) / span : 1;
+    return s.progress < 1; // drop once it reaches the ship's ghost
+  });
+  // Inbound rings: progress over the server-provided light delay; reveal the
+  // verdict on arrival at the command center.
+  const nowMs = performance.now();
+  state.reportSignals = state.reportSignals.filter((s) => {
+    s.progress = (nowMs - s.startWallMs) / (s.durationS * 1000);
+    if (s.progress >= 1) {
+      addReport(s.report);
+      return false;
+    }
+    return true;
+  });
 }
 
 const readout = () => $("readout");
@@ -202,9 +228,32 @@ function join(): void {
           state.lastViewWallMs = performance.now();
           state.link = "online";
           break;
-        case "Report":
-          addReport(msg.report);
+        case "CommandSignal": {
+          // Your order is crossing space to your ship. Replace any in-flight
+          // comet for the same ship (a newer order supersedes).
+          state.commandSignals = state.commandSignals.filter((s) => s.shipId !== msg.ship_id);
+          state.commandSignals.push({
+            shipId: msg.ship_id,
+            depart: msg.depart_time,
+            arrive: msg.arrive_time,
+            progress: 0,
+          });
           break;
+        }
+        case "Report": {
+          // The news has become observable. Visualize it crossing home from the
+          // resolution point; the verdict is revealed when the ring arrives at
+          // the command center (in updateSignals).
+          const rep = msg.report;
+          state.reportSignals.push({
+            from: rep.pos,
+            startWallMs: performance.now(),
+            durationS: Math.max(rep.age, 0.6),
+            report: rep,
+            progress: 0,
+          });
+          break;
+        }
         case "Error":
           joinErr.textContent = msg.message;
           break;

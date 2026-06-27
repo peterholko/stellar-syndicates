@@ -16,6 +16,8 @@ const COL_OTHER = 0xff7a6b;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
+const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
+const COL_REPORT = 0xffd24a; // inbound result rings (gold)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
@@ -36,6 +38,8 @@ export class Renderer {
   private anchorsLayer = new Container();
   private orderLayer = new Container();
   private ghostsLayer = new Container();
+  private signalsLayer = new Container();
+  private signalsGfx = new Graphics();
   private ghosts = new Map<string, GhostSprite>();
 
   private galaxy: GalaxyInfo | null = null;
@@ -58,7 +62,9 @@ export class Renderer {
       this.anchorsLayer,
       this.orderLayer,
       this.ghostsLayer,
+      this.signalsLayer,
     );
+    this.signalsLayer.addChild(this.signalsGfx);
     this.drawStarfield();
     window.addEventListener("resize", () => this.recompute());
   }
@@ -288,7 +294,74 @@ export class Renderer {
     }
 
     this.drawOrders(state, screenById);
+    this.drawSignals(state, dt);
   }
+
+  /// Draw the traveling communication signals (server-timed; we only place them
+  /// at their interpolated `progress`). Violet comet = an order crossing to your
+  /// ship; gold rings = a result crossing home to you.
+  private drawSignals(state: ViewState, dt: number): void {
+    const g = this.signalsGfx;
+    g.clear();
+    if (!state.commandCenter) return;
+    const cc = this.worldToScreen(state.commandCenter);
+
+    // Outbound order comets: command center → the ship's GHOST.
+    for (const sig of state.commandSignals) {
+      const ghost = state.ghosts.find((x) => x.id === sig.shipId);
+      if (!ghost) continue;
+      const tg = this.worldToScreen({ x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
+      const p = Math.max(0, Math.min(1, sig.progress));
+      const hx = cc.x + (tg.x - cc.x) * p;
+      const hy = cc.y + (tg.y - cc.y) * p;
+      const d = norm(tg.x - hx, tg.y - hy); // heading toward the ship
+      dashedLine(g, cc.x, cc.y, hx, hy, 6, 7);
+      g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
+      for (let k = 1; k <= 4; k++) {
+        g.circle(hx - d.x * k * 6, hy - d.y * k * 6, 4.4 - k * 0.8).fill({ color: COL_COMMAND, alpha: 0.42 - k * 0.08 });
+      }
+      g.circle(hx, hy, 12).fill({ color: COL_COMMAND, alpha: 0.12 });
+      g.circle(hx, hy, 5).fill({ color: COL_COMMAND, alpha: 0.98 });
+      arrowhead(g, hx + d.x * 6, hy + d.y * 6, d.x, d.y, 9, COL_COMMAND, 0.98);
+    }
+
+    // Inbound result rings: resolution point → command center.
+    for (const sig of state.reportSignals) {
+      const from = this.worldToScreen(sig.from);
+      const p = Math.max(0, Math.min(1, sig.progress));
+      const px = from.x + (cc.x - from.x) * p;
+      const py = from.y + (cc.y - from.y) * p;
+      const d = norm(cc.x - px, cc.y - py); // heading home
+      dashedLine(g, px, py, cc.x, cc.y, 6, 7);
+      g.stroke({ width: 1, color: COL_REPORT, alpha: 0.3 });
+      const elapsed = sig.progress * sig.durationS;
+      for (let k = 0; k < 3; k++) {
+        const ph = (elapsed * 1.7 + k * 0.34) % 1;
+        g.circle(px, py, 5 + ph * 17).stroke({ width: 2.2 * (1 - ph), color: COL_REPORT, alpha: 0.6 * (1 - ph) });
+      }
+      g.circle(px, py, 7).stroke({ width: 2.4, color: COL_REPORT, alpha: 0.95 });
+      g.circle(px, py, 2).fill({ color: COL_REPORT, alpha: 0.9 });
+      arrowhead(g, px + d.x * 12, py + d.y * 12, d.x, d.y, 7, COL_REPORT, 0.95);
+    }
+  }
+}
+
+function norm(dx: number, dy: number): { x: number; y: number } {
+  const len = Math.hypot(dx, dy);
+  return len < 1e-6 ? { x: 0, y: 0 } : { x: dx / len, y: dy / len };
+}
+
+// A small filled triangle at (x,y) pointing along (dx,dy).
+function arrowhead(g: Graphics, x: number, y: number, dx: number, dy: number, size: number, color: number, alpha: number): void {
+  const px = -dy;
+  const py = dx; // perpendicular
+  const tipX = x + dx * size;
+  const tipY = y + dy * size;
+  const blX = x - dx * size * 0.2 + px * size * 0.7;
+  const blY = y - dy * size * 0.2 + py * size * 0.7;
+  const brX = x - dx * size * 0.2 - px * size * 0.7;
+  const brY = y - dy * size * 0.2 - py * size * 0.7;
+  g.poly([tipX, tipY, blX, blY, brX, brY]).fill({ color, alpha });
 }
 
 function dashedLine(g: Graphics, x1: number, y1: number, x2: number, y2: number, dash: number, gap: number): void {

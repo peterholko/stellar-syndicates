@@ -2,9 +2,32 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, PlayerId, Vec2 } from "./protocol";
+import type { AnchorView, GalaxyInfo, GhostView, PlayerId, RaidReport, Vec2 } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
+
+// Visualizations of communication delay the server owns the timing for. Both are
+// pure rendering: the client only interpolates between server-provided endpoints
+// and times. `progress` (0..1) is recomputed each frame.
+
+// Outbound order comet: command center → the ship's ghost, paced by sim-time.
+export interface CommandSignal {
+  shipId: string;
+  depart: number; // sim-time the order left the command center
+  arrive: number; // sim-time it reaches the ship (observed)
+  progress: number;
+}
+
+// Inbound result rings: resolution point → command center. Departs when the
+// report becomes observable (server-gated, M4) and travels home over the
+// server-provided light delay (`report.age`); the verdict is revealed on arrival.
+export interface ReportSignal {
+  from: Vec2;
+  startWallMs: number;
+  durationS: number;
+  report: RaidReport;
+  progress: number;
+}
 
 export interface ViewState {
   playerId: PlayerId | null;
@@ -33,6 +56,10 @@ export interface ViewState {
   /// purely for drawing the "commanded into the dark" line. The server never
   /// echoes orders back (that's internal truth).
   orders: Record<string, Vec2>;
+
+  // Traveling-signal visualizations (server-timed; client only interpolates).
+  commandSignals: CommandSignal[];
+  reportSignals: ReportSignal[];
 }
 
 export function initialState(): ViewState {
@@ -51,5 +78,7 @@ export function initialState(): ViewState {
     lastViewWallMs: 0,
     selectedShipId: null,
     orders: {},
+    commandSignals: [],
+    reportSignals: [],
   };
 }
