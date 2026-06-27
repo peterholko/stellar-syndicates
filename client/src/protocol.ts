@@ -82,7 +82,10 @@ export interface AnchorView {
 
 // A ship as the player perceives it — a delayed "ghost" (§6). `pos` is where
 // the object was when its arriving light left it; `age` is how stale that is;
-// `uncertainty` is how far it could have moved since (0 for own ships).
+// `uncertainty` is how far it could have moved since (`age × max_speed`). This
+// holds for OWN ships too — there is no FTL tether to your fleet, so a distant
+// own ship is as uncertain as a distant enemy; `own` is only a "this is mine"
+// marker, never a certainty grant.
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;

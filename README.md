@@ -99,10 +99,15 @@ same world advancing with identical positions. See
   player-count revealed instantly); **both are fixed** — anchor ownership is now
   light-gated, and presence/ops state moved to a separate `/status` meta endpoint
   outside the game view.
-- **Two fog regimes (§6):** your own ships are delayed-but-coherent (no
-  uncertainty); rivals are shown at a stale position with an **uncertainty cone**
-  (`age · max_speed` — how far they could have moved since the light left) and an
-  age label, fading with staleness.
+- **One fog law for ALL ships (§6):** certainty tracks **proximity to the
+  command center, not ownership** — there is no FTL tether to your own fleet.
+  Every ship (own or rival) is shown at its stale, light-delayed position with an
+  **uncertainty cone** (`age · max_speed` — how far it could have moved since the
+  light left) and an age label, fading with staleness. An own ship near the
+  command center is fresh and near-certain; the *same* own ship far out is as
+  fogged as a rival at that distance. (Own ships under orders also get a hint of
+  where they've likely advanced along the commanded course, so the fog reads as
+  "proceeding on last orders," not a lost ship.)
 - **Command latency / the three clocks (§6):** a move order travels to the ship
   at light speed (scheduled in the pure core), and the player learns the result
   later still via their delayed view. The client shows the estimate from its
@@ -110,9 +115,12 @@ same world advancing with identical positions. See
 - **Each player sees a genuinely different delayed galaxy.** Distant things are
   stale; nearer things fresher; rivals are dark until their light arrives.
 
-**M3 checkpoint proven:** two players each see their own coherent delayed/fogged
-view; staleness equals light-distance on the wire; commands lag; no information
-(positions, presence, or counts) leaks between players' horizons. See
+**M3 checkpoint proven:** two players each see their own delayed/fogged view;
+staleness equals light-distance on the wire; commands lag; no information
+(positions, presence, or counts) leaks between players' horizons. Own ships obey
+the same law — `uncertainty = age · max_speed`, certainty by proximity not
+ownership — verified on the wire by
+[`scripts/own_fog_check.mjs`](scripts/own_fog_check.mjs). See
 [`scripts/m3_smoke.mjs`](scripts/m3_smoke.mjs).
 
 ### What M4 delivers (verified) — player-vs-player raiding
@@ -427,10 +435,12 @@ You command a chartered corporation from your **home anchor** — and you never 
 the galaxy as it *is*, only as the light that has reached your chair (§6). Every
 sighting shows where something *was*; every order crosses space at light speed.
 
-- **Read your delayed map.** Your own ships are crisp cyan (a coherent feed, just
-  late). Rivals are red **ghosts** at their last-known position, with an
-  uncertainty cone (how far they could have moved since the light left) and a
-  "Δ Ns" staleness label. Soft **teal bubbles** are your sensor coverage; outside
+- **Read your delayed map.** Your own ships are cyan **ghosts** — crisp and
+  near-certain when close to home, but stale and ringed by an **uncertainty cone**
+  when far out (there's no FTL tether to your fleet — certainty comes from being
+  near your command center). Rivals are red ghosts the same way. Every ghost shows
+  how far it could have moved since the light left and a "Δ Ns" staleness label;
+  an own ship under orders also hints where it's likely advanced along its course. Soft **teal bubbles** are your sensor coverage; outside
   them you're blind to raiders. Convoys broadcast galaxy-wide (with their route);
   cargo only shows for convoys inside your sensors. A pulsing red **⚠ RAIDER** is
   your only warning of an attacker that has entered range.
