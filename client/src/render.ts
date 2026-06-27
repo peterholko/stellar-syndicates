@@ -43,6 +43,10 @@ const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
+// Grace before a server-dropped ghost's sprite is destroyed — bridges the brief
+// gap between a destroyed ship leaving the view and its destruction report
+// arriving to claim it as a doomed (held-until-its-ring-lands) ghost.
+const GHOST_GRACE_MS = 450;
 
 interface GhostSprite {
   container: Container;
@@ -51,6 +55,14 @@ interface GhostSprite {
   label: Text;
   ring: Graphics; // selection ring
   seen: boolean;
+  /// True on the frames this sprite was drawn as a DOOMED ghost (a destroyed ship
+  /// held until its result ring lands). When such a sprite goes unseen, the ring
+  /// has just arrived → remove it immediately (exact sync). A sprite the server
+  /// merely stopped sending gets a short grace instead, so the ~0.2 s gap between
+  /// a convoy's vanish and its destruction report can't blink it out.
+  wasDoomed: boolean;
+  /// Wall-ms this sprite first went unseen (for the grace), or null while seen.
+  unseenSince: number | null;
 }
 
 export class Renderer {
@@ -314,15 +326,17 @@ export class Renderer {
       label.anchor.set(0, 0.5);
       container.addChild(cone, ring, body, label);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, label, ring, seen: true };
+      sp = { container, cone, body, label, ring, seen: true, wasDoomed: false, unseenSince: null };
       this.ghosts.set(id, sp);
     }
     return sp;
   }
 
-  private drawGhost(ghost: GhostView, state: ViewState, dt: number): { x: number; y: number } {
+  private drawGhost(ghost: GhostView, state: ViewState, dt: number, doomed = false): { x: number; y: number } {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
+    sp.wasDoomed = doomed;
+    sp.unseenSince = null;
 
     const px = ghost.pos.x + ghost.vel.x * dt;
     const py = ghost.pos.y + ghost.vel.y * dt;
@@ -438,11 +452,35 @@ export class Renderer {
 
     for (const sp of this.ghosts.values()) sp.seen = false;
     const screenById = new Map<string, { x: number; y: number }>();
+    const drawn = new Set<string>();
     for (const ghost of state.ghosts) {
       screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
+      drawn.add(ghost.id);
+    }
+    // Doomed ghosts: ships the server has already stopped sending (destroyed in
+    // true space) but whose destruction light hasn't yet reached this player —
+    // their result ring is still travelling home. Keep them flying on old light
+    // (dead-reckoned from the snapshot) so they vanish EXACTLY when the ring lands
+    // (the signal is dropped in updateSignals at that moment). Never double-draw a
+    // ship the server is still sending.
+    const nowMs = performance.now();
+    for (const sig of state.reportSignals) {
+      for (const d of sig.doomed) {
+        if (drawn.has(d.ghost.id)) continue;
+        const elapsed = (nowMs - d.capturedWallMs) / 1000;
+        const ext = { ...d.ghost, age: d.ghost.age + elapsed };
+        screenById.set(d.ghost.id, this.drawGhost(ext, state, elapsed, true));
+        drawn.add(d.ghost.id);
+      }
     }
     for (const [id, sp] of this.ghosts) {
-      if (!sp.seen) {
+      if (sp.seen) continue;
+      // A held DOOMED ghost going unseen means its result ring just landed — so it
+      // vanishes at that exact moment. A sprite the server merely stopped sending
+      // gets a brief grace, so the ~0.2 s gap between a convoy's vanish and its
+      // destruction report can't blink it out before the doomed hold takes over.
+      if (sp.unseenSince === null) sp.unseenSince = nowMs;
+      if (sp.wasDoomed || nowMs - sp.unseenSince > GHOST_GRACE_MS) {
         this.ghostsLayer.removeChild(sp.container);
         sp.container.destroy({ children: true });
         this.ghosts.delete(id);

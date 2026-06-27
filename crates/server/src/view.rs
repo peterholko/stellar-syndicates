@@ -836,6 +836,44 @@ mod tests {
         assert_eq!(hist.view_for(VIEWER, far, c, 30.5).len(), 0, "far finally sees it destroyed when its light arrives");
     }
 
+    /// A destroyed CONVOY (moving, broadcast-visible) keeps being served as a
+    /// ghost — flying on old light — across the WHOLE interval [T, T + |P−cc|/c],
+    /// and vanishes only when the destruction's light reaches the viewer (the
+    /// moment the yellow result ring arrives). Near and far vanish at different
+    /// times, each synced to its own light. Guards the convoy-raid disappearance
+    /// bug: the server must NOT drop the ghost at the TRUE destruction time.
+    #[test]
+    fn convoy_ghost_persists_for_the_full_interval_then_vanishes_by_light() {
+        let c = 300.0;
+        // Convoy flies +x (vel 10) and is destroyed at t=20 at x=200.
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 20.0 {
+            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0) });
+            t += 0.1;
+        }
+        let dpos = Vec2::new(200.0, 0.0);
+        let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
+        hist.mark_destroyed(EntityId(1), 20.0, dpos);
+
+        // FAR viewer: 4500 su from the kill → 15 s of light → observed-destruction
+        // at t = 35. The convoy's spawn light arrives ~t=15, so it must be visible
+        // across the entire [15, 35) interval and vanish only at 35.
+        let far = Vec2::new(200.0, 4500.0); // |dpos-far| = 4500
+        for now in [16.0, 25.0, 30.0, 34.5] {
+            assert_eq!(hist.view_for(VIEWER, far, c, now).len(), 1,
+                "far viewer must still see the dead convoy flying on old light at t={now} (light lands at 35)");
+        }
+        assert_eq!(hist.view_for(VIEWER, far, c, 35.5).len(), 0,
+            "far viewer's convoy vanishes exactly when its destruction light arrives (t=35)");
+
+        // NEAR viewer: 600 su → 2 s of light → vanishes at t=22, 13 s before the
+        // far viewer. ONE destruction, observed asymmetrically.
+        let near = Vec2::new(200.0, 600.0); // |dpos-near| = 600
+        assert_eq!(hist.view_for(VIEWER, near, c, 21.5).len(), 1, "near still sees it just before its light");
+        assert_eq!(hist.view_for(VIEWER, near, c, 22.5).len(), 0, "near vanishes at t=22 while far waits until 35");
+    }
+
     /// A far rival raider is dark, but if the viewer has an OWN ship near it, the
     /// union coverage detects it (coverage is the union of all assets' radii).
     #[test]

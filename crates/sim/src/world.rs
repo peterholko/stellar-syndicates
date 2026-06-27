@@ -70,7 +70,9 @@ const MARKET_UPDATE_TICKS: u64 = 30;
 // Battle outcome probabilities (§8). Tunable; balance comes later. Each tuple is
 // (P target destroyed, P attacker destroyed, P both destroyed); the remainder is
 // "both survive (attacker driven off)".
-const RVC_PROBS: (f64, f64, f64) = (0.60, 0.12, 0.08); // raider vs convoy (raider favoured)
+// TEMPORARY (testing): raider always destroys the convoy. Restore to
+// (0.60, 0.12, 0.08) for the real balance.
+const RVC_PROBS: (f64, f64, f64) = (1.0, 0.0, 0.0); // raider vs convoy (TEST: 100% convoy destroyed)
 const RVR_PROBS: (f64, f64, f64) = (0.35, 0.35, 0.12); // raider vs raider (even)
 
 /// The limit-order book clears once per this many ticks (≈ every 20 s).

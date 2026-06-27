@@ -419,6 +419,13 @@ function join(): void {
           state.ghosts = msg.ghosts;
           state.market = msg.market;
           state.wallet = msg.wallet;
+          // Remember each ship's latest ghost so a destruction report arriving the
+          // same tick the server drops the ghost can still snapshot it (see below).
+          {
+            const nowW = performance.now();
+            for (const g of msg.ghosts) state.recentGhosts.set(g.id, { ghost: g, seenWallMs: nowW });
+            for (const [id, e] of state.recentGhosts) if (nowW - e.seenWallMs > 5000) state.recentGhosts.delete(id);
+          }
           updateSystemPanel();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
@@ -447,14 +454,26 @@ function join(): void {
         case "Report": {
           // The news has become observable. Visualize it crossing home from the
           // resolution point; the verdict is revealed when the ring arrives at
-          // the command center (in updateSignals).
+          // the command center (in updateSignals). Any ship this report destroyed
+          // is kept flying as a ghost until that ring lands, so the convoy (or
+          // raider) vanishes IN SYNC with the yellow signal — the ring IS the
+          // destruction's light arriving home (§6).
           const rep = msg.report;
+          const capturedWallMs = performance.now();
+          const deadIds: string[] = [];
+          if (rep.outcome === "target_destroyed" || rep.outcome === "both_destroyed") deadIds.push(rep.target_ship);
+          if (rep.outcome === "attacker_destroyed" || rep.outcome === "both_destroyed") deadIds.push(rep.attacker_ship);
+          const doomed = deadIds
+            .map((id) => state.recentGhosts.get(id))
+            .filter((e): e is NonNullable<typeof e> => !!e && capturedWallMs - e.seenWallMs < 3000)
+            .map((e) => ({ ghost: e.ghost, capturedWallMs }));
           state.reportSignals.push({
             from: rep.pos,
-            startWallMs: performance.now(),
+            startWallMs: capturedWallMs,
             durationS: Math.max(rep.age, 0.6),
             report: rep,
             progress: 0,
+            doomed,
           });
           break;
         }

@@ -31,16 +31,17 @@ impl ShipKind {
     pub fn accel(self) -> f64 {
         match self {
             ShipKind::Convoy => 9.0,
-            ShipKind::Raider => 30.0,
+            ShipKind::Raider => 48.0,
         }
     }
 
     /// Cruise speed cap (sim units / s). Both stay well below `c` (= 300) so
-    /// relativity is respected — nothing outruns its own light.
+    /// relativity is respected — nothing outruns its own light. Raiders are much
+    /// faster than convoys (~4× top speed) so they reliably run a convoy down.
     pub fn max_speed(self) -> f64 {
         match self {
             ShipKind::Convoy => 36.0,
-            ShipKind::Raider => 90.0,
+            ShipKind::Raider => 150.0,
         }
     }
 }
