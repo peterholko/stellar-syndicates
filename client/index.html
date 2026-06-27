@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stellar Syndicates</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070d;
+        --panel: #0d1322;
+        --ink: #c9d6e8;
+        --dim: #6b7a90;
+        --accent: #4fc3ff;
+        --warn: #ffb454;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        overflow: hidden;
+      }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      /* Join overlay */
+      #join {
+        position: fixed; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(circle at 50% 35%, #0b1426 0%, #05070d 70%);
+        z-index: 10;
+      }
+      #join .card {
+        background: var(--panel);
+        border: 1px solid #1c2740;
+        border-radius: 10px;
+        padding: 28px 30px;
+        width: 360px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      }
+      #join h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: 0.5px; }
+      #join p { margin: 0 0 18px; color: var(--dim); font-size: 12px; line-height: 1.5; }
+      #join label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+      #join input {
+        width: 100%; padding: 10px 12px; margin-bottom: 16px;
+        background: #060a14; border: 1px solid #243049; border-radius: 6px;
+        color: var(--ink); font: inherit; font-size: 14px;
+      }
+      #join input:focus { outline: none; border-color: var(--accent); }
+      #join button {
+        width: 100%; padding: 11px; cursor: pointer;
+        background: var(--accent); color: #04121d; border: none; border-radius: 6px;
+        font: inherit; font-weight: 700; letter-spacing: 0.5px;
+      }
+      #join button:hover { filter: brightness(1.08); }
+      #join .err { color: var(--warn); font-size: 12px; min-height: 16px; margin-top: 4px; }
+
+      /* HUD status bar */
+      #hud {
+        position: fixed; top: 0; left: 0; right: 0;
+        display: none;
+        gap: 22px;
+        padding: 8px 14px;
+        background: rgba(8, 12, 22, 0.82);
+        border-bottom: 1px solid #18233b;
+        font-size: 12px;
+        z-index: 5;
+        backdrop-filter: blur(4px);
+      }
+      #hud .item { display: flex; gap: 7px; align-items: baseline; }
+      #hud .k { color: var(--dim); text-transform: uppercase; letter-spacing: 1px; font-size: 10px; }
+      #hud .v { color: var(--ink); font-variant-numeric: tabular-nums; }
+      #hud .v.accent { color: var(--accent); }
+      #hud .v.warn { color: var(--warn); }
+      #hud .spacer { flex: 1; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="hud">
+      <div class="item"><span class="k">Corp</span><span class="v accent" id="hud-name">—</span></div>
+      <div class="item"><span class="k">ID</span><span class="v" id="hud-id">—</span></div>
+      <div class="item"><span class="k">Tick</span><span class="v" id="hud-tick">—</span></div>
+      <div class="item"><span class="k">Sim&nbsp;t</span><span class="v" id="hud-time">—</span></div>
+      <div class="item"><span class="k">Players&nbsp;online</span><span class="v" id="hud-online">—</span></div>
+      <div class="spacer"></div>
+      <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
+    </div>
+
+    <div id="join">
+      <div class="card">
+        <h1>Stellar Syndicates</h1>
+        <p>Charter a corporation and command from your home anchor. Enter a name to join the galaxy — reconnecting with the same name resumes your corporation.</p>
+        <label for="name">Corporation name</label>
+        <input id="name" type="text" placeholder="e.g. Meridian Freight" autocomplete="off" />
+        <button id="join-btn">Charter &amp; connect</button>
+        <div class="err" id="join-err"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

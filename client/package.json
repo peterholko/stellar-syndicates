@@ -1,0 +1,19 @@
+{
+  "name": "stellar-syndicates-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pixi.js client — renders the per-player delayed/fogged view. No authoritative state, no game logic.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "pixi.js": "^8.19.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0"
+  }
+}

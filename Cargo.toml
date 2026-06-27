@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/sim", "crates/server"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["Stellar Syndicates"]
+
+# Shared dependency versions are pinned here and referenced with
+# `workspace = true` in the member crates. Versions are resolved at build
+# time via `cargo add` (never trusted from memory) and recorded below.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
