@@ -165,6 +165,13 @@ impl PositionHistory {
             sample: Sample,
             cargo: Option<Cargo>,
             route: &'a Option<Vec<Vec2>>,
+            /// A destroyed raider that WAS legitimately within the viewer's sensor
+            /// coverage at the retarded time of the ghost being shown. Latches its
+            /// detection to that pre-destruction frame so a *post*-destruction
+            /// coverage change (the winner breaking off home) can't un-detect — and
+            /// thereby reveal — the kill before its light arrives (§6). Never set
+            /// for a raider that was never detected, so it can't conjure existence.
+            destroyed_detected: bool,
         }
         let mut pre = Vec::new();
         let mut coverage = vec![cc]; // the command center is itself an asset
@@ -183,6 +190,12 @@ impl PositionHistory {
             if track.owner == viewer {
                 coverage.push(sample.pos);
             }
+            // For a destroyed raider, decide visibility in the ghost's OWN retarded
+            // frame (the world as the arriving light shows it), not the `now` frame
+            // whose coverage already reflects the post-kill break-off.
+            let destroyed_detected = track.destroyed.is_some()
+                && track.kind == ShipKind::Raider
+                && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time);
             pre.push(Pre {
                 id: *id,
                 owner: track.owner,
@@ -190,13 +203,18 @@ impl PositionHistory {
                 sample,
                 cargo: track.cargo,
                 route: &track.route,
+                destroyed_detected,
             });
         }
 
         // Pass 2: apply the two-tier visibility rules using the coverage.
         let mut ghosts = Vec::new();
         for p in pre {
-            let detected = within_sensor(&coverage, p.sample.pos, self.sensor_range);
+            // A destroyed raider stays detected for as long as its retarded-frame
+            // latch holds (until the Pass-1 destruction-light gate removes it); a
+            // live raider/convoy uses the ordinary `now`-frame coverage.
+            let detected =
+                p.destroyed_detected || within_sensor(&coverage, p.sample.pos, self.sensor_range);
 
             // A dark raider is present ONLY inside sensor coverage. (A player's
             // own raider sits at the centre of its own sensor circle, so it is
@@ -247,6 +265,38 @@ impl PositionHistory {
         let track = self.tracks.get(&ship_id)?;
         let sample = latest_observable(&track.samples, cc, c, now)?;
         Some(now - sample.time)
+    }
+
+    /// Was a (destroyed) raider's ghost — observed at retarded position `ghost_pos`,
+    /// whose light left at sim-time `t_r` — inside the viewer's sensor coverage *at
+    /// that same retarded time*? This reconstructs coverage from the viewer's own
+    /// assets as they actually stood at `t_r`, i.e. in the frame whose light is
+    /// arriving now, BEFORE any post-destruction break-off the viewer can't have
+    /// seen yet. It only ever answers "yes" for a genuine past detection, so it can
+    /// keep a dead raider visible until its destruction light arrives without ever
+    /// revealing a raider the viewer never tracked (§6).
+    fn detected_at_retarded_time(&self, viewer: PlayerId, cc: Vec2, ghost_pos: Vec2, t_r: f64) -> bool {
+        // The command center is a fixed sensor asset.
+        if ghost_pos.distance(cc) <= self.sensor_range {
+            return true;
+        }
+        for track in self.tracks.values() {
+            if track.owner != viewer {
+                continue; // coverage comes only from the viewer's own assets
+            }
+            // An asset can't have provided coverage after its own observed death.
+            if let Some((dt, _)) = track.destroyed
+                && t_r >= dt
+            {
+                continue;
+            }
+            if let Some(s) = sample_at(&track.samples, t_r)
+                && s.pos.distance(ghost_pos) <= self.sensor_range
+            {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -354,6 +404,22 @@ fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, c: f64, now: f64) -> 
         }
     }
     None
+}
+
+/// The asset's recorded state contemporaneous with sim-time `t_r` — the newest
+/// sample at or before `t_r` (samples are oldest→newest). Falls back to the
+/// oldest retained sample if `t_r` predates history. Used to reconstruct sensor
+/// coverage in a destroyed raider's retarded frame (`detected_at_retarded_time`).
+fn sample_at(samples: &VecDeque<Sample>, t_r: f64) -> Option<Sample> {
+    let mut best = None;
+    for s in samples.iter() {
+        if s.time <= t_r {
+            best = Some(*s);
+        } else {
+            break;
+        }
+    }
+    best.or_else(|| samples.front().copied())
 }
 
 #[cfg(test)]
@@ -646,5 +712,162 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(0.0, 9000.0), 300.0, 60.0);
         let raider = view.iter().find(|g| g.id == EntityId(1));
         assert!(raider.is_some(), "own ship's sensor radius should detect the nearby raider");
+    }
+
+    // ---- Raider destruction observed through the lightspeed frame (§6, RVR) ----
+    //
+    // A raider is only visible inside the viewer's sensor coverage, and that
+    // coverage is projected by the viewer's *live* assets. When a raider battle
+    // resolves, the winner breaks off home (`send_ship_home`), carrying its sensor
+    // bubble away from the kill. If the dead raider and the receding winner sit at
+    // DIFFERENT distances from the command center, the winner's break-off becomes
+    // observable BEFORE the dead raider's destruction light — so a naive `now`-frame
+    // sensor test drops the dead ghost early, leaking the kill faster than light.
+    // The fix latches a destroyed raider's detection to its own retarded frame.
+
+    // A ship sitting still at `pos` for t ∈ [0, t_end], sampled at 10 Hz.
+    fn still_samples(pos: Vec2, t_end: f64) -> Vec<Sample> {
+        let mut s = Vec::new();
+        let mut t = 0.0;
+        while t <= t_end + 1e-9 {
+            s.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            t += 0.1;
+        }
+        s
+    }
+
+    // A ship at `start` until `t_turn`, then moving toward `dest` at `speed`,
+    // sampled at 10 Hz over [0, t_end] — models a winner breaking off for home.
+    fn recede_samples(start: Vec2, dest: Vec2, speed: f64, t_turn: f64, t_end: f64) -> Vec<Sample> {
+        let unit = (dest - start).normalized();
+        let mut s = Vec::new();
+        let mut t = 0.0;
+        while t <= t_end + 1e-9 {
+            let (pos, vel) = if t <= t_turn {
+                (start, Vec2::ZERO)
+            } else {
+                (start + unit * (speed * (t - t_turn)), unit * speed)
+            };
+            s.push(Sample { time: t, pos, vel });
+            t += 0.1;
+        }
+        s
+    }
+
+    fn dead_track(samples: Vec<Sample>, owner: PlayerId, t: f64, pos: Vec2) -> Track {
+        let mut tr = track_from(samples, owner, ShipKind::Raider);
+        tr.destroyed = Some((t, pos));
+        tr
+    }
+
+    // Walk `now` forward; return the first `now` at which `ship` disappears from the
+    // viewer's view after having been visible (its observed-destruction instant).
+    fn vanish_time(hist: &PositionHistory, viewer: PlayerId, cc: Vec2, ship: EntityId, from: f64, to: f64) -> Option<f64> {
+        let (mut now, mut seen) = (from, false);
+        while now <= to {
+            let present = hist.view_for(viewer, cc, 300.0, now).iter().any(|g| g.id == ship);
+            if present {
+                seen = true;
+            } else if seen {
+                return Some(now);
+            }
+            now += 0.1;
+        }
+        None
+    }
+
+    /// THE CORE REGRESSION. The viewer's own raider wins and breaks off home; the
+    /// dead RIVAL raider must keep ghosting until the destruction's light reaches
+    /// the viewer (T + |P−cc|/c), NOT vanish early when the winner recedes.
+    #[test]
+    fn destroyed_rival_raider_no_ftl_leak_when_winner_breaks_off() {
+        let c = 300.0;
+        let cc = Vec2::new(0.0, 0.0);
+        let p = Vec2::new(1500.0, 0.0); // dead rival, 5 s of light from cc
+        let t = 10.0;
+        let honest = t + p.distance(cc) / c; // = 15.0
+        // Own attacker sat at (1300,0) (4.33 s of light) until T, then recedes home.
+        let attacker = recede_samples(Vec2::new(1300.0, 0.0), cc, 250.0, t, 25.0);
+        let hist = history_of(
+            vec![
+                (EntityId(1), dead_track(still_samples(p, t), RIVAL, t, p)),
+                (EntityId(2), track_from(attacker, VIEWER, ShipKind::Raider)),
+            ],
+            250.0, // sensor range — tight, so the skew matters
+        );
+        // Sanity: before the destruction light, the dead rival IS visible.
+        assert!(hist.view_for(VIEWER, cc, c, 13.0).iter().any(|g| g.id == EntityId(1)),
+            "dead rival should still be a ghost well before its light arrives");
+        let vanish = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0)
+            .expect("the dead rival must eventually be observed destroyed");
+        assert!(vanish >= honest - 0.15,
+            "FTL LEAK: dead rival raider vanished at {vanish:.2}s but its destruction light \
+             only reaches the viewer at {honest:.2}s — the kill leaked {:.2}s faster than light",
+            honest - vanish);
+    }
+
+    /// The viewer's OWN raider is the one destroyed (a rival won and recedes). The
+    /// own dead raider seeds its own coverage, so it must vanish exactly on its own
+    /// light — the new latch must not SHORTEN this.
+    #[test]
+    fn own_destroyed_raider_vanishes_on_its_own_light() {
+        let c = 300.0;
+        let cc = Vec2::new(0.0, 0.0);
+        let p = Vec2::new(1500.0, 0.0);
+        let t = 10.0;
+        let honest = t + p.distance(cc) / c; // 15.0
+        let hist = history_of(
+            vec![(EntityId(1), dead_track(still_samples(p, t), VIEWER, t, p))],
+            250.0,
+        );
+        let vanish = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0)
+            .expect("own dead raider must eventually be observed destroyed");
+        assert!((vanish - honest).abs() < 0.2,
+            "own dead raider should vanish at its light {honest:.2}s, got {vanish:.2}s");
+    }
+
+    /// BOTH raiders destroyed at distinct distances. Each must vanish at ITS OWN
+    /// honest light, never at the (earlier) battle-geometry time.
+    #[test]
+    fn both_destroyed_each_vanishes_on_its_own_light() {
+        let c = 300.0;
+        let cc = Vec2::new(0.0, 0.0);
+        let p_own = Vec2::new(1300.0, 0.0); // own dead raider, 4.33 s light
+        let p_enemy = Vec2::new(1500.0, 0.0); // enemy dead raider, 5 s light (200 su apart)
+        let t = 10.0;
+        let honest_own = t + p_own.distance(cc) / c; // 14.33
+        let honest_enemy = t + p_enemy.distance(cc) / c; // 15.0
+        let hist = history_of(
+            vec![
+                (EntityId(1), dead_track(still_samples(p_own, t), VIEWER, t, p_own)),
+                (EntityId(2), dead_track(still_samples(p_enemy, t), RIVAL, t, p_enemy)),
+            ],
+            250.0,
+        );
+        let v_own = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0).expect("own should vanish");
+        let v_enemy = vanish_time(&hist, VIEWER, cc, EntityId(2), 10.0, 16.0).expect("enemy should vanish");
+        assert!((v_own - honest_own).abs() < 0.2, "own dead vanish {v_own:.2} != light {honest_own:.2}");
+        assert!(v_enemy >= honest_enemy - 0.15,
+            "FTL LEAK: enemy dead raider vanished at {v_enemy:.2}s, light arrives {honest_enemy:.2}s");
+    }
+
+    /// EXISTENCE GUARD. A dead rival raider the viewer never had sensors on must
+    /// stay invisible at every instant — the latch may only confirm a real past
+    /// detection, never conjure a never-tracked raider into view.
+    #[test]
+    fn destroyed_raider_never_detected_stays_invisible() {
+        let c = 300.0;
+        let cc = Vec2::new(0.0, 0.0);
+        let p = Vec2::new(1500.0, 0.0); // far outside the 250 su cc range; no own assets
+        let hist = history_of(
+            vec![(EntityId(1), dead_track(still_samples(p, 10.0), RIVAL, 10.0, p))],
+            250.0,
+        );
+        let mut now = 0.0;
+        while now <= 20.0 {
+            assert!(hist.view_for(VIEWER, cc, c, now).is_empty(),
+                "a never-detected dead raider must never appear (existence leak at t={now:.1})");
+            now += 0.25;
+        }
     }
 }

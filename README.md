@@ -143,6 +143,13 @@ view; staleness equals light-distance on the wire; commands lag; no information
   command center (`T + |P − CC| / c`), then it vanishes. The view filter
   (`crates/server/src/view.rs`, `mark_destroyed` + the per-viewer gate) enforces
   this, so attacker and defender watch the *same* ship die at *different* times.
+  Because a raider is only shown inside the viewer's *sensor coverage*, a
+  destroyed raider's detection is latched to its **own retarded frame**
+  (`detected_at_retarded_time`): the winner breaking off home can't pull its
+  sensor bubble off the kill and make the dead raider blink out before its
+  destruction light arrives — without ever revealing a raider the viewer never
+  tracked. (Convoys broadcast galaxy-wide, so they were always correct; the
+  raider sensor-gated path is the subtle case, covered by four RVR view tests.)
 - **Recall can miss the window:** a recall is light-delayed too; if the raider
   has already made contact, you are "commanding into the past" (deterministic
   sim tests cover intercept, successful recall, and recall-too-late).
