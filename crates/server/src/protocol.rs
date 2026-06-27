@@ -103,15 +103,17 @@ pub enum Role {
 /// A delayed report of a raid outcome (§8), tailored to the recipient. Delivered
 /// only once the light of the event has reached the player's command center, so
 /// attacker and defender may receive it at different times.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct RaidReport {
     pub outcome: RaidOutcome,
     pub attacker: PlayerId,
     pub defender: PlayerId,
-    pub raider: EntityId,
-    pub convoy: EntityId,
+    pub attacker_ship: EntityId,
+    pub target_ship: EntityId,
+    pub attacker_kind: ShipKind,
+    pub target_kind: ShipKind,
     pub pos: Vec2,
-    /// Sim time at which the raid resolved.
+    /// Sim time at which the battle resolved.
     pub at_time: f64,
     /// How long ago (light delay, seconds) — you are learning this stale news.
     pub age: f64,

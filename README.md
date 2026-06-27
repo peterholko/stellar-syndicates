@@ -99,10 +99,15 @@ same world advancing with identical positions. See
   player-count revealed instantly); **both are fixed** — anchor ownership is now
   light-gated, and presence/ops state moved to a separate `/status` meta endpoint
   outside the game view.
-- **Two fog regimes (§6):** your own ships are delayed-but-coherent (no
-  uncertainty); rivals are shown at a stale position with an **uncertainty cone**
-  (`age · max_speed` — how far they could have moved since the light left) and an
-  age label, fading with staleness.
+- **One fog law for ALL ships (§6):** certainty tracks **proximity to the
+  command center, not ownership** — there is no FTL tether to your own fleet.
+  Every ship (own or rival) is shown at its stale, light-delayed position with an
+  **uncertainty cone** (`age · max_speed` — how far it could have moved since the
+  light left) and an age label, fading with staleness. An own ship near the
+  command center is fresh and near-certain; the *same* own ship far out is as
+  fogged as a rival at that distance. (Own ships under orders also get a hint of
+  where they've likely advanced along the commanded course, so the fog reads as
+  "proceeding on last orders," not a lost ship.)
 - **Command latency / the three clocks (§6):** a move order travels to the ship
   at light speed (scheduled in the pure core), and the player learns the result
   later still via their delayed view. The client shows the estimate from its
@@ -110,9 +115,12 @@ same world advancing with identical positions. See
 - **Each player sees a genuinely different delayed galaxy.** Distant things are
   stale; nearer things fresher; rivals are dark until their light arrives.
 
-**M3 checkpoint proven:** two players each see their own coherent delayed/fogged
-view; staleness equals light-distance on the wire; commands lag; no information
-(positions, presence, or counts) leaks between players' horizons. See
+**M3 checkpoint proven:** two players each see their own delayed/fogged view;
+staleness equals light-distance on the wire; commands lag; no information
+(positions, presence, or counts) leaks between players' horizons. Own ships obey
+the same law — `uncertainty = age · max_speed`, certainty by proximity not
+ownership — verified on the wire by
+[`scripts/own_fog_check.mjs`](scripts/own_fog_check.mjs). See
 [`scripts/m3_smoke.mjs`](scripts/m3_smoke.mjs).
 
 ### What M4 delivers (verified) — player-vs-player raiding
@@ -123,23 +131,47 @@ view; staleness equals light-distance on the wire; commands lag; no information
   travels at light speed: the raider begins pursuing only once the order reaches
   it, and it chases the target's *true* position, not the stale ghost the player
   committed on.
-- **Resolution in true space:** contact within `CONTACT_RADIUS` → convoy lost;
-  the convoy reaching the hub (`HUB_SAFE_RADIUS`) → escape.
+- **Randomized resolution in true space:** contact within `CONTACT_RADIUS` rolls
+  a **battle** (not an auto-kill) — convoy destroyed, raider destroyed, both
+  destroyed, or both survive (driven off). A convoy reaching the hub
+  (`HUB_SAFE_RADIUS`) still escapes before contact. **Raiders can now intercept
+  rival raiders too** (same commit/contact machinery), with their own even-odds
+  battle table. All rolls use the **seeded sim `Rng`** (`crates/sim/src/rng.rs`)
+  — one roll per battle, reproducible from seed + commands, no `std` rand.
 - **Delayed reports on each player's own clock (§14):** a per-player *event*
-  scheduler (`crates/server/src/reports.rs`) holds each raid outcome until its
+  scheduler (`crates/server/src/reports.rs`) holds each battle outcome until its
   light reaches that player's command center, so **attacker and defender learn
   it at different times** — verified on the wire (e.g. attacker 19s stale,
   defender 8s, each equal to its own light-distance).
+- **Destruction observed through each player's delayed frame (§6):** a battle
+  resolves ONCE in true space with ONE outcome; both players observe that *same*
+  fixed result, each delayed by light — never a per-viewer re-roll. A destroyed
+  ship does **not** blink out: each player keeps seeing it as a light-delayed
+  **ghost flying on old light** until the destruction's light reaches *their*
+  command center (`T + |P − CC| / c`), then it vanishes. The view filter
+  (`crates/server/src/view.rs`, `mark_destroyed` + the per-viewer gate) enforces
+  this, so attacker and defender watch the *same* ship die at *different* times.
+  Because a raider is only shown inside the viewer's *sensor coverage*, a
+  destroyed raider's detection is latched to its **own retarded frame**
+  (`detected_at_retarded_time`): the winner breaking off home can't pull its
+  sensor bubble off the kill and make the dead raider blink out before its
+  destruction light arrives — without ever revealing a raider the viewer never
+  tracked. (Convoys broadcast galaxy-wide, so they were always correct; the
+  raider sensor-gated path is the subtle case, covered by four RVR view tests.)
 - **Recall can miss the window:** a recall is light-delayed too; if the raider
   has already made contact, you are "commanding into the past" (deterministic
   sim tests cover intercept, successful recall, and recall-too-late).
 - **Client:** select your raider, click a rival ghost to raid it, press **R** to
-  recall; delayed reports surface as a news log ("your convoy was lost — delayed
-  news, 25s old").
+  recall; delayed battle reports surface as a news log phrased per outcome and
+  role ("your convoy was destroyed by a rival raider — delayed news, 25s old").
 
-**M4 checkpoint proven:** A raids B's convoy under honest delay; both learn the
-outcome as delayed news on their own clocks; recall can miss. See
-[`scripts/m4_smoke.mjs`](scripts/m4_smoke.mjs) (+ sim raid tests).
+**M4 checkpoint proven:** A raids B's convoy under honest delay; the battle has
+ONE seeded outcome both players observe on their own clocks; a destroyed ship
+lingers as a ghost per-viewer until its light arrives (attacker and defender
+see it vanish at different times); recall can miss. See
+[`scripts/m4_smoke.mjs`](scripts/m4_smoke.mjs) and the two-player battle
+observer [`scripts/battle_smoke.mjs`](scripts/battle_smoke.mjs) (+ sim battle
+tests and `view::tests::destroyed_ship_vanishes_per_viewer_by_light`).
 
 ### Signals animation (additive — visualizing the communication delay)
 
@@ -403,10 +435,12 @@ You command a chartered corporation from your **home anchor** — and you never 
 the galaxy as it *is*, only as the light that has reached your chair (§6). Every
 sighting shows where something *was*; every order crosses space at light speed.
 
-- **Read your delayed map.** Your own ships are crisp cyan (a coherent feed, just
-  late). Rivals are red **ghosts** at their last-known position, with an
-  uncertainty cone (how far they could have moved since the light left) and a
-  "Δ Ns" staleness label. Soft **teal bubbles** are your sensor coverage; outside
+- **Read your delayed map.** Your own ships are cyan **ghosts** — crisp and
+  near-certain when close to home, but stale and ringed by an **uncertainty cone**
+  when far out (there's no FTL tether to your fleet — certainty comes from being
+  near your command center). Rivals are red ghosts the same way. Every ghost shows
+  how far it could have moved since the light left and a "Δ Ns" staleness label;
+  an own ship under orders also hints where it's likely advanced along its course. Soft **teal bubbles** are your sensor coverage; outside
   them you're blind to raiders. Convoys broadcast galaxy-wide (with their route);
   cargo only shows for convoys inside your sensors. A pulsing red **⚠ RAIDER** is
   your only warning of an attacker that has entered range.

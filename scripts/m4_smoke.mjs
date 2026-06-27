@@ -67,10 +67,13 @@ const main = async () => {
   // Roles correct.
   if (ra.you !== "attacker") fail(`A's report role should be attacker, got ${ra.you}`);
   if (rb.you !== "defender") fail(`B's report role should be defender, got ${rb.you}`);
-  // Same raid.
-  if (ra.convoy !== rb.convoy || ra.raider !== rb.raider || Math.abs(ra.at_time - rb.at_time) > 1e-6)
-    fail("A and B received reports about different raids");
-  console.log(`  both learned of the SAME raid (convoy ${ra.convoy}), correct roles ✓`);
+  // Same battle, ONE true outcome — both players observe the identical result.
+  const OUTCOMES = ["target_destroyed", "attacker_destroyed", "both_destroyed", "both_survive", "escaped"];
+  if (!OUTCOMES.includes(ra.outcome)) fail(`unknown outcome ${ra.outcome}`);
+  if (ra.outcome !== rb.outcome) fail(`A saw outcome ${ra.outcome} but B saw ${rb.outcome} — must be ONE shared result`);
+  if (ra.target_ship !== rb.target_ship || ra.attacker_ship !== rb.attacker_ship || Math.abs(ra.at_time - rb.at_time) > 1e-6)
+    fail("A and B received reports about different battles");
+  console.log(`  both observed the SAME battle (target ${ra.target_ship}, outcome ${ra.outcome}), correct roles ✓`);
 
   // Report fairness: each report's staleness == its light-distance from THAT
   // player's command center to the resolution point.

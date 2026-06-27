@@ -254,12 +254,21 @@ impl GameLoop {
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
         self.reports.ingest(&events);
-        // Route economy news to the owning player immediately (their own
-        // action / a delivery at their doorstep).
         for ev in &events {
-            if let sim::EventPayload::Trade(te) = &ev.payload {
-                self.sessions
-                    .send_to_player(te.player(), ServerMsg::Trade { trade: *te });
+            match &ev.payload {
+                // Route economy news to the owning player immediately (their own
+                // action / a delivery at their doorstep).
+                sim::EventPayload::Trade(te) => {
+                    self.sessions
+                        .send_to_player(te.player(), ServerMsg::Trade { trade: *te });
+                }
+                // A ship was destroyed in true space: tell the view filter so it
+                // keeps serving the ghost until each player's light arrives, then
+                // vanishes it (delayed, per-viewer — never FTL).
+                sim::EventPayload::ShipDestroyed { ship, pos, .. } => {
+                    self.history.mark_destroyed(*ship, ev.time, *pos);
+                }
+                _ => {}
             }
         }
 

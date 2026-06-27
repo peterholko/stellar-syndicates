@@ -1,9 +1,12 @@
 // Pixi.js renderer. Draws the player's DELAYED, FOGGED view (§6) — the heart of
 // the game made visible (Pillar 2: never hide the lag). Each ship is a ghost at
-// the position its arriving light shows; enemy ghosts carry an uncertainty cone
-// (how far they could have moved since the light left) and an age label, and
-// fade with staleness. Your own ships are coherent (no cone). The command center
-// is your vantage — the origin of everything you can see.
+// the position its arriving light shows; EVERY ghost — own or enemy — carries an
+// uncertainty cone (how far it could have moved since the light left) and an age
+// label, and fades with staleness. There is no FTL tether to your own fleet:
+// certainty comes from PROXIMITY to the command center, so a distant own ship is
+// just as fogged as a distant enemy, while one nearby is crisp. An own ship under
+// orders also shows a hint of where it has most likely advanced along its course.
+// The command center is your vantage — the origin of everything you can see.
 
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import type { GalaxyInfo, GhostView, Vec2 } from "./protocol";
@@ -274,11 +277,35 @@ export class Renderer {
     const color = own ? COL_OWN : COL_OTHER;
     const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
 
-    // Uncertainty cone (enemies only): where it could be now, given staleness.
+    // Uncertainty cone: where the object could be NOW given how stale the sighting
+    // is. Drawn for OWN ships too — your distant fleet is light-delayed like
+    // everything else (§6). Near the command center age→0, so the cone shrinks to
+    // nothing and the ship reads as crisp/certain.
     sp.cone.clear();
-    if (!own && ghost.uncertainty > 0) {
+    if (ghost.uncertainty > 0) {
       const rPx = ghost.uncertainty * this.scale;
-      sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
+      const cone = own ? COL_OWN : COL_CONE;
+      sp.cone.circle(0, 0, rPx).fill({ color: cone, alpha: own ? 0.04 : 0.05 }).stroke({ width: 1, color: cone, alpha: own ? 0.16 : 0.22 });
+    }
+    // Own ship under orders: it's executing a course YOU set, so hint where it has
+    // most likely advanced — from the ghost, along the commanded heading, up to how
+    // far it could have moved (its uncertainty). Reads as "proceeding on last
+    // orders," not "lost ship."
+    if (own && ghost.uncertainty > 1) {
+      const dest = state.orders[ghost.id];
+      if (dest) {
+        const dx = dest.x - ghost.pos.x;
+        const dy = dest.y - ghost.pos.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 1) {
+          const step = Math.min(ghost.uncertainty, d);
+          const pr = this.worldToScreen({ x: ghost.pos.x + (dx / d) * step, y: ghost.pos.y + (dy / d) * step });
+          const ox = pr.x - s.x;
+          const oy = pr.y - s.y;
+          sp.cone.moveTo(0, 0).lineTo(ox, oy).stroke({ width: 1, color: COL_OWN, alpha: 0.3 });
+          sp.cone.circle(ox, oy, 2.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.6 });
+        }
+      }
     }
     // Detected rival raider = a threat contact (it's otherwise invisible). Make
     // it unmistakable with a pulsing alert ring — this is your only warning.
@@ -297,7 +324,11 @@ export class Renderer {
     sp.body.clear();
     const len = ghost.kind === "convoy" ? 9 : 7;
     const wid = ghost.kind === "convoy" ? 6 : 3.5;
-    const alpha = own ? 0.97 : Math.max(0.4, 0.95 - 0.55 * Math.min(ghost.age / FADE_AGE_S, 1));
+    // Fade with staleness — own ships too, so a distant (stale) own ship visibly
+    // dims while one near the command center stays crisp. A higher floor for own
+    // ships means you never "lose" your fleet — it just reports from further back.
+    const fade = Math.min(ghost.age / FADE_AGE_S, 1);
+    const alpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
     sp.body.poly([len, 0, -len * 0.7, -wid, -len * 0.7, wid]).fill({ color, alpha });
     if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
     sp.body.rotation = angle;
@@ -305,27 +336,29 @@ export class Renderer {
     // Label: threat warning for raiders, cargo manifest for convoys (shown only
     // when known — i.e. within sensor range), staleness everywhere it matters.
     const sel = state.selectedShipId === ghost.id;
+    // Honest staleness, shown finer-grained when fresh (near the command center).
+    const stale = `Δ${ghost.age.toFixed(ghost.age < 10 ? 1 : 0)}s`;
     let txt = "";
     let col = COL_OTHER;
     let lalpha = 0.85;
     if (ghost.kind === "raider" && !own) {
-      txt = `⚠ RAIDER  Δ${ghost.age.toFixed(0)}s`;
+      txt = `⚠ RAIDER  ${stale}`;
       col = COL_THREAT;
       lalpha = 0.95;
+    } else if (own) {
+      // Own ships are light-delayed too now — always surface staleness so the fog
+      // reads as "reporting from Xs ago," not a glitch. Convoys also show cargo.
+      const cargo = ghost.kind === "convoy"
+        ? (ghost.cargo ? `${ghost.cargo.commodity} ×${ghost.cargo.units}  ` : "")
+        : "";
+      txt = `${cargo}${stale}`;
+      col = COL_OWN;
+      lalpha = sel ? 0.95 : 0.7;
     } else if (ghost.kind === "convoy") {
       const cargo = ghost.cargo ? `${ghost.cargo.commodity} ×${ghost.cargo.units}` : "cargo ?";
-      if (own) {
-        txt = cargo;
-        col = COL_OWN;
-        lalpha = sel ? 0.9 : 0.55;
-      } else {
-        txt = `${cargo}  Δ${ghost.age.toFixed(0)}s`;
-        col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
-        lalpha = 0.9;
-      }
-    } else if (own && sel) {
-      txt = `Δ${ghost.age.toFixed(1)}s`;
-      col = COL_OWN;
+      txt = `${cargo}  ${stale}`;
+      col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
+      lalpha = 0.9;
     }
     sp.label.text = txt;
     sp.label.style.fill = col;

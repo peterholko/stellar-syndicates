@@ -67,6 +67,12 @@ const HUB_SAFE_RADIUS: f64 = 300.0;
 /// The market drifts once per this many ticks (≈ once a second at 30 Hz).
 const MARKET_UPDATE_TICKS: u64 = 30;
 
+// Battle outcome probabilities (§8). Tunable; balance comes later. Each tuple is
+// (P target destroyed, P attacker destroyed, P both destroyed); the remainder is
+// "both survive (attacker driven off)".
+const RVC_PROBS: (f64, f64, f64) = (0.60, 0.12, 0.08); // raider vs convoy (raider favoured)
+const RVR_PROBS: (f64, f64, f64) = (0.35, 0.35, 0.12); // raider vs raider (even)
+
 /// The limit-order book clears once per this many ticks (≈ every 20 s).
 const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
 
@@ -250,50 +256,108 @@ impl World {
         }
     }
 
-    /// Detect and apply raid resolutions: a raider within [`CONTACT_RADIUS`] of
-    /// its target intercepts it (convoy lost); a target within
-    /// [`HUB_SAFE_RADIUS`] of the hub escapes. Both produce a delayed report.
+    /// Roll a random battle outcome with the seeded RNG (§8). Deterministic from
+    /// seed + commands; rolled ONCE per battle (both sides later observe the same
+    /// result). The table depends on the target's kind (raider-vs-convoy vs
+    /// raider-vs-raider).
+    fn roll_battle(&mut self, target_kind: ShipKind) -> RaidOutcome {
+        let (pt, pa, pb) = match target_kind {
+            ShipKind::Convoy => RVC_PROBS,
+            ShipKind::Raider => RVR_PROBS,
+        };
+        let r = self.rng.next_f64();
+        if r < pt {
+            RaidOutcome::TargetDestroyed
+        } else if r < pt + pa {
+            RaidOutcome::AttackerDestroyed
+        } else if r < pt + pa + pb {
+            RaidOutcome::BothDestroyed
+        } else {
+            RaidOutcome::BothSurvive
+        }
+    }
+
+    /// Detect and apply battle resolutions. A raider within [`CONTACT_RADIUS`] of
+    /// its target fights a randomised battle (raider-vs-convoy OR raider-vs-
+    /// raider); a convoy within [`HUB_SAFE_RADIUS`] of the hub escapes before
+    /// contact. Destroyed ships are removed from TRUE space here and at this true
+    /// time; each player observes the destruction later, by light (the view
+    /// filter serves the dead ship's ghost until that player's light arrives).
     fn resolve_raids(&mut self, events: &mut Vec<Event>) {
         let hub = self.hub;
         let now = self.time;
-        let mut outcomes: Vec<(EntityId, EntityId, RaidOutcome, Vec2)> = Vec::new();
+        // Detect contacts: (attacker_id, target_id, is_escape).
+        let mut contacts: Vec<(EntityId, EntityId, bool)> = Vec::new();
         for (rid, ship) in &self.ships {
             if let ShipOrder::Intercept { target } = ship.order
                 && let Some(t) = self.ships.get(&target)
             {
                 if ship.pos.distance(t.pos) <= CONTACT_RADIUS {
-                    outcomes.push((*rid, target, RaidOutcome::Intercepted, ship.pos));
-                } else if t.pos.distance(hub) <= HUB_SAFE_RADIUS {
-                    outcomes.push((*rid, target, RaidOutcome::Escaped, t.pos));
+                    contacts.push((*rid, target, false));
+                } else if t.kind == ShipKind::Convoy && t.pos.distance(hub) <= HUB_SAFE_RADIUS {
+                    contacts.push((*rid, target, true)); // raiders don't get hub-safety
                 }
             }
         }
-        for (rid, cid, outcome, pos) in outcomes {
-            let attacker = self.ships.get(&rid).map(|s| s.owner);
-            let defender = self.ships.get(&cid).map(|s| s.owner);
-            let (Some(attacker), Some(defender)) = (attacker, defender) else {
-                continue; // convoy already resolved by another raider this tick
+
+        for (aid, tid, escape) in contacts {
+            // Re-fetch: an earlier contact this tick may have destroyed a ship.
+            let (Some(att), Some(tgt)) = (self.ships.get(&aid), self.ships.get(&tid)) else {
+                continue;
             };
+            let (a_owner, t_owner) = (att.owner, tgt.owner);
+            let (a_kind, t_kind) = (att.kind, tgt.kind);
+            let (a_pos, t_pos) = (att.pos, tgt.pos);
+
+            let outcome = if escape {
+                RaidOutcome::Escaped
+            } else {
+                self.roll_battle(t_kind)
+            };
+
             events.push(Event::new(
                 now,
                 EventPayload::RaidResolved {
-                    attacker,
-                    defender,
-                    raider: rid,
-                    convoy: cid,
+                    attacker: a_owner,
+                    defender: t_owner,
+                    attacker_ship: aid,
+                    target_ship: tid,
+                    attacker_kind: a_kind,
+                    target_kind: t_kind,
                     outcome,
-                    pos,
+                    pos: a_pos,
                 },
             ));
-            // Raider breaks off and returns home.
-            if let Some(home) = self.players.get(&attacker).map(|c| c.home)
-                && let Some(ship) = self.ships.get_mut(&rid)
-            {
-                ship.order = ShipOrder::MoveTo { dest: home };
+
+            let (kill_attacker, kill_target) = outcome.kills();
+            if kill_attacker {
+                self.ships.remove(&aid);
+                events.push(Event::new(
+                    now,
+                    EventPayload::ShipDestroyed { ship: aid, owner: a_owner, kind: a_kind, pos: a_pos },
+                ));
+            } else {
+                // Surviving attacker (or escape) breaks off and returns home.
+                self.send_ship_home(aid, a_owner);
             }
-            if outcome == RaidOutcome::Intercepted {
-                self.ships.remove(&cid); // convoy lost
+            if kill_target {
+                self.ships.remove(&tid);
+                events.push(Event::new(
+                    now,
+                    EventPayload::ShipDestroyed { ship: tid, owner: t_owner, kind: t_kind, pos: t_pos },
+                ));
             }
+            // A surviving target keeps its order (convoy continues; a raider that
+            // was attacked continues whatever it was doing).
+        }
+    }
+
+    /// Send a surviving ship home (break off).
+    fn send_ship_home(&mut self, id: EntityId, owner: PlayerId) {
+        if let Some(home) = self.players.get(&owner).map(|c| c.home)
+            && let Some(ship) = self.ships.get_mut(&id)
+        {
+            ship.order = ShipOrder::MoveTo { dest: home };
         }
     }
 
@@ -1022,16 +1086,60 @@ mod tests {
         None
     }
 
+    /// After a battle, the world state must be consistent with the outcome: a
+    /// ship is present iff it wasn't destroyed.
+    fn assert_battle_consistent(w: &World, outcome: RaidOutcome, attacker: EntityId, target: EntityId) {
+        let (kill_a, kill_t) = outcome.kills();
+        assert_eq!(w.ships.contains_key(&attacker), !kill_a, "attacker present iff not destroyed");
+        assert_eq!(w.ships.contains_key(&target), !kill_t, "target present iff not destroyed");
+    }
+
     #[test]
-    fn raid_intercepts_convoy() {
+    fn raid_resolves_in_a_battle() {
         let mut w = test_world();
         let (atk, def) = (PlayerId(1), PlayerId(2));
         // Raider near command center (small commit delay), convoy 300 su away.
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
-        let outcome = run_until_raid(&mut w, 60, |_| vec![]);
-        assert_eq!(outcome, Some(RaidOutcome::Intercepted));
-        assert!(!w.ships.contains_key(&convoy), "convoy should be lost");
+        let outcome = run_until_raid(&mut w, 60, |_| vec![]).expect("a battle should resolve");
+        assert_ne!(outcome, RaidOutcome::Escaped, "convoy isn't near the hub — it's a battle");
+        assert_battle_consistent(&w, outcome, raider, convoy);
+    }
+
+    #[test]
+    fn raider_vs_raider_battle() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let attacker = find_ship(&w, atk, ShipKind::Raider);
+        let target = find_ship(&w, def, ShipKind::Raider); // target a RIVAL RAIDER
+        for (id, off) in [(attacker, Vec2::new(120.0, 0.0)), (target, Vec2::new(420.0, 0.0))] {
+            let s = w.ships.get_mut(&id).unwrap();
+            s.pos = cc + off;
+            s.vel = Vec2::ZERO;
+            s.order = ShipOrder::Idle;
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: attacker, target_id: target }]);
+        let outcome = run_until_raid(&mut w, 60, |_| vec![]).expect("a raider-vs-raider battle should resolve");
+        assert_ne!(outcome, RaidOutcome::Escaped, "raiders don't escape via the hub");
+        assert_battle_consistent(&w, outcome, attacker, target);
+    }
+
+    #[test]
+    fn battle_outcome_is_deterministic_from_seed() {
+        // Same seed + same commands → same battle outcome (seeded RNG).
+        let outcome_for = || {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+            w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+            run_until_raid(&mut w, 60, |_| vec![])
+        };
+        assert_eq!(outcome_for(), outcome_for(), "battle outcome must be reproducible from seed");
     }
 
     #[test]
@@ -1071,9 +1179,10 @@ mod tests {
                 vec![]
             }
         });
-        assert_eq!(outcome, Some(RaidOutcome::Intercepted), "recall should have arrived too late");
+        let outcome = outcome.expect("recall arrived too late — a battle should have resolved");
+        assert_ne!(outcome, RaidOutcome::Escaped);
         assert!(recalled, "test should have issued a recall");
-        assert!(!w.ships.contains_key(&convoy));
+        assert_battle_consistent(&w, outcome, raider, convoy);
     }
 
     #[test]
