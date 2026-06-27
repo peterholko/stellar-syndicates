@@ -16,7 +16,7 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | Milestone | State | Notes |
 |-----------|-------|-------|
 | **M1 — Multiplayer architecture scaffold + sessions** | ✅ **Complete** | Full architecture skeleton, end-to-end, built for many players. |
-| M2 — True-world sim (continuous space + acceleration) | ⬜ Not started | |
+| **M2 — True-world sim (continuous space + acceleration)** | ✅ **Complete** | Galaxy, ships, flip-and-burn physics; clients render the shared moving world. |
 | M3 — Lightspeed information model (the core) | ⬜ Not started | |
 | M4 — Raiding loop (PvP) | ⬜ Not started | |
 | M5 — Full multiplayer economy | ⬜ Not started | |
@@ -53,6 +53,29 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 per-player stream and a live tick from the authoritative loop; joins/leaves are
 handled (online count rises and falls correctly). See
 [`scripts/m1_smoke.mjs`](scripts/m1_smoke.mjs).
+
+### What M2 delivers (verified)
+
+- **Continuous 2D galaxy in the pure core** — a central wormhole hub, seeded
+  procedurally-placed star systems (area-uniform), and a ring of home anchors
+  assigned to players on join. Galaxy radius scales with player count (§4).
+- **Flip-and-burn movement (§7)** — ships have position + velocity and move
+  under an acceleration-limited controller that always plans the arrival burn
+  (accelerate, flip, decelerate to arrive **at rest**; travel time ≈ 2·√(d/a)).
+  Convoy (slow/heavy) vs raider (fast/light) is just two parameters. All speeds
+  stay below `c`. Unit-tested for arrival-at-rest, travel time, the speed cap,
+  and determinism.
+- **Shared advancing world** — the game loop integrates movement each tick; each
+  player gets a `View` of ships + anchors (M2: true positions — explicitly
+  temporary until the M3 delay layer). On join a player gets a demo convoy +
+  raider that patrol, so the world is visibly alive.
+- **Pixi map** — renders the hub, systems (with designations), home anchors
+  (own highlighted), and ships as velocity-oriented markers, smoothly
+  extrapolated between server updates.
+
+**M2 checkpoint proven:** ships move with flip-and-burn; multiple clients see the
+same world advancing with identical positions. See
+[`scripts/m2_smoke.mjs`](scripts/m2_smoke.mjs).
 
 ---
 

@@ -21,9 +21,10 @@ function client(name) {
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "Welcome") got.welcome = m;
-    else if (m.type === "Tick") {
+    else if (m.type === "View") {
       got.ticks.push(m.tick);
       got.lastOnline = m.players_online;
+      got.lastShips = m.ships;
     } else if (m.type === "Error") got.errors.push(m.message);
   });
   return { ws, got };

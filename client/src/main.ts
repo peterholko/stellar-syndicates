@@ -22,6 +22,7 @@ function setHud(): void {
   $("hud-time").textContent =
     state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
   $("hud-online").textContent = state.link === "online" ? String(state.playersOnline) : "—";
+  $("hud-ships").textContent = state.link === "online" ? String(state.ships.length) : "—";
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
     connecting: "connecting…",
@@ -73,16 +74,20 @@ function join(): void {
           state.tickHz = msg.tick_hz;
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
+          state.galaxy = msg.galaxy;
           state.link = "online";
           // Swap from the join screen to the galaxy view.
           joinScreen.style.display = "none";
           hud.style.display = "flex";
           void startRenderer();
           break;
-        case "Tick":
+        case "View":
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
           state.playersOnline = msg.players_online;
+          state.anchors = msg.anchors;
+          state.ships = msg.ships;
+          state.lastViewWallMs = performance.now();
           state.link = "online";
           break;
         case "Error":

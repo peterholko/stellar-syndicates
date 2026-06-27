@@ -14,16 +14,22 @@
 pub mod command;
 pub mod config;
 pub mod event;
+pub mod galaxy;
 pub mod ids;
 pub mod math;
+pub mod movement;
 pub mod rng;
+pub mod ship;
 pub mod world;
 
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use event::{Event, EventPayload};
+pub use galaxy::{HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use math::Vec2;
+pub use movement::{flip_and_burn, MoveStep};
 pub use rng::Rng;
+pub use ship::{Ship, ShipKind, ShipOrder};
 pub use world::{Corporation, World};
 

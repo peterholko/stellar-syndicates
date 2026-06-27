@@ -10,7 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::PlayerId;
+use crate::ids::{EntityId, PlayerId};
+use crate::ship::ShipKind;
 
 /// A discrete thing that happened in the world at `time` (seconds).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,10 +22,16 @@ pub struct Event {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "event")]
 pub enum EventPayload {
     /// A new corporation entered the galaxy for the first time.
     PlayerJoined { id: PlayerId, name: String },
+    /// A ship was created (e.g. the demo convoy/raider spawned at a home anchor).
+    ShipSpawned {
+        id: EntityId,
+        owner: PlayerId,
+        kind: ShipKind,
+    },
 }
 
 impl Event {

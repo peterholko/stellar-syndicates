@@ -19,7 +19,7 @@ use tracing::{debug, info};
 use sim::{Command, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
-use crate::protocol::{ClientMsg, ServerMsg};
+use crate::protocol::{ClientMsg, GalaxyInfo, ServerMsg, ShipView};
 use crate::session::{ConnInfo, GameInput, Sessions};
 
 /// Push a per-player message every N sim ticks. At 30 Hz, N=3 → ~10 Hz network
@@ -66,7 +66,8 @@ impl GameLoop {
                         outbound,
                     },
                 );
-                // Greet this connection immediately with its identity + clock.
+                // Greet this connection immediately with its identity, clock,
+                // and the static galaxy geography.
                 self.sessions.send_to_conn(
                     conn_id,
                     ServerMsg::Welcome {
@@ -75,6 +76,12 @@ impl GameLoop {
                         tick_hz: TICK_HZ,
                         tick: self.world.tick,
                         sim_time: self.world.time,
+                        galaxy: GalaxyInfo {
+                            hub: self.world.hub,
+                            radius: self.world.config.galaxy_radius,
+                            c: self.world.config.c,
+                            systems: self.world.systems.clone(),
+                        },
                     },
                 );
                 // Ensure the corporation exists in the sim (idempotent).
@@ -139,19 +146,28 @@ impl GameLoop {
         }
     }
 
-    /// Push every connection its own per-player message. In M1 the content is
-    /// the live tick; M3 replaces this with each player's delayed/fogged view.
+    /// Push every connection its own per-player view. In M2 every player sees
+    /// the same TRUE world (movement verification); M3 makes each view delayed
+    /// and fogged, computed per player from their command center.
     fn broadcast(&self) {
         let players_online = self.sessions.online_player_count();
+
+        // M2: one shared true-world view. Built once and cloned per connection.
+        // (M3 will build a *different* view per player here.)
+        let anchors = self.world.home_slots.clone();
+        let ships: Vec<ShipView> = self.world.ships.values().map(ShipView::from_ship).collect();
+
         for (_conn_id, info) in self.sessions.iter_conns() {
-            let msg = ServerMsg::Tick {
+            let msg = ServerMsg::View {
                 tick: self.world.tick,
                 sim_time: self.world.time,
                 players_online,
+                anchors: anchors.clone(),
+                ships: ships.clone(),
             };
             // Non-blocking: never let one slow client stall the authoritative
             // loop. A full queue means the client is behind; dropping this
-            // (now-stale) tick is correct — the next one supersedes it.
+            // (now-stale) view is correct — the next one supersedes it.
             let _ = info.outbound.try_send(msg);
         }
     }

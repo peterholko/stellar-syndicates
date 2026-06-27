@@ -4,9 +4,14 @@
 //! ([`ClientMsg`]); the server pushes each player their own *filtered view*
 //! ([`ServerMsg`]). The client holds no authoritative state — these messages
 //! are the entire contract (§14).
+//!
+//! NOTE (M2): the `View` currently carries TRUE world positions to all players,
+//! to verify movement. M3 replaces this with each player's delayed/fogged
+//! reconstruction — the wire types here are deliberately explicit (not the raw
+//! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::PlayerId;
+use sim::{EntityId, HomeSlot, PlayerId, Ship, ShipKind, StarSystem, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +26,40 @@ pub enum ClientMsg {
     Ping,
 }
 
+/// Static galaxy geography, sent once at join. Never changes during a session
+/// (systems don't move), so it doesn't need to be in the per-tick stream.
+#[derive(Debug, Clone, Serialize)]
+pub struct GalaxyInfo {
+    pub hub: Vec2,
+    pub radius: f64,
+    /// Speed of light (sim units / s) — lets the client annotate light-delays.
+    pub c: f64,
+    pub systems: Vec<StarSystem>,
+}
+
+/// A ship as shown to a player. Deliberately omits the ship's standing order —
+/// that is internal truth the client must not see (and M3 must not leak).
+#[derive(Debug, Clone, Serialize)]
+pub struct ShipView {
+    pub id: EntityId,
+    pub owner: PlayerId,
+    pub kind: ShipKind,
+    pub pos: Vec2,
+    pub vel: Vec2,
+}
+
+impl ShipView {
+    pub fn from_ship(s: &Ship) -> Self {
+        ShipView {
+            id: s.id,
+            owner: s.owner,
+            kind: s.kind,
+            pos: s.pos,
+            vel: s.vel,
+        }
+    }
+}
+
 /// Messages pushed by the server to a single player's connection.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
@@ -31,18 +70,21 @@ pub enum ServerMsg {
         name: String,
         /// Sim tick rate (Hz) — lets the client display time correctly.
         tick_hz: u32,
-        /// Current authoritative tick at the moment of joining.
         tick: u64,
         sim_time: f64,
+        galaxy: GalaxyInfo,
     },
 
-    /// Per-player heartbeat from the authoritative loop. In M1 this is just the
-    /// live tick; from M3 it becomes the player's delayed/fogged view payload.
-    Tick {
+    /// The player's per-tick view of the world. In M2 these are TRUE positions
+    /// (movement verification); M3 makes them delayed and fogged.
+    View {
         tick: u64,
         sim_time: f64,
-        /// How many distinct players currently have a live connection.
         players_online: usize,
+        /// All home anchors (with owners), so the client can mark homes.
+        anchors: Vec<HomeSlot>,
+        /// Ships visible to this player.
+        ships: Vec<ShipView>,
     },
 
     /// A protocol-level error (e.g. a malformed first message).

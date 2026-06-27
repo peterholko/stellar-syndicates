@@ -18,6 +18,10 @@ pub struct SimConfig {
     /// Seed for all deterministic generation in this galaxy.
     pub seed: u64,
 
+    /// Maximum players this galaxy is sized for. Determines the number of
+    /// pre-generated home anchors and (via `for_players`) the galaxy radius.
+    pub max_players: u32,
+
     /// Speed of light, in sim-units per second. The single most important dial
     /// for the information model: smaller `c` = larger delays. Distances across
     /// the galaxy are tuned (with `galaxy_radius`) to produce delays in the
@@ -27,6 +31,10 @@ pub struct SimConfig {
     /// Base galaxy radius in sim units. Scales with player count so the dark
     /// space between homes stays proportional across 4–12 players (§4).
     pub galaxy_radius: f64,
+
+    /// Fraction of `galaxy_radius` at which home anchors sit (a ring of bright
+    /// spots between the hub and the rim).
+    pub home_ring_frac: f64,
 
     /// Number of procedurally-placed star systems (M2).
     pub system_count: u32,
@@ -42,10 +50,13 @@ impl SimConfig {
         let galaxy_radius = 4000.0 * (player_count as f64).sqrt();
         SimConfig {
             seed,
-            // c chosen so crossing a 4-player galaxy (~radius 8000) takes tens
-            // of seconds of light-delay — dramatic but playable. Refined in M3.
-            c: 200.0,
+            max_players: player_count,
+            // c chosen so crossing a 4-player galaxy (radius 8000) gives a
+            // home→hub light-delay of ~16 s — dramatic but playable. All ship
+            // speeds stay well below c (relativity is respected). Refined in M3.
+            c: 300.0,
             galaxy_radius,
+            home_ring_frac: 0.62,
             system_count: 12 + player_count * 4,
         }
     }
