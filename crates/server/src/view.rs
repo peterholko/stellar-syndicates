@@ -135,6 +135,17 @@ impl PositionHistory {
         ghosts.sort_by_key(|g| g.id.0);
         ghosts
     }
+
+    /// The staleness (light delay, seconds) of a ship's ghost as the command
+    /// center at `cc` observes it — the age of the latest sample whose light has
+    /// arrived. This is exactly how far behind the player's view of that ship
+    /// is, and equals `|ghost_pos − cc| / c`. Used to pace the outbound command
+    /// comet so it meets the ghost. `None` if the ship is currently dark.
+    pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, c: f64, now: f64) -> Option<f64> {
+        let track = self.tracks.get(&ship_id)?;
+        let sample = latest_observable(&track.samples, cc, c, now)?;
+        Some(now - sample.time)
+    }
 }
 
 /// Filter home anchors for a player: positions are static geography (always

@@ -70,6 +70,39 @@ impl GameLoop {
         }
     }
 
+    /// Send the issuing player the outbound command-signal feedback for an order
+    /// to one of THEIR ships. The comet's duration is the player's OBSERVED
+    /// staleness of that ship (its ghost age), so it meets the ghost and reveals
+    /// no true distance. Skipped if the player doesn't own the ship or it's
+    /// currently dark to them.
+    fn emit_command_signal(&self, player_id: PlayerId, ship_id: sim::EntityId) {
+        let Some(corp) = self.world.players.get(&player_id) else {
+            return;
+        };
+        let owns = self
+            .world
+            .ships
+            .get(&ship_id)
+            .map(|s| s.owner == player_id)
+            .unwrap_or(false);
+        if !owns {
+            return;
+        }
+        let cc = corp.command_center;
+        let c = self.world.config.c;
+        let now = self.world.time;
+        // Observed delay to the ship (falls back to ~0 if just spawned at home).
+        let age = self.history.observed_age(ship_id, cc, c, now).unwrap_or(0.0);
+        self.sessions.send_to_player(
+            player_id,
+            ServerMsg::CommandSignal {
+                ship_id,
+                depart_time: now,
+                arrive_time: now + age,
+            },
+        );
+    }
+
     /// Publish current session/ops status (cheap; replaces the watched value).
     fn publish_status(&self) {
         let _ = self.status_tx.send(ServerStatus {
@@ -142,6 +175,7 @@ impl GameLoop {
                 ClientMsg::MoveShip { ship_id, dest } => {
                     // Attach the issuing player (the sim enforces ownership).
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, ship_id);
                         self.pending.push(Command::MoveShip {
                             player_id,
                             ship_id,
@@ -151,6 +185,7 @@ impl GameLoop {
                 }
                 ClientMsg::CommitRaid { raider_id, target_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, raider_id);
                         self.pending.push(Command::CommitRaid {
                             player_id,
                             raider_id,
@@ -160,6 +195,7 @@ impl GameLoop {
                 }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, raider_id);
                         self.pending.push(Command::RecallRaid { player_id, raider_id });
                     }
                 }

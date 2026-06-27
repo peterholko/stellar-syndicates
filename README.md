@@ -136,6 +136,42 @@ view; staleness equals light-distance on the wire; commands lag; no information
 outcome as delayed news on their own clocks; recall can miss. See
 [`scripts/m4_smoke.mjs`](scripts/m4_smoke.mjs) (+ sim raid tests).
 
+### Signals animation (additive — visualizing the communication delay)
+
+Two traveling signals make the lightspeed delay legible, as **client-side
+feedback driven entirely by server-authoritative timing** (the client computes no
+delay and never sees true positions):
+
+- **Outbound order comet** (violet): when you issue any order, a comet crosses
+  from your command center toward the commanded ship's **ghost**. The server
+  sends a `CommandSignal { ship_id, depart_time, arrive_time }` the moment it
+  accepts the order; `arrive − depart` is the player's *observed* light delay to
+  that ship (its ghost's staleness — so it reveals no true distance), and the
+  client interpolates the comet between the command center and the **live ghost**
+  over that sim-time window. Because the endpoint is the ghost the renderer
+  already draws, the comet meets it and cannot overshoot.
+- **Inbound result rings** (gold): when a raid report becomes observable (M4's
+  per-player delivery already gates this by light), gold rings depart the
+  resolution point and travel home to the command center, **revealing the verdict
+  on arrival**. This reuses the existing `RaidReport` (`pos` + `age`) — already
+  fair, since the player has that data — so no new protocol was needed for it.
+
+The single source of truth is the server's per-player observed stream, so the old
+prototype's bugs ("comet overshoots the ghost", "report leaves before you see the
+resolution") are structurally impossible. Smoothing/interpolation between
+server-provided endpoints and times is the only client-side computation.
+
+**Protocol addition:** `ServerMsg::CommandSignal` (server→client, to the issuing
+player only) in `crates/server/src/protocol.rs` + `client/src/protocol.ts`. The
+inbound rings needed no addition.
+
+**Verified in-browser:** issuing an order shows the violet comet traveling from
+the command center to the ship's ghost (paced by the server's observed delay); a
+resolved raid shows gold rings arriving home and the verdict revealed on arrival.
+Each player sees these from their own command center / observed frame (the comet
+goes only to the issuing player; both signals are built from that player's
+command center + ghosts/report).
+
 ---
 
 ## Architecture (§14 of the design)

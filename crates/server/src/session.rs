@@ -142,6 +142,16 @@ impl Sessions {
         }
     }
 
+    /// Send a message to every live connection of a player (e.g. immediate
+    /// feedback for that player's own action).
+    pub fn send_to_player(&self, player_id: PlayerId, msg: ServerMsg) {
+        if let Some(conns) = self.by_player.get(&player_id) {
+            for conn_id in conns {
+                self.send_to_conn(*conn_id, msg.clone());
+            }
+        }
+    }
+
     /// Iterate over every live connection — used to push each one its own
     /// per-player message every broadcast tick.
     pub fn iter_conns(&self) -> impl Iterator<Item = (&ConnId, &ConnInfo)> {

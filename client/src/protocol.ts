@@ -97,4 +97,12 @@ export type ServerMsg =
       ghosts: GhostView[];
     }
   | { type: "Report"; report: RaidReport }
+  | {
+      // Outbound order feedback: a comet crossing from the command center to one
+      // of your ships. The server owns the timing; the client only interpolates.
+      type: "CommandSignal";
+      ship_id: EntityId;
+      depart_time: number;
+      arrive_time: number;
+    }
   | { type: "Error"; message: string };
