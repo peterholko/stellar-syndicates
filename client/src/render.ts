@@ -18,6 +18,8 @@ const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_REPORT = 0xffd24a; // inbound result rings (gold)
+const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
+const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
@@ -34,6 +36,8 @@ interface GhostSprite {
 export class Renderer {
   private app = new Application();
   private bg = new Container();
+  private sensorGfx = new Graphics();
+  private routesGfx = new Graphics();
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
@@ -59,8 +63,10 @@ export class Renderer {
     mount.appendChild(this.app.canvas);
     this.app.stage.addChild(
       this.bg,
+      this.sensorGfx, // soft sensor coverage, under everything gameplay
       this.systemsLayer,
       this.anchorsLayer,
+      this.routesGfx, // convoy broadcast routes, under ghosts
       this.orderLayer,
       this.ghostsLayer,
       this.signalsLayer,
@@ -187,6 +193,42 @@ export class Renderer {
     this.anchorsLayer.addChild(g);
   }
 
+  /// Sensor coverage: a soft bubble around each of the player's assets (their
+  /// own ships + command center), radius = the server-provided sensor range.
+  /// The union shows where the player can detect raiders and read cargo — and,
+  /// by what it doesn't cover, where they are blind.
+  private drawSensorCoverage(state: ViewState, dt: number): void {
+    const g = this.sensorGfx;
+    g.clear();
+    if (!state.galaxy || !state.commandCenter) return;
+    const rPx = state.galaxy.sensor_range * this.scale;
+    const centers: { x: number; y: number }[] = [state.commandCenter];
+    for (const gh of state.ghosts) {
+      if (gh.own) centers.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt });
+    }
+    for (const c of centers) {
+      const s = this.worldToScreen(c);
+      g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: 0.045 }).stroke({ width: 1, color: COL_SENSOR, alpha: 0.14 });
+    }
+  }
+
+  /// Convoy broadcast routes: because convoys broadcast position + heading, show
+  /// their waypoints and the path between them (light-delayed like the rest).
+  private drawRoutes(state: ViewState): void {
+    const g = this.routesGfx;
+    g.clear();
+    for (const gh of state.ghosts) {
+      if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
+      const color = gh.own ? COL_OWN : COL_OTHER;
+      const pts = gh.route.map((w) => this.worldToScreen(w));
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      if (pts.length > 2) g.lineTo(pts[0].x, pts[0].y); // close the patrol loop
+      g.stroke({ width: 1, color, alpha: 0.2 });
+      for (const p of pts) g.circle(p.x, p.y, 2.4).stroke({ width: 1, color, alpha: 0.45 });
+    }
+  }
+
   private drawOrders(state: ViewState, ghostById: Map<string, { x: number; y: number }>): void {
     this.orderLayer.removeChildren();
     for (const [shipId, dest] of Object.entries(state.orders)) {
@@ -238,6 +280,12 @@ export class Renderer {
       const rPx = ghost.uncertainty * this.scale;
       sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
     }
+    // Detected rival raider = a threat contact (it's otherwise invisible). Make
+    // it unmistakable with a pulsing alert ring — this is your only warning.
+    if (!own && ghost.kind === "raider") {
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 230);
+      sp.cone.circle(0, 0, 13 + pulse * 7).stroke({ width: 1.6, color: COL_THREAT, alpha: 0.35 + 0.45 * pulse });
+    }
 
     // Selection ring.
     sp.ring.clear();
@@ -254,20 +302,35 @@ export class Renderer {
     if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
     sp.body.rotation = angle;
 
-    // Age label — disclosure of staleness. Shown for enemies and selection.
-    if (!own) {
-      sp.label.text = `Δ${ghost.age.toFixed(0)}s`;
-      sp.label.style.fill = COL_OTHER;
-      sp.label.alpha = 0.85;
-      sp.label.position.set(11, -10);
-    } else if (state.selectedShipId === ghost.id) {
-      sp.label.text = `Δ${ghost.age.toFixed(1)}s`;
-      sp.label.style.fill = COL_OWN;
-      sp.label.alpha = 0.85;
-      sp.label.position.set(11, -10);
-    } else {
-      sp.label.text = "";
+    // Label: threat warning for raiders, cargo manifest for convoys (shown only
+    // when known — i.e. within sensor range), staleness everywhere it matters.
+    const sel = state.selectedShipId === ghost.id;
+    let txt = "";
+    let col = COL_OTHER;
+    let lalpha = 0.85;
+    if (ghost.kind === "raider" && !own) {
+      txt = `⚠ RAIDER  Δ${ghost.age.toFixed(0)}s`;
+      col = COL_THREAT;
+      lalpha = 0.95;
+    } else if (ghost.kind === "convoy") {
+      const cargo = ghost.cargo ? `${ghost.cargo.commodity} ×${ghost.cargo.units}` : "cargo ?";
+      if (own) {
+        txt = cargo;
+        col = COL_OWN;
+        lalpha = sel ? 0.9 : 0.55;
+      } else {
+        txt = `${cargo}  Δ${ghost.age.toFixed(0)}s`;
+        col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
+        lalpha = 0.9;
+      }
+    } else if (own && sel) {
+      txt = `Δ${ghost.age.toFixed(1)}s`;
+      col = COL_OWN;
     }
+    sp.label.text = txt;
+    sp.label.style.fill = col;
+    sp.label.alpha = lalpha;
+    sp.label.position.set(11, -10);
 
     return s;
   }
@@ -276,10 +339,12 @@ export class Renderer {
     if (!state.galaxy) return;
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
 
+    const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
+
+    this.drawSensorCoverage(state, dt);
+    this.drawRoutes(state);
     this.drawAnchors(state);
     this.drawCommandCenter(state);
-
-    const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 
     for (const sp of this.ghosts.values()) sp.seen = false;
     const screenById = new Map<string, { x: number; y: number }>();

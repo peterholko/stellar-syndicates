@@ -22,7 +22,15 @@ export interface GalaxyInfo {
   hub: Vec2;
   radius: number;
   c: number; // speed of light, sim units / s
+  sensor_range: number; // detection radius each of your assets projects
   systems: SystemView[];
+}
+
+export type Commodity = "fuel" | "ore" | "alloys" | "provisions" | "volatiles";
+
+export interface CargoView {
+  commodity: Commodity;
+  units: number;
 }
 
 export interface AnchorView {
@@ -42,6 +50,10 @@ export interface GhostView {
   age: number;
   uncertainty: number;
   own: boolean;
+  // Convoys broadcast a route (waypoints); raiders don't (null).
+  route: Vec2[] | null;
+  // Cargo present only when this convoy is within your sensor coverage.
+  cargo: CargoView | null;
 }
 
 // Render a decimal-string PlayerId as the canonical "P<hex>" form used by the

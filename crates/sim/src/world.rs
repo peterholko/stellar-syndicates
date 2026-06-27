@@ -390,6 +390,14 @@ impl World {
         let hub = self.hub;
         let nearest = self.nearest_system(home).unwrap_or(hub);
 
+        // Deterministic demo cargo for the convoy (becomes real trade goods in §9).
+        let cargo = {
+            let commodity =
+                crate::cargo::Commodity::ALL[(self.rng.next_u64() % 5) as usize];
+            let units = 40 + (self.rng.next_u64() % 160) as u32;
+            crate::cargo::Cargo { commodity, units }
+        };
+
         // Convoy plies the home↔hub trade lane.
         let convoy_id = self.alloc_entity_id();
         self.ships.insert(
@@ -404,6 +412,7 @@ impl World {
                     index: 1,
                     dwell_until: 0.0,
                 },
+                Some(cargo),
             ),
         );
         events.push(Event::new(
@@ -429,6 +438,7 @@ impl World {
                     index: 1,
                     dwell_until: 0.0,
                 },
+                None, // raiders carry no cargo
             ),
         );
         events.push(Event::new(

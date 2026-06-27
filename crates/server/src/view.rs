@@ -26,9 +26,9 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use sim::{EntityId, HomeSlot, PlayerId, ShipKind, Vec2, World};
+use sim::{Cargo, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, Vec2, World};
 
-use crate::protocol::{AnchorView, GhostView};
+use crate::protocol::{AnchorView, CargoView, GhostView};
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -46,6 +46,14 @@ struct Track {
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
     last_seen: f64,
+    /// Current cargo (convoys). Static for the demo patrol convoys, so sending
+    /// it alongside the (delayed) position is leak-free here; when convoys carry
+    /// dynamic cargo (§9), cargo would move into the per-sample history so it is
+    /// delayed exactly like position.
+    cargo: Option<Cargo>,
+    /// Current broadcast route (convoys' waypoints). Static for demo patrols
+    /// (same caveat as cargo).
+    route: Option<Vec<Vec2>>,
 }
 
 /// The view filter's state: every moving object's recent true-position history.
@@ -55,6 +63,8 @@ pub struct PositionHistory {
     /// light delay (galaxy diameter / c) so every long-lived object always has
     /// an observable sample.
     horizon: f64,
+    /// Sensor detection radius each of a player's assets projects (config).
+    sensor_range: f64,
 }
 
 impl PositionHistory {
@@ -65,6 +75,7 @@ impl PositionHistory {
         PositionHistory {
             tracks: HashMap::new(),
             horizon: max_delay * 1.25 + 1.0,
+            sensor_range: world.config.sensor_range,
         }
     }
 
@@ -78,10 +89,14 @@ impl PositionHistory {
                 kind: ship.kind,
                 samples: VecDeque::new(),
                 last_seen: now,
+                cargo: None,
+                route: None,
             });
             track.owner = ship.owner;
             track.kind = ship.kind;
             track.last_seen = now;
+            track.cargo = ship.cargo;
+            track.route = route_of(&ship.order);
             track.samples.push_back(Sample {
                 time: now,
                 pos: ship.pos,
@@ -104,31 +119,92 @@ impl PositionHistory {
             .retain(|_, t| now - t.last_seen <= horizon);
     }
 
-    /// Build the delayed/fogged view of all ships for a player whose command
-    /// center is at `cc`, at wall-time `now`.
+    /// Build the delayed/fogged view of all ships for a player, applying the
+    /// two-tier information model (§6) on top of the lightspeed delay:
+    ///
+    /// * **Tier 1 — broadcast:** convoys broadcast identity + position, so every
+    ///   convoy is included galaxy-wide as a light-delayed ghost (with its
+    ///   route). Raiders are dark — not broadcast.
+    /// * **Tier 2 — sensor range:** a convoy's *cargo* is included only when the
+    ///   convoy is within the player's sensor coverage; a *raider* is included
+    ///   ONLY when within coverage (otherwise omitted entirely — no leak).
+    ///
+    /// Sensor coverage is the union of `sensor_range` circles around the
+    /// player's assets — their command center and their own ships — taken at
+    /// their **observed (delayed) positions**, the same ghosts the client draws.
+    /// Detection therefore happens in the command center's delayed composite
+    /// frame, using only light that has arrived: a raider is detected exactly
+    /// when its delayed ghost falls inside a drawn coverage circle. This never
+    /// reveals the true position of a dark ship (you still only ever see where
+    /// it *was*), and it cannot disagree with the client's rendering.
     pub fn view_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<GhostView> {
-        let mut ghosts = Vec::new();
+        // Pass 1: retarded ghost for every observable ship, and gather the
+        // viewer's sensor coverage (command center + their own ships' ghosts).
+        struct Pre<'a> {
+            id: EntityId,
+            owner: PlayerId,
+            kind: ShipKind,
+            sample: Sample,
+            cargo: Option<Cargo>,
+            route: &'a Option<Vec<Vec2>>,
+        }
+        let mut pre = Vec::new();
+        let mut coverage = vec![cc]; // the command center is itself an asset
         for (id, track) in &self.tracks {
             let Some(sample) = latest_observable(&track.samples, cc, c, now) else {
-                // No light from this object has arrived yet (e.g. just spawned
-                // far away) — it is simply dark to this player.
-                continue;
+                continue; // dark — no light from this object has arrived yet
             };
-            let age = now - sample.time;
-            let own = track.owner == viewer;
-            // Own forces: a delayed-but-coherent feed — you know exactly where
-            // they were, so no positional uncertainty. Others: the object could
-            // have moved up to `max_speed · age` since the light left.
-            let uncertainty = if own { 0.0 } else { age * track.kind.max_speed() };
-            ghosts.push(GhostView {
+            if track.owner == viewer {
+                coverage.push(sample.pos);
+            }
+            pre.push(Pre {
                 id: *id,
                 owner: track.owner,
                 kind: track.kind,
-                pos: sample.pos,
-                vel: sample.vel,
+                sample,
+                cargo: track.cargo,
+                route: &track.route,
+            });
+        }
+
+        // Pass 2: apply the two-tier visibility rules using the coverage.
+        let mut ghosts = Vec::new();
+        for p in pre {
+            let detected = within_sensor(&coverage, p.sample.pos, self.sensor_range);
+
+            // A dark raider is present ONLY inside sensor coverage. (A player's
+            // own raider sits at the centre of its own sensor circle, so it is
+            // always present.) Omitted entirely otherwise — never sent-and-hidden.
+            if p.kind == ShipKind::Raider && !detected {
+                continue;
+            }
+
+            let age = now - p.sample.time;
+            let own = p.owner == viewer;
+            let uncertainty = if own { 0.0 } else { age * p.kind.max_speed() };
+            let is_convoy = p.kind == ShipKind::Convoy;
+            // Convoys broadcast their route; cargo only within sensor coverage.
+            let route = if is_convoy { p.route.clone() } else { None };
+            let cargo = if is_convoy && detected {
+                p.cargo.map(|cg| CargoView {
+                    commodity: cg.commodity,
+                    units: cg.units,
+                })
+            } else {
+                None
+            };
+
+            ghosts.push(GhostView {
+                id: p.id,
+                owner: p.owner,
+                kind: p.kind,
+                pos: p.sample.pos,
+                vel: p.sample.vel,
                 age,
                 uncertainty,
                 own,
+                route,
+                cargo,
             });
         }
         // Deterministic ordering by id.
@@ -182,6 +258,20 @@ pub fn filter_anchors(
         .collect()
 }
 
+/// Is `p` within `range` of any sensor center?
+fn within_sensor(centers: &[Vec2], p: Vec2, range: f64) -> bool {
+    centers.iter().any(|center| p.distance(*center) <= range)
+}
+
+/// The broadcast route (waypoints) implied by a ship's current order, if any.
+fn route_of(order: &ShipOrder) -> Option<Vec<Vec2>> {
+    match order {
+        ShipOrder::Patrol { waypoints, .. } => Some(waypoints.clone()),
+        ShipOrder::MoveTo { dest } => Some(vec![*dest]),
+        _ => None,
+    }
+}
+
 /// The latest sample whose light has reached `cc` by `now`. Relies on
 /// `arrival(t)` being strictly increasing (object speed < c): the first sample
 /// found scanning newest→oldest with `arrival ≤ now` is the answer.
@@ -201,18 +291,41 @@ mod tests {
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
         let last = samples.last().map(|s| s.time).unwrap_or(0.0);
+        let cargo = (kind == ShipKind::Convoy).then_some(sim::Cargo {
+            commodity: sim::Commodity::Fuel,
+            units: 100,
+        });
         Track {
             owner,
             kind,
             samples: samples.into(),
             last_seen: last,
+            cargo,
+            route: None,
         }
     }
 
+    fn at(id: u64, x: f64, y: f64, owner: PlayerId, kind: ShipKind) -> (EntityId, Track) {
+        // A stationary ship sitting at (x,y) for 0..100 s, sampled at 10 Hz.
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 100.0 {
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel: Vec2::ZERO });
+            t += 0.1;
+        }
+        (EntityId(id), track_from(samples, owner, kind))
+    }
+
+    /// History with one track (id 1) and an effectively-infinite sensor range,
+    /// so the existing lightspeed-fairness tests are unaffected by Tier 2.
     fn history_with(track: Track) -> PositionHistory {
         let mut tracks = HashMap::new();
         tracks.insert(EntityId(1), track);
-        PositionHistory { tracks, horizon: 1e9 }
+        PositionHistory { tracks, horizon: 1e9, sensor_range: 1e12 }
+    }
+
+    fn history_of(tracks: Vec<(EntityId, Track)>, sensor_range: f64) -> PositionHistory {
+        PositionHistory { tracks: tracks.into_iter().collect(), horizon: 1e9, sensor_range }
     }
 
     /// A ship sitting at X, then jumping to Y at t=10. A far command center must
@@ -359,5 +472,76 @@ mod tests {
         assert!(!g_other.own);
         // Uncertainty == age * max_speed.
         assert!((g_other.uncertainty - g_other.age * ShipKind::Raider.max_speed()).abs() < 1e-6);
+    }
+
+    // ---- Two-tier information model (broadcast + sensor range) ----
+
+    const VIEWER: PlayerId = PlayerId(99);
+    const RIVAL: PlayerId = PlayerId(7);
+
+    /// A rival convoy far from all the viewer's assets is STILL visible
+    /// (broadcast, galaxy-wide), but its cargo is hidden (out of sensor range).
+    #[test]
+    fn convoy_broadcasts_but_cargo_is_hidden_out_of_range() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert_eq!(view.len(), 1, "convoy should broadcast galaxy-wide");
+        assert!(view[0].cargo.is_none(), "cargo must be hidden outside sensor range");
+    }
+
+    /// A rival convoy within the viewer's sensor coverage reveals its cargo.
+    #[test]
+    fn convoy_cargo_revealed_within_sensor_range() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
+        // Command center 200 su from the convoy → inside the 1000 su sensor range.
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(view.len(), 1);
+        assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
+    }
+
+    /// A dark rival raider outside the viewer's sensor coverage must be OMITTED
+    /// entirely from the view (not sent-and-hidden) — the fairness guarantee.
+    #[test]
+    fn dark_raider_omitted_outside_sensor() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider)], 1000.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert!(view.is_empty(), "a dark raider out of sensor range must not appear at all");
+    }
+
+    /// The moment a rival raider enters sensor coverage it becomes a detected
+    /// contact (the player's only warning).
+    #[test]
+    fn raider_detected_within_sensor() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider)], 1000.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(view.len(), 1, "raider within sensor range is detected");
+        assert!(!view[0].own);
+    }
+
+    /// A player's OWN raider sits at the centre of its own sensor circle, so it
+    /// is always visible to them even far from the command center.
+    #[test]
+    fn own_raider_is_always_visible() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, VIEWER, ShipKind::Raider)], 1000.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert_eq!(view.len(), 1, "own raider must always be visible");
+        assert!(view[0].own);
+    }
+
+    /// A far rival raider is dark, but if the viewer has an OWN ship near it, the
+    /// union coverage detects it (coverage is the union of all assets' radii).
+    #[test]
+    fn own_ship_extends_coverage_to_detect_raider() {
+        let hist = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 5300.0, 0.0, VIEWER, ShipKind::Convoy), // own scout 300 su away
+            ],
+            1000.0,
+        );
+        // Command center far away; detection comes from the own ship's radius.
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 9000.0), 300.0, 60.0);
+        let raider = view.iter().find(|g| g.id == EntityId(1));
+        assert!(raider.is_some(), "own ship's sensor radius should detect the nearby raider");
     }
 }

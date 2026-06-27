@@ -180,6 +180,52 @@ arrive_time, observe_time }` (server→client, to the issuing player only) in
 of the order's round trip. The inbound raid rings needed no addition (they reuse
 `RaidReport`'s `pos` + `age`).
 
+### Two-tier information model (broadcast + sensor range)
+
+A second layer of "what each player is allowed to see" sits on top of the
+lightspeed delay — and it is enforced **in the view filter**, so it is part of
+the fairness guarantee, not a client effect. One law still governs everything:
+all information travels at `c`. Nothing here is instant.
+
+- **Tier 1 — broadcast (the Galactic Convention), galaxy-wide, light-delayed.**
+  Convoys broadcast identity + position + route, so every convoy (yours and
+  rivals') appears as a light-delayed ghost galaxy-wide. **Raiders do not
+  broadcast — they are dark.**
+- **Tier 2 — sensor range.** Each of a player's assets (every ship + the command
+  center) projects a `sensor_range` detection radius; coverage is their union.
+  Within coverage you learn more: a convoy's **cargo** is revealed, and a **dark
+  raider becomes visible**. Outside coverage, cargo is withheld and a rival
+  raider is **omitted from the view payload entirely** — your only warning of an
+  approaching raider is the moment it trips your sensors.
+
+**View-filter change & the no-leak choice** (`crates/server/src/view.rs`):
+`view_for` now (1) includes all convoys with route, (2) attaches cargo only when
+the convoy is within the viewer's coverage, and (3) includes a raider only when
+within coverage — otherwise it is *omitted server-side*, never sent-and-hidden.
+Detection is computed in the **command center's delayed composite frame**: an
+object is "in coverage" when its **delayed ghost** falls within `sensor_range` of
+an asset's **delayed ghost** (or the command center). This uses only light that
+has arrived, so it never reveals the true position of a dark ship (you still only
+see where it *was*), and it matches exactly what the client draws — a detected
+raider always appears inside a drawn coverage circle.
+
+**Protocol additions:** `GalaxyInfo.sensor_range`; `GhostView.route` (convoy
+broadcast waypoints) and `GhostView.cargo` (present only in range); a `CargoView`
++ `Commodity`. In the sim: a `sensor_range` config constant and an
+`Option<Cargo>` on ships (convoys carry demo cargo; raiders carry none).
+
+**Client visualizations:** soft teal **sensor-coverage** bubbles around your
+assets; convoy **routes** (waypoints + path, light-delayed); **cargo labels**
+shown when known (gold for an in-range rival's manifest — intel) and `cargo ?`
+when out of range; a detected rival raider rendered as a **pulsing red "⚠ RAIDER"
+threat contact**.
+
+**Verified** (`scripts/sensor_smoke.mjs` + 6 view-filter unit tests): convoys
+broadcast galaxy-wide; cargo is present *iff* the convoy is within coverage; a
+dark raider well outside coverage is absent from the payload (no leak), and every
+visible rival raider is within coverage; browser-confirmed the coverage bubbles,
+routes, cargo reveal, and the threat contact appearing as a raider enters range.
+
 **Verified in-browser:** issuing an order shows the violet comet traveling from
 the command center to the ship's ghost (paced by the server's observed delay); a
 resolved raid shows gold rings arriving home and the verdict revealed on arrival.
@@ -279,10 +325,10 @@ scripts/devdb.sh stop                 # or `nuke` to delete it entirely
 ## Tests
 
 ```bash
-cargo test                            # 27 unit tests: determinism, flip-and-burn
+cargo test                            # 33 unit tests: determinism, flip-and-burn
                                       # physics, the lightspeed fairness invariant,
                                       # command latency, raid resolution + recall,
-                                      # delayed-report delivery
+                                      # delayed-report delivery, two-tier sensor model
 
 # end-to-end checkpoint smoke tests (server must be running on :8080):
 cargo run -p server &                 # in one shell
@@ -290,6 +336,8 @@ node scripts/m1_smoke.mjs             # M1: per-player streams, join/leave (+/st
 node scripts/m2_smoke.mjs             # M2: galaxy + flip-and-burn movement
 node scripts/m3_smoke.mjs             # M3: per-player lightspeed views, no leaks (~35s)
 node scripts/m4_smoke.mjs             # M4: raid → delayed reports on own clocks (~70s)
+node scripts/sensor_smoke.mjs         # broadcast + sensor range: cargo gating, dark
+                                      # raiders omitted out of coverage (~35s)
 ```
 
 The server also exposes `GET /status` (JSON: connection/session meta — kept off

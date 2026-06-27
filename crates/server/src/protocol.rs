@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, Vec2};
+use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, StarSystem, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -71,7 +71,18 @@ pub struct GalaxyInfo {
     pub radius: f64,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,
+    /// Sensor detection radius each of the player's assets projects — lets the
+    /// client draw its sensor coverage around its own ships + command center.
+    pub sensor_range: f64,
     pub systems: Vec<StarSystem>,
+}
+
+/// A convoy's cargo manifest, as revealed to a player whose sensors are within
+/// range (Tier 2). Absent from the ghost when out of sensor coverage.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CargoView {
+    pub commodity: Commodity,
+    pub units: u32,
 }
 
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
@@ -107,6 +118,12 @@ pub struct GhostView {
     pub uncertainty: f64,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
+    /// The convoy's broadcast route (waypoints), light-delayed like its
+    /// position. `None` for raiders (they don't broadcast).
+    pub route: Option<Vec<Vec2>>,
+    /// The convoy's cargo — present ONLY when this convoy is within the viewing
+    /// player's sensor coverage (Tier 2). `None` out of range, or for raiders.
+    pub cargo: Option<CargoView>,
 }
 
 /// Messages pushed by the server to a single player's connection.

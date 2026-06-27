@@ -147,6 +147,7 @@ impl GameLoop {
                             hub: self.world.hub,
                             radius: self.world.config.galaxy_radius,
                             c: self.world.config.c,
+                            sensor_range: self.world.config.sensor_range,
                             systems: self.world.systems.clone(),
                         },
                     },

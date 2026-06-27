@@ -38,6 +38,12 @@ pub struct SimConfig {
 
     /// Number of procedurally-placed star systems (M2).
     pub system_count: u32,
+
+    /// Sensor detection radius (sim units) projected by each of a player's
+    /// assets — their command center and every one of their ships. The player's
+    /// sensor coverage is the union of these radii. Within coverage they detect
+    /// dark raiders and read convoy cargo; outside it they are blind to raiders.
+    pub sensor_range: f64,
 }
 
 impl SimConfig {
@@ -58,6 +64,10 @@ impl SimConfig {
             galaxy_radius,
             home_ring_frac: 0.62,
             system_count: 12 + player_count * 4,
+            // Local sensor bubbles (~28% of galaxy radius): coverage is islands
+            // around your assets, so most of the dark between homes is blind to
+            // raiders — the tension the model wants.
+            sensor_range: 2200.0,
         }
     }
 }
