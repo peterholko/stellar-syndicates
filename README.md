@@ -25,11 +25,13 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **System claims + resource production** | ✅ **Complete** | Star systems have resource **deposits** (richer/more valuable toward the frontier); players **claim** systems (credit cost), claimed systems **produce** over time, and that production **ships to the hub** in the same raidable convoys — so raiding now destroys real output. Ownership is light-gated to rivals; stockpiles stay private. |
 | **Acceleration & proportional pursuit** | ✅ **Complete** | Ship acceleration is **derived from thrust ÷ mass** (`a = F/m`), so the raider/convoy nimbleness gap emerges from mass (convoy hull ~22× the raider's) and a **laden convoy accelerates worse** (cargo adds mass). Raiders run convoys down with **proportional steer-and-correct pursuit** (no closed-form solver), easing into a clean contact. The commit shows a **crude, drifting intercept estimate** rendered as a soft/fuzzy zone (sensor-circle idiom). Tuned LOW so a chase is watchable over tens of seconds. |
 | **Autonomous defensive interception** | ✅ **Complete** | A patrolling raider **escorts a friendly convoy and, on its own, intercepts a hostile raider** it senses inbound on it — server-side, every tick, **whether or not the owner is online** (defense is standing doctrine, like offline production). Detection is fog-respecting (only raiders within the picket's sensor range); engagement reuses proportional pursuit + the seeded raider-vs-raider battle; the owner learns the outcome as **delayed news on their own clock**. Patrol **positioning** decides what it can defend (tunable). First piece of a future defensive-doctrine system. |
+| **Solar-system re-theme + re-scale** *(branch `solar-system`)* | ✅ **Complete** | The galaxy is re-cast as **one solar system** at **astronomical-unit scale** with **physically-scaled light-time**: a habitable planet (the market) at ~1 AU, an inner belt (~2–3 AU) and a Kuiper belt (~30–40 AU), the sun at the center, and players starting on spaced **mining-station asteroids**. Bodies carry **real Kepler orbital parameters** (orbital motion frozen for now). System→asteroid, hub→market, claim→operate, production→mining. All mechanics (lightspeed fog, sensors, broadcast, raiding, autonomous defense, economy, signals, notifications) are **preserved** — this is geography/scale/flavor, not a rebuild. |
 
-**All seven milestones of the build plan are complete** — plus three additive
+**All seven milestones of the build plan are complete** — plus additive
 features layered on the core: the **signals animation** (the order's full round
-trip visualized), and the **two-tier information model** (Convention broadcast +
-sensor-range detection).
+trip visualized), the **two-tier information model** (Convention broadcast +
+sensor-range detection), and the **solar-system re-theme** (a real AU/light-time
+re-scale of the whole world).
 
 ### What M1 delivers (verified)
 
@@ -476,6 +478,64 @@ the defender goes offline, an attacker raids the unattended convoy, the escort
 autonomously fights the attacker (raider-vs-raider), and the defender **reconnects
 to learn of it as ~20 s-old delayed news**. Movement, fog, sensors, raiding, recall,
 economy, and notifications all still work.
+
+### What the Solar-System re-theme delivers (verified) — real AU/light-time scale *(branch `solar-system`)*
+
+A **re-theme + re-scale** of the whole world from an abstract wormhole galaxy to
+**one solar system at astronomical-unit scale**, with light-delay derived from the
+real AU light-crossing time. It is deliberately **not a rebuild**: every mechanic
+(lightspeed fog, sensors, Convention broadcast, raiding, autonomous defense, the
+Exchange economy, signals, notifications) is preserved — only geography, scale, and
+flavor change. Asteroid types (M/C/S), multiple habitable planets, and orbital
+**motion** are explicitly deferred.
+
+- **AU scale + physical light-time** (`crates/sim/src/config.rs`): positions are in
+  `AU` sim-units (1 AU = 10 000); the speed of light `C` is derived from the real AU
+  light-crossing time (~8.3 light-min) and a small `TIME_COMPRESSION` (3×). The
+  result is **physically-scaled fog**: light-delay is **minutes in the inner system,
+  hours at the Kuiper edge** — exactly the async, command-lagged regime the design
+  wants. *On the wire: 2.8 min at 1 AU, 1.6 h at 35 AU.*
+- **Solar-system generation** (`crates/sim/src/galaxy.rs`): a `generate_solar_system`
+  places one **habitable planet** at ~1 AU (the market / hub), an **inner belt**
+  (~2–3 AU, accessible, lower-value), a **Kuiper belt** (~30–40 AU, the richer,
+  fog-blind frontier), and `max_players` spaced **starting-asteroid mining stations**
+  (~22 bodies). A new `BodyKind { Asteroid, Planet }` makes the planet the market
+  (never claimable) and keeps asteroids the claimable mining targets — room for more
+  planets later. Every body carries **real Kepler orbital parameters** (semi-major
+  axis, `period = a^1.5`, phase); **orbital motion is frozen** (positions static) and
+  turning it on later is one change.
+- **Re-theme** (`world.rs`): hub = the habitable planet (market); claim = **operate an
+  asteroid**; production = **mining**; players start **owning a starting asteroid with
+  a mining station** (their HQ pre-claims the nearest asteroid). `apply_claim` gates on
+  `BodyKind` so the planet can't be claimed.
+- **Re-tune to AU scale** (`ship.rs`): with `a = F/m` at the new scale an empty raider
+  accelerates ~0.6 and a hauler ~0.24 su/s² (laden, less); raiders cruise ~0.6 c,
+  haulers ~0.3 c. Since ships stay sub-light, a trade run **takes longer than its own
+  light-delay** — interplanetary trips are minutes-to-tens-of-minutes, which is the
+  point of an async, check-back-later game.
+- **Client re-flavor** (`render.ts` / `main.ts` / `index.html`): the **sun** at the
+  center, orbital reference rings at real AU radii, the **planet drawn as a MARKET
+  world**, asteroids as mining bodies (frontier-richer glow kept), the player HQ as a
+  **STATION**, and panels that **operate an asteroid / haul ore → market**. Light-delays
+  and staleness now read in **s / m / h** (`fmtDelay`) across ghost labels, the HUD
+  clock, raid/move readouts, reports, and the market ticker — a Kuiper ghost is
+  legitimately *light-hours* stale.
+
+**Verified:** full sim + server test suite green at the new scale (42 sim + 20 server,
+clippy clean) — trip/chase/economy tests re-budgeted for the slower AU-scale ships;
+and live in-browser (server + Vite, 4-player-sized world): generation confirmed on the
+wire (1 planet at ~1 AU + inner belt at 2.1–2.6 AU + Kuiper belt at ~38–40 AU,
+alloys-rich, 22 bodies, Kepler periods = a^1.5, frozen), light-delay 2.8 min/1 AU and
+1.6 h/35 AU, the market ticker reading **~10 min stale from a station** (fog working),
+and both the market-planet and operate-asteroid panels rendering with AU labels. The
+delayed-view map, fog, sensors, raiding, autonomous defense, and economy all still work.
+
+> **Known scale tradeoff:** at *true* AU scale the inner system (planet + inner belt +
+> the starting stations, all within ~1–4 AU) is a tight cluster near the sun while the
+> Kuiper belt sits out near the rim — astronomically honest, but the inner core is
+> cramped at the current fixed (linear) zoom. The lightspeed mechanics are unaffected;
+> a pan/zoom or log-radial *display* transform is a natural future polish (kept out of
+> this re-theme to avoid disturbing the linear sensor/uncertainty-cone overlays).
 
 ---
 
