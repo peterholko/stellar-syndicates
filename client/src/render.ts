@@ -45,6 +45,14 @@ const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
 
+// --- Zoom / pan -------------------------------------------------------------
+// Zoom bounds are expressed RELATIVE to the fit-the-whole-system scale: at 0.85×
+// you can pull out a touch past the full system; at 30× you can inspect a single
+// inner body. The button step is one comfortable zoom notch.
+const ZOOM_MIN_FACTOR = 0.85;
+const ZOOM_MAX_FACTOR = 30;
+const ZOOM_BUTTON_STEP = 1.3;
+
 // --- Celestial-body art ------------------------------------------------------
 // Transparent RGBA PNGs in client/public/art, served at /art/* in dev and bundled
 // into dist/ for the production build the Rust server serves. The source art is
@@ -121,9 +129,19 @@ export class Renderer {
   private ghosts = new Map<string, GhostSprite>();
 
   private galaxy: GalaxyInfo | null = null;
+  // The view transform (used by worldToScreen). `scale`/`cx`/`cy` are DERIVED each
+  // time the view changes from the user-controllable view state below.
   private scale = 1;
   private cx = 0;
   private cy = 0;
+  // User-controllable view: the world point held at the screen center + the scale.
+  // Representing pan as a WORLD center (not a pixel offset) makes the view survive
+  // window resizes for free. `fitScaleVal` is the fit-the-whole-system base scale
+  // (recomputed on resize) that sets the zoom clamps and the reset view.
+  private viewCx = 0;
+  private viewCy = 0;
+  private fitScaleVal = 1;
+  private userAdjusted = false; // has the user zoomed/panned away from the fit view?
 
   // Body-art textures (loaded in init() before the first draw — see main.ts).
   private sunTex: Texture | null = null;
@@ -248,16 +266,84 @@ export class Renderer {
 
   setGalaxy(galaxy: GalaxyInfo): void {
     this.galaxy = galaxy;
-    this.recompute();
+    this.resetView();
   }
 
+  /// The fit-the-whole-system scale (the sun at centre, the Kuiper rim just inside
+  /// the viewport). Recomputed from the current viewport.
+  private computeFitScale(): number {
+    return this.galaxy ? (Math.min(this.viewW, this.viewH) * 0.46) / this.galaxy.radius : 1;
+  }
+  private minScale(): number {
+    return this.fitScaleVal * ZOOM_MIN_FACTOR;
+  }
+  private maxScale(): number {
+    return this.fitScaleVal * ZOOM_MAX_FACTOR;
+  }
+
+  /// Derive the actual transform (`cx`/`cy`) from the user view (`viewCx`/`viewCy`
+  /// world centre + `scale`) and redraw the static background (rings + sun, which —
+  /// unlike the per-frame layers — only change when the view does).
+  private applyView(): void {
+    this.cx = this.viewW / 2 - this.viewCx * this.scale;
+    this.cy = this.viewH / 2 - this.viewCy * this.scale;
+    this.drawBackground();
+  }
+
+  /// Reset to the fit-the-whole-system view (the sun centred). Used on first load
+  /// and by the "fit" button.
+  resetView(): void {
+    if (!this.galaxy) return;
+    this.fitScaleVal = this.computeFitScale();
+    this.scale = this.fitScaleVal;
+    this.viewCx = 0;
+    this.viewCy = 0;
+    this.userAdjusted = false;
+    this.applyView();
+  }
+
+  /// On window resize: refresh the fit scale (so the clamps + reset stay correct).
+  /// If the user hasn't zoomed/panned, re-fit; otherwise PRESERVE their view (the
+  /// world centre stays centred and the scale is just re-clamped).
   private recompute(): void {
     if (!this.galaxy) return;
-    this.scale = (Math.min(this.viewW, this.viewH) * 0.46) / this.galaxy.radius;
-    this.cx = this.viewW / 2;
-    this.cy = this.viewH / 2;
-    this.drawBackground();
-    // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
+    this.fitScaleVal = this.computeFitScale();
+    if (this.userAdjusted) {
+      this.scale = Math.max(this.minScale(), Math.min(this.maxScale(), this.scale));
+    } else {
+      this.scale = this.fitScaleVal;
+      this.viewCx = 0;
+      this.viewCy = 0;
+    }
+    this.applyView();
+  }
+
+  /// Zoom by `factor` while keeping the world point under (`sx`,`sy`) fixed on
+  /// screen — the standard zoom-toward-cursor behaviour.
+  zoomAt(sx: number, sy: number, factor: number): void {
+    if (!this.galaxy) return;
+    const before = this.screenToWorld(sx, sy);
+    this.scale = Math.max(this.minScale(), Math.min(this.maxScale(), this.scale * factor));
+    // Choose the world centre so `before` maps back to (sx, sy) at the new scale.
+    this.viewCx = before.x - (sx - this.viewW / 2) / this.scale;
+    this.viewCy = before.y - (sy - this.viewH / 2) / this.scale;
+    this.userAdjusted = true;
+    this.applyView();
+  }
+
+  /// Zoom toward the centre of the viewport (used by the zoom buttons).
+  zoomByStep(zoomIn: boolean): void {
+    this.zoomAt(this.viewW / 2, this.viewH / 2, zoomIn ? ZOOM_BUTTON_STEP : 1 / ZOOM_BUTTON_STEP);
+  }
+
+  /// Pan by a screen-pixel delta (drag): shift the world centre the opposite way so
+  /// the grabbed point follows the cursor 1:1.
+  panByScreen(dx: number, dy: number): void {
+    if (!this.galaxy) return;
+    this.viewCx -= dx / this.scale;
+    this.viewCy -= dy / this.scale;
+    this.userAdjusted = true;
+    this.applyView();
   }
 
   private drawStarfield(): void {

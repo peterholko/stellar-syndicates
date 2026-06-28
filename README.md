@@ -592,6 +592,33 @@ on the dark map with transparent backgrounds (no box/checkerboard); `npm run bui
 emits them to `dist/art/` and the Rust server serves `/art/*.png` `200 image/png`;
 clicks on the planet and a frontier asteroid open their panels; no console errors.
 
+#### Zoom & pan — a usable map across the AU scale
+
+The system spans ~1 AU to the ~24 AU rim, so a fixed fit-to-system view is cramped.
+Zoom/pan make it navigable, driven entirely through the renderer's **single view
+transform** — `worldToScreen`/`screenToWorld` over `scale` + a world-space view
+centre — so every layer (sprites, ghosts, the uncertainty cone, sensor circles, the
+command signal, orbital rings, labels, and the click hit-testing) follows for free;
+no individual draw call was re-plumbed.
+
+- **Wheel zooms toward the cursor** — the world point under the cursor stays put
+  (computed via `screenToWorld` before/after the scale change). Clamped to a sensible
+  range: fit×0.85 (whole system, a touch more out) … fit×30 (inspect a single body).
+- **Left-drag pans** the view (the world centre shifts so the grabbed point tracks
+  the cursor 1:1). The starfield stays a fixed backdrop; everything else moves.
+- **Click-vs-drag gate** — a press that moves past ~5 px is a pan and **suppresses
+  the click**, so panning never fires an accidental move order or raid; a stationary
+  tap fires the existing click (select / move / raid / open panel) exactly as before.
+- On-screen **+ / ⊡ / −** buttons (zoom in / fit-reset / zoom out) for discoverability;
+  window resize **preserves** the user's zoom/pan (re-fits only if they hadn't adjusted).
+
+**Verified live** (instrumented the real transform): wheel + button zoom keep the
+cursor/centre point invariant and clamp at ×0.85/×30; left-drag pans by the exact
+pixel delta while a selected ship gets **no** move order (drag suppressed) yet a tap
+*does* fire it; a body tapped after a 4× zoom still opens its panel (hit-test follows
+the transform); resize preserves an adjusted view and keeps a fit view fitted; the
+"fit" button resets exactly. Typecheck + production build clean; no console errors.
+
 ---
 
 ## Architecture (§14 of the design)

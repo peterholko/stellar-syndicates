@@ -76,10 +76,76 @@ const readout = () => $("readout");
 // there. The order travels at light speed — the readout makes the three clocks
 // (send / arrive / observe) explicit, estimated from the stale sighting.
 function installInteraction(): void {
-  renderer.canvas.addEventListener("pointerdown", (e: PointerEvent) => {
-    const sx = e.clientX;
-    const sy = e.clientY;
+  const cv = renderer.canvas;
 
+  // --- Click-vs-drag gate -----------------------------------------------------
+  // The map pointer both ACTS (select / move / raid / open panel) and PANS. A
+  // press that moves past a small threshold is a pan drag and SUPPRESSES the click;
+  // a near-stationary tap fires the existing map-click logic. So pan never triggers
+  // an accidental move order or raid.
+  const DRAG_THRESHOLD = 5; // px
+  let down = false;
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let lastX = 0;
+  let lastY = 0;
+
+  cv.addEventListener("pointerdown", (e: PointerEvent) => {
+    if (e.button !== 0) return; // left button only
+    down = true;
+    dragging = false;
+    startX = lastX = e.clientX;
+    startY = lastY = e.clientY;
+  });
+
+  window.addEventListener("pointermove", (e: PointerEvent) => {
+    if (!down) return;
+    if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) > DRAG_THRESHOLD) {
+      dragging = true;
+      cv.style.cursor = "grabbing";
+    }
+    if (dragging) {
+      renderer.panByScreen(e.clientX - lastX, e.clientY - lastY);
+      lastX = e.clientX;
+      lastY = e.clientY;
+    }
+  });
+
+  const endPress = (e: PointerEvent, act: boolean) => {
+    if (!down) return;
+    down = false;
+    cv.style.cursor = "";
+    const wasDrag = dragging;
+    dragging = false;
+    if (act && !wasDrag) handleMapClick(e.clientX, e.clientY); // a tap → act as before
+  };
+  window.addEventListener("pointerup", (e: PointerEvent) => endPress(e, true));
+  window.addEventListener("pointercancel", (e: PointerEvent) => endPress(e, false));
+
+  // --- Mouse wheel: zoom toward the cursor ------------------------------------
+  cv.addEventListener(
+    "wheel",
+    (e: WheelEvent) => {
+      e.preventDefault(); // don't scroll the page
+      const factor = Math.max(0.5, Math.min(2, Math.exp(-e.deltaY * 0.001)));
+      renderer.zoomAt(e.clientX, e.clientY, factor);
+    },
+    { passive: false },
+  );
+
+  // --- Zoom / fit buttons (wheel + drag aren't discoverable on their own) ------
+  document.getElementById("zoom-in")?.addEventListener("click", () => renderer.zoomByStep(true));
+  document.getElementById("zoom-out")?.addEventListener("click", () => renderer.zoomByStep(false));
+  document.getElementById("zoom-fit")?.addEventListener("click", () => renderer.resetView());
+
+  installKeyboard();
+}
+
+// The existing map-click logic — now fired on a TAP (not a pan drag). All hit-testing
+// uses renderer.worldToScreen / screenToWorld, so it stays correct under any zoom/pan.
+function handleMapClick(sx: number, sy: number): void {
+  {
     // Pick the nearest OWN ghost within a tolerance.
     let picked: string | null = null;
     let bestD = 16;
@@ -162,9 +228,11 @@ function installInteraction(): void {
       `Reaches it in <b>~${fmtDelay(out)}</b> (your light), ` +
       `you'll see it respond <b>~${fmtDelay(out * 2)}</b> from now. ` +
       `<span class="dim">Estimated from a ${fmtDelay(out)}-old sighting.</span>`;
-  });
+  }
+}
 
-  // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
+// Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
+function installKeyboard(): void {
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
     if ((e.key === "r" || e.key === "R") && state.selectedShipId && net) {
@@ -401,6 +469,7 @@ function join(): void {
           hud.style.display = "flex";
           $("readout").style.display = "block";
           $("legend").style.display = "block";
+          $("zoom-controls").style.display = "flex";
           buildMarketPanel();
           $("market").style.display = "block";
           startRenderer().catch((err) => console.error("renderer failed to start", err));

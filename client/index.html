@@ -134,6 +134,26 @@
       #legend .row { display: flex; align-items: center; gap: 7px; }
       #legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 
+      /* Zoom / fit controls — a subtle vertical stack at the top-left, below the HUD
+         and clear of the bottom panels + the top-right market panel. */
+      #zoom-controls {
+        position: fixed; left: 14px; top: 52px;
+        display: none; flex-direction: column; gap: 6px;
+        z-index: 6;
+      }
+      #zoom-controls button {
+        width: 30px; height: 30px; padding: 0;
+        background: rgba(8, 12, 22, 0.82);
+        border: 1px solid #18233b; border-radius: 6px;
+        color: var(--ink); font-size: 17px; line-height: 1; cursor: pointer;
+        font-family: ui-monospace, monospace;
+        display: flex; align-items: center; justify-content: center;
+        backdrop-filter: blur(4px);
+      }
+      #zoom-controls button:hover { border-color: var(--accent); color: var(--accent); }
+      #zoom-controls button:active { background: rgba(20, 30, 50, 0.9); }
+      #zoom-fit { font-size: 14px; }
+
       /* Delayed reports log (top-center) */
       #reports-log {
         position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
@@ -233,6 +253,13 @@
       <div class="row"><span class="dim">operate asteroids → mine → haul to market (raidable) → sell</span></div>
       <div class="row"><span class="dim">bigger glow = richer deposits (frontier belt &gt; inner belt)</span></div>
       <div class="row"><span class="dim">select ship/asteroid · click rival = raid · R = recall · Δt = staleness</span></div>
+      <div class="row"><span class="dim">scroll = zoom · drag = pan</span></div>
+    </div>
+
+    <div id="zoom-controls">
+      <button id="zoom-in" title="Zoom in (scroll up)">+</button>
+      <button id="zoom-fit" title="Fit whole system">⊡</button>
+      <button id="zoom-out" title="Zoom out (scroll down)">−</button>
     </div>
 
     <div id="join">
