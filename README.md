@@ -561,6 +561,37 @@ value gradient **~11× richer outer-third vs inner-third**, and light-delay **6 
 render with AU labels; the delayed-view map, fog, sensors, raiding, autonomous defense,
 and economy all still work.
 
+#### Body art — real sprites for the celestial bodies
+
+The map bodies are now real **transparent PNG art** instead of drawn circles —
+`sun.png`, `planet.png` (the market world), four `asteroidN.png` rock variants, and
+`mining_station.png` — in `client/public/art/` (served at `/art/*` in dev and bundled
+into `dist/` for the production build the Rust server serves). Pixi `Assets.load` runs
+in `init()` (awaited before the render loop, so no body ever draws before its texture
+is ready), with mipmaps + linear filtering set at load time to keep the 1254² source
+crisp when scaled down. Each texture loads **independently** — a missing/failed PNG
+just falls back to a drawn circle rather than blanking the whole map.
+
+- **Hierarchical, zoom-aware, tunable sizes** (`BODY_AU` / `BODY_PX_CLAMP` in
+  `render.ts`): each body's diameter is anchored in AU (so it scales with the map
+  zoom) then clamped — sun > planet > asteroid ≈ station. The click **hit-radius
+  matches each rendered sprite** (`renderer.bodyHitRadius`, same sizing as the draw).
+- **4 variants, deterministic** — each asteroid picks its sprite / rotation / size
+  jitter from an FNV-1a hash of its body id, so a rock looks identical across frames
+  and sessions and the four variants spread evenly (measured: {0:6, 1:5, 2:4, 3:6}
+  over 21 rocks).
+- **Every data cue is kept, layered on the sprite**: the ownership ring (cyan =
+  yours, red = rival, light-gated), the deposit-value size-up + value-glow (richer =
+  bigger/brighter), the selection highlight, and all labels (name, planet `· MARKET`,
+  your-asteroid `◆N` stockpile, `STATION`). The sprite is the body; the rings, glows,
+  and labels are the data overlay. Ships keep their existing rendering; bodies stay
+  static (orbital motion is still Phase 2).
+
+**Verified:** typecheck clean; in dev the 7 sprites serve `200 image/png` and render
+on the dark map with transparent backgrounds (no box/checkerboard); `npm run build`
+emits them to `dist/art/` and the Rust server serves `/art/*.png` `200 image/png`;
+clicks on the planet and a frontier asteroid open their panels; no console errors.
+
 ---
 
 ## Architecture (§14 of the design)

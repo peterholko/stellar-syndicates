@@ -102,15 +102,17 @@ function installInteraction(): void {
       return;
     }
 
-    // Otherwise, did we click a star system? → open its claim / production panel.
+    // Otherwise, did we click a celestial body? → open its market / operate panel.
+    // The hit radius matches each body's rendered sprite (renderer.bodyHitRadius), and
+    // the nearest body whose sprite the cursor is inside wins.
     let sysPick: string | null = null;
-    let bestS = 13;
+    let bestSysD = Infinity;
     if (state.galaxy) {
       for (const sys of state.galaxy.systems) {
         const s = renderer.worldToScreen(sys.pos);
         const d = Math.hypot(s.x - sx, s.y - sy);
-        if (d < bestS) {
-          bestS = d;
+        if (d <= renderer.bodyHitRadius(sys) && d < bestSysD) {
+          bestSysD = d;
           sysPick = sys.id;
         }
       }
@@ -401,7 +403,7 @@ function join(): void {
           $("legend").style.display = "block";
           buildMarketPanel();
           $("market").style.display = "block";
-          void startRenderer();
+          startRenderer().catch((err) => console.error("renderer failed to start", err));
           break;
         case "View":
           state.tick = msg.tick;

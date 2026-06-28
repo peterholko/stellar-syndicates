@@ -8,8 +8,8 @@
 // orders also shows a hint of where it has most likely advanced along its course.
 // The command center is your vantage — the origin of everything you can see.
 
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
+import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import type { Commodity, GalaxyInfo, GhostView, SystemInfo, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
 
 const COL_HUB = 0x7fd4ff;
@@ -44,6 +44,41 @@ const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
+
+// --- Celestial-body art ------------------------------------------------------
+// Transparent RGBA PNGs in client/public/art, served at /art/* in dev and bundled
+// into dist/ for the production build the Rust server serves. The source art is
+// 1254² — FAR too large for map markers — so each sprite is scaled DOWN.
+const ART = (name: string): string => `/art/${name}`;
+const SUN_ART = "sun.png";
+const PLANET_ART = "planet.png";
+const STATION_ART = "mining_station.png";
+const ASTEROID_ART = ["asteroid1.png", "asteroid2.png", "asteroid3.png", "asteroid4.png"];
+
+// On-map body sizes. Each diameter is anchored in WORLD units (AU) so sprites scale
+// with the map zoom/scale, then clamped to a sensible pixel range so a body never
+// vanishes or dominates. The hierarchy (sun > planet > asteroid ≈ station) reads at
+// a glance. All tunable.
+const BODY_AU = { sun: 2.8, planet: 1.7, asteroid: 1.15, station: 1.0 } as const;
+const BODY_PX_CLAMP = {
+  sun: [36, 110],
+  planet: [22, 70],
+  asteroid: [14, 44],
+  station: [12, 40],
+} as const;
+type BodyType = keyof typeof BODY_AU;
+
+// Deterministic FNV-1a hash of a body id → a stable per-asteroid variant / rotation
+// / size jitter (so the 4 sprites repeat without obvious tiling, and a given rock
+// looks identical across frames and sessions).
+function hashId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
 
 // Format a light-delay / staleness in human terms. At AU scale these run from
 // seconds (a nearby ship) to many minutes or hours (the frontier belt), so a
@@ -90,6 +125,12 @@ export class Renderer {
   private cx = 0;
   private cy = 0;
 
+  // Body-art textures (loaded in init() before the first draw — see main.ts).
+  private sunTex: Texture | null = null;
+  private planetTex: Texture | null = null;
+  private stationTex: Texture | null = null;
+  private asteroidTex: Texture[] = [];
+
   async init(mount: HTMLElement): Promise<void> {
     await this.app.init({
       background: "#05070d",
@@ -98,6 +139,9 @@ export class Renderer {
       autoDensity: true,
       resolution: window.devicePixelRatio || 1,
     });
+    // Load all body art up front, so no body ever tries to draw before its texture
+    // is ready (init() is awaited before the render loop starts).
+    await this.loadArt();
     mount.appendChild(this.app.canvas);
     this.app.stage.addChild(
       this.bg,
@@ -131,6 +175,75 @@ export class Renderer {
   }
   screenToWorld(sx: number, sy: number): Vec2 {
     return { x: (sx - this.cx) / this.scale, y: (sy - this.cy) / this.scale };
+  }
+
+  /// Load the celestial-body sprites. Mipmaps + linear filtering (set at load time,
+  /// so they apply on the first GPU upload) keep the 1254² art crisp — not aliased —
+  /// when scaled down to tens of pixels. Each texture loads INDEPENDENTLY: a missing
+  /// or failed PNG just leaves that texture null, so the per-body Graphics fallback
+  /// renders instead of the whole renderer aborting on a blank map.
+  private async loadArt(): Promise<void> {
+    const load = async (name: string): Promise<Texture | null> => {
+      try {
+        return await Assets.load<Texture>({
+          src: ART(name),
+          data: { autoGenerateMipmaps: true, scaleMode: "linear" },
+        });
+      } catch (e) {
+        console.warn(`[render] body art failed to load: ${name}`, e);
+        return null;
+      }
+    };
+    this.sunTex = await load(SUN_ART);
+    this.planetTex = await load(PLANET_ART);
+    this.stationTex = await load(STATION_ART);
+    this.asteroidTex = (await Promise.all(ASTEROID_ART.map(load))).filter((t): t is Texture => t !== null);
+  }
+
+  /// On-screen diameter (px) for a body type: anchored in AU (so it scales with the
+  /// map zoom) then clamped, with an optional multiplier (e.g. deposit value).
+  private bodyDiameter(type: BodyType, mult = 1): number {
+    const au = this.galaxy?.au ?? 10000;
+    const px = BODY_AU[type] * au * this.scale * mult;
+    const [lo, hi] = BODY_PX_CLAMP[type];
+    return Math.max(lo, Math.min(hi, px));
+  }
+
+  /// The deposit value-rate of an asteroid (richness × commodity value), summed —
+  /// drives both its size-up and its value-glow.
+  private valueRate(sys: SystemInfo): number {
+    let v = 0;
+    for (const d of sys.deposits) v += d.richness * (COMMODITY_VALUE[d.resource] ?? 1);
+    return v;
+  }
+
+  /// An asteroid's on-screen diameter (px): base size × deposit-value mult × seeded
+  /// size jitter. Shared by the renderer and the click hit-test so the hit area
+  /// matches the visible sprite.
+  private asteroidDiameter(sys: SystemInfo): number {
+    const h = hashId(sys.id);
+    const valueMult = 1 + Math.min(this.valueRate(sys) * 0.012, 0.5);
+    const sizeJitter = 0.88 + ((h >>> 8) % 24) / 100; // 0.88..1.11
+    return this.bodyDiameter("asteroid", valueMult * sizeJitter);
+  }
+
+  /// Public: the screen-pixel pick radius for a celestial body, matching its
+  /// rendered sprite (+ a small margin) so the whole visible body is clickable.
+  bodyHitRadius(sys: SystemInfo): number {
+    if (sys.body === "planet") return this.bodyDiameter("planet") / 2 + 4;
+    return this.asteroidDiameter(sys) / 2 + 3;
+  }
+
+  /// A centered body sprite at a screen position, sized to `diameter` (the square
+  /// source art preserves aspect), optionally rotated.
+  private bodySprite(tex: Texture, x: number, y: number, diameter: number, rotation = 0): Sprite {
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    sp.position.set(x, y);
+    sp.width = diameter;
+    sp.height = diameter;
+    sp.rotation = rotation;
+    return sp;
   }
 
   setGalaxy(galaxy: GalaxyInfo): void {
@@ -176,14 +289,20 @@ export class Renderer {
       g.circle(this.cx, this.cy, ringPx(auDist)).stroke({ width: 1, color: 0x141d30, alpha });
     }
 
-    // The SUN at the system's center (the origin) — the source of light, and of
-    // every light-delay the player suffers.
-    const sun = this.worldToScreen({ x: 0, y: 0 });
-    g.circle(sun.x, sun.y, 14).fill({ color: 0xffcf6b, alpha: 0.10 });
-    g.circle(sun.x, sun.y, 8).fill({ color: 0xffd87a, alpha: 0.28 });
-    g.circle(sun.x, sun.y, 4).fill({ color: 0xffe9a8, alpha: 0.6 });
-    g.circle(sun.x, sun.y, 2).fill({ color: 0xffffff, alpha: 0.95 });
     this.bg.addChild(g);
+
+    // The SUN at the system's center (the origin) — the source of light, and of
+    // every light-delay the player suffers. The star sprite (largest body), with a
+    // soft fallback glow if the texture somehow isn't ready.
+    const sun = this.worldToScreen({ x: 0, y: 0 });
+    if (this.sunTex) {
+      this.bg.addChild(this.bodySprite(this.sunTex, sun.x, sun.y, this.bodyDiameter("sun")));
+    } else {
+      const sg = new Graphics();
+      sg.circle(sun.x, sun.y, 8).fill({ color: 0xffd87a, alpha: 0.4 });
+      sg.circle(sun.x, sun.y, 3).fill({ color: 0xffffff, alpha: 0.95 });
+      this.bg.addChild(sg);
+    }
 
     // Belt label out at the frontier ring.
     const belt = new Text({ text: "FRONTIER BELT", style: new TextStyle({ fill: 0x3a4660, fontFamily: "ui-monospace, monospace", fontSize: 8, letterSpacing: 2 }) });
@@ -212,21 +331,26 @@ export class Renderer {
 
       // The habitable planet is the MARKET world — not a claimable mining body.
       if (sys.body === "planet") {
+        const dia = this.bodyDiameter("planet");
+        const r = dia / 2;
         const g = new Graphics();
-        if (selected) g.circle(s.x, s.y, 13).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
-        g.circle(s.x, s.y, 9).fill({ color: COL_HUB, alpha: 0.16 });
-        g.circle(s.x, s.y, 5).fill({ color: COL_HUB, alpha: 0.5 });
-        g.circle(s.x, s.y, 2.4).fill({ color: 0xffffff, alpha: 0.95 });
+        g.circle(s.x, s.y, r + 4).fill({ color: COL_HUB, alpha: 0.10 }); // soft market glow
+        if (selected) g.circle(s.x, s.y, r + 5).stroke({ width: 1.4, color: 0xffffff, alpha: 0.85 });
         this.systemsLayer.addChild(g);
+        if (this.planetTex) {
+          this.systemsLayer.addChild(this.bodySprite(this.planetTex, s.x, s.y, dia));
+        } else {
+          g.circle(s.x, s.y, r).fill({ color: COL_HUB, alpha: 0.6 });
+        }
         const t = new Text({ text: `${sys.name} · MARKET`, style: new TextStyle({ fill: COL_HUB, fontFamily: "ui-monospace, monospace", fontSize: 9, letterSpacing: 1 }) });
         t.anchor.set(0, 0.5);
-        t.position.set(s.x + 12, s.y);
+        t.position.set(s.x + r + 4, s.y);
         t.alpha = 0.95;
         this.systemsLayer.addChild(t);
         continue;
       }
 
-      // Value-rate → glow size; dominant resource → tint (the gradient made visible).
+      // Value-rate → size + glow; dominant resource → glow tint (gradient made visible).
       let valueRate = 0;
       let topVal = -1;
       let topColor = COL_SYSTEM;
@@ -238,19 +362,34 @@ export class Renderer {
           topColor = COMMODITY_COLOR[d.resource] ?? COL_SYSTEM;
         }
       }
-      const glow = Math.min(3 + valueRate * 0.45, 18);
       const ring = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
 
+      // Deposit value scales the rock up to ~1.5× (richer = bigger). The diameter is
+      // the SAME computation the click hit-test uses (`asteroidDiameter`). A seeded
+      // variant / rotation keeps the 4 sprites from looking obviously repeated.
+      const h = hashId(sys.id);
+      const dia = this.asteroidDiameter(sys);
+      const r = dia / 2;
+      const glow = Math.min(r + 3 + valueRate * 0.4, r + 16); // value-glow radius
+
       const g = new Graphics();
-      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 });
-      if (selected) g.circle(s.x, s.y, glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.09 }); // deposit-value glow
+      if (selected) g.circle(s.x, s.y, r + 5).stroke({ width: 1.3, color: 0xffffff, alpha: 0.85 });
       if (owner !== null) {
-        g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: ring, alpha: mine ? 0.95 : 0.8 });
+        // Ownership ring around the rock — own (cyan) / rival (red).
+        g.circle(s.x, s.y, r + 2.5).stroke({ width: 1.6, color: ring, alpha: mine ? 0.95 : 0.8 });
       }
-      g.circle(s.x, s.y, 2.2).fill({ color: ring, alpha: 0.95 });
       this.systemsLayer.addChild(g);
 
-      // Label: name; your own systems also show their top stockpiled good.
+      if (this.asteroidTex.length) {
+        const variant = h % this.asteroidTex.length;
+        const rot = ((h >>> 4) % 360) * (Math.PI / 180);
+        this.systemsLayer.addChild(this.bodySprite(this.asteroidTex[variant], s.x, s.y, dia, rot));
+      } else {
+        g.circle(s.x, s.y, 2.2).fill({ color: ring, alpha: 0.95 });
+      }
+
+      // Label: name; your own asteroids also show their top stockpiled good.
       let txt = sys.name;
       if (mine && dyn?.stockpile && dyn.stockpile.length) {
         const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
@@ -271,20 +410,33 @@ export class Renderer {
     for (const a of state.anchors) {
       const own = a.owner !== null && a.owner === state.playerId;
       const s = this.worldToScreen(a.pos);
-      const g = new Graphics();
       const color = own ? COL_ANCHOR_OWN : COL_ANCHOR_OTHER;
       if (a.owner) {
-        g.circle(s.x, s.y, own ? 9 : 6).fill({ color, alpha: own ? 0.22 : 0.14 });
-        g.circle(s.x, s.y, 3).fill({ color, alpha: 0.9 });
+        // An owned home = a built MINING STATION (sits on the player's home asteroid).
+        // It draws above the systems layer, so the station structure reads on the rock.
+        const dia = this.bodyDiameter("station");
+        const g = new Graphics();
+        // Ownership cue — glow + a colored RING (own = cyan, rival = tan), so a
+        // rival's station is as legible as your own (the station art itself is neutral).
+        g.circle(s.x, s.y, dia / 2 + 3).fill({ color, alpha: own ? 0.18 : 0.14 });
+        g.circle(s.x, s.y, dia / 2 + 2.5).stroke({ width: 1.5, color, alpha: own ? 0.95 : 0.85 });
+        this.anchorsLayer.addChild(g);
+        if (this.stationTex) {
+          this.anchorsLayer.addChild(this.bodySprite(this.stationTex, s.x, s.y, dia));
+        } else {
+          g.circle(s.x, s.y, 3).fill({ color, alpha: 0.9 });
+        }
+        if (own) {
+          const t = new Text({ text: "STATION", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
+          t.anchor.set(0.5, 1);
+          t.position.set(s.x, s.y - (dia / 2 + 4));
+          this.anchorsLayer.addChild(t);
+        }
       } else {
+        // An unclaimed home slot — no station built yet, just a faint marker.
+        const g = new Graphics();
         g.circle(s.x, s.y, 4).stroke({ width: 1, color: 0x3a4660, alpha: 0.7 });
-      }
-      this.anchorsLayer.addChild(g);
-      if (own) {
-        const t = new Text({ text: "STATION", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
-        t.anchor.set(0.5, 1);
-        t.position.set(s.x, s.y - 11);
-        this.anchorsLayer.addChild(t);
+        this.anchorsLayer.addChild(g);
       }
     }
   }
