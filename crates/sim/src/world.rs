@@ -15,7 +15,7 @@ use crate::cargo::Cargo;
 use crate::command::Command;
 use crate::config::{SimConfig, DT, TICK_HZ};
 use crate::event::{Event, EventPayload, RaidOutcome, TradeEvent};
-use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
+use crate::galaxy::{BodyKind, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
@@ -122,11 +122,12 @@ pub struct World {
     pub tick: u64,
     /// Simulation time in seconds (`tick * DT`).
     pub time: f64,
-    /// The wormhole hub at the galaxy centre — the shared market commons (§4).
+    /// The habitable planet — the shared market (§4). (Field name kept for the
+    /// economy plumbing; it's the planet's position, not a wormhole, now.)
     pub hub: Vec2,
-    /// Procedurally-placed star systems (static geography).
+    /// Celestial bodies: the habitable planet + asteroid belts (static geography).
     pub systems: Vec<StarSystem>,
-    /// Pre-generated home-anchor slots; assigned to players on join.
+    /// Player starting-asteroid home slots; assigned to players on join.
     pub home_slots: Vec<HomeSlot>,
     /// All corporations, keyed by id. `BTreeMap` keeps iteration deterministic.
     pub players: BTreeMap<PlayerId, Corporation>,
@@ -147,37 +148,34 @@ pub struct World {
 }
 
 impl World {
-    /// Create a galaxy for the given configuration: hub at the centre, seeded
-    /// star systems, and a ring of empty home anchors.
+    /// Create a solar system for the given configuration: the sun at the centre,
+    /// a habitable planet (the market = `hub`), asteroid belts, and the player
+    /// starting-asteroid home slots.
     pub fn new(config: SimConfig) -> Self {
         let mut rng = crate::rng::Rng::new(config.seed);
         let mut next_entity_id = 1u64;
 
-        let systems = {
+        let solar = {
             let mut alloc = || {
                 let id = EntityId(next_entity_id);
                 next_entity_id += 1;
                 id
             };
-            generate_systems(
-                &mut rng,
-                config.galaxy_radius,
-                config.system_count,
-                &mut alloc,
-            )
+            crate::galaxy::generate_solar_system(&mut rng, &config, &mut alloc)
         };
-        let home_slots = generate_home_slots(
-            &mut rng,
-            config.galaxy_radius,
-            config.home_ring_frac,
-            config.max_players,
-        );
+        let hub = solar.hub;
+        let systems = solar.bodies;
+        let home_slots = solar
+            .starts
+            .into_iter()
+            .map(|pos| HomeSlot { pos, owner: None, claimed_at: None })
+            .collect();
 
         World {
             config,
             tick: 0,
             time: 0.0,
-            hub: Vec2::ZERO,
+            hub,
             systems,
             home_slots,
             players: BTreeMap::new(),
@@ -787,6 +785,9 @@ impl World {
         let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
             return;
         };
+        if sys.body != BodyKind::Asteroid {
+            return; // the habitable planet is the market, not a claimable asteroid
+        }
         if sys.owner.is_some() {
             return; // already claimed (the loser learns this rival's claim by light)
         }
@@ -1060,24 +1061,37 @@ impl World {
         });
     }
 
-    /// Assign an unused home anchor to a player (or append one if the galaxy is
-    /// over capacity), returning its position.
+    /// Assign a player to a starting asteroid (their home / command center). They
+    /// begin already operating that asteroid as a MINING STATION — it's pre-claimed
+    /// and producing (§4). Returns the home position.
     fn assign_home(&mut self, id: PlayerId) -> Vec2 {
         let now = self.time;
-        if let Some(slot) = self.home_slots.iter_mut().find(|s| s.owner.is_none()) {
+        let pos = if let Some(slot) = self.home_slots.iter_mut().find(|s| s.owner.is_none()) {
             slot.owner = Some(id);
             slot.claimed_at = Some(now);
-            return slot.pos;
+            slot.pos
+        } else {
+            // Over capacity: scatter an extra home near the starting orbit (this
+            // rare case gets a base but no pre-claimed station — they claim ore
+            // asteroids normally).
+            let n = self.home_slots.len();
+            let angle = TAU * (n as f64) * 0.618_033_988_75; // golden-angle scatter
+            let pos = Vec2::from_polar(angle, self.config.start_orbit_au * crate::config::AU);
+            self.home_slots.push(HomeSlot { pos, owner: Some(id), claimed_at: Some(now) });
+            pos
+        };
+        // Pre-claim the starting-asteroid mining station at this home (the nearest
+        // unclaimed asteroid sitting on it).
+        if let Some(sys) = self
+            .systems
+            .iter_mut()
+            .filter(|s| s.body == BodyKind::Asteroid && s.owner.is_none())
+            .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)))
+            && sys.pos.distance(pos) < 1.0
+        {
+            sys.owner = Some(id);
+            sys.claimed_at = Some(now);
         }
-        // Over capacity: place an extra anchor at a deterministic ring spot.
-        let n = self.home_slots.len();
-        let angle = TAU * (n as f64) * 0.61803398875; // golden-angle scatter
-        let pos = Vec2::from_polar(angle, self.config.galaxy_radius * self.config.home_ring_frac);
-        self.home_slots.push(HomeSlot {
-            pos,
-            owner: Some(id),
-            claimed_at: Some(now),
-        });
         pos
     }
 
@@ -1176,15 +1190,33 @@ mod tests {
     }
 
     #[test]
-    fn galaxy_is_generated() {
+    fn solar_system_is_generated() {
         let w = test_world();
-        assert_eq!(w.hub, Vec2::ZERO);
-        assert_eq!(w.systems.len(), w.config.system_count as usize);
+        // Bodies: 1 habitable planet + inner belt + outer belt + starting asteroids.
+        let expected = 1 + w.config.inner_belt + w.config.outer_belt + w.config.max_players;
+        assert_eq!(w.systems.len() as u32, expected, "~18-22 bodies for a small game");
         assert_eq!(w.home_slots.len(), w.config.max_players as usize);
-        // Systems lie within the galaxy radius.
+
+        // Exactly one habitable planet — the market (hub) — near 1 AU.
+        let planets: Vec<_> = w.systems.iter().filter(|s| s.body == crate::galaxy::BodyKind::Planet).collect();
+        assert_eq!(planets.len(), 1);
+        assert_eq!(w.hub, planets[0].pos, "hub is the habitable planet");
+        let au = crate::config::AU;
+        assert!((w.hub.length() / au - 1.0).abs() < 0.2, "habitable planet near 1 AU");
+
+        // Sun at the centre; everything within the system radius; every body carries
+        // Kepler orbital parameters (frozen).
         for s in &w.systems {
             assert!(s.pos.length() <= w.config.galaxy_radius + 1.0);
+            assert!(s.semi_major_au > 0.0);
+            assert!((s.orbital_period_years - s.semi_major_au.powf(1.5)).abs() < 1e-9, "Kepler period = a^1.5");
+            // Position is consistent with its AU distance (frozen at its phase).
+            assert!((s.pos.length() / au - s.semi_major_au).abs() < 0.01);
         }
+        // The inner belt (~2-3 AU) and an outer/Kuiper belt (~30-40 AU) both exist.
+        let ast = |lo: f64, hi: f64| w.systems.iter().filter(|s| s.body == crate::galaxy::BodyKind::Asteroid && s.semi_major_au >= lo && s.semi_major_au <= hi).count();
+        assert!(ast(2.0, 3.0) >= 1, "inner belt present");
+        assert!(ast(30.0, 40.0) >= 1, "outer/Kuiper belt present");
     }
 
     #[test]
@@ -1234,8 +1266,8 @@ mod tests {
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let start: Vec<Vec2> = w.ships.values().map(|s| s.pos).collect();
-        // Advance a few seconds.
-        for _ in 0..(5 * crate::config::TICK_HZ) {
+        // Advance ~half a minute (ships accelerate gently at the AU scale).
+        for _ in 0..(30 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
         let moved = w
@@ -1404,7 +1436,7 @@ mod tests {
         assert!(ShipKind::Convoy.hull_mass() >= 10.0 * ShipKind::Raider.hull_mass());
         // …so the light raider out-accelerates the heavy convoy by a wide margin —
         // asymmetry from MASS, via a = F/m.
-        assert!(raider.accel() > empty.accel() * 5.0,
+        assert!(raider.accel() > empty.accel() * 2.0,
             "raider accel {:.2} should dwarf convoy {:.2}", raider.accel(), empty.accel());
         // Cargo adds mass, so a loaded convoy accelerates noticeably worse.
         assert!(loaded.mass() > empty.mass());
@@ -1441,8 +1473,8 @@ mod tests {
             c.order = ShipOrder::MoveTo { dest: cc + Vec2::new(9000.0, 0.0) }; // flees outward
         }
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
-        let outcome = run_until_raid(&mut w, 120, |_| vec![])
-            .expect("proportional pursuit should run the fleeing convoy down within 120 s");
+        let outcome = run_until_raid(&mut w, 240, |_| vec![])
+            .expect("proportional pursuit should run the fleeing convoy down within 240 s");
         assert_ne!(outcome, RaidOutcome::Escaped);
     }
 
@@ -1582,7 +1614,7 @@ mod tests {
         let (p_far, convoy2, _h2) =
             defense_setup(&mut w2, PlayerId(1), PlayerId(2), convoy_pos, Vec2::new(3000.0, sensor * 3.0), hostile_pos);
         let (mut far_engaged, mut convoy_lost) = (false, false);
-        for _ in 0..(60 * crate::config::TICK_HZ) {
+        for _ in 0..(300 * crate::config::TICK_HZ) {
             for e in w2.step(&[]) {
                 if let EventPayload::ShipDestroyed { ship, .. } = e.payload
                     && ship == convoy2
@@ -1698,11 +1730,13 @@ mod tests {
     fn recall_can_arrive_too_late() {
         let mut w = test_world();
         let (atk, def) = (PlayerId(1), PlayerId(2));
-        // Raider FAR from CC (big recall/commit delay) but right on top of the
-        // convoy (contact almost immediately once the commit lands).
-        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(4000.0, 0.0), Vec2::new(4180.0, 0.0));
+        // Raider FAR from CC (~4000 su ≈ 66 s of command light) but already inside
+        // CONTACT_RADIUS of the convoy, so contact resolves the instant the commit's
+        // light lands.
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(4000.0, 0.0), Vec2::new(4060.0, 0.0));
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
-        // Recall is issued, but its light (≈13 s away) can't beat the contact.
+        // Recall is issued 14 s later but travels the same ~66 s of light, so it
+        // lands ~14 s after the commit — too late to beat the immediate contact.
         let mut recalled = false;
         let outcome = run_until_raid(&mut w, 120, |w| {
             if !recalled && w.time > 14.0 {
@@ -1739,8 +1773,10 @@ mod tests {
         // Inventory not yet increased (goods still in transit).
         assert_eq!(w.players[&id].inventory[&Fuel], fuel0);
 
-        // Run until the convoy reaches home and deposits the goods.
-        for _ in 0..(220 * crate::config::TICK_HZ) {
+        // Run until the convoy reaches home and deposits the goods. The home↔hub
+        // crossing is ~3–5 AU at the convoy's 0.3c, so this is a tens-of-minutes
+        // haul — the loop runs fast regardless of sim-time, so the budget is large.
+        for _ in 0..(3600 * crate::config::TICK_HZ) {
             w.step(&[]);
             if w.players[&id].inventory[&Fuel] == fuel0 + 50 {
                 return;
@@ -1765,8 +1801,9 @@ mod tests {
         let convoy = w.ships.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
         assert!(convoy.is_some(), "sell should spawn a convoy toward the hub");
 
-        // Run until it reaches the hub and clears at the price-on-arrival.
-        for _ in 0..(260 * crate::config::TICK_HZ) {
+        // Run until it reaches the hub and clears at the price-on-arrival. (~3–5 AU
+        // home↔hub haul at 0.3c; the loop runs fast regardless of sim-time.)
+        for _ in 0..(3600 * crate::config::TICK_HZ) {
             w.step(&[]);
             if w.players[&id].credits > credits0 {
                 return; // sold at arrival, credited
@@ -1860,8 +1897,9 @@ mod tests {
     fn determinism_same_commands_same_state() {
         let mut a = test_world();
         let mut b = test_world();
-        // A system present identically in both deterministic galaxies.
-        let sysid = a.systems[0].id;
+        // An UNCLAIMED ASTEROID present identically in both deterministic systems
+        // (not the habitable planet, which is the market and not claimable).
+        let sysid = a.systems.iter().find(|s| s.is_claimable()).unwrap().id;
         let cmds = vec![
             Command::AddPlayer { id: PlayerId(1), name: "A".into() },
             Command::AddPlayer { id: PlayerId(2), name: "B".into() },
@@ -1898,20 +1936,21 @@ mod tests {
     #[test]
     fn deposits_are_richer_toward_the_frontier() {
         let w = test_world();
-        let mut by_dist: Vec<&StarSystem> = w.systems.iter().collect();
-        by_dist.sort_by(|a, b| a.pos.length().partial_cmp(&b.pos.length()).unwrap());
-        let third = by_dist.len() / 3;
-        assert!(third >= 1, "need enough systems to compare thirds");
+        // ASTEROIDS only (the habitable planet is the market, not a mining body).
+        let mut ast: Vec<&StarSystem> = w.systems.iter().filter(|s| s.body == crate::galaxy::BodyKind::Asteroid).collect();
+        ast.sort_by(|a, b| a.pos.length().partial_cmp(&b.pos.length()).unwrap());
+        let third = ast.len() / 3;
+        assert!(third >= 1, "need enough asteroids to compare thirds");
         let mean = |s: &[&StarSystem]| s.iter().map(|x| value_rate(x)).sum::<f64>() / s.len() as f64;
-        let inner = mean(&by_dist[..third]);
-        let outer = mean(&by_dist[by_dist.len() - third..]);
-        assert!(every_system_has_a_deposit(&w), "every system must have at least one deposit");
+        let inner = mean(&ast[..third]);
+        let outer = mean(&ast[ast.len() - third..]);
+        assert!(every_asteroid_has_a_deposit(&w), "every asteroid must have at least one deposit");
         assert!(outer > inner * 1.5,
-            "frontier should out-produce the core: inner value-rate {inner:.1} vs outer {outer:.1}");
+            "the outer belt should out-produce the inner: inner value-rate {inner:.1} vs outer {outer:.1}");
     }
 
-    fn every_system_has_a_deposit(w: &World) -> bool {
-        w.systems.iter().all(|s| !s.deposits.is_empty())
+    fn every_asteroid_has_a_deposit(w: &World) -> bool {
+        w.systems.iter().filter(|s| s.body == crate::galaxy::BodyKind::Asteroid).all(|s| !s.deposits.is_empty())
     }
 
     /// Deposit generation is deterministic from the seed (replay-safe).
@@ -1936,6 +1975,17 @@ mod tests {
         w.systems
             .iter()
             .max_by(|a, b| value_rate(a).partial_cmp(&value_rate(b)).unwrap())
+            .unwrap()
+            .id
+    }
+
+    /// The claimable asteroid nearest the hub — an inner-belt body, so a hauler
+    /// from it to market is a short (~1–2 AU) trip rather than a Kuiper-edge run.
+    fn nearest_claimable(w: &World) -> EntityId {
+        w.systems
+            .iter()
+            .filter(|s| s.is_claimable())
+            .min_by(|a, b| a.pos.distance(w.hub).partial_cmp(&b.pos.distance(w.hub)).unwrap())
             .unwrap()
             .id
     }
@@ -2009,7 +2059,8 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let sysid = richest_system(&w);
+        // A near (inner-belt) asteroid, so the production haul to market is short.
+        let sysid = nearest_claimable(&w);
         w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
         for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
         let stock_before: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.values().sum();
@@ -2031,7 +2082,7 @@ mod tests {
         // The full loop pays out: run until the convoy reaches the hub and sells.
         let credits_before = w.players[&id].credits;
         let mut sold = false;
-        for _ in 0..(400 * crate::config::TICK_HZ) {
+        for _ in 0..(2400 * crate::config::TICK_HZ) {
             for e in w.step(&[]) {
                 if let EventPayload::Trade(TradeEvent::Sold { player, .. }) = e.payload
                     && player == id

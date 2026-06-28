@@ -33,25 +33,25 @@ pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 
 impl ShipKind {
     /// Engine THRUST (force, F). Acceleration is NOT set directly — it's derived
-    /// as `a = F / m` (see [`Ship::accel`]). Convoys have somewhat more thrust
+    /// as `a = F / m` (see [`Ship::accel`]). Convoys (haulers) have more thrust
     /// (bigger engines) but vastly more mass, so they still accelerate far worse.
     ///
-    /// Tuning note: values are deliberately LOW so the build-up to speed, the
-    /// flip-and-burn, and the convoy-vs-raider nimbleness gap are all *watchable*
-    /// at the current galaxy scale — a chase plays out over tens of seconds, not
-    /// an instant. With these consts an empty raider accelerates at
-    /// `2200/200 = 11` su/s² and an empty convoy at `6750/4500 = 1.5` su/s² (a
-    /// loaded one ~0.86), so the raider visibly darts while the convoy lumbers.
+    /// Tuned for the SOLAR-SYSTEM (AU) scale: acceleration is deliberately LOW so
+    /// the build-up to cruise (~a minute), the flip-and-burn, and the raider-vs-
+    /// hauler nimbleness gap are watchable. With these consts an empty raider
+    /// accelerates at `120/200 = 0.6` su/s² and an empty hauler at
+    /// `1100/4500 ≈ 0.24` (a loaded one ~0.14), so the raider darts while the
+    /// laden hauler lumbers.
     pub fn thrust(self) -> f64 {
         match self {
-            ShipKind::Convoy => 6750.0,
-            ShipKind::Raider => 2200.0,
+            ShipKind::Convoy => 1100.0,
+            ShipKind::Raider => 120.0,
         }
     }
 
-    /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
-    /// than raiders (here ~22×), which is what makes them ponderous — the
-    /// acceleration asymmetry emerges from this, not from hand-set accel consts.
+    /// Hull (empty) MASS, m₀. Haulers are ORDERS OF MAGNITUDE more massive than
+    /// raiders (here ~22×), which is what makes them ponderous — the acceleration
+    /// asymmetry emerges from this, not from hand-set accel consts.
     pub fn hull_mass(self) -> f64 {
         match self {
             ShipKind::Convoy => 4500.0,
@@ -59,13 +59,13 @@ impl ShipKind {
         }
     }
 
-    /// Cruise speed cap (sim units / s). Both stay well below `c` (= 300) so
-    /// relativity is respected — nothing outruns its own light. Acceleration
-    /// (above) ramps velocity up to this cap.
+    /// Cruise speed cap (sim units / s) — a fraction of `c` (≈ 60 at AU scale), so
+    /// these sub-light ships stay well below light and command-lag stays
+    /// meaningful (§6): raiders ≈ 0.6 c, haulers ≈ 0.3 c.
     pub fn max_speed(self) -> f64 {
         match self {
-            ShipKind::Convoy => 48.0,
-            ShipKind::Raider => 120.0,
+            ShipKind::Convoy => 18.0,
+            ShipKind::Raider => 36.0,
         }
     }
 }

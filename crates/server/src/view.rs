@@ -661,11 +661,15 @@ mod tests {
             id: EntityId(id),
             pos,
             name: name.into(),
+            body: sim::BodyKind::Asteroid,
             deposits: vec![],
             claim_cost: 1000.0,
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
+            semi_major_au: 2.5,
+            orbital_period_years: 2.5_f64.powf(1.5),
+            orbital_phase: 0.0,
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
