@@ -1213,10 +1213,13 @@ mod tests {
             // Position is consistent with its AU distance (frozen at its phase).
             assert!((s.pos.length() / au - s.semi_major_au).abs() < 0.01);
         }
-        // The inner belt (~2-3 AU) and an outer/Kuiper belt (~30-40 AU) both exist.
+        // The inner belt (~2-6 AU) and a frontier belt (~9-22 AU) both exist, and
+        // the mid zone between them (the player starting orbit) is populated too —
+        // i.e. bodies are spread across the disk, not split into two far clusters.
         let ast = |lo: f64, hi: f64| w.systems.iter().filter(|s| s.body == crate::galaxy::BodyKind::Asteroid && s.semi_major_au >= lo && s.semi_major_au <= hi).count();
-        assert!(ast(2.0, 3.0) >= 1, "inner belt present");
-        assert!(ast(30.0, 40.0) >= 1, "outer/Kuiper belt present");
+        assert!(ast(2.0, 6.0) >= 1, "inner belt present");
+        assert!(ast(9.0, 22.0) >= 1, "frontier belt present");
+        assert!(ast(6.0, 9.0) >= 1, "mid zone (start orbit) populated — no empty gap");
     }
 
     #[test]
@@ -1773,10 +1776,10 @@ mod tests {
         // Inventory not yet increased (goods still in transit).
         assert_eq!(w.players[&id].inventory[&Fuel], fuel0);
 
-        // Run until the convoy reaches home and deposits the goods. The home↔hub
-        // crossing is ~3–5 AU at the convoy's 0.3c, so this is a tens-of-minutes
-        // haul — the loop runs fast regardless of sim-time, so the budget is large.
-        for _ in 0..(3600 * crate::config::TICK_HZ) {
+        // Run until the convoy reaches home and deposits the goods. The home↔market
+        // crossing is ~6–8 AU at the convoy's 0.3c, so this is a ~1-hour haul — the
+        // loop runs fast regardless of sim-time, so the budget is large.
+        for _ in 0..(9000 * crate::config::TICK_HZ) {
             w.step(&[]);
             if w.players[&id].inventory[&Fuel] == fuel0 + 50 {
                 return;
@@ -1801,9 +1804,9 @@ mod tests {
         let convoy = w.ships.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
         assert!(convoy.is_some(), "sell should spawn a convoy toward the hub");
 
-        // Run until it reaches the hub and clears at the price-on-arrival. (~3–5 AU
-        // home↔hub haul at 0.3c; the loop runs fast regardless of sim-time.)
-        for _ in 0..(3600 * crate::config::TICK_HZ) {
+        // Run until it reaches the hub and clears at the price-on-arrival. (~6–8 AU
+        // home↔market haul at 0.3c; the loop runs fast regardless of sim-time.)
+        for _ in 0..(9000 * crate::config::TICK_HZ) {
             w.step(&[]);
             if w.players[&id].credits > credits0 {
                 return; // sold at arrival, credited

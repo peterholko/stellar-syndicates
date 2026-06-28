@@ -237,7 +237,7 @@ function updateSystemPanel(): void {
     ? "ownership is light-delayed — what you see may already be stale"
     : mine
       ? "ore hauls across fogged space to the market — raidable in transit"
-      : "richer, more valuable deposits lie out toward the dangerous Kuiper frontier";
+      : "richer, more valuable deposits lie out toward the dangerous frontier belt";
   panel.innerHTML =
     `<div class="title">${sys.name}${tag} <span class="x" id="sys-close">✕</span></div>` +
     `<div class="deps">${deps}</div>${action}<div class="hint">${hint}</div>`;

@@ -63,10 +63,10 @@ pub struct SimConfig {
     /// spaced apart so players don't begin on top of each other.
     pub start_orbit_au: f64,
 
-    /// Number of inner-belt asteroids (~2–3 AU, accessible, lower-value ore).
+    /// Number of inner-belt asteroids (~2–6 AU, accessible, lower-value ore).
     pub inner_belt: u32,
-    /// Number of outer-belt / Kuiper asteroids (~30–40 AU, the dangerous, richer
-    /// frontier).
+    /// Number of outer/frontier-belt asteroids (~9–22 AU, the dangerous, richer
+    /// frontier — out at the ~1-light-hour rim).
     pub outer_belt: u32,
 
     /// Sensor detection radius (sim units) projected by each of a player's
@@ -86,10 +86,13 @@ impl SimConfig {
             seed,
             max_players: player_count,
             c: C,
-            // ~45 AU: out past the outer belt, leaving margin for the horizon.
-            galaxy_radius: 45.0 * AU,
-            // Starting mining-station asteroids at ~4 AU, just past the inner belt.
-            start_orbit_au: 4.0,
+            // ~24 AU: just past the frontier rim (~22 AU), leaving margin for the
+            // horizon. Bodies are spread to FILL this disk evenly (see galaxy.rs) —
+            // the map is a playable board, not a realistic cramped-core system.
+            galaxy_radius: 24.0 * AU,
+            // Starting mining-station asteroids at ~7 AU — in the accessible mid
+            // zone between the inner belt and the frontier, spaced apart.
+            start_orbit_au: 7.0,
             inner_belt: 10,
             outer_belt: 7,
             // ~0.45 AU local sensor bubble — coverage is islands around your

@@ -46,7 +46,7 @@ const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
 
 // Format a light-delay / staleness in human terms. At AU scale these run from
-// seconds (a nearby ship) to many minutes or hours (the Kuiper frontier), so a
+// seconds (a nearby ship) to many minutes or hours (the frontier belt), so a
 // raw "Δ660s" reads badly — show seconds up close, minutes/hours far out.
 export function fmtDelay(s: number): string {
   if (s < 10) return `${s.toFixed(1)}s`;
@@ -164,15 +164,15 @@ export class Renderer {
     while (this.bg.children.length > 1) this.bg.removeChildAt(1);
     if (!this.galaxy) return;
     const g = new Graphics();
-    const au = this.galaxy.au || this.galaxy.radius / 45;
+    const au = this.galaxy.au || this.galaxy.radius / 24;
     const ringPx = (auDist: number) => auDist * au * this.scale;
 
-    // System boundary (the Kuiper edge + margin).
+    // System boundary (the frontier rim + margin).
     g.circle(this.cx, this.cy, this.galaxy.radius * this.scale).stroke({ width: 1, color: 0x1c2740, alpha: 0.9 });
-    // Orbital reference rings at real AU radii: the planet's orbit (~1 AU), the
-    // inner belt (~2.5 AU) and the outer/Kuiper belt (~35 AU). The true scale is
-    // stark — a bright, crowded inner system and a lonely distant frontier.
-    for (const [auDist, alpha] of [[1, 0.5], [2.5, 0.7], [35, 0.6]] as const) {
+    // Orbital reference rings at AU radii marking the zones: the planet's orbit
+    // (~1 AU), the inner belt (~4 AU) and the frontier belt (~20 AU). Bodies are
+    // spread EVENLY across these rings — a populated, navigable board.
+    for (const [auDist, alpha] of [[1, 0.5], [4, 0.6], [20, 0.6]] as const) {
       g.circle(this.cx, this.cy, ringPx(auDist)).stroke({ width: 1, color: 0x141d30, alpha });
     }
 
@@ -185,10 +185,10 @@ export class Renderer {
     g.circle(sun.x, sun.y, 2).fill({ color: 0xffffff, alpha: 0.95 });
     this.bg.addChild(g);
 
-    // Belt label out at the Kuiper ring.
-    const belt = new Text({ text: "KUIPER BELT", style: new TextStyle({ fill: 0x3a4660, fontFamily: "ui-monospace, monospace", fontSize: 8, letterSpacing: 2 }) });
+    // Belt label out at the frontier ring.
+    const belt = new Text({ text: "FRONTIER BELT", style: new TextStyle({ fill: 0x3a4660, fontFamily: "ui-monospace, monospace", fontSize: 8, letterSpacing: 2 }) });
     belt.anchor.set(0.5, 0.5);
-    belt.position.set(this.cx, this.cy - ringPx(35));
+    belt.position.set(this.cx, this.cy - ringPx(20));
     this.bg.addChild(belt);
   }
 

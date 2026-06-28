@@ -135,13 +135,36 @@ const DEPOSIT_BASE_RICHNESS: f64 = 0.45;
 const CLAIM_BASE: f64 = 600.0;
 const CLAIM_VALUE_K: f64 = 45.0;
 
-/// AU bounds of the belts and the value gradient (tunable).
+// AU bounds of the belts and the value gradient (tunable). Distances are a
+// GAMEPLAY LEVER, not a physical fact (real solar systems cram the inner bodies
+// and fling the rest across empty space — a terrible board). These ranges +
+// `place_belt` spread the bodies EVENLY across the whole playable disk, with a
+// smooth inner→outer distance/delay/danger/value gradient and no central
+// crowding or empty gaps. At the kept light-time scale (≈2.77 sim-min/AU) the
+// inner belt reads in light-minutes and the ~22 AU frontier rim at ~1 light-hour.
 const PLANET_AU: (f64, f64) = (0.9, 1.1); // habitable planet, ~1 AU (the market)
-const INNER_BELT_AU: (f64, f64) = (2.0, 3.0); // accessible, lower-value
-const OUTER_BELT_AU: (f64, f64) = (30.0, 40.0); // Kuiper frontier, richer
-/// AU distances used to normalise a body's frontier (value) factor in [0,1].
-const FRONTIER_INNER_AU: f64 = 1.0;
-const FRONTIER_OUTER_AU: f64 = 40.0;
+const INNER_BELT_AU: (f64, f64) = (2.0, 6.0); // accessible inner zone, lower-value
+const OUTER_BELT_AU: (f64, f64) = (8.5, 22.0); // frontier belt, richer, ~1 light-hr rim
+/// AU distances used to normalise a body's frontier (value) factor in [0,1]. They
+/// MUST span the belt extent (inner floor → frontier rim) so the deposit gradient
+/// reaches a true ~1.0 at the outermost body.
+const FRONTIER_INNER_AU: f64 = 2.0;
+const FRONTIER_OUTER_AU: f64 = 22.0;
+
+/// Even-distribution placement knobs (see [`place_belt`]). The radial law uses a
+/// power-mean so spatial (areal) density stays roughly uniform — no central
+/// crowding; the golden angle fans the bodies so no concentric rings or spokes
+/// form; the jitters dissolve any residual lattice without letting neighbours
+/// overlap or reorder.
+/// Power for the equal-area-ish radial law (`>1` pushes bodies outward).
+const FILL_POWER: f64 = 1.6;
+/// The golden angle (radians) = `2π·(1 − 1/φ)` ≈ 137.5° — the most irrational
+/// turn, so successive bodies fill the circle as evenly as possible.
+const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
+/// Radial jitter in stratum-index units (`< 0.5` ⇒ bodies never reorder/overlap).
+const RADIAL_JITTER: f64 = 0.35;
+/// Angular jitter (radians) layered on the golden-angle fan.
+const ANGLE_JITTER: f64 = 0.10;
 
 /// A generated solar system: the bodies (planet + asteroids), the market location
 /// (the habitable planet — `hub`), and the player starting-asteroid positions.
@@ -152,17 +175,19 @@ pub struct SolarSystem {
 }
 
 /// Generate the solar system deterministically from the seed (§4): one habitable
-/// planet at ~1 AU (the market), an inner belt (~2–3 AU, lower value, ~minutes of
-/// light), an outer/Kuiper belt (~30–40 AU, richer/higher value, ~hours of light),
-/// and `max_players` spaced starting-asteroid mining stations. Deposit richness &
-/// value rise toward the frontier — the best ore is out in the dangerous, fog-blind
-/// dark. Counts come from the config; all distances are real-inspired, not exact.
+/// planet at ~1 AU (the market), an inner belt (~2–6 AU, lower value, light-minutes
+/// out) and a frontier belt (~9–22 AU, richer/higher value, out at the ~1-light-hour
+/// rim), plus `max_players` spaced starting-asteroid mining stations in the
+/// accessible mid zone. Bodies are spread EVENLY across the whole disk (see
+/// [`place_belt`]) — a playable board, not a realistic cramped core with an empty
+/// gap. Deposit richness & value rise smoothly toward the frontier — the best ore is
+/// out in the dangerous, fog-blind dark. Counts come from the config.
 pub fn generate_solar_system(rng: &mut Rng, config: &SimConfig, alloc: &mut dyn FnMut() -> EntityId) -> SolarSystem {
     let tau = std::f64::consts::TAU;
     let mut bodies = Vec::new();
 
-    // 1. Habitable planet at ~1 AU — the market (hub). A body, so more habitable
-    //    planets/markets can be generated later.
+    // 1. Habitable planet at ~1 AU — the market (hub) and the inner anchor of the
+    //    distance gradient. A body, so more habitable planets/markets can come later.
     let p_theta = rng.range(0.0, tau);
     let p_au = rng.range(PLANET_AU.0, PLANET_AU.1);
     let planet_pos = Vec2::from_polar(p_theta, p_au * AU);
@@ -181,31 +206,71 @@ pub fn generate_solar_system(rng: &mut Rng, config: &SimConfig, alloc: &mut dyn 
         orbital_phase: p_theta,
     });
 
-    // 2. Inner belt, then 3. outer belt.
-    for _ in 0..config.inner_belt {
-        let au = rng.range(INNER_BELT_AU.0, INNER_BELT_AU.1);
-        let theta = rng.range(0.0, tau);
-        bodies.push(asteroid(rng, alloc(), au, theta));
-    }
-    for _ in 0..config.outer_belt {
-        let au = rng.range(OUTER_BELT_AU.0, OUTER_BELT_AU.1);
-        let theta = rng.range(0.0, tau);
-        bodies.push(asteroid(rng, alloc(), au, theta));
-    }
+    // 2 + 3. Inner belt, then frontier belt — placed by ONE even-distribution pass
+    //    (`place_belt`) that shares a global golden-angle counter `k` and a single
+    //    seeded base rotation `theta0`, so the two belts are contiguous (no empty
+    //    gap) and never form rings/spokes. Radial slots are equal-area, so density
+    //    is roughly uniform across the disk (no central crowding).
+    let theta0 = rng.range(0.0, tau);
+    let mut k: u32 = 0;
+    place_belt(rng, alloc, &mut bodies, &mut k, theta0, config.inner_belt, INNER_BELT_AU);
+    place_belt(rng, alloc, &mut bodies, &mut k, theta0, config.outer_belt, OUTER_BELT_AU);
 
-    // 4. Player starting asteroids at ~start_orbit_au, EVENLY SPACED around the
-    //    sun so players don't begin on top of each other.
+    // 4. Player starting asteroids at ~start_orbit_au (the accessible mid zone
+    //    between the belts), EVENLY SPACED around the sun (360/n apart) so players
+    //    don't begin on top of each other.
     let n = config.max_players.max(1);
     let mut starts = Vec::new();
     for i in 0..n {
-        let theta = tau * (i as f64) / (n as f64) + rng.range(-0.15, 0.15);
-        let au = config.start_orbit_au + rng.range(-0.3, 0.3);
+        let theta = tau * (i as f64) / (n as f64) + rng.range(-0.12, 0.12);
+        let au = config.start_orbit_au + rng.range(-0.25, 0.25);
         let a = asteroid(rng, alloc(), au, theta);
         starts.push(a.pos);
         bodies.push(a);
     }
 
     SolarSystem { bodies, hub: planet_pos, starts }
+}
+
+/// Place `count` asteroids spread EVENLY across the belt `[lo, hi]` AU, appending
+/// them to `bodies` and advancing the shared global golden-angle counter `k`.
+///
+/// - RADIUS: each asteroid gets its own equal-width index stratum `i` and a
+///   power-mean radius (`FILL_POWER`), so spatial (areal) density is roughly
+///   uniform — the inner zone isn't crowded and the outer isn't sparse. Radial
+///   jitter (`< 0.5` stratum) keeps bodies from overlapping or reordering.
+/// - ANGLE: the golden angle advances per body across ALL belts (via the shared
+///   `k`), so successive bodies are ~137.5° apart — the disk fills with no rings or
+///   spokes — plus a small wobble. `theta0` is one seeded base rotation for the
+///   whole system, so the fan orientation varies per seed.
+///
+/// Determinism: exactly two `rng.range` draws per body (radial jitter, then angular
+/// wobble) before [`asteroid`] draws its own deposits — a fixed, replayable order.
+fn place_belt(
+    rng: &mut Rng,
+    alloc: &mut dyn FnMut() -> EntityId,
+    bodies: &mut Vec<StarSystem>,
+    k: &mut u32,
+    theta0: f64,
+    count: u32,
+    bounds: (f64, f64),
+) {
+    let tau = std::f64::consts::TAU;
+    for i in 0..count {
+        let au = belt_radius(rng, i, count, bounds);
+        let theta = (theta0 + (*k as f64) * GOLDEN_ANGLE).rem_euclid(tau) + rng.range(-ANGLE_JITTER, ANGLE_JITTER);
+        bodies.push(asteroid(rng, alloc(), au, theta));
+        *k += 1;
+    }
+}
+
+/// Equal-area-ish radius for asteroid `i` of `n` in the belt `[lo, hi]`: a
+/// power-mean over the stratified index quantile, jittered within its stratum.
+fn belt_radius(rng: &mut Rng, i: u32, n: u32, (lo, hi): (f64, f64)) -> f64 {
+    let f = ((i as f64) + 0.5 + rng.range(-RADIAL_JITTER, RADIAL_JITTER)) / (n.max(1) as f64);
+    let f = f.clamp(0.0, 1.0);
+    let (lo_p, hi_p) = (lo.powf(FILL_POWER), hi.powf(FILL_POWER));
+    (lo_p + f * (hi_p - lo_p)).powf(1.0 / FILL_POWER)
 }
 
 /// A claimable asteroid at `au` / `theta`, with seeded deposits whose value rises
