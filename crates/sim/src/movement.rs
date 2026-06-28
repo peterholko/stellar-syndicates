@@ -76,63 +76,54 @@ pub fn flip_and_burn(
     }
 }
 
-/// Time for a pursuer at constant speed `speed` to intercept a target moving at
-/// constant velocity, given the relative position (target − pursuer). Solves
-/// `|rel + target_vel·t| = speed·t` for the smallest positive `t`. Returns
-/// `None` if interception is impossible (target as fast or faster, opening).
-pub fn intercept_time(rel: Vec2, target_vel: Vec2, speed: f64) -> Option<f64> {
-    let a = target_vel.length_sq() - speed * speed;
-    let b = 2.0 * rel.dot(target_vel);
-    let c = rel.length_sq();
-
-    if a.abs() < 1e-9 {
-        // Linear case (target speed ≈ pursuer speed).
-        if b.abs() < 1e-9 {
-            return None;
-        }
-        let t = -c / b;
-        return if t > 0.0 { Some(t) } else { None };
-    }
-    let disc = b * b - 4.0 * a * c;
-    if disc < 0.0 {
-        return None;
-    }
-    let sq = disc.sqrt();
-    let t1 = (-b - sq) / (2.0 * a);
-    let t2 = (-b + sq) / (2.0 * a);
-    // Smallest strictly-positive root.
-    let mut best = f64::INFINITY;
-    for t in [t1, t2] {
-        if t > 1e-9 && t < best {
-            best = t;
-        }
-    }
-    if best.is_finite() {
-        Some(best)
-    } else {
-        None
-    }
-}
-
-/// One tick of interception pursuit: aim at the predicted intercept point (or
-/// straight at the target if no solution) and burn toward it at full speed —
-/// no arrival deceleration (we mean to catch it, not park beside it).
-pub fn intercept_step(
+/// One tick of **proportional pursuit** (§7, §8) — steer-and-correct, NOT a
+/// closed-form intercept solver. Each tick the pursuer simply:
+///   1. forms a crude, light-delayed read of where the target IS — the position
+///      its arriving light shows, `target_pos − target_vel·(range/c)` (a
+///      constant-velocity retardation; it sharpens to the truth as `range→0`,
+///      exactly like the fog model: act on a stale observation, correct as
+///      fresher light arrives);
+///   2. steers toward that observed point, accelerating within its budget while
+///      easing toward the target's velocity as range closes (a brake term), so
+///      it slides into contact instead of blowing past into an orbit (no donut).
+///
+/// Convergence is EMERGENT from this feedback loop, like a guided missile — there
+/// is no boundary-value solver. Cheap and robust: it doesn't depend on any
+/// prediction being right, only on the error shrinking as range closes. Contact
+/// itself is decided by the world (within `CONTACT_RADIUS`). Pass `c = INFINITY`
+/// to pursue the true present position (used by tests).
+#[allow(clippy::too_many_arguments)] // a focused kinematics step, not a config
+pub fn pursue_step(
     pos: Vec2,
     vel: Vec2,
     target_pos: Vec2,
     target_vel: Vec2,
     accel: f64,
     max_speed: f64,
+    c: f64,
     dt: f64,
 ) -> MoveStep {
-    let rel = target_pos - pos;
-    let lead = match intercept_time(rel, target_vel, max_speed) {
-        Some(t) => target_pos + target_vel * t,
-        None => target_pos, // can't solve → tail-chase straight at it
-    };
-    let dir = (lead - pos).normalized();
-    let desired = dir * max_speed;
+    // (1) Where the pursuer SEES the target: light-delayed by the current range.
+    let range = (target_pos - pos).length();
+    let obs_delay = if c.is_finite() && c > 1e-9 { range / c } else { 0.0 };
+    let observed = target_pos - target_vel * obs_delay;
+
+    let to_obs = observed - pos;
+    let obs_range = to_obs.length();
+    let dir = if obs_range > 1e-9 { to_obs / obs_range } else { Vec2::ZERO };
+
+    // (2) Brake term: never close faster than we can bleed off to MATCH the
+    //     target's velocity within the remaining range (√(2·a·d)). So far out we
+    //     run flat-out toward it, and as range shrinks we ease alongside for a
+    //     clean contact rather than slamming past into a loop.
+    let closing = (2.0 * accel * obs_range).sqrt();
+    let mut desired = target_vel + dir * closing;
+    let ds = desired.length();
+    if ds > max_speed && ds > 1e-12 {
+        desired = desired * (max_speed / ds);
+    }
+
+    // Steer toward the desired velocity within this tick's acceleration budget.
     let dv = desired - vel;
     let dv_len = dv.length();
     let max_dv = accel * dt;
@@ -205,5 +196,40 @@ mod tests {
         let (t_slow, _, _) = run(4000.0, 9.0, 36.0); // convoy-like
         let (t_fast, _, _) = run(4000.0, 30.0, 90.0); // raider-like
         assert!(t_fast < t_slow, "raider {t_fast} should beat convoy {t_slow}");
+    }
+
+    /// Proportional pursuit (steer-and-correct, no closed-form solver) runs a
+    /// fleeing target down, converging cleanly to contact — and over a watchable
+    /// span of TENS OF SECONDS at the tuned acceleration, not an instant.
+    #[test]
+    fn pursuit_runs_down_a_fleeing_target_and_makes_contact() {
+        let (accel, max_speed, c) = (11.0, 120.0, 300.0); // raider-like
+        const CONTACT: f64 = 80.0;
+        let mut pos = Vec2::ZERO;
+        let mut vel = Vec2::ZERO;
+        let mut tpos = Vec2::new(3000.0, 0.0);
+        let tvel = Vec2::new(40.0, 0.0); // convoy fleeing along +x at cruise
+
+        let mut t = 0.0;
+        let mut contact_t: Option<f64> = None;
+        let mut min_dist = f64::INFINITY;
+        for _ in 0..(150.0 / DT) as usize {
+            let step = pursue_step(pos, vel, tpos, tvel, accel, max_speed, c, DT);
+            pos = step.pos;
+            vel = step.vel;
+            tpos = tpos + tvel * DT;
+            t += DT;
+            let d = (tpos - pos).length();
+            min_dist = min_dist.min(d);
+            if d <= CONTACT && contact_t.is_none() {
+                contact_t = Some(t);
+            }
+        }
+        let ct = contact_t.unwrap_or_else(|| panic!("pursuer never made contact; closest it got was {min_dist:.0} su"));
+        // Watchable, not instant — and not absurdly long.
+        assert!((5.0..90.0).contains(&ct), "chase should resolve in tens of seconds, took {ct:.1}s");
+        // Never blows wildly past: cruise cap means closing speed is bounded, and
+        // the brake eases it in — so the first contact really is a contact.
+        assert!(vel.length() <= max_speed + accel * DT + 1e-6, "must respect the speed cap");
     }
 }

@@ -26,22 +26,46 @@ pub enum ShipKind {
     Raider,
 }
 
+/// Mass added per unit of cargo carried. A fully-loaded convoy is meaningfully
+/// heavier than an empty one, so it accelerates noticeably worse (a = F/m) — your
+/// richest shipments are also the most sluggish. Tunable.
+pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
+
 impl ShipKind {
-    /// Acceleration magnitude (sim units / s²).
-    pub fn accel(self) -> f64 {
+    /// Engine THRUST (force, F). Acceleration is NOT set directly — it's derived
+    /// as `a = F / m` (see [`Ship::accel`]). Convoys have somewhat more thrust
+    /// (bigger engines) but vastly more mass, so they still accelerate far worse.
+    ///
+    /// Tuning note: values are deliberately LOW so the build-up to speed, the
+    /// flip-and-burn, and the convoy-vs-raider nimbleness gap are all *watchable*
+    /// at the current galaxy scale — a chase plays out over tens of seconds, not
+    /// an instant. With these consts an empty raider accelerates at
+    /// `2200/200 = 11` su/s² and an empty convoy at `6750/4500 = 1.5` su/s² (a
+    /// loaded one ~0.86), so the raider visibly darts while the convoy lumbers.
+    pub fn thrust(self) -> f64 {
         match self {
-            ShipKind::Convoy => 9.0,
-            ShipKind::Raider => 48.0,
+            ShipKind::Convoy => 6750.0,
+            ShipKind::Raider => 2200.0,
+        }
+    }
+
+    /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
+    /// than raiders (here ~22×), which is what makes them ponderous — the
+    /// acceleration asymmetry emerges from this, not from hand-set accel consts.
+    pub fn hull_mass(self) -> f64 {
+        match self {
+            ShipKind::Convoy => 4500.0,
+            ShipKind::Raider => 200.0,
         }
     }
 
     /// Cruise speed cap (sim units / s). Both stay well below `c` (= 300) so
-    /// relativity is respected — nothing outruns its own light. Raiders are much
-    /// faster than convoys (~4× top speed) so they reliably run a convoy down.
+    /// relativity is respected — nothing outruns its own light. Acceleration
+    /// (above) ramps velocity up to this cap.
     pub fn max_speed(self) -> f64 {
         match self {
-            ShipKind::Convoy => 36.0,
-            ShipKind::Raider => 150.0,
+            ShipKind::Convoy => 48.0,
+            ShipKind::Raider => 120.0,
         }
     }
 }
@@ -68,8 +92,9 @@ pub enum ShipOrder {
     },
     /// Autonomously pursue a target ship to intercept (§8). Resolved by the
     /// world in true space (contact → convoy lost; target reaches safety →
-    /// raid fails). Pursuit steering lives in [`crate::movement::intercept_step`]
-    /// and is driven by the world (it needs the target's state).
+    /// raid fails). Pursuit steering lives in [`crate::movement::pursue_step`]
+    /// (proportional steer-and-correct) and is driven by the world (it needs the
+    /// target's state).
     Intercept { target: EntityId },
 }
 
@@ -81,6 +106,17 @@ pub enum ShipOrder {
 pub enum TradeMission {
     DeliverHome,
     SellAtHub,
+}
+
+/// A patrolling raider's AUTONOMOUS defensive sortie (§5.1, Pillar 1): it has
+/// broken off its patrol on its own to intercept a hostile raider threatening a
+/// friendly convoy, and will resume the saved `patrol` route once the threat is
+/// gone. Its presence also marks this Intercept as defensive (not a player's
+/// manual raid), so the world's standing-doctrine logic owns its lifecycle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DefenseEngagement {
+    pub target: EntityId,
+    pub patrol: Vec<Vec2>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +132,11 @@ pub struct Ship {
     pub cargo: Option<Cargo>,
     /// If set, this is a trade convoy that resolves on arrival (§9).
     pub mission: Option<TradeMission>,
+    /// If set, this raider is on an AUTONOMOUS defensive intercept (it broke off
+    /// patrol to engage a threat) — server-driven standing doctrine, runs whether
+    /// or not the owner is connected.
+    #[serde(default)]
+    pub defense: Option<DefenseEngagement>,
 }
 
 impl Ship {
@@ -116,12 +157,29 @@ impl Ship {
             order,
             cargo,
             mission: None,
+            defense: None,
         }
+    }
+
+    /// Total mass = hull + cargo (§7). A loaded ship is heavier, so slower to
+    /// accelerate. Recomputed from current cargo, so dropping/gaining cargo
+    /// changes how the ship handles.
+    pub fn mass(&self) -> f64 {
+        let cargo = self.cargo.map(|c| c.units as f64 * CARGO_MASS_PER_UNIT).unwrap_or(0.0);
+        self.kind.hull_mass() + cargo
+    }
+
+    /// Acceleration DERIVED from thrust and mass: `a = F / m` (§7). Higher mass
+    /// (bigger hull, fuller hold) → weaker acceleration for the same thrust. This
+    /// is the single source of the raider-vs-convoy nimbleness asymmetry and of
+    /// the loaded-convoy penalty — not a hand-set per-kind acceleration.
+    pub fn accel(&self) -> f64 {
+        self.kind.thrust() / self.mass()
     }
 
     /// Advance this ship one timestep at simulation time `time`.
     pub fn advance(&mut self, time: f64, dt: f64) {
-        let accel = self.kind.accel();
+        let accel = self.accel();
         let max_speed = self.kind.max_speed();
 
         match &mut self.order {

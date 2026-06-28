@@ -50,6 +50,7 @@ export interface GalaxyInfo {
   radius: number;
   c: number; // speed of light, sim units / s
   sensor_range: number; // detection radius each of your assets projects
+  raider_speed: number; // raider cruise speed — for the crude intercept estimate
   systems: SystemInfo[];
 }
 
@@ -199,13 +200,12 @@ export type ServerMsg =
   | { type: "Report"; report: RaidReport }
   | { type: "Trade"; trade: TradeEvent }
   | {
-      // Order round-trip feedback: comet out (command center → ship), then the
-      // response light coming home (ship → command center). The server owns all
-      // three clock-times; the client only interpolates.
+      // OUTBOUND order feedback: the violet comet, command center → ship, over
+      // [depart, arrive]. The server owns the clock-times; the client interpolates.
+      // (No return leg — the ship's reaction is seen directly on the map.)
       type: "CommandSignal";
       ship_id: EntityId;
       depart_time: number;
       arrive_time: number;
-      observe_time: number;
     }
   | { type: "Error"; message: string };

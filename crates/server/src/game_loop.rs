@@ -101,9 +101,9 @@ impl GameLoop {
         let c = self.world.config.c;
         let now = self.world.time;
         // Observed one-way light delay to the ship (its ghost staleness). Falls
-        // back to ~0 if just spawned at home. The order reaches the ship one
-        // delay out; the light of its maneuver returns one delay back — so the
-        // player sees the reaction after the full round trip (the three clocks).
+        // back to ~0 if just spawned at home. The order reaches the ship one delay
+        // out — that's the whole outbound signal; the ship's reaction is then seen
+        // directly on the map when its light arrives (no return signal needed).
         let age = self.history.observed_age(ship_id, cc, c, now).unwrap_or(0.0);
         self.sessions.send_to_player(
             player_id,
@@ -111,7 +111,6 @@ impl GameLoop {
                 ship_id,
                 depart_time: now,
                 arrive_time: now + age,
-                observe_time: now + 2.0 * age,
             },
         );
     }
@@ -157,6 +156,7 @@ impl GameLoop {
                             radius: self.world.config.galaxy_radius,
                             c: self.world.config.c,
                             sensor_range: self.world.config.sensor_range,
+                            raider_speed: sim::ShipKind::Raider.max_speed(),
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
