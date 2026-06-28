@@ -207,7 +207,7 @@
     <div id="reports-log"></div>
 
     <div id="market">
-      <div class="mhead"><b>HUB EXCHANGE</b> <span id="market-stale" class="dim"></span></div>
+      <div class="mhead"><b>MARKET EXCHANGE</b> <span id="market-stale" class="dim"></span></div>
       <div class="mtop"><span id="market-credits" class="accent">—</span> · qty <input id="market-qty" type="number" value="50" min="1" /></div>
       <div class="mtop"><label><input type="checkbox" id="market-limit-on" /> limit @</label> <input id="market-limit-price" type="number" step="0.1" placeholder="price" /></div>
       <table>
@@ -215,30 +215,30 @@
         <tbody id="market-rows"></tbody>
       </table>
       <div id="market-orders" class="dim"></div>
-      <div class="mhint dim">Market: buy settles now (goods cross home, raidable); sell clears at price-on-arrival. Limit orders rest and clear in a periodic uniform-price batch (no snipe edge). Press <b>M</b> to toggle.</div>
+      <div class="mhint dim">Market on the habitable planet: buy settles now (goods haul home, raidable); sell clears at price-on-arrival. Limit orders rest and clear in a periodic uniform-price batch (no snipe edge). Press <b>M</b> to toggle.</div>
     </div>
 
     <div id="readout">
-      Click one of your <b>ships</b> to select it (move/raid/recall), or click a
-      <b>star system</b> to claim it and ship its production. Richer deposits lie
-      toward the dangerous frontier. You command across light-minutes — orders and
-      sightings both lag.
+      Click one of your <b>ships</b> to select it (move/raid/recall), or click an
+      <b>asteroid</b> to operate it and haul its ore to market. Richer deposits lie
+      out in the dangerous Kuiper frontier. You command across light-minutes — orders
+      and sightings both lag.
     </div>
 
     <div id="system-panel"></div>
 
     <div id="legend">
-      <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / systems — delayed, crisp only near HQ</div>
+      <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / asteroids — delayed, crisp only near your station</div>
       <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
-      <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
-      <div class="row"><span class="dim">bigger glow = richer deposits (frontier &gt; core)</span></div>
-      <div class="row"><span class="dim">select ship/system · click rival = raid · R = recall · Δt = staleness</span></div>
+      <div class="row"><span class="dim">operate asteroids → mine → haul to market (raidable) → sell</span></div>
+      <div class="row"><span class="dim">bigger glow = richer deposits (Kuiper frontier &gt; inner belt)</span></div>
+      <div class="row"><span class="dim">select ship/asteroid · click rival = raid · R = recall · Δt = staleness</span></div>
     </div>
 
     <div id="join">
       <div class="card">
         <h1>Stellar Syndicates</h1>
-        <p>Charter a corporation and command from your home anchor. Enter a name to join the galaxy — reconnecting with the same name resumes your corporation.</p>
+        <p>Charter a corporation and command from your mining station. Enter a name to join the system — reconnecting with the same name resumes your corporation.</p>
         <label for="name">Corporation name</label>
         <input id="name" type="text" placeholder="e.g. Meridian Freight" autocomplete="off" />
         <button id="join-btn">Charter &amp; connect</button>

@@ -45,6 +45,22 @@ const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
 
+// Format a light-delay / staleness in human terms. At AU scale these run from
+// seconds (a nearby ship) to many minutes or hours (the Kuiper frontier), so a
+// raw "Δ660s" reads badly — show seconds up close, minutes/hours far out.
+export function fmtDelay(s: number): string {
+  if (s < 10) return `${s.toFixed(1)}s`;
+  if (s < 90) return `${Math.round(s)}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const r = Math.round(s - m * 60);
+    return r ? `${m}m${r}s` : `${m}m`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s - h * 3600) / 60);
+  return m ? `${h}h${m}m` : `${h}h`;
+}
+
 interface GhostSprite {
   container: Container;
   cone: Graphics;
@@ -148,27 +164,40 @@ export class Renderer {
     while (this.bg.children.length > 1) this.bg.removeChildAt(1);
     if (!this.galaxy) return;
     const g = new Graphics();
-    const rPx = this.galaxy.radius * this.scale;
-    g.circle(this.cx, this.cy, rPx).stroke({ width: 1, color: 0x1c2740, alpha: 0.9 });
-    for (const f of [0.33, 0.66]) {
-      g.circle(this.cx, this.cy, rPx * f).stroke({ width: 1, color: 0x141d30, alpha: 0.8 });
+    const au = this.galaxy.au || this.galaxy.radius / 45;
+    const ringPx = (auDist: number) => auDist * au * this.scale;
+
+    // System boundary (the Kuiper edge + margin).
+    g.circle(this.cx, this.cy, this.galaxy.radius * this.scale).stroke({ width: 1, color: 0x1c2740, alpha: 0.9 });
+    // Orbital reference rings at real AU radii: the planet's orbit (~1 AU), the
+    // inner belt (~2.5 AU) and the outer/Kuiper belt (~35 AU). The true scale is
+    // stark — a bright, crowded inner system and a lonely distant frontier.
+    for (const [auDist, alpha] of [[1, 0.5], [2.5, 0.7], [35, 0.6]] as const) {
+      g.circle(this.cx, this.cy, ringPx(auDist)).stroke({ width: 1, color: 0x141d30, alpha });
     }
-    const hub = this.worldToScreen(this.galaxy.hub);
-    g.circle(hub.x, hub.y, 11).fill({ color: COL_HUB, alpha: 0.18 });
-    g.circle(hub.x, hub.y, 6).fill({ color: COL_HUB, alpha: 0.4 });
-    g.circle(hub.x, hub.y, 2.5).fill({ color: 0xffffff, alpha: 0.9 });
+
+    // The SUN at the system's center (the origin) — the source of light, and of
+    // every light-delay the player suffers.
+    const sun = this.worldToScreen({ x: 0, y: 0 });
+    g.circle(sun.x, sun.y, 14).fill({ color: 0xffcf6b, alpha: 0.10 });
+    g.circle(sun.x, sun.y, 8).fill({ color: 0xffd87a, alpha: 0.28 });
+    g.circle(sun.x, sun.y, 4).fill({ color: 0xffe9a8, alpha: 0.6 });
+    g.circle(sun.x, sun.y, 2).fill({ color: 0xffffff, alpha: 0.95 });
     this.bg.addChild(g);
-    const label = new Text({ text: "HUB", style: new TextStyle({ fill: COL_HUB, fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: 2 }) });
-    label.anchor.set(0.5, 0);
-    label.position.set(hub.x, hub.y + 13);
-    this.bg.addChild(label);
+
+    // Belt label out at the Kuiper ring.
+    const belt = new Text({ text: "KUIPER BELT", style: new TextStyle({ fill: 0x3a4660, fontFamily: "ui-monospace, monospace", fontSize: 8, letterSpacing: 2 }) });
+    belt.anchor.set(0.5, 0.5);
+    belt.position.set(this.cx, this.cy - ringPx(35));
+    this.bg.addChild(belt);
   }
 
-  /// Draw star systems with their resource geology and (light-gated) ownership.
-  /// A system's glow grows with its deposit value-rate, so the frontier visibly
-  /// out-produces the core (§4); the ring shows ownership — cyan (yours), red (a
-  /// rival, once their claim's light has reached you), or dim (unclaimed). Your
-  /// own systems also surface their accumulated production.
+  /// Draw celestial bodies with their geology and (light-gated) ownership. The
+  /// habitable planet (the market) is drawn as a distinct world; each asteroid's
+  /// glow grows with its deposit value-rate, so the frontier visibly out-produces
+  /// the core (§4). The ring shows who operates it — cyan (yours), red (a rival,
+  /// once their claim's light has reached you), or dim (unclaimed). Your own
+  /// asteroids also surface their accumulated mining output.
   private drawSystems(state: ViewState): void {
     this.systemsLayer.removeChildren();
     if (!this.galaxy) return;
@@ -180,6 +209,22 @@ export class Renderer {
       const mine = owner !== null && owner === state.playerId;
       const rival = owner !== null && !mine;
       const selected = state.selectedSystemId === sys.id;
+
+      // The habitable planet is the MARKET world — not a claimable mining body.
+      if (sys.body === "planet") {
+        const g = new Graphics();
+        if (selected) g.circle(s.x, s.y, 13).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+        g.circle(s.x, s.y, 9).fill({ color: COL_HUB, alpha: 0.16 });
+        g.circle(s.x, s.y, 5).fill({ color: COL_HUB, alpha: 0.5 });
+        g.circle(s.x, s.y, 2.4).fill({ color: 0xffffff, alpha: 0.95 });
+        this.systemsLayer.addChild(g);
+        const t = new Text({ text: `${sys.name} · MARKET`, style: new TextStyle({ fill: COL_HUB, fontFamily: "ui-monospace, monospace", fontSize: 9, letterSpacing: 1 }) });
+        t.anchor.set(0, 0.5);
+        t.position.set(s.x + 12, s.y);
+        t.alpha = 0.95;
+        this.systemsLayer.addChild(t);
+        continue;
+      }
 
       // Value-rate → glow size; dominant resource → tint (the gradient made visible).
       let valueRate = 0;
@@ -236,7 +281,7 @@ export class Renderer {
       }
       this.anchorsLayer.addChild(g);
       if (own) {
-        const t = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
+        const t = new Text({ text: "STATION", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
         t.anchor.set(0.5, 1);
         t.position.set(s.x, s.y - 11);
         this.anchorsLayer.addChild(t);
@@ -466,7 +511,7 @@ export class Renderer {
     // when known — i.e. within sensor range), staleness everywhere it matters.
     const sel = state.selectedShipId === ghost.id;
     // Honest staleness, shown finer-grained when fresh (near the command center).
-    const stale = `Δ${ghost.age.toFixed(ghost.age < 10 ? 1 : 0)}s`;
+    const stale = `Δ${fmtDelay(ghost.age)}`;
     let txt = "";
     let col = COL_OTHER;
     let lalpha = 0.85;

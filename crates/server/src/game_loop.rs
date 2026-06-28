@@ -154,11 +154,13 @@ impl GameLoop {
                         galaxy: GalaxyInfo {
                             hub: self.world.hub,
                             radius: self.world.config.galaxy_radius,
+                            au: sim::config::AU,
                             c: self.world.config.c,
                             sensor_range: self.world.config.sensor_range,
                             raider_speed: sim::ShipKind::Raider.max_speed(),
-                            // Static geography + geology (deposits, claim cost).
-                            // Dynamic ownership/stockpile comes light-gated in View.
+                            // Static geography + geology (body kind, AU, deposits,
+                            // claim cost). Dynamic ownership/stockpile comes
+                            // light-gated in View.
                             systems: self
                                 .world
                                 .systems
@@ -167,6 +169,8 @@ impl GameLoop {
                                     id: s.id,
                                     pos: s.pos,
                                     name: s.name.clone(),
+                                    body: s.body,
+                                    semi_major_au: s.semi_major_au,
                                     deposits: s
                                         .deposits
                                         .iter()

@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, TradeEvent, Vec2};
+use sim::{BodyKind, Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, TradeEvent, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -141,14 +141,20 @@ pub struct DepositView {
     pub reserves: Option<f64>,
 }
 
-/// A star system as static geography + geology: position, name, deposits, and
-/// the credit cost to claim it. Sent once at join. Dynamic state (who owns it,
-/// how much it has stockpiled) is light-gated and lives in [`SystemStateView`].
+/// A celestial body as static geography + geology: position, name, what KIND of
+/// body it is (claimable asteroid vs the habitable planet / market), its orbital
+/// distance from the sun, deposits, and the credit cost to operate it. Sent once
+/// at join. Dynamic state (who owns it, how much it has stockpiled) is light-gated
+/// and lives in [`SystemStateView`].
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
     pub id: EntityId,
     pub pos: Vec2,
     pub name: String,
+    /// `asteroid` (claimable mining target) or `planet` (the market world).
+    pub body: BodyKind,
+    /// Semi-major axis in AU — the body's distance from the sun, for labels.
+    pub semi_major_au: f64,
     pub deposits: Vec<DepositView>,
     pub claim_cost: f64,
 }
@@ -157,8 +163,14 @@ pub struct SystemInfo {
 /// (systems don't move), so it doesn't need to be in the per-tick stream.
 #[derive(Debug, Clone, Serialize)]
 pub struct GalaxyInfo {
+    /// The habitable planet (the market) — the system's economic center. Also
+    /// present in `systems` as a `planet` body; this is its position for the hub
+    /// marker and price/light-delay reference.
     pub hub: Vec2,
     pub radius: f64,
+    /// Sim-units per astronomical unit — lets the client convert distances to AU
+    /// for labels (and place the AU/belt rings).
+    pub au: f64,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,
     /// Sensor detection radius each of the player's assets projects — lets the

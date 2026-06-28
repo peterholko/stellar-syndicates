@@ -1,7 +1,7 @@
 // Bootstrap: wire the join screen → WebSocket → view state → HUD + Pixi render.
 
 import { Net } from "./net";
-import { Renderer } from "./render";
+import { Renderer, fmtDelay } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
 import { formatId, type Commodity, type Side, type TradeEvent } from "./protocol";
 
@@ -20,7 +20,7 @@ function setHud(): void {
   $("hud-id").textContent = state.playerId !== null ? formatId(state.playerId) : "—";
   $("hud-tick").textContent = state.link === "online" ? state.tick.toLocaleString() : "—";
   $("hud-time").textContent =
-    state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
+    state.link === "online" ? fmtDelay(state.simTime) : "—";
   $("hud-online").textContent = state.link === "online" ? String(state.corpsInView) : "—";
   $("hud-ships").textContent = state.link === "online" ? String(state.ghosts.length) : "—";
   $("hud-credits").textContent = state.wallet ? `${Math.round(state.wallet.credits).toLocaleString()}` : "—";
@@ -97,7 +97,7 @@ function installInteraction(): void {
       state.selectedShipId = picked;
       const g = state.ghosts.find((x) => x.id === picked)!;
       readout().innerHTML =
-        `<b>${g.kind}</b> selected — last seen <b>${g.age.toFixed(1)}s</b> ago.<br>` +
+        `<b>${g.kind}</b> selected — last seen <b>${fmtDelay(g.age)}</b> ago.<br>` +
         `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
       return;
     }
@@ -145,7 +145,7 @@ function installInteraction(): void {
       readout().innerHTML =
         `Raid committed: your <b>${sel.kind}</b> → rival <b>${tgt.kind}</b>. ` +
         `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
-        `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
+        `not the <b>${fmtDelay(tgt.age)}</b>-old ghost you see. ` +
         `<span class="dim">Press R to recall — it may arrive too late.</span>`;
       return;
     }
@@ -157,9 +157,9 @@ function installInteraction(): void {
     const out = sel.age; // ≈ light delay command-center → ship
     readout().innerHTML =
       `Order away to <b>${sel.kind}</b>. ` +
-      `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
-      `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-      `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+      `Reaches it in <b>~${fmtDelay(out)}</b> (your light), ` +
+      `you'll see it respond <b>~${fmtDelay(out * 2)}</b> from now. ` +
+      `<span class="dim">Estimated from a ${fmtDelay(out)}-old sighting.</span>`;
   });
 
   // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
@@ -191,6 +191,21 @@ function updateSystemPanel(): void {
     panel.style.display = "none";
     return;
   }
+  // The habitable planet is the MARKET world — not a claimable mining body.
+  if (sys.body === "planet") {
+    panel.innerHTML =
+      `<div class="title">${sys.name} · <span style="color:#7fd4ff">MARKET</span> <span class="x" id="sys-close">✕</span></div>` +
+      `<div class="srow">The habitable planet — home of the Exchange.</div>` +
+      `<div class="srow">~${sys.semi_major_au.toFixed(1)} AU from the sun. Convoys sell here; prices reach you light-delayed.</div>` +
+      `<div class="hint">mine the belts, haul your ore here to sell — raidable in transit</div>`;
+    panel.style.display = "block";
+    document.getElementById("sys-close")?.addEventListener("click", () => {
+      state.selectedSystemId = null;
+      updateSystemPanel();
+    });
+    return;
+  }
+
   const dyn = state.systems.find((s) => s.id === sid);
   const owner = dyn?.owner ?? null;
   const mine = owner !== null && owner === state.playerId;
@@ -206,23 +221,23 @@ function updateSystemPanel(): void {
     const slots = dyn?.stockpile ?? [];
     const stock = slots.length ? slots.map((s) => `${s.units} ${s.commodity}`).join(", ") : "—";
     action =
-      `<div class="srow">Stockpile: <b>${stock}</b></div>` +
-      `<button id="ship-btn" ${slots.length ? "" : "disabled"}>Ship production → hub</button>`;
+      `<div class="srow">Mined ore: <b>${stock}</b></div>` +
+      `<button id="ship-btn" ${slots.length ? "" : "disabled"}>Haul ore → market</button>`;
   } else if (rival) {
-    action = `<div class="srow warn">Held by a rival corporation.</div>`;
+    action = `<div class="srow warn">Operated by a rival corporation.</div>`;
   } else {
     const afford = credits >= sys.claim_cost;
     action =
-      `<div class="srow">Claim cost: <b>${Math.round(sys.claim_cost).toLocaleString()}</b> cr</div>` +
-      `<button id="claim-btn" ${afford ? "" : "disabled"}>${afford ? "Claim system" : "Can't afford"}</button>`;
+      `<div class="srow">~${sys.semi_major_au.toFixed(1)} AU from the sun · operate for <b>${Math.round(sys.claim_cost).toLocaleString()}</b> cr</div>` +
+      `<button id="claim-btn" ${afford ? "" : "disabled"}>${afford ? "Operate asteroid" : "Can't afford"}</button>`;
   }
 
   const tag = mine ? ' · <span style="color:#4fc3ff">YOURS</span>' : rival ? ' · <span style="color:#ff7a6b">rival</span>' : "";
   const hint = rival
     ? "ownership is light-delayed — what you see may already be stale"
     : mine
-      ? "production ships across fogged space to the hub — raidable in transit"
-      : "richer, more valuable deposits lie toward the dangerous frontier";
+      ? "ore hauls across fogged space to the market — raidable in transit"
+      : "richer, more valuable deposits lie out toward the dangerous Kuiper frontier";
   panel.innerHTML =
     `<div class="title">${sys.name}${tag} <span class="x" id="sys-close">✕</span></div>` +
     `<div class="deps">${deps}</div>${action}<div class="hint">${hint}</div>`;
@@ -271,7 +286,7 @@ function addReport(r: import("./protocol").RaidReport): void {
   }
   const el = document.createElement("div");
   el.className = "report " + cls;
-  el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>`;
+  el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${fmtDelay(r.age)} old</span>`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);
@@ -316,7 +331,7 @@ function updateMarket(): void {
   $("market-credits").textContent =
     `${Math.round(state.wallet.credits).toLocaleString()} cr · equity ${Math.round(state.wallet.valuation).toLocaleString()}`;
   const stale = state.market.staleness;
-  $("market-stale").textContent = stale > 0.5 ? `ticker ~${stale.toFixed(0)}s stale` : "ticker live";
+  $("market-stale").textContent = stale > 0.5 ? `ticker ~${fmtDelay(stale)} stale` : "ticker live";
   const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
   const heldOf = new Map(state.wallet.inventory.map((i) => [i.commodity, i.units]));
   for (const c of COMMODITIES) {

@@ -20,12 +20,18 @@ export interface Deposit {
   reserves: number | null; // null = renewable
 }
 
-// Static system geography + geology, sent once at join. Dynamic ownership/
+// What kind of celestial body this is: a claimable mining asteroid, or the
+// habitable planet (the market world / hub). Planets are never claimable.
+export type BodyKind = "asteroid" | "planet";
+
+// Static body geography + geology, sent once at join. Dynamic ownership/
 // stockpile arrives light-gated per tick in `SystemStateView`.
 export interface SystemInfo {
   id: EntityId;
   pos: Vec2;
   name: string;
+  body: BodyKind;
+  semi_major_au: number; // distance from the sun, in AU (for labels)
   deposits: Deposit[];
   claim_cost: number;
 }
@@ -46,8 +52,9 @@ export interface SystemStateView {
 }
 
 export interface GalaxyInfo {
-  hub: Vec2;
+  hub: Vec2; // the habitable planet (market) — system center of gravity
   radius: number;
+  au: number; // sim-units per astronomical unit (for AU labels + belt rings)
   c: number; // speed of light, sim units / s
   sensor_range: number; // detection radius each of your assets projects
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
