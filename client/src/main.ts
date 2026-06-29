@@ -473,8 +473,17 @@ function updateSystemTab(): void {
   const stockTotal = (dyn?.stockpile ?? []).reduce((n, k) => n + k.units, 0);
   const yieldRate = sys.deposits.reduce((n, d) => n + d.richness, 0);
 
-  const ownTag = mine ? badge("accent", "yours") : rival ? badge("negative", "rival") : badge("neutral", "unclaimed");
-  const header = `<div class="panel-title"><div><div class="eyebrow">${esc(systemFlavor(sys))}</div>` +
+  // A system co-located with a home anchor is a starting HOME site; the one at
+  // your command center is YOUR home (granted, not claimable). Detected by
+  // position (the client already knows anchor + command-center positions).
+  const coincides = (p: { x: number; y: number }) => Math.abs(p.x - sys.pos.x) < 1 && Math.abs(p.y - sys.pos.y) < 1;
+  const atHomeSite = state.anchors.some((a) => coincides(a.pos));
+  const isMyHome = mine && !!state.commandCenter && coincides(state.commandCenter);
+
+  const ownTag = isMyHome ? badge("accent", "home base")
+    : mine ? badge("accent", "yours")
+      : rival ? badge("negative", "rival") : badge("neutral", "unclaimed");
+  const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys))}</div>` +
     `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}</div></div>`;
 
   const strip = statStrip([
@@ -489,7 +498,9 @@ function updateSystemTab(): void {
   const prod = mine ? productionReadout(sys, dyn) : "";
 
   let actions: string;
-  if (unclaimed) {
+  if (unclaimed && atHomeSite) {
+    actions = `<div class="mhint" style="margin-top:8px">${badge("neutral", "reserved")} A starting home site — a future corporation will begin here owning it, so it can't be claimed.</div>`;
+  } else if (unclaimed) {
     actions = `<button class="act act--primary" data-action="claim" ${afford ? "" : "disabled"}>` +
       `${icon("gavel")} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
   } else if (mine) {
@@ -500,11 +511,13 @@ function updateSystemTab(): void {
     actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
   }
 
-  const hint = mine
-    ? `<div class="mhint">Production ships across fogged space to the hub — raidable in transit. Automate it from the Logistics tab.</div>`
-    : unclaimed
-      ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
-      : "";
+  const hint = isMyHome
+    ? `<div class="mhint">Your command center sits here — your vantage on the galaxy, and a developed base producing from turn one. Ship its output to the hub or automate supply (Logistics).</div>`
+    : mine
+      ? `<div class="mhint">Production ships across fogged space to the hub — raidable in transit. Automate it from the Logistics tab.</div>`
+      : unclaimed && !atHomeSite
+        ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
+        : "";
 
   root.innerHTML = rail + header + strip + deps + prod + actions + hint;
 }

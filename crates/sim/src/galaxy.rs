@@ -81,6 +81,12 @@ pub struct HomeSlot {
     pub owner: Option<PlayerId>,
     /// Sim time at which this slot was claimed (None while unowned).
     pub claimed_at: Option<f64>,
+    /// The developed HOME STAR SYSTEM co-located at this slot, granted to the
+    /// player who takes the slot (Travian/OGame convention: you begin owning a
+    /// home settlement). Generated with the galaxy; `None` only in pre-feature
+    /// snapshots. The command center sits at this system's position.
+    #[serde(default)]
+    pub system: Option<EntityId>,
 }
 
 /// Commodities ordered cheapest → most valuable (by base price). Deposits are
@@ -184,9 +190,68 @@ pub fn generate_home_slots(rng: &mut Rng, radius: f64, ring_frac: f64, count: u3
             pos,
             owner: None,
             claimed_at: None,
+            system: None, // set when the co-located home system is generated
         });
     }
     slots
+}
+
+/// XORed into the seed so each home system's geology is deterministic but
+/// independent of the frontier-system RNG stream (so changing `system_count`
+/// never shifts home geology, and home generation never perturbs the frontier
+/// or the world's live event RNG).
+const HOME_SYSTEM_MAGIC: u64 = 0x484F_4D45_5359_5354; // "HOMESYST"
+
+/// A developed but MODEST starter geology: two renewable deposits in the cheap,
+/// steady commodities (Provisions + Ore) at low richness. A reliable home base
+/// that produces from turn one — deliberately weaker than the dangerous frontier,
+/// so expansion outward stays the reward/risk (the distance/value gradient holds).
+fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
+    vec![
+        Deposit {
+            resource: Commodity::Provisions,
+            richness: DEPOSIT_BASE_RICHNESS * rng.range(0.85, 1.15),
+            reserves: None,
+            accessibility: 0.1,
+        },
+        Deposit {
+            resource: Commodity::Ore,
+            richness: DEPOSIT_BASE_RICHNESS * rng.range(0.7, 1.0),
+            reserves: None,
+            accessibility: 0.1,
+        },
+    ]
+}
+
+/// One developed home star system, co-located at `pos`, with modest seeded
+/// geology keyed by home `index` (so it's reproducible and independent of the
+/// frontier stream). `owner`/`claimed_at` are left `None` — ownership is granted
+/// to the player on join (free; the command center sits here).
+pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) -> StarSystem {
+    let mut rng = Rng::new(seed ^ HOME_SYSTEM_MAGIC ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let deposits = generate_home_deposits(&mut rng);
+    let claim_cost = claim_cost_for(&deposits);
+    StarSystem {
+        id,
+        pos,
+        name: system_name(&mut rng),
+        deposits,
+        claim_cost,
+        owner: None,
+        claimed_at: None,
+        stockpile: BTreeMap::new(),
+    }
+}
+
+/// One home star system per home slot, co-located with each slot — the developed
+/// home bases players begin owning. Ids drawn from the shared allocator so they
+/// stay unique; geology is deterministic per home index.
+pub fn generate_home_systems(seed: u64, slots: &[HomeSlot], alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
+    slots
+        .iter()
+        .enumerate()
+        .map(|(i, slot)| generate_home_system(seed, i, alloc(), slot.pos))
+        .collect()
 }
 
 /// A short catalogue-style designation, e.g. "KX-417".

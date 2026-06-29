@@ -627,10 +627,10 @@ mod tests {
         let rival = PlayerId(8);
         let cc = Vec2::new(0.0, 0.0);
         let slots = vec![
-            HomeSlot { pos: Vec2::new(0.0, 0.0), owner: Some(me), claimed_at: Some(0.0) },
+            HomeSlot { pos: Vec2::new(0.0, 0.0), owner: Some(me), claimed_at: Some(0.0), system: None },
             // Rival's anchor, 6000 units away → 20 s of light.
-            HomeSlot { pos: Vec2::new(6000.0, 0.0), owner: Some(rival), claimed_at: Some(0.0) },
-            HomeSlot { pos: Vec2::new(0.0, 3000.0), owner: None, claimed_at: None },
+            HomeSlot { pos: Vec2::new(6000.0, 0.0), owner: Some(rival), claimed_at: Some(0.0), system: None },
+            HomeSlot { pos: Vec2::new(0.0, 3000.0), owner: None, claimed_at: None, system: None },
         ];
 
         // At t=10s, the rival's claim light (20 s away) has NOT arrived.

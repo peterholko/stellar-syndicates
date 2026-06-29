@@ -244,19 +244,30 @@ export class Renderer {
     for (const a of state.anchors) {
       const own = a.owner !== null && a.owner === state.playerId;
       const s = this.worldToScreen(a.pos);
-      const g = new Graphics();
-      const color = own ? COL_ANCHOR_OWN : COL_ANCHOR_OTHER;
-      if (a.owner) {
-        g.circle(s.x, s.y, own ? 9 : 6).fill({ color, alpha: own ? 0.22 : 0.14 });
-        g.circle(s.x, s.y, 3).fill({ color, alpha: 0.9 });
-      } else {
-        g.circle(s.x, s.y, 4).stroke({ width: 1, color: 0x3a4660, alpha: 0.7 });
+      // A command base now coincides with the owner's HOME STAR SYSTEM, which is
+      // drawn as an owned cyan/red system (+ the command-center pulse for your own).
+      // So skip the redundant anchor circle when a system sits here — no more
+      // "mystery circle." Only draw a glyph for a base in OPEN space (e.g. a
+      // command center relocated away from its home system, a future mechanic).
+      const atSystem = this.galaxy.systems.some(
+        (sys) => Math.abs(sys.pos.x - a.pos.x) < 1 && Math.abs(sys.pos.y - a.pos.y) < 1,
+      );
+      if (!atSystem) {
+        const g = new Graphics();
+        const color = own ? COL_ANCHOR_OWN : COL_ANCHOR_OTHER;
+        if (a.owner) {
+          g.circle(s.x, s.y, own ? 9 : 6).fill({ color, alpha: own ? 0.22 : 0.14 });
+          g.circle(s.x, s.y, 3).fill({ color, alpha: 0.9 });
+        } else {
+          g.circle(s.x, s.y, 4).stroke({ width: 1, color: 0x3a4660, alpha: 0.7 });
+        }
+        this.anchorsLayer.addChild(g);
       }
-      this.anchorsLayer.addChild(g);
+      // Name your own command seat "HOME" (above the home system's own label).
       if (own) {
         const t = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
         t.anchor.set(0.5, 1);
-        t.position.set(s.x, s.y - 11);
+        t.position.set(s.x, s.y - 13);
         this.anchorsLayer.addChild(t);
       }
     }

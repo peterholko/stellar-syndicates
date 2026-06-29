@@ -40,6 +40,12 @@ pub struct Corporation {
     /// are computed from here (§6). Equals `home` until the command center is
     /// relocated (a later milestone); kept separate so M3 can use it directly.
     pub command_center: Vec2,
+    /// The corporation's owned HOME STAR SYSTEM — granted at join (free), with the
+    /// command center sitting at it. A normal owned [`StarSystem`] in `world.systems`
+    /// (it produces, has a stockpile, can be managed/shipped/defended); this id just
+    /// records which one is home. `None` only in pre-feature snapshots.
+    #[serde(default)]
+    pub home_system: Option<EntityId>,
     /// Credits (the corporate treasury).
     pub credits: f64,
     /// Goods held at home, by commodity.
@@ -175,7 +181,7 @@ impl World {
         let mut rng = crate::rng::Rng::new(config.seed);
         let mut next_entity_id = 1u64;
 
-        let systems = {
+        let mut systems = {
             let mut alloc = || {
                 let id = EntityId(next_entity_id);
                 next_entity_id += 1;
@@ -188,12 +194,29 @@ impl World {
                 &mut alloc,
             )
         };
-        let home_slots = generate_home_slots(
+        let mut home_slots = generate_home_slots(
             &mut rng,
             config.galaxy_radius,
             config.home_ring_frac,
             config.max_players,
         );
+        // One developed HOME STAR SYSTEM per home slot, co-located with it — the
+        // home base each player begins owning (granted on join, no claim cost).
+        // Generated eagerly so every system's static info ships in the one-time
+        // Welcome galaxy; ownership is light-gated like any claim. Geology is
+        // keyed by home index (independent of the frontier RNG stream).
+        let home_systems = {
+            let mut alloc = || {
+                let id = EntityId(next_entity_id);
+                next_entity_id += 1;
+                id
+            };
+            crate::galaxy::generate_home_systems(config.seed, &home_slots, &mut alloc)
+        };
+        for (slot, sys) in home_slots.iter_mut().zip(&home_systems) {
+            slot.system = Some(sys.id);
+        }
+        systems.extend(home_systems);
 
         World {
             config,
@@ -730,7 +753,7 @@ impl World {
                 if self.players.contains_key(id) {
                     return;
                 }
-                let home = self.assign_home(*id);
+                let (home, home_system) = self.assign_home(*id);
                 // Starting inventory: a stock of each commodity to sell, plus a
                 // treasury to buy with.
                 let inventory = crate::cargo::Commodity::ALL
@@ -745,6 +768,7 @@ impl World {
                         joined_tick: self.tick,
                         home,
                         command_center: home,
+                        home_system: Some(home_system),
                         credits: 10_000.0,
                         inventory,
                         valuation: 10_000.0,
@@ -1023,6 +1047,12 @@ impl World {
     /// filter gates ownership). No-op if already owned or unaffordable.
     fn apply_claim(&mut self, player_id: PlayerId, system_id: EntityId, events: &mut Vec<Event>) {
         let now = self.time;
+        // Home systems are reserved starting bases — granted on join, never bought
+        // from the pool (so an unassigned slot's home can't be sniped before its
+        // player arrives, and a granted home isn't re-claimable).
+        if self.home_slots.iter().any(|h| h.system == Some(system_id)) {
+            return;
+        }
         let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
             return;
         };
@@ -1581,23 +1611,48 @@ impl World {
 
     /// Assign an unused home anchor to a player (or append one if the galaxy is
     /// over capacity), returning its position.
-    fn assign_home(&mut self, id: PlayerId) -> Vec2 {
+    /// Assign a home slot to a joining player and GRANT them its co-located home
+    /// star system (free — no claim cost). Sets ownership at `now` so a rival
+    /// learns of the home by light delay like any claim. Returns the home position
+    /// and the granted home system's id.
+    fn assign_home(&mut self, id: PlayerId) -> (Vec2, EntityId) {
         let now = self.time;
-        if let Some(slot) = self.home_slots.iter_mut().find(|s| s.owner.is_none()) {
-            slot.owner = Some(id);
-            slot.claimed_at = Some(now);
-            return slot.pos;
+        // Take the first unowned pre-generated slot (deterministic order), else
+        // append an over-capacity slot with a freshly-generated home system.
+        let idx = match self.home_slots.iter().position(|s| s.owner.is_none()) {
+            Some(i) => {
+                self.home_slots[i].owner = Some(id);
+                self.home_slots[i].claimed_at = Some(now);
+                i
+            }
+            None => {
+                let n = self.home_slots.len();
+                let angle = TAU * (n as f64) * 0.61803398875; // golden-angle scatter
+                let pos = Vec2::from_polar(angle, self.config.galaxy_radius * self.config.home_ring_frac);
+                let sys_id = self.alloc_entity_id();
+                let mut sys = crate::galaxy::generate_home_system(self.config.seed, n, sys_id, pos);
+                sys.owner = Some(id);
+                sys.claimed_at = Some(now);
+                self.systems.push(sys);
+                self.home_slots.push(HomeSlot {
+                    pos,
+                    owner: Some(id),
+                    claimed_at: Some(now),
+                    system: Some(sys_id),
+                });
+                return (pos, sys_id);
+            }
+        };
+        let pos = self.home_slots[idx].pos;
+        // Grant the pre-generated home system at this slot (every slot has one).
+        let sys_id = self.home_slots[idx]
+            .system
+            .expect("a generated home slot always has a co-located home system");
+        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+            sys.owner = Some(id);
+            sys.claimed_at = Some(now);
         }
-        // Over capacity: place an extra anchor at a deterministic ring spot.
-        let n = self.home_slots.len();
-        let angle = TAU * (n as f64) * 0.61803398875; // golden-angle scatter
-        let pos = Vec2::from_polar(angle, self.config.galaxy_radius * self.config.home_ring_frac);
-        self.home_slots.push(HomeSlot {
-            pos,
-            owner: Some(id),
-            claimed_at: Some(now),
-        });
-        pos
+        (pos, sys_id)
     }
 
     /// Spawn the M2 demo fleet (one convoy, one raider) at a home anchor, set to
@@ -1699,8 +1754,20 @@ mod tests {
     fn galaxy_is_generated() {
         let w = test_world();
         assert_eq!(w.hub, Vec2::ZERO);
-        assert_eq!(w.systems.len(), w.config.system_count as usize);
+        // Frontier systems + one co-located home system per home slot.
+        assert_eq!(
+            w.systems.len(),
+            (w.config.system_count + w.config.max_players) as usize
+        );
         assert_eq!(w.home_slots.len(), w.config.max_players as usize);
+        // Every home slot has a co-located, unowned-until-granted home system.
+        for slot in &w.home_slots {
+            let sid = slot.system.expect("home slot has a home system");
+            let sys = w.systems.iter().find(|s| s.id == sid).expect("home system exists");
+            assert_eq!(sys.pos, slot.pos, "home system sits at its slot");
+            assert!(sys.owner.is_none(), "home system unowned until a player joins");
+            assert!(!sys.deposits.is_empty(), "home system is developed");
+        }
         // Systems lie within the galaxy radius.
         for s in &w.systems {
             assert!(s.pos.length() <= w.config.galaxy_radius + 1.0);
@@ -1732,6 +1799,20 @@ mod tests {
         assert_eq!(corp.home, corp.command_center);
         // One anchor is now owned.
         assert_eq!(w.home_slots.iter().filter(|s| s.owner == Some(id)).count(), 1);
+        // The player begins owning exactly one HOME STAR SYSTEM, granted free
+        // (credits untouched), with the command center sitting at it.
+        let home_id = corp.home_system.expect("a joined player has a home system");
+        assert_eq!(corp.credits, 10_000.0, "the home is granted, not bought");
+        let owned: Vec<_> = w.systems.iter().filter(|s| s.owner == Some(id)).collect();
+        assert_eq!(owned.len(), 1, "exactly one owned system at join (the home)");
+        assert_eq!(owned[0].id, home_id);
+        assert_eq!(owned[0].pos, corp.command_center, "home system sits at the command center");
+        // Claimed at the join instant (== the home anchor's claim time), so a rival
+        // learns of it by light delay like any claim — not instantly, not never.
+        let anchor_claimed = w.home_slots.iter().find(|s| s.owner == Some(id)).unwrap().claimed_at;
+        assert!(owned[0].claimed_at.is_some());
+        assert_eq!(owned[0].claimed_at, anchor_claimed, "home system & anchor claimed at the same instant");
+        assert!(!owned[0].deposits.is_empty(), "home is a developed, producing system");
     }
 
     #[test]
@@ -1746,6 +1827,69 @@ mod tests {
         assert_eq!(ev2.len(), 0);
         assert_eq!(w.players.len(), 1);
         assert_eq!(w.ships.len(), 2); // no duplicate fleet
+        // Reconnect must NOT grant a second home system.
+        assert_eq!(w.systems.iter().filter(|s| s.owner == Some(id)).count(), 1);
+    }
+
+    #[test]
+    fn home_system_produces_and_ships_from_turn_one() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.expect("owns a home system");
+        // No claim needed: the granted home accrues production immediately.
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let stock: f64 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile.values().sum();
+        assert!(stock >= 1.0, "the home system produces from turn one (got {stock})");
+
+        // It ships to the hub like any owned system → a raidable sell convoy.
+        w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
+        let convoy = w.ships.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
+        assert!(convoy.is_some(), "the home can ship its production to the hub");
+    }
+
+    #[test]
+    fn home_system_is_modest_not_a_frontier_jackpot() {
+        let mut w = test_world();
+        let id = PlayerId(5);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let home_value = value_rate(w.systems.iter().find(|s| s.id == home).unwrap());
+        // The richest FRONTIER system clearly out-produces the starter home, so
+        // expansion outward stays the reward (the distance/value gradient holds).
+        let best_frontier = w
+            .home_slots
+            .iter()
+            .filter_map(|h| h.system)
+            .collect::<std::collections::BTreeSet<_>>();
+        let best = w
+            .systems
+            .iter()
+            .filter(|s| !best_frontier.contains(&s.id))
+            .map(value_rate)
+            .fold(0.0_f64, f64::max);
+        assert!(home_value < best, "home ({home_value:.1}) must be weaker than the richest frontier ({best:.1})");
+    }
+
+    #[test]
+    fn home_systems_cannot_be_claimed_from_the_pool() {
+        let mut w = test_world();
+        // An unassigned home slot's system is reserved — claiming it is a no-op.
+        let id = PlayerId(9);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let other_home = w
+            .home_slots
+            .iter()
+            .find(|h| h.owner.is_none())
+            .and_then(|h| h.system)
+            .expect("an unassigned home slot exists at 4-player scale");
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: other_home }]);
+        let sys = w.systems.iter().find(|s| s.id == other_home).unwrap();
+        assert!(sys.owner.is_none(), "a reserved home system cannot be claimed");
+        assert_eq!(w.players[&id].credits, credits0, "a rejected claim charges nothing");
     }
 
     #[test]
