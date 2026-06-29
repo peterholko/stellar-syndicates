@@ -94,8 +94,8 @@ function spark(data: number[], w = 60, h = 18): string {
   const path = pts
     .map((v, i) => `${((i / (pts.length - 1)) * w).toFixed(1)},${(h - ((v - min) / span) * (h - 2) - 1).toFixed(1)}`)
     .join(" ");
-  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">` +
-    `<polyline fill="none" stroke="${stroke}" stroke-width="1.5" points="${path}"/></svg>`;
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+    `<polyline fill="none" stroke="${stroke}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${path}"/></svg>`;
 }
 
 // Observed price trend, derived ONLY from the client's own (light-delayed) price
@@ -146,9 +146,12 @@ function setRailTab(tab: RailTab): void {
   document.querySelectorAll<HTMLElement>("#rail-tabs button").forEach((b) => {
     b.classList.toggle("is-active", b.dataset.tab === tab);
   });
-  // The System tab is JS-rendered; (re)build it when shown. The other tabs already
-  // carry fresh content from the last View, so they need no render-on-show.
+  // Render the shown tab once on switch (each tab then refreshes per-View only
+  // while it's the visible one — see the View handler — so hidden tabs don't churn).
   if (tab === "system") updateSystemTab();
+  else if (tab === "market") updateMarket();
+  else if (tab === "logistics") updateStandingPanel();
+  else if (tab === "doctrine") updateDoctrinePanel();
 }
 function openRail(tab: RailTab): void {
   $("rail").classList.add("is-open");
@@ -926,19 +929,23 @@ function join(): void {
           state.wallet = msg.wallet;
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
-          // Refresh the System tab only while it's the open tab (avoid 10 Hz DOM
-          // churn when it's hidden); other tabs' updaters are cheap + guarded.
-          if ($("rail").classList.contains("is-open") && railTab === "system") updateSystemTab();
-          updateStandingPanel();
-          updateDoctrinePanel();
-          updateCheckinPanel(); // refresh attention + ages against fresh state
+          // Accumulate observed prices every View (fog-safe history for the
+          // sparklines), even when the Market tab is closed.
+          recordPriceHistory();
+          // Refresh only the currently-visible rail tab — hidden tabs don't churn
+          // (they re-render on show via setRailTab). Each updater also guards itself.
+          if ($("rail").classList.contains("is-open")) {
+            if (railTab === "system") updateSystemTab();
+            else if (railTab === "market") updateMarket();
+            else if (railTab === "logistics") updateStandingPanel();
+            else if (railTab === "doctrine") updateDoctrinePanel();
+          }
+          updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
           state.lastViewWallMs = performance.now();
           state.link = "online";
-          recordPriceHistory();
-          updateMarket();
           break;
         case "CommandSignal": {
           // Your order is crossing space to your ship (the violet comet); you'll

@@ -27,6 +27,8 @@
         --field-bd: #243049;
         --panel-bg: rgba(8, 12, 22, 0.94);
         --panel-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        --btn-bg: #131a2c;
+        --btn-bg-hover: #1b2740;
       }
       * { box-sizing: border-box; }
       html, body {
@@ -146,21 +148,7 @@
       #reports-log .report.bad .ic { color: #ff6b6b; }
       #reports-log .report .dim { color: var(--dim); }
 
-      /* Hub Exchange panel (right side) */
-      #market .mhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-      #market .mhead b { letter-spacing: 1px; }
-      #market .mtop { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
-      #market .mtop input { width: 56px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
-      #market table { width: 100%; border-collapse: collapse; }
-      #market td, #market th { text-align: right; padding: 3px 4px; font-variant-numeric: tabular-nums; }
-      #market th { color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
-      #market td.name { text-align: left; color: var(--ink); }
-      #market button { cursor: pointer; background: #16233c; color: var(--ink); border: 1px solid #2a3a58; border-radius: 4px; font: inherit; font-size: 11px; padding: 2px 7px; }
-      #market button.buy:hover { background: #18402a; border-color: #2f6b46; }
-      #market button.sell:hover { background: #402018; border-color: #6b3a2f; }
-      #market .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; }
-
-      /* Standing orders panel (top-left, toggled with O) */
+      /* Standing orders panel (now hosted in the rail's Logistics tab). */
       #standing-list { margin-bottom: 10px; line-height: 1.5; max-height: 220px; overflow-y: auto; }
       #standing-list .so { border-left: 2px solid #3a2f58; padding: 4px 7px; margin-bottom: 5px; background: rgba(20,16,34,0.5); border-radius: 4px; color: var(--ink); }
       #standing-list .so .meta { color: var(--dim); font-size: 10px; }
@@ -173,12 +161,6 @@
       #standing #so-add { width: 100%; margin-top: 2px; cursor: pointer; background: #1d1630; color: var(--ink); border: 1px solid #3a2f58; border-radius: 5px; font: inherit; font-size: 12px; padding: 6px 8px; }
       #standing #so-add:hover { background: #2a1f48; border-color: #c99bff; }
       #standing .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; color: var(--dim); }
-      #market .accent { color: var(--accent); }
-      #market-limit-price { width: 60px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
-      #market #market-orders { margin-top: 8px; font-size: 11px; line-height: 1.5; }
-      #market #market-orders .o { color: var(--ink); }
-      #market #market-orders .o.buy { color: #7fd0a0; }
-      #market #market-orders .o.sell { color: #e0a070; }
 
       /* Fleet doctrine (§16) — fields, now hosted in the rail's Doctrine tab. */
       #doctrine .fd-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
@@ -236,7 +218,7 @@
       }
       #rail .rail__tabs .seg { flex: 1; display: flex; }
       #rail .rail__tabs .seg button { flex: 1; padding: 5px 4px; font-size: 10px; letter-spacing: 0.3px; }
-      #rail .rail__close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 2px; }
+      #rail .rail__close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #rail .rail__close:hover { color: var(--ink); }
       #rail .rail__body { flex: 1; overflow-y: auto; padding: 12px 14px; }
       #rail .tab { display: none; }
@@ -269,7 +251,7 @@
       .bar__fill.is-warn { background: var(--warn); }
       .bar__fill.is-positive { background: var(--positive); }
 
-      .spark { display: block; }
+      .spark { display: block; width: 100%; height: 18px; }
       .is-stale { color: var(--fg-stale) !important; }
       .tone-up { color: var(--positive); } .tone-down { color: var(--negative); } .tone-flat { color: var(--dim); }
 
@@ -281,13 +263,18 @@
       .tab .act {
         cursor: pointer; width: 100%; margin-top: 5px; text-align: left;
         display: flex; align-items: center; gap: 7px;
-        background: #131a2c; color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px;
+        background: var(--btn-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px;
         font: inherit; font-size: 12px; padding: 7px 9px;
       }
-      .tab .act:hover:not([disabled]) { background: #1b2740; border-color: var(--accent); }
+      .tab .act:hover:not([disabled]) { background: var(--btn-bg-hover); border-color: var(--accent); }
       .tab .act[disabled] { opacity: 0.42; cursor: not-allowed; }
       .tab .act.act--primary { background: var(--accent); color: #04121d; font-weight: 700; justify-content: center; border-color: var(--accent); }
       .tab .act.act--primary:hover:not([disabled]) { filter: brightness(1.08); }
+      /* Keyboard focus visibility on all rail controls (WCAG 2.4.7). */
+      .seg button:focus-visible, .tab .act:focus-visible, #rail .rail__close:focus-visible,
+      .board__row:focus-visible, .sysrail__row:focus-visible {
+        outline: 2px solid var(--accent); outline-offset: -2px;
+      }
 
       /* ---- System view (SYSTEM tab) ---- */
       .sysview__deps { margin: 4px 0 6px; }
@@ -373,7 +360,7 @@
           <button data-tab="logistics">Logistics</button>
           <button data-tab="doctrine">Doctrine</button>
         </div>
-        <span class="rail__close" id="rail-close" title="Close (Esc)">✕</span>
+        <button class="rail__close" id="rail-close" type="button" title="Close (Esc)" aria-label="Close workspace">✕</button>
       </div>
       <div class="rail__body">
         <!-- SYSTEM tab — rich master→detail star-system view, built by JS. -->
