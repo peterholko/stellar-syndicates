@@ -101,7 +101,30 @@ export type TradeEvent =
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
   | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
-  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number };
+  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
+  | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number };
+
+// --- Standing logistics orders (§15) — mirror the sim's serde shape exactly, so
+// the client both reads them (from the View) and writes them (SetStandingOrder). ---
+export type StandingEndpoint =
+  | { kind: "system"; id: EntityId }
+  | { kind: "hub" }
+  | { kind: "home" };
+export type StandingTrigger =
+  | { kind: "above_threshold"; threshold: number }
+  | { kind: "percent_surplus"; percent: number; floor: number }
+  | { kind: "maintain_at_dest"; target: number };
+export type OrderStatus = "active" | "paused";
+export interface StandingOrder {
+  id: number; // 0 on create = "allocate a fresh id"
+  source: StandingEndpoint;
+  dest: StandingEndpoint;
+  commodity: Commodity;
+  trigger: StandingTrigger;
+  status: OrderStatus;
+  next_eval_tick: number;
+  in_flight: EntityId | null;
+}
 
 export interface AnchorView {
   pos: Vec2;
@@ -150,6 +173,8 @@ export type ClientMsg =
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "ClaimSystem"; system_id: EntityId }
   | { type: "ShipProduction"; system_id: EntityId }
+  | { type: "SetStandingOrder"; order: StandingOrder }
+  | { type: "ClearStandingOrder"; order_id: number }
   | { type: "Ping" };
 
 export type RaidOutcome =
@@ -196,6 +221,7 @@ export type ServerMsg =
       ghosts: GhostView[];
       market: MarketView;
       wallet: WalletView;
+      standing_orders: StandingOrder[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Trade"; trade: TradeEvent }

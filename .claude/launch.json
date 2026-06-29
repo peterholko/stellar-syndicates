@@ -6,6 +6,12 @@
       "runtimeExecutable": "target/debug/server",
       "runtimeArgs": [],
       "port": 8080
+    },
+    {
+      "name": "stellar-client",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "client", "run", "dev"],
+      "port": 5173
     }
   ]
 }

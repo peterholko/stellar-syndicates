@@ -22,6 +22,7 @@ pub mod math;
 pub mod movement;
 pub mod rng;
 pub mod ship;
+pub mod standing;
 pub mod world;
 
 pub use cargo::{Cargo, Commodity};
@@ -35,5 +36,6 @@ pub use math::Vec2;
 pub use movement::{flip_and_burn, MoveStep};
 pub use rng::Rng;
 pub use ship::{DefenseEngagement, Ship, ShipKind, ShipOrder, TradeMission};
+pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 pub use world::{Corporation, World};
 

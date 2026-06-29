@@ -11,7 +11,7 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, TradeEvent, Vec2};
+use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, StandingOrder, TradeEvent, Vec2};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +50,14 @@ pub enum ClientMsg {
     /// Ship a claimed system's accumulated production to the hub to sell (§9) —
     /// spawns raidable convoys from the system.
     ShipProduction { system_id: EntityId },
+
+    /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
+    /// a matching id edits. Instant local administration; the server attaches the
+    /// issuing player.
+    SetStandingOrder { order: StandingOrder },
+
+    /// Remove a standing order by id.
+    ClearStandingOrder { order_id: u32 },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -275,6 +283,10 @@ pub enum ServerMsg {
         market: MarketView,
         /// The player's own credits + holdings (fresh).
         wallet: WalletView,
+        /// The player's own standing logistics orders (§15) — fresh (own private
+        /// policy, not light-gated, like the wallet). Lets the client list/edit them
+        /// and show what's running automatically.
+        standing_orders: Vec<StandingOrder>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

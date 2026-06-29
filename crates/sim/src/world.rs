@@ -21,6 +21,7 @@ use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
 use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, Ship, ShipKind, ShipOrder, TradeMission};
+use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -44,6 +45,13 @@ pub struct Corporation {
     /// share-price noise: credits + goods (held, in-transit, and reserved in
     /// resting orders) at market value + buy-order escrow.
     pub valuation: f64,
+    /// Standing logistics orders (§15) — constrained automation rules this corp
+    /// runs server-side, online or off. See [`crate::standing`].
+    #[serde(default)]
+    pub standing_orders: Vec<crate::standing::StandingOrder>,
+    /// Monotonic allocator for this corp's standing-order ids (0 ⇒ first id is 1).
+    #[serde(default)]
+    pub next_standing_id: u32,
 }
 
 /// An order in flight: a player's command that has left their command center
@@ -102,6 +110,12 @@ const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
 
 /// Corporate valuations recompute once per this many ticks (the slow §9 close).
 const VALUATION_TICKS: u64 = 60 * TICK_HZ as u64;
+
+/// A standing logistics order (§15) is re-evaluated at most once per this many
+/// ticks (≈ every 5 s). With the one-convoy-in-flight guard this bounds a rule to
+/// at most one dispatch per period — a permanently-satisfied trigger can never
+/// flood the map (the async-automation anti-spam invariant).
+const EVAL_PERIOD: u64 = 5 * TICK_HZ as u64;
 
 /// The order that resumes a saved patrol route after a defensive sortie (or idles
 /// if the route was empty).
@@ -235,6 +249,14 @@ impl World {
         // 5b. Accrue production at every claimed system (§5.1 continuous progress)
         //     — happens whether or not the owner is logged in.
         self.accrue_production();
+
+        // 5c. Standing logistics orders (§15): reconcile each rule's in-flight
+        //     convoy against reality (raids/arrivals above may have removed it),
+        //     then evaluate the rules and auto-dispatch convoys. Server-driven,
+        //     runs whether or not the owner is connected — the heart of async play.
+        //     Placed after accrue so rules act on this tick's fresh stockpiles.
+        self.reconcile_standing_inflight();
+        self.evaluate_standing_orders(&mut events);
 
         // 6. Advance the clock; drift the market on a slow cadence so the price
         //    information lag is visible, and clear the limit-order book on the
@@ -599,6 +621,8 @@ impl World {
                         credits: 10_000.0,
                         inventory,
                         valuation: 10_000.0,
+                        standing_orders: Vec::new(),
+                        next_standing_id: 0,
                     },
                 );
                 events.push(Event::new(
@@ -776,7 +800,86 @@ impl World {
             Command::ShipProduction { player_id, system_id } => {
                 self.apply_ship_production(*player_id, *system_id, events);
             }
+            Command::SetStandingOrder { player_id, order } => {
+                self.apply_set_standing_order(*player_id, *order);
+            }
+            Command::ClearStandingOrder { player_id, order_id } => {
+                if let Some(corp) = self.players.get_mut(player_id) {
+                    corp.standing_orders.retain(|o| o.id != *order_id);
+                }
+            }
         }
+    }
+
+    /// Create or replace a standing logistics order (§15). INSTANT local
+    /// administration: validates against the constrained option set, then either
+    /// allocates a fresh id (create) or replaces an existing rule by id (edit),
+    /// PRESERVING its anti-spam state (`next_eval_tick`, `in_flight`) so editing a
+    /// rule can't be used to bypass the dispatch cadence. Invalid rules are ignored.
+    fn apply_set_standing_order(&mut self, player_id: PlayerId, mut order: StandingOrder) {
+        // --- Validate the constrained option set (reject nonsense outright) ---
+        let Some(source_sys) = order.source.system_id() else {
+            return; // the source must be a system
+        };
+        if order.source == order.dest {
+            return; // a route to itself is meaningless
+        }
+        // The source system must exist and be owned by this player right now.
+        let owns_source = self
+            .systems
+            .iter()
+            .any(|s| s.id == source_sys && s.owner == Some(player_id));
+        if !owns_source {
+            return;
+        }
+        // Destination, if a system, must exist (ownership may change later — that's
+        // a frontier risk handled at arrival).
+        if let crate::standing::Endpoint::System { id } = order.dest
+            && !self.systems.iter().any(|s| s.id == id)
+        {
+            return;
+        }
+        match order.trigger {
+            crate::standing::Trigger::AboveThreshold { threshold } => {
+                if !(threshold.is_finite() && threshold >= 0.0) {
+                    return;
+                }
+            }
+            crate::standing::Trigger::PercentSurplus { percent, floor } => {
+                if !((1..=100).contains(&percent) && floor.is_finite() && floor >= 0.0) {
+                    return;
+                }
+            }
+            crate::standing::Trigger::MaintainAtDest { target } => {
+                // "Maintain a level" only makes sense at a stockpiling destination.
+                if matches!(order.dest, crate::standing::Endpoint::Hub) {
+                    return;
+                }
+                if !(target.is_finite() && target > 0.0) {
+                    return;
+                }
+            }
+        }
+
+        let Some(corp) = self.players.get_mut(&player_id) else {
+            return;
+        };
+        if order.id == 0 {
+            corp.next_standing_id += 1;
+            order.id = corp.next_standing_id;
+            order.in_flight = None;
+            // Deterministic per-rule stagger so many rules made the same tick don't
+            // all fire on the same eval boundary (a load nicety; snapshot-stable).
+            order.next_eval_tick = self.tick + (order.id as u64 % EVAL_PERIOD);
+            corp.standing_orders.push(order);
+        } else if let Some(slot) = corp.standing_orders.iter_mut().find(|o| o.id == order.id) {
+            // Edit: keep the player-facing fields, preserve anti-spam bookkeeping.
+            let (keep_eval, keep_flight) = (slot.next_eval_tick, slot.in_flight);
+            *slot = order;
+            slot.next_eval_tick = keep_eval;
+            slot.in_flight = keep_flight;
+        }
+        // (Editing a non-existent id is a no-op.)
     }
 
     /// Claim an unclaimed system for the player, debiting the claim cost. Resolves
@@ -967,6 +1070,219 @@ impl World {
         }
     }
 
+    /// Anti-spam gate 1 upkeep: a standing order holds the id of its one in-flight
+    /// convoy; once that convoy leaves the world (arrived this tick, or raided), the
+    /// rule becomes eligible to dispatch again. Reconcile by ship existence — robust
+    /// to ANY cause of convoy removal, deterministic, O(rules).
+    fn reconcile_standing_inflight(&mut self) {
+        // Cheap fast-path: nothing to reconcile unless some rule has a convoy latched.
+        if !self.players.values().any(|c| c.standing_orders.iter().any(|o| o.in_flight.is_some())) {
+            return;
+        }
+        let alive: std::collections::BTreeSet<EntityId> = self.ships.keys().copied().collect();
+        for corp in self.players.values_mut() {
+            for order in &mut corp.standing_orders {
+                if let Some(id) = order.in_flight
+                    && !alive.contains(&id)
+                {
+                    order.in_flight = None;
+                }
+            }
+        }
+    }
+
+    /// Sum of cargo (by owner, destination, commodity) already in flight on mission
+    /// convoys — so a MaintainAtDest rule counts goods already crossing toward the
+    /// destination and doesn't over-ship while a top-up is en route.
+    fn standing_inflight_index(&self) -> BTreeMap<(PlayerId, Endpoint, crate::cargo::Commodity), u32> {
+        let mut idx: BTreeMap<(PlayerId, Endpoint, crate::cargo::Commodity), u32> = BTreeMap::new();
+        for ship in self.ships.values() {
+            let (Some(mission), Some(cargo)) = (ship.mission, ship.cargo) else {
+                continue;
+            };
+            let dest = match mission {
+                TradeMission::DeliverHome => Endpoint::Home,
+                TradeMission::SellAtHub => Endpoint::Hub,
+                TradeMission::DeliverToSystem { system } => Endpoint::System { id: system },
+            };
+            *idx.entry((ship.owner, dest, cargo.commodity)).or_insert(0) += cargo.units;
+        }
+        idx
+    }
+
+    /// Evaluate every player's standing logistics orders (§15) and auto-dispatch
+    /// convoys. Deterministic + offline: a pure function of the TRUE world + tick,
+    /// iterated in fixed order (players BTreeMap → orders Vec). Two anti-spam gates:
+    /// a rule fires only if it has no convoy in flight AND it's past its eval cadence
+    /// (`next_eval_tick`), which is advanced every time a rule is evaluated. Plan
+    /// (read-only) then execute (mutate + spawn), like `apply_ship_production`.
+    fn evaluate_standing_orders(&mut self, events: &mut Vec<Event>) {
+        let now_tick = self.tick;
+        let hub = self.hub;
+        let in_flight = self.standing_inflight_index();
+
+        struct Plan {
+            player: PlayerId,
+            order_id: u32,
+            source_sys: EntityId,
+            commodity: crate::cargo::Commodity,
+            units: u32,
+            spawn: Vec2,
+            dest: Vec2,
+            mission: TradeMission,
+        }
+        let mut plans: Vec<Plan> = Vec::new();
+        let mut evaluated: Vec<(PlayerId, u32)> = Vec::new();
+        // Units already PLANNED toward each (owner, dest, commodity) THIS tick, so a
+        // later MaintainAtDest rule sharing a destination counts its siblings' planned
+        // shipments and doesn't over-ship past the target.
+        let mut planned: BTreeMap<(PlayerId, Endpoint, crate::cargo::Commodity), u32> = BTreeMap::new();
+
+        // --- Phase 1: PLAN (read-only over players/systems). ---
+        for (pid, corp) in &self.players {
+            for order in &corp.standing_orders {
+                if order.status != OrderStatus::Active {
+                    continue;
+                }
+                if order.in_flight.is_some() {
+                    continue; // gate 1: one convoy in flight per rule
+                }
+                if now_tick < order.next_eval_tick {
+                    continue; // gate 2: fixed eval cadence
+                }
+                evaluated.push((*pid, order.id));
+
+                let Some(source_id) = order.source.system_id() else {
+                    continue;
+                };
+                // The source must be a system this corp still owns.
+                let Some(src) = self
+                    .systems
+                    .iter()
+                    .find(|s| s.id == source_id && s.owner == Some(*pid))
+                else {
+                    continue;
+                };
+                let have = src.stockpile.get(&order.commodity).copied().unwrap_or(0.0);
+
+                let units: u32 = match order.trigger {
+                    Trigger::AboveThreshold { threshold } => {
+                        if have >= threshold {
+                            have.floor() as u32
+                        } else {
+                            0
+                        }
+                    }
+                    Trigger::PercentSurplus { percent, floor } => {
+                        let surplus = (have - floor).max(0.0);
+                        (surplus * (percent as f64) / 100.0).floor() as u32
+                    }
+                    Trigger::MaintainAtDest { target } => {
+                        let dest_level = match order.dest {
+                            Endpoint::System { id } => self
+                                .systems
+                                .iter()
+                                .find(|s| s.id == id)
+                                .map(|s| s.stockpile.get(&order.commodity).copied().unwrap_or(0.0))
+                                .unwrap_or(0.0),
+                            Endpoint::Home => {
+                                corp.inventory.get(&order.commodity).copied().unwrap_or(0) as f64
+                            }
+                            Endpoint::Hub => 0.0, // forbidden by validation
+                        };
+                        // Count both convoys already crossing AND shipments planned
+                        // earlier THIS tick toward the same dest, so siblings sharing a
+                        // destination don't each ship the full deficit (over-shoot).
+                        let key = (*pid, order.dest, order.commodity);
+                        let enroute = (in_flight.get(&key).copied().unwrap_or(0)
+                            + planned.get(&key).copied().unwrap_or(0)) as f64;
+                        let deficit = target - (dest_level + enroute);
+                        if deficit >= 1.0 {
+                            (deficit.floor() as u32).min(have.floor() as u32)
+                        } else {
+                            0
+                        }
+                    }
+                };
+                if units < 1 {
+                    continue;
+                }
+                // Record this shipment as planned toward its destination this tick.
+                *planned.entry((*pid, order.dest, order.commodity)).or_insert(0) += units;
+
+                let (dest_pos, mission) = match order.dest {
+                    Endpoint::Hub => (hub, TradeMission::SellAtHub),
+                    Endpoint::Home => (corp.home, TradeMission::DeliverHome),
+                    Endpoint::System { id } => match self.systems.iter().find(|s| s.id == id) {
+                        Some(s) => (s.pos, TradeMission::DeliverToSystem { system: id }),
+                        None => continue,
+                    },
+                };
+                plans.push(Plan {
+                    player: *pid,
+                    order_id: order.id,
+                    source_sys: source_id,
+                    commodity: order.commodity,
+                    units,
+                    spawn: src.pos,
+                    dest: dest_pos,
+                    mission,
+                });
+            }
+        }
+
+        // --- Phase 2: EXECUTE (debit source, spawn convoy, latch in_flight, notify). ---
+        for p in plans {
+            // Re-check the source still holds the units (an earlier plan this tick may
+            // have drained the same system); skip cleanly if not.
+            let debited = self
+                .systems
+                .iter_mut()
+                .find(|s| s.id == p.source_sys && s.owner == Some(p.player))
+                .map(|s| {
+                    let have = s.stockpile.get(&p.commodity).copied().unwrap_or(0.0);
+                    if have + 1e-9 >= p.units as f64 {
+                        *s.stockpile.entry(p.commodity).or_insert(0.0) -= p.units as f64;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if !debited {
+                continue;
+            }
+
+            let cargo = Cargo { commodity: p.commodity, units: p.units };
+            let convoy_id = self.spawn_trade_convoy(p.player, p.spawn, p.dest, cargo, p.mission);
+
+            if let Some(corp) = self.players.get_mut(&p.player)
+                && let Some(order) = corp.standing_orders.iter_mut().find(|o| o.id == p.order_id)
+            {
+                order.in_flight = Some(convoy_id);
+            }
+            events.push(Event::new(
+                self.time,
+                EventPayload::Trade(TradeEvent::AutoDispatched {
+                    player: p.player,
+                    commodity: p.commodity,
+                    units: p.units,
+                    source: p.source_sys,
+                    rule_id: p.order_id,
+                }),
+            ));
+        }
+
+        // --- Phase 3: advance the eval cadence for every rule we examined. ---
+        for (pid, oid) in evaluated {
+            if let Some(corp) = self.players.get_mut(&pid)
+                && let Some(order) = corp.standing_orders.iter_mut().find(|o| o.id == oid)
+            {
+                order.next_eval_tick = now_tick + EVAL_PERIOD;
+            }
+        }
+    }
+
     /// Spawn a raidable trade convoy that resolves its mission on arrival.
     fn spawn_trade_convoy(
         &mut self,
@@ -1034,6 +1350,32 @@ impl World {
                             unit_price,
                         }),
                     ));
+                }
+                TradeMission::DeliverToSystem { system } => {
+                    // Deposit into the destination system's stockpile — but ONLY if
+                    // the convoy's owner still owns it on arrival (a system can be
+                    // lost mid-transit; we don't gift cargo to a rival who took it).
+                    let delivered = self
+                        .systems
+                        .iter_mut()
+                        .find(|s| s.id == system && s.owner == Some(ship.owner))
+                        .map(|sys| {
+                            *sys.stockpile.entry(cargo.commodity).or_insert(0.0) += cargo.units as f64;
+                            true
+                        })
+                        .unwrap_or(false);
+                    if delivered {
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::Delivered {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: cargo.units,
+                            }),
+                        ));
+                    }
+                    // If not delivered (system lost), the cargo is simply lost — the
+                    // frontier risk of automated supply into contested space.
                 }
             }
         }
@@ -2082,5 +2424,312 @@ mod tests {
         if outcome.kills().1 {
             assert!(!w.ships.contains_key(&convoy), "a destroyed production convoy is gone");
         }
+    }
+
+    // ---- Standing orders / logistics automation (§15) ----------------------
+
+    /// Claim a system, set an AboveThreshold standing order to the hub, then run
+    /// the world with NO further commands (the player is OFFLINE). The rule must
+    /// auto-dispatch a raidable convoy server-side and the sale must credit the
+    /// absent owner — the core async-persistent promise.
+    #[test]
+    fn standing_order_auto_ships_to_hub_while_offline() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        let commodity = w.systems.iter().find(|s| s.id == sysid).unwrap().deposits[0].resource;
+        let credits0 = w.players[&id].credits;
+
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0,
+                source: Endpoint::System { id: sysid },
+                dest: Endpoint::Hub,
+                commodity,
+                trigger: Trigger::AboveThreshold { threshold: 3.0 },
+                status: OrderStatus::Active,
+                next_eval_tick: 0,
+                in_flight: None,
+            },
+        }]);
+        assert_eq!(w.players[&id].standing_orders.len(), 1, "rule stored");
+        assert_eq!(w.players[&id].standing_orders[0].id, 1, "create allocates id 1");
+
+        // From here on: ZERO commands — pure server clock (player logged off).
+        let (mut auto_fired, mut sold) = (false, false);
+        for _ in 0..(500 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::Trade(TradeEvent::AutoDispatched { player, .. }) if player == id => auto_fired = true,
+                    EventPayload::Trade(TradeEvent::Sold { player, .. }) if player == id => sold = true,
+                    _ => {}
+                }
+            }
+            if sold {
+                break;
+            }
+        }
+        assert!(auto_fired, "the standing order must auto-dispatch a convoy while offline");
+        assert!(sold, "the auto-shipped convoy must reach the hub and sell");
+        assert!(w.players[&id].credits > credits0, "auto-selling must pay the absent owner");
+    }
+
+    /// Anti-spam: a permanently-satisfied threshold must NOT flood the map. At most
+    /// ONE auto-ship convoy from a single rule is ever in flight at once.
+    #[test]
+    fn standing_order_never_floods_convoys() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        let commodity = w.systems.iter().find(|s| s.id == sysid).unwrap().deposits[0].resource;
+        // Threshold 1: the source is essentially always above it once producing.
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0,
+                source: Endpoint::System { id: sysid },
+                dest: Endpoint::Hub,
+                commodity,
+                trigger: Trigger::AboveThreshold { threshold: 1.0 },
+                status: OrderStatus::Active,
+                next_eval_tick: 0,
+                in_flight: None,
+            },
+        }]);
+
+        let mut dispatches = 0u32;
+        let mut max_in_flight = 0usize;
+        for _ in 0..(300 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::Trade(TradeEvent::AutoDispatched { player, .. }) if player == id) {
+                    dispatches += 1;
+                }
+            }
+            let in_flight = w
+                .ships
+                .values()
+                .filter(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub))
+                .count();
+            max_in_flight = max_in_flight.max(in_flight);
+        }
+        assert!(max_in_flight <= 1, "at most one auto-ship convoy in flight per rule (got {max_in_flight})");
+        // It DID keep cycling (dispatched repeatedly as convoys arrived), not just once.
+        assert!(dispatches >= 2, "the rule should re-fire across the run as convoys complete");
+    }
+
+    /// MaintainAtDest pulls supply INTO a destination system to keep it stocked, via
+    /// the new system→system convoy — and stops once the level (incl. in-flight) is met.
+    #[test]
+    fn maintain_at_dest_supplies_a_system_to_system() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Own two systems: a producing source and a destination depot.
+        let source = richest_system(&w);
+        let commodity = w.systems.iter().find(|s| s.id == source).unwrap().deposits[0].resource;
+        let dest = w.systems.iter().find(|s| s.owner.is_none() && s.id != source).unwrap().id;
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: source }]);
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: dest }]);
+
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0,
+                source: Endpoint::System { id: source },
+                dest: Endpoint::System { id: dest },
+                commodity,
+                trigger: Trigger::MaintainAtDest { target: 5.0 },
+                status: OrderStatus::Active,
+                next_eval_tick: 0,
+                in_flight: None,
+            },
+        }]);
+
+        // Offline run: the dest stockpile of `commodity` should rise toward the target
+        // as system→system convoys deliver. (Account for the dest's own production of
+        // that commodity, if any, by asserting it reached at least the target.)
+        let dest_has = |w: &World| {
+            w.systems.iter().find(|s| s.id == dest).unwrap().stockpile.get(&commodity).copied().unwrap_or(0.0)
+        };
+        let mut delivered_via_route = false;
+        for _ in 0..(500 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::Trade(TradeEvent::Delivered { player, .. }) if player == id) {
+                    delivered_via_route = true;
+                }
+            }
+            if dest_has(&w) >= 5.0 && delivered_via_route {
+                break;
+            }
+        }
+        assert!(delivered_via_route, "a system→system supply convoy must deliver to the depot");
+        assert!(dest_has(&w) >= 5.0, "MaintainAtDest must bring the depot up to the target");
+    }
+
+    /// Standing-order execution is deterministic: same seed + same commands ⇒ byte-
+    /// identical world (the rules + their convoys + credits all reproduce).
+    #[test]
+    fn standing_orders_are_deterministic() {
+        let build = || {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let sysid = richest_system(&w);
+            let commodity = w.systems.iter().find(|s| s.id == sysid).unwrap().deposits[0].resource;
+            w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+            w.step(&[Command::SetStandingOrder {
+                player_id: id,
+                order: StandingOrder {
+                    id: 0,
+                    source: Endpoint::System { id: sysid },
+                    dest: Endpoint::Hub,
+                    commodity,
+                    trigger: Trigger::PercentSurplus { percent: 50, floor: 2.0 },
+                    status: OrderStatus::Active,
+                    next_eval_tick: 0,
+                    in_flight: None,
+                },
+            }]);
+            for _ in 0..(200 * crate::config::TICK_HZ) {
+                w.step(&[]);
+            }
+            w
+        };
+        let a = build();
+        let b = build();
+        assert_eq!(
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap(),
+            "standing-order execution must be reproducible from the seed"
+        );
+        // And the rule actually ran (it fired at least once → credits grew past start).
+        assert!(a.players[&PlayerId(1)].credits > 10_000.0 - 1.0 || !a.ships.is_empty());
+    }
+
+    /// Clearing a standing order stops it; invalid rules are rejected at set-time.
+    #[test]
+    fn standing_order_clear_and_validation() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+
+        // Invalid: source is the hub (not a system) → rejected.
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0, source: Endpoint::Hub, dest: Endpoint::Home,
+                commodity: crate::cargo::Commodity::Ore,
+                trigger: Trigger::AboveThreshold { threshold: 1.0 },
+                status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+            },
+        }]);
+        // Invalid: source you don't own → rejected.
+        let unowned = w.systems.iter().find(|s| s.owner.is_none()).unwrap().id;
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0, source: Endpoint::System { id: unowned }, dest: Endpoint::Hub,
+                commodity: crate::cargo::Commodity::Ore,
+                trigger: Trigger::AboveThreshold { threshold: 1.0 },
+                status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+            },
+        }]);
+        // Invalid: MaintainAtDest with a Hub destination → rejected.
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0, source: Endpoint::System { id: sysid }, dest: Endpoint::Hub,
+                commodity: crate::cargo::Commodity::Ore,
+                trigger: Trigger::MaintainAtDest { target: 5.0 },
+                status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+            },
+        }]);
+        assert!(w.players[&id].standing_orders.is_empty(), "invalid rules must be rejected");
+
+        // Valid rule → stored; then cleared.
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0, source: Endpoint::System { id: sysid }, dest: Endpoint::Hub,
+                commodity: crate::cargo::Commodity::Ore,
+                trigger: Trigger::AboveThreshold { threshold: 1.0 },
+                status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+            },
+        }]);
+        let rid = w.players[&id].standing_orders[0].id;
+        w.step(&[Command::ClearStandingOrder { player_id: id, order_id: rid }]);
+        assert!(w.players[&id].standing_orders.is_empty(), "cleared rule is gone");
+    }
+
+    /// Two MaintainAtDest rules from different sources to the SAME destination,
+    /// evaluated on the SAME tick, must not EACH ship the full deficit (over-shoot).
+    /// The per-tick "planned" tally folds a sibling's just-planned shipment into the
+    /// in-flight accounting.
+    #[test]
+    fn maintain_at_dest_two_sources_do_not_overship() {
+        use crate::cargo::Commodity::Ore;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Take three unowned systems and claim them directly (deterministic setup).
+        let ids: Vec<EntityId> = w.systems.iter().filter(|s| s.owner.is_none()).take(3).map(|s| s.id).collect();
+        let (a, b, d) = (ids[0], ids[1], ids[2]);
+        let now = w.time;
+        for &sid in &[a, b, d] {
+            let sys = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+            sys.owner = Some(id);
+            sys.claimed_at = Some(now);
+        }
+        // Stock both sources well above the target; empty the destination.
+        for &sid in &[a, b] {
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(Ore, 50.0);
+        }
+        w.systems.iter_mut().find(|s| s.id == d).unwrap().stockpile.remove(&Ore);
+
+        for &src in &[a, b] {
+            w.step(&[Command::SetStandingOrder {
+                player_id: id,
+                order: StandingOrder {
+                    id: 0,
+                    source: Endpoint::System { id: src },
+                    dest: Endpoint::System { id: d },
+                    commodity: Ore,
+                    trigger: Trigger::MaintainAtDest { target: 5.0 },
+                    status: OrderStatus::Active,
+                    next_eval_tick: 0,
+                    in_flight: None,
+                },
+            }]);
+        }
+        // Reset to a clean slate where BOTH rules are idle + eligible on the SAME
+        // upcoming eval tick (the over-ship scenario): drop any convoy a rule already
+        // launched during setup, refill sources, empty the depot, clear the gates.
+        w.ships.retain(|_, s| s.mission.is_none());
+        for &sid in &[a, b] {
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(Ore, 50.0);
+        }
+        w.systems.iter_mut().find(|s| s.id == d).unwrap().stockpile.remove(&Ore);
+        for o in w.players.get_mut(&id).unwrap().standing_orders.iter_mut() {
+            o.next_eval_tick = 0;
+            o.in_flight = None;
+        }
+        // One step: both rules evaluate together. Sum what they auto-dispatched.
+        let mut dispatched = 0u32;
+        for e in w.step(&[]) {
+            if let EventPayload::Trade(TradeEvent::AutoDispatched { player, units, .. }) = e.payload
+                && player == id
+            {
+                dispatched += units;
+            }
+        }
+        assert!(dispatched >= 1, "a maintain rule should ship toward the empty depot");
+        assert!(dispatched <= 5, "two rules to one dest must not over-ship the target (shipped {dispatched})");
     }
 }

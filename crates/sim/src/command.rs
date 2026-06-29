@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
+use crate::standing::StandingOrder;
 
 /// A single authoritative mutation request, applied at a tick boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,5 +101,24 @@ pub enum Command {
     ShipProduction {
         player_id: PlayerId,
         system_id: EntityId,
+    },
+
+    /// Create or replace a standing logistics order (§15) — a constrained
+    /// automation rule the corp runs server-side, online or off. INSTANT local
+    /// administration (like a limit order): it changes only the player's own
+    /// private policy table and reveals nothing to rivals; the CONVOYS it later
+    /// spawns are sub-light and raidable. `order.id == 0` creates (a fresh id is
+    /// allocated); a matching id replaces (edit), preserving anti-spam state.
+    /// Validated against the constrained option set; nonsense is ignored.
+    SetStandingOrder {
+        player_id: PlayerId,
+        order: StandingOrder,
+    },
+
+    /// Remove a standing order by id (no-op if absent). Does not recall any convoy
+    /// it already dispatched. Instant local administration.
+    ClearStandingOrder {
+        player_id: PlayerId,
+        order_id: u32,
     },
 }

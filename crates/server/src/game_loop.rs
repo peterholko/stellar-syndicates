@@ -265,6 +265,16 @@ impl GameLoop {
                         self.pending.push(Command::ShipProduction { player_id, system_id });
                     }
                 }
+                ClientMsg::SetStandingOrder { order } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetStandingOrder { player_id, order });
+                    }
+                }
+                ClientMsg::ClearStandingOrder { order_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ClearStandingOrder { player_id, order_id });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -403,6 +413,9 @@ impl GameLoop {
                     ghosts,
                     market,
                     wallet,
+                    // The player's own standing orders (fresh — private policy, not
+                    // light-gated), so the client can list/edit them.
+                    standing_orders: corp.standing_orders.clone(),
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

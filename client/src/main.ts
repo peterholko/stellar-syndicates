@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type Side, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -174,6 +174,9 @@ function installInteraction(): void {
     } else if (e.key === "m" || e.key === "M") {
       const m = $("market");
       m.style.display = m.style.display === "none" ? "block" : "none";
+    } else if (e.key === "o" || e.key === "O") {
+      const s = $("standing");
+      s.style.display = s.style.display === "none" ? "block" : "none";
     }
   });
 }
@@ -337,11 +340,12 @@ function addTradeNews(t: TradeEvent): void {
   let text = "";
   switch (t.event) {
     case "Bought": text = `Bought ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
-    case "Delivered": text = `Delivery arrived: +${t.units} ${t.commodity} in stores.`; break;
+    case "Delivered": text = `Delivery arrived: +${t.units} ${t.commodity} (stored at destination).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${t.commodity} crossing to the hub.`; break;
     case "Sold": text = `Sold ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${t.commodity} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
     case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)}.`; break;
+    case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${t.commodity} (auto, raidable).`; break;
   }
   const el = document.createElement("div");
   el.className = "report good";
@@ -349,6 +353,108 @@ function addTradeNews(t: TradeEvent): void {
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);
+}
+
+// --- Standing orders panel (§15) — constrained logistics automation ----------
+function systemName(id: string): string {
+  return state.galaxy?.systems.find((x) => x.id === id)?.name ?? id;
+}
+function ownedSystems(): { id: string; name: string }[] {
+  if (state.playerId === null) return [];
+  return state.systems
+    .filter((s) => s.owner === state.playerId)
+    .map((s) => ({ id: s.id, name: systemName(s.id) }));
+}
+function endpointLabel(e: StandingEndpoint): string {
+  return e.kind === "hub" ? "hub" : e.kind === "home" ? "home" : systemName(e.id);
+}
+function triggerLabel(t: StandingTrigger): string {
+  if (t.kind === "above_threshold") return `when stock ≥ ${t.threshold}`;
+  if (t.kind === "percent_surplus") return `${t.percent}% of surplus over ${t.floor}`;
+  return `keep dest ≥ ${t.target}`;
+}
+
+let standingBuilt = false;
+function buildStandingPanel(): void {
+  if (standingBuilt) return;
+  standingBuilt = true;
+  $("standing-toggle").addEventListener("click", () => { $("standing").style.display = "none"; });
+  const trig = $("so-trigger") as HTMLSelectElement;
+  const syncForm = () => {
+    const amt = $("so-amount") as HTMLInputElement;
+    ($("so-floor-row") as HTMLElement).style.display = trig.value === "percent_surplus" ? "flex" : "none";
+    amt.title = trig.value === "above_threshold" ? "threshold (units)"
+      : trig.value === "percent_surplus" ? "percent (1–100)"
+      : "target level (units)";
+  };
+  trig.addEventListener("change", syncForm);
+  syncForm();
+  $("so-add").addEventListener("click", () => {
+    if (!net) return;
+    const source = ($("so-source") as HTMLSelectElement).value;
+    if (!source) return; // need an owned source system first
+    const commodity = ($("so-commodity") as HTMLSelectElement).value as Commodity;
+    const tkind = ($("so-trigger") as HTMLSelectElement).value;
+    const amount = Number(($("so-amount") as HTMLInputElement).value) || 0;
+    const floor = Number(($("so-floor") as HTMLInputElement).value) || 0;
+    const destVal = ($("so-dest") as HTMLSelectElement).value;
+    const dest: StandingEndpoint = destVal === "hub" ? { kind: "hub" }
+      : destVal === "home" ? { kind: "home" }
+      : { kind: "system", id: destVal };
+    let trigger: StandingTrigger;
+    if (tkind === "percent_surplus") trigger = { kind: "percent_surplus", percent: Math.max(1, Math.min(100, Math.round(amount))), floor };
+    else if (tkind === "maintain_at_dest") trigger = { kind: "maintain_at_dest", target: amount };
+    else trigger = { kind: "above_threshold", threshold: amount };
+    const order: StandingOrder = {
+      id: 0, source: { kind: "system", id: source }, dest, commodity, trigger,
+      status: "active", next_eval_tick: 0, in_flight: null,
+    };
+    net.send({ type: "SetStandingOrder", order });
+  });
+}
+
+function updateStandingPanel(): void {
+  if (!standingBuilt) return;
+  // Rebuild source/dest selects only when the owned-systems set changes (so a
+  // mid-edit selection isn't clobbered every tick).
+  const owned = ownedSystems();
+  const ownedKey = owned.map((s) => s.id).join(",");
+  const srcSel = $("so-source") as HTMLSelectElement;
+  if (srcSel.dataset.key !== ownedKey) {
+    srcSel.dataset.key = ownedKey;
+    const destSel = $("so-dest") as HTMLSelectElement;
+    const prevSrc = srcSel.value, prevDest = destSel.value;
+    srcSel.innerHTML = owned.length
+      ? owned.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")
+      : `<option value="">(claim a system first)</option>`;
+    if (owned.some((s) => s.id === prevSrc)) srcSel.value = prevSrc;
+    destSel.innerHTML = `<option value="hub">hub (sell)</option><option value="home">home (store)</option>` +
+      owned.map((s) => `<option value="${s.id}">${s.name} (depot)</option>`).join("");
+    if (prevDest) destSel.value = prevDest;
+  }
+  const comSel = $("so-commodity") as HTMLSelectElement;
+  if (!comSel.options.length) comSel.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${c}</option>`).join("");
+
+  const list = $("standing-list");
+  const orders = state.standingOrders;
+  if (!orders.length) {
+    list.innerHTML = `<span class="dim">No standing orders yet — set one below. They run on the server while you're away.</span>`;
+    return;
+  }
+  list.innerHTML = orders
+    .map((o) => {
+      const flight = o.in_flight ? `<span class="run">● convoy en route</span>` : `<span class="dim">idle</span>`;
+      const paused = o.status === "paused" ? " · paused" : "";
+      return `<div class="so"><span class="x" data-clear="${o.id}" title="remove">✕</span>` +
+        `<b>#${o.id}</b> ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
+        `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
+    })
+    .join("");
+  list.querySelectorAll<HTMLElement>("[data-clear]").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (net) net.send({ type: "ClearStandingOrder", order_id: Number(el.dataset.clear) });
+    });
+  });
 }
 
 // --- Networking ------------------------------------------------------------
@@ -386,6 +492,8 @@ function join(): void {
           $("legend").style.display = "block";
           buildMarketPanel();
           $("market").style.display = "block";
+          buildStandingPanel();
+          $("standing").style.display = "block";
           void startRenderer();
           break;
         case "View":
@@ -397,7 +505,9 @@ function join(): void {
           state.ghosts = msg.ghosts;
           state.market = msg.market;
           state.wallet = msg.wallet;
+          state.standingOrders = msg.standing_orders;
           updateSystemPanel();
+          updateStandingPanel();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;

@@ -96,6 +96,10 @@ pub enum TradeEvent {
     LimitPlaced { player: PlayerId, side: Side, commodity: Commodity, units: u32, limit_price: f64 },
     /// A limit order (partially) cleared in the batch at the uniform price.
     LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A STANDING ORDER fired (§15): the rule auto-dispatched a convoy carrying
+    /// `units` of `commodity` from `source`. The "policy ran while you were away"
+    /// notification — feeds the check-in timeline.
+    AutoDispatched { player: PlayerId, commodity: Commodity, units: u32, source: EntityId, rule_id: u32 },
 }
 
 impl TradeEvent {
@@ -107,7 +111,8 @@ impl TradeEvent {
             | TradeEvent::SellDispatched { player, .. }
             | TradeEvent::Sold { player, .. }
             | TradeEvent::LimitPlaced { player, .. }
-            | TradeEvent::LimitFilled { player, .. } => *player,
+            | TradeEvent::LimitFilled { player, .. }
+            | TradeEvent::AutoDispatched { player, .. } => *player,
         }
     }
 }

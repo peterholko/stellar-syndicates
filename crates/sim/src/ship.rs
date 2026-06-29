@@ -100,12 +100,18 @@ pub enum ShipOrder {
 
 /// What a trade convoy does when it reaches its destination (§9). A buy spawns a
 /// delivery convoy (hub → home) that deposits cargo on arrival; a sell spawns a
-/// convoy (home → hub) that sells the cargo at the price-on-arrival.
+/// convoy (home → hub) that sells the cargo at the price-on-arrival; a standing
+/// logistics order (§15) can also spawn a convoy that deposits cargo into another
+/// system's stockpile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeMission {
     DeliverHome,
     SellAtHub,
+    /// Deposit the cargo into the destination system's stockpile on arrival (a
+    /// system→system supply convoy; §15). Cargo is lost if the destination is no
+    /// longer owned by the convoy's owner when it arrives (no gifting rivals).
+    DeliverToSystem { system: EntityId },
 }
 
 /// A patrolling raider's AUTONOMOUS defensive sortie (§5.1, Pillar 1): it has

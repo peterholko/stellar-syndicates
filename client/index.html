@@ -180,6 +180,33 @@
       #market button.buy:hover { background: #18402a; border-color: #2f6b46; }
       #market button.sell:hover { background: #402018; border-color: #6b3a2f; }
       #market .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; }
+
+      /* Standing orders panel (top-left, toggled with O) */
+      #standing {
+        position: fixed; top: 44px; left: 14px;
+        display: none;
+        width: 300px;
+        padding: 12px 14px;
+        background: rgba(8, 12, 22, 0.92);
+        border: 1px solid #1c2740; border-left: 2px solid #c99bff; border-radius: 8px;
+        font-size: 12px; z-index: 7;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      }
+      #standing .mhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+      #standing .mhead b { letter-spacing: 1px; }
+      #standing #standing-toggle { cursor: pointer; }
+      #standing-list { margin-bottom: 10px; line-height: 1.5; max-height: 220px; overflow-y: auto; }
+      #standing-list .so { border-left: 2px solid #3a2f58; padding: 4px 7px; margin-bottom: 5px; background: rgba(20,16,34,0.5); border-radius: 4px; color: var(--ink); }
+      #standing-list .so .meta { color: var(--dim); font-size: 10px; }
+      #standing-list .so .x { float: right; color: var(--dim); cursor: pointer; }
+      #standing-list .so .run { color: #7fdc8a; }
+      .so-form { border-top: 1px solid #18233b; padding-top: 8px; }
+      .so-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+      .so-row label { width: 56px; color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+      .so-row select, .so-row input { flex: 1; min-width: 0; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; font-size: 11px; padding: 3px 5px; }
+      #standing #so-add { width: 100%; margin-top: 2px; cursor: pointer; background: #1d1630; color: var(--ink); border: 1px solid #3a2f58; border-radius: 5px; font: inherit; font-size: 12px; padding: 6px 8px; }
+      #standing #so-add:hover { background: #2a1f48; border-color: #c99bff; }
+      #standing .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; color: var(--dim); }
       #market .accent { color: var(--accent); }
       #market-limit-price { width: 60px; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; padding: 2px 5px; }
       #market #market-orders { margin-top: 8px; font-size: 11px; line-height: 1.5; }
@@ -218,6 +245,28 @@
       <div class="mhint dim">Market: buy settles now (goods cross home, raidable); sell clears at price-on-arrival. Limit orders rest and clear in a periodic uniform-price batch (no snipe edge). Press <b>M</b> to toggle.</div>
     </div>
 
+    <!-- Standing logistics orders (§15) — automation that runs while you're away. -->
+    <div id="standing">
+      <div class="mhead"><b>STANDING ORDERS</b> <span id="standing-toggle" class="dim" title="Press O">✕</span></div>
+      <div id="standing-list" class="dim">No standing orders yet.</div>
+      <div class="so-form">
+        <div class="so-row"><label>From</label><select id="so-source"></select></div>
+        <div class="so-row"><label>Ship</label><select id="so-commodity"></select></div>
+        <div class="so-row"><label>When</label>
+          <select id="so-trigger">
+            <option value="above_threshold">stockpile ≥</option>
+            <option value="percent_surplus">% of surplus over</option>
+            <option value="maintain_at_dest">keep dest ≥</option>
+          </select>
+          <input id="so-amount" type="number" step="1" min="0" value="10" title="threshold / percent / target" />
+        </div>
+        <div class="so-row" id="so-floor-row"><label>%→keep</label><input id="so-floor" type="number" step="1" min="0" value="50" title="percent (1-100) and floor to leave behind" /></div>
+        <div class="so-row"><label>To</label><select id="so-dest"></select></div>
+        <button id="so-add">Add standing order</button>
+      </div>
+      <div class="mhint dim">Rules run on the server — online or off. Each spawns a raidable convoy when it fires; at most one in flight per rule. You set policy; geography + raids do the rest.</div>
+    </div>
+
     <div id="readout">
       Click one of your <b>ships</b> to select it (move/raid/recall), or click a
       <b>star system</b> to claim it and ship its production. Richer deposits lie
@@ -233,6 +282,7 @@
       <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
       <div class="row"><span class="dim">bigger glow = richer deposits (frontier &gt; core)</span></div>
       <div class="row"><span class="dim">select ship/system · click rival = raid · R = recall · Δt = staleness</span></div>
+      <div class="row"><span class="dim">M = market · O = standing orders (automation) · runs while you're offline</span></div>
     </div>
 
     <div id="join">
