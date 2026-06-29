@@ -133,14 +133,16 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
 // time; ✕ / Esc closes it → the map stays uncluttered. ----------------------
-type RailTab = "system" | "market" | "logistics" | "doctrine";
+// The right rail hosts only the SELECTION/holdings-context tabs. The Market is a
+// hub-wide institution → it lives in the TOP NAVBAR as its own overlay, not here.
+type RailTab = "system" | "logistics" | "doctrine";
 let railTab: RailTab = "system";
 let railBuilt = false;
 
 function setRailTab(tab: RailTab): void {
   railTab = tab;
-  const bodyId: Record<RailTab, string> = { system: "tab-system", market: "market", logistics: "standing", doctrine: "doctrine" };
-  for (const t of ["system", "market", "logistics", "doctrine"] as RailTab[]) {
+  const bodyId: Record<RailTab, string> = { system: "tab-system", logistics: "standing", doctrine: "doctrine" };
+  for (const t of ["system", "logistics", "doctrine"] as RailTab[]) {
     $(bodyId[t]).classList.toggle("is-active", t === tab);
   }
   document.querySelectorAll<HTMLElement>("#rail-tabs button").forEach((b) => {
@@ -149,7 +151,6 @@ function setRailTab(tab: RailTab): void {
   // Render the shown tab once on switch (each tab then refreshes per-View only
   // while it's the visible one — see the View handler — so hidden tabs don't churn).
   if (tab === "system") updateSystemTab();
-  else if (tab === "market") updateMarket();
   else if (tab === "logistics") updateStandingPanel();
   else if (tab === "doctrine") updateDoctrinePanel();
 }
@@ -173,6 +174,40 @@ function buildRail(): void {
     const b = (e.target as HTMLElement).closest("button");
     if (b?.dataset.tab) setRailTab(b.dataset.tab as RailTab);
   });
+  // Top-navbar destinations (hub-wide, system-independent): Market + check-in Log.
+  $("nav-market").addEventListener("click", toggleMarket);
+  $("nav-log").addEventListener("click", toggleCheckin);
+  $("market-close").addEventListener("click", closeMarket);
+}
+
+// --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
+function openMarket(): void {
+  $("market").classList.add("is-open");
+  $("nav-market").classList.add("is-active");
+  updateMarket();
+}
+function closeMarket(): void {
+  $("market").classList.remove("is-open");
+  $("nav-market").classList.remove("is-active");
+}
+function toggleMarket(): void {
+  if ($("market").classList.contains("is-open")) closeMarket();
+  else openMarket();
+}
+
+// --- Check-in modal (top-navbar destination; the welcome-back digest) ----------
+function openCheckin(): void {
+  $("checkin").style.display = "block";
+  $("nav-log").classList.add("is-active");
+  updateCheckinPanel();
+}
+function closeCheckin(): void {
+  $("checkin").style.display = "none";
+  $("nav-log").classList.remove("is-active");
+}
+function toggleCheckin(): void {
+  if ($("checkin").style.display === "none") openCheckin();
+  else closeCheckin();
 }
 
 // Click an own ship to select it; click elsewhere to order the selected ship
@@ -277,15 +312,15 @@ function installInteraction(): void {
     } else if (e.key === "s" || e.key === "S") {
       toggleRail("system");
     } else if (e.key === "m" || e.key === "M") {
-      toggleRail("market");
+      toggleMarket(); // hub-wide overlay, not a rail tab
     } else if (e.key === "o" || e.key === "O") {
       toggleRail("logistics");
     } else if (e.key === "f" || e.key === "F") {
       toggleRail("doctrine");
     } else if (e.key === "l" || e.key === "L") {
-      const ci = $("checkin");
-      ci.style.display = ci.style.display === "none" ? "block" : "none";
+      toggleCheckin();
     } else if (e.key === "Escape") {
+      closeMarket();
       closeRail();
     }
   });
@@ -378,7 +413,7 @@ function buildSystemTab(): void {
         if ([...sel.options].some((o) => o.value === sid)) sel.value = sid;
         break;
       }
-      case "market": openRail("market"); break;
+      case "market": openMarket(); break;
     }
   });
 }
@@ -842,7 +877,7 @@ let checkinBuilt = false;
 function buildCheckinPanel(): void {
   if (checkinBuilt) return;
   checkinBuilt = true;
-  $("checkin-toggle").addEventListener("click", () => { $("checkin").style.display = "none"; });
+  $("checkin-toggle").addEventListener("click", closeCheckin);
 }
 
 function updateCheckinPanel(): void {
@@ -900,9 +935,9 @@ function join(): void {
           hud.style.display = "flex";
           $("readout").style.display = "block";
           $("legend").style.display = "block";
-          // Wire the unified rail + all its tab bodies once. The rail stays CLOSED
-          // on join so the map is uncluttered — opened by clicking a system or via
-          // S/M/O/F. (Only the check-in modal auto-opens — the welcome-back digest.)
+          // Wire the rail (System/Logistics/Doctrine), the navbar Market overlay,
+          // and the navbar Log. The rail + Market stay CLOSED on join so the map is
+          // uncluttered — opened by clicking a system, S/O/F, or the navbar/M.
           buildRail();
           buildSystemTab();
           buildMarketPanel();
@@ -914,8 +949,7 @@ function join(): void {
           // next Timeline digest, and open the check-in panel for the welcome-back.
           state.awaySet = false;
           buildCheckinPanel();
-          updateCheckinPanel();
-          $("checkin").style.display = "block";
+          openCheckin();
           void startRenderer();
           break;
         case "View":
@@ -936,10 +970,11 @@ function join(): void {
           // (they re-render on show via setRailTab). Each updater also guards itself.
           if ($("rail").classList.contains("is-open")) {
             if (railTab === "system") updateSystemTab();
-            else if (railTab === "market") updateMarket();
             else if (railTab === "logistics") updateStandingPanel();
             else if (railTab === "doctrine") updateDoctrinePanel();
           }
+          // The Market is a navbar overlay now — refresh it when open.
+          if ($("market").classList.contains("is-open")) updateMarket();
           updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.

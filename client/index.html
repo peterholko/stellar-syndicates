@@ -78,7 +78,9 @@
       #hud {
         position: fixed; top: 0; left: 0; right: 0;
         display: none;
-        gap: 22px;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px 18px;
         padding: 8px 14px;
         background: rgba(8, 12, 22, 0.82);
         border-bottom: 1px solid #18233b;
@@ -127,7 +129,7 @@
 
       /* Delayed reports log (top-center) */
       #reports-log {
-        position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+        position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
         display: flex; flex-direction: column; gap: 6px;
         width: min(560px, 80vw);
         z-index: 6; pointer-events: none;
@@ -201,7 +203,7 @@
 
       /* ---- right-docked rail ---- */
       #rail {
-        position: fixed; top: 44px; right: 14px; bottom: 14px;
+        position: fixed; top: 58px; right: 14px; bottom: 14px;
         width: 320px;
         display: none; flex-direction: column;
         background: var(--panel-bg);
@@ -329,6 +331,27 @@
       .mkt-orders { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
       .mkt-orders .ord { display: flex; align-items: center; gap: 6px; font-size: 11px; }
       .mkt-orders .ord .o-rm { margin-left: auto; color: var(--dim); cursor: pointer; }
+
+      /* ---- top navbar destinations (hub-wide, in the HUD) ---- */
+      .hud-nav { display: flex; gap: 6px; align-items: center; }
+      .hud-btn { cursor: pointer; background: rgba(79,195,255,0.08); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; font: inherit; font-size: 11px; letter-spacing: 0.3px; padding: 3px 9px; white-space: nowrap; }
+      .hud-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .hud-btn.is-active { background: var(--accent); color: #04121d; font-weight: 700; border-color: var(--accent); }
+      .hud-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+      /* ---- Hub Exchange overlay (opened from the navbar / M — system-independent) ---- */
+      #market {
+        position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+        display: none;
+        width: 360px; max-height: 78vh; overflow-y: auto;
+        padding: 14px 16px;
+        background: var(--panel-bg);
+        border: 1px solid var(--border); border-top: 2px solid var(--accent); border-radius: 8px;
+        box-shadow: var(--panel-shadow); backdrop-filter: blur(4px);
+        font-size: 12px; z-index: 8;
+      }
+      #market.is-open { display: block; }
+      #market #market-close { margin-left: 2px; }
     </style>
   </head>
   <body>
@@ -344,6 +367,10 @@
       <div class="item"><span class="k">Credits</span><span class="v accent" id="hud-credits">—</span></div>
       <div class="item"><span class="k">Equity</span><span class="v" id="hud-equity">—</span></div>
       <div class="spacer"></div>
+      <nav class="hud-nav" aria-label="Hub destinations">
+        <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)">◫ Market</button>
+        <button id="nav-log" class="hud-btn" type="button" title="Check-in log (L)">⌖ Log</button>
+      </nav>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
     </div>
 
@@ -356,7 +383,6 @@
       <div class="rail__tabs">
         <div class="seg" id="rail-tabs">
           <button data-tab="system">System</button>
-          <button data-tab="market">Market</button>
           <button data-tab="logistics">Logistics</button>
           <button data-tab="doctrine">Doctrine</button>
         </div>
@@ -365,28 +391,6 @@
       <div class="rail__body">
         <!-- SYSTEM tab — rich master→detail star-system view, built by JS. -->
         <div id="tab-system" class="tab"></div>
-
-        <!-- MARKET tab — the hub exchange. (Part 2 enriches this with sparklines
-             + composer; here it keeps the working table.) Inner IDs preserved. -->
-        <div id="market" class="tab">
-          <div class="panel-title"><div><div class="eyebrow">the shared commons · light-delayed</div><h2>Hub Exchange</h2></div><div class="panel-title__right"><span id="market-fresh" class="badge badge--neutral"></span></div></div>
-          <div id="market-wallet" class="stat-strip"></div>
-          <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
-          <div id="market-board"></div>
-          <div class="composer">
-            <div class="composer__row"><label>Order</label>
-              <div class="seg" id="mk-side"><button data-side="buy" class="is-active">Buy</button><button data-side="sell">Sell</button></div>
-              <span class="composer__sel" id="mk-sel">—</span>
-            </div>
-            <div class="composer__row"><label>Qty</label><input type="number" id="mk-qty" min="1" value="50" />
-              <label class="lim"><input type="checkbox" id="mk-limit-on" /> limit @</label><input type="number" id="mk-limit" step="0.1" placeholder="mkt" disabled /></div>
-            <div class="composer__preview" id="mk-preview"></div>
-            <button class="act act--primary" id="mk-submit">Buy</button>
-            <div class="mhint" id="mk-feedback"></div>
-          </div>
-          <div class="mkt-orders" id="market-orders"></div>
-          <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
-        </div>
 
         <!-- LOGISTICS tab — standing orders (§15), automation that runs offline. -->
         <div id="standing" class="tab">
@@ -422,6 +426,28 @@
       </div>
     </div>
 
+    <!-- HUB EXCHANGE — a galaxy-wide institution, NOT tied to any selected system,
+         so it opens from the TOP NAVBAR (and M), independent of the right rail. -->
+    <div id="market">
+      <div class="panel-title"><div><div class="eyebrow">the shared commons · light-delayed</div><h2>Hub Exchange</h2></div><div class="panel-title__right"><span id="market-fresh" class="badge badge--neutral"></span><button class="rail__close" id="market-close" type="button" title="Close (Esc)" aria-label="Close market">✕</button></div></div>
+      <div id="market-wallet" class="stat-strip"></div>
+      <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
+      <div id="market-board"></div>
+      <div class="composer">
+        <div class="composer__row"><label>Order</label>
+          <div class="seg" id="mk-side"><button data-side="buy" class="is-active">Buy</button><button data-side="sell">Sell</button></div>
+          <span class="composer__sel" id="mk-sel">—</span>
+        </div>
+        <div class="composer__row"><label>Qty</label><input type="number" id="mk-qty" min="1" value="50" />
+          <label class="lim"><input type="checkbox" id="mk-limit-on" /> limit @</label><input type="number" id="mk-limit" step="0.1" placeholder="mkt" disabled /></div>
+        <div class="composer__preview" id="mk-preview"></div>
+        <button class="act act--primary" id="mk-submit">Buy</button>
+        <div class="mhint" id="mk-feedback"></div>
+      </div>
+      <div class="mkt-orders" id="market-orders"></div>
+      <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
+    </div>
+
     <!-- Check-in timeline + attention (§16, Layer 3) — the welcome-back digest. -->
     <div id="checkin">
       <div class="mhead"><b>CHECK-IN</b> <span id="checkin-toggle" class="dim" title="Press L">✕</span></div>
@@ -443,7 +469,8 @@
       <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
       <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
       <div class="row"><span class="dim">click a system = open it · click rival = raid · R = recall · Δt = staleness</span></div>
-      <div class="row"><span class="dim">workspace: S/M = system/market · O = logistics · F = doctrine · Esc = close · L = check-in</span></div>
+      <div class="row"><span class="dim">rail: S = system · O = logistics · F = doctrine · Esc = close</span></div>
+      <div class="row"><span class="dim">top bar: M = market · L = check-in log</span></div>
     </div>
 
     <div id="join">
