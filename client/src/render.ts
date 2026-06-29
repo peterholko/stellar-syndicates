@@ -194,15 +194,33 @@ export class Renderer {
         }
       }
       const glow = Math.min(3 + valueRate * 0.45, 18);
-      const ring = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
 
       const g = new Graphics();
-      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 });
-      if (selected) g.circle(s.x, s.y, glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
-      if (owner !== null) {
-        g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: ring, alpha: mine ? 0.95 : 0.8 });
+      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 }); // geology value-glow
+
+      // Ownership treatment — own and rival are a matched pair (halo + bold ring),
+      // so territory reads at a glance; unclaimed systems stay deliberately subdued
+      // (no ring) so they recede. Ownership is still light-gated upstream: a rival
+      // only appears as rival once their claim's light has reached this player.
+      if (mine) {
+        // Friendly territory: cyan halo + bold ring.
+        g.circle(s.x, s.y, 10).fill({ color: COL_OWN, alpha: 0.10 });
+        g.circle(s.x, s.y, 7).stroke({ width: 1.8, color: COL_OWN, alpha: 0.95 });
+      } else if (rival) {
+        // Rival / contested territory: a slow-breathing red danger halo + a bold
+        // DOUBLE ring — unmistakable as hostile-held, and clearly distinct from the
+        // fast-pulsing raider-threat marker (slower cadence, static rings, sized to
+        // the system body, softer COL_OTHER hue vs. the alert COL_THREAT red).
+        const breath = 0.5 + 0.5 * Math.sin(performance.now() / 1100);
+        g.circle(s.x, s.y, 13).fill({ color: COL_OTHER, alpha: 0.05 + 0.07 * breath });
+        g.circle(s.x, s.y, 9.5).stroke({ width: 1, color: COL_OTHER, alpha: 0.4 });
+        g.circle(s.x, s.y, 7).stroke({ width: 2, color: COL_OTHER, alpha: 0.98 });
       }
-      g.circle(s.x, s.y, 2.2).fill({ color: ring, alpha: 0.95 });
+      if (selected) {
+        g.circle(s.x, s.y, owner !== null ? 12 : glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+      }
+      const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
+      g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
       this.systemsLayer.addChild(g);
 
       // Label: name; your own systems also show their top stockpiled good.
@@ -215,7 +233,7 @@ export class Renderer {
       const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
       t.anchor.set(0, 0.5);
       t.position.set(s.x + glow + 2, s.y);
-      t.alpha = mine ? 0.95 : rival ? 0.78 : selected ? 0.8 : 0.5;
+      t.alpha = mine ? 0.95 : rival ? 0.88 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
     }
   }
