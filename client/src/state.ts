@@ -2,7 +2,7 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, FleetDoctrine, GalaxyInfo, GhostView, MarketView, PlayerId, StandingOrder, SystemStateView, Vec2, WalletView } from "./protocol";
+import type { AnchorView, FleetDoctrine, GalaxyInfo, GhostView, MarketView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
@@ -51,6 +51,14 @@ export interface ViewState {
   standingOrders: StandingOrder[];
   /// The player's own fleet doctrine (§16), fresh from the View.
   doctrine: FleetDoctrine;
+  /// The check-in timeline (§16, Layer 3): what became observable, newest last.
+  timeline: TimelineEntry[];
+  /// Sim-time the player was last online — the "while you were away" boundary.
+  /// Captured from the first Timeline message of the session.
+  awaySince: number;
+  /// Whether `awaySince` has been latched this session (so live re-sends don't
+  /// move the boundary).
+  awaySet: boolean;
   /// Wall-clock ms when the last View arrived, for smooth extrapolation
   /// between the ~10 Hz server updates and the 60 fps render.
   lastViewWallMs: number;
@@ -91,6 +99,9 @@ export function initialState(): ViewState {
     wallet: null,
     standingOrders: [],
     doctrine: defaultDoctrine(),
+    timeline: [],
+    awaySince: 0,
+    awaySet: false,
     lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,

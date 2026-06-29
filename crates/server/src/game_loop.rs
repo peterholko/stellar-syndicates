@@ -26,6 +26,7 @@ use crate::protocol::{
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
+use crate::timeline::Timeline;
 use crate::view::{self, PositionHistory, PriceHistory};
 
 /// Push a per-player message every N sim ticks. At 30 Hz, N=3 → ~10 Hz network
@@ -48,6 +49,11 @@ struct GameLoop {
     /// Delayed delivery of discrete reports (raid outcomes) — each player learns
     /// them on their own clock (§8).
     reports: ReportScheduler,
+    /// Per-player retained check-in timeline (§16, Layer 3) — what became
+    /// observable, buffered across disconnects, for the "welcome back" digest.
+    timeline: Timeline,
+    /// Last timeline length pushed to each player, so we only re-send when it grows.
+    timeline_sent: HashMap<PlayerId, usize>,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
     persistence: PersistenceHandle,
@@ -72,6 +78,8 @@ impl GameLoop {
             history,
             prices,
             reports: ReportScheduler::new(),
+            timeline: Timeline::new(),
+            timeline_sent: HashMap::new(),
             pending: Vec::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
@@ -182,6 +190,14 @@ impl GameLoop {
                         },
                     },
                 );
+                // Welcome-back: the check-in digest of what became observable while
+                // away (§16, Layer 3). `away_since` is their last-online time, so the
+                // client can mark entries newer than it as "while you were away".
+                let (entries, away_since) = self.timeline.digest(player_id);
+                self.timeline_sent.insert(player_id, entries.len());
+                self.sessions
+                    .send_to_conn(conn_id, ServerMsg::Timeline { entries, away_since });
+
                 // Ensure the corporation exists in the sim (idempotent).
                 self.pending.push(Command::AddPlayer {
                     id: player_id,
@@ -301,6 +317,11 @@ impl GameLoop {
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
         self.reports.ingest(&events);
+        // Record events into the per-player check-in timeline (§16, Layer 3) at
+        // their observable time, then promote any whose light has now arrived —
+        // for ALL players, online or off (offline buffering is the whole point).
+        self.timeline.ingest(&events, &self.world);
+        self.timeline.promote(self.world.time);
         for ev in &events {
             match &ev.payload {
                 // Route economy news to the owning player immediately (their own
@@ -360,6 +381,7 @@ impl GameLoop {
         // (AddPlayer not processed) simply gets nothing this tick.
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
+        let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
         for player_id in self.sessions.online_players() {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
@@ -432,6 +454,17 @@ impl GameLoop {
                     due.into_iter().map(|r| ServerMsg::Report { report: r }).collect(),
                 );
             }
+
+            // Mark the player online (advances their "away" boundary), and if their
+            // check-in timeline gained entries since we last pushed (e.g. an
+            // auto-dispatch or a battle whose light just arrived), re-send the digest.
+            self.timeline.mark_seen(player_id, now);
+            let jlen = self.timeline.journal_len(player_id);
+            if self.timeline_sent.get(&player_id).copied().unwrap_or(0) != jlen {
+                self.timeline_sent.insert(player_id, jlen);
+                let (entries, away_since) = self.timeline.digest(player_id);
+                timelines.insert(player_id, ServerMsg::Timeline { entries, away_since });
+            }
         }
 
         for (_conn_id, info) in self.sessions.iter_conns() {
@@ -445,6 +478,9 @@ impl GameLoop {
                 for r in reps {
                     let _ = info.outbound.try_send(r.clone());
                 }
+            }
+            if let Some(tl) = timelines.get(&info.player_id) {
+                let _ = info.outbound.try_send(tl.clone());
             }
         }
     }

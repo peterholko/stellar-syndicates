@@ -145,6 +145,28 @@ pub struct RaidReport {
     pub you: Role,
 }
 
+/// Severity of a check-in timeline entry — drives the client's colour/icon.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelineSeverity {
+    Good,
+    Bad,
+    Warn,
+    Info,
+}
+
+/// One entry in the player's check-in timeline (§16, Layer 3): a discrete thing
+/// that became OBSERVABLE to them at `at_time` (their own clock — own economy is
+/// instant, distant battles/rival claims arrive light-delayed). The server
+/// composes the human-readable `text`; the client lists entries newest-first.
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineEntry {
+    /// Sim-time the news became observable to this player.
+    pub at_time: f64,
+    pub severity: TimelineSeverity,
+    pub text: String,
+}
+
 /// One resource deposit on a system, as the client sees it (static geology,
 /// public knowledge — prospecting/fog of deposits is deferred). Lets the client
 /// render the frontier-richer gradient and the system's would-be production.
@@ -302,6 +324,14 @@ pub enum ServerMsg {
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.
     Report { report: RaidReport },
+
+    /// The player's check-in timeline (§16, Layer 3) — the retained digest of what
+    /// became OBSERVABLE to them, buffered across disconnects. Sent on connect (the
+    /// "welcome back" digest) and again whenever it grows. `away_since` is the
+    /// sim-time they were last online, so the client can split "while you were
+    /// away" from earlier entries. Awareness only — never new information, never
+    /// faster than light.
+    Timeline { entries: Vec<TimelineEntry>, away_since: f64 },
 
     /// Economy news for this player (§9): a buy settled, a delivery arrived, a
     /// sell was dispatched or cleared.

@@ -156,6 +156,15 @@ export interface AnchorView {
   owner: PlayerId | null;
 }
 
+// --- Check-in timeline (§16, Layer 3) — the retained, server-composed digest of
+// what became OBSERVABLE to the player, buffered across disconnects. ---
+export type TimelineSeverity = "good" | "bad" | "warn" | "info";
+export interface TimelineEntry {
+  at_time: number; // sim-time the news became observable to this player
+  severity: TimelineSeverity;
+  text: string;
+}
+
 // A ship as the player perceives it — a delayed "ghost" (§6). `pos` is where
 // the object was when its arriving light left it; `age` is how stale that is;
 // `uncertainty` is how far it could have moved since (`age × max_speed`). This
@@ -251,6 +260,7 @@ export type ServerMsg =
       doctrine: FleetDoctrine;
     }
   | { type: "Report"; report: RaidReport }
+  | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }
   | { type: "Trade"; trade: TradeEvent }
   | {
       // OUTBOUND order feedback: the violet comet, command center → ship, over

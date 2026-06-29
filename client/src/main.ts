@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type FleetDoctrine, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type FleetDoctrine, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type TimelineEntry, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -180,6 +180,9 @@ function installInteraction(): void {
     } else if (e.key === "f" || e.key === "F") {
       const d = $("doctrine");
       d.style.display = d.style.display === "none" ? "block" : "none";
+    } else if (e.key === "l" || e.key === "L") {
+      const ci = $("checkin");
+      ci.style.display = ci.style.display === "none" ? "block" : "none";
     }
   });
 }
@@ -526,6 +529,76 @@ function updateDoctrinePanel(): void {
   }
 }
 
+// --- Check-in loop (§16, Layer 3) — timeline digest + attention surfacing ----
+// Presence buys AWARENESS, not advantage: when you check in, here's what became
+// observable while you were away, and the decisions waiting for you. The timeline
+// is server-composed (light-correct, buffered offline); the attention items are
+// derived right here from the player's own View — no extra information, just a
+// summary of what they can already see.
+function agoLabel(at: number): string {
+  const d = Math.max(0, state.simTime - at);
+  return d < 90 ? `${d.toFixed(0)}s ago` : `${(d / 60).toFixed(0)}m ago`;
+}
+
+type Attn = { severity: TimelineEntry["severity"]; text: string };
+function computeAttention(): Attn[] {
+  if (state.playerId === null) return [];
+  const items: Attn[] = [];
+  const owned = state.systems.filter((s) => s.owner === state.playerId);
+  const ownedIds = new Set(owned.map((s) => s.id));
+  const active = state.standingOrders.filter((o) => o.status === "active");
+  const IDLE = 30;
+  // 1. Idle stockpile not covered by a standing order sourced there → automate it.
+  for (const s of owned) {
+    const total = (s.stockpile ?? []).reduce((n, k) => n + k.units, 0);
+    const covered = active.some((o) => o.source.kind === "system" && o.source.id === s.id);
+    if (total >= IDLE && !covered) {
+      items.push({ severity: "warn", text: `${systemName(s.id)}: ${total} units sitting idle — set a standing order (O) or ship it.` });
+    }
+  }
+  // 2. A rule that points at a system you no longer hold → fix it.
+  for (const o of active) {
+    const refs: string[] = [];
+    if (o.source.kind === "system" && !ownedIds.has(o.source.id)) refs.push(systemName(o.source.id));
+    if (o.dest.kind === "system" && !ownedIds.has(o.dest.id)) refs.push(systemName(o.dest.id));
+    if (refs.length) items.push({ severity: "warn", text: `Standing order #${o.id} targets ${refs.join(" & ")} — you no longer hold it; update it (O).` });
+  }
+  // 3. General nudge toward automation if you hold producers but run nothing.
+  if (owned.length > 0 && active.length === 0 && items.length === 0) {
+    items.push({ severity: "info", text: `You hold ${owned.length} system${owned.length > 1 ? "s" : ""} but run no standing orders — automate supply so it works while you're away (O).` });
+  }
+  return items;
+}
+
+let checkinBuilt = false;
+function buildCheckinPanel(): void {
+  if (checkinBuilt) return;
+  checkinBuilt = true;
+  $("checkin-toggle").addEventListener("click", () => { $("checkin").style.display = "none"; });
+}
+
+function updateCheckinPanel(): void {
+  if (!checkinBuilt) return;
+  const tl = state.timeline;
+  const away = tl.filter((e) => e.at_time > state.awaySince);
+  const earlier = tl.filter((e) => e.at_time <= state.awaySince);
+  const row = (e: TimelineEntry) => `<div class="ci ${e.severity}">${e.text} <span class="t">${agoLabel(e.at_time)}</span></div>`;
+  const awayHtml = away.length
+    ? away.slice().reverse().map(row).join("")
+    : `<span class="dim">Nothing new since you were last here.</span>`;
+  const earlierHtml = earlier.length
+    ? `<div class="ci-sub">Earlier</div>` + earlier.slice().reverse().map(row).join("")
+    : "";
+  $("checkin-timeline").innerHTML =
+    `<div class="ci-sub">Since you were away${away.length ? ` (${away.length})` : ""}</div>${awayHtml}${earlierHtml}`;
+
+  const att = computeAttention();
+  $("checkin-attention").innerHTML = att.length
+    ? att.map((a) => `<div class="ci ${a.severity}">⚑ ${a.text}</div>`).join("")
+    : `<span class="dim">Nothing needs your attention.</span>`;
+  $("checkin-att-head").textContent = `Needs attention${att.length ? ` (${att.length})` : ""}`;
+}
+
 // --- Networking ------------------------------------------------------------
 let net: Net | null = null;
 
@@ -566,6 +639,12 @@ function join(): void {
           buildDoctrinePanel();
           updateDoctrinePanel();
           $("doctrine").style.display = "block";
+          // Fresh session: re-latch the "while you were away" boundary from the
+          // next Timeline digest, and open the check-in panel for the welcome-back.
+          state.awaySet = false;
+          buildCheckinPanel();
+          updateCheckinPanel();
+          $("checkin").style.display = "block";
           void startRenderer();
           break;
         case "View":
@@ -582,6 +661,7 @@ function join(): void {
           updateSystemPanel();
           updateStandingPanel();
           updateDoctrinePanel();
+          updateCheckinPanel(); // refresh attention + ages against fresh state
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
@@ -614,6 +694,17 @@ function join(): void {
           delete state.raids[msg.report.attacker_ship];
           break;
         }
+        case "Timeline":
+          state.timeline = msg.entries;
+          // Latch the "while you were away" boundary from the FIRST digest of the
+          // session (the connect message); live re-sends keep that boundary so the
+          // away-section doesn't empty out mid-session.
+          if (!state.awaySet) {
+            state.awaySince = msg.away_since;
+            state.awaySet = true;
+          }
+          updateCheckinPanel();
+          break;
         case "Trade":
           addTradeNews(msg.trade);
           break;

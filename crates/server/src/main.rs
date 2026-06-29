@@ -18,6 +18,7 @@ mod persistence;
 mod protocol;
 mod reports;
 mod session;
+mod timeline;
 mod view;
 mod ws;
 

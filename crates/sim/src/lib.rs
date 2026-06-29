@@ -32,7 +32,7 @@ pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{
     DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine, RetreatThreshold,
 };
-pub use event::{Event, EventPayload, RaidOutcome, TradeEvent};
+pub use event::{DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
 pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
