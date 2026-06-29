@@ -267,6 +267,32 @@ function installInteraction(): void {
       return;
     }
 
+    // A home ANCHOR (command base) — the prominent "small circle" that marks where
+    // a corporation commands from. It is NOT a star system (no deposits to claim),
+    // so it has no System view; but clicking it should explain what it is instead
+    // of feeling dead. Light-gated: a rival's base reveals nothing beyond "they're
+    // here" (their systems/stockpiles/orders never leak). Own ships are picked
+    // above, so the parked starting fleet still selects normally.
+    let anchorPick: import("./protocol").AnchorView | null = null;
+    let bestA = 14;
+    for (const a of state.anchors) {
+      const s = renderer.worldToScreen(a.pos);
+      const d = Math.hypot(s.x - sx, s.y - sy);
+      if (d < bestA) {
+        bestA = d;
+        anchorPick = a;
+      }
+    }
+    if (anchorPick) {
+      const ownA = anchorPick.owner !== null && anchorPick.owner === state.playerId;
+      readout().innerHTML = ownA
+        ? `<b>Your command center</b> — your vantage on the galaxy. Everything you see is light-delayed from here; nothing reaches you faster than its light.`
+        : anchorPick.owner !== null
+          ? `<b>Rival command base</b> — a rival corporation commands from here. <span class="dim">You can see the base, but its systems, stockpiles &amp; orders never leak. To contest a rival, <b>claim and hold the star systems</b> around it.</span>`
+          : `<b>Empty command site</b> — no corporation is based here.`;
+      return;
+    }
+
     if (!state.selectedShipId || !net) return;
     const sel = state.ghosts.find((x) => x.id === state.selectedShipId);
     if (!sel) return;
