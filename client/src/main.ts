@@ -55,41 +55,17 @@ async function startRenderer(): Promise<void> {
   requestAnimationFrame(frame);
 }
 
-// Advance the traveling-signal visualizations each frame. This is the ONLY
-// client-side timing computation: interpolating progress between server-provided
-// endpoints/times (and revealing a report's verdict when its ring arrives). No
-// delay is computed from truth or a client-side c.
+// Advance the OUTBOUND order signal each frame (the only traveling signal). This
+// is the ONLY client-side timing computation: interpolating outbound progress
+// between server-provided times. No delay is computed from truth or a client c.
+// The signal is dropped once the order reaches the ship — from then on the ship's
+// reaction is seen directly on the map (no inbound/response animation).
 function updateSignals(): void {
   const estSimNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
-  // Order round trip: comet OUT to the ship, then the response light coming
-  // BACK; dropped once that return light reaches the command center (which is
-  // when the ghost's new course becomes visible — so the gap is never dead).
   state.commandSignals = state.commandSignals.filter((s) => {
+    if (estSimNow >= s.arrive) return false; // order has arrived — the comet is done
     const outSpan = s.arrive - s.depart;
-    const backSpan = s.observe - s.arrive;
-    if (estSimNow < s.arrive) {
-      s.phase = "out";
-      s.pOut = outSpan > 1e-3 ? (estSimNow - s.depart) / outSpan : 1;
-      s.pBack = 0;
-    } else if (estSimNow < s.observe) {
-      s.phase = "back";
-      s.pOut = 1;
-      s.pBack = backSpan > 1e-3 ? (estSimNow - s.arrive) / backSpan : 1;
-    } else {
-      return false; // response light has arrived; the ghost now shows the change
-    }
-    s.remainingS = Math.max(0, s.observe - estSimNow);
-    return true;
-  });
-  // Inbound rings: progress over the server-provided light delay; reveal the
-  // verdict on arrival at the command center.
-  const nowMs = performance.now();
-  state.reportSignals = state.reportSignals.filter((s) => {
-    s.progress = (nowMs - s.startWallMs) / (s.durationS * 1000);
-    if (s.progress >= 1) {
-      addReport(s.report);
-      return false;
-    }
+    s.pOut = outSpan > 1e-3 ? (estSimNow - s.depart) / outSpan : 1;
     return true;
   });
 }
@@ -164,6 +140,7 @@ function installInteraction(): void {
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
       net.send({ type: "CommitRaid", raider_id: sel.id, target_id: tgt.id });
+      state.raids[sel.id] = tgt.id; // drive the soft intercept-estimate overlay
       delete state.orders[sel.id];
       readout().innerHTML =
         `Raid committed: your <b>${sel.kind}</b> → rival <b>${tgt.kind}</b>. ` +
@@ -190,6 +167,7 @@ function installInteraction(): void {
     if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
     if ((e.key === "r" || e.key === "R") && state.selectedShipId && net) {
       net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
+      delete state.raids[state.selectedShipId]; // break off the intercept estimate
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
@@ -419,13 +397,6 @@ function join(): void {
           state.ghosts = msg.ghosts;
           state.market = msg.market;
           state.wallet = msg.wallet;
-          // Remember each ship's latest ghost so a destruction report arriving the
-          // same tick the server drops the ghost can still snapshot it (see below).
-          {
-            const nowW = performance.now();
-            for (const g of msg.ghosts) state.recentGhosts.set(g.id, { ghost: g, seenWallMs: nowW });
-            for (const [id, e] of state.recentGhosts) if (nowW - e.seenWallMs > 5000) state.recentGhosts.delete(id);
-          }
           updateSystemPanel();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
@@ -435,46 +406,28 @@ function join(): void {
           updateMarket();
           break;
         case "CommandSignal": {
-          // Your order is crossing space to your ship, and you'll see its
-          // response a round trip later. Replace any in-flight signal for the
-          // same ship (a newer order supersedes).
+          // Your order is crossing space to your ship (the violet comet); you'll
+          // see the ship react on the map when its light arrives. Replace any
+          // in-flight signal for the same ship (a newer order supersedes).
           state.commandSignals = state.commandSignals.filter((s) => s.shipId !== msg.ship_id);
           state.commandSignals.push({
             shipId: msg.ship_id,
             depart: msg.depart_time,
             arrive: msg.arrive_time,
-            observe: msg.observe_time,
-            phase: "out",
             pOut: 0,
-            pBack: 0,
-            remainingS: 0,
           });
           break;
         }
         case "Report": {
-          // The news has become observable. Visualize it crossing home from the
-          // resolution point; the verdict is revealed when the ring arrives at
-          // the command center (in updateSignals). Any ship this report destroyed
-          // is kept flying as a ghost until that ring lands, so the convoy (or
-          // raider) vanishes IN SYNC with the yellow signal — the ring IS the
-          // destruction's light arriving home (§6).
-          const rep = msg.report;
-          const capturedWallMs = performance.now();
-          const deadIds: string[] = [];
-          if (rep.outcome === "target_destroyed" || rep.outcome === "both_destroyed") deadIds.push(rep.target_ship);
-          if (rep.outcome === "attacker_destroyed" || rep.outcome === "both_destroyed") deadIds.push(rep.attacker_ship);
-          const doomed = deadIds
-            .map((id) => state.recentGhosts.get(id))
-            .filter((e): e is NonNullable<typeof e> => !!e && capturedWallMs - e.seenWallMs < 3000)
-            .map((e) => ({ ghost: e.ghost, capturedWallMs }));
-          state.reportSignals.push({
-            from: rep.pos,
-            startWallMs: capturedWallMs,
-            durationS: Math.max(rep.age, 0.6),
-            report: rep,
-            progress: 0,
-            doomed,
-          });
+          // The server delivers this exactly when the destruction's light reaches
+          // THIS player's command center — the same moment the doomed ghost
+          // vanishes on their map at the kill site. So we just NOTIFY now: no
+          // travelling ring (the map already IS the inbound feed). Two players at
+          // different distances are notified at different times, each synced to
+          // when they see it (§6).
+          addReport(msg.report);
+          // The raid is over — drop its intercept estimate.
+          delete state.raids[msg.report.attacker_ship];
           break;
         }
         case "Trade":

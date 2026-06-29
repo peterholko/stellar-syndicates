@@ -37,16 +37,13 @@ const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
-const COL_REPORT = 0xffd24a; // inbound result rings (gold)
+const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
+const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
-// Grace before a server-dropped ghost's sprite is destroyed — bridges the brief
-// gap between a destroyed ship leaving the view and its destruction report
-// arriving to claim it as a doomed (held-until-its-ring-lands) ghost.
-const GHOST_GRACE_MS = 450;
 
 interface GhostSprite {
   container: Container;
@@ -55,14 +52,6 @@ interface GhostSprite {
   label: Text;
   ring: Graphics; // selection ring
   seen: boolean;
-  /// True on the frames this sprite was drawn as a DOOMED ghost (a destroyed ship
-  /// held until its result ring lands). When such a sprite goes unseen, the ring
-  /// has just arrived → remove it immediately (exact sync). A sprite the server
-  /// merely stopped sending gets a short grace instead, so the ~0.2 s gap between
-  /// a convoy's vanish and its destruction report can't blink it out.
-  wasDoomed: boolean;
-  /// Wall-ms this sprite first went unseen (for the grace), or null while seen.
-  unseenSince: number | null;
 }
 
 export class Renderer {
@@ -73,10 +62,11 @@ export class Renderer {
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
+  private interceptGfx = new Graphics(); // soft intercept-estimate zones
   private ghostsLayer = new Container();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
-  private signalLabels = new Map<string, Text>();
+  private interceptLabels = new Map<string, Text>();
   private ghosts = new Map<string, GhostSprite>();
 
   private galaxy: GalaxyInfo | null = null;
@@ -100,6 +90,7 @@ export class Renderer {
       this.anchorsLayer,
       this.routesGfx, // convoy broadcast routes, under ghosts
       this.orderLayer,
+      this.interceptGfx, // soft intercept estimate, under the ghosts it guides
       this.ghostsLayer,
       this.signalsLayer,
     );
@@ -253,6 +244,71 @@ export class Renderer {
     }
   }
 
+  /// Soft, fuzzy INTERCEPT ESTIMATES for committed raids (§7/§8). Computed
+  /// CRUDELY — a constant-velocity projection from the delayed ghosts, ignoring
+  /// acceleration and the light-delayed steer-and-correct pursuit — so it is
+  /// EXPECTED to drift from the real outcome. Rendered in the sensor-circle idiom
+  /// (translucent, soft, concentric) precisely so it reads as "best guess, about
+  /// here," the way a sensor circle reads as a soft boundary — honest uncertainty,
+  /// not a precise promise.
+  private drawIntercepts(state: ViewState): void {
+    const g = this.interceptGfx;
+    g.clear();
+    const live = new Set<string>();
+    if (this.galaxy) {
+      const raiderSpeed = Math.max(this.galaxy.raider_speed || 100, 1);
+      for (const [raiderId, targetId] of Object.entries(state.raids)) {
+        const r = state.ghosts.find((x) => x.id === raiderId);
+        const t = state.ghosts.find((x) => x.id === targetId);
+        if (!r || !t) continue; // a ship left the view — no guess to draw
+
+        // Crude constant-velocity intercept: ETA ≈ range / cruise (a 0.7 fudge
+        // for the acceleration ramp), then project the target forward.
+        const range = Math.hypot(t.pos.x - r.pos.x, t.pos.y - r.pos.y);
+        const eta = range / (raiderSpeed * 0.7);
+        const ip = { x: t.pos.x + t.vel.x * eta, y: t.pos.y + t.vel.y * eta };
+        const s = this.worldToScreen(ip);
+        const rp = this.worldToScreen({ x: r.pos.x, y: r.pos.y });
+
+        // Fuzzier the farther out (more uncertain). Soft fill + faint concentric
+        // rings = the "approximate zone" idiom.
+        const rad = Math.min(12 + eta * 1.4, 48);
+        g.circle(s.x, s.y, rad).fill({ color: COL_ESTIMATE, alpha: 0.05 });
+        for (const f of [1.0, 0.66, 0.34]) {
+          g.circle(s.x, s.y, rad * f).stroke({ width: 1, color: COL_ESTIMATE, alpha: 0.1 + (1 - f) * 0.08 });
+        }
+        g.circle(s.x, s.y, 1.6).fill({ color: COL_ESTIMATE, alpha: 0.5 });
+        // Faint dashed guidance from the raider to the estimate (not a path).
+        dashedLine(g, rp.x, rp.y, s.x, s.y, 4, 10);
+        g.stroke({ width: 1, color: COL_ESTIMATE, alpha: 0.12 });
+
+        const label = this.interceptLabel(raiderId);
+        label.text = `≈ intercept · ~${Math.round(eta)}s`;
+        label.position.set(s.x + rad + 3, s.y);
+        label.visible = true;
+        live.add(raiderId);
+      }
+    }
+    for (const [id, label] of this.interceptLabels) {
+      if (!live.has(id)) label.visible = false;
+    }
+  }
+
+  private interceptLabel(id: string): Text {
+    let t = this.interceptLabels.get(id);
+    if (!t) {
+      t = new Text({
+        text: "",
+        style: new TextStyle({ fill: COL_ESTIMATE, fontFamily: "ui-monospace, monospace", fontSize: 9, letterSpacing: 0.5 }),
+      });
+      t.anchor.set(0, 0.5);
+      t.alpha = 0.8;
+      this.signalsLayer.addChild(t);
+      this.interceptLabels.set(id, t);
+    }
+    return t;
+  }
+
   /// The command center: the player's vantage, with a pulsing ring.
   private drawCommandCenter(state: ViewState): void {
     if (!state.commandCenter) return;
@@ -326,17 +382,15 @@ export class Renderer {
       label.anchor.set(0, 0.5);
       container.addChild(cone, ring, body, label);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, label, ring, seen: true, wasDoomed: false, unseenSince: null };
+      sp = { container, cone, body, label, ring, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
   }
 
-  private drawGhost(ghost: GhostView, state: ViewState, dt: number, doomed = false): { x: number; y: number } {
+  private drawGhost(ghost: GhostView, state: ViewState, dt: number): { x: number; y: number } {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
-    sp.wasDoomed = doomed;
-    sp.unseenSince = null;
 
     const px = ghost.pos.x + ghost.vel.x * dt;
     const py = ghost.pos.y + ghost.vel.y * dt;
@@ -348,11 +402,16 @@ export class Renderer {
     const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
 
     // Uncertainty cone: where the object could be NOW given how stale the sighting
-    // is. Drawn for OWN ships too — your distant fleet is light-delayed like
-    // everything else (§6). Near the command center age→0, so the cone shrinks to
-    // nothing and the ship reads as crisp/certain.
+    // is. OWN ships always show it — your distant fleet is light-delayed like
+    // everything else (§6), and near the command center age→0 so it shrinks to
+    // nothing. For RIVALS the cone is ON-DEMAND inspection detail: shown only when
+    // you SELECT that contact or it is your current intercept TARGET (its staleness
+    // is exactly what tells you how risky the intercept is). Otherwise it's hidden,
+    // so the reddish cone is never ambient clutter or confused with the teal sensor
+    // bubbles. (The threat ring and selection ring below are unaffected.)
     sp.cone.clear();
-    if (ghost.uncertainty > 0) {
+    const inspecting = state.selectedShipId === ghost.id || Object.values(state.raids).includes(ghost.id);
+    if ((own || inspecting) && ghost.uncertainty > 0) {
       const rPx = ghost.uncertainty * this.scale;
       const cone = own ? COL_OWN : COL_CONE;
       sp.cone.circle(0, 0, rPx).fill({ color: cone, alpha: own ? 0.04 : 0.05 }).stroke({ width: 1, color: cone, alpha: own ? 0.16 : 0.22 });
@@ -452,35 +511,15 @@ export class Renderer {
 
     for (const sp of this.ghosts.values()) sp.seen = false;
     const screenById = new Map<string, { x: number; y: number }>();
-    const drawn = new Set<string>();
     for (const ghost of state.ghosts) {
       screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
-      drawn.add(ghost.id);
     }
-    // Doomed ghosts: ships the server has already stopped sending (destroyed in
-    // true space) but whose destruction light hasn't yet reached this player —
-    // their result ring is still travelling home. Keep them flying on old light
-    // (dead-reckoned from the snapshot) so they vanish EXACTLY when the ring lands
-    // (the signal is dropped in updateSignals at that moment). Never double-draw a
-    // ship the server is still sending.
-    const nowMs = performance.now();
-    for (const sig of state.reportSignals) {
-      for (const d of sig.doomed) {
-        if (drawn.has(d.ghost.id)) continue;
-        const elapsed = (nowMs - d.capturedWallMs) / 1000;
-        const ext = { ...d.ghost, age: d.ghost.age + elapsed };
-        screenById.set(d.ghost.id, this.drawGhost(ext, state, elapsed, true));
-        drawn.add(d.ghost.id);
-      }
-    }
+    // A ship is drawn only while the server is sending its ghost. A destroyed
+    // ship's ghost flies on old light until its destruction light reaches this
+    // player, then the server stops sending it and it vanishes here at the kill
+    // site — the moment the player observes the destruction (§6). No hold.
     for (const [id, sp] of this.ghosts) {
-      if (sp.seen) continue;
-      // A held DOOMED ghost going unseen means its result ring just landed — so it
-      // vanishes at that exact moment. A sprite the server merely stopped sending
-      // gets a brief grace, so the ~0.2 s gap between a convoy's vanish and its
-      // destruction report can't blink it out before the doomed hold takes over.
-      if (sp.unseenSince === null) sp.unseenSince = nowMs;
-      if (sp.wasDoomed || nowMs - sp.unseenSince > GHOST_GRACE_MS) {
+      if (!sp.seen) {
         this.ghostsLayer.removeChild(sp.container);
         sp.container.destroy({ children: true });
         this.ghosts.delete(id);
@@ -488,108 +527,42 @@ export class Renderer {
     }
 
     this.drawOrders(state, screenById);
+    this.drawIntercepts(state);
     this.drawSignals(state, dt);
   }
 
-  private signalLabel(id: string): Text {
-    let t = this.signalLabels.get(id);
-    if (!t) {
-      t = new Text({
-        text: "",
-        style: new TextStyle({ fill: COL_COMMAND, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "700", letterSpacing: 1 }),
-      });
-      t.anchor.set(0, 0.5);
-      this.signalsLayer.addChild(t);
-      this.signalLabels.set(id, t);
-    }
-    return t;
-  }
-
-  /// Draw the traveling communication signals (server-timed; we only place them
-  /// at their interpolated `progress`). Violet = an order's round trip (comet
-  /// out, then the response light home); gold rings = a raid result crossing
-  /// home to you.
+  /// Draw the OUTBOUND command signal (server-timed; we only place it at its
+  /// interpolated `pOut`): the violet comet of an order in flight, command center
+  /// → ship. This is the ONE thing the map can't show — your command crossing
+  /// space, not yet arrived. The ship's REACTION needs no signal: it's seen
+  /// directly on the map (in delayed light) when the ghost changes course. So
+  /// there is no inbound/response leg, and raid results are a notification only.
   private drawSignals(state: ViewState, dt: number): void {
     const g = this.signalsGfx;
     g.clear();
     if (!state.commandCenter) return;
     const cc = this.worldToScreen(state.commandCenter);
 
-    // Order round trip: comet OUT to the ship, then the response light home.
-    const liveLabels = new Set<string>();
+    // OUTBOUND only: a violet comet, command center → ship. No return leg (the
+    // ship's reaction is seen on the map), and no inbound result rings (a raid
+    // outcome is seen on the map + a notification) — only what the map can't show.
     for (const sig of state.commandSignals) {
       const ghost = state.ghosts.find((x) => x.id === sig.shipId);
       if (!ghost) continue;
       const gp = this.worldToScreen({ x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
 
-      if (sig.phase === "out") {
-        // Violet comet: command center → ghost.
-        const p = Math.max(0, Math.min(1, sig.pOut));
-        const hx = cc.x + (gp.x - cc.x) * p;
-        const hy = cc.y + (gp.y - cc.y) * p;
-        const d = norm(gp.x - hx, gp.y - hy);
-        dashedLine(g, cc.x, cc.y, hx, hy, 6, 7);
-        g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
-        for (let k = 1; k <= 4; k++) {
-          g.circle(hx - d.x * k * 6, hy - d.y * k * 6, 4.4 - k * 0.8).fill({ color: COL_COMMAND, alpha: 0.42 - k * 0.08 });
-        }
-        g.circle(hx, hy, 12).fill({ color: COL_COMMAND, alpha: 0.12 });
-        g.circle(hx, hy, 5).fill({ color: COL_COMMAND, alpha: 0.98 });
-        arrowhead(g, hx + d.x * 6, hy + d.y * 6, d.x, d.y, 9, COL_COMMAND, 0.98);
-      } else {
-        // Return leg: the order has reached the ship; now the light of its
-        // maneuver is travelling back. Fill the gap so the wait is explained.
-        const p = Math.max(0, Math.min(1, sig.pBack));
-
-        // "Order received" flash at the ghost (brief, at the hand-off).
-        if (p < 0.22) {
-          const f = p / 0.22;
-          g.circle(gp.x, gp.y, 6 + f * 22).stroke({ width: 2.4 * (1 - f), color: COL_COMMAND, alpha: 0.8 * (1 - f) });
-        }
-
-        // A faint, hollow violet pulse travelling ghost → command center.
-        const px = gp.x + (cc.x - gp.x) * p;
-        const py = gp.y + (cc.y - gp.y) * p;
-        const d = norm(cc.x - px, cc.y - py); // heading home
-        dashedLine(g, px, py, cc.x, cc.y, 5, 8);
-        g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
-        for (let k = 0; k < 2; k++) {
-          const ph = (p * 3 + k * 0.5) % 1;
-          g.circle(px, py, 4 + ph * 10).stroke({ width: 1.6 * (1 - ph), color: COL_COMMAND, alpha: 0.5 * (1 - ph) });
-        }
-        g.circle(px, py, 2).fill({ color: COL_COMMAND, alpha: 0.85 });
-        arrowhead(g, px + d.x * 9, py + d.y * 9, d.x, d.y, 6, COL_COMMAND, 0.85);
-
-        // Status label on the ship: the pause is the return-trip delay.
-        const label = this.signalLabel(sig.shipId);
-        label.text = `RECEIVED · response light ~${Math.ceil(sig.remainingS)}s`;
-        label.position.set(gp.x + 12, gp.y + 10);
-        label.visible = true;
-        liveLabels.add(sig.shipId);
+      const p = Math.max(0, Math.min(1, sig.pOut));
+      const hx = cc.x + (gp.x - cc.x) * p;
+      const hy = cc.y + (gp.y - cc.y) * p;
+      const d = norm(gp.x - hx, gp.y - hy);
+      dashedLine(g, cc.x, cc.y, hx, hy, 6, 7);
+      g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
+      for (let k = 1; k <= 4; k++) {
+        g.circle(hx - d.x * k * 6, hy - d.y * k * 6, 4.4 - k * 0.8).fill({ color: COL_COMMAND, alpha: 0.42 - k * 0.08 });
       }
-    }
-    // Hide labels whose signal ended (the response light has arrived).
-    for (const [id, label] of this.signalLabels) {
-      if (!liveLabels.has(id)) label.visible = false;
-    }
-
-    // Inbound result rings: resolution point → command center.
-    for (const sig of state.reportSignals) {
-      const from = this.worldToScreen(sig.from);
-      const p = Math.max(0, Math.min(1, sig.progress));
-      const px = from.x + (cc.x - from.x) * p;
-      const py = from.y + (cc.y - from.y) * p;
-      const d = norm(cc.x - px, cc.y - py); // heading home
-      dashedLine(g, px, py, cc.x, cc.y, 6, 7);
-      g.stroke({ width: 1, color: COL_REPORT, alpha: 0.3 });
-      const elapsed = sig.progress * sig.durationS;
-      for (let k = 0; k < 3; k++) {
-        const ph = (elapsed * 1.7 + k * 0.34) % 1;
-        g.circle(px, py, 5 + ph * 17).stroke({ width: 2.2 * (1 - ph), color: COL_REPORT, alpha: 0.6 * (1 - ph) });
-      }
-      g.circle(px, py, 7).stroke({ width: 2.4, color: COL_REPORT, alpha: 0.95 });
-      g.circle(px, py, 2).fill({ color: COL_REPORT, alpha: 0.9 });
-      arrowhead(g, px + d.x * 12, py + d.y * 12, d.x, d.y, 7, COL_REPORT, 0.95);
+      g.circle(hx, hy, 12).fill({ color: COL_COMMAND, alpha: 0.12 });
+      g.circle(hx, hy, 5).fill({ color: COL_COMMAND, alpha: 0.98 });
+      arrowhead(g, hx + d.x * 6, hy + d.y * 6, d.x, d.y, 9, COL_COMMAND, 0.98);
     }
   }
 }

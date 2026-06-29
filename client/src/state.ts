@@ -2,52 +2,27 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, RaidReport, SystemStateView, Vec2, WalletView } from "./protocol";
+import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, SystemStateView, Vec2, WalletView } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
-// Visualizations of communication delay the server owns the timing for. Both are
-// pure rendering: the client only interpolates between server-provided endpoints
-// and times. `progress` (0..1) is recomputed each frame.
-
-// Order round-trip signal: comet out (command center → ghost) over
-// [depart, arrive], then the response light home (ghost → command center) over
-// [arrive, observe], when the ghost visibly changes course. Paced by sim-time.
+// The OUTBOUND command signal: the violet comet of an order crossing space from
+// the command center to the ship, over [depart, arrive]. Pure rendering — the
+// client only interpolates between the server-provided times. There is no inbound
+// "response" leg: the ship's reaction is seen directly on the map in delayed
+// light, so animating a confirmation travelling home would just duplicate the map.
 export interface CommandSignal {
   shipId: string;
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
-  observe: number; // sim-time the ship's response light reaches the command center
-  // Recomputed each frame:
-  phase: "out" | "back";
-  pOut: number; // 0..1 outbound progress
-  pBack: number; // 0..1 return progress
-  remainingS: number; // seconds until the response is observable
+  pOut: number; // 0..1 outbound progress, recomputed each frame
 }
 
-// A ship the server has destroyed, kept flying as a ghost on the client (on old
-// light) until its result ring reaches the command center — so it vanishes IN
-// SYNC with the yellow signal arrival, not at the earlier moment the server first
-// stops sending it. `ghost` is the snapshot taken when the report arrived;
-// `capturedWallMs` lets us dead-reckon it onward.
-export interface DoomedGhost {
-  ghost: GhostView;
-  capturedWallMs: number;
-}
-
-// Inbound result rings: resolution point → command center. Departs when the
-// report becomes observable (server-gated, M4) and travels home over the
-// server-provided light delay (`report.age`); the verdict is revealed on arrival.
-// Any ship this report destroyed is carried in `doomed` and kept rendered until
-// the ring lands (then it vanishes with the verdict — §6).
-export interface ReportSignal {
-  from: Vec2;
-  startWallMs: number;
-  durationS: number;
-  report: RaidReport;
-  progress: number;
-  doomed: DoomedGhost[];
-}
+// NOTE: a raid result has NO inbound travelling signal. The map IS the inbound
+// sensor feed — when the destruction's light reaches the player, the doomed
+// ghost vanishes on the map at the kill location (server-driven), and at that
+// same observed moment a NOTIFICATION is logged. There is no second "news
+// travelling home" channel (it would depict information that already arrived).
 
 export interface ViewState {
   playerId: PlayerId | null;
@@ -79,18 +54,18 @@ export interface ViewState {
   selectedShipId: string | null;
   /// Currently selected star system (for the claim / ship-production panel).
   selectedSystemId: string | null;
+  /// Committed raids the player issued (raiderId → targetId), so the renderer can
+  /// draw a CRUDE, drifting intercept estimate for each. Cleared on recall, on the
+  /// result notification, or when either ship leaves the view.
+  raids: Record<string, string>;
   /// Client-side record of move orders the player issued (shipId → destination),
   /// purely for drawing the "commanded into the dark" line. The server never
   /// echoes orders back (that's internal truth).
   orders: Record<string, Vec2>;
 
-  // Traveling-signal visualizations (server-timed; client only interpolates).
+  // The OUTBOUND order/recall signal (command center → ship). Stays — it depicts
+  // a real channel (your command crossing space) the player can't otherwise see.
   commandSignals: CommandSignal[];
-  reportSignals: ReportSignal[];
-  /// The most recent ghost seen for each ship id (with wall-time), so a report
-  /// arriving the same tick the server drops the ghost can still capture it as a
-  /// `DoomedGhost`. Pruned a few seconds after a ship was last seen.
-  recentGhosts: Map<string, { ghost: GhostView; seenWallMs: number }>;
 }
 
 export function initialState(): ViewState {
@@ -112,9 +87,8 @@ export function initialState(): ViewState {
     lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,
+    raids: {},
     orders: {},
     commandSignals: [],
-    reportSignals: [],
-    recentGhosts: new Map(),
   };
 }

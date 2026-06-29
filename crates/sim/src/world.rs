@@ -19,8 +19,8 @@ use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem}
 use crate::ids::{EntityId, PlayerId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
-use crate::movement::intercept_step;
-use crate::ship::{Ship, ShipKind, ShipOrder, TradeMission};
+use crate::movement::pursue_step;
+use crate::ship::{DefenseEngagement, Ship, ShipKind, ShipOrder, TradeMission};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -64,6 +64,28 @@ const CONTACT_RADIUS: f64 = 80.0;
 /// is the shared commons).
 const HUB_SAFE_RADIUS: f64 = 300.0;
 
+// --- Autonomous defensive doctrine (§5.1, Pillar 1) — all tunable. -----------
+// A patrolling raider guards friendly convoys within its sensor bubble and can
+// only react to hostiles it can actually sense (== `config.sensor_range`), so
+// patrol POSITIONING (how close to the convoy's route) decides whether it detects
+// a threat early enough to intercept. These knobs balance that dynamic.
+/// A hostile counts as "on an intercept course" only if it is moving at least
+/// this fast (so a drifting/parked raider isn't treated as an inbound attack).
+const THREAT_MIN_SPEED: f64 = 8.0;
+/// …and heading within ~acos(0.3)≈72° of straight at the guarded convoy.
+const THREAT_CLOSING_COS: f64 = 0.3;
+/// Once engaged, a defender breaks off (resumes patrol) if its quarry gets
+/// farther than `sensor_range × this` away — it guards its station, it doesn't
+/// chase a fleeing raider across the galaxy.
+const PURSUIT_BREAKOFF_MULT: f64 = 2.5;
+/// How near a friendly convoy a patrolling raider must be to "adopt" it as the
+/// charge it guards (and then shadow). A picket with NO convoy this close guards
+/// nothing — so WHERE a patrol sits decides what (if anything) it can defend.
+const ASSIGN_RANGE: f64 = 3300.0;
+/// Half-length of the short bracketing patrol a picket holds over its charge, so
+/// it keeps station near a moving convoy instead of drifting off.
+const SHADOW_OFFSET: f64 = 400.0;
+
 /// The market drifts once per this many ticks (≈ once a second at 30 Hz).
 const MARKET_UPDATE_TICKS: u64 = 30;
 
@@ -80,6 +102,16 @@ const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
 
 /// Corporate valuations recompute once per this many ticks (the slow §9 close).
 const VALUATION_TICKS: u64 = 60 * TICK_HZ as u64;
+
+/// The order that resumes a saved patrol route after a defensive sortie (or idles
+/// if the route was empty).
+fn resume_patrol(route: Vec<Vec2>) -> ShipOrder {
+    if route.is_empty() {
+        ShipOrder::Idle
+    } else {
+        ShipOrder::Patrol { waypoints: route, index: 0, dwell_until: 0.0 }
+    }
+}
 
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
@@ -182,6 +214,13 @@ impl World {
         // 2. Deliver any orders whose outbound light has now reached the ship.
         self.deliver_due_orders(&mut events);
 
+        // 2b. Standing defensive doctrine (§5.1, Pillar 1): patrolling raiders
+        //     autonomously break off to intercept hostiles threatening a friendly
+        //     convoy, and resume patrol when the threat is gone — server-driven,
+        //     runs whether or not the owner is connected. Decided on each patrol's
+        //     OWN local sensing, then handed to the existing pursuit + combat.
+        self.autonomous_defense();
+
         // 3. Integrate continuous movement (flip-and-burn, patrols, and raider
         //    interception pursuit).
         self.integrate_movement();
@@ -226,18 +265,24 @@ impl World {
             .map(|(id, s)| (*id, (s.pos, s.vel)))
             .collect();
         let time = self.time;
+        let c = self.config.c;
         let mut lost_target = Vec::new();
         for (id, ship) in self.ships.iter_mut() {
             if let ShipOrder::Intercept { target } = ship.order {
                 match snapshot.get(&target) {
                     Some(&(tp, tv)) => {
-                        let step = intercept_step(
+                        // Proportional pursuit toward the target's light-delayed
+                        // observed position; acceleration derived from this ship's
+                        // current mass (a = F/m), so a laden convoy-raider would
+                        // turn worse — same loop, no closed-form solver.
+                        let step = pursue_step(
                             ship.pos,
                             ship.vel,
                             tp,
                             tv,
-                            ship.kind.accel(),
+                            ship.accel(),
                             ship.kind.max_speed(),
+                            c,
                             DT,
                         );
                         ship.pos = step.pos;
@@ -249,15 +294,155 @@ impl World {
                 ship.advance(time, DT);
             }
         }
-        // Raiders whose target vanished return home.
+        // Raiders whose target vanished break off: a defensive patrol RESUMES its
+        // patrol (its threat is gone); a manual raider returns home.
         for id in lost_target {
             let home = self
                 .ships
                 .get(&id)
                 .and_then(|s| self.players.get(&s.owner))
                 .map(|c| c.home);
-            if let (Some(home), Some(ship)) = (home, self.ships.get_mut(&id)) {
-                ship.order = ShipOrder::MoveTo { dest: home };
+            if let Some(ship) = self.ships.get_mut(&id) {
+                if let Some(def) = ship.defense.take() {
+                    ship.order = resume_patrol(def.patrol);
+                } else if let Some(home) = home {
+                    ship.order = ShipOrder::MoveTo { dest: home };
+                }
+            }
+        }
+    }
+
+    /// Standing defensive doctrine, run every tick for ALL patrolling raiders,
+    /// server-authoritative and deterministic (§5.1, Pillar 1 — defense works
+    /// while the owner is offline). Each patrolling raider, acting on its OWN
+    /// local sensing:
+    ///   * guards friendly convoys within its sensor bubble;
+    ///   * detects hostile raiders within its sensor range (fog-respecting — dark
+    ///     raiders beyond sensor range are invisible to it);
+    ///   * if a detected hostile is on an intercept course toward a guarded convoy
+    ///     (moving, heading roughly at it), BREAKS OFF patrol to intercept it,
+    ///     reusing the ordinary [`ShipOrder::Intercept`] pursuit + raider-vs-raider
+    ///     combat (resolved by [`Self::resolve_raids`]);
+    ///   * once its quarry is destroyed or flees out of reach, RESUMES its patrol.
+    ///
+    /// It never reads a rival's hidden orders — only observable geometry (position,
+    /// heading) of contacts it can actually sense — so detection is fair, and patrol
+    /// POSITIONING (how near the convoy's likely approach vectors) decides whether
+    /// it senses a threat early enough to catch it.
+    fn autonomous_defense(&mut self) {
+        let sensor = self.config.sensor_range;
+        let breakoff = sensor * PURSUIT_BREAKOFF_MULT;
+
+        // Read-only snapshot for assessment (avoids borrow conflicts; ordered, so
+        // deterministic).
+        #[derive(Clone, Copy)]
+        struct Snap {
+            id: EntityId,
+            owner: PlayerId,
+            kind: ShipKind,
+            pos: Vec2,
+            vel: Vec2,
+        }
+        let snap: Vec<Snap> = self
+            .ships
+            .iter()
+            .map(|(id, s)| Snap { id: *id, owner: s.owner, kind: s.kind, pos: s.pos, vel: s.vel })
+            .collect();
+        let find = |id: EntityId| snap.iter().find(|s| s.id == id).copied();
+
+        let mut engage: Vec<(EntityId, EntityId)> = Vec::new(); // (patrol, hostile)
+        let mut shadow: Vec<(EntityId, Vec2)> = Vec::new(); // (patrol, charge pos)
+        let mut disengage: Vec<EntityId> = Vec::new();
+
+        for (pid, ship) in &self.ships {
+            if ship.kind != ShipKind::Raider {
+                continue;
+            }
+            // Already on a defensive sortie: keep pursuing while the quarry is
+            // alive and in reach; break off if it has fled past the breakoff range.
+            // (A quarry that was DESTROYED is handled by `integrate_movement`'s
+            // lost-target path, which resumes patrol.)
+            if let Some(def) = &ship.defense {
+                if let Some(t) = find(def.target)
+                    && ship.pos.distance(t.pos) > breakoff
+                {
+                    disengage.push(*pid);
+                }
+                continue;
+            }
+            // On patrol: adopt the nearest friendly convoy within assignment range
+            // as this picket's CHARGE, then defend it.
+            if !matches!(ship.order, ShipOrder::Patrol { .. }) {
+                continue;
+            }
+            let (owner, ppos) = (ship.owner, ship.pos);
+            let charge = snap
+                .iter()
+                .filter(|s| s.owner == owner && s.kind == ShipKind::Convoy && ppos.distance(s.pos) <= ASSIGN_RANGE)
+                .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)));
+            let Some(charge) = charge else {
+                continue; // no convoy in range to guard — positioning matters
+            };
+            // The most imminent SENSED threat: a hostile raider within this
+            // picket's own sensor range, moving on an intercept course toward the
+            // charge. (Detection is fog-respecting — dark raiders beyond sensor
+            // range are invisible to it.)
+            let mut best: Option<(EntityId, f64)> = None;
+            for h in snap.iter().filter(|s| {
+                s.owner != owner && s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor
+            }) {
+                if h.vel.length() < THREAT_MIN_SPEED {
+                    continue; // not actually inbound
+                }
+                let to_c = charge.pos - h.pos;
+                let d = to_c.length();
+                if d < 1e-6 {
+                    continue;
+                }
+                if h.vel.normalized().dot(to_c / d) >= THREAT_CLOSING_COS && best.map(|(_, bd)| d < bd).unwrap_or(true) {
+                    best = Some((h.id, d));
+                }
+            }
+            match best {
+                Some((target, _)) => engage.push((*pid, target)),
+                // No threat: keep STATION on the charge so the picket's sensor
+                // actually covers it (a fast escort would otherwise drift away and
+                // be unable to defend). It stays in Patrol state, ready to engage.
+                None => shadow.push((*pid, charge.pos)),
+            }
+        }
+
+        // Break off patrol to intercept (saving the patrol route to resume later).
+        for (pid, target) in engage {
+            if let Some(ship) = self.ships.get_mut(&pid) {
+                let patrol = match &ship.order {
+                    ShipOrder::Patrol { waypoints, .. } => waypoints.clone(),
+                    _ => Vec::new(),
+                };
+                ship.order = ShipOrder::Intercept { target };
+                ship.defense = Some(DefenseEngagement { target, patrol });
+            }
+        }
+        // Hold station near the charge convoy (a short patrol bracketing it that
+        // tracks it as it moves), so the picket stays in sensor range of its ward.
+        for (pid, cpos) in shadow {
+            if let Some(ship) = self.ships.get_mut(&pid)
+                && let ShipOrder::Patrol { waypoints, .. } = &mut ship.order
+            {
+                let off = Vec2::new(SHADOW_OFFSET, 0.0);
+                if waypoints.len() == 2 {
+                    waypoints[0] = cpos + off;
+                    waypoints[1] = cpos - off;
+                } else {
+                    *waypoints = vec![cpos + off, cpos - off];
+                }
+            }
+        }
+        // Quarry fled out of reach → resume patrol.
+        for pid in disengage {
+            if let Some(ship) = self.ships.get_mut(&pid) {
+                let patrol = ship.defense.take().map(|d| d.patrol).unwrap_or_default();
+                ship.order = resume_patrol(patrol);
             }
         }
     }
@@ -937,7 +1122,10 @@ impl World {
             },
         ));
 
-        // Raider roams home↔nearest-system↔hub.
+        // Raider ESCORTS the convoy's home↔hub trade lane (so it's positioned to
+        // autonomously defend the convoy via standing doctrine). `nearest` is no
+        // longer used for its route, but kept available for future picket setups.
+        let _ = nearest;
         let raider_id = self.alloc_entity_id();
         self.ships.insert(
             raider_id,
@@ -947,7 +1135,7 @@ impl World {
                 ShipKind::Raider,
                 home,
                 ShipOrder::Patrol {
-                    waypoints: vec![home, nearest, hub],
+                    waypoints: vec![home, hub],
                     index: 1,
                     dwell_until: 0.0,
                 },
@@ -1072,8 +1260,9 @@ mod tests {
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         // Let the convoy travel away from its home (== command center) so the
-        // order has a non-trivial outbound delay.
-        for _ in 0..(20 * crate::config::TICK_HZ) {
+        // order has a non-trivial outbound delay. (Convoys lumber now — give the
+        // heavy hauler enough time to get well clear of home.)
+        for _ in 0..(45 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
         let cid = convoy_id(&w);
@@ -1190,6 +1379,252 @@ mod tests {
         let (kill_a, kill_t) = outcome.kills();
         assert_eq!(w.ships.contains_key(&attacker), !kill_a, "attacker present iff not destroyed");
         assert_eq!(w.ships.contains_key(&target), !kill_t, "target present iff not destroyed");
+    }
+
+    // ---- Acceleration from mass (a = F/m) + proportional pursuit (§7, §8) ----
+
+    fn ship_of(kind: ShipKind, cargo: Option<Cargo>) -> Ship {
+        Ship::new(EntityId(1), PlayerId(1), kind, Vec2::ZERO, ShipOrder::Idle, cargo)
+    }
+
+    /// Acceleration is DERIVED as thrust / mass — the raider/convoy nimbleness gap
+    /// emerges from the MASS difference, and a loaded convoy accelerates worse.
+    #[test]
+    fn acceleration_derives_from_thrust_over_mass() {
+        let raider = ship_of(ShipKind::Raider, None);
+        let empty = ship_of(ShipKind::Convoy, None);
+        let loaded = ship_of(
+            ShipKind::Convoy,
+            Some(Cargo { commodity: crate::cargo::Commodity::Alloys, units: 120 }),
+        );
+
+        // a = F/m exactly (not a hand-set constant).
+        assert!((raider.accel() - ShipKind::Raider.thrust() / ShipKind::Raider.hull_mass()).abs() < 1e-9);
+        // Convoy hull is orders of magnitude heavier than the raider's…
+        assert!(ShipKind::Convoy.hull_mass() >= 10.0 * ShipKind::Raider.hull_mass());
+        // …so the light raider out-accelerates the heavy convoy by a wide margin —
+        // asymmetry from MASS, via a = F/m.
+        assert!(raider.accel() > empty.accel() * 5.0,
+            "raider accel {:.2} should dwarf convoy {:.2}", raider.accel(), empty.accel());
+        // Cargo adds mass, so a loaded convoy accelerates noticeably worse.
+        assert!(loaded.mass() > empty.mass());
+        assert!(loaded.accel() < empty.accel(),
+            "loaded convoy accel {:.3} must be worse than empty {:.3}", loaded.accel(), empty.accel());
+    }
+
+    /// A raider runs down a MOVING convoy via proportional pursuit (full
+    /// integration, including the light-delayed observed-position steering), and
+    /// makes contact — no closed-form solver involved.
+    #[test]
+    fn raider_runs_down_a_moving_convoy() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        // Raider beside the attacker's command center; convoy ~2500 su away and
+        // FLEEING further out, so the raider must chase it down over distance.
+        {
+            let r = w.ships.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(50.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = ShipOrder::Idle;
+        }
+        {
+            let c = w.ships.get_mut(&convoy).unwrap();
+            c.pos = cc + Vec2::new(2500.0, 0.0);
+            c.vel = Vec2::ZERO;
+            c.order = ShipOrder::MoveTo { dest: cc + Vec2::new(9000.0, 0.0) }; // flees outward
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let outcome = run_until_raid(&mut w, 120, |_| vec![])
+            .expect("proportional pursuit should run the fleeing convoy down within 120 s");
+        assert_ne!(outcome, RaidOutcome::Escaped);
+    }
+
+    // ---- Autonomous defensive interception (§5.1, Pillar 1) ----
+
+    /// Set up defender `d` (a patrolling raider guarding a convoy) and attacker
+    /// `a` (a hostile raider inbound on that convoy). Positions are caller-chosen
+    /// so the close-vs-far positioning dynamic can be exercised. Returns
+    /// (patrol_raider, convoy, hostile_raider). NO player commands are issued — the
+    /// defense must be autonomous.
+    fn defense_setup(w: &mut World, d: PlayerId, a: PlayerId, convoy_pos: Vec2, patrol_pos: Vec2, hostile_pos: Vec2) -> (EntityId, EntityId, EntityId) {
+        w.step(&[
+            Command::AddPlayer { id: d, name: "Def".into() },
+            Command::AddPlayer { id: a, name: "Atk".into() },
+        ]);
+        let convoy = find_ship(w, d, ShipKind::Convoy);
+        let patrol = find_ship(w, d, ShipKind::Raider);
+        let hostile = find_ship(w, a, ShipKind::Raider);
+        {
+            let c = w.ships.get_mut(&convoy).unwrap();
+            c.pos = convoy_pos;
+            c.vel = Vec2::ZERO;
+            c.order = ShipOrder::Idle;
+        }
+        {
+            let p = w.ships.get_mut(&patrol).unwrap();
+            p.pos = patrol_pos;
+            p.vel = Vec2::ZERO;
+            p.defense = None;
+            // A small standing patrol around its station.
+            p.order = ShipOrder::Patrol {
+                waypoints: vec![patrol_pos, patrol_pos + Vec2::new(200.0, 0.0)],
+                index: 0,
+                dwell_until: 0.0,
+            };
+        }
+        {
+            let h = w.ships.get_mut(&hostile).unwrap();
+            h.pos = hostile_pos;
+            h.vel = (convoy_pos - hostile_pos).normalized() * 60.0; // inbound, on course
+            h.order = ShipOrder::Intercept { target: convoy };
+        }
+        (patrol, convoy, hostile)
+    }
+
+    fn engaged_on(w: &World, patrol: EntityId, hostile: EntityId) -> bool {
+        w.ships.get(&patrol).and_then(|s| s.defense.as_ref()).map(|d| d.target == hostile).unwrap_or(false)
+    }
+
+    /// A patrolling raider, with NO player action, autonomously breaks off to
+    /// intercept a hostile raider it senses inbound on a guarded convoy, and the
+    /// engagement resolves through the existing seeded raider-vs-raider combat.
+    #[test]
+    fn patrol_autonomously_intercepts_a_threatening_raider() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        // Patrol right by the convoy; hostile 1500 su out (inside the patrol's
+        // sensor range) heading straight at the convoy.
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos + Vec2::new(0.0, 120.0), Vec2::new(1500.0, 0.0));
+
+        let mut engaged = false;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if engaged_on(&w, patrol, hostile) {
+                engaged = true;
+                break;
+            }
+        }
+        assert!(engaged, "the patrol must autonomously break off to intercept the inbound hostile");
+        assert!(matches!(w.ships[&patrol].order, ShipOrder::Intercept { target } if target == hostile));
+
+        // The defensive engagement resolves via the existing seeded RVR battle —
+        // patrol (attacker) vs the hostile raider (target).
+        let mut rvr = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::RaidResolved { attacker_ship, target_ship, attacker_kind, target_kind, .. } = e.payload
+                    && attacker_kind == ShipKind::Raider
+                    && target_kind == ShipKind::Raider
+                    && (attacker_ship == patrol || target_ship == patrol)
+                {
+                    rvr = true;
+                }
+            }
+            if rvr {
+                break;
+            }
+        }
+        assert!(rvr, "the autonomous defense should resolve in a raider-vs-raider battle");
+    }
+
+    /// Detection respects the fog model: the patrol cannot react to a hostile it
+    /// can't sense (beyond its sensor range).
+    #[test]
+    fn patrol_ignores_a_threat_beyond_sensor_range() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let sensor = w.config.sensor_range;
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        // Hostile FAR beyond the patrol's sensor range — undetectable for now.
+        let hostile_pos = convoy_pos + Vec2::new(sensor * 2.0 + 1000.0, 0.0);
+        let (patrol, _c, _h) = defense_setup(&mut w, d, a, convoy_pos, convoy_pos, hostile_pos);
+        for _ in 0..(3 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(matches!(w.ships[&patrol].order, ShipOrder::Patrol { .. }), "must not react to an undetectable threat");
+            assert!(w.ships[&patrol].defense.is_none());
+        }
+    }
+
+    /// POSITIONING is the strategic decision: a patrol on the approach vector
+    /// senses the threat and engages; one stationed off it never senses the threat,
+    /// so the convoy is lost. (Knobs are tunable to balance this.)
+    #[test]
+    fn patrol_positioning_decides_whether_it_can_defend() {
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let hostile_pos = Vec2::new(-2000.0, 0.0); // inbound from the left
+
+        // CLOSE — patrol on the approach → detects + engages.
+        let mut w1 = test_world();
+        let (p_close, _c1, h1) =
+            defense_setup(&mut w1, PlayerId(1), PlayerId(2), convoy_pos, Vec2::new(700.0, 0.0), hostile_pos);
+        let mut close_engaged = false;
+        for _ in 0..(25 * crate::config::TICK_HZ) {
+            w1.step(&[]);
+            if engaged_on(&w1, p_close, h1) {
+                close_engaged = true;
+                break;
+            }
+        }
+        assert!(close_engaged, "a well-positioned patrol detects the inbound threat and engages");
+
+        // FAR — patrol way off the approach vector → never senses it → convoy lost.
+        let mut w2 = test_world();
+        let sensor = w2.config.sensor_range;
+        let (p_far, convoy2, _h2) =
+            defense_setup(&mut w2, PlayerId(1), PlayerId(2), convoy_pos, Vec2::new(3000.0, sensor * 3.0), hostile_pos);
+        let (mut far_engaged, mut convoy_lost) = (false, false);
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w2.step(&[]) {
+                if let EventPayload::ShipDestroyed { ship, .. } = e.payload
+                    && ship == convoy2
+                {
+                    convoy_lost = true;
+                }
+            }
+            if w2.ships.get(&p_far).map(|s| s.defense.is_some()).unwrap_or(false) {
+                far_engaged = true;
+            }
+            if convoy_lost {
+                break;
+            }
+        }
+        assert!(!far_engaged, "a patrol off the approach vector never senses the threat");
+        assert!(convoy_lost, "with no defender in reach, the convoy is lost — positioning matters");
+    }
+
+    /// Once the threat is gone, the defender RESUMES its patrol (not a chase, not
+    /// a flight home). Deterministic — independent of the random battle outcome.
+    #[test]
+    fn defender_resumes_patrol_after_the_threat_is_gone() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1200.0, 0.0));
+        let mut engaged = false;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.ships[&patrol].defense.is_some() {
+                engaged = true;
+                break;
+            }
+        }
+        assert!(engaged, "patrol should have engaged");
+
+        // The threat vanishes (destroyed elsewhere / broke contact).
+        w.ships.remove(&hostile);
+        w.step(&[]);
+        assert!(w.ships[&patrol].defense.is_none(), "defense cleared once the threat is gone");
+        assert!(matches!(w.ships[&patrol].order, ShipOrder::Patrol { .. }), "the defender resumes its standing patrol");
     }
 
     #[test]

@@ -164,6 +164,9 @@ pub struct GalaxyInfo {
     /// Sensor detection radius each of the player's assets projects — lets the
     /// client draw its sensor coverage around its own ships + command center.
     pub sensor_range: f64,
+    /// Raider cruise speed (sim units / s) — lets the client compute a CRUDE,
+    /// drifting intercept estimate for a committed raid (rendered as a soft zone).
+    pub raider_speed: f64,
     pub systems: Vec<SystemInfo>,
 }
 
@@ -281,27 +284,22 @@ pub enum ServerMsg {
     /// sell was dispatched or cleared.
     Trade { trade: TradeEvent },
 
-    /// Feedback for an order the player just issued — the full round trip of the
-    /// command (§6, the three clocks). Sent immediately to the issuing player
-    /// (confirming their own local action), carrying authoritative sim-times:
+    /// Feedback for an order the player just issued — the OUTBOUND command in
+    /// flight (§6, "commanding into the past"). Sent immediately to the issuing
+    /// player, carrying authoritative sim-times:
     ///   * `depart_time` — the order leaves the command center;
     ///   * `arrive_time` — it reaches the ship (as the player observes it): the
-    ///     violet comet travels command-center → ghost over this window;
-    ///   * `observe_time` — the light of the ship's resulting maneuver gets back
-    ///     to the command center, i.e. when the player will SEE the ship react.
-    ///     Between `arrive_time` and `observe_time` the client shows the return
-    ///     leg (the response light coming home), so the gap before the ghost
-    ///     visibly changes course is explained rather than dead.
+    ///     violet comet travels command-center → ghost over this window.
     ///
-    /// All three are derived from the player's OBSERVED light delay to the ship
-    /// (its ghost's staleness): `arrive − depart` and `observe − arrive` each
-    /// equal that one-way delay, so nothing reveals the ship's true distance.
-    /// The client only interpolates between these times.
+    /// This is the one thing the MAP can't show — your command crossing space,
+    /// not yet arrived. The ship's *reaction* needs no signal: the player simply
+    /// sees the ghost change course on the map when its light arrives (the map IS
+    /// the inbound channel). Both times derive from the player's OBSERVED light
+    /// delay to the ship (its ghost staleness), so nothing reveals true distance.
     CommandSignal {
         ship_id: EntityId,
         depart_time: f64,
         arrive_time: f64,
-        observe_time: f64,
     },
 
     /// A protocol-level error (e.g. a malformed first message).

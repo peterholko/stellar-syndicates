@@ -23,6 +23,8 @@ See [`GAME_DESIGN.md`](GAME_DESIGN.md) for the full design and
 | **M6 — Robust sessions, persistence, scale to 12** | ✅ **Complete** | Restart restores the galaxy from the latest snapshot; 12 players in one galaxy with the loop keeping up; corps persist + reconnect resumes. |
 | **M7 — Client polish** | ✅ **Complete** | Credits/equity in the HUD, the full delayed-map + market + raid UI tied together, and a run + play guide; the core loop is playable by multiple people. |
 | **System claims + resource production** | ✅ **Complete** | Star systems have resource **deposits** (richer/more valuable toward the frontier); players **claim** systems (credit cost), claimed systems **produce** over time, and that production **ships to the hub** in the same raidable convoys — so raiding now destroys real output. Ownership is light-gated to rivals; stockpiles stay private. |
+| **Acceleration & proportional pursuit** | ✅ **Complete** | Ship acceleration is **derived from thrust ÷ mass** (`a = F/m`), so the raider/convoy nimbleness gap emerges from mass (convoy hull ~22× the raider's) and a **laden convoy accelerates worse** (cargo adds mass). Raiders run convoys down with **proportional steer-and-correct pursuit** (no closed-form solver), easing into a clean contact. The commit shows a **crude, drifting intercept estimate** rendered as a soft/fuzzy zone (sensor-circle idiom). Tuned LOW so a chase is watchable over tens of seconds. |
+| **Autonomous defensive interception** | ✅ **Complete** | A patrolling raider **escorts a friendly convoy and, on its own, intercepts a hostile raider** it senses inbound on it — server-side, every tick, **whether or not the owner is online** (defense is standing doctrine, like offline production). Detection is fog-respecting (only raiders within the picket's sensor range); engagement reuses proportional pursuit + the seeded raider-vs-raider battle; the owner learns the outcome as **delayed news on their own clock**. Patrol **positioning** decides what it can defend (tunable). First piece of a future defensive-doctrine system. |
 
 **All seven milestones of the build plan are complete** — plus three additive
 features layered on the core: the **signals animation** (the order's full round
@@ -395,6 +397,85 @@ convoy) + the view light-gating test; the two-player wire smoke
 charge, **light-gated ownership**, private stockpile, accrual, shipping); and
 in-browser (deposit/claim panel, the richness glow gradient, claiming a frontier
 system, live stockpile accrual, shipping a production convoy).
+
+### What Acceleration & Proportional Pursuit delivers (verified) — Expanse-style chases
+
+Ships no longer have a hand-set acceleration; they have **thrust and mass**, and
+acceleration is derived (§7).
+
+- **`a = F / m` (`crates/sim/src/ship.rs`):** each `ShipKind` exposes a `thrust`
+  (force) and a `hull_mass`; `Ship::accel()` returns `thrust / (hull + cargo)`.
+  The convoy hull (4500) is ~22× the raider's (200), so for comparable thrust the
+  raider accelerates ~11 su/s² and the convoy ~1.5 — the **nimbleness asymmetry
+  emerges from MASS**, not from a per-kind accel constant. **Cargo adds mass**
+  (`CARGO_MASS_PER_UNIT`), so a fully-loaded convoy (~0.86 su/s²) accelerates
+  noticeably worse than an empty one — your richest shipments are the most
+  sluggish. Mass is now a real property other systems can hook into later.
+- **Proportional pursuit (`crates/sim/src/movement.rs::pursue_step`):** a raider
+  does NOT solve a closed-form acceleration intercept. Each tick it steers toward
+  the target's **light-delayed observed position** (`target − target_vel·range/c`,
+  a crude retardation that sharpens to the truth as range closes — the pursuit
+  loop and the fog model are the same loop) and accelerates within budget, easing
+  toward the target's velocity as range shrinks so it **slides into contact
+  instead of orbiting** (no donut). Convergence is emergent, like a guided
+  missile — cheap and robust. The old `intercept_time`/`intercept_step` solver is
+  gone.
+- **Approximate intercept estimate (client):** on commit, the client shows a
+  CRUDE constant-velocity projection (ignores acceleration + the delayed pursuit,
+  so it **drifts**) rendered as a soft, fuzzy, concentric **amber zone in the
+  sensor-circle idiom** — "best guess, about here," honest about the player's
+  stale, approximate read. It updates as fresher ghosts arrive and clears on
+  recall / the result notification.
+- **Tuned to be WATCHABLE:** thrust/mass values are deliberately low for the
+  current galaxy scale — a full chase plays out over **tens of seconds** (verified
+  ~53 s commit-to-contact), the convoy visibly lumbers up to speed while the
+  raider darts, and a recall has time to matter. All values are tunable consts.
+
+**Verified:** sim tests (`acceleration_derives_from_thrust_over_mass`,
+`raider_runs_down_a_moving_convoy`, `pursuit_runs_down_a_fleeing_target_…`) +
+in-browser: instrumented a raider running a fleeing convoy down — raider cruising
+120 vs convoy lumbering 33→48, range closing 5900→contact, the raider braking
+120→25 into a clean contact (no orbit), the soft drifting intercept estimate on
+screen, contact at ~53 s, and the result notification firing. Fog, sensors,
+raiding, recall, and the economy all still work.
+
+### What Autonomous Defensive Interception delivers (verified) — defense without presence
+
+Defense must work while you're offline (§5.1, Pillar 1): under lightspeed
+command-lag you cannot react in real time, so defense is **standing doctrine your
+ships execute autonomously, server-side** — the combat-layer equivalent of offline
+production accrual. (First piece of a future configurable defensive-doctrine
+system; for now a single hardcoded behavior.)
+
+- **`World::autonomous_defense()` runs every tick for all patrolling raiders**
+  (`crates/sim/src/world.rs`), deterministic and server-authoritative. Each picket,
+  on its **own local sensing**, adopts the nearest friendly convoy within
+  `ASSIGN_RANGE` as its charge and keeps station on it (so a fast escort doesn't
+  drift out of sensor range of its ward — the starting raider now escorts its
+  convoy's lane instead of roaming).
+- **Fog-respecting detection:** it reacts ONLY to hostile raiders inside its OWN
+  `sensor_range` (dark raiders beyond it are invisible) that are **on an intercept
+  course** toward the charge (moving, heading roughly at it — observable geometry,
+  never a peek at the rival's hidden orders). So patrol **positioning** decides what
+  it can defend — a picket with no convoy in range, or that can't sense the threat
+  in time, fails. `THREAT_MIN_SPEED`, `THREAT_CLOSING_COS`, `ASSIGN_RANGE`,
+  `PURSUIT_BREAKOFF_MULT` are all tunable.
+- **Reuses everything:** on a threat it sets an ordinary `ShipOrder::Intercept` and
+  the existing **proportional pursuit** chases it down; contact resolves through the
+  existing **seeded raider-vs-raider battle**; the outcome surfaces through the
+  existing **delayed report → notification** (no inbound signal), so the owner —
+  even one who was offline — learns it on their own light-clock, asymmetrically. Once
+  the quarry is destroyed or flees past breakoff, the picket **resumes patrol**.
+
+**Verified:** sim tests (`patrol_autonomously_intercepts_a_threatening_raider`,
+`patrol_ignores_a_threat_beyond_sensor_range`,
+`patrol_positioning_decides_whether_it_can_defend` — close engages, far fails &
+convoy is lost — and `defender_resumes_patrol_after_the_threat_is_gone`); and the
+OFFLINE wire test [`scripts/patrol_defense_smoke.mjs`](scripts/patrol_defense_smoke.mjs):
+the defender goes offline, an attacker raids the unattended convoy, the escort
+autonomously fights the attacker (raider-vs-raider), and the defender **reconnects
+to learn of it as ~20 s-old delayed news**. Movement, fog, sensors, raiding, recall,
+economy, and notifications all still work.
 
 ---
 

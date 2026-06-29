@@ -34,6 +34,6 @@ pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
 pub use movement::{flip_and_burn, MoveStep};
 pub use rng::Rng;
-pub use ship::{Ship, ShipKind, ShipOrder, TradeMission};
+pub use ship::{DefenseEngagement, Ship, ShipKind, ShipOrder, TradeMission};
 pub use world::{Corporation, World};
 
