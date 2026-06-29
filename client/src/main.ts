@@ -218,44 +218,52 @@ function installInteraction(): void {
     const sx = e.clientX;
     const sy = e.clientY;
 
-    // Pick the nearest OWN ghost within a tolerance.
-    let picked: string | null = null;
-    let bestD = 16;
+    // Selection priority: a star SYSTEM and an own SHIP are hit-tested together,
+    // because your starting fleet sits right on your home system — letting a parked
+    // ship always swallow the click made the home system unselectable. Nearest wins,
+    // with a small bias toward the SYSTEM so a body with ships on it (the home case)
+    // still opens its System view; ships out in open space are still picked normally.
+    const SYSTEM_BIAS = 5; // px the system may be "farther" and still win the tie
+
+    let shipPick: string | null = null;
+    let bestShip = 16;
     for (const g of state.ghosts) {
       if (!g.own) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d < bestD) {
-        bestD = d;
-        picked = g.id;
+      if (d < bestShip) {
+        bestShip = d;
+        shipPick = g.id;
       }
     }
 
-    if (picked) {
-      state.selectedShipId = picked;
-      const g = state.ghosts.find((x) => x.id === picked)!;
-      readout().innerHTML =
-        `<b>${g.kind}</b> selected — last seen <b>${g.age.toFixed(1)}s</b> ago.<br>` +
-        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
-      return;
-    }
-
-    // Otherwise, did we click a star system? → open its claim / production panel.
     let sysPick: string | null = null;
-    let bestS = 13;
+    let bestSys = 15;
     if (state.galaxy) {
       for (const sys of state.galaxy.systems) {
         const s = renderer.worldToScreen(sys.pos);
         const d = Math.hypot(s.x - sx, s.y - sy);
-        if (d < bestS) {
-          bestS = d;
+        if (d < bestSys) {
+          bestSys = d;
           sysPick = sys.id;
         }
       }
     }
-    if (sysPick) {
+
+    // Prefer the system when it's hit and either no ship was hit, or the system is
+    // within SYSTEM_BIAS of being as close (i.e. they're essentially co-located).
+    if (sysPick && (!shipPick || bestSys <= bestShip + SYSTEM_BIAS)) {
       state.selectedSystemId = sysPick;
       openRail("system"); // → setRailTab("system") renders the detail
+      return;
+    }
+
+    if (shipPick) {
+      state.selectedShipId = shipPick;
+      const g = state.ghosts.find((x) => x.id === shipPick)!;
+      readout().innerHTML =
+        `<b>${g.kind}</b> selected — last seen <b>${g.age.toFixed(1)}s</b> ago.<br>` +
+        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
       return;
     }
 
