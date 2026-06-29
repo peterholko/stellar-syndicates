@@ -1644,15 +1644,31 @@ impl World {
             }
         };
         let pos = self.home_slots[idx].pos;
-        // Grant the pre-generated home system at this slot (every slot has one).
-        let sys_id = self.home_slots[idx]
-            .system
-            .expect("a generated home slot always has a co-located home system");
-        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
-            sys.owner = Some(id);
-            sys.claimed_at = Some(now);
+        // Grant the slot's pre-generated home system. If it's missing — e.g. an
+        // old PRE-FEATURE snapshot (slot.system deserialized to None and no home
+        // systems were generated) or a migrated world — generate one now, so a new
+        // join never panics or leaves `home_system` pointing at an unowned system.
+        match self.home_slots[idx].system.filter(|sid| self.systems.iter().any(|s| s.id == *sid)) {
+            Some(sys_id) => {
+                let sys = self
+                    .systems
+                    .iter_mut()
+                    .find(|s| s.id == sys_id)
+                    .expect("home system existence was just checked");
+                sys.owner = Some(id);
+                sys.claimed_at = Some(now);
+                (pos, sys_id)
+            }
+            None => {
+                let sys_id = self.alloc_entity_id();
+                let mut sys = crate::galaxy::generate_home_system(self.config.seed, idx, sys_id, pos);
+                sys.owner = Some(id);
+                sys.claimed_at = Some(now);
+                self.systems.push(sys);
+                self.home_slots[idx].system = Some(sys_id);
+                (pos, sys_id)
+            }
         }
-        (pos, sys_id)
     }
 
     /// Spawn the M2 demo fleet (one convoy, one raider) at a home anchor, set to
@@ -1890,6 +1906,23 @@ mod tests {
         let sys = w.systems.iter().find(|s| s.id == other_home).unwrap();
         assert!(sys.owner.is_none(), "a reserved home system cannot be claimed");
         assert_eq!(w.players[&id].credits, credits0, "a rejected claim charges nothing");
+    }
+
+    #[test]
+    fn join_regenerates_a_missing_home_system() {
+        // Simulate an old/migrated snapshot: the first home slot lost its
+        // pre-generated home system (system == None). A join must still grant a
+        // home — generated on the fly — never panic or own a phantom system.
+        let mut w = test_world();
+        w.home_slots[0].system = None;
+        let id = PlayerId(11);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let corp = &w.players[&id];
+        let home = corp.home_system.expect("a home was granted");
+        let owned: Vec<_> = w.systems.iter().filter(|s| s.owner == Some(id)).collect();
+        assert_eq!(owned.len(), 1, "exactly one owned home, regenerated on the fly");
+        assert_eq!(owned[0].id, home, "home_system points at the owned system (no phantom)");
+        assert_eq!(owned[0].pos, corp.command_center);
     }
 
     #[test]
