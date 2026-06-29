@@ -2,7 +2,8 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, StandingOrder, SystemStateView, Vec2, WalletView } from "./protocol";
+import type { AnchorView, FleetDoctrine, GalaxyInfo, GhostView, MarketView, PlayerId, StandingOrder, SystemStateView, Vec2, WalletView } from "./protocol";
+import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
@@ -48,6 +49,8 @@ export interface ViewState {
   wallet: WalletView | null;
   /// The player's own standing logistics orders (§15), fresh from the View.
   standingOrders: StandingOrder[];
+  /// The player's own fleet doctrine (§16), fresh from the View.
+  doctrine: FleetDoctrine;
   /// Wall-clock ms when the last View arrived, for smooth extrapolation
   /// between the ~10 Hz server updates and the 60 fps render.
   lastViewWallMs: number;
@@ -87,6 +90,7 @@ export function initialState(): ViewState {
     market: null,
     wallet: null,
     standingOrders: [],
+    doctrine: defaultDoctrine(),
     lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,

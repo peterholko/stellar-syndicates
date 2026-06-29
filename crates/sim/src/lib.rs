@@ -14,6 +14,7 @@
 pub mod cargo;
 pub mod command;
 pub mod config;
+pub mod doctrine;
 pub mod event;
 pub mod galaxy;
 pub mod ids;
@@ -28,6 +29,9 @@ pub mod world;
 pub use cargo::{Cargo, Commodity};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
+pub use doctrine::{
+    DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine, RetreatThreshold,
+};
 pub use event::{Event, EventPayload, RaidOutcome, TradeEvent};
 pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};

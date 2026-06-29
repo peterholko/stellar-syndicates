@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::doctrine::FleetDoctrine;
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
 use crate::standing::StandingOrder;
@@ -120,5 +121,17 @@ pub enum Command {
     ClearStandingOrder {
         player_id: PlayerId,
         order_id: u32,
+    },
+
+    /// Set the corporation's fleet doctrine (§16) — the constrained, server-run
+    /// combat & logistics policy ([`FleetDoctrine`]) that governs how autonomous
+    /// pickets engage/retreat/escort and how automated supply re-routes when a
+    /// destination is lost. INSTANT local administration (like a standing order):
+    /// it changes only the corp's own private policy and reveals nothing to rivals;
+    /// the SHIPS it later commands are sub-light, raidable, and light-revealed.
+    /// Always valid (a closed menu of enums), so it is never rejected.
+    SetFleetDoctrine {
+        player_id: PlayerId,
+        doctrine: FleetDoctrine,
     },
 }

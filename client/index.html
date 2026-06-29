@@ -213,6 +213,25 @@
       #market #market-orders .o { color: var(--ink); }
       #market #market-orders .o.buy { color: #7fd0a0; }
       #market #market-orders .o.sell { color: #e0a070; }
+
+      /* Fleet doctrine panel (§16) — bottom-left, toggled with F */
+      #doctrine {
+        position: fixed; left: 14px; bottom: 14px;
+        display: none;
+        width: 286px;
+        padding: 12px 14px;
+        background: rgba(8, 12, 22, 0.92);
+        border: 1px solid #1c2740; border-left: 2px solid #ff9e6b; border-radius: 8px;
+        font-size: 12px; z-index: 7;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      }
+      #doctrine .mhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+      #doctrine .mhead b { letter-spacing: 1px; }
+      #doctrine #doctrine-toggle { cursor: pointer; }
+      #doctrine .fd-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+      #doctrine .fd-row label { width: 64px; color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+      #doctrine .fd-row select { flex: 1; min-width: 0; background: #060a14; border: 1px solid #243049; border-radius: 4px; color: var(--ink); font: inherit; font-size: 11px; padding: 3px 5px; }
+      #doctrine .mhint { margin-top: 8px; font-size: 10px; line-height: 1.4; color: var(--dim); }
     </style>
   </head>
   <body>
@@ -267,6 +286,16 @@
       <div class="mhint dim">Rules run on the server — online or off. Each spawns a raidable convoy when it fires; at most one in flight per rule. You set policy; geography + raids do the rest.</div>
     </div>
 
+    <!-- Fleet doctrine (§16) — constrained combat & logistics policy, runs offline. -->
+    <div id="doctrine">
+      <div class="mhead"><b>FLEET DOCTRINE</b> <span id="doctrine-toggle" class="dim" title="Press F">✕</span></div>
+      <div class="fd-row"><label>Engage</label><select id="fd-engage"></select></div>
+      <div class="fd-row"><label>Retreat</label><select id="fd-retreat"></select></div>
+      <div class="fd-row"><label>Escort</label><select id="fd-escort"></select></div>
+      <div class="fd-row"><label>Lost&nbsp;supply</label><select id="fd-dest"></select></div>
+      <div class="mhint dim">Standing policy your pickets follow autonomously — online or off. Defaults match today's behaviour. Pickets sense only what's in range; the ships they command stay raidable &amp; light-revealed.</div>
+    </div>
+
     <div id="readout">
       Click one of your <b>ships</b> to select it (move/raid/recall), or click a
       <b>star system</b> to claim it and ship its production. Richer deposits lie
@@ -282,7 +311,7 @@
       <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
       <div class="row"><span class="dim">bigger glow = richer deposits (frontier &gt; core)</span></div>
       <div class="row"><span class="dim">select ship/system · click rival = raid · R = recall · Δt = staleness</span></div>
-      <div class="row"><span class="dim">M = market · O = standing orders (automation) · runs while you're offline</span></div>
+      <div class="row"><span class="dim">M = market · O = standing orders · F = fleet doctrine · automation runs while you're offline</span></div>
     </div>
 
     <div id="join">

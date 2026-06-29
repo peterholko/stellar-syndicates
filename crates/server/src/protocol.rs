@@ -11,7 +11,10 @@
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
 use serde::{Deserialize, Serialize};
-use sim::{Commodity, EntityId, PlayerId, RaidOutcome, ShipKind, Side, StandingOrder, TradeEvent, Vec2};
+use sim::{
+    Commodity, EntityId, FleetDoctrine, PlayerId, RaidOutcome, ShipKind, Side, StandingOrder,
+    TradeEvent, Vec2,
+};
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -58,6 +61,11 @@ pub enum ClientMsg {
 
     /// Remove a standing order by id.
     ClearStandingOrder { order_id: u32 },
+
+    /// Set the corporation's fleet doctrine (§16) — the constrained combat &
+    /// logistics policy. Instant local administration; the server attaches the
+    /// issuing player.
+    SetFleetDoctrine { doctrine: FleetDoctrine },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -287,6 +295,9 @@ pub enum ServerMsg {
         /// policy, not light-gated, like the wallet). Lets the client list/edit them
         /// and show what's running automatically.
         standing_orders: Vec<StandingOrder>,
+        /// The player's own fleet doctrine (§16) — fresh private policy (like the
+        /// wallet), so the client can display and edit it.
+        doctrine: FleetDoctrine,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

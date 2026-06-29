@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type FleetDoctrine, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -177,6 +177,9 @@ function installInteraction(): void {
     } else if (e.key === "o" || e.key === "O") {
       const s = $("standing");
       s.style.display = s.style.display === "none" ? "block" : "none";
+    } else if (e.key === "f" || e.key === "F") {
+      const d = $("doctrine");
+      d.style.display = d.style.display === "none" ? "block" : "none";
     }
   });
 }
@@ -346,9 +349,16 @@ function addTradeNews(t: TradeEvent): void {
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${t.commodity} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
     case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)}.`; break;
     case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${t.commodity} (auto, raidable).`; break;
+    case "SupplyDiverted": {
+      const what = t.action === "lost" ? "lost (cargo dropped)"
+        : t.action === "returned_home" ? "re-routed home (raidable)"
+        : "re-routed to sell at the hub (raidable)";
+      text = `⚠ Supply to ${systemName(t.system)} undeliverable — you no longer hold it: ${t.units} ${t.commodity} ${what}.`;
+      break;
+    }
   }
   const el = document.createElement("div");
-  el.className = "report good";
+  el.className = t.event === "SupplyDiverted" && t.action === "lost" ? "report bad" : "report good";
   el.innerHTML = `<span class="ic" style="color:#7fd4ff">◈</span> ${text}`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
@@ -457,6 +467,65 @@ function updateStandingPanel(): void {
   });
 }
 
+// --- Fleet doctrine panel (§16) — constrained combat & logistics policy -------
+// Four dropdowns, each a closed menu mirroring the sim enums; any change sends
+// the whole doctrine (instant local admin — the convoys/pickets it commands stay
+// raidable & light-revealed). Every field defaults to today's behaviour.
+const DOCTRINE_FIELDS: { key: keyof FleetDoctrine; id: string; opts: [string, string][] }[] = [
+  { key: "engagement", id: "fd-engage", opts: [
+    ["avoid", "Avoid — never engage"],
+    ["defensive_only", "Defensive only (default)"],
+    ["engage_weaker", "Engage weaker — hunt when you outnumber"],
+    ["engage_any", "Engage any — hunt all sensed hostiles"],
+  ] },
+  { key: "retreat", id: "fd-retreat", opts: [
+    ["quarter", "Retreat if outnumbered ~3:1 (25%)"],
+    ["half", "Retreat if outnumbered (50%)"],
+    ["three_quarter", "Hold only with a clear edge (75%)"],
+    ["never", "Never retreat (default)"],
+  ] },
+  { key: "escort", id: "fd-escort", opts: [
+    ["guard_nearest", "Guard nearest convoy (default)"],
+    ["guard_richest", "Guard richest convoy"],
+    ["hold_station", "Hold station — picket your route"],
+  ] },
+  { key: "destination_invalid", id: "fd-dest", opts: [
+    ["drop", "Lost supply: drop cargo (default)"],
+    ["return_home", "Lost supply: re-route home"],
+    ["sell_at_hub", "Lost supply: sell at hub"],
+  ] },
+];
+
+let doctrineBuilt = false;
+function buildDoctrinePanel(): void {
+  if (doctrineBuilt) return;
+  doctrineBuilt = true;
+  $("doctrine-toggle").addEventListener("click", () => { $("doctrine").style.display = "none"; });
+  const sendDoctrine = () => {
+    if (!net) return;
+    const d = { ...state.doctrine };
+    for (const f of DOCTRINE_FIELDS) {
+      (d as Record<string, string>)[f.key] = ($(f.id) as HTMLSelectElement).value;
+    }
+    net.send({ type: "SetFleetDoctrine", doctrine: d });
+  };
+  for (const f of DOCTRINE_FIELDS) {
+    const sel = $(f.id) as HTMLSelectElement;
+    sel.innerHTML = f.opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
+    sel.addEventListener("change", sendDoctrine);
+  }
+}
+
+function updateDoctrinePanel(): void {
+  if (!doctrineBuilt) return;
+  for (const f of DOCTRINE_FIELDS) {
+    const sel = $(f.id) as HTMLSelectElement;
+    // Don't clobber a dropdown the player is actively changing.
+    if (document.activeElement === sel) continue;
+    sel.value = String(state.doctrine[f.key]);
+  }
+}
+
 // --- Networking ------------------------------------------------------------
 let net: Net | null = null;
 
@@ -494,6 +563,9 @@ function join(): void {
           $("market").style.display = "block";
           buildStandingPanel();
           $("standing").style.display = "block";
+          buildDoctrinePanel();
+          updateDoctrinePanel();
+          $("doctrine").style.display = "block";
           void startRenderer();
           break;
         case "View":
@@ -506,8 +578,10 @@ function join(): void {
           state.market = msg.market;
           state.wallet = msg.wallet;
           state.standingOrders = msg.standing_orders;
+          state.doctrine = msg.doctrine;
           updateSystemPanel();
           updateStandingPanel();
+          updateDoctrinePanel();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;

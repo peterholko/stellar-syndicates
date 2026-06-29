@@ -102,7 +102,10 @@ export type TradeEvent =
   | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
-  | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number };
+  | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
+  | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction };
+
+export type DivertAction = "lost" | "returned_home" | "sold_at_hub";
 
 // --- Standing logistics orders (§15) — mirror the sim's serde shape exactly, so
 // the client both reads them (from the View) and writes them (SetStandingOrder). ---
@@ -124,6 +127,28 @@ export interface StandingOrder {
   status: OrderStatus;
   next_eval_tick: number;
   in_flight: EntityId | null;
+}
+
+// --- Fleet doctrine (§16) — constrained combat & logistics policy. Mirrors the
+// sim's serde enums exactly; the client reads it from the View and writes it via
+// SetFleetDoctrine. Every field defaults to today's behaviour. ---
+export type EngagementPolicy = "avoid" | "defensive_only" | "engage_weaker" | "engage_any";
+export type RetreatThreshold = "quarter" | "half" | "three_quarter" | "never";
+export type EscortPolicy = "guard_nearest" | "guard_richest" | "hold_station";
+export type DestinationInvalidPolicy = "drop" | "return_home" | "sell_at_hub";
+export interface FleetDoctrine {
+  engagement: EngagementPolicy;
+  retreat: RetreatThreshold;
+  escort: EscortPolicy;
+  destination_invalid: DestinationInvalidPolicy;
+}
+export function defaultDoctrine(): FleetDoctrine {
+  return {
+    engagement: "defensive_only",
+    retreat: "never",
+    escort: "guard_nearest",
+    destination_invalid: "drop",
+  };
 }
 
 export interface AnchorView {
@@ -175,6 +200,7 @@ export type ClientMsg =
   | { type: "ShipProduction"; system_id: EntityId }
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }
+  | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "Ping" };
 
 export type RaidOutcome =
@@ -222,6 +248,7 @@ export type ServerMsg =
       market: MarketView;
       wallet: WalletView;
       standing_orders: StandingOrder[];
+      doctrine: FleetDoctrine;
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Trade"; trade: TradeEvent }

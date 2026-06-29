@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use crate::cargo::Cargo;
 use crate::command::Command;
 use crate::config::{SimConfig, DT, TICK_HZ};
-use crate::event::{Event, EventPayload, RaidOutcome, TradeEvent};
+use crate::doctrine::{
+    DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine,
+};
+use crate::event::{DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
@@ -52,6 +55,11 @@ pub struct Corporation {
     /// Monotonic allocator for this corp's standing-order ids (0 ⇒ first id is 1).
     #[serde(default)]
     pub next_standing_id: u32,
+    /// Fleet doctrine (§16) — the constrained, server-run combat & logistics
+    /// policy governing autonomous engage/retreat/escort and supply re-routing.
+    /// Defaults to today's behaviour. See [`crate::doctrine`].
+    #[serde(default)]
+    pub doctrine: FleetDoctrine,
 }
 
 /// An order in flight: a player's command that has left their command center
@@ -334,29 +342,33 @@ impl World {
         }
     }
 
-    /// Standing defensive doctrine, run every tick for ALL patrolling raiders,
-    /// server-authoritative and deterministic (§5.1, Pillar 1 — defense works
-    /// while the owner is offline). Each patrolling raider, acting on its OWN
-    /// local sensing:
-    ///   * guards friendly convoys within its sensor bubble;
-    ///   * detects hostile raiders within its sensor range (fog-respecting — dark
-    ///     raiders beyond sensor range are invisible to it);
-    ///   * if a detected hostile is on an intercept course toward a guarded convoy
-    ///     (moving, heading roughly at it), BREAKS OFF patrol to intercept it,
-    ///     reusing the ordinary [`ShipOrder::Intercept`] pursuit + raider-vs-raider
-    ///     combat (resolved by [`Self::resolve_raids`]);
-    ///   * once its quarry is destroyed or flees out of reach, RESUMES its patrol.
+    /// Standing fleet doctrine (§5.1 Pillar 1 + §16 Layer 2), run every tick for
+    /// ALL patrolling raiders, server-authoritative and deterministic — it works
+    /// whether or not the owner is connected. Each patrolling raider acts on its
+    /// OWN local, fog-respecting sensing (only contacts within `sensor_range`;
+    /// never a rival's hidden orders) and on its corp's [`FleetDoctrine`]:
     ///
-    /// It never reads a rival's hidden orders — only observable geometry (position,
-    /// heading) of contacts it can actually sense — so detection is fair, and patrol
-    /// POSITIONING (how near the convoy's likely approach vectors) decides whether
-    /// it senses a threat early enough to catch it.
+    ///   * [`EscortPolicy`] picks the CHARGE it shadows (nearest / richest convoy,
+    ///     or hold the player's route at a chokepoint);
+    ///   * [`EngagementPolicy`] decides WHEN it breaks off patrol to intercept a
+    ///     sensed hostile — never (Avoid), only a threat closing on a guarded
+    ///     convoy (DefensiveOnly = the legacy behaviour), opportunistically when it
+    ///     outnumbers the enemy (EngageWeaker), or any sensed hostile (EngageAny);
+    ///   * [`RetreatThreshold`] withdraws a committing / engaged picket home when
+    ///     the local friendly force-ratio falls below the threshold — re-checked
+    ///     each tick, so enemy reinforcements can break a committed fight.
+    ///
+    /// All four default to the pre-Layer-2 behaviour, so an untouched corp plays
+    /// exactly as before. The intercept itself reuses the ordinary
+    /// [`ShipOrder::Intercept`] pursuit + seeded combat (resolved by
+    /// [`Self::resolve_raids`]); a quarry destroyed elsewhere is handled by
+    /// `integrate_movement`'s lost-target path.
     fn autonomous_defense(&mut self) {
         let sensor = self.config.sensor_range;
         let breakoff = sensor * PURSUIT_BREAKOFF_MULT;
 
         // Read-only snapshot for assessment (avoids borrow conflicts; ordered, so
-        // deterministic).
+        // deterministic). `cargo` lets the richest-escort policy pick by load.
         #[derive(Clone, Copy)]
         struct Snap {
             id: EntityId,
@@ -364,51 +376,60 @@ impl World {
             kind: ShipKind,
             pos: Vec2,
             vel: Vec2,
+            cargo: u32,
         }
         let snap: Vec<Snap> = self
             .ships
             .iter()
-            .map(|(id, s)| Snap { id: *id, owner: s.owner, kind: s.kind, pos: s.pos, vel: s.vel })
+            .map(|(id, s)| Snap {
+                id: *id,
+                owner: s.owner,
+                kind: s.kind,
+                pos: s.pos,
+                vel: s.vel,
+                cargo: s.cargo.map(|c| c.units).unwrap_or(0),
+            })
             .collect();
+        let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
+            self.players.iter().map(|(id, c)| (*id, c.doctrine)).collect();
         let find = |id: EntityId| snap.iter().find(|s| s.id == id).copied();
 
-        let mut engage: Vec<(EntityId, EntityId)> = Vec::new(); // (patrol, hostile)
-        let mut shadow: Vec<(EntityId, Vec2)> = Vec::new(); // (patrol, charge pos)
-        let mut disengage: Vec<EntityId> = Vec::new();
-
-        for (pid, ship) in &self.ships {
-            if ship.kind != ShipKind::Raider {
-                continue;
-            }
-            // Already on a defensive sortie: keep pursuing while the quarry is
-            // alive and in reach; break off if it has fled past the breakoff range.
-            // (A quarry that was DESTROYED is handled by `integrate_movement`'s
-            // lost-target path, which resumes patrol.)
-            if let Some(def) = &ship.defense {
-                if let Some(t) = find(def.target)
-                    && ship.pos.distance(t.pos) > breakoff
-                {
-                    disengage.push(*pid);
+        // --- Sensing helpers (all fog-respecting: within `sensor` of the picket). ---
+        // Local raider force as (friendly incl. self, hostile), for the force-ratio
+        // gates.
+        let force = |ppos: Vec2, owner: PlayerId| -> (usize, usize) {
+            let (mut f, mut h) = (0usize, 0usize);
+            for s in snap.iter().filter(|s| s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor) {
+                if s.owner == owner {
+                    f += 1;
+                } else {
+                    h += 1;
                 }
-                continue;
             }
-            // On patrol: adopt the nearest friendly convoy within assignment range
-            // as this picket's CHARGE, then defend it.
-            if !matches!(ship.order, ShipOrder::Patrol { .. }) {
-                continue;
-            }
-            let (owner, ppos) = (ship.owner, ship.pos);
-            let charge = snap
-                .iter()
-                .filter(|s| s.owner == owner && s.kind == ShipKind::Convoy && ppos.distance(s.pos) <= ASSIGN_RANGE)
-                .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)));
-            let Some(charge) = charge else {
-                continue; // no convoy in range to guard — positioning matters
-            };
-            // The most imminent SENSED threat: a hostile raider within this
-            // picket's own sensor range, moving on an intercept course toward the
-            // charge. (Detection is fog-respecting — dark raiders beyond sensor
-            // range are invisible to it.)
+            (f, h)
+        };
+        let ratio = |f: usize, h: usize| -> f64 {
+            if h == 0 { 1.0 } else { f as f64 / (f + h) as f64 }
+        };
+        // Nearest friendly convoy within `range` (its position).
+        let nearest_friendly_convoy = |ppos: Vec2, owner: PlayerId, range: f64| -> Option<Vec2> {
+            snap.iter()
+                .filter(|s| s.owner == owner && s.kind == ShipKind::Convoy && ppos.distance(s.pos) <= range)
+                .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)))
+                .map(|s| s.pos)
+        };
+        // Nearest sensed hostile raider, ANY heading (the proactive-hunt target).
+        let nearest_hostile = |ppos: Vec2, owner: PlayerId| -> Option<EntityId> {
+            snap.iter()
+                .filter(|s| s.owner != owner && s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor)
+                .min_by(|a, b| {
+                    ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id))
+                })
+                .map(|s| s.id)
+        };
+        // Nearest sensed hostile raider on an intercept COURSE toward `guard`
+        // (moving fast enough, heading roughly at it) — the defensive target.
+        let nearest_threat_on = |ppos: Vec2, owner: PlayerId, guard: Vec2| -> Option<EntityId> {
             let mut best: Option<(EntityId, f64)> = None;
             for h in snap.iter().filter(|s| {
                 s.owner != owner && s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor
@@ -416,7 +437,7 @@ impl World {
                 if h.vel.length() < THREAT_MIN_SPEED {
                     continue; // not actually inbound
                 }
-                let to_c = charge.pos - h.pos;
+                let to_c = guard - h.pos;
                 let d = to_c.length();
                 if d < 1e-6 {
                     continue;
@@ -425,12 +446,102 @@ impl World {
                     best = Some((h.id, d));
                 }
             }
-            match best {
-                Some((target, _)) => engage.push((*pid, target)),
-                // No threat: keep STATION on the charge so the picket's sensor
-                // actually covers it (a fast escort would otherwise drift away and
-                // be unable to defend). It stays in Patrol state, ready to engage.
-                None => shadow.push((*pid, charge.pos)),
+            best.map(|(id, _)| id)
+        };
+
+        let mut engage: Vec<(EntityId, EntityId)> = Vec::new(); // (patrol, hostile)
+        let mut shadow: Vec<(EntityId, Vec2)> = Vec::new(); // (patrol, charge pos)
+        let mut disengage: Vec<EntityId> = Vec::new(); // quarry fled → resume patrol
+        let mut retreat: Vec<EntityId> = Vec::new(); // odds turned → withdraw home
+
+        for (pid, ship) in &self.ships {
+            if ship.kind != ShipKind::Raider {
+                continue;
+            }
+            let (owner, ppos) = (ship.owner, ship.pos);
+            let doc = doctrines.get(&owner).copied().unwrap_or_default();
+
+            // Already on a defensive sortie.
+            if let Some(def) = &ship.defense {
+                // Withdraw home if the odds have turned against us below the
+                // doctrine's threshold — checked continuously, so reinforcements
+                // can break a committed fight.
+                if let Some(min) = doc.retreat.min_ratio() {
+                    let (f, h) = force(ppos, owner);
+                    if ratio(f, h) < min {
+                        retreat.push(*pid);
+                        continue;
+                    }
+                }
+                // Otherwise keep pursuing while the quarry is alive and in reach;
+                // break off if it has fled past the breakoff range. (A quarry
+                // DESTROYED elsewhere is handled by `integrate_movement`.)
+                if let Some(t) = find(def.target)
+                    && ship.pos.distance(t.pos) > breakoff
+                {
+                    disengage.push(*pid);
+                }
+                continue;
+            }
+            // On patrol: pick a charge per escort policy, then decide engagement.
+            if !matches!(ship.order, ShipOrder::Patrol { .. }) {
+                continue;
+            }
+            // CHARGE to shadow (movement). HoldStation shadows nothing — it keeps
+            // the player's set route to picket a fixed chokepoint.
+            let charge_pos: Option<Vec2> = match doc.escort {
+                EscortPolicy::GuardNearest => snap
+                    .iter()
+                    .filter(|s| s.owner == owner && s.kind == ShipKind::Convoy && ppos.distance(s.pos) <= ASSIGN_RANGE)
+                    .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)))
+                    .map(|s| s.pos),
+                EscortPolicy::GuardRichest => snap
+                    .iter()
+                    .filter(|s| s.owner == owner && s.kind == ShipKind::Convoy && ppos.distance(s.pos) <= ASSIGN_RANGE)
+                    .min_by(|a, b| {
+                        b.cargo
+                            .cmp(&a.cargo) // most-laden first
+                            .then(ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos))) // then nearest
+                            .then(a.id.cmp(&b.id)) // then lowest id (determinism)
+                    })
+                    .map(|s| s.pos),
+                EscortPolicy::HoldStation => None,
+            };
+            // The convoy this picket DEFENDS (for the defensive engagement test):
+            // its shadow charge, or — when holding station — the nearest friendly
+            // convoy that wanders into its sensor bubble.
+            let guard_pos = match doc.escort {
+                EscortPolicy::HoldStation => nearest_friendly_convoy(ppos, owner, sensor),
+                _ => charge_pos,
+            };
+            let defensive = guard_pos.and_then(|g| nearest_threat_on(ppos, owner, g));
+
+            // Engagement target by policy (each tier a superset of defence).
+            let mut target = match doc.engagement {
+                EngagementPolicy::Avoid => None,
+                EngagementPolicy::DefensiveOnly => defensive,
+                EngagementPolicy::EngageWeaker => defensive.or_else(|| {
+                    let (f, h) = force(ppos, owner);
+                    if f > h { nearest_hostile(ppos, owner) } else { None }
+                }),
+                EngagementPolicy::EngageAny => defensive.or_else(|| nearest_hostile(ppos, owner)),
+            };
+            // Don't commit into a fight we'd want to retreat from anyway.
+            if let (Some(_), Some(min)) = (target, doc.retreat.min_ratio()) {
+                let (f, h) = force(ppos, owner);
+                if ratio(f, h) < min {
+                    target = None;
+                }
+            }
+            match target {
+                Some(t) => engage.push((*pid, t)),
+                // No engagement: shadow the charge so the picket's sensor keeps
+                // covering it. HoldStation has no charge and leaves the route be.
+                None => {
+                    if let Some(cpos) = charge_pos {
+                        shadow.push((*pid, cpos));
+                    }
+                }
             }
         }
 
@@ -465,6 +576,22 @@ impl World {
             if let Some(ship) = self.ships.get_mut(&pid) {
                 let patrol = ship.defense.take().map(|d| d.patrol).unwrap_or_default();
                 ship.order = resume_patrol(patrol);
+            }
+        }
+        // Odds turned against us → break off and withdraw HOME (preserve the
+        // asset; distinct from resuming patrol). Server-driven, online or off.
+        for pid in retreat {
+            let home = self
+                .ships
+                .get(&pid)
+                .and_then(|s| self.players.get(&s.owner))
+                .map(|c| c.home);
+            if let Some(ship) = self.ships.get_mut(&pid) {
+                ship.defense = None;
+                ship.order = match home {
+                    Some(h) => ShipOrder::MoveTo { dest: h },
+                    None => ShipOrder::Idle,
+                };
             }
         }
     }
@@ -623,6 +750,7 @@ impl World {
                         valuation: 10_000.0,
                         standing_orders: Vec::new(),
                         next_standing_id: 0,
+                        doctrine: FleetDoctrine::default(),
                     },
                 );
                 events.push(Event::new(
@@ -806,6 +934,14 @@ impl World {
             Command::ClearStandingOrder { player_id, order_id } => {
                 if let Some(corp) = self.players.get_mut(player_id) {
                     corp.standing_orders.retain(|o| o.id != *order_id);
+                }
+            }
+            Command::SetFleetDoctrine { player_id, doctrine } => {
+                // Instant local administration: a closed menu of enums is always
+                // valid, so just install it. Takes effect from the next tick's
+                // autonomous-defence / supply pass.
+                if let Some(corp) = self.players.get_mut(player_id) {
+                    corp.doctrine = *doctrine;
                 }
             }
         }
@@ -1373,9 +1509,50 @@ impl World {
                                 units: cargo.units,
                             }),
                         ));
+                    } else {
+                        // Destination no longer ours: apply the corp's doctrine
+                        // (§16). Default Drop loses the cargo; otherwise re-route the
+                        // SAME convoy on a new leg (still sub-light + raidable — no
+                        // teleporting goods), to deliver home or sell at the hub.
+                        let owner = ship.owner;
+                        let policy = self
+                            .players
+                            .get(&owner)
+                            .map(|c| c.doctrine.destination_invalid)
+                            .unwrap_or_default();
+                        let reroute = match policy {
+                            DestinationInvalidPolicy::Drop => None,
+                            DestinationInvalidPolicy::ReturnHome => {
+                                self.players.get(&owner).map(|c| (c.home, TradeMission::DeliverHome))
+                            }
+                            DestinationInvalidPolicy::SellAtHub => {
+                                Some((self.hub, TradeMission::SellAtHub))
+                            }
+                        };
+                        let action = match policy {
+                            DestinationInvalidPolicy::Drop => DivertAction::Lost,
+                            DestinationInvalidPolicy::ReturnHome => DivertAction::ReturnedHome,
+                            DestinationInvalidPolicy::SellAtHub => DivertAction::SoldAtHub,
+                        };
+                        if let Some((dest, mission)) = reroute {
+                            // Re-task the convoy we just pulled out of the map and put
+                            // it back on its new leg, keeping its id and cargo.
+                            let mut ship = ship;
+                            ship.order = ShipOrder::MoveTo { dest };
+                            ship.mission = Some(mission);
+                            self.ships.insert(ship.id, ship);
+                        }
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::SupplyDiverted {
+                                player: owner,
+                                commodity: cargo.commodity,
+                                units: cargo.units,
+                                system,
+                                action,
+                            }),
+                        ));
                     }
-                    // If not delivered (system lost), the cargo is simply lost — the
-                    // frontier risk of automated supply into contested space.
                 }
             }
         }
@@ -1511,6 +1688,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doctrine::RetreatThreshold;
     use crate::ids::PlayerId;
 
     fn test_world() -> World {
@@ -2731,5 +2909,288 @@ mod tests {
         }
         assert!(dispatched >= 1, "a maintain rule should ship toward the empty depot");
         assert!(dispatched <= 5, "two rules to one dest must not over-ship the target (shipped {dispatched})");
+    }
+
+    // ---- Fleet doctrine (§16, async-automation Layer 2) ----
+
+    /// A doctrine is just a Copy menu installed by command — INSTANT local admin,
+    /// always valid, defaulting to today's behaviour.
+    #[test]
+    fn set_fleet_doctrine_round_trips() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        assert_eq!(w.players[&id].doctrine, FleetDoctrine::default());
+        let doc = FleetDoctrine {
+            engagement: EngagementPolicy::EngageAny,
+            retreat: RetreatThreshold::Half,
+            escort: EscortPolicy::GuardRichest,
+            destination_invalid: DestinationInvalidPolicy::SellAtHub,
+        };
+        w.step(&[Command::SetFleetDoctrine { player_id: id, doctrine: doc }]);
+        assert_eq!(w.players[&id].doctrine, doc, "doctrine installs verbatim");
+    }
+
+    /// `EngagementPolicy::Avoid`: a picket never autonomously breaks off, even when
+    /// a hostile is closing on the very convoy it would otherwise guard.
+    #[test]
+    fn doctrine_avoid_never_breaks_off() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        // The classic defensive scenario (default doctrine WOULD engage here).
+        let (patrol, _c, _h) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos + Vec2::new(0.0, 120.0), Vec2::new(1500.0, 0.0));
+        w.players.get_mut(&d).unwrap().doctrine.engagement = EngagementPolicy::Avoid;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.ships[&patrol].defense.is_none(), "Avoid doctrine never engages");
+            assert!(matches!(w.ships[&patrol].order, ShipOrder::Patrol { .. }), "it stays on patrol");
+        }
+    }
+
+    /// `EngagementPolicy::EngageAny`: a picket hunts a hostile it senses even when
+    /// that hostile is NOT on a course at a convoy — something `DefensiveOnly`
+    /// (the default) deliberately ignores.
+    #[test]
+    fn doctrine_engage_any_hunts_a_non_threatening_raider() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1500.0, 0.0));
+        // Re-cast the hostile as a PARKED drifter inside the picket's sensor bubble
+        // (no speed, no course at the convoy) — invisible to a defensive picket.
+        {
+            let h = w.ships.get_mut(&hostile).unwrap();
+            h.pos = convoy_pos + Vec2::new(500.0, 0.0);
+            h.vel = Vec2::ZERO;
+            h.order = ShipOrder::Idle;
+        }
+        // Default DefensiveOnly: ignores the non-closing drifter.
+        for _ in 0..(3 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.ships[&patrol].defense.is_none(), "DefensiveOnly ignores a parked drifter");
+        }
+        // EngageAny: now it breaks off to hunt the same contact.
+        w.players.get_mut(&d).unwrap().doctrine.engagement = EngagementPolicy::EngageAny;
+        let mut engaged = false;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if engaged_on(&w, patrol, hostile) {
+                engaged = true;
+                break;
+            }
+        }
+        assert!(engaged, "EngageAny hunts any sensed hostile");
+    }
+
+    /// `EngagementPolicy::EngageWeaker`: opportunistic — it only commits to a hunt
+    /// when it locally OUTNUMBERS the enemy.
+    #[test]
+    fn doctrine_engage_weaker_needs_numerical_advantage() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1500.0, 0.0));
+        {
+            let h = w.ships.get_mut(&hostile).unwrap();
+            h.pos = convoy_pos + Vec2::new(500.0, 0.0);
+            h.vel = Vec2::ZERO;
+            h.order = ShipOrder::Idle;
+        }
+        w.players.get_mut(&d).unwrap().doctrine.engagement = EngagementPolicy::EngageWeaker;
+        // 1 picket vs 1 hostile: an even fight → EngageWeaker declines.
+        for _ in 0..(3 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.ships[&patrol].defense.is_none(), "EngageWeaker declines a 1:1 fight");
+        }
+        // Add a friendly raider beside the picket: now we outnumber → it engages.
+        let ally = w.alloc_entity_id();
+        let ppos = w.ships[&patrol].pos;
+        w.ships.insert(ally, Ship::new(ally, d, ShipKind::Raider, ppos, ShipOrder::Idle, None));
+        let mut engaged = false;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if engaged_on(&w, patrol, hostile) {
+                engaged = true;
+                break;
+            }
+        }
+        assert!(engaged, "EngageWeaker engages once it outnumbers the enemy");
+    }
+
+    /// `RetreatThreshold`: `Never` (default) fights regardless of odds; `Half`
+    /// withdraws an already-committed picket HOME once enemy reinforcements push
+    /// the local force ratio below the threshold (re-checked every tick).
+    #[test]
+    fn doctrine_retreat_threshold_withdraws_when_outnumbered() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let (patrol, _c, _h) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1500.0, 0.0));
+        // Engage under the default (Never) doctrine.
+        let mut engaged = false;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.ships[&patrol].defense.is_some() {
+                engaged = true;
+                break;
+            }
+        }
+        assert!(engaged, "picket should have committed");
+
+        // Pile two hostile raiders onto the picket: 1-vs-3, ratio 0.25.
+        let ppos = w.ships[&patrol].pos;
+        for k in 0..2 {
+            let hid = w.alloc_entity_id();
+            let off = Vec2::new(40.0 * (k as f64 + 1.0), 0.0);
+            w.ships.insert(hid, Ship::new(hid, a, ShipKind::Raider, ppos + off, ShipOrder::Idle, None));
+        }
+        // Never: it keeps fighting despite the odds.
+        w.step(&[]);
+        assert!(w.ships[&patrol].defense.is_some(), "Never doctrine fights outnumbered");
+        assert!(matches!(w.ships[&patrol].order, ShipOrder::Intercept { .. }));
+
+        // Switch to Half: next tick it breaks off and withdraws home.
+        w.players.get_mut(&d).unwrap().doctrine.retreat = RetreatThreshold::Half;
+        w.step(&[]);
+        assert!(w.ships[&patrol].defense.is_none(), "retreat clears the engagement");
+        let home = w.players[&d].home;
+        assert!(
+            matches!(w.ships[&patrol].order, ShipOrder::MoveTo { dest } if dest == home),
+            "an outnumbered picket withdraws home"
+        );
+    }
+
+    /// `EscortPolicy::HoldStation` keeps the player's set patrol route (a fixed
+    /// chokepoint picket); `GuardNearest` (default) rewrites it to shadow the
+    /// convoy. Verified with no threat present, so only the escort path runs.
+    #[test]
+    fn doctrine_hold_station_keeps_player_route() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        // Patrol within escort range of the convoy; remove the hostile entirely.
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos + Vec2::new(700.0, 0.0), Vec2::new(1500.0, 0.0));
+        w.ships.remove(&hostile);
+        let route = |w: &World| match &w.ships[&patrol].order {
+            ShipOrder::Patrol { waypoints, .. } => waypoints.clone(),
+            _ => panic!("picket should be on patrol"),
+        };
+        let route_before = route(&w);
+
+        // HoldStation: the route is left exactly as the player set it.
+        w.players.get_mut(&d).unwrap().doctrine.escort = EscortPolicy::HoldStation;
+        w.step(&[]);
+        w.step(&[]);
+        assert_eq!(route(&w), route_before, "HoldStation keeps the player's set route");
+
+        // GuardNearest: the route is rewritten to bracket the convoy (shadowing).
+        w.players.get_mut(&d).unwrap().doctrine.escort = EscortPolicy::GuardNearest;
+        w.step(&[]);
+        assert_ne!(route(&w), route_before, "GuardNearest rewrites the route to shadow the convoy");
+    }
+
+    /// Spawn an automated supply convoy onto a destination the corp does NOT own,
+    /// so delivery fails and the destination-invalid doctrine decides the cargo's
+    /// fate. Returns (convoy id, destination system id).
+    fn doomed_supply(w: &mut World, owner: PlayerId) -> (EntityId, EntityId) {
+        let d = w.systems.iter().find(|s| s.owner.is_none()).unwrap().id;
+        let d_pos = w.systems.iter().find(|s| s.id == d).unwrap().pos;
+        let cargo = Cargo { commodity: crate::cargo::Commodity::Ore, units: 30 };
+        // Spawn essentially on top of the destination so it "arrives" at once.
+        let convoy = w.spawn_trade_convoy(
+            owner,
+            d_pos + Vec2::new(1.0, 0.0),
+            d_pos,
+            cargo,
+            TradeMission::DeliverToSystem { system: d },
+        );
+        (convoy, d)
+    }
+
+    fn run_until_divert(w: &mut World, system: EntityId) -> Option<DivertAction> {
+        for _ in 0..(15 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::Trade(TradeEvent::SupplyDiverted { action, system: s, .. }) = e.payload
+                    && s == system
+                {
+                    return Some(action);
+                }
+            }
+        }
+        None
+    }
+
+    /// `DestinationInvalidPolicy::Drop` (default): a supply convoy to a lost system
+    /// loses its cargo — the frontier risk of automation.
+    #[test]
+    fn destination_invalid_drop_loses_cargo() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let (convoy, d) = doomed_supply(&mut w, id);
+        assert_eq!(run_until_divert(&mut w, d), Some(DivertAction::Lost), "Drop loses the cargo");
+        assert!(!w.ships.contains_key(&convoy), "the dropped convoy is gone");
+    }
+
+    /// `ReturnHome` / `SellAtHub`: instead of losing the cargo, the SAME convoy is
+    /// re-routed onto a new (still raidable) leg — home, or to the hub to sell.
+    #[test]
+    fn destination_invalid_reroutes_keep_the_cargo() {
+        // ReturnHome.
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        w.players.get_mut(&id).unwrap().doctrine.destination_invalid =
+            DestinationInvalidPolicy::ReturnHome;
+        let home = w.players[&id].home;
+        let (convoy, d) = doomed_supply(&mut w, id);
+        assert_eq!(run_until_divert(&mut w, d), Some(DivertAction::ReturnedHome));
+        let ship = w.ships.get(&convoy).expect("re-routed convoy still flies (raidable)");
+        assert!(matches!(ship.mission, Some(TradeMission::DeliverHome)), "re-tasked to deliver home");
+        assert!(matches!(ship.order, ShipOrder::MoveTo { dest } if dest == home), "heading home");
+        assert!(ship.cargo.is_some(), "cargo preserved");
+
+        // SellAtHub.
+        let mut w = test_world();
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        w.players.get_mut(&id).unwrap().doctrine.destination_invalid =
+            DestinationInvalidPolicy::SellAtHub;
+        let hub = w.hub;
+        let (convoy, d) = doomed_supply(&mut w, id);
+        assert_eq!(run_until_divert(&mut w, d), Some(DivertAction::SoldAtHub));
+        let ship = w.ships.get(&convoy).expect("re-routed convoy still flies");
+        assert!(matches!(ship.mission, Some(TradeMission::SellAtHub)), "re-tasked to sell at hub");
+        assert!(matches!(ship.order, ShipOrder::MoveTo { dest } if dest == hub), "heading to the hub");
+    }
+
+    /// Doctrine-driven autonomous behaviour stays deterministic: identical seed +
+    /// commands (including a SetFleetDoctrine) ⇒ byte-identical snapshots.
+    #[test]
+    fn doctrine_behaviour_is_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            let (d, a) = (PlayerId(1), PlayerId(2));
+            let convoy_pos = Vec2::new(3000.0, 0.0);
+            let (_p, _c, _h) =
+                defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1500.0, 0.0));
+            let doc = FleetDoctrine {
+                engagement: EngagementPolicy::EngageAny,
+                retreat: RetreatThreshold::Half,
+                escort: EscortPolicy::GuardRichest,
+                destination_invalid: DestinationInvalidPolicy::ReturnHome,
+            };
+            w.step(&[Command::SetFleetDoctrine { player_id: d, doctrine: doc }]);
+            for _ in 0..(30 * crate::config::TICK_HZ) {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w).unwrap()
+        };
+        assert_eq!(run(), run(), "doctrine-driven sim is reproducible from seed + commands");
     }
 }

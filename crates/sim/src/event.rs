@@ -100,6 +100,25 @@ pub enum TradeEvent {
     /// `units` of `commodity` from `source`. The "policy ran while you were away"
     /// notification — feeds the check-in timeline.
     AutoDispatched { player: PlayerId, commodity: Commodity, units: u32, source: EntityId, rule_id: u32 },
+    /// An automated supply convoy reached `system` but the corp no longer owns it
+    /// (lost / taken mid-transit). What happened to the cargo is governed by the
+    /// corp's [`crate::doctrine::DestinationInvalidPolicy`] and reported as
+    /// `action`. The "your frontier supply went sideways" notification — an
+    /// attention item for the check-in timeline (§16, Layer 2).
+    SupplyDiverted { player: PlayerId, commodity: Commodity, units: u32, system: EntityId, action: DivertAction },
+}
+
+/// What became of an automated supply convoy whose destination was no longer
+/// owned on arrival (mirrors [`crate::doctrine::DestinationInvalidPolicy`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DivertAction {
+    /// The cargo was lost.
+    Lost,
+    /// The convoy re-routed home (and will deposit there, raidable in transit).
+    ReturnedHome,
+    /// The convoy re-routed to the hub to sell (raidable in transit).
+    SoldAtHub,
 }
 
 impl TradeEvent {
@@ -112,7 +131,8 @@ impl TradeEvent {
             | TradeEvent::Sold { player, .. }
             | TradeEvent::LimitPlaced { player, .. }
             | TradeEvent::LimitFilled { player, .. }
-            | TradeEvent::AutoDispatched { player, .. } => *player,
+            | TradeEvent::AutoDispatched { player, .. }
+            | TradeEvent::SupplyDiverted { player, .. } => *player,
         }
     }
 }

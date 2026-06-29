@@ -275,6 +275,11 @@ impl GameLoop {
                         self.pending.push(Command::ClearStandingOrder { player_id, order_id });
                     }
                 }
+                ClientMsg::SetFleetDoctrine { doctrine } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -416,6 +421,8 @@ impl GameLoop {
                     // The player's own standing orders (fresh — private policy, not
                     // light-gated), so the client can list/edit them.
                     standing_orders: corp.standing_orders.clone(),
+                    // The player's own fleet doctrine (fresh private policy).
+                    doctrine: corp.doctrine,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);
