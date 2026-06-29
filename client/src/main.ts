@@ -86,6 +86,32 @@ const stat = (label: string, value: string, tone = "") =>
   `<div class="stat"><dt>${esc(label)}</dt><dd class="${tone}">${value}</dd></div>`;
 const statStrip = (cells: string[]) => `<div class="stat-strip">${cells.join("")}</div>`;
 
+// Sparkline as inline SVG — no deps. Stroke auto-colors by trend (first vs last).
+function spark(data: number[], w = 60, h = 18): string {
+  const pts = data.length >= 2 ? data : [data[0] ?? 0, data[0] ?? 0];
+  const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1;
+  const stroke = pts[pts.length - 1] >= pts[0] ? "var(--positive)" : "var(--negative)";
+  const path = pts
+    .map((v, i) => `${((i / (pts.length - 1)) * w).toFixed(1)},${(h - ((v - min) / span) * (h - 2) - 1).toFixed(1)}`)
+    .join(" ");
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">` +
+    `<polyline fill="none" stroke="${stroke}" stroke-width="1.5" points="${path}"/></svg>`;
+}
+
+// Observed price trend, derived ONLY from the client's own (light-delayed) price
+// history — NOT a server "pressure" signal (the server exposes none; fabricating
+// one would break the fog model). Dual color+glyph encoding reads without color.
+function trend(h: number[]): { glyph: string; tone: string } {
+  if (!h || h.length < 4) return { glyph: "▬", tone: "tone-flat" };
+  const ref = h[h.length - 4] || 1;
+  const pct = (h[h.length - 1] - h[h.length - 4]) / Math.abs(ref);
+  if (pct > 0.04) return { glyph: "▲▲", tone: "tone-up" };
+  if (pct > 0.004) return { glyph: "▲", tone: "tone-up" };
+  if (pct < -0.04) return { glyph: "▼▼", tone: "tone-down" };
+  if (pct < -0.004) return { glyph: "▼", tone: "tone-down" };
+  return { glyph: "▬", tone: "tone-flat" };
+}
+
 // currentColor line icons (recolor for free via the parent's `color`).
 const ICONS: Record<string, string> = {
   trending: "M3 17l6-6 4 4 8-8 M21 7v4h-4",
@@ -448,44 +474,18 @@ function addReport(r: import("./protocol").RaidReport): void {
   setTimeout(() => el.classList.add("fade"), 12000);
 }
 
-// --- Hub Exchange (§9) -------------------------------------------------------
+// --- Hub Exchange (§9) — MARKET tab: a price board with observed-history
+// sparklines + honest staleness, and a buy/sell composer that surfaces the
+// buy(instant)/sell(raidable convoy, clears on arrival) asymmetry. Inspired by
+// Stellar Charters' Exchange. UI-only: same messages, same lagged-price model. --
 const COMMODITIES: Commodity[] = ["fuel", "ore", "alloys", "provisions", "volatiles"];
 
-function buildMarketPanel(): void {
-  const rows = $("market-rows");
-  rows.innerHTML = "";
-  for (const c of COMMODITIES) {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td class="name">${c}</td>` +
-      `<td id="mp-price-${c}">—</td>` +
-      `<td id="mp-held-${c}">—</td>` +
-      `<td><button class="buy" data-c="${c}" data-side="buy">Buy</button> ` +
-      `<button class="sell" data-c="${c}" data-side="sell">Sell</button></td>`;
-    rows.appendChild(tr);
-  }
-  rows.addEventListener("click", (e) => {
-    const btn = (e.target as HTMLElement).closest("button");
-    if (!btn || !net) return;
-    const c = btn.getAttribute("data-c") as Commodity;
-    const side = btn.getAttribute("data-side") as Side;
-    const qty = Math.max(1, Math.floor(Number((($("market-qty") as HTMLInputElement).value) || 0)));
-    const limitOn = ($("market-limit-on") as HTMLInputElement).checked;
-    const limitPrice = Number(($("market-limit-price") as HTMLInputElement).value);
-    if (limitOn && limitPrice > 0) {
-      net.send({ type: "PlaceLimitOrder", side, commodity: c, units: qty, limit_price: limitPrice });
-    } else {
-      net.send(side === "buy"
-        ? { type: "MarketBuy", commodity: c, units: qty }
-        : { type: "MarketSell", commodity: c, units: qty });
-    }
-  });
-}
+// The composer's local selection (the board is the master list, this the detail).
+const composer: { side: Side; commodity: Commodity } = { side: "buy", commodity: "fuel" };
 
 // Accumulate the OBSERVED hub prices into a per-commodity rolling history (the
-// Market sparkline data source). Fog-safe: it only ever stores the lagged prices
-// the player has already been shown. Throttled to ~1 Hz of sim-time and capped to
-// a rolling window so the sparkline spans a meaningful, bounded span.
+// sparkline data source). Fog-safe: it only ever stores the lagged prices the
+// player has already been shown. Throttled to ~1 Hz of sim-time, capped.
 const PRICE_HISTORY_CAP = 60; // ~1 minute at 1 Hz sampling
 function recordPriceHistory(): void {
   if (!state.market) return;
@@ -498,25 +498,114 @@ function recordPriceHistory(): void {
   }
 }
 
+let marketBuilt = false;
+function buildMarketPanel(): void {
+  if (marketBuilt) return;
+  marketBuilt = true;
+  // Board row click = select commodity (master→detail drives the composer).
+  $("market-board").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-resource]") as HTMLElement | null;
+    if (!b?.dataset.resource) return;
+    composer.commodity = b.dataset.resource as Commodity;
+    renderMarketBoard();
+    renderComposer();
+  });
+  $("mk-side").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
+    if (!b?.dataset.side) return;
+    composer.side = b.dataset.side as Side;
+    renderComposer();
+  });
+  $("mk-limit-on").addEventListener("change", () => {
+    ($("mk-limit") as HTMLInputElement).disabled = !($("mk-limit-on") as HTMLInputElement).checked;
+    renderComposer();
+  });
+  $("mk-qty").addEventListener("input", renderComposer);
+  $("mk-limit").addEventListener("input", renderComposer);
+  $("mk-submit").addEventListener("click", () => {
+    if (!net) return;
+    const c = composer.commodity;
+    const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
+    const limitOn = ($("mk-limit-on") as HTMLInputElement).checked;
+    const limitPrice = Number(($("mk-limit") as HTMLInputElement).value);
+    if (limitOn && limitPrice > 0) {
+      net.send({ type: "PlaceLimitOrder", side: composer.side, commodity: c, units: qty, limit_price: limitPrice });
+    } else {
+      net.send(composer.side === "buy" ? { type: "MarketBuy", commodity: c, units: qty } : { type: "MarketSell", commodity: c, units: qty });
+    }
+    $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${c}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
+  });
+}
+
+// The per-commodity price board: icon | name | observed sparkline | (stale-aware)
+// price + observed-trend glyph | held. Selection highlights the active row.
+function renderMarketBoard(): void {
+  if (!state.market) return;
+  const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
+  const heldOf = new Map((state.wallet?.inventory ?? []).map((i) => [i.commodity, i.units]));
+  const stale = state.market.staleness > 0.5;
+  $("market-board").innerHTML = COMMODITIES.map((c) => {
+    const p = priceOf.get(c);
+    const hist = state.priceHistory[c] ?? [];
+    const tr = trend(hist);
+    const active = composer.commodity === c ? "is-active" : "";
+    const priceTxt = p === undefined ? `<span class="is-stale">—</span>` : `${stale ? "~" : ""}${p.toFixed(2)}`;
+    return `<button class="board__row ${active}" data-resource="${c}" title="observed from your own price history — not a market forecast">` +
+      `<span class="dep-ico">${icon("trending", 12)}</span>` +
+      `<span class="b-name">${c}</span>` +
+      spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
+      `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
+      `<span class="b-held">${heldOf.get(c) ?? 0}</span></button>`;
+  }).join("");
+}
+
+// The composer preview surfaces the buy/sell asymmetry in plain language — the
+// honest-fog centerpiece (teaches the lightspeed economy, not shipping fees).
+function renderComposer(): void {
+  if (!state.market) return;
+  const c = composer.commodity;
+  const price = state.market.prices.find((p) => p.commodity === c)?.price;
+  const stale = state.market.staleness > 0.5;
+  const px = price !== undefined ? `${stale ? "~" : ""}${price.toFixed(2)}` : "?";
+  $("mk-sel").textContent = c;
+  document.querySelectorAll<HTMLElement>("#mk-side button").forEach((b) => b.classList.toggle("is-active", b.dataset.side === composer.side));
+  const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
+  const limitOn = ($("mk-limit-on") as HTMLInputElement).checked;
+  const submit = $("mk-submit");
+  if (limitOn) {
+    $("mk-preview").innerHTML = `<b>Limit ${composer.side} ${qty} ${c}</b> rests on the book and clears in the periodic <span class="accent">uniform-price batch</span> — reacting fastest confers no edge. Partial fills carry to the next batch.`;
+    submit.textContent = `Place limit ${composer.side}`;
+  } else if (composer.side === "buy") {
+    const cost = price !== undefined ? fmt(qty * price) : "?";
+    $("mk-preview").innerHTML = `Settles <b>now</b> at ${px}/u (~<span class="accent">${cost} cr</span>). The goods then cross fogged space to your home anchor — that delivery convoy is <b>raidable</b> in transit.`;
+    submit.textContent = `Buy ${qty} ${c}`;
+  } else {
+    $("mk-preview").innerHTML = `Convoy <b>dispatched now</b>; it clears at the price <b>on arrival</b> (not today's ${px}) and is <b>raidable</b> until it reaches the hub — double uncertainty: price + delivery.`;
+    submit.textContent = `Sell ${qty} ${c}`;
+  }
+}
+
+function renderRestingOrders(): void {
+  const orders = state.wallet?.orders ?? [];
+  $("market-orders").innerHTML = orders.length
+    ? `<div class="deps-head">Resting limit orders</div>` +
+      orders.map((o) => `<div class="ord">${badge(o.side === "buy" ? "positive" : "warn", `${o.side} ${o.units} ${o.commodity} @ ${o.limit_price.toFixed(1)}`)}</div>`).join("")
+    : "";
+}
+
 function updateMarket(): void {
   if (!state.market || !state.wallet) return;
-  $("market-credits").textContent =
-    `${Math.round(state.wallet.credits).toLocaleString()} cr · equity ${Math.round(state.wallet.valuation).toLocaleString()}`;
   const stale = state.market.staleness;
-  $("market-stale").textContent = stale > 0.5 ? `ticker ~${stale.toFixed(0)}s stale` : "ticker live";
-  const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
-  const heldOf = new Map(state.wallet.inventory.map((i) => [i.commodity, i.units]));
-  for (const c of COMMODITIES) {
-    const pe = document.getElementById(`mp-price-${c}`);
-    const he = document.getElementById(`mp-held-${c}`);
-    if (pe) pe.textContent = priceOf.has(c) ? priceOf.get(c)!.toFixed(2) : "—";
-    if (he) he.textContent = String(heldOf.get(c) ?? 0);
-  }
-  const ordersEl = $("market-orders");
-  const orders = state.wallet.orders;
-  ordersEl.innerHTML = orders.length
-    ? "<b>resting:</b> " + orders.map((o) => `<span class="o ${o.side}">${o.side} ${o.units} ${o.commodity} @ ${o.limit_price.toFixed(1)}</span>`).join(" · ")
-    : "";
+  const fresh = $("market-fresh");
+  fresh.className = "badge " + (stale > 0.5 ? "badge--warn" : "badge--positive");
+  fresh.textContent = stale > 0.5 ? `~${stale.toFixed(0)}s stale` : "live";
+  $("market-wallet").innerHTML = statStrip([
+    stat("Credits", `${fmt(state.wallet.credits)} cr`, "is-accent"),
+    stat("Equity", `${fmt(state.wallet.valuation)} cr`),
+  ]);
+  renderMarketBoard();
+  renderComposer();
+  renderRestingOrders();
 }
 
 function addTradeNews(t: TradeEvent): void {

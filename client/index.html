@@ -333,6 +333,8 @@
       .composer__row label { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; min-width: 42px; }
       .composer__row input[type="number"] { width: 70px; background: var(--field-bg); border: 1px solid var(--field-bd); border-radius: 4px; color: var(--ink); font: inherit; padding: 3px 6px; }
       .composer__row.toggle { font-size: 11px; color: var(--dim); gap: 5px; }
+      .composer__row label.lim { min-width: auto; text-transform: none; letter-spacing: 0; color: var(--dim); display: flex; align-items: center; gap: 4px; font-size: 11px; }
+      .composer__row label.lim input { width: auto; }
       .composer__sel { color: var(--accent); text-transform: capitalize; font-weight: 700; }
       .composer__preview { background: rgba(20,26,40,0.5); border-radius: 5px; padding: 7px 9px; margin: 8px 0; font-size: 11px; line-height: 1.45; color: var(--dim); }
       .composer__preview b { color: var(--ink); }
@@ -380,15 +382,23 @@
         <!-- MARKET tab — the hub exchange. (Part 2 enriches this with sparklines
              + composer; here it keeps the working table.) Inner IDs preserved. -->
         <div id="market" class="tab">
-          <div class="panel-title"><div><div class="eyebrow">the shared commons</div><h2>Hub Exchange</h2></div><div class="panel-title__right"><span id="market-stale" class="badge badge--neutral"></span></div></div>
-          <div class="mtop"><span id="market-credits" class="accent">—</span> · qty <input id="market-qty" type="number" value="50" min="1" /></div>
-          <div class="mtop"><label><input type="checkbox" id="market-limit-on" /> limit @</label> <input id="market-limit-price" type="number" step="0.1" placeholder="price" /></div>
-          <table>
-            <thead><tr><th class="name">commodity</th><th>price</th><th>held</th><th></th></tr></thead>
-            <tbody id="market-rows"></tbody>
-          </table>
-          <div id="market-orders" class="dim"></div>
-          <div class="mhint dim">Market: buy settles now (goods cross home, raidable); sell clears at price-on-arrival. Limit orders rest and clear in a periodic uniform-price batch (no snipe edge).</div>
+          <div class="panel-title"><div><div class="eyebrow">the shared commons · light-delayed</div><h2>Hub Exchange</h2></div><div class="panel-title__right"><span id="market-fresh" class="badge badge--neutral"></span></div></div>
+          <div id="market-wallet" class="stat-strip"></div>
+          <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
+          <div id="market-board"></div>
+          <div class="composer">
+            <div class="composer__row"><label>Order</label>
+              <div class="seg" id="mk-side"><button data-side="buy" class="is-active">Buy</button><button data-side="sell">Sell</button></div>
+              <span class="composer__sel" id="mk-sel">—</span>
+            </div>
+            <div class="composer__row"><label>Qty</label><input type="number" id="mk-qty" min="1" value="50" />
+              <label class="lim"><input type="checkbox" id="mk-limit-on" /> limit @</label><input type="number" id="mk-limit" step="0.1" placeholder="mkt" disabled /></div>
+            <div class="composer__preview" id="mk-preview"></div>
+            <button class="act act--primary" id="mk-submit">Buy</button>
+            <div class="mhint" id="mk-feedback"></div>
+          </div>
+          <div class="mkt-orders" id="market-orders"></div>
+          <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
         </div>
 
         <!-- LOGISTICS tab — standing orders (§15), automation that runs offline. -->
