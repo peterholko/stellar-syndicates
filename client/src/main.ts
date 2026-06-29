@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type FleetDoctrine, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type TimelineEntry, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type Deposit, type FleetDoctrine, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -72,6 +72,80 @@ function updateSignals(): void {
 
 const readout = () => $("readout");
 
+// --- UI kit (Stellar-Charters-inspired) — string-template helpers every panel
+// composes from. Each returns an HTML string; panels assign once via innerHTML and
+// wire interaction through ONE delegated listener per root (handler-safe across
+// re-renders). Tone is always a class → color-via-CSS-var, so the whole workspace
+// themes from index.html's :root tokens. ------------------------------------
+const fmt = (n: number) => Math.round(n).toLocaleString();
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+const badge = (tone: string, txt: string) => `<span class="badge badge--${tone}">${esc(txt)}</span>`;
+const bar = (pct: number, tone = "") =>
+  `<div class="bar"><div class="bar__fill ${tone}" style="width:${Math.max(0, Math.min(100, pct))}%"></div></div>`;
+const stat = (label: string, value: string, tone = "") =>
+  `<div class="stat"><dt>${esc(label)}</dt><dd class="${tone}">${value}</dd></div>`;
+const statStrip = (cells: string[]) => `<div class="stat-strip">${cells.join("")}</div>`;
+
+// currentColor line icons (recolor for free via the parent's `color`).
+const ICONS: Record<string, string> = {
+  trending: "M3 17l6-6 4 4 8-8 M21 7v4h-4",
+  ship: "M3 13l9-9 9 9 M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6",
+  send: "M4 12l16-7-7 16-2-7-7-2Z",
+  gavel: "M14 4l6 6-4 4-6-6 4-4Z M8 10l-5 5 4 4 5-5 M14 18h7",
+  spark: "M12 3v4 M12 17v4 M3 12h4 M17 12h4",
+};
+const icon = (name: string, size = 14) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+  `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] ?? ""}"/></svg>`;
+
+// Mirror of the sim's commodity value-rank (also in render.ts) — for flavor text
+// and dominant-resource selection. Client-only; no server data.
+const COMMODITY_VALUE: Record<Commodity, number> = {
+  provisions: 6, ore: 8, fuel: 10, volatiles: 18, alloys: 26,
+};
+
+// --- Workspace rail: one right-docked column hosting System/Market/Logistics/
+// Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
+// time; ✕ / Esc closes it → the map stays uncluttered. ----------------------
+type RailTab = "system" | "market" | "logistics" | "doctrine";
+let railTab: RailTab = "system";
+let railBuilt = false;
+
+function setRailTab(tab: RailTab): void {
+  railTab = tab;
+  const bodyId: Record<RailTab, string> = { system: "tab-system", market: "market", logistics: "standing", doctrine: "doctrine" };
+  for (const t of ["system", "market", "logistics", "doctrine"] as RailTab[]) {
+    $(bodyId[t]).classList.toggle("is-active", t === tab);
+  }
+  document.querySelectorAll<HTMLElement>("#rail-tabs button").forEach((b) => {
+    b.classList.toggle("is-active", b.dataset.tab === tab);
+  });
+  // The System tab is JS-rendered; (re)build it when shown. The other tabs already
+  // carry fresh content from the last View, so they need no render-on-show.
+  if (tab === "system") updateSystemTab();
+}
+function openRail(tab: RailTab): void {
+  $("rail").classList.add("is-open");
+  setRailTab(tab);
+}
+function closeRail(): void {
+  $("rail").classList.remove("is-open");
+}
+function toggleRail(tab: RailTab): void {
+  const open = $("rail").classList.contains("is-open");
+  if (open && railTab === tab) closeRail();
+  else openRail(tab);
+}
+function buildRail(): void {
+  if (railBuilt) return;
+  railBuilt = true;
+  $("rail-close").addEventListener("click", closeRail);
+  $("rail-tabs").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button");
+    if (b?.dataset.tab) setRailTab(b.dataset.tab as RailTab);
+  });
+}
+
 // Click an own ship to select it; click elsewhere to order the selected ship
 // there. The order travels at light speed — the readout makes the three clocks
 // (send / arrive / observe) explicit, estimated from the stale sighting.
@@ -117,7 +191,7 @@ function installInteraction(): void {
     }
     if (sysPick) {
       state.selectedSystemId = sysPick;
-      updateSystemPanel();
+      openRail("system"); // → setRailTab("system") renders the detail
       return;
     }
 
@@ -171,82 +245,170 @@ function installInteraction(): void {
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
+    } else if (e.key === "s" || e.key === "S") {
+      toggleRail("system");
     } else if (e.key === "m" || e.key === "M") {
-      const m = $("market");
-      m.style.display = m.style.display === "none" ? "block" : "none";
+      toggleRail("market");
     } else if (e.key === "o" || e.key === "O") {
-      const s = $("standing");
-      s.style.display = s.style.display === "none" ? "block" : "none";
+      toggleRail("logistics");
     } else if (e.key === "f" || e.key === "F") {
-      const d = $("doctrine");
-      d.style.display = d.style.display === "none" ? "block" : "none";
+      toggleRail("doctrine");
     } else if (e.key === "l" || e.key === "L") {
       const ci = $("checkin");
       ci.style.display = ci.style.display === "none" ? "block" : "none";
+    } else if (e.key === "Escape") {
+      closeRail();
     }
   });
 }
 
-// --- System panel: claim a system / ship its production (§4, §9) -------------
-// Shows the selected system's deposits (the frontier-richer geology) and, by
-// ownership: a Claim button if unclaimed, or stockpile + a Ship-to-hub button if
-// it's yours. A rival's system shows only that it's owned (their holdings never
-// leak). Refreshed each View so stockpile/credits stay live.
-function updateSystemPanel(): void {
-  const panel = $("system-panel");
+// --- Star System view (SYSTEM tab) — a master→detail workspace (§4, §9) -------
+// The galaxy map is the master list (click a system); this tab is the detail:
+// header + light-gated ownership + stat strip + geology readout + production
+// readout (owner-only) + valid context actions, plus an owned-systems rail when
+// you hold several. Fog-safe: ownership/stockpile use exactly the light-gated
+// fields the View already provides; a rival's system shows only that it's held.
+// One delegated listener (set once) survives the per-render innerHTML rewrites.
+
+// Eyebrow flavor, derived purely client-side from public geology + position.
+function systemFlavor(sys: SystemInfo): string {
+  if (!sys.deposits.length) return "barren system";
+  const dom = sys.deposits.reduce((a, b) =>
+    a.richness * COMMODITY_VALUE[a.resource] >= b.richness * COMMODITY_VALUE[b.resource] ? a : b);
+  const frac = state.galaxy ? Math.hypot(sys.pos.x, sys.pos.y) / state.galaxy.radius : 0;
+  const tier = frac > 0.6 ? "frontier" : frac > 0.33 ? "mid-rim" : "core";
+  return `${dom.resource}-rich ${tier}`;
+}
+
+function depositRow(d: Deposit): string {
+  const pct = Math.min(100, d.richness * 40);
+  const reserves = d.reserves === null
+    ? `<span class="tone-up">renewable</span>`
+    : d.reserves < 50 ? `<span class="is-warn">${fmt(d.reserves)} left</span>`
+      : `${fmt(d.reserves)} left`;
+  return `<div class="dep-row"><span class="dep-ico">${icon("trending", 13)}</span>` +
+    `<span class="dep-name">${d.resource}</span>${bar(pct)}` +
+    `<span class="dep-r">~${d.richness.toFixed(2)}/s · ${reserves}</span></div>`;
+}
+
+// Owner-only production readout: per-resource stockpile + the deposit yield as its
+// flow (the protocol carries no separate per-tick flow). Gated behind ownership.
+function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): string {
+  const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const rateOf = new Map<Commodity, number>();
+  for (const d of sys.deposits) rateOf.set(d.resource, (rateOf.get(d.resource) ?? 0) + d.richness);
+  const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
+  const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
+  if (!rows.length) return "";
+  return `<div class="deps-head" style="margin-top:8px">Stockpile · production</div>` +
+    rows.map((c) => {
+      const rt = rateOf.get(c) ?? 0;
+      const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
+      return `<div class="sys-prod"><span class="dep-ico">${icon("spark", 12)}</span>` +
+        `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
+    }).join("");
+}
+
+// Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
+function ownedSystemsRail(): string {
+  if (!state.galaxy) return "";
+  const owned = state.galaxy.systems.filter((s) =>
+    state.systems.find((d) => d.id === s.id)?.owner === state.playerId);
+  if (owned.length < 2) return "";
+  return `<div class="sysrail">` + owned.map((s) => {
+    const dyn = state.systems.find((d) => d.id === s.id);
+    const stock = (dyn?.stockpile ?? []).reduce((n, k) => n + k.units, 0);
+    const active = s.id === state.selectedSystemId ? "is-active" : "";
+    return `<button class="sysrail__row ${active}" data-sys="${s.id}">` +
+      `<span>${esc(s.name)} <span class="sysrail__sub">· ${stock > 0 ? fmt(stock) + " stock" : "idle"}</span></span>` +
+      `<span class="sysrail__chev">›</span></button>`;
+  }).join("") + `</div>`;
+}
+
+let systemTabBuilt = false;
+function buildSystemTab(): void {
+  if (systemTabBuilt) return;
+  systemTabBuilt = true;
+  $("tab-system").addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest("[data-action],[data-sys]") as HTMLElement | null;
+    if (!el) return;
+    if (el.dataset.sys) {
+      state.selectedSystemId = el.dataset.sys; // re-selects; map highlights it too
+      updateSystemTab();
+      return;
+    }
+    const sid = state.selectedSystemId;
+    if (!sid || !net) return;
+    switch (el.dataset.action) {
+      case "claim": net.send({ type: "ClaimSystem", system_id: sid }); break;
+      case "ship": net.send({ type: "ShipProduction", system_id: sid }); break;
+      case "standing": {
+        openRail("logistics");
+        updateStandingPanel();
+        const sel = $("so-source") as HTMLSelectElement;
+        if ([...sel.options].some((o) => o.value === sid)) sel.value = sid;
+        break;
+      }
+      case "market": openRail("market"); break;
+    }
+  });
+}
+
+function updateSystemTab(): void {
+  if (!systemTabBuilt) return;
+  const root = $("tab-system");
+  const rail = ownedSystemsRail();
   const sid = state.selectedSystemId;
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
-  if (!sid || !sys) {
-    panel.style.display = "none";
+  if (!sys) {
+    root.innerHTML = rail +
+      `<div class="mhint">Click a star system on the map to inspect its geology, claim it, or ship its output.` +
+      (rail ? " Or pick one of your holdings above." : "") + `</div>`;
     return;
   }
   const dyn = state.systems.find((s) => s.id === sid);
   const owner = dyn?.owner ?? null;
   const mine = owner !== null && owner === state.playerId;
   const rival = owner !== null && !mine;
-  const credits = state.wallet?.credits ?? 0;
+  const unclaimed = owner === null;
+  const afford = (state.wallet?.credits ?? 0) >= sys.claim_cost;
+  const stockTotal = (dyn?.stockpile ?? []).reduce((n, k) => n + k.units, 0);
+  const yieldRate = sys.deposits.reduce((n, d) => n + d.richness, 0);
 
-  const deps = sys.deposits
-    .map((d) => `<div class="dep">${d.resource} · <b>${d.richness.toFixed(2)}</b>/s${d.reserves === null ? " · renewable" : ` · ${Math.round(d.reserves)} left`}</div>`)
-    .join("");
+  const ownTag = mine ? badge("accent", "yours") : rival ? badge("negative", "rival") : badge("neutral", "unclaimed");
+  const header = `<div class="panel-title"><div><div class="eyebrow">${esc(systemFlavor(sys))}</div>` +
+    `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}</div></div>`;
 
-  let action: string;
-  if (mine) {
-    const slots = dyn?.stockpile ?? [];
-    const stock = slots.length ? slots.map((s) => `${s.units} ${s.commodity}`).join(", ") : "—";
-    action =
-      `<div class="srow">Stockpile: <b>${stock}</b></div>` +
-      `<button id="ship-btn" ${slots.length ? "" : "disabled"}>Ship production → hub</button>`;
-  } else if (rival) {
-    action = `<div class="srow warn">Held by a rival corporation.</div>`;
+  const strip = statStrip([
+    stat("Deposits", String(sys.deposits.length)),
+    stat("Yield/s", yieldRate.toFixed(1)),
+    stat("Stock", mine ? fmt(stockTotal) : "—"),
+    stat("Claim", unclaimed ? fmt(sys.claim_cost) : "—", unclaimed && !afford ? "is-negative" : ""),
+  ]);
+
+  const deps = `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
+    sys.deposits.map(depositRow).join("") + `</div>`;
+  const prod = mine ? productionReadout(sys, dyn) : "";
+
+  let actions: string;
+  if (unclaimed) {
+    actions = `<button class="act act--primary" data-action="claim" ${afford ? "" : "disabled"}>` +
+      `${icon("gavel")} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
+  } else if (mine) {
+    actions = `<button class="act" data-action="ship" ${stockTotal > 0 ? "" : "disabled"}>${icon("ship")} Ship production → hub</button>` +
+      `<button class="act" data-action="standing">${icon("send")} Auto-supply from here</button>` +
+      `<button class="act" data-action="market">${icon("trending")} Open hub market</button>`;
   } else {
-    const afford = credits >= sys.claim_cost;
-    action =
-      `<div class="srow">Claim cost: <b>${Math.round(sys.claim_cost).toLocaleString()}</b> cr</div>` +
-      `<button id="claim-btn" ${afford ? "" : "disabled"}>${afford ? "Claim system" : "Can't afford"}</button>`;
+    actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
   }
 
-  const tag = mine ? ' · <span style="color:#4fc3ff">YOURS</span>' : rival ? ' · <span style="color:#ff7a6b">rival</span>' : "";
-  const hint = rival
-    ? "ownership is light-delayed — what you see may already be stale"
-    : mine
-      ? "production ships across fogged space to the hub — raidable in transit"
-      : "richer, more valuable deposits lie toward the dangerous frontier";
-  panel.innerHTML =
-    `<div class="title">${sys.name}${tag} <span class="x" id="sys-close">✕</span></div>` +
-    `<div class="deps">${deps}</div>${action}<div class="hint">${hint}</div>`;
-  panel.style.display = "block";
+  const hint = mine
+    ? `<div class="mhint">Production ships across fogged space to the hub — raidable in transit. Automate it from the Logistics tab.</div>`
+    : unclaimed
+      ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
+      : "";
 
-  document.getElementById("claim-btn")?.addEventListener("click", () => {
-    if (net) net.send({ type: "ClaimSystem", system_id: sid });
-  });
-  document.getElementById("ship-btn")?.addEventListener("click", () => {
-    if (net) net.send({ type: "ShipProduction", system_id: sid });
-  });
-  document.getElementById("sys-close")?.addEventListener("click", () => {
-    state.selectedSystemId = null;
-    updateSystemPanel();
-  });
+  root.innerHTML = rail + header + strip + deps + prod + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------
@@ -320,6 +482,22 @@ function buildMarketPanel(): void {
   });
 }
 
+// Accumulate the OBSERVED hub prices into a per-commodity rolling history (the
+// Market sparkline data source). Fog-safe: it only ever stores the lagged prices
+// the player has already been shown. Throttled to ~1 Hz of sim-time and capped to
+// a rolling window so the sparkline spans a meaningful, bounded span.
+const PRICE_HISTORY_CAP = 60; // ~1 minute at 1 Hz sampling
+function recordPriceHistory(): void {
+  if (!state.market) return;
+  if (state.simTime - state.lastPriceSampleAt < 0.9) return; // throttle
+  state.lastPriceSampleAt = state.simTime;
+  for (const p of state.market.prices) {
+    const series = (state.priceHistory[p.commodity] ??= []);
+    series.push(p.price);
+    if (series.length > PRICE_HISTORY_CAP) series.shift();
+  }
+}
+
 function updateMarket(): void {
   if (!state.market || !state.wallet) return;
   $("market-credits").textContent =
@@ -391,7 +569,6 @@ let standingBuilt = false;
 function buildStandingPanel(): void {
   if (standingBuilt) return;
   standingBuilt = true;
-  $("standing-toggle").addEventListener("click", () => { $("standing").style.display = "none"; });
   const trig = $("so-trigger") as HTMLSelectElement;
   const syncForm = () => {
     const amt = $("so-amount") as HTMLInputElement;
@@ -503,7 +680,6 @@ let doctrineBuilt = false;
 function buildDoctrinePanel(): void {
   if (doctrineBuilt) return;
   doctrineBuilt = true;
-  $("doctrine-toggle").addEventListener("click", () => { $("doctrine").style.display = "none"; });
   const sendDoctrine = () => {
     if (!net) return;
     const d = { ...state.doctrine };
@@ -632,13 +808,16 @@ function join(): void {
           hud.style.display = "flex";
           $("readout").style.display = "block";
           $("legend").style.display = "block";
+          // Wire the unified rail + all its tab bodies once. The rail stays CLOSED
+          // on join so the map is uncluttered — opened by clicking a system or via
+          // S/M/O/F. (Only the check-in modal auto-opens — the welcome-back digest.)
+          buildRail();
+          buildSystemTab();
           buildMarketPanel();
-          $("market").style.display = "block";
           buildStandingPanel();
-          $("standing").style.display = "block";
           buildDoctrinePanel();
           updateDoctrinePanel();
-          $("doctrine").style.display = "block";
+          setRailTab("system");
           // Fresh session: re-latch the "while you were away" boundary from the
           // next Timeline digest, and open the check-in panel for the welcome-back.
           state.awaySet = false;
@@ -658,7 +837,9 @@ function join(): void {
           state.wallet = msg.wallet;
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
-          updateSystemPanel();
+          // Refresh the System tab only while it's the open tab (avoid 10 Hz DOM
+          // churn when it's hidden); other tabs' updaters are cheap + guarded.
+          if ($("rail").classList.contains("is-open") && railTab === "system") updateSystemTab();
           updateStandingPanel();
           updateDoctrinePanel();
           updateCheckinPanel(); // refresh attention + ages against fresh state
@@ -667,6 +848,7 @@ function join(): void {
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
           state.lastViewWallMs = performance.now();
           state.link = "online";
+          recordPriceHistory();
           updateMarket();
           break;
         case "CommandSignal": {

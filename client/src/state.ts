@@ -46,6 +46,14 @@ export interface ViewState {
   systems: SystemStateView[];
   ghosts: GhostView[];
   market: MarketView | null;
+  /// Client-accumulated history of the (light-delayed) hub prices the player has
+  /// OBSERVED, per commodity — the data source for the Market sparklines. This is
+  /// fog-safe by construction: it stores only the lagged prices already shown in
+  /// the ticker, never server truth. Sampled at ~1 Hz (see recordPriceHistory),
+  /// capped to a rolling window. Newest sample last.
+  priceHistory: Record<string, number[]>;
+  /// Sim-time of the last price-history sample, to throttle accumulation.
+  lastPriceSampleAt: number;
   wallet: WalletView | null;
   /// The player's own standing logistics orders (§15), fresh from the View.
   standingOrders: StandingOrder[];
@@ -96,6 +104,8 @@ export function initialState(): ViewState {
     systems: [],
     ghosts: [],
     market: null,
+    priceHistory: {},
+    lastPriceSampleAt: -1,
     wallet: null,
     standingOrders: [],
     doctrine: defaultDoctrine(),
