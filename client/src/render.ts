@@ -65,6 +65,14 @@ interface GhostSprite {
 // +x at angle 0, so rotate the sprite by +90° to align its nose with the heading.
 const SHIP_ART_FACING = Math.PI / 2;
 
+// On-map ship sprite sizes (screen px at the fit zoom) — big enough that the
+// detailed art reads, with the convoy clearly LARGER than the nimble raider.
+// Tunable. They scale modestly with zoom (clamped) so they stay sensible.
+const SHIP_PX_CONVOY = 56;
+const SHIP_PX_RAIDER = 40;
+const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
+const SHIP_ZOOM_MAX = 1.6; // growth cap when zoomed in
+
 export class Renderer {
   private app = new Application();
   private bg = new Container();
@@ -641,8 +649,11 @@ export class Renderer {
     if (tex) {
       sp.sprite.visible = true;
       if (sp.sprite.texture !== tex) sp.sprite.texture = tex;
-      const targetPx = ghost.kind === "convoy" ? 30 : 20;
-      sp.sprite.scale.set(targetPx / tex.width);
+      const base = ghost.kind === "convoy" ? SHIP_PX_CONVOY : SHIP_PX_RAIDER;
+      // Grow when zoomed in / shrink a touch when zoomed out, bounded so ships
+      // never get absurd (fit zoom → 1×).
+      const zoomK = Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, this.scale / this.fitScale()));
+      sp.sprite.scale.set((base * zoomK) / tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
       sp.sprite.tint = color;
       sp.sprite.alpha = alpha;

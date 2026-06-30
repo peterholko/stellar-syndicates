@@ -425,7 +425,7 @@ function handleMapClick(sx: number, sy: number): void {
     const SYSTEM_BIAS = 5; // px the system may be "farther" and still win the tie
 
     let shipPick: string | null = null;
-    let bestShip = 16;
+    let bestShip = 24; // ~half the (now larger) ship sprite, so the body is clickable
     for (const g of state.ghosts) {
       if (!g.own) continue;
       const s = renderer.worldToScreen(g.pos);
@@ -496,7 +496,7 @@ function handleMapClick(sx: number, sy: number): void {
     // direct) or INSPECT it (open the fog-aware rival panel when you don't). Own
     // ghosts are picked earlier, so here we only ever match rivals.
     let enemy: string | null = null;
-    let bestE = 16;
+    let bestE = 24; // match the larger ship sprite for raid-targeting
     for (const g of state.ghosts) {
       if (g.own) continue;
       const s = renderer.worldToScreen(g.pos);
