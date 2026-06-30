@@ -326,9 +326,13 @@
       .dep-row .dep-ico { color: var(--accent); display: flex; }
       /* Bundled Stellar-Charters resource/action icons (framed PNG badges). */
       .cicon { display: block; border-radius: 3px; object-fit: contain; flex: none; }
+      /* Volatiles has no native icon — reuse Fuel, hue-shifted cold (see README). */
+      .cicon--cold { filter: hue-rotate(135deg) saturate(1.2); }
       .dep-ico .cicon { width: 18px; height: 18px; }
       /* Inline icons (rule list, claim button) sit on the text baseline-ish. */
       #standing-list .so .cicon, .act .cicon { display: inline-block; vertical-align: -3px; }
+      #checkin .ci .cicon { display: inline-block; vertical-align: -2px; margin-right: 3px; }
+      .hud-btn .cicon { display: inline-block; vertical-align: -3px; margin-right: 3px; }
       .dep-row .dep-name { color: var(--ink); }
       .dep-row .dep-r { text-align: right; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
       .sysrail { margin-bottom: 10px; max-height: 132px; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
@@ -436,7 +440,7 @@
       <div class="item"><span class="k">Equity</span><span class="v" id="hud-equity">—</span></div>
       <div class="spacer"></div>
       <nav class="hud-nav" aria-label="Hub destinations">
-        <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)">◫ Market</button>
+        <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)"><img class="cicon" src="/art/ui_icons/svg/concept-market-exchange.svg" width="14" height="14" alt="" />Market</button>
         <button id="nav-log" class="hud-btn" type="button" title="Check-in log (L)">⌖ Log</button>
       </nav>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
@@ -546,6 +550,7 @@
     <div id="legend">
       <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / systems — delayed, crisp only near HQ</div>
       <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
+      <div class="row"><img class="cicon" src="/art/ui_icons/svg/concept-command-center-hq.svg" width="13" height="13" alt="" /> command center · <img class="cicon" src="/art/ui_icons/svg/concept-sensor-range.svg" width="13" height="13" alt="" /> sensor range · <img class="cicon" src="/art/ui_icons/svg/concept-uncertainty-fog.svg" width="13" height="13" alt="" /> uncertainty</div>
       <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
       <div class="row"><span class="dim">click a system = open it · click rival = raid · R = recall · Δt = staleness</span></div>
       <div class="row"><span class="dim">scroll = zoom · drag = pan · ⊡ = fit · arrows/+/− also work</span></div>

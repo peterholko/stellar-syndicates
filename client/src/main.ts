@@ -113,17 +113,6 @@ function trend(h: number[]): { glyph: string; tone: string } {
 }
 
 // currentColor line icons (recolor for free via the parent's `color`).
-const ICONS: Record<string, string> = {
-  trending: "M3 17l6-6 4 4 8-8 M21 7v4h-4",
-  ship: "M3 13l9-9 9 9 M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6",
-  send: "M4 12l16-7-7 16-2-7-7-2Z",
-  gavel: "M14 4l6 6-4 4-6-6 4-4Z M8 10l-5 5 4 4 5-5 M14 18h7",
-  spark: "M12 3v4 M12 17v4 M3 12h4 M17 12h4",
-};
-const icon = (name: string, size = 14) =>
-  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
-  `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] ?? ""}"/></svg>`;
-
 // Mirror of the sim's commodity value-rank (also in render.ts) — for flavor text
 // and dominant-resource selection. Client-only; no server data.
 const COMMODITY_VALUE: Record<Commodity, number> = {
@@ -139,26 +128,37 @@ const CARGO_MASS_PER_UNIT = 28;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
 
-// Resource icons (Stellar Charters art, bundled in client/public/icons). Dedicated
-// icons for Fuel / Alloys / Provisions(food); Ore and Volatiles use the metals /
-// ice STAND-INS until dedicated art exists (see README gap list). Credits get NO
-// icon — they render as the text label "Cr". Served at /icons/* in dev and dist.
-const COMMODITY_ICON: Record<Commodity, string> = {
-  fuel: "/icons/resource-fuel.png",
-  ore: "/icons/resource-metals.png", // stand-in (metals ≈ ore)
-  alloys: "/icons/resource-alloys.png",
-  provisions: "/icons/resource-food.png",
-  volatiles: "/icons/resource-ice.png", // stand-in (ice ≈ volatiles)
+// The native Stellar Syndicates icon set (/art/ui_icons/svg) — full-color SVG,
+// crisp at any size, used as <img>. Resources / Actions / Concepts / Status. This
+// SUPERSEDES the earlier Stellar-Charters borrow. No loading="lazy" — these panels
+// re-render ~10 Hz, recreating the <img>; lazy would replace them before the
+// observer fires. Eager hits the browser cache instantly.
+const uiIcon = (slug: string, size = 16, cls = "") =>
+  `<img class="cicon ${cls}" src="/art/ui_icons/svg/${slug}.svg" width="${size}" height="${size}" alt="" />`;
+
+// Commodity → resource icon. Exact where the set has one (the SVG accent colors
+// even match the map tints: metals=bronze=ore, industrials=purple=alloys,
+// supplies=green=provisions, fuel=fuel). Volatiles has NO native icon → it reuses
+// Fuel, hue-shifted cold, until it gets dedicated art (see README). Credits stay
+// the text label "Cr" (no icon).
+const RESOURCE_SLUG: Record<Commodity, string> = {
+  fuel: "resource-fuel",
+  ore: "resource-metals",
+  provisions: "resource-supplies",
+  alloys: "resource-industrials",
+  volatiles: "resource-fuel", // STAND-IN (hue-shifted cold) — wants dedicated art
 };
-// NOTE: no loading="lazy" — these panels re-render ~10 Hz (each View), recreating
-// the <img> elements; lazy loading would replace them before the Intersection
-// observer fires, so they'd never appear. Eager hits the browser cache instantly.
 const commodityIcon = (c: Commodity, size = 18) =>
-  `<img class="cicon" src="${COMMODITY_ICON[c]}" width="${size}" height="${size}" alt="" title="${c}" />`;
-// Charters ACTION icons (claim/escort/patrol/interdict/survey) — used where they
-// map cleanly to a Syndicates action; the line-SVG icon() set covers the rest.
-const actionIcon = (name: string, size = 16) =>
-  `<img class="cicon" src="/icons/action-${name}.png" width="${size}" height="${size}" alt="" />`;
+  `<img class="cicon${c === "volatiles" ? " cicon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" width="${size}" height="${size}" alt="" title="${c}" />`;
+
+// Status icon by timeline severity (the native Status set).
+const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
+  good: "status-success",
+  bad: "status-warning-threat",
+  warn: "status-warning-threat",
+  info: "status-info",
+};
+const statusIcon = (sev: TimelineEntry["severity"], size = 13) => uiIcon(STATUS_SLUG[sev], size);
 
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
@@ -307,9 +307,9 @@ function ownBody(g: GhostView): string {
 
   parts.push(`<div class="sp-sec">Actions</div>`);
   if (g.kind === "raider") {
-    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${icon("send", 13)} Recall raider</button>`);
+    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
-  parts.push(`<div class="sp-line dim" style="margin-top:6px">Click empty space on the map to <b>move</b> this ship${g.kind === "raider" ? " · click a rival contact to <b>raid</b>" : ""}.</div>`);
+  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this ship${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
   return parts.join("");
 }
 
@@ -330,7 +330,7 @@ function rivalBody(g: GhostView): string {
   } else {
     parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">A raider runs silent — no route or cargo is observable. You see it only because it is within your sensor range right now.</div>`);
   }
-  parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
+  parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">${uiIcon("action-attack-raid", 12)} Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
   return parts.join("");
 }
 
@@ -354,7 +354,7 @@ function updateShipPanel(): void {
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${icon("ship", 14)} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", 15)} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -698,12 +698,12 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
 function buildPanel(dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
   if (!opts.length) return "";
-  const head = `<div class="deps-head" style="margin-top:8px">Build · develop</div>`;
+  const head = `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Build · develop</div>`;
   const building = dyn?.build ?? null;
   if (building) {
     const eta = Math.max(0, building.complete_time - state.simTime);
     const label = building.key.charAt(0).toUpperCase() + building.key.slice(1);
-    return head + `<div class="mhint">${icon("ship", 12)} Building <b>${label}</b> — ETA <b>${eta.toFixed(0)}s</b>. <span class="dim">One job at a time.</span></div>`;
+    return head + `<div class="mhint">${uiIcon("action-build", 13)} Building <b>${label}</b> — ETA <b>${eta.toFixed(0)}s</b>. <span class="dim">One job at a time.</span></div>`;
   }
   const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const rows = opts.map((o) => {
@@ -818,11 +818,11 @@ function updateSystemTab(): void {
     actions = `<div class="mhint" style="margin-top:8px">${badge("neutral", "reserved")} A starting home site — a future corporation will begin here owning it, so it can't be claimed.</div>`;
   } else if (unclaimed) {
     actions = `<button class="act act--primary" data-action="claim" ${afford ? "" : "disabled"}>` +
-      `${actionIcon("claim", 18)} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
+      `${uiIcon("action-claim-system", 16)} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
   } else if (mine) {
-    actions = `<button class="act" data-action="ship" ${stockTotal > 0 ? "" : "disabled"}>${icon("ship")} Ship production → hub</button>` +
-      `<button class="act" data-action="standing">${icon("send")} Auto-supply from here</button>` +
-      `<button class="act" data-action="market">${icon("trending")} Open hub market</button>`;
+    actions = `<button class="act" data-action="ship" ${stockTotal > 0 ? "" : "disabled"}>${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
+      `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
+      `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button>`;
   } else {
     actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
   }
@@ -1248,7 +1248,7 @@ function updateCheckinPanel(): void {
   const tl = state.timeline;
   const away = tl.filter((e) => e.at_time > state.awaySince);
   const earlier = tl.filter((e) => e.at_time <= state.awaySince);
-  const row = (e: TimelineEntry) => `<div class="ci ${e.severity}">${e.text} <span class="t">${agoLabel(e.at_time)}</span></div>`;
+  const row = (e: TimelineEntry) => `<div class="ci ${e.severity}">${statusIcon(e.severity)} ${e.text} <span class="t">${agoLabel(e.at_time)}</span></div>`;
   const awayHtml = away.length
     ? away.slice().reverse().map(row).join("")
     : `<span class="dim">Nothing new since you were last here.</span>`;
@@ -1260,7 +1260,7 @@ function updateCheckinPanel(): void {
 
   const att = computeAttention();
   $("checkin-attention").innerHTML = att.length
-    ? att.map((a) => `<div class="ci ${a.severity}">⚑ ${a.text}</div>`).join("")
+    ? att.map((a) => `<div class="ci ${a.severity}">${statusIcon(a.severity)} ${a.text}</div>`).join("")
     : `<span class="dim">Nothing needs your attention.</span>`;
   $("checkin-att-head").textContent = `Needs attention${att.length ? ` (${att.length})` : ""}`;
 }
