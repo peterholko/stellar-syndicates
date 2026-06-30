@@ -371,11 +371,13 @@ function updateShipPanel(): void {
     : stat("Position", `±${fmt(g.uncertainty)} su`);
   const strip = statStrip([ageCell, headingCell(g), posCell]);
 
+  // Terse note — the stat strip already carries age / heading / ±uncertainty, so
+  // this only adds a glance of context (no numbers restated, no physics lecture).
   const note = certain
-    ? `<div class="sp-note">Confirmed — this sighting has essentially zero light lag (the ship sits at your command center).</div>`
+    ? "" // the "confirmed" Position stat already says it
     : own
-      ? `<div class="sp-note">Even your own fleet is seen by <b>delayed light</b> — there's no faster-than-light tether, so this <b>${g.age.toFixed(1)}s</b>-old sighting could be off by <b>±${fmt(g.uncertainty)} su</b> (the cone on the map). You know it's yours, its cargo and its orders — but not its exact position right now.</div>`
-      : `<div class="sp-note">Last seen <b>${g.age.toFixed(1)}s</b> ago; it could be anywhere within <b>±${fmt(g.uncertainty)} su</b> of that sighting now (the cone on the map). Dead-reckon along its heading — predicted, <b>not confirmed</b>.</div>`;
+      ? `<div class="sp-note">Delayed sighting — true position uncertain (see cone).</div>`
+      : `<div class="sp-note">Last sighting — could be anywhere in the cone.</div>`;
 
   root.innerHTML = head + `<div class="sp-body">${strip}${note}${own ? ownBody(g) : rivalBody(g)}</div>`;
 }
