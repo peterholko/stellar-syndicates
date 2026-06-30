@@ -54,11 +54,16 @@ const ZOOM_MAX_FACTOR = 24;
 interface GhostSprite {
   container: Container;
   cone: Graphics;
-  body: Graphics;
+  body: Graphics; // primitive triangle — fallback until the ship sprite loads
+  sprite: Sprite; // the ship art (rotated to heading, tinted by ownership)
   label: Text;
   ring: Graphics; // selection ring
   seen: boolean;
 }
+
+// Ship sprites are top-down with the nose at -y; the heading convention here points
+// +x at angle 0, so rotate the sprite by +90° to align its nose with the heading.
+const SHIP_ART_FACING = Math.PI / 2;
 
 export class Renderer {
   private app = new Application();
@@ -82,6 +87,9 @@ export class Renderer {
   private hubSprite: Sprite | null = null;
   private texPlanet: Texture | null = null;
   private texStation: Texture | null = null;
+  // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
+  private texConvoy: Texture | null = null;
+  private texRaider: Texture | null = null;
 
   private galaxy: GalaxyInfo | null = null;
   private scale = 1;
@@ -134,12 +142,16 @@ export class Renderer {
         return null; // leave null — the primitive fallback keeps the map working
       }
     };
-    const [planet, station] = await Promise.all([
+    const [planet, station, convoy, raider] = await Promise.all([
       load("/art/celestial_sprites/habitable_planet.png"),
       load("/art/celestial_sprites/mining_station.png"),
+      load("/art/ship_sprites/cargo_freighter.png"),
+      load("/art/ship_sprites/raider_attack_ship.png"),
     ]);
     this.texPlanet = planet;
     this.texStation = station;
+    this.texConvoy = convoy;
+    this.texRaider = raider;
   }
 
   get canvas(): HTMLCanvasElement {
@@ -539,11 +551,14 @@ export class Renderer {
       const cone = new Graphics();
       const ring = new Graphics();
       const body = new Graphics();
+      const sprite = new Sprite(Texture.EMPTY);
+      sprite.anchor.set(0.5);
+      sprite.visible = false;
       const label = new Text({ text: "", style: new TextStyle({ fill: COL_OTHER, fontFamily: "ui-monospace, monospace", fontSize: 9 }) });
       label.anchor.set(0, 0.5);
-      container.addChild(cone, ring, body, label);
+      container.addChild(cone, ring, body, sprite, label);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, label, ring, seen: true };
+      sp = { container, cone, body, sprite, label, ring, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
@@ -610,18 +625,33 @@ export class Renderer {
       sp.ring.circle(0, 0, 13).stroke({ width: 1.5, color: 0xffffff, alpha: 0.8 });
     }
 
-    // Body triangle, oriented by heading, faded by staleness for enemies.
-    sp.body.clear();
-    const len = ghost.kind === "convoy" ? 9 : 7;
-    const wid = ghost.kind === "convoy" ? 6 : 3.5;
-    // Fade with staleness — own ships too, so a distant (stale) own ship visibly
-    // dims while one near the command center stays crisp. A higher floor for own
-    // ships means you never "lose" your fleet — it just reports from further back.
+    // The ship BODY: a top-down sprite rotated to heading, sized by kind (convoy
+    // reads LARGER than the nimble raider — the asymmetry at a glance), TINTED by
+    // ownership (own cyan / rival red, so the same hull reads friend-or-foe), and
+    // faded by staleness. Fade applies to own ships too, so a distant (stale) own
+    // ship visibly dims while one near the command center stays crisp — but with a
+    // higher floor so you never "lose" your fleet, it just reports from further back.
     const fade = Math.min(ghost.age / FADE_AGE_S, 1);
     const alpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
-    sp.body.poly([len, 0, -len * 0.7, -wid, -len * 0.7, wid]).fill({ color, alpha });
-    if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
-    sp.body.rotation = angle;
+    const tex = ghost.kind === "convoy" ? this.texConvoy : this.texRaider;
+    sp.body.clear();
+    if (tex) {
+      sp.sprite.visible = true;
+      if (sp.sprite.texture !== tex) sp.sprite.texture = tex;
+      const targetPx = ghost.kind === "convoy" ? 30 : 20;
+      sp.sprite.scale.set(targetPx / tex.width);
+      sp.sprite.rotation = angle + SHIP_ART_FACING;
+      sp.sprite.tint = color;
+      sp.sprite.alpha = alpha;
+    } else {
+      // Primitive triangle fallback until the art loads.
+      sp.sprite.visible = false;
+      const len = ghost.kind === "convoy" ? 9 : 7;
+      const wid = ghost.kind === "convoy" ? 6 : 3.5;
+      sp.body.poly([len, 0, -len * 0.7, -wid, -len * 0.7, wid]).fill({ color, alpha });
+      if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
+      sp.body.rotation = angle;
+    }
 
     // Label: threat warning for raiders, cargo manifest for convoys (shown only
     // when known — i.e. within sensor range), staleness everywhere it matters.
