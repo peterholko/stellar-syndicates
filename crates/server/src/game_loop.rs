@@ -21,8 +21,8 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{
-    ClientMsg, DepositView, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg,
-    SystemInfo, WalletView,
+    BuildOptionView, ClientMsg, DepositView, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView,
+    ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
@@ -187,6 +187,8 @@ impl GameLoop {
                                     claim_cost: s.claim_cost,
                                 })
                                 .collect(),
+                            // What can be built + each recipe's cost/time (§step1).
+                            build_options: build_options(),
                         },
                     },
                 );
@@ -296,6 +298,16 @@ impl GameLoop {
                         self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
                     }
                 }
+                ClientMsg::BuildShip { system_id, ship_kind } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind });
+                    }
+                }
+                ClientMsg::DevelopSystem { system_id, upgrade } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {
@@ -389,7 +401,9 @@ impl GameLoop {
             let cc = corp.command_center;
             let ghosts = self.history.view_for(player_id, cc, c, now);
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
-            let systems = view::filter_systems(&self.world.systems, player_id, cc, c, now);
+            let systems = view::filter_systems(
+                &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
+            );
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
@@ -484,6 +498,28 @@ impl GameLoop {
             }
         }
     }
+}
+
+/// The buildable options + their recipes (§step1), built from the sim's const
+/// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
+fn build_options() -> Vec<BuildOptionView> {
+    use sim::{BuildKind, ShipKind, SystemUpgrade};
+    [
+        ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
+        ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
+        ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
+    ]
+    .into_iter()
+    .map(|(key, label, what)| {
+        let r = sim::build::recipe_for(what);
+        BuildOptionView {
+            key: key.to_string(),
+            label: label.to_string(),
+            costs: r.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
+            build_secs: r.build_ticks as f64 / TICK_HZ as f64,
+        }
+    })
+    .collect()
 }
 
 /// Run the authoritative loop until all [`GameHandle`]s are dropped.

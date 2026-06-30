@@ -94,6 +94,16 @@ impl Timeline {
                         }
                     }
                 }
+                // Construction is your own private administration (§step1) — owner-only,
+                // observable instantly; the finished ship reveals as a light-gated ghost.
+                EventPayload::BuildStarted { owner, system, what, .. } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!("Construction started at {name}: {}.", build_label(*what)));
+                }
+                EventPayload::SystemUpgraded { owner, system, tier } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — Extractor tier {tier} (more output)."));
+                }
                 _ => {}
             }
         }
@@ -165,6 +175,15 @@ fn system_name(world: &World, id: sim::EntityId) -> String {
         .find(|s| s.id == id)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| format!("{id}"))
+}
+
+/// Human label for a build job, for the check-in timeline (§step1).
+fn build_label(what: sim::BuildKind) -> &'static str {
+    match what {
+        sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
+    }
 }
 
 fn kind_word(k: ShipKind) -> &'static str {

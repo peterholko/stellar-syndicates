@@ -170,6 +170,14 @@ pub struct World {
     pending_orders: Vec<PendingOrder>,
     /// Monotonic allocator for entity ids.
     next_entity_id: u64,
+    /// Pending construction jobs (ships + system upgrades), resolved in step()
+    /// phase 5b' when their completion tick arrives (§step1 growth sink). Iterated
+    /// in id-push order for determinism. `#[serde(default)]` so old snapshots load.
+    #[serde(default)]
+    pub build_queue: Vec<crate::build::BuildJob>,
+    /// Monotonic allocator for build-job ids (0 ⇒ first id is 1).
+    #[serde(default)]
+    next_build_id: u64,
     /// World RNG stream (continues past generation) for deterministic events.
     rng: crate::rng::Rng,
 }
@@ -232,6 +240,8 @@ impl World {
             next_order_id: 1,
             pending_orders: Vec::new(),
             next_entity_id,
+            build_queue: Vec::new(),
+            next_build_id: 0,
             rng,
         }
     }
@@ -280,6 +290,11 @@ impl World {
         // 5b. Accrue production at every claimed system (§5.1 continuous progress)
         //     — happens whether or not the owner is logged in.
         self.accrue_production();
+
+        // 5b'. Resolve construction jobs whose completion tick has arrived (§step1
+        //      growth sink): spawn built ships / apply system upgrades. Server-driven
+        //      — a build started before logging off still completes on the clock.
+        self.resolve_builds(&mut events);
 
         // 5c. Standing logistics orders (§15): reconcile each rule's in-flight
         //     convoy against reality (raids/arrivals above may have removed it),
@@ -968,6 +983,90 @@ impl World {
                     corp.doctrine = *doctrine;
                 }
             }
+            Command::BuildShip { player_id, system_id, ship_kind } => {
+                self.apply_build(*player_id, *system_id, crate::build::BuildKind::Ship { ship: *ship_kind }, events);
+            }
+            Command::DevelopSystem { player_id, system_id, upgrade } => {
+                self.apply_build(*player_id, *system_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, events);
+            }
+        }
+    }
+
+    /// Validate + start a construction job (§step1 growth sink): the player must own
+    /// the system and its stockpile must cover the WHOLE recipe (no partial debit —
+    /// a soft reject). Deducts the recipe NOW and enqueues a job that resolves at
+    /// `tick + build_ticks`. Determinism: pure, runs in command phase so the debit is
+    /// visible to this tick's accrual + standing orders.
+    fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, what: crate::build::BuildKind, events: &mut Vec<Event>) {
+        let recipe = crate::build::recipe_for(what);
+        let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
+            return;
+        };
+        if sys.owner != Some(player_id) {
+            return; // only the owner builds at their system
+        }
+        let affordable = recipe
+            .costs
+            .iter()
+            .all(|(c, need)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *need);
+        if !affordable {
+            return; // soft reject — no event, no debit
+        }
+        // Deduct the whole recipe from the system stockpile.
+        let sys = self.systems.iter_mut().find(|s| s.id == system_id).unwrap();
+        for (c, need) in recipe.costs {
+            *sys.stockpile.entry(*c).or_insert(0.0) -= *need;
+        }
+        self.next_build_id += 1;
+        let complete_tick = self.tick + recipe.build_ticks;
+        self.build_queue.push(crate::build::BuildJob {
+            id: self.next_build_id,
+            owner: player_id,
+            system: system_id,
+            what,
+            complete_tick,
+        });
+        events.push(Event::new(
+            self.time,
+            EventPayload::BuildStarted { id: self.next_build_id, owner: player_id, system: system_id, what, complete_tick },
+        ));
+    }
+
+    /// Resolve construction jobs whose completion tick has arrived: spawn built ships
+    /// (Idle, at the system) / apply system upgrades. Drains due jobs in id-push order
+    /// (deterministic); a built ship is owned by whoever PAID even if the system was
+    /// since lost (you keep what you built); an upgrade applies only if still owned.
+    fn resolve_builds(&mut self, events: &mut Vec<Event>) {
+        if !self.build_queue.iter().any(|j| j.complete_tick <= self.tick) {
+            return;
+        }
+        let due: Vec<crate::build::BuildJob> =
+            self.build_queue.iter().filter(|j| j.complete_tick <= self.tick).copied().collect();
+        self.build_queue.retain(|j| j.complete_tick > self.tick);
+        for job in due {
+            match job.what {
+                crate::build::BuildKind::Ship { ship } => {
+                    let pos = self
+                        .systems
+                        .iter()
+                        .find(|s| s.id == job.system)
+                        .map(|s| s.pos)
+                        .or_else(|| self.players.get(&job.owner).map(|c| c.home))
+                        .unwrap_or(self.hub);
+                    let id = self.alloc_entity_id();
+                    self.ships.insert(id, Ship::new(id, job.owner, ship, pos, ShipOrder::Idle, None));
+                    events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
+                }
+                crate::build::BuildKind::Upgrade { upgrade: _ } => {
+                    // Apply only if the owner still holds the system (can't upgrade a
+                    // system you lost; the resources were already spent — frontier risk).
+                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
+                        sys.extractor_tier += 1;
+                        let tier = sys.extractor_tier;
+                        events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, tier }));
+                    }
+                }
+            }
         }
     }
 
@@ -1121,8 +1220,11 @@ impl World {
             if sys.owner.is_none() {
                 continue;
             }
+            // Extractor upgrades (§step1 structure sink) multiply every deposit's
+            // output: richness · MULT^tier (compounding, deterministic).
+            let mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
             for dep in &mut sys.deposits {
-                let mut amount = dep.richness * DT;
+                let mut amount = dep.richness * mult * DT;
                 if let Some(reserves) = dep.reserves.as_mut() {
                     amount = amount.min(*reserves);
                     *reserves -= amount;
@@ -1923,6 +2025,154 @@ mod tests {
         assert_eq!(owned.len(), 1, "exactly one owned home, regenerated on the fly");
         assert_eq!(owned[0].id, home, "home_system points at the owned system (no phantom)");
         assert_eq!(owned[0].pos, corp.command_center);
+    }
+
+    // --- §step1 PART 1: build sink ------------------------------------------
+    use crate::build::{SystemUpgrade, CONVOY_RECIPE, EXTRACTOR_RICHNESS_MULT};
+    use crate::cargo::Commodity;
+
+    /// Seed an owned system's stockpile so a recipe is affordable in tests.
+    fn seed_stock(w: &mut World, sys: EntityId, items: &[(Commodity, f64)]) {
+        let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+        for (c, n) in items {
+            *s.stockpile.entry(*c).or_insert(0.0) += *n;
+        }
+    }
+
+    #[test]
+    fn build_ship_deducts_recipe_and_spawns_after_duration() {
+        let mut w = test_world();
+        let id = PlayerId(2);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        let ore0 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Ore];
+        let ships0 = w.ships.len();
+
+        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy }]);
+        // Recipe deducted at once (minus this tick's accrual on the ore deposit; home
+        // produces ore, so assert it dropped by ~the recipe, not exactly).
+        let ore1 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Ore];
+        assert!(ore1 < ore0 - 30.0, "ore stockpile debited by the convoy recipe (~40)");
+        assert_eq!(w.build_queue.len(), 1, "a build job is enqueued");
+        assert_eq!(w.ships.len(), ships0, "no ship yet — it builds over time");
+
+        // Step until just before completion: still no new ship.
+        for _ in 0..(CONVOY_RECIPE.build_ticks - 2) {
+            w.step(&[]);
+        }
+        assert_eq!(w.ships.len(), ships0, "not built before its duration elapses");
+        // Step past completion → a Convoy spawns Idle at the system.
+        let mut spawned = None;
+        for _ in 0..4 {
+            for ev in w.step(&[]) {
+                if let EventPayload::ShipSpawned { id: sid, kind: ShipKind::Convoy, .. } = ev.payload {
+                    spawned = Some(sid);
+                }
+            }
+        }
+        let sid = spawned.expect("the convoy completes and spawns");
+        let ship = &w.ships[&sid];
+        assert_eq!(ship.owner, id);
+        assert_eq!(ship.kind, ShipKind::Convoy);
+        assert!(matches!(ship.order, ShipOrder::Idle), "built ships spawn Idle at the system");
+        let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        assert!(ship.pos.distance(home_pos) < 1.0, "spawns at the building system");
+        assert!(w.build_queue.is_empty(), "completed job is drained");
+    }
+
+    #[test]
+    fn build_rejected_when_stockpile_short() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Home produces only Ore + Provisions → it has NO Alloys/Fuel, so a Raider
+        // (Alloys + Fuel) is unaffordable: a soft reject (no debit, no job, no event).
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider }]);
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no build started");
+        assert!(w.build_queue.is_empty(), "no job enqueued on a short stockpile");
+    }
+
+    #[test]
+    fn develop_system_raises_extractor_tier_and_richness() {
+        let mut w = test_world();
+        let id = PlayerId(4);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        let rate0: f64 = w.systems.iter().find(|s| s.id == home).unwrap().deposits.iter().map(|d| d.richness).sum();
+
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+        let dur = crate::build::EXTRACTOR_RECIPE.build_ticks;
+        for _ in 0..(dur + 3) {
+            w.step(&[]);
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.extractor_tier, 1, "extractor tier applied on completion");
+        // One tick's accrual should now reflect the ×MULT richness.
+        let stock_before: f64 = sys.stockpile.values().sum();
+        w.step(&[]);
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let gained: f64 = sys.stockpile.values().sum::<f64>() - stock_before;
+        let expect = rate0 * EXTRACTOR_RICHNESS_MULT * crate::config::DT;
+        assert!((gained - expect).abs() < 1e-6, "production scaled by the extractor (got {gained}, want {expect})");
+    }
+
+    #[test]
+    fn build_survives_system_loss_owner_keeps_ship() {
+        let mut w = test_world();
+        let id = PlayerId(5);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy }]);
+        // Lose the system mid-build (e.g. a future conquest).
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().owner = Some(PlayerId(999));
+        let mut built = false;
+        for _ in 0..(CONVOY_RECIPE.build_ticks + 4) {
+            for ev in w.step(&[]) {
+                if let EventPayload::ShipSpawned { owner, kind: ShipKind::Convoy, .. } = ev.payload
+                    && owner == id
+                {
+                    built = true;
+                }
+            }
+        }
+        assert!(built, "you keep what you paid for even if the system is lost");
+    }
+
+    #[test]
+    fn upgrade_dropped_if_system_lost() {
+        let mut w = test_world();
+        let id = PlayerId(6);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().owner = Some(PlayerId(999));
+        for _ in 0..(crate::build::EXTRACTOR_RECIPE.build_ticks + 4) {
+            w.step(&[]);
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.extractor_tier, 0, "can't upgrade a system you no longer own (resources already spent)");
+    }
+
+    #[test]
+    fn builds_are_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            let id = PlayerId(7);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let home = w.players[&id].home_system.unwrap();
+            seed_stock(&mut w, home, &[(Commodity::Ore, 200.0), (Commodity::Alloys, 100.0)]);
+            w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy }]);
+            for _ in 0..400 {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w).unwrap()
+        };
+        assert_eq!(run(), run(), "same seed + commands incl. a completed build → identical state");
     }
 
     #[test]

@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use sim::{
     Commodity, EntityId, FleetDoctrine, PlayerId, RaidOutcome, ShipKind, Side, StandingOrder,
-    TradeEvent, Vec2,
+    SystemUpgrade, TradeEvent, Vec2,
 };
 
 /// Messages sent by the client to the server.
@@ -66,6 +66,14 @@ pub enum ClientMsg {
     /// logistics policy. Instant local administration; the server attaches the
     /// issuing player.
     SetFleetDoctrine { doctrine: FleetDoctrine },
+
+    /// Build a ship at one of the player's owned systems (§step1 growth sink) — costs
+    /// a commodity recipe from that system's stockpile and completes over time.
+    BuildShip { system_id: EntityId, ship_kind: ShipKind },
+
+    /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
+    /// Extractor tier that raises its output — costs a recipe, completes over time.
+    DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -206,6 +214,19 @@ pub struct GalaxyInfo {
     /// drifting intercept estimate for a committed raid (rendered as a soft zone).
     pub raider_speed: f64,
     pub systems: Vec<SystemInfo>,
+    /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
+    /// Static (const recipes), sent once so the client renders costs without re-tx.
+    pub build_options: Vec<BuildOptionView>,
+}
+
+/// A buildable thing and its recipe (§step1 growth sink), for the System-view UI.
+/// `key` is a stable identifier the client maps back to a build command.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildOptionView {
+    pub key: String,
+    pub label: String,
+    pub costs: Vec<StockSlot>,
+    pub build_secs: f64,
 }
 
 /// One commodity in a system's stockpile (whole units), shown only to the owner.
@@ -213,6 +234,14 @@ pub struct GalaxyInfo {
 pub struct StockSlot {
     pub commodity: Commodity,
     pub units: u32,
+}
+
+/// An owner-only in-progress build at a system (§step1). `key` is what's building;
+/// `complete_time` is the sim-time of completion (the client shows ETA = it − now).
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildStateView {
+    pub key: String,
+    pub complete_time: f64,
 }
 
 /// The DYNAMIC, per-tick, light-gated state of a star system (companion to the
@@ -225,6 +254,12 @@ pub struct SystemStateView {
     pub id: EntityId,
     pub owner: Option<PlayerId>,
     pub stockpile: Option<Vec<StockSlot>>,
+    /// Owner-only: the in-progress build at this system (§step1), if any. Like
+    /// `stockpile`, never present for a rival — build state never leaks.
+    pub build: Option<BuildStateView>,
+    /// Number of Extractor upgrades built here (visible to all once the system is
+    /// known — it's part of the system's observable development, not private intel).
+    pub extractor_tier: u32,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within

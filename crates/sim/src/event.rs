@@ -77,6 +77,19 @@ pub enum EventPayload {
         kind: ShipKind,
         pos: crate::math::Vec2,
     },
+
+    /// Construction began at an owned system: a recipe was deducted and a build job
+    /// enqueued (§step1 growth sink). Owner-only news (the spend is private; the
+    /// finished ship reveals as a normal light-gated ghost).
+    BuildStarted {
+        id: u64,
+        owner: PlayerId,
+        system: EntityId,
+        what: crate::build::BuildKind,
+        complete_tick: u64,
+    },
+    /// A system development completed (e.g. an Extractor tier applied). Owner-only.
+    SystemUpgraded { system: EntityId, owner: PlayerId, tier: u32 },
 }
 
 /// Economy events. `player` always names the corporation involved; values are

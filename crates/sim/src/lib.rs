@@ -11,6 +11,7 @@
 //! the per-player lightspeed view filter's delivery scheduling, rendering —
 //! lives in the `server` crate and the client, never here.
 
+pub mod build;
 pub mod cargo;
 pub mod command;
 pub mod config;
@@ -26,6 +27,7 @@ pub mod ship;
 pub mod standing;
 pub mod world;
 
+pub use build::{BuildJob, BuildKind, SystemUpgrade};
 pub use cargo::{Cargo, Commodity};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};

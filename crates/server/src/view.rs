@@ -29,7 +29,7 @@ use std::collections::VecDeque;
 
 use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, StarSystem, Vec2, World};
 
-use crate::protocol::{AnchorView, CargoView, GhostView, StockSlot, SystemStateView};
+use crate::protocol::{AnchorView, BuildStateView, CargoView, GhostView, StockSlot, SystemStateView};
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -353,12 +353,16 @@ pub fn filter_anchors(
 /// * **stockpile** — a system's accumulated production is private: shown only to
 ///   the owner (who can anyway predict it from the known deposit rates), never to
 ///   rivals. So no information about a rival's holdings ever leaks.
+#[allow(clippy::too_many_arguments)]
 pub fn filter_systems(
     systems: &[StarSystem],
     viewer: PlayerId,
     cc: Vec2,
     c: f64,
     now: f64,
+    build_queue: &[sim::BuildJob],
+    tick: u64,
+    dt: f64,
 ) -> Vec<SystemStateView> {
     systems
         .iter()
@@ -386,13 +390,37 @@ pub fn filter_systems(
                     })
                     .collect()
             });
+            // Owner-only: the soonest in-progress build here (the UI shows one job).
+            let build = own
+                .then(|| {
+                    build_queue
+                        .iter()
+                        .filter(|j| j.system == sys.id && j.owner == viewer)
+                        .min_by_key(|j| j.complete_tick)
+                        .map(|j| BuildStateView {
+                            key: build_key(j.what).to_string(),
+                            complete_time: now + (j.complete_tick.saturating_sub(tick)) as f64 * dt,
+                        })
+                })
+                .flatten();
             SystemStateView {
                 id: sys.id,
                 owner,
                 stockpile,
+                build,
+                extractor_tier: sys.extractor_tier,
             }
         })
         .collect()
+}
+
+/// Stable key string for a buildable thing (matches the client's build commands).
+pub fn build_key(what: sim::BuildKind) -> &'static str {
+    match what {
+        sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
+    }
 }
 
 /// History of the hub's standing prices, so each player can be shown the prices
@@ -666,6 +694,7 @@ mod tests {
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
+            extractor_tier: 0,
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -674,8 +703,16 @@ mod tests {
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
 
+        // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
+        let builds = vec![
+            sim::BuildJob { id: 1, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300 },
+            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300 },
+        ];
+
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0);
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT);
+        assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
+        assert!(v10[1].build.is_none(), "a rival's build state must never leak");
         assert_eq!(v10[0].owner, Some(me), "own claim is visible instantly");
         assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
         assert_eq!(v10[2].owner, None);
@@ -688,7 +725,7 @@ mod tests {
         assert!(v10[2].stockpile.is_none());
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, c, 25.0);
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);
         assert_eq!(v25[1].owner, Some(rival));
         // …but still NEVER their stockpile.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");

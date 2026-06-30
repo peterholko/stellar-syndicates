@@ -134,4 +134,26 @@ pub enum Command {
         player_id: PlayerId,
         doctrine: FleetDoctrine,
     },
+
+    /// Build a ship at one of the player's OWNED systems (§step1 growth sink).
+    /// Deducts a fixed RECIPE of commodities from that system's stockpile NOW and
+    /// enqueues a build job that completes after the recipe's duration, spawning the
+    /// ship (Idle) at the system. INSTANT local administration (not light-delayed):
+    /// you commit resources at your own system immediately; the COMPLETION reveals to
+    /// rivals only as a normal light-gated ghost. Ignored unless the player owns the
+    /// system and its stockpile covers the recipe (a soft reject — no partial debit).
+    BuildShip {
+        player_id: PlayerId,
+        system_id: EntityId,
+        ship_kind: crate::ship::ShipKind,
+    },
+
+    /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an
+    /// Extractor tier that raises its output. Same deduct-and-enqueue semantics as
+    /// `BuildShip`; on completion the upgrade is applied (only if still owned).
+    DevelopSystem {
+        player_id: PlayerId,
+        system_id: EntityId,
+        upgrade: crate::build::SystemUpgrade,
+    },
 }

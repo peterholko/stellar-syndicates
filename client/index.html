@@ -281,6 +281,7 @@
       /* ---- System view (SYSTEM tab) ---- */
       .sysview__deps { margin: 4px 0 6px; }
       .deps-head { color: var(--dim); text-transform: uppercase; font-size: 9px; letter-spacing: 0.6px; margin-bottom: 4px; }
+      .deps-head .sp-tier { color: var(--accent); }
       .dep-row { display: grid; grid-template-columns: 22px 1fr 56px auto; align-items: center; gap: 8px; padding: 3px 0; }
       .dep-row .dep-ico { color: var(--accent); display: flex; }
       /* Bundled Stellar-Charters resource/action icons (framed PNG badges). */
@@ -306,6 +307,12 @@
       .sys-prod .sp-stock { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
       .sys-prod .sp-rate { color: var(--positive); font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
       .sys-prod .sp-none { color: var(--dim); }
+      /* Build / develop options (§step1 growth sink). */
+      .build-grid { display: flex; flex-direction: column; gap: 4px; }
+      .build-opt { justify-content: space-between; }
+      .build-opt .bo-name { font-weight: 600; }
+      .build-opt .bo-cost { color: var(--dim); font-size: 11px; display: inline-flex; align-items: center; gap: 3px; }
+      .build-opt .bo-cost .cicon { width: 13px; height: 13px; vertical-align: middle; }
 
       /* ---- Market board (MARKET tab) ---- */
       .board__row {

@@ -59,6 +59,10 @@ pub struct StarSystem {
     /// Production accumulated at the system, awaiting a convoy to the hub.
     #[serde(default)]
     pub stockpile: BTreeMap<Commodity, f64>,
+    /// Number of Extractor upgrades built here (§step1 structure sink). Scales
+    /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
+    #[serde(default)]
+    pub extractor_tier: u32,
 }
 
 impl StarSystem {
@@ -136,6 +140,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             owner: None,
             claimed_at: None,
             stockpile: BTreeMap::new(),
+            extractor_tier: 0,
         });
     }
     systems
@@ -240,6 +245,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         owner: None,
         claimed_at: None,
         stockpile: BTreeMap::new(),
+        extractor_tier: 0,
     }
 }
 

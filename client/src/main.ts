@@ -469,20 +469,53 @@ function depositRow(d: Deposit): string {
 
 // Owner-only production readout: per-resource stockpile + the deposit yield as its
 // flow (the protocol carries no separate per-tick flow). Gated behind ownership.
+// Per-Extractor-tier output multiplier — MIRRORS the sim's `EXTRACTOR_RICHNESS_MULT`
+// (crates/sim/src/build.rs). Production compounds as `richness · MULT^tier`, so the
+// readout shows the ACTUAL current output, not the intrinsic geology (which the
+// Geology section above shows unmodified).
+const EXTRACTOR_RICHNESS_MULT = 1.5;
+
 function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const tier = dyn?.extractor_tier ?? 0;
+  const mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
   const rateOf = new Map<Commodity, number>();
-  for (const d of sys.deposits) rateOf.set(d.resource, (rateOf.get(d.resource) ?? 0) + d.richness);
+  for (const d of sys.deposits) rateOf.set(d.resource, (rateOf.get(d.resource) ?? 0) + d.richness * mult);
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
-  return `<div class="deps-head" style="margin-top:8px">Stockpile · production</div>` +
+  const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
+  return `<div class="deps-head" style="margin-top:8px">Stockpile · production${tierTag}</div>` +
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, 16)}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("");
+}
+
+// Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
+// each buildable option with its recipe cost + afford state (costs draw from THIS
+// system's stockpile), plus any in-progress build with an ETA. Fog-safe — only
+// rendered for systems you own (the View only sends build state to the owner).
+function buildPanel(dyn: SystemStateView | undefined): string {
+  const opts = state.galaxy?.build_options ?? [];
+  if (!opts.length) return "";
+  const head = `<div class="deps-head" style="margin-top:8px">Build · develop</div>`;
+  const building = dyn?.build ?? null;
+  if (building) {
+    const eta = Math.max(0, building.complete_time - state.simTime);
+    const label = building.key.charAt(0).toUpperCase() + building.key.slice(1);
+    return head + `<div class="mhint">${icon("ship", 12)} Building <b>${label}</b> — ETA <b>${eta.toFixed(0)}s</b>. <span class="dim">One job at a time.</span></div>`;
+  }
+  const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const rows = opts.map((o) => {
+    const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+    const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, 13)}${c.units}`).join(" ");
+    return `<button class="act build-opt" data-build="${o.key}" ${afford ? "" : "disabled"} title="${afford ? "costs draw from this system's stockpile" : "not enough resources stockpiled here"}">` +
+      `<span class="bo-name">${esc(o.label)}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
+  }).join("");
+  return head + `<div class="build-grid">${rows}</div>`;
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
@@ -506,7 +539,7 @@ function buildSystemTab(): void {
   if (systemTabBuilt) return;
   systemTabBuilt = true;
   $("tab-system").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-action],[data-sys]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-action],[data-sys],[data-build]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.sys) {
       state.selectedSystemId = el.dataset.sys; // re-selects; map highlights it too
@@ -515,6 +548,13 @@ function buildSystemTab(): void {
     }
     const sid = state.selectedSystemId;
     if (!sid || !net) return;
+    if (el.dataset.build) {
+      // §step1 build sink: convoy/raider → BuildShip; extractor → DevelopSystem.
+      const k = el.dataset.build;
+      if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
+      else if (k === "extractor") net.send({ type: "DevelopSystem", system_id: sid, upgrade: "extractor" });
+      return;
+    }
     switch (el.dataset.action) {
       case "claim": net.send({ type: "ClaimSystem", system_id: sid }); break;
       case "ship": net.send({ type: "ShipProduction", system_id: sid }); break;
@@ -574,6 +614,7 @@ function updateSystemTab(): void {
   const deps = `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
     sys.deposits.map(depositRow).join("") + `</div>`;
   const prod = mine ? productionReadout(sys, dyn) : "";
+  const build = mine ? buildPanel(dyn) : "";
 
   let actions: string;
   if (unclaimed && atHomeSite) {
@@ -597,7 +638,7 @@ function updateSystemTab(): void {
         ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
         : "";
 
-  root.innerHTML = rail + header + strip + deps + prod + actions + hint;
+  root.innerHTML = rail + header + strip + deps + prod + build + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------

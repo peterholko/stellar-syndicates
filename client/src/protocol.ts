@@ -39,10 +39,29 @@ export interface StockSlot {
 // Per-tick, light-gated dynamic state of a system. `owner` is null until a
 // rival's claim light arrives (own claims are instant); `stockpile` is present
 // only for the owner — a rival's holdings never leak.
+// An owner-only in-progress build at a system (§step1). `key` = what's building
+// ("convoy"|"raider"|"extractor"); `complete_time` = sim-time of completion.
+export interface BuildState {
+  key: string;
+  complete_time: number;
+}
+
 export interface SystemStateView {
   id: EntityId;
   owner: PlayerId | null;
   stockpile: StockSlot[] | null;
+  /// Owner-only in-progress build (§step1) — null for rivals (never leaks).
+  build: BuildState | null;
+  /// Extractor upgrades built here (visible once the system is known).
+  extractor_tier: number;
+}
+
+// A buildable thing + its recipe (§step1), sent once in the galaxy.
+export interface BuildOption {
+  key: string;
+  label: string;
+  costs: StockSlot[];
+  build_secs: number;
 }
 
 export interface GalaxyInfo {
@@ -52,6 +71,7 @@ export interface GalaxyInfo {
   sensor_range: number; // detection radius each of your assets projects
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
   systems: SystemInfo[];
+  build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
 
 export type Commodity = "fuel" | "ore" | "alloys" | "provisions" | "volatiles";
@@ -210,6 +230,8 @@ export type ClientMsg =
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
+  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" }
   | { type: "Ping" };
 
 export type RaidOutcome =
