@@ -213,9 +213,12 @@ export class Renderer {
 
   setGalaxy(galaxy: GalaxyInfo): void {
     this.galaxy = galaxy;
-    // Drop pooled body sprites from any previous galaxy (fresh systems / ids).
+    // Drop pooled body sprites from any previous galaxy (fresh systems / ids) —
+    // the per-system bodies AND the hub, so a galaxy change leaves no stale sprite.
     for (const sp of this.systemBodies.values()) sp.destroy();
     this.systemBodies.clear();
+    this.hubSprite?.destroy();
+    this.hubSprite = null;
     this.recompute();
   }
 
