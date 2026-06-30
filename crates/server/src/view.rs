@@ -408,7 +408,11 @@ pub fn filter_systems(
                 owner,
                 stockpile,
                 build,
-                extractor_tier: sys.extractor_tier,
+                // Owner-only, like the stockpile: a system's development tier is
+                // private intel. Gating it also avoids leaking an upgrade to a rival
+                // FASTER THAN LIGHT (the field would otherwise update the instant it
+                // lands, unlike the light-gated `owner`). Rivals see tier 0.
+                extractor_tier: if own { sys.extractor_tier } else { 0 },
             }
         })
         .collect()
@@ -696,12 +700,14 @@ mod tests {
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
             extractor_tier: 0,
         };
-        let systems = vec![
+        let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
             // Rival's claim 6000 su away → 20 s of light.
             mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::Ore, 99.0)]),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
+        systems[0].extractor_tier = 2; // mine — developed
+        systems[1].extractor_tier = 3; // rival — must stay hidden
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
@@ -723,12 +729,16 @@ mod tests {
         assert_eq!(mine[0].units, 12, "stockpile reported in whole units");
         assert!(v10[1].stockpile.is_none(), "a rival's stockpile must never be shown");
         assert!(v10[2].stockpile.is_none());
+        // Development tier is owner-only too — the owner sees their own…
+        assert_eq!(v10[0].extractor_tier, 2, "owner sees their own development tier");
+        assert_eq!(v10[1].extractor_tier, 0, "a rival's tier must never leak (not even faster-than-light)");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
         let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);
         assert_eq!(v25[1].owner, Some(rival));
-        // …but still NEVER their stockpile.
+        // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
+        assert_eq!(v25[1].extractor_tier, 0, "ownership visible, development tier still private");
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.
