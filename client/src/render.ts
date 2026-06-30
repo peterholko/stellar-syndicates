@@ -45,6 +45,12 @@ const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
 
+// --- Zoom limits, as multiples of the fit-to-galaxy scale (so they scale with
+// galaxy size). MIN ≈ fit (whole galaxy visible, a touch looser); MAX inspects a
+// single system / tight cluster for precise clicking. ---
+const ZOOM_MIN_FACTOR = 0.9;
+const ZOOM_MAX_FACTOR = 24;
+
 interface GhostSprite {
   container: Container;
   cone: Graphics;
@@ -73,6 +79,12 @@ export class Renderer {
   private scale = 1;
   private cx = 0;
   private cy = 0;
+  /// True once the user has zoomed/panned — so a window resize PRESERVES their
+  /// view (re-clamping scale) instead of snapping back to fit-to-galaxy.
+  private userView = false;
+  /// The world-anchored background (galaxy rings + hub) is drawn only when the
+  /// transform changes, not every frame; this flags it for redraw.
+  private viewDirty = false;
 
   async init(mount: HTMLElement): Promise<void> {
     await this.app.init({
@@ -117,6 +129,45 @@ export class Renderer {
     return { x: (sx - this.cx) / this.scale, y: (sy - this.cy) / this.scale };
   }
 
+  /// The fit-to-galaxy scale (whole galaxy comfortably visible) — the default and
+  /// reset view, and the basis for the zoom clamp.
+  private fitScale(): number {
+    if (!this.galaxy) return 1;
+    return (Math.min(this.viewW, this.viewH) * 0.46) / this.galaxy.radius;
+  }
+  private clampScale(s: number): number {
+    const fit = this.fitScale();
+    return Math.max(fit * ZOOM_MIN_FACTOR, Math.min(fit * ZOOM_MAX_FACTOR, s));
+  }
+
+  /// Multiplicative zoom keeping the world point under (`screenX`,`screenY`) fixed
+  /// (zoom toward the cursor). All draws follow via the shared transform.
+  zoomAt(screenX: number, screenY: number, factor: number): void {
+    if (!this.galaxy) return;
+    const before = this.screenToWorld(screenX, screenY);
+    this.scale = this.clampScale(this.scale * factor);
+    this.cx = screenX - before.x * this.scale;
+    this.cy = screenY - before.y * this.scale;
+    this.userView = true;
+    this.viewDirty = true;
+  }
+  /// Zoom toward the viewport centre (for the +/− buttons).
+  zoomByFactor(factor: number): void {
+    this.zoomAt(this.viewW / 2, this.viewH / 2, factor);
+  }
+  /// Pan by a screen-pixel delta (drag).
+  panBy(dx: number, dy: number): void {
+    this.cx += dx;
+    this.cy += dy;
+    this.userView = true;
+    this.viewDirty = true;
+  }
+  /// Reset to the fit-to-galaxy view (and let subsequent resizes re-fit again).
+  resetView(): void {
+    this.userView = false;
+    this.recompute();
+  }
+
   setGalaxy(galaxy: GalaxyInfo): void {
     this.galaxy = galaxy;
     this.recompute();
@@ -124,9 +175,15 @@ export class Renderer {
 
   private recompute(): void {
     if (!this.galaxy) return;
-    this.scale = (Math.min(this.viewW, this.viewH) * 0.46) / this.galaxy.radius;
-    this.cx = this.viewW / 2;
-    this.cy = this.viewH / 2;
+    if (this.userView) {
+      // Preserve the user's pan/zoom across a resize; just re-clamp the scale to
+      // the new viewport's limits.
+      this.scale = this.clampScale(this.scale);
+    } else {
+      this.scale = this.fitScale();
+      this.cx = this.viewW / 2;
+      this.cy = this.viewH / 2;
+    }
     this.drawBackground();
     // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
   }
@@ -529,6 +586,11 @@ export class Renderer {
   update(state: ViewState): void {
     if (!state.galaxy) return;
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
+    // Redraw the world-anchored background (rings + hub) when the user zoomed/panned.
+    if (this.viewDirty) {
+      this.drawBackground();
+      this.viewDirty = false;
+    }
 
     const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 

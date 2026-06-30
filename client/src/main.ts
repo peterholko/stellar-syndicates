@@ -210,14 +210,11 @@ function toggleCheckin(): void {
   else closeCheckin();
 }
 
-// Click an own ship to select it; click elsewhere to order the selected ship
-// there. The order travels at light speed — the readout makes the three clocks
-// (send / arrive / observe) explicit, estimated from the stale sighting.
-function installInteraction(): void {
-  renderer.canvas.addEventListener("pointerdown", (e: PointerEvent) => {
-    const sx = e.clientX;
-    const sy = e.clientY;
-
+// The map CLICK action (select own ship · select a star system incl. home ·
+// inspect a command anchor · raid a rival ghost · move order to empty space). All
+// hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
+// ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
+function handleMapClick(sx: number, sy: number): void {
     // Selection priority: a star SYSTEM and an own SHIP are hit-tested together,
     // because your starting fleet sits right on your home system — letting a parked
     // ship always swallow the click made the home system unselectable. Nearest wins,
@@ -332,7 +329,55 @@ function installInteraction(): void {
       `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
       `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
       `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+}
+
+// Wire map interaction: zoom (wheel toward cursor + buttons), pan (left-drag on
+// empty space), and the click action — gated so a drag PANS and never fires a
+// click (no accidental move orders / raids / selections when panning).
+function installInteraction(): void {
+  const canvas = renderer.canvas;
+  const DRAG_THRESHOLD = 5; // px of motion that turns a press into a pan
+  let down = false, panning = false;
+  let startX = 0, startY = 0, lastX = 0, lastY = 0;
+
+  canvas.addEventListener("pointerdown", (e: PointerEvent) => {
+    if (e.button !== 0) return; // left button only starts a click/drag
+    down = true; panning = false;
+    startX = e.clientX; startY = e.clientY; lastX = e.clientX; lastY = e.clientY;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* capture optional */ }
   });
+  canvas.addEventListener("pointermove", (e: PointerEvent) => {
+    if (!down) return;
+    if (!panning && Math.hypot(e.clientX - startX, e.clientY - startY) > DRAG_THRESHOLD) {
+      panning = true; // crossed the threshold → this is a pan, not a click
+    }
+    if (panning) {
+      renderer.panBy(e.clientX - lastX, e.clientY - lastY);
+      lastX = e.clientX; lastY = e.clientY;
+    }
+  });
+  const endPress = (e: PointerEvent) => {
+    if (!down) return;
+    down = false;
+    try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
+    // A tap (no pan) runs the existing click action; a pan-drag suppresses it.
+    if (!panning) handleMapClick(e.clientX, e.clientY);
+    panning = false;
+  };
+  canvas.addEventListener("pointerup", endPress);
+  canvas.addEventListener("pointercancel", () => { down = false; panning = false; });
+
+  // Mouse wheel zooms toward the cursor. preventDefault stops the page scrolling;
+  // over a panel the wheel hits the panel (not the canvas), so panels still scroll.
+  canvas.addEventListener("wheel", (e: WheelEvent) => {
+    e.preventDefault();
+    renderer.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0016));
+  }, { passive: false });
+
+  // On-screen zoom controls.
+  $("zoom-in").addEventListener("click", () => renderer.zoomByFactor(1.3));
+  $("zoom-out").addEventListener("click", () => renderer.zoomByFactor(1 / 1.3));
+  $("zoom-reset").addEventListener("click", () => renderer.resetView());
 
   // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
   window.addEventListener("keydown", (e) => {
@@ -356,6 +401,18 @@ function installInteraction(): void {
     } else if (e.key === "Escape") {
       closeMarket();
       closeRail();
+    } else if (e.key === "+" || e.key === "=") {
+      renderer.zoomByFactor(1.3);
+    } else if (e.key === "-" || e.key === "_") {
+      renderer.zoomByFactor(1 / 1.3);
+    } else if (e.key === "ArrowLeft") {
+      renderer.panBy(60, 0);
+    } else if (e.key === "ArrowRight") {
+      renderer.panBy(-60, 0);
+    } else if (e.key === "ArrowUp") {
+      renderer.panBy(0, 60);
+    } else if (e.key === "ArrowDown") {
+      renderer.panBy(0, -60);
     }
   });
 }
@@ -982,6 +1039,7 @@ function join(): void {
           hud.style.display = "flex";
           $("readout").style.display = "block";
           $("legend").style.display = "block";
+          $("zoom-controls").style.display = "flex";
           // Wire the rail (System/Logistics/Doctrine), the navbar Market overlay,
           // and the navbar Log. The rail + Market stay CLOSED on join so the map is
           // uncluttered — opened by clicking a system, S/O/F, or the navbar/M.

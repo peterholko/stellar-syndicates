@@ -339,6 +339,21 @@
       .hud-btn.is-active { background: var(--accent); color: #04121d; font-weight: 700; border-color: var(--accent); }
       .hud-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+      /* ---- map zoom controls (left edge, clear of the right rail) ---- */
+      #zoom-controls {
+        position: fixed; left: 14px; top: 50%; transform: translateY(-50%);
+        display: none; flex-direction: column; gap: 6px; z-index: 6;
+      }
+      #zoom-controls button {
+        width: 30px; height: 30px; cursor: pointer; line-height: 1;
+        background: rgba(8,12,22,0.82); color: var(--ink);
+        border: 1px solid var(--border); border-radius: 6px;
+        font: inherit; font-size: 15px; backdrop-filter: blur(4px);
+      }
+      #zoom-controls button:hover { border-color: var(--accent); color: var(--accent); }
+      #zoom-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      #zoom-controls #zoom-reset { font-size: 13px; }
+
       /* ---- Hub Exchange overlay (opened from the navbar / M — system-independent) ---- */
       #market {
         position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
@@ -464,11 +479,18 @@
       sightings both lag.
     </div>
 
+    <div id="zoom-controls">
+      <button id="zoom-in" type="button" title="Zoom in (scroll up · +)" aria-label="Zoom in">+</button>
+      <button id="zoom-reset" type="button" title="Fit galaxy (reset view)" aria-label="Fit galaxy">⊡</button>
+      <button id="zoom-out" type="button" title="Zoom out (scroll down · −)" aria-label="Zoom out">−</button>
+    </div>
+
     <div id="legend">
       <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / systems — delayed, crisp only near HQ</div>
       <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
       <div class="row"><span class="dim">claim systems → produce → ship to hub (raidable) → sell</span></div>
       <div class="row"><span class="dim">click a system = open it · click rival = raid · R = recall · Δt = staleness</span></div>
+      <div class="row"><span class="dim">scroll = zoom · drag = pan · ⊡ = fit · arrows/+/− also work</span></div>
       <div class="row"><span class="dim">rail: S = system · O = logistics · F = doctrine · Esc = close</span></div>
       <div class="row"><span class="dim">top bar: M = market · L = check-in log</span></div>
     </div>
