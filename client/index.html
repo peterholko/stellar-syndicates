@@ -46,7 +46,12 @@
       #join {
         position: fixed; inset: 0;
         display: flex; align-items: center; justify-content: center;
-        background: radial-gradient(circle at 50% 35%, #0b1426 0%, #05070d 70%);
+        /* Lore illustration (corporate command center) under a darkening wash so
+           the card stays readable. Other 5 scenes are available in /art. */
+        background:
+          radial-gradient(circle at 50% 38%, rgba(8,14,28,0.62) 0%, rgba(5,7,13,0.93) 72%),
+          url("/art/lore_illustrations/corporate_command_center.png") center/cover no-repeat,
+          #05070d;
         z-index: 10;
       }
       #join .card {
