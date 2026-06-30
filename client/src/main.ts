@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type Deposit, type FleetDoctrine, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
 
 const state: ViewState = initialState();
 
@@ -25,7 +25,6 @@ function setHud(): void {
   $("hud-ships").textContent = state.link === "online" ? String(state.ghosts.length) : "—";
   $("hud-credits").textContent = state.wallet ? `${Math.round(state.wallet.credits).toLocaleString()}` : "—";
   $("hud-equity").textContent = state.wallet ? `${Math.round(state.wallet.valuation).toLocaleString()}` : "—";
-  $("hud-fuel").textContent = state.wallet ? `${Math.round(state.wallet.fuel_total).toLocaleString()}` : "—";
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
     connecting: "connecting…",
@@ -131,6 +130,15 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
   provisions: 6, ore: 8, fuel: 10, volatiles: 18, alloys: 26,
 };
 
+// Mirror of the sim's fuel-cost model (crates/sim/src/fuel.rs + ship.rs) — so the
+// own-ship panel can show this ship's fuel burn rate honestly. Movement burns
+// FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
+const FUEL_PER_MASS_DISTANCE = 1.0e-6;
+const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200 };
+const CARGO_MASS_PER_UNIT = 28;
+const shipMass = (g: GhostView) =>
+  HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
+
 // Resource icons (Stellar Charters art, bundled in client/public/icons). Dedicated
 // icons for Fuel / Alloys / Provisions(food); Ore and Volatiles use the metals /
 // ice STAND-INS until dedicated art exists (see README gap list). Credits get NO
@@ -177,6 +185,7 @@ function setRailTab(tab: RailTab): void {
   else if (tab === "doctrine") updateDoctrinePanel();
 }
 function openRail(tab: RailTab): void {
+  deselectShip(); // the rail and the ship panel share the right-dock slot
   $("rail").classList.add("is-open");
   setRailTab(tab);
 }
@@ -200,6 +209,175 @@ function buildRail(): void {
   $("nav-market").addEventListener("click", toggleMarket);
   $("nav-log").addEventListener("click", toggleCheckin);
   $("market-close").addEventListener("click", closeMarket);
+}
+
+// --- Ship details panel — a FOG-AWARE master→detail card for the SELECTED ship.
+// It shares the right-dock slot with the rail (mutually exclusive: selecting a ship
+// closes the rail and clears any system selection; opening the rail deselects the
+// ship). Re-renders each View so the information AGE keeps ticking. Strictly a UI
+// layer over GhostView — it shows ONLY what the per-player view already reveals, so
+// a rival's cargo/route/internal state never leaks. ------------------------------
+let shipPanelBuilt = false;
+function buildShipPanel(): void {
+  if (shipPanelBuilt) return;
+  shipPanelBuilt = true;
+  // One delegated listener survives the per-View innerHTML rewrites.
+  $("ship-panel").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-act]");
+    if (!b) return;
+    const act = (b as HTMLElement).dataset.act;
+    if (act === "close") {
+      deselectShip();
+    } else if (act === "recall" && state.selectedShipId && net) {
+      net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
+      delete state.raids[state.selectedShipId]; // break off the intercept estimate
+      updateShipPanel();
+    }
+  });
+}
+function selectShip(id: string): void {
+  state.selectedShipId = id;
+  state.selectedSystemId = null; // a ship and a system are never both selected
+  closeRail(); // the ship panel and rail share the right-dock slot
+  $("ship-panel").classList.add("is-open");
+  buildShipPanel();
+  updateShipPanel();
+}
+function deselectShip(): void {
+  state.selectedShipId = null;
+  $("ship-panel").classList.remove("is-open");
+}
+
+const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k);
+
+// Heading arrow + speed, computed in SCREEN space so it matches the map exactly.
+function headingCell(g: GhostView): string {
+  const sp = Math.hypot(g.vel.x, g.vel.y);
+  if (sp < 0.5) return stat("Heading", `<span class="dim">stationary</span>`);
+  const p0 = renderer.worldToScreen(g.pos);
+  const p1 = renderer.worldToScreen({ x: g.pos.x + g.vel.x, y: g.pos.y + g.vel.y });
+  const deg = (Math.atan2(p1.y - p0.y, p1.x - p0.x) * 180) / Math.PI;
+  return stat("Heading", `<span class="sp-arrow" aria-hidden="true" style="transform:rotate(${deg.toFixed(0)}deg)">➤</span> ${sp.toFixed(0)} su/s`);
+}
+
+// Inferred activity for an OWN ship — there is NO server order field, so this reads
+// purely from the client's own overlays (raids/orders/command signals/route/vel).
+function ownActivity(g: GhostView): string {
+  if (state.commandSignals.some((s) => s.shipId === g.id)) return "Order in transit — your command is still crossing space to it.";
+  if (state.raids[g.id]) return "Raiding — pursuing a rival contact (recall to break off).";
+  if (state.orders[g.id]) return "En route — proceeding on your last move order.";
+  if (g.route && g.route.length) return "Hauling — en route along its trade route.";
+  if (Math.hypot(g.vel.x, g.vel.y) < 0.5) return "Holding station — idle.";
+  return "Under way.";
+}
+
+// OWN ship: full knowledge — activity, cargo + route (you always know your own),
+// the shared FLEET fuel reserve, and the relevant actions.
+function ownBody(g: GhostView): string {
+  const parts: string[] = [];
+  parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
+
+  if (g.kind === "convoy") {
+    const cargo = g.cargo
+      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)}</div>`
+      : `<span class="dim">empty hold</span>`;
+    parts.push(`<div class="sp-sec">Cargo</div>${cargo}`);
+    if (g.route && g.route.length) {
+      const d = g.route[g.route.length - 1];
+      parts.push(`<div class="sp-sec">Route</div><div class="sp-line">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → final waypoint near (${d.x.toFixed(0)}, ${d.y.toFixed(0)}).</div>`);
+    }
+  }
+
+  // Fleet fuel reserve (corp-wide, shared across ALL your ships) + this ship's burn
+  // rate. Framed honestly: it's the operating reserve every ship spends, not a tank
+  // on this one ship. (See the per-ship deepening note in the README.)
+  const reserve = state.wallet ? state.wallet.fuel_total : 0;
+  const rate = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g);
+  let sub = `<span class="dim">~${rate.toFixed(1)} fuel / 1,000 su at this ship's mass</span>`;
+  const dest = state.orders[g.id];
+  if (dest) {
+    const cost = FUEL_PER_MASS_DISTANCE * Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) * shipMass(g);
+    sub = `<span class="dim">~${fmt(cost)} fuel for its current order · ${rate.toFixed(1)}/1,000 su</span>`;
+  }
+  parts.push(
+    `<div class="sp-sec">Fuel</div>` +
+    `<div class="sp-fuel">${commodityIcon("fuel", 16)}<div><div>Fleet reserve: <span class="sp-fuel-v">${fmt(reserve)}</span></div>${sub}</div></div>` +
+    `<div class="sp-line dim" style="margin-top:6px">Shared reserve across all your systems — what every ship draws on to move, not a tank on this one ship.</div>`,
+  );
+
+  parts.push(`<div class="sp-sec">Actions</div>`);
+  if (g.kind === "raider") {
+    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${icon("send", 13)} Recall raider</button>`);
+  }
+  parts.push(`<div class="sp-line dim" style="margin-top:6px">Click empty space on the map to <b>move</b> this ship${g.kind === "raider" ? " · click a rival contact to <b>raid</b>" : ""}.</div>`);
+  return parts.join("");
+}
+
+// RIVAL ship: ONLY what's observable. A convoy broadcasts its route (light-delayed)
+// and reveals cargo ONLY when inside your sensor coverage (cargo present). A raider
+// runs dark. Never any order/intent/fuel/internal state.
+function rivalBody(g: GhostView): string {
+  const parts: string[] = [];
+  if (g.kind === "convoy") {
+    if (g.route && g.route.length) {
+      const d = g.route[g.route.length - 1];
+      parts.push(`<div class="sp-sec">Route (broadcast)</div><div class="sp-line">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → heading near (${d.x.toFixed(0)}, ${d.y.toFixed(0)}). <span class="dim">Light-delayed.</span></div>`);
+    }
+    // Cargo ONLY when in sensor range (cargo present). NEVER shown otherwise.
+    parts.push(`<div class="sp-sec">Cargo</div>` + (g.cargo
+      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)} <span class="dim">— in sensor range</span></div>`
+      : `<span class="dim">unknown — out of sensor range</span>`));
+  } else {
+    parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">A raider runs silent — no route or cargo is observable. You see it only because it is within your sensor range right now.</div>`);
+  }
+  parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
+  return parts.join("");
+}
+
+function updateShipPanel(): void {
+  if (!state.selectedShipId) return;
+  const root = $("ship-panel");
+  const g = state.ghosts.find((x) => x.id === state.selectedShipId);
+  if (!g) {
+    // No longer observable (passed beyond your sensors/light, or — a rival —
+    // destroyed). Honest: we can't show what we can't see.
+    root.innerHTML =
+      `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">contact</div><h2>Contact lost</h2></div></div>` +
+      `<button class="sp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
+      `<div class="sp-body"><div class="sp-note">This ship has passed beyond your sensors and the last light to reach you. Nothing more is observable.</div></div>`;
+    return;
+  }
+  const own = g.own;
+  const eyebrow = own ? "your fleet" : g.kind === "raider" ? "dark contact" : "rival contact";
+  const ownTag = own ? badge("accent", "yours") : badge("negative", "rival");
+  const stale = g.age >= 8;
+
+  const head =
+    `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
+    `<h2>${icon("ship", 14)} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
+
+  // Information AGE is the headline stat (the game's identity: you always know HOW
+  // OLD this sighting is).
+  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${g.age.toFixed(1)}s ago</dd></div>`;
+  // Positional certainty follows the SAME light-delay model for own AND rival ships:
+  // there is no FTL tether to your own fleet — uncertainty = age × max_speed for every
+  // object (server view.rs / protocol GhostView). So read it HONESTLY off g.uncertainty
+  // and never grant your own ships false certainty (a distant own ship is as uncertain
+  // as a rival). A ship at your command center has ~0 lag → "confirmed".
+  const certain = g.uncertainty < 1;
+  const posCell = certain
+    ? stat("Position", `<span class="tone-up">confirmed</span>`)
+    : stat("Position", `±${fmt(g.uncertainty)} su`);
+  const strip = statStrip([ageCell, headingCell(g), posCell]);
+
+  const note = certain
+    ? `<div class="sp-note">Confirmed — this sighting has essentially zero light lag (the ship sits at your command center).</div>`
+    : own
+      ? `<div class="sp-note">Even your own fleet is seen by <b>delayed light</b> — there's no faster-than-light tether, so this <b>${g.age.toFixed(1)}s</b>-old sighting could be off by <b>±${fmt(g.uncertainty)} su</b> (the cone on the map). You know it's yours, its cargo and its orders — but not its exact position right now.</div>`
+      : `<div class="sp-note">Last seen <b>${g.age.toFixed(1)}s</b> ago; it could be anywhere within <b>±${fmt(g.uncertainty)} su</b> of that sighting now (the cone on the map). Dead-reckon along its heading — predicted, <b>not confirmed</b>.</div>`;
+
+  root.innerHTML = head + `<div class="sp-body">${strip}${note}${own ? ownBody(g) : rivalBody(g)}</div>`;
 }
 
 // --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
@@ -278,10 +456,10 @@ function handleMapClick(sx: number, sy: number): void {
     }
 
     if (shipPick) {
-      state.selectedShipId = shipPick;
       const g = state.ghosts.find((x) => x.id === shipPick)!;
+      selectShip(shipPick); // opens the fog-aware ship panel; clears any system selection
       readout().innerHTML =
-        `<b>${g.kind}</b> selected — last seen <b>${g.age.toFixed(1)}s</b> ago.<br>` +
+        `<b>${esc(g.own ? shipKindLabel(g.kind) : "rival " + g.kind)}</b> selected — details in the panel. ` +
         `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
       return;
     }
@@ -312,11 +490,9 @@ function handleMapClick(sx: number, sy: number): void {
       return;
     }
 
-    if (!state.selectedShipId || !net) return;
-    const sel = state.ghosts.find((x) => x.id === state.selectedShipId);
-    if (!sel) return;
-
-    // Did we click a RIVAL ghost? → commit a raid against it.
+    // Rival ghost hit-test — either RAID it (when you have an own ship selected to
+    // direct) or INSPECT it (open the fog-aware rival panel when you don't). Own
+    // ghosts are picked earlier, so here we only ever match rivals.
     let enemy: string | null = null;
     let bestE = 16;
     for (const g of state.ghosts) {
@@ -328,29 +504,44 @@ function handleMapClick(sx: number, sy: number): void {
         enemy = g.id;
       }
     }
+
+    const sel = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
+    const haveOwn = !!sel && sel.own;
+
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
-      net.send({ type: "CommitRaid", raider_id: sel.id, target_id: tgt.id });
-      state.raids[sel.id] = tgt.id; // drive the soft intercept-estimate overlay
-      delete state.orders[sel.id];
-      readout().innerHTML =
-        `Raid committed: your <b>${sel.kind}</b> → rival <b>${tgt.kind}</b>. ` +
-        `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
-        `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
-        `<span class="dim">Press R to recall — it may arrive too late.</span>`;
+      if (haveOwn && net) {
+        // Direct your selected ship to raid the rival's TRUE position.
+        net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
+        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        delete state.orders[sel!.id];
+        updateShipPanel();
+        readout().innerHTML =
+          `Raid committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b>. ` +
+          `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
+          `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
+          `<span class="dim">Press R to recall — it may arrive too late.</span>`;
+      } else {
+        // Nothing of yours selected to attack with → INSPECT the rival (panel).
+        selectShip(enemy);
+        readout().innerHTML = `Rival <b>${esc(tgt.kind)}</b> selected — its light-delayed details are in the panel.`;
+      }
       return;
     }
 
-    // Otherwise → move order to the clicked point.
-    const dest = renderer.screenToWorld(sx, sy);
-    net.send({ type: "MoveShip", ship_id: sel.id, dest });
-    state.orders[sel.id] = dest;
-    const out = sel.age; // ≈ light delay command-center → ship
-    readout().innerHTML =
-      `Order away to <b>${sel.kind}</b>. ` +
-      `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
-      `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-      `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+    // Empty space → move order for the selected OWN ship (a rival can't be moved).
+    if (haveOwn && net) {
+      const dest = renderer.screenToWorld(sx, sy);
+      net.send({ type: "MoveShip", ship_id: sel!.id, dest });
+      state.orders[sel!.id] = dest;
+      updateShipPanel();
+      const out = sel!.age; // ≈ light delay command-center → ship
+      readout().innerHTML =
+        `Order away to <b>${esc(shipKindLabel(sel!.kind))}</b>. ` +
+        `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
+        `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
+        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+    }
 }
 
 // Wire map interaction: zoom (wheel toward cursor + buttons), pan (left-drag on
@@ -404,9 +595,11 @@ function installInteraction(): void {
   // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
-    if ((e.key === "r" || e.key === "R") && state.selectedShipId && net) {
-      net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
-      delete state.raids[state.selectedShipId]; // break off the intercept estimate
+    const selShip = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
+    if ((e.key === "r" || e.key === "R") && selShip?.own && net) {
+      net.send({ type: "RecallRaid", raider_id: selShip.id });
+      delete state.raids[selShip.id]; // break off the intercept estimate
+      updateShipPanel();
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
@@ -423,6 +616,7 @@ function installInteraction(): void {
     } else if (e.key === "Escape") {
       closeMarket();
       closeRail();
+      deselectShip();
     } else if (e.key === "+" || e.key === "=") {
       renderer.zoomByFactor(1.3);
     } else if (e.key === "-" || e.key === "_") {
@@ -1142,6 +1336,9 @@ function join(): void {
             else if (railTab === "logistics") updateStandingPanel();
             else if (railTab === "doctrine") updateDoctrinePanel();
           }
+          // The selected-ship panel keeps the information AGE ticking (and handles a
+          // contact passing out of view) while it's open.
+          if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
           // The Market is a navbar overlay now — refresh it when open.
           if ($("market").classList.contains("is-open")) updateMarket();
           updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
