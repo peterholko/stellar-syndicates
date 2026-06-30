@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Fuel"><title>Fuel</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M32 9 C43 23 48 33 48 42 C48 52 41 57 32 57 C23 57 16 52 16 42 C16 33 21 23 32 9Z" fill="#303b4b" stroke="#07111d" stroke-width="4.4"/>
+<path d="M32 23 C38 31 40 36 40 42 C40 47 36 50 32 50 C28 50 24 47 24 42 C24 36 27 31 32 23Z" fill="#ff9d5c" stroke="#07111d" stroke-width="2.5"/>
+<path d="M32 31 C35 36 36 39 36 42 C36 45 34 47 32 47 C30 47 28 45 28 42 C28 39 29 36 32 31Z" fill="#ffd24a" opacity="0.9"/>
+<line x1="23" y1="36" x2="18" y2="36" stroke="#3fe0c8" stroke-width="2.2" opacity="0.85"/>
+<line x1="46" y1="36" x2="41" y2="36" stroke="#3fe0c8" stroke-width="2.2" opacity="0.85"/></g></svg>

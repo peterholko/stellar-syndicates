@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Recall"><title>Recall</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="42" r="5" fill="#7fd4ff" stroke="#07111d" stroke-width="2.4"/>
+<path d="M48 20 H30 C20 20 14 27 14 36 C14 45 21 51 31 51 H39" stroke="#07111d" stroke-width="8"/>
+<path d="M48 20 H30 C20 20 14 27 14 36 C14 45 21 51 31 51 H39" stroke="#4fc3ff" stroke-width="4"/>
+<polygon points="48,11 48,29 58,20" fill="#4fc3ff" stroke="#07111d" stroke-width="2.2"/>
+<line x1="33" y1="51" x2="40" y2="51" stroke="#ffd24a" stroke-width="3"/></g></svg>

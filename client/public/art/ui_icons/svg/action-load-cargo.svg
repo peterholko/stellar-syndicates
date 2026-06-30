@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Load Cargo"><title>Load Cargo</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="35" width="32" height="15" rx="3" fill="#26313f" stroke="#07111d" stroke-width="4.4"/>
+<path d="M16 42 H48" stroke="#07111d" stroke-width="3"/>
+<rect x="22" y="21" width="20" height="16" rx="3" fill="#303b4b" stroke="#07111d" stroke-width="4.4"/>
+<path d="M32 13 V31" stroke="#07111d" stroke-width="8"/>
+<path d="M32 13 V31" stroke="#4fc3ff" stroke-width="4"/>
+<polygon points="22,28 42,28 32,40" fill="#4fc3ff" stroke="#07111d" stroke-width="2.2"/>
+<rect x="25" y="25" width="5" height="3" rx="1.2" fill="#ffd24a" opacity="0.95"/>
+<rect x="35" y="25" width="4" height="3" rx="1.2" fill="#3fe0c8" opacity="0.95"/></g></svg>

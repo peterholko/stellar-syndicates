@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Claim System"><title>Claim System</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="30" cy="34" r="19" fill="none" stroke="#07111d" stroke-width="7"/>
+<circle cx="30" cy="34" r="19" fill="none" stroke="#4fc3ff" stroke-width="3.4"/>
+<circle cx="30" cy="34" r="5" fill="#ffd24a" stroke="#07111d" stroke-width="2.2"/>
+<line x1="43" y1="18" x2="43" y2="49" stroke="#07111d" stroke-width="6"/>
+<line x1="43" y1="18" x2="43" y2="49" stroke="#8a97a8" stroke-width="2.8"/>
+<path d="M43 18 L56 22 L43 28Z" fill="#3fe0c8" stroke="#07111d" stroke-width="2.4"/>
+<rect x="26" y="14" width="8" height="2.4" rx="1.2" fill="#7fd4ff" opacity="0.95"/></g></svg>
