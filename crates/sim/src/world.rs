@@ -769,6 +769,13 @@ impl World {
                     return;
                 }
                 let (home, home_system) = self.assign_home(*id);
+                // Seed the home system with a Fuel reserve so fleets move from turn
+                // one (§step1 part 2) — the home produces no fuel, so this is the
+                // runway that buys time to expand toward fuel-bearing systems.
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == home_system) {
+                    *sys.stockpile.entry(crate::fuel::MOVEMENT_FUEL).or_insert(0.0) +=
+                        crate::fuel::FUEL_HOME_SEED;
+                }
                 // Starting inventory: a stock of each commodity to sell, plus a
                 // treasury to buy with.
                 let inventory = crate::cargo::Commodity::ALL
@@ -808,6 +815,28 @@ impl World {
                 ship_id,
                 dest,
             } => {
+                // Burn fuel ∝ distance × fleet mass at dispatch (§step1 part 2). A
+                // shortfall HOLDS the move (the ship keeps its current order — never
+                // lost) and notifies the owner.
+                let Some(ship) = self.ships.get(ship_id) else {
+                    return;
+                };
+                if ship.owner != *player_id {
+                    return;
+                }
+                let cost = crate::fuel::fuel_cost(ship.pos.distance(*dest), ship.mass());
+                let origin = ship.pos;
+                if !self.charge_fuel(*player_id, origin, cost) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::FuelShortfall {
+                            owner: *player_id,
+                            needed: cost,
+                            kind: crate::fuel::ShortfallKind::Move,
+                        },
+                    ));
+                    return;
+                }
                 self.schedule_for_owner(*player_id, *ship_id, ShipOrder::MoveTo { dest: *dest });
             }
             Command::CommitRaid {
@@ -821,6 +850,28 @@ impl World {
                 };
                 if target.owner == *player_id {
                     return; // no raiding your own ships
+                }
+                let target_pos = target.pos;
+                // The raider must exist and be the player's.
+                let Some(raider) = self.ships.get(raider_id) else {
+                    return;
+                };
+                if raider.owner != *player_id {
+                    return;
+                }
+                // Fuel the intercept run (raiders are light → cheap, but not free).
+                let cost = crate::fuel::fuel_cost(raider.pos.distance(target_pos), raider.mass());
+                let origin = raider.pos;
+                if !self.charge_fuel(*player_id, origin, cost) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::FuelShortfall {
+                            owner: *player_id,
+                            needed: cost,
+                            kind: crate::fuel::ShortfallKind::Raid,
+                        },
+                    ));
+                    return;
                 }
                 self.schedule_for_owner(
                     *player_id,
@@ -1190,6 +1241,12 @@ impl World {
             }
             let pos = sys.pos;
             for (commodity, amount) in sys.stockpile.iter_mut() {
+                // Retain Fuel as the system's operating reserve — it powers movement
+                // now (§step1 part 2), so "ship to hub" exports saleable output, not
+                // the fuel you need to move it. (Sell fuel via the Market instead.)
+                if *commodity == crate::fuel::MOVEMENT_FUEL {
+                    continue;
+                }
                 let units = amount.floor() as u32;
                 if units >= 1 {
                     *amount -= units as f64;
@@ -1199,7 +1256,27 @@ impl World {
         } else {
             return;
         }
+        let hub = self.hub;
         for (cargo, pos) in shipments {
+            // Fuel the haul ∝ distance × loaded mass; a shortfall HOLDS this convoy
+            // (refund its goods to the system — never lost) and notifies the owner.
+            let mass = ShipKind::Convoy.hull_mass()
+                + cargo.units as f64 * crate::ship::CARGO_MASS_PER_UNIT;
+            let cost = crate::fuel::fuel_cost(pos.distance(hub), mass);
+            if !self.charge_fuel(player_id, pos, cost) {
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == system_id) {
+                    *sys.stockpile.entry(cargo.commodity).or_insert(0.0) += cargo.units as f64;
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::FuelShortfall {
+                        owner: player_id,
+                        needed: cost,
+                        kind: crate::fuel::ShortfallKind::Shipment,
+                    },
+                ));
+                continue;
+            }
             events.push(Event::new(
                 self.time,
                 EventPayload::Trade(TradeEvent::SellDispatched {
@@ -1208,7 +1285,7 @@ impl World {
                     units: cargo.units,
                 }),
             ));
-            self.spawn_trade_convoy(player_id, pos, self.hub, cargo, TradeMission::SellAtHub);
+            self.spawn_trade_convoy(player_id, pos, hub, cargo, TradeMission::SellAtHub);
         }
     }
 
@@ -1521,6 +1598,27 @@ impl World {
                 continue;
             }
 
+            // Fuel the automated haul ∝ distance × loaded mass (§step1 part 2),
+            // EXCEPT a Fuel haul itself (exempt — else a fuel-starved depot could
+            // never be resupplied). A shortfall refunds the source and skips THIS
+            // cycle silently (the rule stays active and retries) — async-fair, and
+            // no timeline spam from offline automation.
+            if p.commodity != crate::fuel::MOVEMENT_FUEL {
+                let mass =
+                    ShipKind::Convoy.hull_mass() + p.units as f64 * crate::ship::CARGO_MASS_PER_UNIT;
+                let cost = crate::fuel::fuel_cost(p.spawn.distance(p.dest), mass);
+                if !self.charge_fuel(p.player, p.spawn, cost) {
+                    if let Some(s) = self
+                        .systems
+                        .iter_mut()
+                        .find(|s| s.id == p.source_sys && s.owner == Some(p.player))
+                    {
+                        *s.stockpile.entry(p.commodity).or_insert(0.0) += p.units as f64;
+                    }
+                    continue;
+                }
+            }
+
             let cargo = Cargo { commodity: p.commodity, units: p.units };
             let convoy_id = self.spawn_trade_convoy(p.player, p.spawn, p.dest, cargo, p.mission);
 
@@ -1709,6 +1807,39 @@ impl World {
             ship_id,
             new_order,
         });
+    }
+
+    /// Try to draw `cost` Fuel from the player's owned system NEAREST `origin` that
+    /// can cover the FULL cost on its own (atomic — never split across systems).
+    /// Returns true on success (or when `cost` ≈ 0, a free dispatch); false on a
+    /// shortfall, in which case NOTHING is debited and the caller must LIMIT the op
+    /// (hold it) rather than destroy anything. Tiebreak `(distance, id)` →
+    /// deterministic. This is the single fuel-debit choke point (§step1 part 2).
+    fn charge_fuel(&mut self, player: PlayerId, origin: Vec2, cost: f64) -> bool {
+        if cost <= 1e-9 {
+            return true;
+        }
+        let fuel = crate::fuel::MOVEMENT_FUEL;
+        let mut best: Option<(f64, EntityId)> = None;
+        for s in &self.systems {
+            if s.owner != Some(player) {
+                continue;
+            }
+            if s.stockpile.get(&fuel).copied().unwrap_or(0.0) + 1e-9 < cost {
+                continue;
+            }
+            let key = (s.pos.distance(origin), s.id);
+            if best.is_none_or(|b| key < b) {
+                best = Some(key);
+            }
+        }
+        let Some((_, sid)) = best else {
+            return false;
+        };
+        if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
+            *s.stockpile.entry(fuel).or_insert(0.0) -= cost;
+        }
+        true
     }
 
     /// Assign an unused home anchor to a player (or append one if the galaxy is
@@ -2173,6 +2304,166 @@ mod tests {
             serde_json::to_string(&w).unwrap()
         };
         assert_eq!(run(), run(), "same seed + commands incl. a completed build → identical state");
+    }
+
+    // --- §step1 PART 2: fuel-to-move sink -----------------------------------
+
+    fn player_ship(w: &World, owner: PlayerId, kind: ShipKind) -> EntityId {
+        *w.ships.iter().find(|(_, s)| s.owner == owner && s.kind == kind).unwrap().0
+    }
+    fn home_fuel(w: &World, owner: PlayerId) -> f64 {
+        let h = w.players[&owner].home_system.unwrap();
+        system_stock(w, h, Commodity::Fuel)
+    }
+    fn system_stock(w: &World, sys: EntityId, c: Commodity) -> f64 {
+        w.systems.iter().find(|s| s.id == sys).unwrap().stockpile.get(&c).copied().unwrap_or(0.0)
+    }
+    /// Empty the Fuel reserve of every system the player owns (a fuel-starved fleet).
+    fn drain_fuel(w: &mut World, owner: PlayerId) {
+        for s in w.systems.iter_mut().filter(|s| s.owner == Some(owner)) {
+            s.stockpile.insert(Commodity::Fuel, 0.0);
+        }
+    }
+
+    #[test]
+    fn joining_seeds_a_home_fuel_reserve() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // The home produces no fuel, so its reserve is exactly the seed (turn-one runway).
+        assert!((home_fuel(&w, id) - crate::fuel::FUEL_HOME_SEED).abs() < 1e-6);
+    }
+
+    #[test]
+    fn moving_a_fleet_burns_fuel_proportional_to_distance_and_mass() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let convoy = player_ship(&w, id, ShipKind::Convoy);
+        let (pos, mass) = { let s = &w.ships[&convoy]; (s.pos, s.mass()) };
+        let dest = pos + Vec2::new(3000.0, 1200.0);
+        let expected = crate::fuel::fuel_cost(pos.distance(dest), mass);
+        assert!(expected > 1.0, "a real move should cost real fuel");
+        let f0 = home_fuel(&w, id);
+        let ev = w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest }]);
+        assert!((f0 - home_fuel(&w, id) - expected).abs() < 1e-6, "burned exactly fuel_cost(dist, mass)");
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::FuelShortfall { .. })), "no shortfall when fueled");
+    }
+
+    #[test]
+    fn a_fuelless_move_is_held_not_destroyed() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        drain_fuel(&mut w, id);
+        let convoy = player_ship(&w, id, ShipKind::Convoy);
+        let dest = w.ships[&convoy].pos + Vec2::new(3000.0, 0.0);
+        let ev = w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload,
+                EventPayload::FuelShortfall { owner, kind: crate::fuel::ShortfallKind::Move, .. } if owner == id)),
+            "a held move notifies its owner",
+        );
+        assert!(w.ships.contains_key(&convoy), "a shortfall LIMITS — it never destroys the ship");
+        assert!(!w.pending_orders.iter().any(|p| p.ship_id == convoy), "the move was not scheduled (held)");
+        assert_eq!(home_fuel(&w, id), 0.0, "a shortfall debits nothing");
+    }
+
+    #[test]
+    fn recalling_a_raider_is_exempt_from_fuel() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let raider = player_ship(&w, id, ShipKind::Raider);
+        // Send the raider far afield (fueled), then run until it's well clear of home.
+        let home = w.players[&id].command_center;
+        let dest = home + Vec2::new(5000.0, 0.0);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: raider, dest }]);
+        for _ in 0..(20 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let away = w.ships[&raider].pos.distance(home);
+        assert!(away > 500.0, "raider is well away from home");
+        // Now strand it: zero fuel. Recall must STILL work (exempt — never strand a fleet).
+        drain_fuel(&mut w, id);
+        let ev = w.step(&[Command::RecallRaid { player_id: id, raider_id: raider }]);
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::FuelShortfall { .. })), "recall never burns fuel");
+        for _ in 0..(40 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(w.ships[&raider].pos.distance(home) < away, "the recalled raider heads home despite no fuel");
+    }
+
+    #[test]
+    fn ship_production_retains_fuel_and_burns_to_haul() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 50.0)]);
+        let f0 = home_fuel(&w, id);
+        let ev = w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload,
+                EventPayload::Trade(TradeEvent::SellDispatched { commodity: Commodity::Ore, .. }))),
+            "ore ships to the hub",
+        );
+        assert!(
+            !ev.iter().any(|e| matches!(&e.payload,
+                EventPayload::Trade(TradeEvent::SellDispatched { commodity: Commodity::Fuel, .. }))),
+            "Fuel is retained as the operating reserve, never auto-shipped",
+        );
+        let f1 = home_fuel(&w, id);
+        assert!(f1 < f0 && f1 > 0.0, "hauling burns some fuel but keeps the reserve (burned {:.1})", f0 - f1);
+    }
+
+    #[test]
+    fn a_fuelless_shipment_is_held_and_refunded() {
+        let mut w = test_world();
+        let id = PlayerId(3);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        drain_fuel(&mut w, id);
+        seed_stock(&mut w, home, &[(Commodity::Ore, 40.0)]);
+        let ev = w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload,
+                EventPayload::FuelShortfall { kind: crate::fuel::ShortfallKind::Shipment, .. })),
+            "a held shipment notifies its owner",
+        );
+        assert!(system_stock(&w, home, Commodity::Ore) >= 40.0, "held goods are refunded, never lost");
+    }
+
+    #[test]
+    fn fuel_burn_is_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            let id = PlayerId(7);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let convoy = player_ship(&w, id, ShipKind::Convoy);
+            w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: Vec2::new(2000.0, 1500.0) }]);
+            for _ in 0..200 {
+                w.step(&[]);
+            }
+            home_fuel(&w, id)
+        };
+        let a = run();
+        assert_eq!(a, run(), "the same seed + move burns identical fuel");
+        assert!(a < crate::fuel::FUEL_HOME_SEED, "the move actually spent fuel from the reserve");
+    }
+
+    #[test]
+    fn spent_fuel_survives_a_snapshot() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let convoy = player_ship(&w, id, ShipKind::Convoy);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: Vec2::new(2000.0, 1500.0) }]);
+        let spent = home_fuel(&w, id);
+        assert!(spent < crate::fuel::FUEL_HOME_SEED, "fuel was spent before the snapshot");
+        // Save → load: the depleted reserve (not the seed) is what reloads.
+        let w2: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert!((home_fuel(&w2, id) - spent).abs() < 1e-6, "the spent-fuel reserve persists across a snapshot");
     }
 
     #[test]

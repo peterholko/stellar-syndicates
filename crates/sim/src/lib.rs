@@ -17,6 +17,7 @@ pub mod command;
 pub mod config;
 pub mod doctrine;
 pub mod event;
+pub mod fuel;
 pub mod galaxy;
 pub mod ids;
 pub mod market;

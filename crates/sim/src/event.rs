@@ -90,6 +90,10 @@ pub enum EventPayload {
     },
     /// A system development completed (e.g. an Extractor tier applied). Owner-only.
     SystemUpgraded { system: EntityId, owner: PlayerId, tier: u32 },
+    /// A dispatch was LIMITED because no owned system could cover its fuel cost
+    /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
+    /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").
+    FuelShortfall { owner: PlayerId, needed: f64, kind: crate::fuel::ShortfallKind },
 }
 
 /// Economy events. `player` always names the corporation involved; values are

@@ -112,6 +112,7 @@ export interface WalletView {
   valuation: number; // equity / net worth (slow §9 close)
   inventory: InvSlot[];
   orders: OrderView[];
+  fuel_total: number; // §step1 — total Fuel across owned systems (fleet reserve)
 }
 
 // Economy news (mirrors sim TradeEvent, tagged by `event`).

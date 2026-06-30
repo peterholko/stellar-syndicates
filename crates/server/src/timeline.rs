@@ -104,6 +104,10 @@ impl Timeline {
                     let name = system_name(world, *system);
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — Extractor tier {tier} (more output)."));
                 }
+                EventPayload::FuelShortfall { owner, needed, kind } => {
+                    self.push(*owner, e.time, TimelineSeverity::Warn,
+                        format!("A {} was held — out of fuel (needed ~{:.0}). Stockpile fuel near your fleet.", kind.label(), needed));
+                }
                 _ => {}
             }
         }

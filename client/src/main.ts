@@ -25,6 +25,7 @@ function setHud(): void {
   $("hud-ships").textContent = state.link === "online" ? String(state.ghosts.length) : "—";
   $("hud-credits").textContent = state.wallet ? `${Math.round(state.wallet.credits).toLocaleString()}` : "—";
   $("hud-equity").textContent = state.wallet ? `${Math.round(state.wallet.valuation).toLocaleString()}` : "—";
+  $("hud-fuel").textContent = state.wallet ? `${Math.round(state.wallet.fuel_total).toLocaleString()}` : "—";
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
     connecting: "connecting…",
@@ -1085,6 +1086,7 @@ function join(): void {
   net = new Net({
     onOpen: () => {
       net!.send({ type: "Join", name });
+      (window as unknown as { __ss: { net?: unknown } }).__ss.net = net; // debug hook
     },
     onMessage: (msg) => {
       switch (msg.type) {

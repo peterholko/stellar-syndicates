@@ -441,6 +441,15 @@ impl GameLoop {
                         limit_price: o.limit_price,
                     })
                     .collect(),
+                // The fleet's fuel reserve: sum Fuel across this player's systems
+                // (owner-only — read off systems we own, so it never leaks).
+                fuel_total: self
+                    .world
+                    .systems
+                    .iter()
+                    .filter(|s| s.owner == Some(player_id))
+                    .map(|s| s.stockpile.get(&sim::Commodity::Fuel).copied().unwrap_or(0.0))
+                    .sum(),
             };
 
             views.insert(

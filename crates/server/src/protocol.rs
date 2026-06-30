@@ -122,6 +122,9 @@ pub struct WalletView {
     pub valuation: f64,
     pub inventory: Vec<InvSlot>,
     pub orders: Vec<OrderView>,
+    /// Total Fuel across all owned systems' stockpiles — the fleet's operating
+    /// reserve (§step1 part 2). Owner-only (summed from owned systems only).
+    pub fuel_total: f64,
 }
 
 /// Which side of a raid the recipient is on.
