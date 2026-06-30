@@ -8,7 +8,7 @@
 // orders also shows a hint of where it has most likely advanced along its course.
 // The command center is your vantage — the origin of everything you can see.
 
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
 
@@ -75,6 +75,14 @@ export class Renderer {
   private interceptLabels = new Map<string, Text>();
   private ghosts = new Map<string, GhostSprite>();
 
+  // Celestial body sprites (planet = star system, station = hub), pooled in a
+  // persistent layer UNDER the ownership/value/label cues so those still read.
+  private bodyLayer = new Container();
+  private systemBodies = new Map<string, Sprite>();
+  private hubSprite: Sprite | null = null;
+  private texPlanet: Texture | null = null;
+  private texStation: Texture | null = null;
+
   private galaxy: GalaxyInfo | null = null;
   private scale = 1;
   private cx = 0;
@@ -98,6 +106,7 @@ export class Renderer {
     this.app.stage.addChild(
       this.bg,
       this.sensorGfx, // soft sensor coverage, under everything gameplay
+      this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
       this.anchorsLayer,
       this.routesGfx, // convoy broadcast routes, under ghosts
@@ -108,7 +117,29 @@ export class Renderer {
     );
     this.signalsLayer.addChild(this.signalsGfx);
     this.drawStarfield();
+    // Load the art set (transparent PNGs from /art, bundled by Vite in dev + dist).
+    // Non-blocking: the map draws (primitives) immediately and swaps to sprites the
+    // moment the textures resolve — so a slow load never blanks the map.
+    void this.loadArt();
     window.addEventListener("resize", () => this.recompute());
+  }
+
+  /// Load the celestial + ship sprite textures. Each resolves independently; the
+  /// draw paths guard on `tex* !== null`, so missing/slow art degrades gracefully.
+  private async loadArt(): Promise<void> {
+    const load = async (url: string): Promise<Texture | null> => {
+      try {
+        return await Assets.load(url);
+      } catch {
+        return null; // leave null — the primitive fallback keeps the map working
+      }
+    };
+    const [planet, station] = await Promise.all([
+      load("/art/celestial_sprites/habitable_planet.png"),
+      load("/art/celestial_sprites/mining_station.png"),
+    ]);
+    this.texPlanet = planet;
+    this.texStation = station;
   }
 
   get canvas(): HTMLCanvasElement {
@@ -170,6 +201,9 @@ export class Renderer {
 
   setGalaxy(galaxy: GalaxyInfo): void {
     this.galaxy = galaxy;
+    // Drop pooled body sprites from any previous galaxy (fresh systems / ids).
+    for (const sp of this.systemBodies.values()) sp.destroy();
+    this.systemBodies.clear();
     this.recompute();
   }
 
@@ -276,8 +310,20 @@ export class Renderer {
       if (selected) {
         g.circle(s.x, s.y, owner !== null ? 12 : glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
       }
-      const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
-      g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
+      // The BODY itself: a planet sprite (pooled), sized by deposit value (the
+      // frontier-richer hierarchy) and dimmed when unclaimed so owned/rival
+      // territory leads. The glow + ownership rings + label above are the data
+      // cues; the sprite is just the body they decorate. Dot fallback until art loads.
+      if (this.texPlanet) {
+        const bsp = this.bodyFor(sys.id, this.texPlanet);
+        const bodyD = Math.min(12 + valueRate * 0.8, 30);
+        bsp.position.set(s.x, s.y);
+        bsp.scale.set(bodyD / this.texPlanet.width);
+        bsp.alpha = owner !== null ? 1 : 0.6; // unclaimed recedes
+      } else {
+        const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
+        g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
+      }
       this.systemsLayer.addChild(g);
 
       // Label: name; your own systems also show their top stockpiled good.
@@ -457,6 +503,35 @@ export class Renderer {
     }
   }
 
+  /// Pool a celestial body sprite by id in the persistent bodyLayer (so we don't
+  /// churn a Sprite per system per frame). Anchored centre; texture swapped if needed.
+  private bodyFor(id: string, tex: Texture): Sprite {
+    let sp = this.systemBodies.get(id);
+    if (!sp) {
+      sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      this.bodyLayer.addChild(sp);
+      this.systemBodies.set(id, sp);
+    } else if (sp.texture !== tex) {
+      sp.texture = tex;
+    }
+    return sp;
+  }
+
+  /// The hub body: a station sprite at the wormhole hub (over its teal glow, which
+  /// stays in the background). Positioned each frame so it tracks zoom/pan.
+  private drawHubBody(): void {
+    if (!this.galaxy || !this.texStation) return;
+    if (!this.hubSprite) {
+      this.hubSprite = new Sprite(this.texStation);
+      this.hubSprite.anchor.set(0.5);
+      this.bodyLayer.addChild(this.hubSprite);
+    }
+    const h = this.worldToScreen(this.galaxy.hub);
+    this.hubSprite.position.set(h.x, h.y);
+    this.hubSprite.scale.set(28 / this.texStation.width);
+  }
+
   private ghostSprite(id: string): GhostSprite {
     let sp = this.ghosts.get(id);
     if (!sp) {
@@ -596,6 +671,7 @@ export class Renderer {
 
     this.drawSensorCoverage(state, dt);
     this.drawSystems(state);
+    this.drawHubBody();
     this.drawRoutes(state);
     this.drawAnchors(state);
     this.drawCommandCenter(state);
