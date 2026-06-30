@@ -93,7 +93,7 @@ export class Renderer {
   private bodyLayer = new Container();
   private systemBodies = new Map<string, Sprite>();
   private hubSprite: Sprite | null = null;
-  private texPlanet: Texture | null = null;
+  private texStar: Texture | null = null; // star systems are drawn as a STAR
   private texStation: Texture | null = null;
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
@@ -150,13 +150,16 @@ export class Renderer {
         return null; // leave null — the primitive fallback keeps the map working
       }
     };
-    const [planet, station, convoy, raider] = await Promise.all([
-      load("/art/celestial_sprites/habitable_planet.png"),
+    // A star SYSTEM is drawn as a STAR (sun). The hub is the trade station. The
+    // habitable_planet sprite is intentionally NOT loaded here — it's reserved for
+    // a future habitable-world / market-body concept, not generic star systems.
+    const [star, station, convoy, raider] = await Promise.all([
+      load("/art/celestial_sprites/sun.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
     ]);
-    this.texPlanet = planet;
+    this.texStar = star;
     this.texStation = station;
     this.texConvoy = convoy;
     this.texRaider = raider;
@@ -333,15 +336,17 @@ export class Renderer {
       if (selected) {
         g.circle(s.x, s.y, owner !== null ? 12 : glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
       }
-      // The BODY itself: a planet sprite (pooled), sized by deposit value (the
+      // The BODY itself: a STAR sprite (pooled), sized by deposit value (the
       // frontier-richer hierarchy) and dimmed when unclaimed so owned/rival
       // territory leads. The glow + ownership rings + label above are the data
-      // cues; the sprite is just the body they decorate. Dot fallback until art loads.
-      if (this.texPlanet) {
-        const bsp = this.bodyFor(sys.id, this.texPlanet);
+      // cues; the star is just the body they decorate (ownership stays on the
+      // RING — the star carries no tint). Dot fallback until art loads. All systems
+      // share one sun sprite for now; per-system star-type variety is future art.
+      if (this.texStar) {
+        const bsp = this.bodyFor(sys.id, this.texStar);
         const bodyD = Math.min(12 + valueRate * 0.8, 30);
         bsp.position.set(s.x, s.y);
-        bsp.scale.set(bodyD / this.texPlanet.width);
+        bsp.scale.set(bodyD / this.texStar.width);
         bsp.alpha = owner !== null ? 1 : 0.6; // unclaimed recedes
       } else {
         const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
