@@ -130,6 +130,27 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
   provisions: 6, ore: 8, fuel: 10, volatiles: 18, alloys: 26,
 };
 
+// Resource icons (Stellar Charters art, bundled in client/public/icons). Dedicated
+// icons for Fuel / Alloys / Provisions(food); Ore and Volatiles use the metals /
+// ice STAND-INS until dedicated art exists (see README gap list). Credits get NO
+// icon — they render as the text label "Cr". Served at /icons/* in dev and dist.
+const COMMODITY_ICON: Record<Commodity, string> = {
+  fuel: "/icons/resource-fuel.png",
+  ore: "/icons/resource-metals.png", // stand-in (metals ≈ ore)
+  alloys: "/icons/resource-alloys.png",
+  provisions: "/icons/resource-food.png",
+  volatiles: "/icons/resource-ice.png", // stand-in (ice ≈ volatiles)
+};
+// NOTE: no loading="lazy" — these panels re-render ~10 Hz (each View), recreating
+// the <img> elements; lazy loading would replace them before the Intersection
+// observer fires, so they'd never appear. Eager hits the browser cache instantly.
+const commodityIcon = (c: Commodity, size = 18) =>
+  `<img class="cicon" src="${COMMODITY_ICON[c]}" width="${size}" height="${size}" alt="" title="${c}" />`;
+// Charters ACTION icons (claim/escort/patrol/interdict/survey) — used where they
+// map cleanly to a Syndicates action; the line-SVG icon() set covers the rest.
+const actionIcon = (name: string, size = 16) =>
+  `<img class="cicon" src="/icons/action-${name}.png" width="${size}" height="${size}" alt="" />`;
+
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
 // time; ✕ / Esc closes it → the map stays uncluttered. ----------------------
@@ -441,7 +462,7 @@ function depositRow(d: Deposit): string {
     ? `<span class="tone-up">renewable</span>`
     : d.reserves < 50 ? `<span class="is-warn">${fmt(d.reserves)} left</span>`
       : `${fmt(d.reserves)} left`;
-  return `<div class="dep-row"><span class="dep-ico">${icon("trending", 13)}</span>` +
+  return `<div class="dep-row"><span class="dep-ico">${commodityIcon(d.resource, 18)}</span>` +
     `<span class="dep-name">${d.resource}</span>${bar(pct)}` +
     `<span class="dep-r">~${d.richness.toFixed(2)}/s · ${reserves}</span></div>`;
 }
@@ -459,7 +480,7 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
-      return `<div class="sys-prod"><span class="dep-ico">${icon("spark", 12)}</span>` +
+      return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, 16)}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("");
 }
@@ -547,7 +568,7 @@ function updateSystemTab(): void {
     stat("Deposits", String(sys.deposits.length)),
     stat("Yield/s", yieldRate.toFixed(1)),
     stat("Stock", mine ? fmt(stockTotal) : "—"),
-    stat("Claim", unclaimed ? fmt(sys.claim_cost) : "—", unclaimed && !afford ? "is-negative" : ""),
+    stat("Claim", unclaimed ? `${fmt(sys.claim_cost)} Cr` : "—", unclaimed && !afford ? "is-negative" : ""),
   ]);
 
   const deps = `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
@@ -559,7 +580,7 @@ function updateSystemTab(): void {
     actions = `<div class="mhint" style="margin-top:8px">${badge("neutral", "reserved")} A starting home site — a future corporation will begin here owning it, so it can't be claimed.</div>`;
   } else if (unclaimed) {
     actions = `<button class="act act--primary" data-action="claim" ${afford ? "" : "disabled"}>` +
-      `${icon("gavel")} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
+      `${actionIcon("claim", 18)} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
   } else if (mine) {
     actions = `<button class="act" data-action="ship" ${stockTotal > 0 ? "" : "disabled"}>${icon("ship")} Ship production → hub</button>` +
       `<button class="act" data-action="standing">${icon("send")} Auto-supply from here</button>` +
@@ -693,7 +714,7 @@ function renderMarketBoard(): void {
     const active = composer.commodity === c ? "is-active" : "";
     const priceTxt = p === undefined ? `<span class="is-stale">—</span>` : `${stale ? "~" : ""}${p.toFixed(2)}`;
     return `<button class="board__row ${active}" data-resource="${c}" title="observed from your own price history — not a market forecast">` +
-      `<span class="dep-ico">${icon("trending", 12)}</span>` +
+      `<span class="dep-ico">${commodityIcon(c, 18)}</span>` +
       `<span class="b-name">${c}</span>` +
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
@@ -719,7 +740,7 @@ function renderComposer(): void {
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `Settles <b>now</b> at ${px}/u (~<span class="accent">${cost} cr</span>). The goods then cross fogged space to your home anchor — that delivery convoy is <b>raidable</b> in transit.`;
+    $("mk-preview").innerHTML = `Settles <b>now</b> at ${px}/u (~<span class="accent">${cost} Cr</span>). The goods then cross fogged space to your home anchor — that delivery convoy is <b>raidable</b> in transit.`;
     submit.textContent = `Buy ${qty} ${c}`;
   } else {
     $("mk-preview").innerHTML = `Convoy <b>dispatched now</b>; it clears at the price <b>on arrival</b> (not today's ${px}) and is <b>raidable</b> until it reaches the hub — double uncertainty: price + delivery.`;
@@ -742,8 +763,8 @@ function updateMarket(): void {
   fresh.className = "badge " + (stale > 0.5 ? "badge--warn" : "badge--positive");
   fresh.textContent = stale > 0.5 ? `~${stale.toFixed(0)}s stale` : "live";
   $("market-wallet").innerHTML = statStrip([
-    stat("Credits", `${fmt(state.wallet.credits)} cr`, "is-accent"),
-    stat("Equity", `${fmt(state.wallet.valuation)} cr`),
+    stat("Credits", `${fmt(state.wallet.credits)} Cr`, "is-accent"),
+    stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
   ]);
   renderMarketBoard();
   renderComposer();
@@ -867,7 +888,7 @@ function updateStandingPanel(): void {
       const flight = o.in_flight ? `<span class="run">● convoy en route</span>` : `<span class="dim">idle</span>`;
       const paused = o.status === "paused" ? " · paused" : "";
       return `<div class="so"><span class="x" data-clear="${o.id}" title="remove">✕</span>` +
-        `<b>#${o.id}</b> ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
+        `<b>#${o.id}</b> ${commodityIcon(o.commodity, 14)} ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
         `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
     })
     .join("");
