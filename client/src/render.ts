@@ -364,7 +364,10 @@ export class Renderer {
         bsp.anchor.set(anchor[0], anchor[1]);
         bsp.position.set(s.x, s.y);
         bsp.scale.set(bodyD / (starVisualRatio(st) * starTex.width));
-        bsp.alpha = owner !== null ? 1 : 0.62; // unclaimed recedes
+        // Keep unclaimed stars near-full brightness so the vivid star art reads
+        // (ownership is carried by the RING, not by dimming the star); owned/rival
+        // still lead via their full brightness + ring.
+        bsp.alpha = owner !== null ? 1 : 0.9;
       } else {
         const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
         g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
