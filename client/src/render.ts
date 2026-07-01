@@ -64,6 +64,10 @@ const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
+// Ships render in their NATURAL art — no per-syndicate body tint (a future
+// ownership indicator is TBD). This neutral is only the primitive fallback hull
+// shown before the sprite art loads; it must NOT imply ownership.
+const COL_SHIP_NEUTRAL = 0xc9d6e8;
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
@@ -708,7 +712,6 @@ export class Renderer {
     sp.container.position.set(s.x, s.y);
 
     const own = ghost.own;
-    const color = own ? COL_OWN : COL_OTHER;
     const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
 
     // Uncertainty cone: where the object could be NOW given how stale the sighting
@@ -760,11 +763,12 @@ export class Renderer {
     }
 
     // The ship BODY: a top-down sprite rotated to heading, sized by kind (convoy
-    // reads LARGER than the nimble raider — the asymmetry at a glance), TINTED by
-    // ownership (own cyan / rival red, so the same hull reads friend-or-foe), and
-    // faded by staleness. Fade applies to own ships too, so a distant (stale) own
-    // ship visibly dims while one near the command center stays crisp — but with a
-    // higher floor so you never "lose" your fleet, it just reports from further back.
+    // reads LARGER than the nimble raider — the asymmetry at a glance), rendered in
+    // its NATURAL art with NO per-syndicate tint (own/rival are distinguished by
+    // other cues — label, threat ring, selection — with a dedicated ownership
+    // indicator still TBD). Faded by staleness: fade applies to own ships too, so a
+    // distant (stale) own ship visibly dims while one near the command center stays
+    // crisp — with a higher floor so you never "lose" your fleet.
     const fade = Math.min(ghost.age / FADE_AGE_S, 1);
     const alpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
     const tex = ghost.kind === "convoy" ? this.texConvoy : this.texRaider;
@@ -778,14 +782,14 @@ export class Renderer {
       const zoomK = Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, this.scale / this.fitScale()));
       sp.sprite.scale.set((base * zoomK) / tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
-      sp.sprite.tint = color;
+      sp.sprite.tint = 0xffffff; // natural art — no per-syndicate tint
       sp.sprite.alpha = alpha;
     } else {
-      // Primitive triangle fallback until the art loads.
+      // Primitive triangle fallback until the art loads (syndicate-neutral).
       sp.sprite.visible = false;
       const len = ghost.kind === "convoy" ? 9 : 7;
       const wid = ghost.kind === "convoy" ? 6 : 3.5;
-      sp.body.poly([len, 0, -len * 0.7, -wid, -len * 0.7, wid]).fill({ color, alpha });
+      sp.body.poly([len, 0, -len * 0.7, -wid, -len * 0.7, wid]).fill({ color: COL_SHIP_NEUTRAL, alpha });
       if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
       sp.body.rotation = angle;
     }
