@@ -9,9 +9,31 @@
 // The command center is your vantage — the origin of everything you can see.
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
-import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
+import type { Commodity, GalaxyInfo, GhostView, SystemInfo, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
+import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
+
+// --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
+// The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
+// map (unchanged: `scale`/`cx`/`cy` camera + all gameplay layers) and a schematic
+// System View (its own fixed fit camera, in systemview.ts). Only one is active at
+// a time; a crossfade + camera push connects them. This is a LEVEL-OF-DETAIL
+// change, NOT a second scale of gameplay — see the hard-boundary note in
+// systemview.ts. Ships/convoys/raiders/fog/combat/movement ALL stay on the galaxy
+// map; the System View is presentation only.
+export type MapViewMode = { type: "galaxy" } | { type: "system"; systemId: string };
+
+// Crossfade + camera-push transition between the two scenes.
+const TRANS_MS = 480;
+const easeInOut = (t: number): number => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+const clamp01 = (x: number): number => Math.max(0, Math.min(1, x));
+interface Transition {
+  dir: "in" | "out";
+  start: number;
+  camFrom: { cx: number; cy: number; scale: number };
+  camTo: { cx: number; cy: number; scale: number };
+}
 
 const COL_HUB = 0x7fd4ff;
 const COL_SYSTEM = 0x4a5d7a;
@@ -76,7 +98,14 @@ const SHIP_ZOOM_MAX = 1.6; // growth cap when zoomed in
 
 export class Renderer {
   private app = new Application();
-  private bg = new Container();
+  // A persistent starfield behind BOTH scenes (never faded), so the backdrop is
+  // continuous across the galaxy⇄system LOD change.
+  private starfield = new Container();
+  // The galaxy scene root — ALL existing gameplay layers live under it, so the
+  // whole galaxy can be faded/pushed as one during the transition. The galaxy
+  // camera (scale/cx/cy) still drives everything inside it exactly as before.
+  private galaxyRoot = new Container();
+  private bg = new Container(); // galaxy rings + hub (was: also the starfield)
   private sensorGfx = new Graphics();
   private routesGfx = new Graphics();
   private systemsLayer = new Container();
@@ -102,6 +131,11 @@ export class Renderer {
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
 
+  // The schematic System View scene (its own camera). Presentation only.
+  private systemScene = new SystemViewScene();
+  private mode: MapViewMode = { type: "galaxy" };
+  private transition: Transition | null = null;
+
   private galaxy: GalaxyInfo | null = null;
   private scale = 1;
   private cx = 0;
@@ -122,7 +156,10 @@ export class Renderer {
       resolution: window.devicePixelRatio || 1,
     });
     mount.appendChild(this.app.canvas);
-    this.app.stage.addChild(
+    // Galaxy scene: all existing gameplay layers under ONE root so it can be
+    // faded/pushed as a unit during the semantic-zoom transition. Draw order and
+    // the per-layer camera math are unchanged — only the parent is now galaxyRoot.
+    this.galaxyRoot.addChild(
       this.bg,
       this.sensorGfx, // soft sensor coverage, under everything gameplay
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
@@ -134,13 +171,21 @@ export class Renderer {
       this.ghostsLayer,
       this.signalsLayer,
     );
+    // Stage: persistent starfield (bottom) · galaxy scene · system scene (top,
+    // hidden until entered). The HUD/breadcrumb/panels are DOM (the "hudRoot"),
+    // and persist across both scenes.
+    this.app.stage.addChild(this.starfield, this.galaxyRoot, this.systemScene.root);
     this.signalsLayer.addChild(this.signalsGfx);
     this.drawStarfield();
     // Load the art set (transparent PNGs from /art, bundled by Vite in dev + dist).
     // Non-blocking: the map draws (primitives) immediately and swaps to sprites the
     // moment the textures resolve — so a slow load never blanks the map.
     void this.loadArt();
-    window.addEventListener("resize", () => this.recompute());
+    window.addEventListener("resize", () => {
+      this.recompute();
+      this.systemScene.layout(this.viewW, this.viewH); // the System View has its own fit camera
+    });
+    this.systemScene.layout(this.viewW, this.viewH);
   }
 
   /// Load the celestial + ship sprite textures. Each resolves independently; the
@@ -230,6 +275,58 @@ export class Renderer {
     this.recompute();
   }
 
+  // --- Semantic-zoom (galaxy ⇄ system) — presentation only ------------------
+  get viewMode(): MapViewMode {
+    return this.mode;
+  }
+  /// True when the galaxy camera is at its deepest zoom — the cue for "zoom in
+  /// again to enter the System View" (see main.ts's wheel handler).
+  atMaxZoom(): boolean {
+    return this.scale >= this.fitScale() * ZOOM_MAX_FACTOR - 1e-3;
+  }
+  /// Camera to restore when leaving the System View (the player's pre-enter view).
+  private savedGalaxyCam: { cx: number; cy: number; scale: number } | null = null;
+
+  /// ENTER the schematic System View for a system: build its (deterministic,
+  /// public) visual schematic, save the current galaxy camera, and start the
+  /// crossfade + camera-push toward the star. No sim/protocol change — the scene
+  /// renders only public geography + the light-gated ownership already in `state`.
+  enterSystemView(sys: SystemInfo): void {
+    if (this.mode.type === "system" && this.mode.systemId === sys.id) return;
+    const st = starTypeFor(sys.id);
+    this.systemScene.setSystem(buildVisualSystem(sys), this.starTex.get(st.slug) ?? null);
+    this.systemScene.layout(this.viewW, this.viewH);
+    this.savedGalaxyCam = { cx: this.cx, cy: this.cy, scale: this.scale };
+    const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
+    // Push the galaxy camera to center the star at max zoom, so the map visibly
+    // dives toward it as the schematic fades in (an LOD change that FEELS
+    // connected — not a literal zoom through astronomical space).
+    const toScale = this.fitScale() * ZOOM_MAX_FACTOR;
+    const camTo = { cx: this.viewW / 2 - sys.pos.x * toScale, cy: this.viewH / 2 - sys.pos.y * toScale, scale: toScale };
+    this.systemScene.root.visible = true;
+    this.systemScene.root.alpha = 0;
+    this.mode = { type: "system", systemId: sys.id };
+    this.userView = true;
+    this.transition = { dir: "in", start: performance.now(), camFrom, camTo };
+  }
+
+  /// EXIT back to the galaxy, restoring the pre-enter camera as the schematic
+  /// crossfades out and the galaxy pulls back.
+  exitSystemView(): void {
+    if (this.mode.type !== "system") return;
+    const restore = this.savedGalaxyCam ?? { cx: this.viewW / 2, cy: this.viewH / 2, scale: this.fitScale() };
+    const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
+    this.systemScene.clearSelection();
+    this.mode = { type: "galaxy" };
+    this.transition = { dir: "out", start: performance.now(), camFrom, camTo: restore };
+  }
+
+  /// Hit-test a planet/moon in the System View (opens a details panel — the ONLY
+  /// planet interaction; no per-planet gameplay, no deeper camera level).
+  systemPick(sx: number, sy: number): SystemBodyDetail | null {
+    return this.systemScene.pickBody(sx, sy);
+  }
+
   setGalaxy(galaxy: GalaxyInfo): void {
     this.galaxy = galaxy;
     // Drop pooled body sprites from any previous galaxy (fresh systems / ids) —
@@ -266,11 +363,12 @@ export class Renderer {
     for (let i = 0; i < 360; i++) {
       stars.circle(rand() * 2400, rand() * 1500, rand() * 1.3 + 0.2).fill({ color: 0xb8c6dd, alpha: rand() * 0.4 + 0.12 });
     }
-    this.bg.addChildAt(stars, 0);
+    // Persistent backdrop shared by both scenes (no longer inside `bg`).
+    this.starfield.addChild(stars);
   }
 
   private drawBackground(): void {
-    while (this.bg.children.length > 1) this.bg.removeChildAt(1);
+    this.bg.removeChildren();
     if (!this.galaxy) return;
     const g = new Graphics();
     const rPx = this.galaxy.radius * this.scale;
@@ -730,41 +828,98 @@ export class Renderer {
   update(state: ViewState): void {
     if (!state.galaxy) return;
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
-    // Redraw the world-anchored background (rings + hub) when the user zoomed/panned.
-    if (this.viewDirty) {
-      this.drawBackground();
-      this.viewDirty = false;
-    }
 
-    const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
+    // Advance any galaxy⇄system transition (camera push + crossfade), and decide
+    // which scene(s) to draw this frame. Only one scene is "live" at rest; during
+    // a transition BOTH draw so the crossfade reads.
+    const { drawGalaxy, drawSystem } = this.tickTransition();
 
-    this.drawSensorCoverage(state, dt);
-    this.drawSystems(state);
-    this.drawHubBody();
-    this.drawRoutes(state);
-    this.drawAnchors(state);
-    this.drawCommandCenter(state);
-
-    for (const sp of this.ghosts.values()) sp.seen = false;
-    const screenById = new Map<string, { x: number; y: number }>();
-    for (const ghost of state.ghosts) {
-      screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
-    }
-    // A ship is drawn only while the server is sending its ghost. A destroyed
-    // ship's ghost flies on old light until its destruction light reaches this
-    // player, then the server stops sending it and it vanishes here at the kill
-    // site — the moment the player observes the destruction (§6). No hold.
-    for (const [id, sp] of this.ghosts) {
-      if (!sp.seen) {
-        this.ghostsLayer.removeChild(sp.container);
-        sp.container.destroy({ children: true });
-        this.ghosts.delete(id);
+    if (drawGalaxy) {
+      // Redraw the world-anchored background (rings + hub) when the camera moved.
+      if (this.viewDirty) {
+        this.drawBackground();
+        this.viewDirty = false;
       }
+      const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
+
+      this.drawSensorCoverage(state, dt);
+      this.drawSystems(state);
+      this.drawHubBody();
+      this.drawRoutes(state);
+      this.drawAnchors(state);
+      this.drawCommandCenter(state);
+
+      for (const sp of this.ghosts.values()) sp.seen = false;
+      const screenById = new Map<string, { x: number; y: number }>();
+      for (const ghost of state.ghosts) {
+        screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
+      }
+      // A ship is drawn only while the server is sending its ghost. A destroyed
+      // ship's ghost flies on old light until its destruction light reaches this
+      // player, then the server stops sending it and it vanishes here at the kill
+      // site — the moment the player observes the destruction (§6). No hold.
+      for (const [id, sp] of this.ghosts) {
+        if (!sp.seen) {
+          this.ghostsLayer.removeChild(sp.container);
+          sp.container.destroy({ children: true });
+          this.ghosts.delete(id);
+        }
+      }
+
+      this.drawOrders(state, screenById);
+      this.drawIntercepts(state);
+      this.drawSignals(state, dt);
     }
 
-    this.drawOrders(state, screenById);
-    this.drawIntercepts(state);
-    this.drawSignals(state, dt);
+    if (drawSystem) {
+      // Ownership is the ONLY dynamic input, and it comes from the SAME light-
+      // gated per-player view (state.systems) the galaxy map reads — so the
+      // System View is fogged identically and leaks nothing hidden.
+      const sid = this.systemScene.currentId();
+      const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
+      this.systemScene.update(dyn?.owner ?? null, state.playerId, performance.now());
+    }
+  }
+
+  /// Advance the crossfade/camera-push. Mutates the galaxy camera + both scene
+  /// alphas; finalizes (hides the inactive scene, restores the exact camera on
+  /// exit) when complete. Returns which scenes to draw this frame.
+  private tickTransition(): { drawGalaxy: boolean; drawSystem: boolean } {
+    const tr = this.transition;
+    if (!tr) return { drawGalaxy: this.mode.type === "galaxy", drawSystem: this.mode.type === "system" };
+
+    const raw = clamp01((performance.now() - tr.start) / TRANS_MS);
+    const p = easeInOut(raw);
+    this.cx = tr.camFrom.cx + (tr.camTo.cx - tr.camFrom.cx) * p;
+    this.cy = tr.camFrom.cy + (tr.camTo.cy - tr.camFrom.cy) * p;
+    this.scale = tr.camFrom.scale + (tr.camTo.scale - tr.camFrom.scale) * p;
+    this.viewDirty = true; // the camera moved — the galaxy background must redraw
+
+    if (tr.dir === "in") {
+      this.galaxyRoot.alpha = 1 - clamp01((raw - 0.35) / 0.65);
+      this.systemScene.root.alpha = clamp01((raw - 0.25) / 0.75);
+    } else {
+      this.galaxyRoot.alpha = clamp01((raw - 0.25) / 0.75);
+      this.systemScene.root.alpha = 1 - clamp01((raw - 0.35) / 0.65);
+    }
+
+    if (raw >= 1) {
+      if (tr.dir === "in") {
+        this.galaxyRoot.alpha = 0;
+        this.galaxyRoot.visible = false; // system view is live — stop drawing the galaxy
+        this.systemScene.root.alpha = 1;
+      } else {
+        this.galaxyRoot.alpha = 1;
+        this.galaxyRoot.visible = true;
+        this.systemScene.root.visible = false;
+        this.systemScene.root.alpha = 1;
+        this.cx = tr.camTo.cx; this.cy = tr.camTo.cy; this.scale = tr.camTo.scale; // restore exactly
+      }
+      this.transition = null;
+    } else {
+      this.galaxyRoot.visible = true;
+    }
+    return { drawGalaxy: true, drawSystem: true };
   }
 
   /// Draw the OUTBOUND command signal (server-timed; we only place it at its

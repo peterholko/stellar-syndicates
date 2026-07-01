@@ -5,6 +5,7 @@ import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
 import { formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
+import type { SystemBodyDetail } from "./systemview";
 
 const state: ViewState = initialState();
 
@@ -413,6 +414,86 @@ function toggleCheckin(): void {
   else closeCheckin();
 }
 
+// --- System View (semantic-zoom LOD) — ENTER/EXIT + planet details -----------
+// A PRESENTATION-ONLY level-of-detail: the schematic star-system view. It shows
+// public geography + the SAME light-gated ownership as the galaxy map, and adds
+// NO gameplay (no per-planet claim/build/defend, no intra-system ships/combat).
+// All state lives in the renderer (viewMode); this layer only wires the UX.
+const hex6 = (n: number) => "#" + (n >>> 0).toString(16).padStart(6, "0").slice(-6);
+
+// The nearest star system within a screen-space radius of a point (for
+// double-click / deep-zoom enter). Mirrors handleMapClick's system hit-test.
+function systemUnderCursor(sx: number, sy: number, radius = 22): SystemInfo | null {
+  if (!state.galaxy) return null;
+  let best: SystemInfo | null = null;
+  let bestD = radius;
+  for (const sys of state.galaxy.systems) {
+    const s = renderer.worldToScreen(sys.pos);
+    const d = Math.hypot(s.x - sx, s.y - sy);
+    if (d < bestD) { bestD = d; best = sys; }
+  }
+  return best;
+}
+
+function showBreadcrumb(name: string): void {
+  $("bc-system").textContent = name;
+  $("breadcrumb").classList.add("is-open");
+}
+function enterSystem(sys: SystemInfo): void {
+  renderer.enterSystemView(sys);
+  state.selectedSystemId = sys.id; // keep the galaxy selection in sync (rail shows it)
+  showBreadcrumb(sys.name);
+  closePlanetPanel();
+  readout().innerHTML =
+    `<b>${esc(sys.name)}</b> — schematic system view. <span class="dim">Click a planet for details · Esc / Back / zoom out returns to the galaxy. ` +
+    `This is a VIEW: claims, production &amp; defense stay at the system level.</span>`;
+}
+function exitSystem(): void {
+  if (renderer.viewMode.type !== "system") return;
+  renderer.exitSystemView();
+  $("breadcrumb").classList.remove("is-open");
+  closePlanetPanel();
+}
+
+let planetPanelBuilt = false;
+function buildPlanetPanel(): void {
+  if (planetPanelBuilt) return;
+  planetPanelBuilt = true;
+  $("planet-panel").addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("[data-act='close']")) closePlanetPanel();
+  });
+}
+function closePlanetPanel(): void {
+  $("planet-panel").classList.remove("is-open");
+}
+function openPlanetPanel(d: SystemBodyDetail): void {
+  buildPlanetPanel();
+  const eyebrow = d.isMoon ? "natural satellite" : d.habitable ? "habitable world" : "planet";
+  const habitable = d.habitable ? " " + badge("positive", "habitable") : "";
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
+    `<h2>${esc(d.name)}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const kindLine = `<div><span class="pp-swatch" style="background:${hex6(d.kindColor)}"></span>${esc(d.kindLabel)}${habitable}</div>`;
+  // The SYSTEM's deposits, shown here as a VISUAL ASSOCIATION with this body — the
+  // deposit still belongs to the system (claim/produce/ship it at the system level).
+  const deps = d.deposits.length
+    ? `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px">Associated deposit</div>` +
+      d.deposits.map(depositRow).join("")
+    : `<div class="pp-note" style="border:0;padding:0;margin-top:10px">No deposit associated with this body.</div>`;
+  const note = `<div class="pp-note">Public geography — the same for every corporation. Any deposit here belongs to the <b>star system</b>; claim it, develop it, and ship its output from the system panel, exactly as on the galaxy map.</div>`;
+  $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${note}</div>`;
+  $("planet-panel").classList.add("is-open");
+}
+
+// Click INSIDE the System View: a planet/moon opens its details; empty space
+// clears the selection/panel. No move orders, no raids — those are galaxy-only.
+function handleSystemClick(sx: number, sy: number): void {
+  const d = renderer.systemPick(sx, sy);
+  if (d) openPlanetPanel(d);
+  else closePlanetPanel();
+}
+
 // The map CLICK action (select own ship · select a star system incl. home ·
 // inspect a command anchor · raid a rival ghost · move order to empty space). All
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
@@ -568,7 +649,10 @@ function installInteraction(): void {
       panning = true; // crossed the threshold → this is a pan, not a click
     }
     if (panning) {
-      renderer.panBy(e.clientX - lastX, e.clientY - lastY);
+      // Pan only the galaxy camera. The System View has a fixed fit camera (no
+      // intra-system pan/zoom — zoom-out is an EXIT gesture), so a drag there just
+      // suppresses the click.
+      if (renderer.viewMode.type === "galaxy") { renderer.panBy(e.clientX - lastX, e.clientY - lastY); }
       lastX = e.clientX; lastY = e.clientY;
     }
   });
@@ -576,8 +660,11 @@ function installInteraction(): void {
     if (!down) return;
     down = false;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
-    // A tap (no pan) runs the existing click action; a pan-drag suppresses it.
-    if (!panning) handleMapClick(e.clientX, e.clientY);
+    // A tap (no pan) runs the click action for the ACTIVE scene; a pan suppresses it.
+    if (!panning) {
+      if (renderer.viewMode.type === "system") handleSystemClick(e.clientX, e.clientY);
+      else handleMapClick(e.clientX, e.clientY);
+    }
     panning = false;
   };
   canvas.addEventListener("pointerup", endPress);
@@ -585,10 +672,44 @@ function installInteraction(): void {
 
   // Mouse wheel zooms toward the cursor. preventDefault stops the page scrolling;
   // over a panel the wheel hits the panel (not the canvas), so panels still scroll.
+  // Wheel also drives the semantic-zoom LOD change: zooming IN past the galaxy's
+  // max zoom (with a system under the cursor) ENTERS the System View; zooming OUT
+  // in the System View EXITS back to the galaxy. Both are explicit LOD changes
+  // (a crossfade), not a literal zoom through space.
+  let sysZoomOutAccum = 0;
   canvas.addEventListener("wheel", (e: WheelEvent) => {
     e.preventDefault();
+    if (renderer.viewMode.type === "system") {
+      if (e.deltaY > 0) { // scrolling out
+        sysZoomOutAccum += e.deltaY;
+        if (sysZoomOutAccum > 60) { exitSystem(); sysZoomOutAccum = 0; }
+      } else {
+        sysZoomOutAccum = 0; // scrolling in — reset (no deeper level to zoom into)
+      }
+      return;
+    }
+    // Galaxy mode: if already at max zoom and the user keeps zooming IN, dive into
+    // the system under the cursor (or the selected one).
+    const wasMax = renderer.atMaxZoom();
     renderer.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0016));
+    if (e.deltaY < 0 && wasMax) {
+      const sys = systemUnderCursor(e.clientX, e.clientY)
+        ?? (state.selectedSystemId ? state.galaxy?.systems.find((s) => s.id === state.selectedSystemId) ?? null : null);
+      if (sys) enterSystem(sys);
+    }
   }, { passive: false });
+
+  // Double-click a star system → enter its System View (the primary explicit
+  // enter gesture; single-click still just selects it, see handleMapClick).
+  canvas.addEventListener("dblclick", (e: MouseEvent) => {
+    if (renderer.viewMode.type !== "galaxy") return;
+    const sys = systemUnderCursor(e.clientX, e.clientY, 16);
+    if (sys) enterSystem(sys);
+  });
+
+  // Breadcrumb: GALAXY / Back both return to the galaxy map.
+  $("bc-galaxy").addEventListener("click", exitSystem);
+  $("bc-back").addEventListener("click", exitSystem);
 
   // On-screen zoom controls.
   $("zoom-in").addEventListener("click", () => renderer.zoomByFactor(1.3));
@@ -617,9 +738,16 @@ function installInteraction(): void {
     } else if (e.key === "l" || e.key === "L") {
       toggleCheckin();
     } else if (e.key === "Escape") {
-      closeMarket();
-      closeRail();
-      deselectShip();
+      // In the System View, Escape steps out one level: planet panel → system → galaxy.
+      if ($("planet-panel").classList.contains("is-open")) {
+        closePlanetPanel();
+      } else if (renderer.viewMode.type === "system") {
+        exitSystem();
+      } else {
+        closeMarket();
+        closeRail();
+        deselectShip();
+      }
     } else if (e.key === "+" || e.key === "=") {
       renderer.zoomByFactor(1.3);
     } else if (e.key === "-" || e.key === "_") {
@@ -754,6 +882,11 @@ function buildSystemTab(): void {
       return;
     }
     switch (el.dataset.action) {
+      case "inspect": {
+        const s = state.galaxy?.systems.find((x) => x.id === sid);
+        if (s) enterSystem(s);
+        break;
+      }
       case "claim": net.send({ type: "ClaimSystem", system_id: sid }); break;
       case "ship": net.send({ type: "ShipProduction", system_id: sid }); break;
       case "standing": {
@@ -837,6 +970,10 @@ function updateSystemTab(): void {
   } else {
     actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
   }
+  // Inspect → the presentation-only schematic System View. Offered for ANY system
+  // (its geography is public); it is a VIEW, never a gameplay action. Also reachable
+  // by double-click or deep-zoom on the map.
+  actions += `<button class="act" data-action="inspect">◎ Inspect system ▸</button>`;
 
   const hint = isMyHome
     ? `<div class="mhint">Your command center sits here — your vantage on the galaxy, and a developed base producing from turn one. Ship its output to the hub or automate supply (Logistics).</div>`
