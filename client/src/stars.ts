@@ -12,22 +12,34 @@ export interface StarType {
   slug: string;
   title: string;
   exotic: boolean;
+  // Map-icon metadata (from the galaxy-map star-icons manifest). All icons share a
+  // 1254px canvas but the VISIBLE star fills a different area/offset per type, so we
+  // use `center` (visible-star centre, in canvas px) to place it at the system, and
+  // `visualDiameter` (visible extent, canvas px) to size the visible star — NOT the
+  // whole transparent canvas — to a consistent on-map diameter.
+  file: string;
+  center: [number, number];
+  visualDiameter: number;
 }
 
-// 6 realistic (common) + 6 exotic (rare). `title` matches the art manifest.
+// The star-icon canvas all icons are authored on (see the icons manifest).
+export const STAR_ICON_CANVAS = 1254;
+
+// 6 realistic (common) + 4 exotic (rare). The map-icon set has 10 types (the older
+// `hypergiant` / `anomaly` are not in this icon set, so they're dropped — every
+// assigned type has both a map icon AND a concept portrait). `title` matches the
+// manifest.
 export const STAR_TYPES: StarType[] = [
-  { slug: "red_dwarf", title: "Red Dwarf", exotic: false },
-  { slug: "yellow_star", title: "Yellow Star (Sun-like)", exotic: false },
-  { slug: "white_star", title: "White Star", exotic: false },
-  { slug: "blue_giant", title: "Blue Giant", exotic: false },
-  { slug: "red_giant", title: "Red Giant", exotic: false },
-  { slug: "white_dwarf", title: "White Dwarf", exotic: false },
-  { slug: "neutron_star", title: "Neutron Star / Pulsar", exotic: true },
-  { slug: "binary_star", title: "Binary Star", exotic: true },
-  { slug: "black_hole", title: "Black Hole", exotic: true },
-  { slug: "magnetar", title: "Magnetar", exotic: true },
-  { slug: "hypergiant", title: "Hypergiant", exotic: true },
-  { slug: "anomaly", title: "Anomaly", exotic: true },
+  { slug: "red_dwarf", title: "Red Dwarf", exotic: false, file: "red_dwarf_icon.png", center: [627.5, 613.0], visualDiameter: 402 },
+  { slug: "yellow_star", title: "Yellow Star (Sun-like)", exotic: false, file: "yellow_star_icon.png", center: [613.5, 605.0], visualDiameter: 532 },
+  { slug: "white_star", title: "White Star", exotic: false, file: "white_star_icon.png", center: [632.5, 598.0], visualDiameter: 762 },
+  { slug: "blue_giant", title: "Blue Giant", exotic: false, file: "blue_giant_star.png", center: [626.5, 626.0], visualDiameter: 1031 },
+  { slug: "red_giant", title: "Red Giant", exotic: false, file: "red_giant_icon.png", center: [630.0, 611.5], visualDiameter: 939 },
+  { slug: "white_dwarf", title: "White Dwarf", exotic: false, file: "white_dwarf_icon.png", center: [626.0, 626.5], visualDiameter: 257 },
+  { slug: "neutron_star", title: "Neutron Star / Pulsar", exotic: true, file: "neutron_star_icon.png", center: [637.5, 633.0], visualDiameter: 1082 },
+  { slug: "binary_star", title: "Binary Star", exotic: true, file: "binary_star_icon.png", center: [638.0, 604.5], visualDiameter: 774 },
+  { slug: "black_hole", title: "Black Hole", exotic: true, file: "black_hole_icon.png", center: [632.5, 582.5], visualDiameter: 1019 },
+  { slug: "magnetar", title: "Magnetar", exotic: true, file: "magnetar_icon.png", center: [627.5, 606.0], visualDiameter: 838 },
 ];
 
 const REALISTIC = STAR_TYPES.filter((s) => !s.exotic);
@@ -55,5 +67,11 @@ export function starTypeFor(id: string): StarType {
   return pool[(h >>> 17) % pool.length];
 }
 
-export const starIconUrl = (slug: string) => `/art/celestial_sprites/stars/png/128/${slug}.png`;
+// Sprite anchor (0..1) placing the VISIBLE star centre at the system position.
+export const starAnchor = (t: StarType): [number, number] => [t.center[0] / STAR_ICON_CANVAS, t.center[1] / STAR_ICON_CANVAS];
+// Visible-star extent as a fraction of the canvas — divide the target on-map
+// diameter by this (× texture width) to size the visible star, not the canvas.
+export const starVisualRatio = (t: StarType): number => t.visualDiameter / STAR_ICON_CANVAS;
+
+export const starIconUrl = (t: StarType) => `/art/celestial_sprites/stars/icons/${t.file}`;
 export const starConceptUrl = (slug: string) => `/art/celestial_sprites/stars/${slug}_concept.png`;

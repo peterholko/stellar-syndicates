@@ -1,0 +1,278 @@
+{
+  "name": "Stellar Syndicates Galaxy-Map Star Icons",
+  "source": "peterholko/stellar-syndicates",
+  "description": "Background-removed star icons for the galaxy map. All share a 1254x1254 canvas but the visible star fills a different area per type; use content_bbox / visual_diameter / center to scale and place each marker.",
+  "canvas": [
+    1254,
+    1254
+  ],
+  "background": "transparent",
+  "bbox_alpha_threshold": 16,
+  "count": 10,
+  "missing_types": [
+    "hypergiant",
+    "anomaly"
+  ],
+  "stars": [
+    {
+      "slug": "red_dwarf",
+      "title": "Red Dwarf",
+      "class": "realistic",
+      "file": "red_dwarf_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        442,
+        412,
+        371,
+        402
+      ],
+      "content_size": [
+        371,
+        402
+      ],
+      "visual_diameter": 402,
+      "center": [
+        627.5,
+        613.0
+      ],
+      "fill_fraction": 0.021
+    },
+    {
+      "slug": "yellow_star",
+      "title": "Yellow Star (Sun-like)",
+      "class": "realistic",
+      "file": "yellow_star_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        355,
+        339,
+        517,
+        532
+      ],
+      "content_size": [
+        517,
+        532
+      ],
+      "visual_diameter": 532,
+      "center": [
+        613.5,
+        605.0
+      ],
+      "fill_fraction": 0.058
+    },
+    {
+      "slug": "white_star",
+      "title": "White Star",
+      "class": "realistic",
+      "file": "white_star_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        268,
+        217,
+        729,
+        762
+      ],
+      "content_size": [
+        729,
+        762
+      ],
+      "visual_diameter": 762,
+      "center": [
+        632.5,
+        598.0
+      ],
+      "fill_fraction": 0.096
+    },
+    {
+      "slug": "blue_giant",
+      "title": "Blue Giant",
+      "class": "realistic",
+      "file": "blue_giant_star.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        111,
+        112,
+        1031,
+        1028
+      ],
+      "content_size": [
+        1031,
+        1028
+      ],
+      "visual_diameter": 1031,
+      "center": [
+        626.5,
+        626.0
+      ],
+      "fill_fraction": 0.281
+    },
+    {
+      "slug": "red_giant",
+      "title": "Red Giant",
+      "class": "realistic",
+      "file": "red_giant_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        177,
+        142,
+        906,
+        939
+      ],
+      "content_size": [
+        906,
+        939
+      ],
+      "visual_diameter": 939,
+      "center": [
+        630.0,
+        611.5
+      ],
+      "fill_fraction": 0.324
+    },
+    {
+      "slug": "white_dwarf",
+      "title": "White Dwarf",
+      "class": "realistic",
+      "file": "white_dwarf_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        500,
+        498,
+        252,
+        257
+      ],
+      "content_size": [
+        252,
+        257
+      ],
+      "visual_diameter": 257,
+      "center": [
+        626.0,
+        626.5
+      ],
+      "fill_fraction": 0.014
+    },
+    {
+      "slug": "neutron_star",
+      "title": "Neutron Star / Pulsar",
+      "class": "exotic",
+      "file": "neutron_star_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        405,
+        92,
+        465,
+        1082
+      ],
+      "content_size": [
+        465,
+        1082
+      ],
+      "visual_diameter": 1082,
+      "center": [
+        637.5,
+        633.0
+      ],
+      "fill_fraction": 0.107
+    },
+    {
+      "slug": "binary_star",
+      "title": "Binary Star",
+      "class": "exotic",
+      "file": "binary_star_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        251,
+        301,
+        774,
+        607
+      ],
+      "content_size": [
+        774,
+        607
+      ],
+      "visual_diameter": 774,
+      "center": [
+        638.0,
+        604.5
+      ],
+      "fill_fraction": 0.17
+    },
+    {
+      "slug": "black_hole",
+      "title": "Black Hole",
+      "class": "exotic",
+      "file": "black_hole_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        123,
+        308,
+        1019,
+        549
+      ],
+      "content_size": [
+        1019,
+        549
+      ],
+      "visual_diameter": 1019,
+      "center": [
+        632.5,
+        582.5
+      ],
+      "fill_fraction": 0.186
+    },
+    {
+      "slug": "magnetar",
+      "title": "Magnetar",
+      "class": "exotic",
+      "file": "magnetar_icon.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "content_bbox": [
+        210,
+        187,
+        835,
+        838
+      ],
+      "content_size": [
+        835,
+        838
+      ],
+      "visual_diameter": 838,
+      "center": [
+        627.5,
+        606.0
+      ],
+      "fill_fraction": 0.279
+    }
+  ]
+}

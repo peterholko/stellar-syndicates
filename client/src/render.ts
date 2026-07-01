@@ -11,7 +11,7 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
-import { STAR_TYPES, starIconUrl, starTypeFor } from "./stars";
+import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 
 const COL_HUB = 0x7fd4ff;
 const COL_SYSTEM = 0x4a5d7a;
@@ -167,7 +167,7 @@ export class Renderer {
     // The star-type icons (each independent; a missing one falls back to the dot).
     await Promise.all(
       STAR_TYPES.map(async (t) => {
-        const tex = await load(starIconUrl(t.slug));
+        const tex = await load(starIconUrl(t));
         if (tex) this.starTex.set(t.slug, tex);
       }),
     );
@@ -350,13 +350,20 @@ export class Renderer {
       // ownership rings + label above are the data cues; the star is just the body
       // they decorate — ownership stays on the RING, and the star icon carries NO
       // tint, so a blue star is never mistaken for "owned" nor a red star for
-      // "rival". Dot fallback until the icon loads.
-      const starTex = this.starTex.get(starTypeFor(sys.id).slug);
+      // "rival". Dot fallback until the icon loads. Because each icon's VISIBLE star
+      // fills a different area of its transparent canvas, use the type's manifest
+      // `center`/`visualDiameter` to CENTRE the visible star at the system and size
+      // that visible disk (not the canvas) to bodyD — so every type reads at a
+      // consistent on-map size regardless of its icon's fill.
+      const st = starTypeFor(sys.id);
+      const starTex = this.starTex.get(st.slug);
       if (starTex) {
         const bsp = this.bodyFor(sys.id, starTex);
-        const bodyD = Math.min(20 + valueRate * 0.9, 46);
+        const bodyD = Math.min(20 + valueRate * 0.9, 46); // target VISIBLE diameter
+        const anchor = starAnchor(st);
+        bsp.anchor.set(anchor[0], anchor[1]);
         bsp.position.set(s.x, s.y);
-        bsp.scale.set(bodyD / starTex.width);
+        bsp.scale.set(bodyD / (starVisualRatio(st) * starTex.width));
         bsp.alpha = owner !== null ? 1 : 0.62; // unclaimed recedes
       } else {
         const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
