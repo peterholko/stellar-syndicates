@@ -324,6 +324,11 @@
       }
 
       /* ---- System view (SYSTEM tab) ---- */
+      /* Star-type feature: concept-art banner + type name in the System view. */
+      .sysview__star { margin: 4px 0 12px; }
+      .sysview__star .star-art { display: block; width: 100%; height: 116px; object-fit: cover; border-radius: 7px; border: 1px solid var(--border); background: #05070d; }
+      .sysview__star .star-cap { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+      .sysview__star .star-type { font-size: 11px; letter-spacing: 0.4px; color: var(--ink); font-weight: 700; }
       .sysview__deps { margin: 4px 0 6px; }
       .deps-head { color: var(--dim); text-transform: uppercase; font-size: 9px; letter-spacing: 0.6px; margin-bottom: 4px; }
       .deps-head .sp-tier { color: var(--accent); }

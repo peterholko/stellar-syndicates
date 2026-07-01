@@ -11,6 +11,7 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, GalaxyInfo, GhostView, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
+import { STAR_TYPES, starIconUrl, starTypeFor } from "./stars";
 
 const COL_HUB = 0x7fd4ff;
 const COL_SYSTEM = 0x4a5d7a;
@@ -93,7 +94,9 @@ export class Renderer {
   private bodyLayer = new Container();
   private systemBodies = new Map<string, Sprite>();
   private hubSprite: Sprite | null = null;
-  private texStar: Texture | null = null; // star systems are drawn as a STAR
+  // Star-type map icons, keyed by slug — a system draws the icon for its
+  // deterministically-assigned type (stars.ts). Loaded lazily in loadArt.
+  private starTex = new Map<string, Texture>();
   private texStation: Texture | null = null;
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
@@ -150,19 +153,24 @@ export class Renderer {
         return null; // leave null — the primitive fallback keeps the map working
       }
     };
-    // A star SYSTEM is drawn as a STAR (sun). The hub is the trade station. The
-    // habitable_planet sprite is intentionally NOT loaded here — it's reserved for
-    // a future habitable-world / market-body concept, not generic star systems.
-    const [star, station, convoy, raider] = await Promise.all([
-      load("/art/celestial_sprites/sun.png"),
+    // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
+    // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
+    // for a future habitable-world / market-body concept, not generic systems.
+    const [station, convoy, raider] = await Promise.all([
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
     ]);
-    this.texStar = star;
     this.texStation = station;
     this.texConvoy = convoy;
     this.texRaider = raider;
+    // The star-type icons (each independent; a missing one falls back to the dot).
+    await Promise.all(
+      STAR_TYPES.map(async (t) => {
+        const tex = await load(starIconUrl(t.slug));
+        if (tex) this.starTex.set(t.slug, tex);
+      }),
+    );
   }
 
   get canvas(): HTMLCanvasElement {
@@ -336,18 +344,20 @@ export class Renderer {
       if (selected) {
         g.circle(s.x, s.y, owner !== null ? 12 : glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
       }
-      // The BODY itself: a STAR sprite (pooled), sized by deposit value (the
-      // frontier-richer hierarchy) and dimmed when unclaimed so owned/rival
-      // territory leads. The glow + ownership rings + label above are the data
-      // cues; the star is just the body they decorate (ownership stays on the
-      // RING — the star carries no tint). Dot fallback until art loads. All systems
-      // share one sun sprite for now; per-system star-type variety is future art.
-      if (this.texStar) {
-        const bsp = this.bodyFor(sys.id, this.texStar);
-        const bodyD = Math.min(12 + valueRate * 0.8, 30);
+      // The BODY itself: the system's assigned STAR-TYPE icon (deterministic by id,
+      // stars.ts), pooled, sized by deposit value (the frontier-richer hierarchy)
+      // and dimmed when unclaimed so owned/rival territory leads. The glow +
+      // ownership rings + label above are the data cues; the star is just the body
+      // they decorate — ownership stays on the RING, and the star icon carries NO
+      // tint, so a blue star is never mistaken for "owned" nor a red star for
+      // "rival". Dot fallback until the icon loads.
+      const starTex = this.starTex.get(starTypeFor(sys.id).slug);
+      if (starTex) {
+        const bsp = this.bodyFor(sys.id, starTex);
+        const bodyD = Math.min(20 + valueRate * 0.9, 46);
         bsp.position.set(s.x, s.y);
-        bsp.scale.set(bodyD / this.texStar.width);
-        bsp.alpha = owner !== null ? 1 : 0.6; // unclaimed recedes
+        bsp.scale.set(bodyD / starTex.width);
+        bsp.alpha = owner !== null ? 1 : 0.62; // unclaimed recedes
       } else {
         const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
         g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });

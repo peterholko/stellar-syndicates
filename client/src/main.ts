@@ -4,6 +4,7 @@ import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
 import { formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
+import { starConceptUrl, starTypeFor } from "./stars";
 
 const state: ViewState = initialState();
 
@@ -801,6 +802,16 @@ function updateSystemTab(): void {
   const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys))}</div>` +
     `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}</div></div>`;
 
+  // The system's STAR — concept art + type name. Flavor only; observable for ANY
+  // system (a star is visible from afar) and leaks no economy/holdings (those stay
+  // light-gated). Assigned deterministically by system id (stars.ts), so it's
+  // stable and matches the map icon.
+  const st = starTypeFor(sys.id);
+  const starFeature = `<div class="sysview__star">` +
+    `<img class="star-art" src="${starConceptUrl(st.slug)}" alt="" />` +
+    `<div class="star-cap"><span class="star-type">${esc(st.title)}</span>` +
+    `${st.exotic ? badge("accent", "exotic") : badge("neutral", "star")}</div></div>`;
+
   const strip = statStrip([
     stat("Deposits", String(sys.deposits.length)),
     stat("Yield/s", yieldRate.toFixed(1)),
@@ -835,7 +846,7 @@ function updateSystemTab(): void {
         ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
         : "";
 
-  root.innerHTML = rail + header + strip + deps + prod + build + actions + hint;
+  root.innerHTML = rail + header + starFeature + strip + deps + prod + build + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------
