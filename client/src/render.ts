@@ -85,6 +85,7 @@ interface GhostSprite {
   sprite: Sprite; // the ship art (rotated to heading, tinted by ownership)
   label: Text;
   ring: Graphics; // selection ring
+  pip: Graphics; // ownership tag (cyan = yours, red = rival) — the friend/foe cue
   seen: boolean;
 }
 
@@ -701,9 +702,11 @@ export class Renderer {
       sprite.visible = false;
       const label = new Text({ text: "", style: new TextStyle({ fill: COL_OTHER, fontFamily: "ui-monospace, monospace", fontSize: 9 }) });
       label.anchor.set(0, 0.5);
-      container.addChild(cone, ring, body, sprite, label);
+      const pip = new Graphics();
+      // Pip is topmost so the friend/foe tag is never hidden by the sprite/label.
+      container.addChild(cone, ring, body, sprite, label, pip);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, sprite, label, ring, seen: true };
+      sp = { container, cone, body, sprite, label, ring, pip, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
@@ -830,6 +833,31 @@ export class Renderer {
       if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
       sp.body.rotation = angle;
     }
+
+    // Ownership PIP — a small, always-on friend/foe tag riding just above the ship:
+    // a cyan diamond = YOURS (COL_OWN), red = RIVAL (COL_OTHER). Now that the hull
+    // carries no ownership tint, THIS is the primary own-vs-rival cue. Drawn in
+    // SCREEN space (a child at a fixed LOCAL offset, so it never rotates with heading
+    // and keeps a consistent screen size), sat just above the sprite's current
+    // on-screen extent, and sized in screen px (gently clamped so it neither balloons
+    // nor vanishes across zoom). It keeps a HIGH alpha floor so ownership stays
+    // readable even on a stale/faded ship — the pip is exactly the cue that must
+    // SURVIVE the staleness fade (unlike the old tint, which washed out). A dark rim
+    // keeps it legible over bright cues (sensor teal, threat rings). The diamond
+    // shape reads distinctly from the many circular cues (cones/rings/sensor). This
+    // is ADDITIVE — it doesn't touch the cone, threat ring, selection ring, or label.
+    // (Ownership is BINARY here; a future enhancement could key the pip color per
+    // rival syndicate by owner id, with your ships fixed cyan.)
+    const pip = sp.pip;
+    pip.clear();
+    const pipCol = own ? COL_OWN : COL_OTHER;
+    const half = this.shipHitRadius(ghost.kind); // half the ship's current on-screen size
+    const pipR = Math.max(3.2, Math.min(8, half * 0.14));
+    const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
+    const pipA = Math.max(0.85, 0.97 - 0.25 * fade); // high floor — survives staleness
+    const diamond = (cy: number, rr: number): number[] => [0, cy - rr, rr, cy, 0, cy + rr, -rr, cy];
+    pip.poly(diamond(pipY, pipR + 1.3)).fill({ color: 0x05070d, alpha: 0.7 * pipA }); // dark rim for contrast
+    pip.poly(diamond(pipY, pipR)).fill({ color: pipCol, alpha: pipA });
 
     // Label: threat warning for raiders, cargo manifest for convoys (shown only
     // when known — i.e. within sensor range), staleness everywhere it matters.
