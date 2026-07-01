@@ -9,7 +9,7 @@
 // The command center is your vantage — the origin of everything you can see.
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
-import type { Commodity, GalaxyInfo, GhostView, SystemInfo, Vec2 } from "./protocol";
+import type { Commodity, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
@@ -98,7 +98,14 @@ const SHIP_ART_FACING = Math.PI / 2;
 const SHIP_PX_CONVOY = 56;
 const SHIP_PX_RAIDER = 40;
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
-const SHIP_ZOOM_MAX = 1.6; // growth cap when zoomed in
+const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
+// Deep-zoom NATIVE-size ramp: the zoom ratio r (= scale / fitScale) at which
+// ships BEGIN ramping from their indicator size (base × SHIP_ZOOM_MAX) up to
+// their TRUE NATIVE texture size, reaching native exactly at ZOOM_MAX_FACTOR.
+// Below this, ships stay small map indicators exactly as before. ~12 is the top
+// half of the 0.9→24 zoom range. Tunable — set it near ZOOM_MAX_FACTOR for a
+// last-sliver "snap," or lower for an earlier, gentler ramp.
+const SHIP_NATIVE_ZOOM_START = 12;
 
 export class Renderer {
   private app = new Application();
@@ -702,6 +709,35 @@ export class Renderer {
     return sp;
   }
 
+  /// On-screen ship size (px) as a function of the current zoom, in TWO phases:
+  ///  1. Normal / indicator: base × clamp(r, SHIP_ZOOM_MIN, SHIP_ZOOM_MAX) — the
+  ///     small map markers, unchanged, across the whole normal zoom range.
+  ///  2. Deep-zoom (r ≥ SHIP_NATIVE_ZOOM_START): smoothly ramp from the indicator
+  ///     size UP TO the TRUE NATIVE texture width, reaching native exactly at
+  ///     ZOOM_MAX_FACTOR. Seamless at the threshold — both phases give
+  ///     base × SHIP_ZOOM_MAX there, so there's no pop — and it never exceeds
+  ///     nativeW, so the sprite scale is always ≤ 1.0 (downscale-or-native, crisp).
+  /// Both kinds converge to the SAME native size at max zoom: up close the art's
+  /// SHAPE distinguishes convoy vs raider, so identical native size is intended.
+  private shipSizePx(kind: ShipKind, nativeW: number): number {
+    const base = kind === "convoy" ? SHIP_PX_CONVOY : SHIP_PX_RAIDER;
+    const r = this.scale / this.fitScale();
+    const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
+    if (r <= SHIP_NATIVE_ZOOM_START) return indicator;
+    const t = Math.min((r - SHIP_NATIVE_ZOOM_START) / (ZOOM_MAX_FACTOR - SHIP_NATIVE_ZOOM_START), 1);
+    const s = t * t * (3 - 2 * t); // smoothstep — gentle growth, not linear
+    const from = base * SHIP_ZOOM_MAX; // indicator size at the handoff (seamless)
+    return from + (nativeW - from) * s;
+  }
+
+  /// Half the ship's CURRENT on-screen size — the click hit radius, so ships stay
+  /// clickable as they enlarge in the deep-zoom band. Falls back to a 256px native
+  /// assumption before the texture loads. Consumed by main.ts's map hit-test.
+  shipHitRadius(kind: ShipKind): number {
+    const tex = kind === "convoy" ? this.texConvoy : this.texRaider;
+    return this.shipSizePx(kind, tex ? tex.width : 256) / 2;
+  }
+
   private drawGhost(ghost: GhostView, state: ViewState, dt: number): { x: number; y: number } {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
@@ -776,11 +812,12 @@ export class Renderer {
     if (tex) {
       sp.sprite.visible = true;
       if (sp.sprite.texture !== tex) sp.sprite.texture = tex;
-      const base = ghost.kind === "convoy" ? SHIP_PX_CONVOY : SHIP_PX_RAIDER;
-      // Grow when zoomed in / shrink a touch when zoomed out, bounded so ships
-      // never get absurd (fit zoom → 1×).
-      const zoomK = Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, this.scale / this.fitScale()));
-      sp.sprite.scale.set((base * zoomK) / tex.width);
+      // Size vs zoom: a small indicator through normal zoom, ramping to TRUE
+      // NATIVE texture size in the deepest band (see shipSizePx). scale =
+      // targetPx / native, so it's ≤ 1.0 everywhere — downscale-or-native, always
+      // crisp, and exactly 1:1 undistorted art at max zoom.
+      const targetPx = this.shipSizePx(ghost.kind, tex.width);
+      sp.sprite.scale.set(targetPx / tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
       sp.sprite.tint = 0xffffff; // natural art — no per-syndicate tint
       sp.sprite.alpha = alpha;

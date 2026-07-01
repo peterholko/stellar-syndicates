@@ -507,12 +507,16 @@ function handleMapClick(sx: number, sy: number): void {
     const SYSTEM_BIAS = 5; // px the system may be "farther" and still win the tie
 
     let shipPick: string | null = null;
-    let bestShip = 24; // ~half the (now larger) ship sprite, so the body is clickable
+    let bestShip = Infinity; // nearest own-ship hit distance (px)
     for (const g of state.ghosts) {
       if (!g.own) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d < bestShip) {
+      // Hit radius tracks the ship's CURRENT on-screen size, so it grows with the
+      // sprite in the deep-zoom native-size band; floored at 24px so normal-zoom
+      // clicking feels exactly as before.
+      const rad = Math.max(24, renderer.shipHitRadius(g.kind));
+      if (d < rad && d < bestShip) {
         bestShip = d;
         shipPick = g.id;
       }
@@ -578,12 +582,15 @@ function handleMapClick(sx: number, sy: number): void {
     // direct) or INSPECT it (open the fog-aware rival panel when you don't). Own
     // ghosts are picked earlier, so here we only ever match rivals.
     let enemy: string | null = null;
-    let bestE = 24; // match the larger ship sprite for raid-targeting
+    let bestE = Infinity; // nearest rival-ghost hit distance (px)
     for (const g of state.ghosts) {
       if (g.own) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d < bestE) {
+      // Hit radius tracks the ship's current on-screen size (grows in deep zoom),
+      // floored at 24px so normal-zoom raid-targeting is unchanged.
+      const rad = Math.max(24, renderer.shipHitRadius(g.kind));
+      if (d < rad && d < bestE) {
         bestE = d;
         enemy = g.id;
       }
