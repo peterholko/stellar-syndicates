@@ -754,19 +754,17 @@ export class Renderer {
     const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
 
     // Uncertainty cone: where the object could be NOW given how stale the sighting
-    // is. OWN ships always show it — your distant fleet is light-delayed like
-    // everything else (§6), and near the command center age→0 so it shrinks to
-    // nothing. For RIVALS the cone is ON-DEMAND inspection detail: shown only when
-    // you SELECT that contact or it is your current intercept TARGET (its staleness
-    // is exactly what tells you how risky the intercept is). Otherwise it's hidden,
-    // so the reddish cone is never ambient clutter or confused with the teal sensor
-    // bubbles. (The threat ring and selection ring below are unaffected.)
+    // is. This is ON-DEMAND inspection detail only — shown when you SELECT a contact
+    // or it is your current intercept TARGET (its staleness is exactly what tells you
+    // how risky the intercept is). It is NEVER drawn ambiently: own ships no longer
+    // carry an always-on uncertainty circle (that was clutter that didn't help), so
+    // the map stays clean around your fleets and the cone is never confused with the
+    // teal sensor bubbles. (The threat ring and selection ring below are unaffected.)
     sp.cone.clear();
     const inspecting = state.selectedShipId === ghost.id || Object.values(state.raids).includes(ghost.id);
-    if ((own || inspecting) && ghost.uncertainty > 0) {
+    if (inspecting && ghost.uncertainty > 0) {
       const rPx = ghost.uncertainty * this.scale;
-      const cone = own ? COL_OWN : COL_CONE;
-      sp.cone.circle(0, 0, rPx).fill({ color: cone, alpha: own ? 0.04 : 0.05 }).stroke({ width: 1, color: cone, alpha: own ? 0.16 : 0.22 });
+      sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
     }
     // Own ship under orders: it's executing a course YOU set, so hint where it has
     // most likely advanced — from the ghost, along the commanded heading, up to how
