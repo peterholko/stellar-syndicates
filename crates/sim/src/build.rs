@@ -58,6 +58,13 @@ pub enum SystemUpgrade {
     /// food arrives again. Sustaining boosted frontier output becomes a supply
     /// line rivals can raid.
     Habitat,
+    /// FUEL REFINERY (§buildings step 3b): converts the system's stockpiled
+    /// **Volatiles → Fuel** continuously (`REFINERY_RATE_PER_TIER`/s per tier at
+    /// `REFINERY_YIELD` Fuel per Volatile). Volatiles' job — and forward fuel
+    /// production: a refinery near your theater turns a Volatiles supply line
+    /// into a fuel depot, easing the fuel-∝-distance operating cost. Idles dry
+    /// (soft; nothing destroyed).
+    Refinery,
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -114,6 +121,8 @@ pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 40.0)
 pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
 /// Habitat (system development): **Ore + Provisions** — food to found a colony.
 pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
+/// Fuel Refinery (system development): **Ore + Alloys** industrial plant.
+pub const REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 15.0)], build_ticks: 20 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
@@ -125,8 +134,20 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray } => &SENSOR_ARRAY_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform } => &DEFENSE_PLATFORM_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat } => &HABITAT_RECIPE,
+        BuildKind::Upgrade { upgrade: SystemUpgrade::Refinery } => &REFINERY_RECIPE,
     }
 }
+
+// --- FUEL REFINERY (§buildings step 3b) -----------------------------------------
+
+/// Volatiles consumed per second PER Refinery tier (input-side rate). Tunable.
+pub const REFINERY_RATE_PER_TIER: f64 = 0.5;
+/// Fuel produced per Volatile consumed. Slightly LOSSY (< 1) so raw Volatiles
+/// trade keeps a niche — refine for logistics, sell for margin. Because the
+/// yield is < 1, conversion always SHRINKS the stockpile total, so it can never
+/// violate the Depot storage cap (a guard still bounds it for yield ≥ 1
+/// tunings). Tunable.
+pub const REFINERY_YIELD: f64 = 0.8;
 
 // --- HABITAT (§buildings step 3a) ----------------------------------------------
 

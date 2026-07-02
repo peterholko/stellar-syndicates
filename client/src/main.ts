@@ -833,13 +833,24 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
   const upkeep = habTier > 0
     ? `<div class="mhint" style="margin-top:4px">Habitat upkeep: −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} provisions/s from this stockpile${habFed ? "" : ` — <span style="color:var(--warn)">UNFED: output boost suspended (nothing lost; resupply to restore)</span>`}.</div>`
     : "";
+  // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
+  const refTier = dyn?.refinery_tier ?? 0;
+  let refinery = "";
+  if (refTier > 0) {
+    const rate = (state.galaxy?.refinery_rate_per_tier ?? 0.5) * refTier;
+    const yieldK = state.galaxy?.refinery_yield ?? 0.8;
+    const vol = stockOf.get("volatiles") ?? 0;
+    refinery = vol > 0
+      ? `<div class="mhint" style="margin-top:4px">Refinery: converting ${rate.toFixed(1)} volatiles/s → +${(rate * yieldK).toFixed(1)} fuel/s.</div>`
+      : `<div class="mhint" style="margin-top:4px">Refinery: <span style="color:var(--warn)">idle — no Volatiles</span>. Haul some in (${yieldK} fuel per volatile).</div>`;
+  }
   return `<div class="deps-head" style="margin-top:8px">Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, 16)}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + upkeep;
+    }).join("") + upkeep + refinery;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
@@ -934,7 +945,7 @@ function buildSystemTab(): void {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
       if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-      else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
+      else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat" || k === "refinery") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }
     switch (el.dataset.action) {
@@ -1030,7 +1041,7 @@ function updateSystemTab(): void {
     : "";
   const devs = mine
     ? `<div class="devs-row">` +
-      ([["Extractor", dyn?.extractor_tier ?? 0, ""], ["Depot", dyn?.depot_tier ?? 0, ""], ["Shipyard", dyn?.shipyard_tier ?? 0, ""], ["Sensor", dyn?.sensor_tier ?? 0, ""], ["Defense", dyn?.defense_tier ?? 0, ""], ["Habitat", habTier, habTag]] as [string, number, string][])
+      ([["Extractor", dyn?.extractor_tier ?? 0, ""], ["Depot", dyn?.depot_tier ?? 0, ""], ["Shipyard", dyn?.shipyard_tier ?? 0, ""], ["Sensor", dyn?.sensor_tier ?? 0, ""], ["Defense", dyn?.defense_tier ?? 0, ""], ["Habitat", habTier, habTag], ["Refinery", dyn?.refinery_tier ?? 0, ""]] as [string, number, string][])
         .map(([n, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}${tag}</span>`)
         .join(`<span class="dev-sep">·</span>`) +
       `</div>`
@@ -1462,6 +1473,13 @@ function computeAttention(): Attn[] {
   for (const s of owned) {
     if (s.habitat_tier >= 1 && !s.habitat_fed) {
       items.push({ severity: "warn", text: `${systemName(s.id)}: Habitat UNFED — output boost suspended. Ship Provisions there (nothing is lost).` });
+    }
+  }
+  // 0c. DRY REFINERY (§buildings step 3b) — built industry sitting idle.
+  for (const s of owned) {
+    const vol = (s.stockpile ?? []).find((k) => k.commodity === "volatiles")?.units ?? 0;
+    if (s.refinery_tier >= 1 && vol === 0) {
+      items.push({ severity: "info", text: `${systemName(s.id)}: Refinery idle — no Volatiles. Haul some in to produce Fuel locally.` });
     }
   }
   // 1. Idle stockpile not covered by a standing order sourced there → automate it.

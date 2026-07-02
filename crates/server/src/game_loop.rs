@@ -176,6 +176,9 @@ impl GameLoop {
                             // readout (§buildings step 3a).
                             habitat_output_mult: sim::build::HABITAT_OUTPUT_MULT,
                             habitat_upkeep_per_tier: sim::build::HABITAT_UPKEEP_PER_TIER,
+                            // Refinery tunables (§buildings step 3b).
+                            refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
+                            refinery_yield: sim::build::REFINERY_YIELD,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -536,6 +539,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
         ("defense_platform", "Defense Platform", BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform }),
         ("habitat", "Habitat", BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat }),
+        ("refinery", "Fuel Refinery", BuildKind::Upgrade { upgrade: SystemUpgrade::Refinery }),
     ]
     .into_iter()
     .map(|(key, label, what)| {

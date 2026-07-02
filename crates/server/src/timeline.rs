@@ -109,6 +109,7 @@ impl Timeline {
                         sim::SystemUpgrade::SensorArray => format!("Sensor Array tier {tier} (standing vision)"),
                         sim::SystemUpgrade::DefensePlatform => format!("Defense Platform tier {tier} (static defense)"),
                         sim::SystemUpgrade::Habitat => format!("Habitat tier {tier} (boosts output; consumes Provisions)"),
+                        sim::SystemUpgrade::Refinery => format!("Fuel Refinery tier {tier} (Volatiles → Fuel)"),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
@@ -253,6 +254,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "a Sensor Array",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "a Defense Platform",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "a Habitat",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Refinery } => "a Fuel Refinery",
     }
 }
 

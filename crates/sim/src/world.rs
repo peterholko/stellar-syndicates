@@ -1361,6 +1361,10 @@ impl World {
                                 sys.habitat_fed = true;
                                 sys.habitat_tier
                             }
+                            crate::build::SystemUpgrade::Refinery => {
+                                sys.refinery_tier += 1;
+                                sys.refinery_tier
+                            }
                         };
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
                     }
@@ -1581,26 +1585,57 @@ impl World {
                 sys.habitat_fed = false; // no habitat — flag is meaningless/off
             }
 
+            // Accrual idles at a FULL depot (nothing destroyed, nothing drawn) —
+            // but the refinery below still runs: its lossy conversion SHRINKS the
+            // total, so it works (and frees space) even at the cap.
             let mut headroom = sys.storage_headroom();
-            if headroom <= 0.0 {
-                continue; // full — production idles (nothing destroyed, nothing drawn)
-            }
-            // Extractor upgrades (§step1 structure sink) multiply every deposit's
-            // output: richness · MULT^tier; a FED Habitat multiplies the system's
-            // ENTIRE output on top (compounding, deterministic).
-            let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
-            if sys.habitat_tier >= 1 && sys.habitat_fed {
-                mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.habitat_tier as i32);
-            }
-            for dep in &mut sys.deposits {
-                let mut amount = (dep.richness * mult * DT).min(headroom);
-                if let Some(reserves) = dep.reserves.as_mut() {
-                    amount = amount.min(*reserves);
-                    *reserves -= amount;
+            if headroom > 0.0 {
+                // Extractor upgrades (§step1 structure sink) multiply every
+                // deposit's output: richness · MULT^tier; a FED Habitat multiplies
+                // the system's ENTIRE output on top (compounding, deterministic).
+                let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
+                if sys.habitat_tier >= 1 && sys.habitat_fed {
+                    mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.habitat_tier as i32);
                 }
-                if amount > 0.0 {
-                    *sys.stockpile.entry(dep.resource).or_insert(0.0) += amount;
-                    headroom -= amount;
+                for dep in &mut sys.deposits {
+                    let mut amount = (dep.richness * mult * DT).min(headroom);
+                    if let Some(reserves) = dep.reserves.as_mut() {
+                        amount = amount.min(*reserves);
+                        *reserves -= amount;
+                    }
+                    if amount > 0.0 {
+                        *sys.stockpile.entry(dep.resource).or_insert(0.0) += amount;
+                        headroom -= amount;
+                    }
+                }
+            }
+
+            // --- FUEL REFINERY (§buildings step 3b) — conversion LAST, after
+            // upkeep + accrual, so it can refine this tick's fresh Volatiles.
+            // Bounded by rate, available Volatiles, and the storage cap on the
+            // Fuel side (with the lossy yield the total always SHRINKS, so the
+            // cap can't actually bind — the guard protects yield ≥ 1 tunings).
+            // Dry = idle (soft; nothing destroyed, nothing conjured).
+            if sys.refinery_tier >= 1 {
+                let have = sys
+                    .stockpile
+                    .get(&crate::cargo::Commodity::Volatiles)
+                    .copied()
+                    .unwrap_or(0.0);
+                let mut take = (crate::build::REFINERY_RATE_PER_TIER * sys.refinery_tier as f64 * DT).min(have);
+                if take > 0.0 {
+                    // Cap guard: post-conversion total must stay ≤ cap
+                    // (net change = take·(yield − 1) ≤ 0 for yield < 1).
+                    let net = take * (crate::build::REFINERY_YIELD - 1.0);
+                    let room = sys.storage_headroom();
+                    if net > room {
+                        take = (room / (crate::build::REFINERY_YIELD - 1.0)).max(0.0);
+                    }
+                    if take > 0.0 {
+                        *sys.stockpile.entry(crate::cargo::Commodity::Volatiles).or_insert(0.0) -= take;
+                        *sys.stockpile.entry(crate::cargo::Commodity::Fuel).or_insert(0.0) +=
+                            take * crate::build::REFINERY_YIELD;
+                    }
                 }
             }
         }
@@ -3008,6 +3043,116 @@ mod tests {
             system_stock(&w, home, Commodity::Provisions) > 1.0,
             "…with a growing food surplus, not a knife-edge"
         );
+    }
+
+    // --- §buildings step 3b: Fuel Refinery ------------------------------------
+
+    /// The Refinery converts stockpiled Volatiles → Fuel at exactly
+    /// rate·tier·DT input and yield·input output, measured over one tick.
+    #[test]
+    fn refinery_converts_at_rate_and_ratio() {
+        let mut w = test_world();
+        let id = PlayerId(34);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 2;
+        seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
+
+        let vol0 = system_stock(&w, home, Commodity::Volatiles);
+        let fuel0 = system_stock(&w, home, Commodity::Fuel);
+        w.step(&[]);
+        let dt = crate::config::DT;
+        let take = crate::build::REFINERY_RATE_PER_TIER * 2.0 * dt;
+        let vol_delta = system_stock(&w, home, Commodity::Volatiles) - vol0;
+        let fuel_delta = system_stock(&w, home, Commodity::Fuel) - fuel0;
+        assert!((vol_delta + take).abs() < 1e-9, "consumes rate·tier·DT volatiles (got {vol_delta})");
+        assert!(
+            (fuel_delta - take * crate::build::REFINERY_YIELD).abs() < 1e-9,
+            "produces yield·input fuel (got {fuel_delta})"
+        );
+    }
+
+    /// A dry Refinery IDLES (soft): no Volatiles → no conversion, no fuel from
+    /// nowhere, nothing destroyed. And a bounded stock converts only what exists.
+    #[test]
+    fn refinery_idles_dry_and_never_overdraws() {
+        let mut w = test_world();
+        let id = PlayerId(35);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 3;
+
+        // Dry: fuel unchanged (home produces no fuel; only the seed sits there).
+        let fuel0 = system_stock(&w, home, Commodity::Fuel);
+        w.step(&[]);
+        assert!((system_stock(&w, home, Commodity::Fuel) - fuel0).abs() < 1e-9, "dry refinery = idle");
+
+        // A sliver of Volatiles smaller than one tick's rate: converts exactly
+        // that sliver, never negative.
+        let sliver = 0.001;
+        seed_stock(&mut w, home, &[(Commodity::Volatiles, sliver)]);
+        let fuel1 = system_stock(&w, home, Commodity::Fuel);
+        w.step(&[]);
+        assert!((system_stock(&w, home, Commodity::Volatiles)).abs() < 1e-9, "drains to zero, not below");
+        let gained = system_stock(&w, home, Commodity::Fuel) - fuel1;
+        assert!((gained - sliver * crate::build::REFINERY_YIELD).abs() < 1e-9, "converts only what exists");
+    }
+
+    /// The storage cap never blocks conversion with the LOSSY yield (< 1): at a
+    /// FULL depot, refining shrinks the total (input > output), so it proceeds
+    /// and the total stays at/under the cap — nothing destroyed, nothing stuck.
+    #[test]
+    fn refinery_respects_storage_cap_at_full_depot() {
+        let mut w = test_world();
+        let id = PlayerId(36);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 1;
+        // Fill exactly to the cap, with volatiles included in the fill.
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let headroom = sys.storage_headroom();
+        seed_stock(&mut w, home, &[(Commodity::Volatiles, headroom)]);
+        let cap = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
+
+        let fuel0 = system_stock(&w, home, Commodity::Fuel);
+        w.step(&[]);
+        let s = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert!(s.storage_used() <= cap + 1e-9, "total never exceeds the cap");
+        assert!(
+            system_stock(&w, home, Commodity::Fuel) > fuel0,
+            "the lossy conversion proceeds even at a full depot (it frees space)"
+        );
+    }
+
+    /// End-to-end: a refinery turns a Volatiles stock into an operating Fuel
+    /// reserve that FUELS a fleet move — forward fuel production works.
+    #[test]
+    fn refinery_fuel_powers_a_move() {
+        let mut w = test_world();
+        let id = PlayerId(37);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        drain_fuel(&mut w, id); // no seed fuel anywhere
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 2;
+        seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
+        // Refine for a while → a real fuel reserve appears from Volatiles.
+        for _ in 0..(20 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(home_fuel(&w, id) > 5.0, "refinery built an operating reserve from volatiles");
+        // A move now dispatches on refinery-produced fuel (no shortfall hold).
+        let ship = player_ship(&w, id, ShipKind::Convoy);
+        let dest = w.players[&id].home + Vec2::new(2000.0, 0.0);
+        let mut held = false;
+        w.step(&[Command::MoveShip { player_id: id, ship_id: ship, dest }]);
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::FuelShortfall { owner, .. } if owner == id) {
+                    held = true;
+                }
+            }
+        }
+        assert!(!held, "the move runs on refinery-produced fuel — no shortfall hold");
     }
 
     #[test]

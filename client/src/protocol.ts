@@ -70,6 +70,8 @@ export interface SystemStateView {
   /// Whether the Habitat's Provisions upkeep is covered — owner-only; rivals
   /// always see false. UNFED = boost suspended (nothing destroyed).
   habitat_fed: boolean;
+  /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
+  refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
   slots_used: number;
   slots_total: number;
@@ -104,6 +106,10 @@ export interface GalaxyInfo {
   /// per_tier·tier Provisions/s — for the owner-only readout.
   habitat_output_mult: number;
   habitat_upkeep_per_tier: number;
+  /// Refinery tunables (§buildings step 3b): rate·tier Volatiles/s in, yield
+  /// Fuel out per Volatile — for the owner-only refining readout.
+  refinery_rate_per_tier: number;
+  refinery_yield: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -267,7 +273,7 @@ export type ClientMsg =
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
   | { type: "Ping" };
 
 export type RaidOutcome =

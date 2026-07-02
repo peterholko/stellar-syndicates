@@ -102,6 +102,11 @@ pub struct StarSystem {
     /// harmless on old snapshots — corrected on the first tick.
     #[serde(default)]
     pub habitat_fed: bool,
+    /// Number of Fuel Refinery tiers here (§buildings step 3b). Converts
+    /// stockpiled Volatiles → Fuel at `REFINERY_RATE_PER_TIER · tier`/s
+    /// (`REFINERY_YIELD` Fuel per Volatile); idles dry. Owner-only in the View.
+    #[serde(default)]
+    pub refinery_tier: u32,
 }
 
 impl StarSystem {
@@ -134,6 +139,7 @@ impl StarSystem {
             + self.sensor_tier
             + self.defense_tier
             + self.habitat_tier
+            + self.refinery_tier
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
@@ -236,6 +242,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             defense_tier: 0,
             habitat_tier: 0,
             habitat_fed: false,
+            refinery_tier: 0,
         });
     }
     systems
@@ -351,6 +358,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         defense_tier: 0,
         habitat_tier: 0,
         habitat_fed: false,
+        refinery_tier: 0,
     }
 }
 
