@@ -83,17 +83,6 @@ pub enum Command {
         limit_price: f64,
     },
 
-    /// Claim an unclaimed star system for a credit cost (§4). Resolves in true
-    /// space at this tick: the system's ownership flips and accrues production
-    /// from then on. The owner learns it on their own clock; rivals learn who
-    /// owns it only once the claim's light reaches them (the view filter gates
-    /// it like a home-anchor claim — no FTL presence leak). Ignored if the system
-    /// is already owned or the player can't afford it.
-    ClaimSystem {
-        player_id: PlayerId,
-        system_id: EntityId,
-    },
-
     /// Dispatch convoys to carry a claimed system's accumulated production to the
     /// hub to sell (§9). One raidable convoy per stockpiled commodity, flying the
     /// dangerous, fog-blind frontier→hub crossing; each sells on arrival at the

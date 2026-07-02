@@ -109,6 +109,9 @@ pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 18.0), (
 pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 20.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
 /// Corvette: **Ore + Alloys** — the dedicated defender; military industry.
 pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 30.0), (Commodity::Alloys, 15.0)], build_ticks: 14 * HZ };
+/// Colony Ship: **Ore + Alloys + Provisions** (colonists eat) — absorbs the old
+/// instant-claim economics into a physical, raidable investment (§ships part 3).
+pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0), (Commodity::Alloys, 20.0), (Commodity::Provisions, 40.0)], build_ticks: 30 * HZ };
 /// Extractor (system development): bulk **Ore** — a structure that grows the system's output.
 pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0)], build_ticks: 18 * HZ };
 /// Depot (system development): light **Ore** — cheaper than an Extractor, so early
@@ -135,6 +138,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Raider } => &RAIDER_RECIPE,
         BuildKind::Ship { ship: ShipKind::Scout } => &SCOUT_RECIPE,
         BuildKind::Ship { ship: ShipKind::Corvette } => &CORVETTE_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Colony } => &COLONY_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor } => &EXTRACTOR_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
@@ -214,6 +218,7 @@ pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
         ShipKind::Convoy => 1,
         ShipKind::Raider => 2,
         ShipKind::Corvette => 2, // military industry, like the raider
+        ShipKind::Colony => 1,   // civilian settlement — any yard
         ShipKind::Scout => 1,
     }
 }

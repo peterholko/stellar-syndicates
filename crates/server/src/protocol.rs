@@ -46,10 +46,6 @@ pub enum ClientMsg {
     /// Place a resting limit order; it clears in the periodic batch (§9).
     PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
 
-    /// Claim an unclaimed star system for its credit cost (§4). The server
-    /// attaches the issuing player; the sim resolves it in true space.
-    ClaimSystem { system_id: EntityId },
-
     /// Ship a claimed system's accumulated production to the hub to sell (§9) —
     /// spawns raidable convoys from the system.
     ShipProduction { system_id: EntityId },

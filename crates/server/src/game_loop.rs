@@ -289,11 +289,6 @@ impl GameLoop {
                         });
                     }
                 }
-                ClientMsg::ClaimSystem { system_id } => {
-                    if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::ClaimSystem { player_id, system_id });
-                    }
-                }
                 ClientMsg::ShipProduction { system_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::ShipProduction { player_id, system_id });
@@ -538,6 +533,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
         ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
         ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
+        ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
         ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
         ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
         ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),

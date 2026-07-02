@@ -105,6 +105,11 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         reason: BuildRejectReason,
     },
+    /// A COLONY SHIP arrived at a system that was ALREADY claimed (§ships
+    /// part 3 — you lost the race, or it flipped en route). SOFT: the ship
+    /// holds position, fully intact and redirectable; nothing is destroyed.
+    /// Owner-only news, light-delayed from the hold position.
+    ColonyHeld { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
     /// A SCOUT captured an intel snapshot of a rival system's fortifications
     /// (§scout part 2). OWNER-ONLY: the knowledge exists on the scout at `pos`
     /// at the capture moment — the owner learns it when that light reaches

@@ -130,6 +130,18 @@ impl Timeline {
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
+                // A colony ship arrived at an already-claimed system (§ships
+                // part 3) — you lost the race (or it flipped en route). OWNER-
+                // ONLY, light-delayed from the hold position; the ship is intact.
+                EventPayload::ColonyHeld { owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Warn, format!(
+                            "Your colony ship arrived at {name} — already claimed. It is holding position, intact; redirect it to another system."
+                        ));
+                    }
+                }
                 // A scout captured intel (§scout part 2) — OWNER-ONLY, delivered
                 // when the capture's light (from the scout's position) reaches
                 // the owner's command center: knowledge travels home at c.
@@ -261,6 +273,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
@@ -277,6 +290,7 @@ fn kind_word(k: ShipKind) -> &'static str {
         ShipKind::Convoy => "convoy",
         ShipKind::Raider => "raider",
         ShipKind::Corvette => "corvette",
+        ShipKind::Colony => "colony ship",
         ShipKind::Scout => "scout",
     }
 }

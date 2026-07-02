@@ -345,6 +345,10 @@ impl World {
         //    the hub → escape). A raided trade convoy's goods are simply lost.
         self.resolve_raids(&mut events);
 
+        // 4b. COLONY ARRIVALS (§ships part 3): settlement is physical — resolve
+        //     after raids so a colony ship killed at the doorstep never claims.
+        self.resolve_colony_arrivals(&mut events);
+
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
 
@@ -977,7 +981,7 @@ impl World {
             // the owner offline. Each duel reports through the ordinary
             // RaidResolved (both sides get their usual delayed reports); dead
             // corvettes are real losses, unlike platform tiers.
-            if !escape && t_kind == ShipKind::Convoy && a_owner != t_owner {
+            if !escape && matches!(t_kind, ShipKind::Convoy | ShipKind::Colony) && a_owner != t_owner {
                 let (attacker_alive, stopped) = self.corvettes_screen(aid, a_owner, a_kind, t_owner, t_pos, events);
                 if stopped {
                     if !attacker_alive {
@@ -990,7 +994,7 @@ impl World {
                 }
             }
             if !escape
-                && t_kind == ShipKind::Convoy
+                && matches!(t_kind, ShipKind::Convoy | ShipKind::Colony)
                 && a_owner != t_owner
                 && let Some((raider_survives, stopped)) = self.platform_defends(t_owner, t_pos, a_kind.attack_weight(), events)
                 && stopped
@@ -1374,9 +1378,6 @@ impl World {
                     }),
                 ));
             }
-            Command::ClaimSystem { player_id, system_id } => {
-                self.apply_claim(*player_id, *system_id, events);
-            }
             Command::ShipProduction { player_id, system_id } => {
                 self.apply_ship_production(*player_id, *system_id, events);
             }
@@ -1705,38 +1706,81 @@ impl World {
     /// Claim an unclaimed system for the player, debiting the claim cost. Resolves
     /// in true space at `self.time`; rivals learn of it only by light (the view
     /// filter gates ownership). No-op if already owned or unaffordable.
-    fn apply_claim(&mut self, player_id: PlayerId, system_id: EntityId, events: &mut Vec<Event>) {
+    /// COLONY ARRIVALS (§ships part 3): claiming is PHYSICAL. Each colony ship
+    /// within [`crate::ship::COLONY_CLAIM_RADIUS`] of a system resolves here,
+    /// after movement and raids (a ship killed at the doorstep never settles):
+    ///
+    ///   * UNCLAIMED, non-reserved system → SETTLE: ownership transfers, the
+    ///     ship is CONSUMED (it becomes the colony — removed silently, no
+    ///     destruction event), and `SystemClaimed` light-propagates exactly as
+    ///     the old instant claim did. THE RACE: earlier arrival tick wins;
+    ///     same-tick arrivals resolve in ship-id order (deterministic tiebreak).
+    ///   * RESERVED home-site system → never settleable (an unassigned slot's
+    ///     home can't be sniped before its player arrives).
+    ///   * ALREADY CLAIMED by a RIVAL → the loser HOLDS at the spot, intact and
+    ///     redirectable (soft — nothing destroyed); one owner-only `ColonyHeld`
+    ///     notice per hold (`notified_held`, cleared when the ship moves again).
+    ///     Arriving at your OWN system just parks quietly.
+    fn resolve_colony_arrivals(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
-        // Home systems are reserved starting bases — granted on join, never bought
-        // from the pool (so an unassigned slot's home can't be sniped before its
-        // player arrives, and a granted home isn't re-claimable).
-        if self.home_slots.iter().any(|h| h.system == Some(system_id)) {
-            return;
+        // Deterministic pass: ships in id order (BTreeMap).
+        let colonists: Vec<EntityId> = self
+            .ships
+            .iter()
+            .filter(|(_, sh)| sh.kind == ShipKind::Colony)
+            .map(|(id, _)| *id)
+            .collect();
+        for cid in colonists {
+            let Some(ship) = self.ships.get(&cid) else { continue };
+            let (owner, pos, idle) = (ship.owner, ship.pos, matches!(ship.order, ShipOrder::Idle));
+            // Nearest system within settle range ((distance, id) tiebreak).
+            let near = self
+                .systems
+                .iter()
+                .filter(|sy| sy.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS)
+                .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)))
+                .map(|sy| (sy.id, sy.owner));
+            let Some((sys_id, sys_owner)) = near else {
+                // In open space: clear any past hold-notice latch once it moves on.
+                if !idle && let Some(sh) = self.ships.get_mut(&cid) {
+                    sh.notified_held = false;
+                }
+                continue;
+            };
+            let reserved = self.home_slots.iter().any(|h| h.system == Some(sys_id));
+            match sys_owner {
+                None if !reserved => {
+                    // SETTLE: flip ownership, consume the ship (no destruction —
+                    // it became the colony), light-propagate the claim.
+                    if let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id) {
+                        sy.owner = Some(owner);
+                        sy.claimed_at = Some(now);
+                    }
+                    self.ships.remove(&cid);
+                    events.push(Event::new(
+                        now,
+                        EventPayload::SystemClaimed { system: sys_id, owner, pos },
+                    ));
+                }
+                None => {
+                    // Reserved home site: hold like a lost race (soft, notice once).
+                    if idle && !self.ships[&cid].notified_held {
+                        self.ships.get_mut(&cid).unwrap().notified_held = true;
+                        events.push(Event::new(now, EventPayload::ColonyHeld { owner, system: sys_id, pos }));
+                    }
+                }
+                Some(holder) if holder != owner => {
+                    // Lost the race (or it flipped en route): hold, intact, notice once.
+                    if idle && !self.ships[&cid].notified_held {
+                        self.ships.get_mut(&cid).unwrap().notified_held = true;
+                        events.push(Event::new(now, EventPayload::ColonyHeld { owner, system: sys_id, pos }));
+                    }
+                }
+                Some(_) => {
+                    // Your own system: parking a colony ship there is unremarkable.
+                }
+            }
         }
-        let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
-            return;
-        };
-        if sys.owner.is_some() {
-            return; // already claimed (the loser learns this rival's claim by light)
-        }
-        let (pos, cost) = (sys.pos, sys.claim_cost);
-        let Some(corp) = self.players.get(&player_id) else {
-            return;
-        };
-        if corp.credits < cost {
-            return; // can't afford the claim
-        }
-        if let Some(corp) = self.players.get_mut(&player_id) {
-            corp.credits -= cost;
-        }
-        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == system_id) {
-            sys.owner = Some(player_id);
-            sys.claimed_at = Some(now);
-        }
-        events.push(Event::new(
-            now,
-            EventPayload::SystemClaimed { system: system_id, owner: player_id, pos },
-        ));
     }
 
     /// Ship a claimed system's accumulated production to the hub: one raidable
@@ -2742,7 +2786,8 @@ mod tests {
     #[test]
     fn home_systems_cannot_be_claimed_from_the_pool() {
         let mut w = test_world();
-        // An unassigned home slot's system is reserved — claiming it is a no-op.
+        // An unassigned home slot's system is reserved — a colony ship parked
+        // right on it never settles it; it holds (soft, intact) with a notice.
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let other_home = w
@@ -2751,11 +2796,16 @@ mod tests {
             .find(|h| h.owner.is_none())
             .and_then(|h| h.system)
             .expect("an unassigned home slot exists at 4-player scale");
-        let credits0 = w.players[&id].credits;
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: other_home }]);
+        let pos = w.systems.iter().find(|s| s.id == other_home).unwrap().pos;
+        let cid = colony_at(&mut w, id, pos);
+        let ev = w.step(&[]);
         let sys = w.systems.iter().find(|s| s.id == other_home).unwrap();
-        assert!(sys.owner.is_none(), "a reserved home system cannot be claimed");
-        assert_eq!(w.players[&id].credits, credits0, "a rejected claim charges nothing");
+        assert!(sys.owner.is_none(), "a reserved home system cannot be settled");
+        assert!(w.ships.contains_key(&cid), "the colony ship holds, intact");
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::ColonyHeld { system, .. } if system == other_home)),
+            "the owner is told the site is reserved/taken"
+        );
     }
 
     #[test]
@@ -2778,6 +2828,21 @@ mod tests {
     // --- §step1 PART 1: build sink ------------------------------------------
     use crate::build::{SystemUpgrade, CONVOY_RECIPE, EXTRACTOR_RICHNESS_MULT};
     use crate::cargo::Commodity;
+
+    /// Grant `owner` a system directly (test SETUP — the game path is now a
+    /// colony-ship arrival, tested separately in §ships part 3).
+    fn grant_system(w: &mut World, owner: PlayerId, sys: EntityId) {
+        let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+        s.owner = Some(owner);
+        s.claimed_at = Some(w.time);
+    }
+
+    /// Park a fresh COLONY ship of `owner` at `pos` (already arrived, Idle).
+    fn colony_at(w: &mut World, owner: PlayerId, pos: Vec2) -> EntityId {
+        let id = w.alloc_entity_id();
+        w.ships.insert(id, Ship::new(id, owner, ShipKind::Colony, pos, ShipOrder::Idle, None));
+        id
+    }
 
     /// Seed an owned system's stockpile so a recipe is affordable in tests.
     fn seed_stock(w: &mut World, sys: EntityId, items: &[(Commodity, f64)]) {
@@ -3141,7 +3206,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         // Claim a frontier system (shipyard 0) and stock it for a convoy.
         let claim = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: claim }]);
+        grant_system(&mut w, id, claim);
         assert_eq!(w.systems.iter().find(|s| s.id == claim).unwrap().owner, Some(id), "claimed");
         seed_stock(&mut w, claim, &[(Commodity::Ore, 100.0)]);
 
@@ -4733,13 +4798,15 @@ mod tests {
         let mut b = test_world();
         // A system present identically in both deterministic galaxies.
         let sysid = a.systems[0].id;
+        // Park identical colony ships on it in both worlds — the ARRIVAL claim
+        // (the dynamic owner mutation + accrual) runs in each, so replay
+        // equality covers the new settle path, not just seeded generation.
+        let pos = a.systems[0].pos;
+        colony_at(&mut a, PlayerId(1), pos);
+        colony_at(&mut b, PlayerId(1), pos);
         let cmds = vec![
             Command::AddPlayer { id: PlayerId(1), name: "A".into() },
             Command::AddPlayer { id: PlayerId(2), name: "B".into() },
-            // Idempotent after the first tick — exercises the DYNAMIC new state
-            // (owner mutation + continuous production accrual) so replay equality
-            // covers it, not just the static seeded generation.
-            Command::ClaimSystem { player_id: PlayerId(1), system_id: sysid },
         ];
         for _ in 0..600 {
             a.step(&cmds);
@@ -4747,7 +4814,7 @@ mod tests {
         }
         // The dynamic paths actually ran (so the comparison is meaningful).
         let sys_a = a.systems.iter().find(|s| s.id == sysid).unwrap();
-        assert_eq!(sys_a.owner, Some(PlayerId(1)), "claim path must have executed");
+        assert_eq!(sys_a.owner, Some(PlayerId(1)), "the colony settle path must have executed");
         assert!(sys_a.stockpile.values().sum::<f64>() > 0.0, "accrual path must have executed");
         assert_eq!(
             serde_json::to_string(&a).unwrap(),
@@ -4811,26 +4878,38 @@ mod tests {
             .id
     }
 
+    /// §ships part 3: claiming is PHYSICAL — a colony ship that ARRIVES at an
+    /// unclaimed system settles it: ownership + claimed_at transfer, the ship is
+    /// CONSUMED (no wreck — it became the colony), and SystemClaimed fires
+    /// (light-gating to rivals is the same event path as ever).
     #[test]
-    fn claim_charges_credits_and_transfers_ownership() {
+    fn colony_ship_settles_an_unclaimed_system_on_arrival() {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
-        let cost = w.systems.iter().find(|s| s.id == sysid).unwrap().claim_cost;
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        let cid = colony_at(&mut w, id, pos);
         let credits0 = w.players[&id].credits;
-        assert!(cost > 0.0 && credits0 >= cost, "starting credits should afford a claim");
-
-        let ev = w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        let ev = w.step(&[]);
         let sys = w.systems.iter().find(|s| s.id == sysid).unwrap();
-        assert_eq!(sys.owner, Some(id), "claim should transfer ownership");
+        assert_eq!(sys.owner, Some(id), "arrival transfers ownership");
         assert!(sys.claimed_at.is_some());
-        assert!((credits0 - w.players[&id].credits - cost).abs() < 1e-6, "claim should charge the cost");
+        assert!(!w.ships.contains_key(&cid), "the colony ship is consumed — it became the colony");
+        assert!(
+            !ev.iter().any(|e| matches!(e.payload, EventPayload::ShipDestroyed { ship, .. } if ship == cid)),
+            "consumed, not destroyed — no wreck report"
+        );
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::SystemClaimed { system, .. } if system == sysid)));
+        assert_eq!(w.players[&id].credits, credits0, "no credit charge — the recipe was the price");
     }
 
+    /// §ships part 3: THE RACE. Two rivals launch at the same frontier system;
+    /// the earlier arrival settles it (same-tick ties break by ship id —
+    /// deterministic). The loser HOLDS at the spot, intact, is told once, and
+    /// remains fully spendable: redirected to another system, it settles there.
     #[test]
-    fn cannot_claim_an_owned_system_or_one_you_cannot_afford() {
+    fn colony_race_loser_holds_and_redirects() {
         let mut w = test_world();
         let (a, b) = (PlayerId(1), PlayerId(2));
         w.step(&[
@@ -4838,18 +4917,94 @@ mod tests {
             Command::AddPlayer { id: b, name: "B".into() },
         ]);
         let sysid = richest_system(&w);
-        w.step(&[Command::ClaimSystem { player_id: a, system_id: sysid }]);
-        let b_credits0 = w.players[&b].credits;
-        // B tries to claim A's system — no-op, no charge.
-        w.step(&[Command::ClaimSystem { player_id: b, system_id: sysid }]);
-        assert_eq!(w.systems.iter().find(|s| s.id == sysid).unwrap().owner, Some(a));
-        assert_eq!(w.players[&b].credits, b_credits0, "a failed claim must not charge");
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        // A's ship arrives THIS tick; B's is still one tick of flight away
+        // (simulated: park B's next tick — later arrival loses).
+        colony_at(&mut w, a, pos);
+        w.step(&[]);
+        assert_eq!(w.systems.iter().find(|s| s.id == sysid).unwrap().owner, Some(a), "first arrival wins");
 
-        // Drain B's credits, then a claim of an unclaimed system fails (no charge).
-        let unclaimed = w.systems.iter().find(|s| s.owner.is_none()).unwrap().id;
-        w.players.get_mut(&b).unwrap().credits = 0.0;
-        w.step(&[Command::ClaimSystem { player_id: b, system_id: unclaimed }]);
-        assert!(w.systems.iter().find(|s| s.id == unclaimed).unwrap().owner.is_none());
+        let b_ship = colony_at(&mut w, b, pos);
+        let ev = w.step(&[]);
+        assert_eq!(w.systems.iter().find(|s| s.id == sysid).unwrap().owner, Some(a), "the flip is final");
+        assert!(w.ships.contains_key(&b_ship), "the loser HOLDS — nothing destroyed");
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::ColonyHeld { owner, system, .. } if owner == b && system == sysid)),
+            "the loser is notified"
+        );
+        // No notice spam while it sits there…
+        let ev = w.step(&[]);
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::ColonyHeld { .. })), "one notice per hold");
+
+        // …and it remains SPENDABLE: redirect it to another unclaimed system.
+        let other = w
+            .systems
+            .iter()
+            .find(|s| s.is_unclaimed() && !w.home_slots.iter().any(|h| h.system == Some(s.id)))
+            .unwrap();
+        let (other_id, other_pos) = (other.id, other.pos);
+        // Teleport-park it there (flight time is not what's under test).
+        w.ships.get_mut(&b_ship).unwrap().pos = other_pos;
+        w.step(&[]);
+        assert_eq!(w.systems.iter().find(|s| s.id == other_id).unwrap().owner, Some(b), "the held ship settles elsewhere");
+        assert!(!w.ships.contains_key(&b_ship), "…and is consumed there");
+    }
+
+    /// §ships part 3: same-tick RACE tiebreak is deterministic — the lower ship
+    /// id (built/launched earlier) settles; the other holds.
+    #[test]
+    fn colony_same_tick_race_breaks_by_ship_id() {
+        let run = || {
+            let mut w = test_world();
+            let (a, b) = (PlayerId(1), PlayerId(2));
+            w.step(&[
+                Command::AddPlayer { id: a, name: "A".into() },
+                Command::AddPlayer { id: b, name: "B".into() },
+            ]);
+            let sysid = richest_system(&w);
+            let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+            let a_ship = colony_at(&mut w, a, pos); // lower id — allocated first
+            let b_ship = colony_at(&mut w, b, pos);
+            w.step(&[]);
+            let owner = w.systems.iter().find(|s| s.id == sysid).unwrap().owner;
+            (owner, w.ships.contains_key(&a_ship), w.ships.contains_key(&b_ship))
+        };
+        let (owner, a_alive, b_alive) = run();
+        assert_eq!(owner, Some(PlayerId(1)), "lower ship id settles on a tie");
+        assert!(!a_alive, "winner consumed");
+        assert!(b_alive, "loser holds, intact");
+        assert_eq!(run(), (owner, a_alive, b_alive), "the race is deterministic");
+    }
+
+    /// §ships part 3: a colony ship destroyed IN TRANSIT is colonists lost —
+    /// the recipe is gone, no claim ever lands. Expansion has stakes (and a
+    /// reason for corvette escorts — which screen colony ships like convoys).
+    #[test]
+    fn colony_ship_destroyed_in_transit_never_claims() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.ships.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = ShipOrder::Idle;
+        }
+        // Def's colony ship crawls somewhere far — intercepted well short of it.
+        let target_sys = richest_system(&w);
+        let dest = w.systems.iter().find(|s| s.id == target_sys).unwrap().pos;
+        let cid = w.alloc_entity_id();
+        w.ships.insert(cid, Ship::new(cid, def, ShipKind::Colony, cc + Vec2::new(420.0, 0.0), ShipOrder::MoveTo { dest }, None));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: cid }]);
+        let outcome = run_until_raid(&mut w, 90, |_| vec![]).expect("the intercept resolves");
+        assert_eq!(outcome, RaidOutcome::TargetDestroyed, "a fat unescorted civilian dies (atk 3 vs def 1)");
+        assert!(!w.ships.contains_key(&cid), "colonists lost");
+        assert!(w.systems.iter().find(|s| s.id == target_sys).unwrap().owner.is_none(), "no claim ever lands");
     }
 
     #[test]
@@ -4863,7 +5018,7 @@ mod tests {
         assert!(w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.is_empty(),
             "an unclaimed system must not produce");
 
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        grant_system(&mut w, id, sysid);
         let secs = 20u32;
         for _ in 0..(secs * crate::config::TICK_HZ) { w.step(&[]); }
 
@@ -4881,7 +5036,8 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        grant_system(&mut w, id, sysid);
+        w.step(&[]);
         for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
         let stock_before: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.values().sum();
         assert!(stock_before >= 1.0, "should have whole units to ship");
@@ -4925,7 +5081,8 @@ mod tests {
             Command::AddPlayer { id: atk, name: "Raider".into() },
         ]);
         let sysid = richest_system(&w);
-        w.step(&[Command::ClaimSystem { player_id: def, system_id: sysid }]);
+        grant_system(&mut w, def, sysid);
+        w.step(&[]);
         for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
         w.step(&[Command::ShipProduction { player_id: def, system_id: sysid }]);
         let convoy = *w.ships.iter().find(|(_, s)| s.owner == def && s.mission == Some(TradeMission::SellAtHub)).unwrap().0;
@@ -4967,7 +5124,8 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        grant_system(&mut w, id, sysid);
+        w.step(&[]);
         let commodity = w.systems.iter().find(|s| s.id == sysid).unwrap().deposits[0].resource;
         let credits0 = w.players[&id].credits;
 
@@ -5014,7 +5172,8 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        grant_system(&mut w, id, sysid);
+        w.step(&[]);
         let commodity = w.systems.iter().find(|s| s.id == sysid).unwrap().deposits[0].resource;
         // Threshold 1: the source is essentially always above it once producing.
         w.step(&[Command::SetStandingOrder {
@@ -5062,8 +5221,10 @@ mod tests {
         let source = richest_system(&w);
         let commodity = w.systems.iter().find(|s| s.id == source).unwrap().deposits[0].resource;
         let dest = w.systems.iter().find(|s| s.owner.is_none() && s.id != source).unwrap().id;
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: source }]);
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: dest }]);
+        grant_system(&mut w, id, source);
+        w.step(&[]);
+        grant_system(&mut w, id, dest);
+        w.step(&[]);
 
         w.step(&[Command::SetStandingOrder {
             player_id: id,
@@ -5110,7 +5271,8 @@ mod tests {
             w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
             let sysid = richest_system(&w);
             let commodity = w.systems.iter().find(|s| s.id == sysid).unwrap().deposits[0].resource;
-            w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+            grant_system(&mut w, id, sysid);
+        w.step(&[]);
             w.step(&[Command::SetStandingOrder {
                 player_id: id,
                 order: StandingOrder {
@@ -5147,7 +5309,8 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
-        w.step(&[Command::ClaimSystem { player_id: id, system_id: sysid }]);
+        grant_system(&mut w, id, sysid);
+        w.step(&[]);
 
         // Invalid: source is the hub (not a system) → rejected.
         w.step(&[Command::SetStandingOrder {

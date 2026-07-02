@@ -99,6 +99,7 @@ const SHIP_ART_FACING = Math.PI / 2;
 const SHIP_PX_CONVOY = 56;
 const SHIP_PX_RAIDER = 40;
 const SHIP_PX_CORVETTE = 48; // between raider and convoy — the size hierarchy
+const SHIP_PX_COLONY = 64; // the biggest thing flying
 const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
@@ -145,6 +146,7 @@ export class Renderer {
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
   private texCorvette: Texture | null = null;
+  private texColony: Texture | null = null;
   private texScout: Texture | null = null;
 
   // The schematic System View scene (its own camera). Presentation only.
@@ -217,17 +219,19 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [station, convoy, raider, corvette, scout] = await Promise.all([
+    const [station, convoy, raider, corvette, colony, scout] = await Promise.all([
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
       load("/art/ship_sprites/corvette_escort_ship.png"),
+      load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
     this.texStation = station;
     this.texConvoy = convoy;
     this.texRaider = raider;
     this.texCorvette = corvette;
+    this.texColony = colony;
     this.texScout = scout;
     // The star-type icons (each independent; a missing one falls back to the dot).
     await Promise.all(
@@ -737,6 +741,7 @@ export class Renderer {
       case "convoy": return this.texConvoy;
       case "raider": return this.texRaider;
       case "corvette": return this.texCorvette;
+      case "colony": return this.texColony;
       case "scout": return this.texScout;
     }
   }
@@ -774,7 +779,7 @@ export class Renderer {
   /// Both kinds converge to the SAME native size at max zoom: up close the art's
   /// SHAPE distinguishes convoy vs raider, so identical native size is intended.
   private shipSizePx(kind: ShipKind, nativeW: number): number {
-    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : SHIP_PX_SCOUT;
+    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT;
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
     if (r <= SHIP_NATIVE_ZOOM_START) return indicator;
@@ -926,6 +931,12 @@ export class Renderer {
       txt = `ESCORT  ${stale}`;
       col = COL_OTHER;
       lalpha = 0.85;
+    } else if (ghost.kind === "colony" && !own) {
+      // A rival COLONY SHIP broadcasting its voyage: someone's expansion,
+      // telegraphed — the loudest strategic signal on the map.
+      txt = `COLONY SHIP  ${stale}`;
+      col = COL_REPORT; // gold — this is intel worth acting on
+      lalpha = 0.95;
     } else if (ghost.kind === "scout" && !own) {
       // A detected rival scout: a contact worth knowing about (someone is
       // LOOKING at you), but not an attack alarm — no pulsing threat ring.

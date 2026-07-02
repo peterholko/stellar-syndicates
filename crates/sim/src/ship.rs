@@ -33,6 +33,14 @@ pub enum ShipKind {
     /// BROADCASTS under the Convention: a declared escort DETERS (a dark
     /// defender would just be a raider with extra steps).
     Corvette,
+    /// The SETTLEMENT ship (§ships part 3): the HEAVIEST hull flying — slow,
+    /// expensive to fuel — with no cargo bay (it IS the cargo: colonists +
+    /// infrastructure). Claiming is now PHYSICAL: send it to an unclaimed
+    /// system; on arrival ownership transfers and the ship is CONSUMED (it
+    /// becomes the colony). BROADCASTS under the Convention (a declared
+    /// civilian settlement vessel — and your expansion is telegraphed,
+    /// raidable, escortable). Destroyed in transit = colonists lost.
+    Colony,
     /// The ACTIVE-INTEL ship (§scout): the lightest hull in the game — fastest
     /// to accelerate, cheapest to fuel — with NO cargo capacity and negligible
     /// combat strength (in any engagement it is simply destroyed; its defense is
@@ -64,6 +72,8 @@ impl ShipKind {
             ShipKind::Raider => 2200.0,
             // 4000/800 = 5 su/s² — nimbler than a convoy, no match for a raider.
             ShipKind::Corvette => 4000.0,
+            // 7200/6000 = 1.2 su/s² — the most ponderous thing in space.
+            ShipKind::Colony => 7200.0,
             // Small engine, tiny hull: 1400/80 = 17.5 su/s² — the dartiest ship.
             ShipKind::Scout => 1400.0,
         }
@@ -79,6 +89,7 @@ impl ShipKind {
             ShipKind::Convoy => 4500.0,
             ShipKind::Raider => 200.0,
             ShipKind::Corvette => 800.0,
+            ShipKind::Colony => 6000.0, // the heaviest hull — fuel-∝-mass bites
             ShipKind::Scout => 80.0,
         }
     }
@@ -91,6 +102,7 @@ impl ShipKind {
             ShipKind::Convoy => 48.0,
             ShipKind::Raider => 120.0,
             ShipKind::Corvette => 80.0, // keeps station with convoys, can't chase raiders
+            ShipKind::Colony => 40.0, // slower than a convoy — the long, visible voyage
             ShipKind::Scout => 140.0, // the fastest thing flying — still < c/2
         }
     }
@@ -100,9 +112,10 @@ impl ShipKind {
     /// inside a rival's sensor coverage. One source of truth for the View's
     /// gating (a broadcasting spy would be useless).
     pub fn broadcasts(self) -> bool {
-        // Convoys (trade) and corvettes (a DECLARED escort deters) broadcast;
-        // raiders and scouts run dark.
-        matches!(self, ShipKind::Convoy | ShipKind::Corvette)
+        // Convoys (trade), corvettes (a DECLARED escort deters), and colony
+        // ships (a declared civilian settlement vessel — expansion is
+        // telegraphed) broadcast; raiders and scouts run dark.
+        matches!(self, ShipKind::Convoy | ShipKind::Corvette | ShipKind::Colony)
     }
 
     /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
@@ -130,6 +143,7 @@ impl ShipKind {
             ShipKind::Raider => 3.0,   // the hunter
             ShipKind::Corvette => 1.0, // guards; barely bites back
             ShipKind::Convoy => 0.0,   // civilians don't attack
+            ShipKind::Colony => 0.0,   // colonists, not soldiers
             ShipKind::Scout => 0.0,    // dies if engaged — speed is its armor
         }
     }
@@ -140,6 +154,7 @@ impl ShipKind {
             ShipKind::Raider => 2.0,
             ShipKind::Corvette => 4.0, // the armored screen — built to be attacked
             ShipKind::Convoy => 1.0,
+            ShipKind::Colony => 1.0, // a fat civilian hull — escort it
             ShipKind::Scout => 0.0, // no armor at all
         }
     }
@@ -159,6 +174,11 @@ impl ShipKind {
         self.attack_weight() + self.defense_weight()
     }
 }
+
+/// Radius (sim units) within which an arriving COLONY SHIP settles an
+/// unclaimed system (§ships part 3) — matches the raid contact radius, so
+/// "arrival" means the same thing everywhere. Tunable.
+pub const COLONY_CLAIM_RADIUS: f64 = 80.0;
 
 /// Radius (sim units) within which a friendly CORVETTE screens a raid contact
 /// on a civilian ship (§ships part 2): shadowing a convoy = escort; parked at
@@ -257,6 +277,11 @@ pub struct Ship {
     /// or not the owner is connected.
     #[serde(default)]
     pub defense: Option<DefenseEngagement>,
+    /// COLONY ships only (§ships part 3): the "arrived at an already-claimed
+    /// system" notice has been sent for the current hold, so it isn't re-sent
+    /// every tick. Cleared whenever the ship moves again. serde default = false.
+    #[serde(default)]
+    pub notified_held: bool,
 }
 
 impl Ship {
@@ -278,6 +303,7 @@ impl Ship {
             cargo,
             mission: None,
             defense: None,
+            notified_held: false,
         }
     }
 

@@ -10,7 +10,7 @@ export interface Vec2 {
   y: number;
 }
 
-export type ShipKind = "convoy" | "raider" | "corvette" | "scout";
+export type ShipKind = "convoy" | "raider" | "corvette" | "colony" | "scout";
 
 // A resource deposit on a system (static geology, public). Richer/more valuable
 // toward the frontier — the distance/value gradient (§4).
@@ -27,6 +27,8 @@ export interface SystemInfo {
   pos: Vec2;
   name: string;
   deposits: Deposit[];
+  /// DEPRECATED (§ships part 3): claiming is physical (colony ships) — no
+  /// longer charged or displayed; kept for wire compatibility.
   claim_cost: number;
 }
 
@@ -282,7 +284,6 @@ export type ClientMsg =
   | { type: "MarketBuy"; commodity: Commodity; units: number }
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
-  | { type: "ClaimSystem"; system_id: EntityId }
   | { type: "ShipProduction"; system_id: EntityId }
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }

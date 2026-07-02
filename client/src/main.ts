@@ -125,7 +125,7 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // own-ship panel can show this ship's fuel burn rate honestly. Movement burns
 // FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
 const FUEL_PER_MASS_DISTANCE = 1.0e-6;
-const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, corvette: 800, scout: 80 };
+const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80 };
 const CARGO_MASS_PER_UNIT = 28;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
@@ -250,7 +250,7 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
-const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "scout" ? "Scout" : k);
+const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "colony" ? "Colony Ship" : k === "scout" ? "Scout" : k);
 
 // Heading arrow + speed, computed in SCREEN space so it matches the map exactly.
 function headingCell(g: GhostView): string {
@@ -307,6 +307,9 @@ function ownBody(g: GhostView): string {
     `<div class="sp-line dim" style="margin-top:6px">Shared reserve across all your systems — what every ship draws on to move, not a tank on this one ship.</div>`,
   );
 
+  if (g.kind === "colony") {
+    parts.push(`<div class="sp-sec">Role — Settlement</div><div class="sp-line">Colonists + infrastructure. Send it to an <b>unclaimed system</b>: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable: <b>escort it</b>. If someone claims the target first, it holds there intact — redirect it.</div>`);
+  }
   if (g.kind === "corvette") {
     parts.push(`<div class="sp-sec">Role — Escort · Garrison</div><div class="sp-line">A dedicated <b>defender</b>: any raid contact on one of your convoys within its protect radius must fight THROUGH this ship first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.</div>`);
   }
@@ -873,11 +876,11 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
 // rendered for systems you own (the View only sends build state to the owner).
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
-const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "scout"]);
+const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
-const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, corvette: 2, scout: 1 };
+const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1 };
 
 function buildPanel(dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
@@ -958,7 +961,7 @@ function buildSystemTab(): void {
     if (el.dataset.build) {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
-      if (k === "convoy" || k === "raider" || k === "corvette" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
+      if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
       else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat" || k === "refinery") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }
@@ -968,7 +971,6 @@ function buildSystemTab(): void {
         if (s) enterSystem(s);
         break;
       }
-      case "claim": net.send({ type: "ClaimSystem", system_id: sid }); break;
       case "ship": {
         // Immediate, honest feedback: list what THIS click dispatches (the same
         // non-fuel whole-units rule the sim applies), instead of silence.
@@ -1024,7 +1026,6 @@ function updateSystemTab(): void {
   const mine = owner !== null && owner === state.playerId;
   const rival = owner !== null && !mine;
   const unclaimed = owner === null;
-  const afford = (state.wallet?.credits ?? 0) >= sys.claim_cost;
   const stockTotal = (dyn?.stockpile ?? []).reduce((n, k) => n + k.units, 0);
   const yieldRate = sys.deposits.reduce((n, d) => n + d.richness, 0);
 
@@ -1063,7 +1064,6 @@ function updateSystemTab(): void {
     // Development slots (owner-only; §buildings step 1) — the specialization budget.
     stat("Slots", mine ? `${dyn?.slots_used ?? 0}/${dyn?.slots_total ?? 0}` : "—",
       mine && (dyn?.slots_total ?? 0) > 0 && (dyn?.slots_used ?? 0) >= (dyn?.slots_total ?? 0) ? "is-warn" : ""),
-    stat("Claim", unclaimed ? `${fmt(sys.claim_cost)} Cr` : "—", unclaimed && !afford ? "is-negative" : ""),
   ]);
   // Storage fill bar + full warning, under the strip (owner-only).
   const storageBar = mine && cap > 0
@@ -1095,8 +1095,10 @@ function updateSystemTab(): void {
   if (unclaimed && atHomeSite) {
     actions = `<div class="mhint" style="margin-top:8px">${badge("neutral", "reserved")} A starting home site — a future corporation will begin here owning it, so it can't be claimed.</div>`;
   } else if (unclaimed) {
-    actions = `<button class="act act--primary" data-action="claim" ${afford ? "" : "disabled"}>` +
-      `${uiIcon("action-claim-system", 16)} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
+    // Claiming is PHYSICAL now (§ships part 3): build a Colony Ship at a
+    // shipyard and SEND it here — it claims on arrival (and is raidable en
+    // route). The old instant credit purchase is gone.
+    actions = `<div class="mhint" style="margin-top:8px">${uiIcon("action-claim-system", 14)} <b>To claim:</b> build a <b>Colony Ship</b> at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.</div>`;
   } else if (mine) {
     // Gate "Ship → hub" on what the sim will ACTUALLY dispatch (non-fuel whole
     // units), not the raw stock total — the home's Fuel reserve used to keep
@@ -1132,7 +1134,7 @@ function updateSystemTab(): void {
     : mine
       ? `<div class="mhint">Production ships across fogged space to the hub — raidable in transit. Automate it from the Logistics tab.</div>`
       : unclaimed && !atHomeSite
-        ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
+        ? `<div class="mhint">Settlement starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
         : "";
 
   root.innerHTML = rail + header + starFeature + strip + storageBar + devs + deps + intelBlock + prod + build + actions + hint;

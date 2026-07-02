@@ -46,7 +46,11 @@ pub struct StarSystem {
     /// Resource deposits (static geology). Richer/more valuable toward the rim.
     #[serde(default)]
     pub deposits: Vec<Deposit>,
-    /// Credit cost to claim this system (scales with its production value).
+    /// DEPRECATED (§ships part 3): the old instant-claim credit cost. Claiming
+    /// is now PHYSICAL (a Colony Ship's recipe absorbs the economics), so this
+    /// charges nothing and gates nothing. Kept on the struct/wire for snapshot
+    /// compatibility and as a ready-made "system value" scalar (a future colony
+    /// overhead / valuation knob). Still generated per-system.
     #[serde(default)]
     pub claim_cost: f64,
     /// Owning corporation, once claimed (light-gated to rivals by the view filter).
