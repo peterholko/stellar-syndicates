@@ -350,8 +350,10 @@ export type RaidOutcome =
   | "both_survive"
   | "escaped";
 
-// A delayed battle report (§8) — arrives on the recipient's own clock. One true
-// outcome (seeded); both sides observe the same result, light-delayed.
+// A delayed battle report (§8) — arrives on the recipient's own clock. Both
+// sides observe the same result, light-delayed. §FLEETS Part 2: a
+// composition-vs-composition report — `*_kind` are the flagships and `*_losses`
+// list the per-kind ships each side lost over the Lanchester engagement.
 export interface RaidReport {
   outcome: RaidOutcome;
   attacker: PlayerId;
@@ -364,6 +366,8 @@ export interface RaidReport {
   at_time: number;
   age: number; // light delay — how stale this news is
   you: "attacker" | "defender";
+  attacker_losses: CompCount[];
+  target_losses: CompCount[];
 }
 
 // Server → client.

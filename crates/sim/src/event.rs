@@ -54,6 +54,14 @@ pub enum EventPayload {
         target_kind: ShipKind,
         outcome: RaidOutcome,
         pos: crate::math::Vec2,
+        /// Per-kind ships the ATTACKER lost over the engagement (§Part 2
+        /// Lanchester — a composition-vs-composition report). serde default keeps
+        /// old snapshots/events loading; empty for a no-loss brush.
+        #[serde(default)]
+        attacker_losses: std::collections::BTreeMap<ShipKind, u32>,
+        /// Per-kind ships the DEFENDER (target side) lost over the engagement.
+        #[serde(default)]
+        target_losses: std::collections::BTreeMap<ShipKind, u32>,
     },
 
     /// A player claimed a star system at `pos` at this event's `time` (§4). Like

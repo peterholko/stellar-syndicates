@@ -12,7 +12,9 @@
 //! client could miss one; M6 (robust sessions) will make delivery reliable
 //! (re-deliver until acknowledged).
 
-use sim::{Event, EventPayload, PlayerId, RaidOutcome, Vec2};
+use std::collections::BTreeMap;
+
+use sim::{Event, EventPayload, PlayerId, RaidOutcome, ShipKind, Vec2};
 
 use crate::protocol::{RaidReport, Role};
 
@@ -35,6 +37,9 @@ struct PendingReport {
     attacker_kind: sim::ShipKind,
     target_kind: sim::ShipKind,
     outcome: RaidOutcome,
+    /// Per-kind ships each side lost over the engagement (§FLEETS Part 2).
+    attacker_losses: BTreeMap<ShipKind, u32>,
+    target_losses: BTreeMap<ShipKind, u32>,
     recipients: Vec<Recipient>,
 }
 
@@ -60,21 +65,25 @@ impl ReportScheduler {
                 target_kind,
                 outcome,
                 pos,
-            } = e.payload
+                attacker_losses,
+                target_losses,
+            } = &e.payload
             {
                 self.pending.push(PendingReport {
-                    pos,
+                    pos: *pos,
                     event_time: e.time,
-                    attacker,
-                    defender,
-                    attacker_ship,
-                    target_ship,
-                    attacker_kind,
-                    target_kind,
-                    outcome,
+                    attacker: *attacker,
+                    defender: *defender,
+                    attacker_ship: *attacker_ship,
+                    target_ship: *target_ship,
+                    attacker_kind: *attacker_kind,
+                    target_kind: *target_kind,
+                    outcome: *outcome,
+                    attacker_losses: attacker_losses.clone(),
+                    target_losses: target_losses.clone(),
                     recipients: vec![
-                        Recipient { player: attacker, delivered: false },
-                        Recipient { player: defender, delivered: false },
+                        Recipient { player: *attacker, delivered: false },
+                        Recipient { player: *defender, delivered: false },
                     ],
                 });
             }
@@ -109,6 +118,8 @@ impl ReportScheduler {
                         } else {
                             Role::Defender
                         },
+                        attacker_losses: losses_view(&r.attacker_losses),
+                        target_losses: losses_view(&r.target_losses),
                     });
                 }
             }
@@ -118,6 +129,15 @@ impl ReportScheduler {
         });
         out
     }
+}
+
+/// Flatten a per-kind loss map into the wire form (ordered by kind).
+fn losses_view(losses: &BTreeMap<ShipKind, u32>) -> Vec<crate::protocol::CompCount> {
+    losses
+        .iter()
+        .filter(|(_, n)| **n > 0)
+        .map(|(k, n)| crate::protocol::CompCount { kind: *k, count: *n })
+        .collect()
 }
 
 #[cfg(test)]
@@ -137,6 +157,8 @@ mod tests {
                 target_kind: sim::ShipKind::Convoy,
                 outcome: RaidOutcome::TargetDestroyed,
                 pos,
+                attacker_losses: BTreeMap::new(),
+                target_losses: BTreeMap::new(),
             },
         )
     }

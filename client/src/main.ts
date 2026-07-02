@@ -1246,9 +1246,20 @@ function addReport(r: import("./protocol").RaidReport): void {
       else if (yourShipDied) { icon = "‼"; cls = "bad"; text = `Your ${mine} was destroyed by a rival ${theirs}.`; }
       else { icon = "✓"; cls = "good"; text = `Your ${mine} destroyed a rival ${theirs}.`; }
   }
+  // Per-kind losses (§FLEETS Part 2) — a composition-vs-composition tally.
+  const fmtLosses = (l: import("./protocol").CompCount[]): string =>
+    l.filter((c) => c.count > 0).map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ");
+  const yours = r.you === "attacker" ? r.attacker_losses : r.target_losses;
+  const rivals = r.you === "attacker" ? r.target_losses : r.attacker_losses;
+  const yoursStr = fmtLosses(yours ?? []);
+  const rivalsStr = fmtLosses(rivals ?? []);
+  let lossLine = "";
+  if (yoursStr || rivalsStr) {
+    lossLine = `<div class="sp-line dim" style="margin-top:2px">You lost: ${yoursStr || "nothing"} · They lost: ${rivalsStr || "nothing"}</div>`;
+  }
   const el = document.createElement("div");
   el.className = "report " + cls;
-  el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>`;
+  el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>${lossLine}`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);

@@ -93,6 +93,11 @@ pub struct StarSystem {
     /// through engagement outcomes (delayed battle reports).
     #[serde(default)]
     pub defense_tier: u32,
+    /// The platform's accumulated DAMAGE POOL (§FLEETS Part 2 Lanchester): a tier
+    /// dies when this fills a `PLATFORM_TIER_HULL`, carrying the remainder. serde
+    /// default keeps pre-Lanchester snapshots loading (a fresh, undamaged pool).
+    #[serde(default)]
+    pub defense_pool: f64,
     /// Number of Habitat tiers here (§buildings step 3a). When FED, boosts the
     /// system's total output ×`HABITAT_OUTPUT_MULT^tier`; consumes
     /// `HABITAT_UPKEEP_PER_TIER`/s of Provisions from this stockpile. Owner-only.
@@ -244,6 +249,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             shipyard_tier: 0, // frontier systems must EARN their shipyards
             sensor_tier: 0,
             defense_tier: 0,
+            defense_pool: 0.0,
             habitat_tier: 0,
             habitat_fed: false,
             refinery_tier: 0,
@@ -360,6 +366,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
         sensor_tier: 0,
         defense_tier: 0,
+        defense_pool: 0.0,
         habitat_tier: 0,
         habitat_fed: false,
         refinery_tier: 0,

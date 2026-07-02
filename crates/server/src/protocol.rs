@@ -157,8 +157,10 @@ pub enum Role {
 
 /// A delayed report of a raid outcome (§8), tailored to the recipient. Delivered
 /// only once the light of the event has reached the player's command center, so
-/// attacker and defender may receive it at different times.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// attacker and defender may receive it at different times. §FLEETS Part 2: now
+/// a composition-vs-composition report — `attacker_kind`/`target_kind` are the
+/// flagships, and `*_losses` carry the per-kind ships each side lost.
+#[derive(Debug, Clone, Serialize)]
 pub struct RaidReport {
     pub outcome: RaidOutcome,
     pub attacker: PlayerId,
@@ -174,6 +176,10 @@ pub struct RaidReport {
     pub age: f64,
     /// The recipient's side.
     pub you: Role,
+    /// Per-kind ships the attacker lost over the engagement.
+    pub attacker_losses: Vec<CompCount>,
+    /// Per-kind ships the defender (target side) lost over the engagement.
+    pub target_losses: Vec<CompCount>,
 }
 
 /// Severity of a check-in timeline entry — drives the client's colour/icon.

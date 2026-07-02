@@ -175,6 +175,15 @@ impl ShipKind {
     pub fn combat_weight(self) -> f64 {
         self.attack_weight() + self.defense_weight()
     }
+
+    /// HULL (§FLEETS Part 2 — Lanchester): the damage a kind's pool must absorb
+    /// to destroy ONE ship of it. Derived from its defense weight (`defense ×
+    /// [`crate::combat::HULL_PER_DEFENSE`]`) with a small floor so even a
+    /// zero-defense scout can be attritted (it just dies fast — speed was its
+    /// armor). Tunable via the combat block.
+    pub fn hull(self) -> f64 {
+        (self.defense_weight() * crate::combat::HULL_PER_DEFENSE).max(crate::combat::HULL_MIN)
+    }
 }
 
 /// The FLAGSHIP precedence (GDD §13.1): a fleet is DRAWN and named for its

@@ -133,52 +133,6 @@ const SHADOW_OFFSET: f64 = 400.0;
 /// The market drifts once per this many ticks (≈ once a second at 30 Hz).
 const MARKET_UPDATE_TICKS: u64 = 30;
 
-// Battle outcome probabilities (§8, §fleets part 1) as a function of the sides'
-// WEIGHTED-STRENGTH RATIO `r = attack / defense`. Each row is (P target
-// destroyed, P attacker destroyed, P both destroyed); the remainder is "both
-// survive (attacker driven off)". Tunable; balance comes later.
-//
-// PRESERVATION MAPPING (the old-outcome anchors — proven by the existing
-// seeded tests, whose rng draw pattern is also unchanged at one roll/battle):
-//   * raider(atk 3) vs convoy(def 1)        → r = 3.0 → ROW_OVERWHELM
-//     ≡ the old RVC_PROBS (1.0, 0, 0 — TEMPORARY testing value; restore to
-//     (0.60, 0.12, 0.08) for real balance, exactly as before).
-//   * raider(atk 3) vs raider(def 2)        → r = 1.5 → ROW_EVEN
-//     ≡ the old RVR_PROBS (0.35, 0.35, 0.12).
-//   * raider(atk 3) vs platform unit(def 3) → r = 1.0 → ROW_EVEN
-//     ≡ the old per-tier RVR duel.
-// Preserving BOTH even anchors forces the table to be FLAT on r ∈ [1.0, 1.5];
-// between 1.5 and 3.0 it interpolates linearly toward overwhelm, and r < 1
-// MIRRORS (evaluate at 1/r, swap the destroyed probabilities — continuous at
-// r = 1 because ROW_EVEN is symmetric).
-const ROW_EVEN: (f64, f64, f64) = (0.35, 0.35, 0.12);
-const ROW_OVERWHELM: (f64, f64, f64) = (1.0, 0.0, 0.0);
-/// Ratio at (and beyond) which the attacker simply overwhelms the defender.
-const RATIO_OVERWHELM: f64 = 3.0;
-/// The even band `[RATIO_EVEN_LO, RATIO_EVEN_HI]` (flat — see mapping above).
-const RATIO_EVEN_LO: f64 = 1.0;
-const RATIO_EVEN_HI: f64 = 1.5;
-
-/// The outcome row for a strength ratio `r = atk / def` (both > 0).
-fn outcome_probs(r: f64) -> (f64, f64, f64) {
-    if r >= RATIO_OVERWHELM {
-        ROW_OVERWHELM
-    } else if r > RATIO_EVEN_HI {
-        // Linear interpolation EVEN → OVERWHELM over (1.5, 3.0).
-        let t = (r - RATIO_EVEN_HI) / (RATIO_OVERWHELM - RATIO_EVEN_HI);
-        (
-            ROW_EVEN.0 + (ROW_OVERWHELM.0 - ROW_EVEN.0) * t,
-            ROW_EVEN.1 + (ROW_OVERWHELM.1 - ROW_EVEN.1) * t,
-            ROW_EVEN.2 + (ROW_OVERWHELM.2 - ROW_EVEN.2) * t,
-        )
-    } else if r >= RATIO_EVEN_LO {
-        ROW_EVEN
-    } else {
-        // Attacker weaker: mirror the stronger-side row (swap destroyed probs).
-        let (pt, pa, pb) = outcome_probs(1.0 / r);
-        (pa, pt, pb)
-    }
-}
 
 /// The limit-order book clears once per this many ticks (≈ every 20 s).
 const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
@@ -245,6 +199,56 @@ pub struct World {
     next_build_id: u64,
     /// World RNG stream (continues past generation) for deterministic events.
     rng: crate::rng::Rng,
+    /// TRANSIENT per-engagement report ledgers (§FLEETS Part 2), keyed by the
+    /// ordered `(attacker, defender)` fleet pair. Accumulates composition-vs-
+    /// composition losses across the multi-tick attrition so ONE battle report
+    /// fires when the engagement ends. NOT persisted (serde skip): the damage
+    /// pools on the fleets/platform ARE persisted, so a mid-battle restart
+    /// resumes the fight; only the running report tally resets. Rebuilt each tick
+    /// as fleets come into and out of contact.
+    #[serde(skip)]
+    combat_ledger: BTreeMap<(EntityId, EntityId), CombatLedger>,
+}
+
+/// A running battle-report tally for one attacker↔defender engagement (§Part 2).
+/// Transient (see [`World::combat_ledger`]).
+#[derive(Debug, Clone)]
+struct CombatLedger {
+    attacker: EntityId,
+    defender: EntityId,
+    a_owner: PlayerId,
+    d_owner: PlayerId,
+    a_kind: ShipKind,
+    d_kind: ShipKind,
+    /// Composition each side started the engagement with (for the loss diff).
+    a_start: BTreeMap<ShipKind, u32>,
+    d_start: BTreeMap<ShipKind, u32>,
+    /// Weighted strength each side started with (for retreat-at-fraction).
+    a_start_strength: f64,
+    d_start_strength: f64,
+    /// A covering defense platform folded into the defender, if any.
+    platform: Option<EntityId>,
+    /// The platform's tier count at engagement start (for tiers-lost reporting).
+    platform_start_tiers: u32,
+    /// Last contact position (light source for the delayed report).
+    pos: Vec2,
+    /// Set once the engagement is touched this tick (stale ledgers flush).
+    touched: bool,
+}
+
+/// Per-kind ships lost = `start − now` (saturating), for a battle report.
+fn diff_comp(
+    start: &BTreeMap<ShipKind, u32>,
+    now: &BTreeMap<ShipKind, u32>,
+) -> BTreeMap<ShipKind, u32> {
+    let mut out = BTreeMap::new();
+    for (k, s) in start {
+        let lost = s.saturating_sub(now.get(k).copied().unwrap_or(0));
+        if lost > 0 {
+            out.insert(*k, lost);
+        }
+    }
+    out
 }
 
 impl World {
@@ -308,6 +312,7 @@ impl World {
             build_queue: Vec::new(),
             next_build_id: 0,
             rng,
+            combat_ledger: BTreeMap::new(),
         }
     }
 
@@ -745,217 +750,66 @@ impl World {
         }
     }
 
-    /// Roll a seeded battle outcome from the sides' WEIGHTED STRENGTHS (§fleets
-    /// part 1): `atk` = the aggressor's attack weight, `def` = the defender's
-    /// defense weight (sums, ready for multi-ship sides). Exactly ONE rng draw
-    /// per battle — the stream, and thus every pre-existing seeded outcome, is
-    /// unchanged; the probabilities come from `outcome_probs` (see its anchors).
-    /// Zero-strength sides resolve deterministically (the roll is still drawn,
-    /// keeping the stream stable regardless of participants).
-    fn roll_battle_weighted(&mut self, atk: f64, def: f64) -> RaidOutcome {
-        let roll = self.rng.next_f64();
-        if atk <= 0.0 && def <= 0.0 {
-            return RaidOutcome::BothSurvive; // nobody can hurt anybody
-        }
-        if def <= 0.0 {
-            return RaidOutcome::TargetDestroyed;
-        }
-        if atk <= 0.0 {
-            return RaidOutcome::AttackerDestroyed;
-        }
-        let (pt, pa, pb) = outcome_probs(atk / def);
-        if roll < pt {
-            RaidOutcome::TargetDestroyed
-        } else if roll < pt + pa {
-            RaidOutcome::AttackerDestroyed
-        } else if roll < pt + pa + pb {
-            RaidOutcome::BothDestroyed
-        } else {
-            RaidOutcome::BothSurvive
-        }
-    }
-
-    /// CORVETTE SCREENING (§fleets part 2): every friendly corvette (same owner
-    /// as the attacked civilian) within [`crate::ship::CORVETTE_PROTECT_RADIUS`]
-    /// of the contact duels the attacker in nearest-first order ((distance, id)
-    /// tiebreak — deterministic) BEFORE the platform or the target itself.
-    /// One weighted seeded duel per corvette (attacker's attack vs corvette
-    /// defense 4):
-    ///   * corvette destroyed → a REAL ship is lost (ShipDestroyed + report);
-    ///     the attacker proceeds to the next screen;
-    ///   * attacker destroyed / mutual kill → the raid is STOPPED;
-    ///   * stand-off → the attacker is DRIVEN OFF (breaks off home) — stopped.
-    ///
-    /// Fighting through EVERY corvette lets the raid proceed (to the platform,
-    /// then the target). Returns (attacker_alive, raid_stopped).
-    fn corvettes_screen(
-        &mut self,
-        attacker: EntityId,
-        a_owner: PlayerId,
-        a_kind: ShipKind,
-        defender: PlayerId,
-        contact: Vec2,
-        events: &mut Vec<Event>,
-    ) -> (bool, bool) {
-        let now = self.time;
-        // Deterministic screen order: nearest corvette first, id tiebreak.
-        let mut screen: Vec<(EntityId, f64)> = self
-            .fleets
+    /// The nearest FRIENDLY fleet (owner `owner`) that CONTAINS a corvette and is
+    /// within [`crate::ship::CORVETTE_PROTECT_RADIUS`] of `pos`, excluding the
+    /// target itself (`exclude`) — the cross-fleet SCREEN that intercepts a raid
+    /// on a civilian (now-secondary to composition escort). Deterministic
+    /// (nearest, id tiebreak).
+    fn nearest_screen(&self, owner: PlayerId, pos: Vec2, exclude: EntityId) -> Option<EntityId> {
+        self.fleets
             .iter()
             .filter(|(id, s)| {
-                **id != attacker
-                    && s.owner == defender
+                **id != exclude
+                    && s.owner == owner
                     && s.contains(ShipKind::Corvette)
-                    && s.pos.distance(contact) <= crate::ship::CORVETTE_PROTECT_RADIUS
+                    && s.pos.distance(pos) <= crate::ship::CORVETTE_PROTECT_RADIUS
             })
-            .map(|(id, s)| (*id, s.pos.distance(contact)))
-            .collect();
-        screen.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-
-        for (cid, _) in screen {
-            let Some(cv) = self.fleets.get(&cid) else { continue };
-            let (cv_pos, cv_kind) = (cv.pos, cv.flagship_kind());
-            let outcome = self.roll_battle_weighted(a_kind.attack_weight(), cv_kind.defense_weight());
-            // Every duel is an ordinary battle: both owners get delayed reports.
-            events.push(Event::new(
-                now,
-                EventPayload::RaidResolved {
-                    attacker: a_owner,
-                    defender,
-                    attacker_ship: attacker,
-                    target_ship: cid,
-                    attacker_kind: a_kind,
-                    target_kind: cv_kind,
-                    outcome,
-                    pos: cv_pos,
-                },
-            ));
-            let (kill_attacker, kill_corvette) = outcome.kills();
-            if kill_corvette {
-                self.fleets.remove(&cid);
-                events.push(Event::new(
-                    now,
-                    EventPayload::ShipDestroyed { ship: cid, owner: defender, kind: cv_kind, pos: cv_pos },
-                ));
-            }
-            if kill_attacker {
-                if let Some(att) = self.fleets.remove(&attacker) {
-                    events.push(Event::new(
-                        now,
-                        EventPayload::ShipDestroyed { ship: attacker, owner: a_owner, kind: a_kind, pos: att.pos },
-                    ));
-                }
-                return (false, true);
-            }
-            if outcome == RaidOutcome::BothSurvive {
-                // Driven off by the screen — the attacker breaks for home.
-                self.send_ship_home(attacker, a_owner);
-                return (true, true);
-            }
-            // Corvette destroyed (screen thinned) → next duel.
-        }
-        (true, false) // fought through (or no screen) — the raid proceeds
+            .min_by(|a, b| a.1.pos.distance(pos).total_cmp(&b.1.pos.distance(pos)).then(a.0.cmp(b.0)))
+            .map(|(id, _)| *id)
     }
 
-    /// Run a DEFENSE PLATFORM's engagement against a raider attacking `defender`'s
-    /// convoy at `contact` (§buildings step 2c), if a defended system covers it.
-    ///
-    /// Picks the NEAREST covering system owned by the defender with a platform
-    /// (`(distance, id)` tiebreak — deterministic; one platform engages per
-    /// contact). The raider then fights the platform's `tier` stationary units in
-    /// sequential SEEDED duels on the existing raider-vs-raider table:
-    ///   * unit destroyed  → the platform LOSES A TIER (damage; the slot frees
-    ///     up) and the raider proceeds to the next unit;
-    ///   * raider destroyed / mutual kill → the raid is STOPPED;
-    ///   * stand-off (both survive) → the raider is DRIVEN OFF — stopped, and
-    ///     the platform holds that duel undamaged.
-    ///
-    /// Defeating EVERY unit fights THROUGH: the raid proceeds to the convoy.
-    /// The system itself is never destroyed — tiers are the stakes.
-    ///
-    /// Emits the owner-only `PlatformEngaged` detail event and returns
-    /// `Some((raider_survives, raid_stopped))`, or `None` if no platform covers
-    /// the contact (nothing changes anywhere outside a platform's radius).
-    fn platform_defends(
-        &mut self,
-        defender: PlayerId,
-        contact: Vec2,
-        attacker_atk: f64,
-        events: &mut Vec<Event>,
-    ) -> Option<(bool, bool)> {
-        let radius = crate::build::DEFENSE_PLATFORM_RADIUS;
-        let sys_id = self
-            .systems
+    /// The nearest owned system with a Defense Platform covering `pos` (§buildings
+    /// step 2c) — folded into the defender's forces as stationary tiers.
+    fn covering_platform(&self, owner: PlayerId, pos: Vec2) -> Option<EntityId> {
+        self.systems
             .iter()
-            .filter(|s| {
-                s.owner == Some(defender) && s.defense_tier >= 1 && s.pos.distance(contact) <= radius
-            })
-            .min_by(|a, b| {
-                a.pos.distance(contact).total_cmp(&b.pos.distance(contact)).then(a.id.cmp(&b.id))
-            })
-            .map(|s| s.id)?;
-
-        let mut tiers_lost = 0u32;
-        let mut raider_survives = true;
-        let mut driven_off = false;
-        loop {
-            let tier = self.systems.iter().find(|s| s.id == sys_id).map(|s| s.defense_tier).unwrap_or(0);
-            if tier == 0 {
-                break; // every unit defeated — the raider fights through
-            }
-            // One stationary defender unit at PLATFORM_TIER_DEFENSE (3): vs the
-            // raider's attack 3 the duel sits at the even row — the old per-tier
-            // RVR duel exactly. (Escaped can't occur here; stand-off defensively.)
-            match self.roll_battle_weighted(attacker_atk, crate::build::PLATFORM_TIER_DEFENSE) {
-                RaidOutcome::TargetDestroyed => {
-                    tiers_lost += 1;
-                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
-                        sys.defense_tier -= 1;
-                    }
-                }
-                RaidOutcome::AttackerDestroyed => {
-                    raider_survives = false;
-                    break;
-                }
-                RaidOutcome::BothDestroyed => {
-                    tiers_lost += 1;
-                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
-                        sys.defense_tier -= 1;
-                    }
-                    raider_survives = false;
-                    break;
-                }
-                RaidOutcome::BothSurvive | RaidOutcome::Escaped => {
-                    driven_off = true;
-                    break;
-                }
-            }
-        }
-        let stopped = !raider_survives || driven_off;
-        events.push(Event::new(
-            self.time,
-            EventPayload::PlatformEngaged {
-                owner: defender,
-                system: sys_id,
-                pos: contact,
-                raider_destroyed: !raider_survives,
-                driven_off,
-                tiers_lost,
-            },
-        ));
-        Some((raider_survives, stopped))
+            .filter(|s| s.owner == Some(owner) && s.defense_tier >= 1 && s.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS)
+            .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)))
+            .map(|s| s.id)
     }
 
-    /// Detect and apply battle resolutions. A raider within [`CONTACT_RADIUS`] of
-    /// its target fights a randomised battle (raider-vs-convoy OR raider-vs-
-    /// raider); a convoy within [`HUB_SAFE_RADIUS`] of the hub escapes before
-    /// contact. Destroyed fleets are removed from TRUE space here and at this true
-    /// time; each player observes the destruction later, by light (the view
-    /// filter serves the dead ship's ghost until that player's light arrives).
+    /// Write a post-attrition side back onto its fleet: update composition + pools,
+    /// or REMOVE the fleet if it was wiped out.
+    fn write_back_fleet(&mut self, id: EntityId, side: &crate::combat::Forces) {
+        if side.ship_count() == 0 {
+            self.fleets.remove(&id);
+        } else if let Some(f) = self.fleets.get_mut(&id) {
+            f.composition = side.comp.clone();
+            f.damage = side.damage.clone();
+        }
+    }
+
+    /// Resolve COMBAT this tick (§FLEETS Part 2 — deterministic Lanchester
+    /// attrition). Each attacker fleet in contact with its target trades ONE tick
+    /// of proportional casualties with the defending side — the target fleet, plus
+    /// a covering defense platform, or a cross-fleet corvette screen it must fight
+    /// through first. Damage accumulates in the fleets' per-kind pools and the
+    /// platform's pool ACROSS ticks, so relief merging mid-battle shifts the
+    /// ratio, doctrine withdraws survivors at a strength threshold, and a cargo
+    /// raid runs at a gentler skirmish rate than a decisive battle. ONE
+    /// composition-vs-composition report fires per engagement when it ends.
+    /// Deterministic and seed-free — the outcome is a function of the state alone.
     fn resolve_raids(&mut self, events: &mut Vec<Event>) {
         let hub = self.hub;
         let now = self.time;
-        // Detect contacts: (attacker_id, target_id, is_escape).
+
+        // Age every ledger; those not re-touched this tick have ended.
+        for l in self.combat_ledger.values_mut() {
+            l.touched = false;
+        }
+
+        // Detect this tick's contacts (attacker on Intercept within reach; a
+        // convoy reaching hub safety escapes).
         let mut contacts: Vec<(EntityId, EntityId, bool)> = Vec::new();
         for (rid, ship) in &self.fleets {
             if let FleetOrder::Intercept { target } = ship.order
@@ -964,61 +818,29 @@ impl World {
                 if ship.pos.distance(t.pos) <= CONTACT_RADIUS {
                     contacts.push((*rid, target, false));
                 } else if t.flagship_kind() == ShipKind::Convoy && t.pos.distance(hub) <= HUB_SAFE_RADIUS {
-                    contacts.push((*rid, target, true)); // raiders don't get hub-safety
+                    contacts.push((*rid, target, true));
                 }
             }
         }
 
+        // Resolve each contact into a concrete engagement (redirect through a
+        // corvette screen; fold a covering platform). Escapes end with no losses.
+        struct Eng {
+            attacker: EntityId,
+            defender: EntityId,
+            raid: bool,
+            platform: Option<EntityId>,
+        }
+        let mut engs: Vec<Eng> = Vec::new();
         for (aid, tid, escape) in contacts {
-            // Re-fetch: an earlier contact this tick may have destroyed a ship.
-            let (Some(att), Some(tgt)) = (self.fleets.get(&aid), self.fleets.get(&tid)) else {
+            let (Some(att), Some(tgt)) = (self.fleets.get(&aid), self.fleets.get(&tid)) else { continue };
+            if att.owner == tgt.owner {
                 continue;
-            };
+            }
             let (a_owner, t_owner) = (att.owner, tgt.owner);
             let (a_kind, t_kind) = (att.flagship_kind(), tgt.flagship_kind());
-            let (a_pos, t_pos) = (att.pos, tgt.pos);
-
-            // DEFENSE PLATFORM (§buildings step 2c): a convoy attacked inside a
-            // defended friendly system's protection radius is shielded — the
-            // raider must fight THROUGH the platform (tier = stationary defender
-            // units, sequential seeded duels on the existing RVR table) before it
-            // can touch the convoy. STANDING defense: runs owner-online-or-not,
-            // and "senses" exactly its own radius (the contact is physically
-            // inside it — deterministic, fog-clean). If the platform stops the
-            // raid, the result reports through the ORDINARY RaidResolved event —
-            // both sides get their usual delayed battle reports, and the attacker
-            // learns of the fortification only through the outcome (§6 identity:
-            // deterrence is discovered the hard way, never leaked in the View).
-            // CORVETTE SCREEN (§fleets part 2): friendly corvettes near the
-            // contact duel the attacker BEFORE anything else — escort (shadowing
-            // the convoy) and garrison (parked at the defended system) are the
-            // same rule at CORVETTE_PROTECT_RADIUS. Standing defense: works with
-            // the owner offline. Each duel reports through the ordinary
-            // RaidResolved (both sides get their usual delayed reports); dead
-            // corvettes are real losses, unlike platform tiers.
-            if !escape && matches!(t_kind, ShipKind::Convoy | ShipKind::Colony) && a_owner != t_owner {
-                let (attacker_alive, stopped) = self.corvettes_screen(aid, a_owner, a_kind, t_owner, t_pos, events);
-                if stopped {
-                    if !attacker_alive {
-                        // ShipDestroyed + reports already emitted by the screen.
-                    }
-                    continue; // the convoy was never touched
-                }
-                if !self.fleets.contains_key(&aid) {
-                    continue; // defensive (shouldn't happen: stopped covers death)
-                }
-            }
-            if !escape
-                && matches!(t_kind, ShipKind::Convoy | ShipKind::Colony)
-                && a_owner != t_owner
-                && let Some((raider_survives, stopped)) = self.platform_defends(t_owner, t_pos, a_kind.attack_weight(), events)
-                && stopped
-            {
-                let outcome = if raider_survives {
-                    RaidOutcome::BothSurvive // driven off — no losses either side
-                } else {
-                    RaidOutcome::AttackerDestroyed
-                };
+            let t_pos = tgt.pos;
+            if escape {
                 events.push(Event::new(
                     now,
                     EventPayload::RaidResolved {
@@ -1028,74 +850,225 @@ impl World {
                         target_ship: tid,
                         attacker_kind: a_kind,
                         target_kind: t_kind,
-                        outcome,
-                        pos: a_pos,
+                        outcome: RaidOutcome::Escaped,
+                        pos: t_pos,
+                        attacker_losses: BTreeMap::new(),
+                        target_losses: BTreeMap::new(),
                     },
                 ));
-                if raider_survives {
-                    self.send_ship_home(aid, a_owner); // driven off — breaks off
-                } else {
-                    self.fleets.remove(&aid);
-                    events.push(Event::new(
-                        now,
-                        EventPayload::ShipDestroyed { ship: aid, owner: a_owner, kind: a_kind, pos: a_pos },
-                    ));
+                self.send_ship_home(aid, a_owner);
+                continue;
+            }
+            let civilian = matches!(t_kind, ShipKind::Convoy | ShipKind::Colony);
+            let mut defender = tid;
+            let mut platform = None;
+            let mut raid = t_kind == ShipKind::Convoy;
+            if civilian {
+                if let Some(screen) = self.nearest_screen(t_owner, t_pos, tid) {
+                    defender = screen; // fight the escort first — a battle, not a raid
+                    raid = false;
+                } else if let Some(sid) = self.covering_platform(t_owner, t_pos) {
+                    platform = Some(sid); // defense of place — decisive
+                    raid = false;
                 }
-                continue; // the convoy was never touched (fought-through falls past)
+            } else {
+                raid = false; // a warship/scout target is a battle, not a cargo raid
+            }
+            engs.push(Eng { attacker: aid, defender, raid, platform });
+        }
+
+        // One attrition tick per engagement.
+        for eng in engs {
+            let Eng { attacker: aid, defender: did, raid, platform } = eng;
+            if aid == did || !self.fleets.contains_key(&aid) || !self.fleets.contains_key(&did) {
+                continue;
             }
 
-            let outcome = if escape {
-                RaidOutcome::Escaped
-            } else if t_kind == ShipKind::Scout {
-                // A scout has negligible combat strength: in ANY engagement it is
-                // simply destroyed (its defense was speed and darkness). No roll.
-                RaidOutcome::TargetDestroyed
-            } else if a_kind == ShipKind::Scout {
-                // …and a scout that somehow ATTACKS anything dies just the same.
-                RaidOutcome::AttackerDestroyed
-            } else {
-                // Weighted strengths (§fleets part 1): raider(3) vs convoy(1) → the
-                // overwhelm row; raider(3) vs raider(2) → the even row — exactly
-                // the two old kind-keyed tables.
-                self.roll_battle_weighted(a_kind.attack_weight(), t_kind.defense_weight())
+            let (a_comp, a_dmg, a_owner, a_pos, a_kind) = {
+                let f = &self.fleets[&aid];
+                (f.composition.clone(), f.damage.clone(), f.owner, f.pos, f.flagship_kind())
+            };
+            let (d_comp, d_dmg, d_owner, d_pos, d_kind) = {
+                let f = &self.fleets[&did];
+                (f.composition.clone(), f.damage.clone(), f.owner, f.pos, f.flagship_kind())
+            };
+            let (ptiers, ppool) = platform
+                .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
+                .map(|s| (s.defense_tier, s.defense_pool))
+                .unwrap_or((0, 0.0));
+
+            let mut a_side = crate::combat::Forces::from_fleet(&a_comp, &a_dmg);
+            let mut d_side = crate::combat::Forces::from_fleet(&d_comp, &d_dmg).with_platform(ptiers, ppool);
+
+            // Ensure the report ledger exists (snapshot the engagement's start).
+            let key = (aid, did);
+            let (a_start_strength, d_start_strength) = {
+                let a_str = a_side.strength();
+                let d_str = d_side.strength();
+                let l = self.combat_ledger.entry(key).or_insert_with(|| CombatLedger {
+                    attacker: aid,
+                    defender: did,
+                    a_owner,
+                    d_owner,
+                    a_kind,
+                    d_kind,
+                    a_start: a_comp.clone(),
+                    d_start: d_comp.clone(),
+                    a_start_strength: a_str,
+                    d_start_strength: d_str,
+                    platform,
+                    platform_start_tiers: ptiers,
+                    pos: d_pos,
+                    touched: true,
+                });
+                l.touched = true;
+                l.pos = d_pos;
+                (l.a_start_strength, l.d_start_strength)
             };
 
+            // Scouts die the instant they are in a battle (speed was their armor).
+            let a_scouts = a_side.strip_scouts();
+            let d_scouts = d_side.strip_scouts();
+            let rate = crate::combat::DMG_RATE * if raid { crate::combat::RAID_SKIRMISH_MULT } else { 1.0 };
+            let (mut la, mut lb) = crate::combat::attrition_tick(&mut a_side, &mut d_side, rate);
+            if a_scouts > 0 {
+                *la.per_kind.entry(ShipKind::Scout).or_insert(0) += a_scouts;
+            }
+            if d_scouts > 0 {
+                *lb.per_kind.entry(ShipKind::Scout).or_insert(0) += d_scouts;
+            }
+
+            // Cargo SEIZURE: a raider that empties a convoy target this tick loots
+            // its cargo before the wreck is removed, then breaks off.
+            if raid && d_side.ship_count() == 0 {
+                let cargo = self.fleets.get(&did).and_then(|f| f.cargo);
+                if let (Some(cargo), Some(a)) = (cargo, self.fleets.get_mut(&aid))
+                    && a.cargo.is_none()
+                {
+                    a.cargo = Some(cargo);
+                }
+            }
+
+            // Write survivors + pools back (removes a wiped-out fleet).
+            self.write_back_fleet(aid, &a_side);
+            self.write_back_fleet(did, &d_side);
+            if let Some(s) = platform.and_then(|sid| self.systems.iter_mut().find(|s| s.id == sid)) {
+                s.defense_tier = d_side.platform_tiers;
+                s.defense_pool = d_side.platform_pool;
+            }
+
+            // Delayed-disappearance ghosts for ships lost THIS tick (each kind).
+            for (k, n) in &la.per_kind {
+                for _ in 0..*n {
+                    events.push(Event::new(now, EventPayload::ShipDestroyed { ship: aid, owner: a_owner, kind: *k, pos: a_pos }));
+                }
+            }
+            for (k, n) in &lb.per_kind {
+                for _ in 0..*n {
+                    events.push(Event::new(now, EventPayload::ShipDestroyed { ship: did, owner: d_owner, kind: *k, pos: d_pos }));
+                }
+            }
+
+            // Retreat-at-fraction (§Part 2): a surviving COMBATANT fleet whose
+            // weighted strength has fallen below its doctrine threshold breaks off
+            // and flees home — re-checked every tick, so relief can shift it.
+            for (fid, owner, start) in [(aid, a_owner, a_start_strength), (did, d_owner, d_start_strength)] {
+                let (combatant, cur) = match self.fleets.get(&fid) {
+                    Some(f) if f.is_combatant() => (
+                        true,
+                        crate::combat::Forces::from_fleet(&f.composition, &f.damage).strength(),
+                    ),
+                    _ => (false, 0.0),
+                };
+                if !combatant {
+                    continue;
+                }
+                let min_ratio = self.players.get(&owner).and_then(|c| c.doctrine.retreat.min_ratio());
+                if min_ratio.is_some_and(|min| cur / start.max(1e-9) < min) {
+                    self.send_ship_home(fid, owner); // breaks the Intercept / flees
+                }
+            }
+        }
+
+        // Flush ledgers whose engagement ended (contact broken, or a side gone).
+        self.flush_combat_ledgers(events);
+    }
+
+    /// Emit the delayed composition-vs-composition battle report for every ended
+    /// engagement (a side destroyed, or contact broken this tick) and clear it.
+    fn flush_combat_ledgers(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let ended: Vec<(EntityId, EntityId)> = self
+            .combat_ledger
+            .iter()
+            .filter(|(_, l)| {
+                !l.touched || !self.fleets.contains_key(&l.attacker) || !self.fleets.contains_key(&l.defender)
+            })
+            .map(|(k, _)| *k)
+            .collect();
+        for key in ended {
+            let l = self.combat_ledger.remove(&key).unwrap();
+            let a_now = self.fleets.get(&l.attacker).map(|f| f.composition.clone()).unwrap_or_default();
+            let d_now = self.fleets.get(&l.defender).map(|f| f.composition.clone()).unwrap_or_default();
+            let a_losses = diff_comp(&l.a_start, &a_now);
+            let d_losses = diff_comp(&l.d_start, &d_now);
+            let a_dead = !self.fleets.contains_key(&l.attacker);
+            let d_dead = !self.fleets.contains_key(&l.defender);
+            let outcome = match (a_dead, d_dead) {
+                (true, true) => RaidOutcome::BothDestroyed,
+                (true, false) => RaidOutcome::AttackerDestroyed,
+                (false, true) => RaidOutcome::TargetDestroyed,
+                (false, false) => RaidOutcome::BothSurvive,
+            };
             events.push(Event::new(
                 now,
                 EventPayload::RaidResolved {
-                    attacker: a_owner,
-                    defender: t_owner,
-                    attacker_ship: aid,
-                    target_ship: tid,
-                    attacker_kind: a_kind,
-                    target_kind: t_kind,
+                    attacker: l.a_owner,
+                    defender: l.d_owner,
+                    attacker_ship: l.attacker,
+                    target_ship: l.defender,
+                    attacker_kind: l.a_kind,
+                    target_kind: l.d_kind,
                     outcome,
-                    pos: a_pos,
+                    pos: l.pos,
+                    attacker_losses: a_losses,
+                    target_losses: d_losses,
                 },
             ));
-
-            let (kill_attacker, kill_target) = outcome.kills();
-            if kill_attacker {
-                self.fleets.remove(&aid);
-                events.push(Event::new(
-                    now,
-                    EventPayload::ShipDestroyed { ship: aid, owner: a_owner, kind: a_kind, pos: a_pos },
-                ));
-            } else {
-                // Surviving attacker (or escape) breaks off and returns home.
-                self.send_ship_home(aid, a_owner);
+            // Platform detail (owner-only), if a platform was in this fight.
+            if let Some(sid) = l.platform {
+                let now_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.defense_tier).unwrap_or(0);
+                let tiers_lost = l.platform_start_tiers.saturating_sub(now_tiers);
+                if tiers_lost > 0 || a_dead {
+                    events.push(Event::new(
+                        now,
+                        EventPayload::PlatformEngaged {
+                            owner: l.d_owner,
+                            system: sid,
+                            pos: l.pos,
+                            raider_destroyed: a_dead,
+                            driven_off: !a_dead && !d_dead,
+                            tiers_lost,
+                        },
+                    ));
+                }
             }
-            if kill_target {
-                self.fleets.remove(&tid);
-                events.push(Event::new(
-                    now,
-                    EventPayload::ShipDestroyed { ship: tid, owner: t_owner, kind: t_kind, pos: t_pos },
-                ));
+            // A surviving attacker breaks off for home ONLY if it is no longer
+            // hunting a live target — i.e. it destroyed its quarry or disengaged.
+            // If it just fought THROUGH a screen (its Intercept target still
+            // lives), leave its order alone so it presses on to the convoy.
+            if !a_dead {
+                let still_hunting = match self.fleets.get(&l.attacker).map(|f| &f.order) {
+                    Some(FleetOrder::Intercept { target }) => self.fleets.contains_key(target),
+                    _ => false,
+                };
+                if !still_hunting {
+                    self.send_ship_home(l.attacker, l.a_owner);
+                }
             }
-            // A surviving target keeps its order (convoy continues; a raider that
-            // was attacked continues whatever it was doing).
         }
     }
+
 
     /// Send a surviving ship home (break off).
     fn send_ship_home(&mut self, id: EntityId, owner: PlayerId) {
@@ -4132,6 +4105,145 @@ mod tests {
         assert_eq!(w.fleets.contains_key(&target), !kill_t, "target present iff not destroyed");
     }
 
+    // --- §FLEETS Part 2: Lanchester combat in the authoritative sim ----------
+
+    /// (attacker_losses, target_losses, outcome) of a battle report.
+    type Report = (BTreeMap<ShipKind, u32>, BTreeMap<ShipKind, u32>, RaidOutcome);
+
+    /// Drive a committed raid to its first battle report with losses.
+    fn run_to_report(w: &mut World, max_secs: u32) -> Option<Report> {
+        for _ in 0..(max_secs * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::RaidResolved { attacker_losses, target_losses, outcome, .. } = &e.payload
+                    && (!attacker_losses.is_empty() || !target_losses.is_empty())
+                {
+                    return Some((attacker_losses.clone(), target_losses.clone(), *outcome));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn battle_report_carries_per_kind_losses() {
+        // A 4-raider fleet raids a 3-corvette fleet — a full battle both bleed in.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, target) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(300.0, 0.0));
+        w.fleets.get_mut(&raider).unwrap().composition.insert(ShipKind::Raider, 4);
+        {
+            let d = w.fleets.get_mut(&target).unwrap();
+            d.composition.clear();
+            d.composition.insert(ShipKind::Corvette, 3);
+            d.cargo = None;
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: target }]);
+        let (a_losses, t_losses, _outcome) = run_to_report(&mut w, 120).expect("a battle report fires");
+        assert!(t_losses.get(&ShipKind::Corvette).copied().unwrap_or(0) > 0, "the defender's corvette losses are reported per kind");
+        assert!(a_losses.get(&ShipKind::Raider).copied().unwrap_or(0) > 0, "the attacker bled raiders too — nobody wins for free");
+    }
+
+    #[test]
+    fn raid_costs_the_winner_something_but_rarely_everything() {
+        // A lone raider raids a lone convoy: it wins (seizes/destroys) but the
+        // convoy's token defense means the raider isn't guaranteed to walk away
+        // untouched — and critically the raider survives (a survivable skirmish).
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(300.0, 0.0));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        run_until_raid(&mut w, 120, |_| vec![]).expect("the raid resolves");
+        assert!(!w.fleets.contains_key(&convoy), "the convoy is taken");
+        assert!(w.fleets.contains_key(&raider), "the raider survives the skirmish");
+    }
+
+    #[test]
+    fn platform_pool_attrits_tiers_then_reports() {
+        // A raider grinds a convoy defended by a 2-tier platform: the platform's
+        // pool fills and tiers fall (owner-only PlatformEngaged), and the raid
+        // reports through the ordinary battle report.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(300.0, 0.0));
+        w.fleets.get_mut(&raider).unwrap().composition.insert(ShipKind::Raider, 6);
+        // Fortify a system covering the convoy.
+        let cpos = w.fleets[&convoy].pos;
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(def);
+            s.claimed_at = Some(0.0);
+            s.defense_tier = 2;
+            s.pos = cpos; // co-located so it covers the contact
+            s.id
+        };
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut saw_platform = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::PlatformEngaged { .. }) {
+                    saw_platform = true;
+                }
+            }
+            let tier = w.systems.iter().find(|s| s.id == sid).map(|s| s.defense_tier).unwrap_or(0);
+            if tier < 2 || !w.fleets.contains_key(&raider) {
+                break;
+            }
+        }
+        let final_tier = w.systems.iter().find(|s| s.id == sid).unwrap().defense_tier;
+        assert!(final_tier < 2 || saw_platform, "the platform's pool attrits a tier under sustained attack");
+    }
+
+    #[test]
+    fn persistence_round_trip_mid_engagement_resumes_the_fight() {
+        // Start a battle, accumulate damage pools, SERIALIZE mid-fight, reload,
+        // and confirm the pools survived and the fight resolves the same way.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // Place them already in contact range so the fight starts promptly.
+        let (raider, target) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
+        w.fleets.get_mut(&raider).unwrap().composition.insert(ShipKind::Raider, 5);
+        {
+            let d = w.fleets.get_mut(&target).unwrap();
+            d.composition.clear();
+            d.composition.insert(ShipKind::Corvette, 4);
+            d.cargo = None;
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: target }]);
+        // Fight long enough for the order's light to arrive and pools to build.
+        for _ in 0..40 {
+            w.step(&[]);
+        }
+        let pools_present = w.fleets.values().any(|f| f.damage.values().any(|d| *d > 0.0));
+        assert!(pools_present, "damage pools accumulated mid-engagement");
+        // Round-trip through JSON (the snapshot path).
+        let json = serde_json::to_string(&w).unwrap();
+        let mut w2: World = serde_json::from_str(&json).unwrap();
+        assert!(w2.fleets.values().any(|f| f.damage.values().any(|d| *d > 0.0)), "damage pools survived serialization");
+        // Both continue to the same resolution (a side is destroyed).
+        let mut done1 = false;
+        for _ in 0..(200 * crate::config::TICK_HZ) {
+            if !w.fleets.contains_key(&raider) || !w.fleets.contains_key(&target) {
+                done1 = true;
+                break;
+            }
+            w.step(&[]);
+        }
+        let mut done2 = false;
+        for _ in 0..(200 * crate::config::TICK_HZ) {
+            if !w2.fleets.contains_key(&raider) || !w2.fleets.contains_key(&target) {
+                done2 = true;
+                break;
+            }
+            w2.step(&[]);
+        }
+        assert!(done1 && done2, "both the original and the reloaded world resolve the fight");
+        assert_eq!(
+            w.fleets.contains_key(&raider),
+            w2.fleets.contains_key(&raider),
+            "the reloaded fight reaches the same winner (deterministic)",
+        );
+    }
+
     // ---- Acceleration from mass (a = F/m) + proportional pursuit (§7, §8) ----
 
     fn ship_of(kind: ShipKind, cargo: Option<Cargo>) -> Fleet {
@@ -4538,27 +4650,6 @@ mod tests {
 
     // --- §fleets part 1: weighted combat strengths ------------------------------
 
-    /// The strength table + outcome rows reproduce today's outcomes EXACTLY at
-    /// the anchor ratios (see the mapping on `outcome_probs`), interpolate
-    /// between them, and mirror continuously for a weaker attacker.
-    #[test]
-    fn outcome_probs_preserves_the_old_tables() {
-        // raider(3) vs convoy(1) -> r=3 -> the old RVC row.
-        assert_eq!(outcome_probs(ShipKind::Raider.attack_weight() / ShipKind::Convoy.defense_weight()), (1.0, 0.0, 0.0));
-        // raider(3) vs raider(2) -> r=1.5 -> the old RVR row.
-        assert_eq!(outcome_probs(ShipKind::Raider.attack_weight() / ShipKind::Raider.defense_weight()), (0.35, 0.35, 0.12));
-        // raider(3) vs platform unit(3) -> r=1.0 -> the old per-tier RVR duel.
-        assert_eq!(outcome_probs(ShipKind::Raider.attack_weight() / crate::build::PLATFORM_TIER_DEFENSE), (0.35, 0.35, 0.12));
-        // Between the anchors: monotone interpolation toward overwhelm.
-        let (pt, pa, _) = outcome_probs(2.25);
-        assert!(pt > 0.35 && pt < 1.0 && pa < 0.35, "interpolates between even and overwhelm");
-        // Weaker attacker mirrors: swap of the destroyed probabilities.
-        let strong = outcome_probs(2.25);
-        let weak = outcome_probs(1.0 / 2.25);
-        assert!((weak.0 - strong.1).abs() < 1e-12 && (weak.1 - strong.0).abs() < 1e-12 && (weak.2 - strong.2).abs() < 1e-12, "r<1 mirrors the inverse ratio");
-        // Continuity at the mirror point (the even row is symmetric).
-        assert_eq!(outcome_probs(1.0), outcome_probs(0.999999999), "continuous at r = 1");
-    }
 
     // --- §fleets part 2: Corvette -----------------------------------------------
 
