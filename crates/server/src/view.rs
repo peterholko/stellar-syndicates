@@ -425,8 +425,13 @@ pub fn filter_systems(
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
                 extractor_tier: if own { sys.extractor_tier } else { 0 },
+                depot_tier: if own { sys.depot_tier } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
+                // Storage (§buildings step 2) — owner-only like everything above.
+                // `used` is floored to whole units to match the stockpile readout.
+                storage_cap: if own { sys.storage_cap() as u32 } else { 0 },
+                storage_used: if own { sys.storage_used().floor() as u32 } else { 0 },
             }
         })
         .collect()
@@ -438,6 +443,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
     }
 }
 
@@ -713,6 +719,7 @@ mod tests {
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
             extractor_tier: 0,
+            depot_tier: 0,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -753,6 +760,11 @@ mod tests {
         assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
         assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
         assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
+        // Storage cap + fill (§buildings step 2) — owner-only on the same rule.
+        assert_eq!(v10[0].storage_cap, systems[0].storage_cap() as u32, "owner sees their cap");
+        assert_eq!(v10[0].storage_used, 12, "owner sees fill in whole units");
+        assert_eq!(v10[0].depot_tier, 0);
+        assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].depot_tier), (0, 0, 0), "a rival's storage never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
         let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);

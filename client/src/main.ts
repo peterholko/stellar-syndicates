@@ -905,10 +905,10 @@ function buildSystemTab(): void {
     const sid = state.selectedSystemId;
     if (!sid || !net) return;
     if (el.dataset.build) {
-      // §step1 build sink: convoy/raider → BuildShip; extractor → DevelopSystem.
+      // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
       if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-      else if (k === "extractor") net.send({ type: "DevelopSystem", system_id: sid, upgrade: "extractor" });
+      else if (k === "extractor" || k === "depot") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }
     switch (el.dataset.action) {
@@ -975,15 +975,26 @@ function updateSystemTab(): void {
     `<div class="star-cap"><span class="star-type">${esc(st.title)}</span>` +
     `${st.exotic ? badge("accent", "exotic") : badge("neutral", "star")}</div></div>`;
 
+  // Storage (§buildings step 2): the owner sees fill vs cap — the "ship it or
+  // production idles" pressure made visible. Owner-only fields; rivals see —.
+  const cap = dyn?.storage_cap ?? 0;
+  const used = dyn?.storage_used ?? 0;
+  const storageFull = mine && cap > 0 && used >= cap;
   const strip = statStrip([
     stat("Deposits", String(sys.deposits.length)),
     stat("Yield/s", yieldRate.toFixed(1)),
-    stat("Stock", mine ? fmt(stockTotal) : "—"),
+    stat("Stock", mine && cap > 0 ? `${fmt(used)} / ${fmt(cap)}` : mine ? fmt(stockTotal) : "—", storageFull ? "is-warn" : ""),
     // Development slots (owner-only; §buildings step 1) — the specialization budget.
     stat("Slots", mine ? `${dyn?.slots_used ?? 0}/${dyn?.slots_total ?? 0}` : "—",
       mine && (dyn?.slots_total ?? 0) > 0 && (dyn?.slots_used ?? 0) >= (dyn?.slots_total ?? 0) ? "is-warn" : ""),
     stat("Claim", unclaimed ? `${fmt(sys.claim_cost)} Cr` : "—", unclaimed && !afford ? "is-negative" : ""),
   ]);
+  // Storage fill bar + full warning, under the strip (owner-only).
+  const storageBar = mine && cap > 0
+    ? `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
+      (storageFull ? `<span class="storage-warn">${badge("warn", "storage full")} production idling — ship goods out or build a Depot</span>` : "") +
+      `</div>`
+    : "";
 
   const deps = `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
     sys.deposits.map(depositRow).join("") + `</div>`;
@@ -1016,7 +1027,7 @@ function updateSystemTab(): void {
         ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
         : "";
 
-  root.innerHTML = rail + header + starFeature + strip + deps + prod + build + actions + hint;
+  root.innerHTML = rail + header + starFeature + strip + storageBar + deps + prod + build + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------
@@ -1208,6 +1219,9 @@ function addTradeNews(t: TradeEvent): void {
       text = `⚠ Supply to ${systemName(t.system)} undeliverable — you no longer hold it: ${t.units} ${t.commodity} ${what}.`;
       break;
     }
+    case "StorageOverflow":
+      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${t.commodity} couldn't be stored — convoy carries it on to sell at the hub (raidable).`;
+      break;
   }
   const el = document.createElement("div");
   el.className = t.event === "SupplyDiverted" && t.action === "lost" ? "report bad" : "report good";
@@ -1395,6 +1409,14 @@ function computeAttention(): Attn[] {
   const ownedIds = new Set(owned.map((s) => s.id));
   const active = state.standingOrders.filter((o) => o.status === "active");
   const IDLE = 30;
+  // 0. STORAGE FULL (§buildings step 2) — production is idling right now; the
+  //    most urgent economy cue there is. Owner-only fields, so this never fires
+  //    for systems the player doesn't hold.
+  for (const s of owned) {
+    if (s.storage_cap > 0 && s.storage_used >= s.storage_cap) {
+      items.push({ severity: "warn", text: `${systemName(s.id)}: storage FULL (${s.storage_used}/${s.storage_cap}) — production idling. Ship goods out or build a Depot.` });
+    }
+  }
   // 1. Idle stockpile not covered by a standing order sourced there → automate it.
   for (const s of owned) {
     const total = (s.stockpile ?? []).reduce((n, k) => n + k.units, 0);

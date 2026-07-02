@@ -54,9 +54,15 @@ export interface SystemStateView {
   build: BuildState | null;
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
+  /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.
+  depot_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
   slots_used: number;
   slots_total: number;
+  /// Storage capacity + current fill, whole units (§buildings step 2) — owner-only;
+  /// rivals see 0/0. `storage_used` may exceed the cap (grandfathered stockpile).
+  storage_cap: number;
+  storage_used: number;
 }
 
 // A buildable thing + its recipe (§step1), sent once in the galaxy.
@@ -127,7 +133,8 @@ export type TradeEvent =
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
-  | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction };
+  | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
+  | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
 
 export type DivertAction = "lost" | "returned_home" | "sold_at_hub";
 
@@ -235,7 +242,7 @@ export type ClientMsg =
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" }
   | { type: "Ping" };
 
 export type RaidOutcome =

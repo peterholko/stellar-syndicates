@@ -23,12 +23,17 @@ pub enum BuildKind {
     Upgrade { upgrade: SystemUpgrade },
 }
 
-/// The one simple system development in scope: an Extractor tier that lifts deposit
-/// output (the STRUCTURE sink). Kept flat (Travian-style) — no refining chain.
+/// The system developments (STRUCTURE sinks). Kept flat (Travian-style) — no
+/// refining chain. Each BUILT tier of any of these consumes one development slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemUpgrade {
+    /// Lifts deposit output: `richness · EXTRACTOR_RICHNESS_MULT^tier`.
     Extractor,
+    /// Raises the system's STORAGE CAP (§buildings step 2): capacity =
+    /// `STORAGE_BASE_CAP + STORAGE_PER_DEPOT_TIER · tier`. Caps create the
+    /// "ship it / sell it / spend it before it overflows" logistics pressure.
+    Depot,
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -70,12 +75,16 @@ pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 35.0)], bui
 pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 18.0), (Commodity::Fuel, 12.0)], build_ticks: 10 * HZ };
 /// Extractor (system development): bulk **Ore** — a structure that grows the system's output.
 pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0)], build_ticks: 18 * HZ };
+/// Depot (system development): light **Ore** — cheaper than an Extractor, so early
+/// storage capacity is accessible before income compounds.
+pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0)], build_ticks: 15 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
         BuildKind::Ship { ship: ShipKind::Convoy } => &CONVOY_RECIPE,
         BuildKind::Ship { ship: ShipKind::Raider } => &RAIDER_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor } => &EXTRACTOR_RECIPE,
+        BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
     }
 }
 
@@ -94,3 +103,17 @@ pub const EXTRACTOR_RICHNESS_MULT: f64 = 1.5;
 pub const DEV_SLOTS_BASE: u32 = 3;
 /// Hard ceiling on any system's slot budget (3-deposit frontier systems hit it).
 pub const DEV_SLOTS_MAX: u32 = 5;
+
+// --- STORAGE CAPS (§buildings step 2) ----------------------------------------
+// A system's stockpile has a TOTAL capacity (summed across commodities). NEW
+// inflow (production accrual, seeds, deliveries) is capped — production simply
+// IDLES at the cap; nothing already stored is ever destroyed (async-fair, and
+// oversize pre-cap stockpiles are grandfathered). Depot tiers raise the cap.
+
+/// Base storage capacity of every system (no Depot). Chosen comfortably above the
+/// home's 300-unit fuel seed so a fresh corporation starts with headroom, while
+/// still filling within minutes of idle production — the "ship it or lose the
+/// flow" pressure that gives standing orders a real job. Tunable.
+pub const STORAGE_BASE_CAP: f64 = 500.0;
+/// Extra capacity per Depot tier. Tunable.
+pub const STORAGE_PER_DEPOT_TIER: f64 = 400.0;

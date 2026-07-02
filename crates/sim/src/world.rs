@@ -772,9 +772,12 @@ impl World {
                 // Seed the home system with a Fuel reserve so fleets move from turn
                 // one (§step1 part 2) — the home produces no fuel, so this is the
                 // runway that buys time to expand toward fuel-bearing systems.
+                // Like all inflow, the seed respects the storage cap (§buildings
+                // step 2); the base cap comfortably exceeds the seed, so a fresh
+                // home always receives it in full.
                 if let Some(sys) = self.systems.iter_mut().find(|s| s.id == home_system) {
-                    *sys.stockpile.entry(crate::fuel::MOVEMENT_FUEL).or_insert(0.0) +=
-                        crate::fuel::FUEL_HOME_SEED;
+                    let seed = crate::fuel::FUEL_HOME_SEED.min(sys.storage_headroom());
+                    *sys.stockpile.entry(crate::fuel::MOVEMENT_FUEL).or_insert(0.0) += seed;
                 }
                 // Starting inventory: a stock of each commodity to sell, plus a
                 // treasury to buy with.
@@ -1137,13 +1140,21 @@ impl World {
                     self.ships.insert(id, Ship::new(id, job.owner, ship, pos, ShipOrder::Idle, None));
                     events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
                 }
-                crate::build::BuildKind::Upgrade { upgrade: _ } => {
+                crate::build::BuildKind::Upgrade { upgrade } => {
                     // Apply only if the owner still holds the system (can't upgrade a
                     // system you lost; the resources were already spent — frontier risk).
                     if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
-                        sys.extractor_tier += 1;
-                        let tier = sys.extractor_tier;
-                        events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, tier }));
+                        let tier = match upgrade {
+                            crate::build::SystemUpgrade::Extractor => {
+                                sys.extractor_tier += 1;
+                                sys.extractor_tier
+                            }
+                            crate::build::SystemUpgrade::Depot => {
+                                sys.depot_tier += 1;
+                                sys.depot_tier
+                            }
+                        };
+                        events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
                     }
                 }
             }
@@ -1321,22 +1332,34 @@ impl World {
     /// Accrue production at every claimed system: each deposit adds `richness·DT`
     /// units of its resource to the system's stockpile, drawing down finite
     /// reserves (renewable deposits never deplete). Deterministic.
+    ///
+    /// STORAGE CAP (§buildings step 2): a full system accrues NOTHING further —
+    /// production simply IDLES at the cap until goods ship out (async-fair: an
+    /// offline player's depot fills and waits; nothing is destroyed, and a
+    /// grandfathered over-cap stockpile is untouched — the cap blocks NEW inflow
+    /// only). Reserves are drawn down only by what actually accrues, so a full
+    /// depot never wastes a finite deposit.
     fn accrue_production(&mut self) {
         for sys in &mut self.systems {
             if sys.owner.is_none() {
                 continue;
             }
+            let mut headroom = sys.storage_headroom();
+            if headroom <= 0.0 {
+                continue; // full — production idles (nothing destroyed, nothing drawn)
+            }
             // Extractor upgrades (§step1 structure sink) multiply every deposit's
             // output: richness · MULT^tier (compounding, deterministic).
             let mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
             for dep in &mut sys.deposits {
-                let mut amount = dep.richness * mult * DT;
+                let mut amount = (dep.richness * mult * DT).min(headroom);
                 if let Some(reserves) = dep.reserves.as_mut() {
                     amount = amount.min(*reserves);
                     *reserves -= amount;
                 }
                 if amount > 0.0 {
                     *sys.stockpile.entry(dep.resource).or_insert(0.0) += amount;
+                    headroom -= amount;
                 }
             }
         }
@@ -1750,24 +1773,55 @@ impl World {
                     // Deposit into the destination system's stockpile — but ONLY if
                     // the convoy's owner still owns it on arrival (a system can be
                     // lost mid-transit; we don't gift cargo to a rival who took it).
+                    // STORAGE CAP (§buildings step 2): deliver up to the depot's
+                    // remaining headroom (whole units); any EXCESS stays aboard and
+                    // the SAME convoy carries it onward to the hub to sell — still
+                    // sub-light and raidable, and goods are never silently destroyed.
+                    // (This overflow rule is deliberate: of the "sell it / leave it"
+                    // options, an automatic sale is the one that can't deadlock a
+                    // full depot or strand cargo.)
                     let delivered = self
                         .systems
                         .iter_mut()
                         .find(|s| s.id == system && s.owner == Some(ship.owner))
                         .map(|sys| {
-                            *sys.stockpile.entry(cargo.commodity).or_insert(0.0) += cargo.units as f64;
-                            true
-                        })
-                        .unwrap_or(false);
-                    if delivered {
-                        events.push(Event::new(
-                            now,
-                            EventPayload::Trade(TradeEvent::Delivered {
-                                player: ship.owner,
-                                commodity: cargo.commodity,
-                                units: cargo.units,
-                            }),
-                        ));
+                            let stored = (cargo.units as f64).min(sys.storage_headroom()).floor() as u32;
+                            if stored > 0 {
+                                *sys.stockpile.entry(cargo.commodity).or_insert(0.0) += stored as f64;
+                            }
+                            stored
+                        });
+                    if let Some(stored) = delivered {
+                        if stored > 0 {
+                            events.push(Event::new(
+                                now,
+                                EventPayload::Trade(TradeEvent::Delivered {
+                                    player: ship.owner,
+                                    commodity: cargo.commodity,
+                                    units: stored,
+                                }),
+                            ));
+                        }
+                        let excess = cargo.units - stored;
+                        if excess > 0 {
+                            // Re-task the convoy we pulled off the map with the
+                            // overflow: on to the hub, sell on arrival.
+                            let mut ship = ship;
+                            ship.cargo = Some(crate::cargo::Cargo { commodity: cargo.commodity, units: excess });
+                            ship.order = ShipOrder::MoveTo { dest: self.hub };
+                            ship.mission = Some(TradeMission::SellAtHub);
+                            let owner = ship.owner;
+                            self.ships.insert(ship.id, ship);
+                            events.push(Event::new(
+                                now,
+                                EventPayload::Trade(TradeEvent::StorageOverflow {
+                                    player: owner,
+                                    commodity: cargo.commodity,
+                                    units: excess,
+                                    system,
+                                }),
+                            ));
+                        }
                     } else {
                         // Destination no longer ours: apply the corp's doctrine
                         // (§16). Default Drop loses the cargo; otherwise re-route the
@@ -2374,6 +2428,126 @@ mod tests {
             assert_eq!(sys.dev_slots(), want);
             assert!((3..=5).contains(&sys.dev_slots()), "budgets stay in the tunable 3–5 band");
         }
+    }
+
+    // --- §buildings step 2: Depot storage caps --------------------------------
+
+    #[test]
+    fn storage_cap_stops_accrual_and_resumes_after_shipping() {
+        let mut w = test_world();
+        let id = PlayerId(22);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+
+        // Fill the home to its cap (grandfather-style direct fill).
+        let cap = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
+        let used = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        seed_stock(&mut w, home, &[(Commodity::Provisions, cap - used)]);
+
+        // Full → accrual idles: total stays exactly at the cap (nothing destroyed).
+        let t0: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let t1: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        assert!((t1 - t0).abs() < 1e-9, "a full depot accrues nothing (production idles)");
+        assert!((t1 - cap).abs() < 1e-6, "…and sits exactly at the cap");
+
+        // Ship goods out (production → hub) → headroom returns → accrual resumes.
+        w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
+        let t2: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        assert!(t2 < cap - 1.0, "shipping freed capacity");
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let t3: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        assert!(t3 > t2 + 1e-6, "production resumes once there is headroom");
+    }
+
+    #[test]
+    fn oversize_stockpile_is_grandfathered_never_destroyed() {
+        let mut w = test_world();
+        let id = PlayerId(23);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Simulate a pre-cap snapshot: stockpile far over the cap.
+        let cap = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
+        seed_stock(&mut w, home, &[(Commodity::Provisions, cap * 3.0)]);
+        let over: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let after: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        assert!((after - over).abs() < 1e-9, "over-cap stock is kept (cap blocks NEW accrual only)");
+    }
+
+    #[test]
+    fn depot_tier_raises_the_cap() {
+        let mut w = test_world();
+        let id = PlayerId(24);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0)]);
+        let cap0 = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
+
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Depot }]);
+        for _ in 0..(crate::build::DEPOT_RECIPE.build_ticks + 3) {
+            w.step(&[]);
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.depot_tier, 1, "depot tier applied on completion");
+        assert!(
+            (sys.storage_cap() - cap0 - crate::build::STORAGE_PER_DEPOT_TIER).abs() < 1e-9,
+            "each depot tier adds STORAGE_PER_DEPOT_TIER capacity"
+        );
+        assert_eq!(sys.dev_slots_built(), 1, "a depot tier consumes a development slot");
+    }
+
+    #[test]
+    fn delivery_overflow_reroutes_excess_to_hub_never_destroys() {
+        let mut w = test_world();
+        let id = PlayerId(25);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Leave only ~10 units of headroom at the destination.
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let fill = sys.storage_headroom() - 10.0;
+        seed_stock(&mut w, home, &[(Commodity::Provisions, fill)]);
+
+        // A convoy delivering 40 ore arrives: 10 stored, 30 carry on to the hub.
+        let pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        let sid = w.alloc_entity_id();
+        let mut ship = Ship::new(
+            sid,
+            id,
+            ShipKind::Convoy,
+            pos, // already at the destination → arrives immediately
+            ShipOrder::MoveTo { dest: pos },
+            Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 40 }),
+        );
+        ship.mission = Some(TradeMission::DeliverToSystem { system: home });
+        w.ships.insert(sid, ship);
+
+        let mut delivered = 0u32;
+        let mut overflow = 0u32;
+        for _ in 0..5 {
+            for ev in w.step(&[]) {
+                match ev.payload {
+                    EventPayload::Trade(TradeEvent::Delivered { units, commodity: Commodity::Ore, .. }) => delivered += units,
+                    EventPayload::Trade(TradeEvent::StorageOverflow { units, system, .. }) => {
+                        assert_eq!(system, home);
+                        overflow += units;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(delivered, 10, "delivers up to the depot's headroom");
+        assert_eq!(overflow, 30, "the excess is reported, not destroyed");
+        // The SAME convoy carries the excess onward to sell at the hub.
+        let ship = w.ships.get(&sid).expect("convoy survives with the overflow");
+        assert_eq!(ship.mission, Some(TradeMission::SellAtHub), "re-routed to sell at the hub");
+        assert_eq!(ship.cargo.unwrap().units, 30, "carries exactly the unstored excess");
     }
 
     #[test]

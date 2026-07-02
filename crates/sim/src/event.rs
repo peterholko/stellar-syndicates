@@ -88,8 +88,15 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         complete_tick: u64,
     },
-    /// A system development completed (e.g. an Extractor tier applied). Owner-only.
-    SystemUpgraded { system: EntityId, owner: PlayerId, tier: u32 },
+    /// A system development completed (an upgrade tier applied). Owner-only.
+    SystemUpgraded {
+        system: EntityId,
+        owner: PlayerId,
+        /// Which development completed (Extractor/Depot/…).
+        upgrade: crate::build::SystemUpgrade,
+        /// The new tier of that development.
+        tier: u32,
+    },
     /// A build request was SOFT-REJECTED (no debit, no job — async-fair): the
     /// system can't host it right now. Owner-only news; `reason` says why.
     BuildRejected {
@@ -131,6 +138,12 @@ pub enum TradeEvent {
     /// `action`. The "your frontier supply went sideways" notification — an
     /// attention item for the check-in timeline (§16, Layer 2).
     SupplyDiverted { player: PlayerId, commodity: Commodity, units: u32, system: EntityId, action: DivertAction },
+    /// A delivery arrived at `system` but its DEPOT was (partly) FULL (§buildings
+    /// step 2): `units` of the cargo could not be stored, so the SAME convoy
+    /// carries the excess onward to the hub to sell (sub-light, raidable — goods
+    /// are never silently destroyed). Any storable part was delivered first (its
+    /// own `Delivered` event).
+    StorageOverflow { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
 }
 
 /// What became of an automated supply convoy whose destination was no longer
@@ -157,7 +170,8 @@ impl TradeEvent {
             | TradeEvent::LimitPlaced { player, .. }
             | TradeEvent::LimitFilled { player, .. }
             | TradeEvent::AutoDispatched { player, .. }
-            | TradeEvent::SupplyDiverted { player, .. } => *player,
+            | TradeEvent::SupplyDiverted { player, .. }
+            | TradeEvent::StorageOverflow { player, .. } => *player,
         }
     }
 }

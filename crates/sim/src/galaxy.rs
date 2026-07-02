@@ -63,6 +63,12 @@ pub struct StarSystem {
     /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
     #[serde(default)]
     pub extractor_tier: u32,
+    /// Number of Depot upgrades built here (§buildings step 2). Each tier raises
+    /// the system's storage cap by `STORAGE_PER_DEPOT_TIER`. `default` = 0 on old
+    /// snapshots (they get the base cap; oversize stockpiles are grandfathered —
+    /// the cap blocks NEW inflow only, it never destroys what's stored).
+    #[serde(default)]
+    pub depot_tier: u32,
 }
 
 impl StarSystem {
@@ -89,7 +95,26 @@ impl StarSystem {
     /// see `World::dev_slots_pending` — so the full "used" count is
     /// `dev_slots_built() + pending`.)
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier
+        self.extractor_tier + self.depot_tier
+    }
+
+    /// This system's TOTAL storage capacity (§buildings step 2): a base every
+    /// system has, plus a chunk per Depot tier. New inflow is capped at this;
+    /// what's already stored is never destroyed.
+    pub fn storage_cap(&self) -> f64 {
+        crate::build::STORAGE_BASE_CAP + crate::build::STORAGE_PER_DEPOT_TIER * self.depot_tier as f64
+    }
+
+    /// Total units currently stored (summed across commodities) — what the cap
+    /// measures against.
+    pub fn storage_used(&self) -> f64 {
+        self.stockpile.values().sum()
+    }
+
+    /// Remaining storage headroom (0 when at/over cap — e.g. a grandfathered
+    /// oversize stockpile from before caps existed).
+    pub fn storage_headroom(&self) -> f64 {
+        (self.storage_cap() - self.storage_used()).max(0.0)
     }
 }
 
@@ -162,6 +187,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             claimed_at: None,
             stockpile: BTreeMap::new(),
             extractor_tier: 0,
+            depot_tier: 0,
         });
     }
     systems
@@ -267,6 +293,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         claimed_at: None,
         stockpile: BTreeMap::new(),
         extractor_tier: 0,
+        depot_tier: 0,
     }
 }
 

@@ -100,9 +100,13 @@ impl Timeline {
                     let name = system_name(world, *system);
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("Construction started at {name}: {}.", build_label(*what)));
                 }
-                EventPayload::SystemUpgraded { owner, system, tier } => {
+                EventPayload::SystemUpgraded { owner, system, upgrade, tier } => {
                     let name = system_name(world, *system);
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — Extractor tier {tier} (more output)."));
+                    let what = match upgrade {
+                        sim::SystemUpgrade::Extractor => format!("Extractor tier {tier} (more output)"),
+                        sim::SystemUpgrade::Depot => format!("Depot tier {tier} (more storage)"),
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
                 // A soft-rejected build (§buildings step 1) — owner-only, instant
                 // (your own administration): nothing was spent, the request just
@@ -200,6 +204,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
     }
 }
 
@@ -252,6 +257,18 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     format!("Supply to {name} re-routed to sell at the hub ({units} {com}) — system lost."),
                 ),
             }
+        }
+        // A full depot bounced part of a delivery onward to the hub (§buildings
+        // step 2) — an attention item: the player should ship out or build a Depot.
+        TradeEvent::StorageOverflow { commodity, units, system, .. } => {
+            let name = system_name(world, system);
+            (
+                Warn,
+                format!(
+                    "Depot full at {name}: {units} {} couldn't be stored — re-routed to sell at the hub. Ship goods out or build a Depot.",
+                    commodity_name(commodity)
+                ),
+            )
         }
         // Online-only / low-signal news (manual buys, dispatch-started, resting
         // placements) stays out of the away-digest.
