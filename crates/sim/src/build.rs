@@ -176,6 +176,11 @@ pub const HABITAT_UPKEEP_PER_TIER: f64 = 0.15;
 /// affected. Simple, deterministic, and fog-clean (the contact is physically
 /// there). Tunable.
 pub const DEFENSE_PLATFORM_RADIUS: f64 = 1300.0;
+/// DEFENSE WEIGHT of one platform tier in the weighted-strength battle model
+/// (§ships part 1). With the raider's attack weight 3, a per-tier duel sits at
+/// ratio 3/3 = 1.0 → the even row — exactly the old per-tier RVR duel, so
+/// pre-existing platform outcomes are numerically unchanged. Tunable.
+pub const PLATFORM_TIER_DEFENSE: f64 = 3.0;
 
 // --- SENSOR ARRAY (§buildings step 2b) ----------------------------------------
 

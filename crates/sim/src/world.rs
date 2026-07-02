@@ -133,13 +133,52 @@ const SHADOW_OFFSET: f64 = 400.0;
 /// The market drifts once per this many ticks (≈ once a second at 30 Hz).
 const MARKET_UPDATE_TICKS: u64 = 30;
 
-// Battle outcome probabilities (§8). Tunable; balance comes later. Each tuple is
-// (P target destroyed, P attacker destroyed, P both destroyed); the remainder is
-// "both survive (attacker driven off)".
-// TEMPORARY (testing): raider always destroys the convoy. Restore to
-// (0.60, 0.12, 0.08) for the real balance.
-const RVC_PROBS: (f64, f64, f64) = (1.0, 0.0, 0.0); // raider vs convoy (TEST: 100% convoy destroyed)
-const RVR_PROBS: (f64, f64, f64) = (0.35, 0.35, 0.12); // raider vs raider (even)
+// Battle outcome probabilities (§8, §ships part 1) as a function of the sides'
+// WEIGHTED-STRENGTH RATIO `r = attack / defense`. Each row is (P target
+// destroyed, P attacker destroyed, P both destroyed); the remainder is "both
+// survive (attacker driven off)". Tunable; balance comes later.
+//
+// PRESERVATION MAPPING (the old-outcome anchors — proven by the existing
+// seeded tests, whose rng draw pattern is also unchanged at one roll/battle):
+//   * raider(atk 3) vs convoy(def 1)        → r = 3.0 → ROW_OVERWHELM
+//     ≡ the old RVC_PROBS (1.0, 0, 0 — TEMPORARY testing value; restore to
+//     (0.60, 0.12, 0.08) for real balance, exactly as before).
+//   * raider(atk 3) vs raider(def 2)        → r = 1.5 → ROW_EVEN
+//     ≡ the old RVR_PROBS (0.35, 0.35, 0.12).
+//   * raider(atk 3) vs platform unit(def 3) → r = 1.0 → ROW_EVEN
+//     ≡ the old per-tier RVR duel.
+// Preserving BOTH even anchors forces the table to be FLAT on r ∈ [1.0, 1.5];
+// between 1.5 and 3.0 it interpolates linearly toward overwhelm, and r < 1
+// MIRRORS (evaluate at 1/r, swap the destroyed probabilities — continuous at
+// r = 1 because ROW_EVEN is symmetric).
+const ROW_EVEN: (f64, f64, f64) = (0.35, 0.35, 0.12);
+const ROW_OVERWHELM: (f64, f64, f64) = (1.0, 0.0, 0.0);
+/// Ratio at (and beyond) which the attacker simply overwhelms the defender.
+const RATIO_OVERWHELM: f64 = 3.0;
+/// The even band `[RATIO_EVEN_LO, RATIO_EVEN_HI]` (flat — see mapping above).
+const RATIO_EVEN_LO: f64 = 1.0;
+const RATIO_EVEN_HI: f64 = 1.5;
+
+/// The outcome row for a strength ratio `r = atk / def` (both > 0).
+fn outcome_probs(r: f64) -> (f64, f64, f64) {
+    if r >= RATIO_OVERWHELM {
+        ROW_OVERWHELM
+    } else if r > RATIO_EVEN_HI {
+        // Linear interpolation EVEN → OVERWHELM over (1.5, 3.0).
+        let t = (r - RATIO_EVEN_HI) / (RATIO_OVERWHELM - RATIO_EVEN_HI);
+        (
+            ROW_EVEN.0 + (ROW_OVERWHELM.0 - ROW_EVEN.0) * t,
+            ROW_EVEN.1 + (ROW_OVERWHELM.1 - ROW_EVEN.1) * t,
+            ROW_EVEN.2 + (ROW_OVERWHELM.2 - ROW_EVEN.2) * t,
+        )
+    } else if r >= RATIO_EVEN_LO {
+        ROW_EVEN
+    } else {
+        // Attacker weaker: mirror the stronger-side row (swap destroyed probs).
+        let (pt, pa, pb) = outcome_probs(1.0 / r);
+        (pa, pt, pb)
+    }
+}
 
 /// The limit-order book clears once per this many ticks (≈ every 20 s).
 const BATCH_TICKS: u64 = 20 * TICK_HZ as u64;
@@ -476,21 +515,23 @@ impl World {
 
         // --- Sensing helpers (all fog-respecting: within the owner's coverage —
         // the picket's bubble or an owned sensor array's). ---
-        // Local raider force as (friendly incl. self, hostile), for the force-ratio
-        // gates.
-        let force = |ppos: Vec2, owner: PlayerId| -> (usize, usize) {
-            let (mut f, mut h) = (0usize, 0usize);
-            for s in snap.iter().filter(|s| s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos)) {
+        // Local COMBATANT force as WEIGHTED strength (friendly incl. self,
+        // hostile) — §ships part 1: doctrine compares strengths, not counts.
+        // Non-combatants (convoys, scouts) are excluded exactly as before, so
+        // raider-only worlds see identical ratios (equal weights cancel).
+        let force = |ppos: Vec2, owner: PlayerId| -> (f64, f64) {
+            let (mut f, mut h) = (0.0f64, 0.0f64);
+            for s in snap.iter().filter(|s| s.kind.is_combatant() && sensed(owner, ppos, s.pos)) {
                 if s.owner == owner {
-                    f += 1;
+                    f += s.kind.combat_weight();
                 } else {
-                    h += 1;
+                    h += s.kind.combat_weight();
                 }
             }
             (f, h)
         };
-        let ratio = |f: usize, h: usize| -> f64 {
-            if h == 0 { 1.0 } else { f as f64 / (f + h) as f64 }
+        let ratio = |f: f64, h: f64| -> f64 {
+            if h <= 0.0 { 1.0 } else { f / (f + h) }
         };
         // Nearest friendly convoy within `range` (its position).
         let nearest_friendly_convoy = |ppos: Vec2, owner: PlayerId, range: f64| -> Option<Vec2> {
@@ -685,24 +726,30 @@ impl World {
         }
     }
 
-    /// Roll a random battle outcome with the seeded RNG (§8). Deterministic from
-    /// seed + commands; rolled ONCE per battle (both sides later observe the same
-    /// result). The table depends on the target's kind (raider-vs-convoy vs
-    /// raider-vs-raider).
-    fn roll_battle(&mut self, target_kind: ShipKind) -> RaidOutcome {
-        let (pt, pa, pb) = match target_kind {
-            ShipKind::Convoy => RVC_PROBS,
-            ShipKind::Raider => RVR_PROBS,
-            // Defensive only — scout engagements are resolved deterministically
-            // in resolve_raids (a scout always simply dies) before any roll.
-            ShipKind::Scout => (1.0, 0.0, 0.0),
-        };
-        let r = self.rng.next_f64();
-        if r < pt {
+    /// Roll a seeded battle outcome from the sides' WEIGHTED STRENGTHS (§ships
+    /// part 1): `atk` = the aggressor's attack weight, `def` = the defender's
+    /// defense weight (sums, ready for multi-ship sides). Exactly ONE rng draw
+    /// per battle — the stream, and thus every pre-existing seeded outcome, is
+    /// unchanged; the probabilities come from `outcome_probs` (see its anchors).
+    /// Zero-strength sides resolve deterministically (the roll is still drawn,
+    /// keeping the stream stable regardless of participants).
+    fn roll_battle_weighted(&mut self, atk: f64, def: f64) -> RaidOutcome {
+        let roll = self.rng.next_f64();
+        if atk <= 0.0 && def <= 0.0 {
+            return RaidOutcome::BothSurvive; // nobody can hurt anybody
+        }
+        if def <= 0.0 {
+            return RaidOutcome::TargetDestroyed;
+        }
+        if atk <= 0.0 {
+            return RaidOutcome::AttackerDestroyed;
+        }
+        let (pt, pa, pb) = outcome_probs(atk / def);
+        if roll < pt {
             RaidOutcome::TargetDestroyed
-        } else if r < pt + pa {
+        } else if roll < pt + pa {
             RaidOutcome::AttackerDestroyed
-        } else if r < pt + pa + pb {
+        } else if roll < pt + pa + pb {
             RaidOutcome::BothDestroyed
         } else {
             RaidOutcome::BothSurvive
@@ -732,6 +779,7 @@ impl World {
         &mut self,
         defender: PlayerId,
         contact: Vec2,
+        attacker_atk: f64,
         events: &mut Vec<Event>,
     ) -> Option<(bool, bool)> {
         let radius = crate::build::DEFENSE_PLATFORM_RADIUS;
@@ -754,10 +802,10 @@ impl World {
             if tier == 0 {
                 break; // every unit defeated — the raider fights through
             }
-            // One stationary defender unit ≈ a raider-vs-raider duel (reuses the
-            // seeded table unchanged; Escaped can't occur in RVR, treat as a
-            // stand-off defensively).
-            match self.roll_battle(ShipKind::Raider) {
+            // One stationary defender unit at PLATFORM_TIER_DEFENSE (3): vs the
+            // raider's attack 3 the duel sits at the even row — the old per-tier
+            // RVR duel exactly. (Escaped can't occur here; stand-off defensively.)
+            match self.roll_battle_weighted(attacker_atk, crate::build::PLATFORM_TIER_DEFENSE) {
                 RaidOutcome::TargetDestroyed => {
                     tiers_lost += 1;
                     if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
@@ -843,7 +891,7 @@ impl World {
             if !escape
                 && t_kind == ShipKind::Convoy
                 && a_owner != t_owner
-                && let Some((raider_survives, stopped)) = self.platform_defends(t_owner, t_pos, events)
+                && let Some((raider_survives, stopped)) = self.platform_defends(t_owner, t_pos, a_kind.attack_weight(), events)
                 && stopped
             {
                 let outcome = if raider_survives {
@@ -886,7 +934,10 @@ impl World {
                 // …and a scout that somehow ATTACKS anything dies just the same.
                 RaidOutcome::AttackerDestroyed
             } else {
-                self.roll_battle(t_kind)
+                // Weighted strengths (§ships part 1): raider(3) vs convoy(1) → the
+                // overwhelm row; raider(3) vs raider(2) → the even row — exactly
+                // the two old kind-keyed tables.
+                self.roll_battle_weighted(a_kind.attack_weight(), t_kind.defense_weight())
             };
 
             events.push(Event::new(
@@ -4161,6 +4212,30 @@ mod tests {
             (lost, tier1)
         };
         assert_eq!(run(), run(), "the platform engagement is deterministic from the seed");
+    }
+
+    // --- §ships part 1: weighted combat strengths ------------------------------
+
+    /// The strength table + outcome rows reproduce today's outcomes EXACTLY at
+    /// the anchor ratios (see the mapping on `outcome_probs`), interpolate
+    /// between them, and mirror continuously for a weaker attacker.
+    #[test]
+    fn outcome_probs_preserves_the_old_tables() {
+        // raider(3) vs convoy(1) -> r=3 -> the old RVC row.
+        assert_eq!(outcome_probs(ShipKind::Raider.attack_weight() / ShipKind::Convoy.defense_weight()), (1.0, 0.0, 0.0));
+        // raider(3) vs raider(2) -> r=1.5 -> the old RVR row.
+        assert_eq!(outcome_probs(ShipKind::Raider.attack_weight() / ShipKind::Raider.defense_weight()), (0.35, 0.35, 0.12));
+        // raider(3) vs platform unit(3) -> r=1.0 -> the old per-tier RVR duel.
+        assert_eq!(outcome_probs(ShipKind::Raider.attack_weight() / crate::build::PLATFORM_TIER_DEFENSE), (0.35, 0.35, 0.12));
+        // Between the anchors: monotone interpolation toward overwhelm.
+        let (pt, pa, _) = outcome_probs(2.25);
+        assert!(pt > 0.35 && pt < 1.0 && pa < 0.35, "interpolates between even and overwhelm");
+        // Weaker attacker mirrors: swap of the destroyed probabilities.
+        let strong = outcome_probs(2.25);
+        let weak = outcome_probs(1.0 / 2.25);
+        assert!((weak.0 - strong.1).abs() < 1e-12 && (weak.1 - strong.0).abs() < 1e-12 && (weak.2 - strong.2).abs() < 1e-12, "r<1 mirrors the inverse ratio");
+        // Continuity at the mirror point (the even row is symmetric).
+        assert_eq!(outcome_probs(1.0), outcome_probs(0.999999999), "continuous at r = 1");
     }
 
     #[test]

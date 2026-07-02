@@ -100,6 +100,47 @@ impl ShipKind {
             _ => 1.0,
         }
     }
+
+    // --- COMBAT STRENGTHS (§ships part 1, GDD §26.2 spirit) -------------------
+    // Battles are weighted-strength contests, not unit counts: each side's
+    // strength is a SUM of these per-kind weights, and the seeded outcome table
+    // (`world::outcome_probs`) is a function of the attack/defense RATIO. The
+    // weights re-express today's exact outcomes in the new units (see the
+    // anchor-point notes on `outcome_probs`), so pre-existing raid results are
+    // numerically unchanged. All tunable.
+
+    /// Offensive weight when this kind is the AGGRESSOR in an engagement.
+    pub fn attack_weight(self) -> f64 {
+        match self {
+            ShipKind::Raider => 3.0,   // the hunter
+            ShipKind::Convoy => 0.0,   // civilians don't attack
+            ShipKind::Scout => 0.0,    // dies if engaged — speed is its armor
+        }
+    }
+
+    /// Defensive weight when this kind is ATTACKED (or screening a defender).
+    pub fn defense_weight(self) -> f64 {
+        match self {
+            ShipKind::Raider => 2.0,
+            ShipKind::Convoy => 1.0,
+            ShipKind::Scout => 0.0, // no armor at all
+        }
+    }
+
+    /// Whether this kind counts toward doctrine's local FORCE-RATIO assessments
+    /// (weighted strength, not head-count). Non-combatants (convoys, scouts) are
+    /// excluded exactly as the old raider-count was — so raider-only worlds see
+    /// identical ratios.
+    pub fn is_combatant(self) -> bool {
+        matches!(self, ShipKind::Raider)
+    }
+
+    /// A combatant's weight in force-ratio comparisons (attack + defense — its
+    /// total fighting presence). Equal-kind fleets produce the same ratios as
+    /// the old head-count.
+    pub fn combat_weight(self) -> f64 {
+        self.attack_weight() + self.defense_weight()
+    }
 }
 
 /// The scout's sensor-bubble multiplier over the standard ship bubble (its
