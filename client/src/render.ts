@@ -98,6 +98,7 @@ const SHIP_ART_FACING = Math.PI / 2;
 // Tunable. They scale modestly with zoom (clamped) so they stay sensible.
 const SHIP_PX_CONVOY = 56;
 const SHIP_PX_RAIDER = 40;
+const SHIP_PX_CORVETTE = 48; // between raider and convoy — the size hierarchy
 const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
@@ -143,6 +144,7 @@ export class Renderer {
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
+  private texCorvette: Texture | null = null;
   private texScout: Texture | null = null;
 
   // The schematic System View scene (its own camera). Presentation only.
@@ -215,15 +217,17 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [station, convoy, raider, scout] = await Promise.all([
+    const [station, convoy, raider, corvette, scout] = await Promise.all([
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
+      load("/art/ship_sprites/corvette_escort_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
     this.texStation = station;
     this.texConvoy = convoy;
     this.texRaider = raider;
+    this.texCorvette = corvette;
     this.texScout = scout;
     // The star-type icons (each independent; a missing one falls back to the dot).
     await Promise.all(
@@ -727,6 +731,16 @@ export class Renderer {
     this.hubSprite.scale.set(28 / this.texStation.width);
   }
 
+  /// The ship art for a kind (null until loaded — primitive fallback covers it).
+  private texFor(kind: ShipKind): Texture | null {
+    switch (kind) {
+      case "convoy": return this.texConvoy;
+      case "raider": return this.texRaider;
+      case "corvette": return this.texCorvette;
+      case "scout": return this.texScout;
+    }
+  }
+
   private ghostSprite(id: string): GhostSprite {
     let sp = this.ghosts.get(id);
     if (!sp) {
@@ -760,7 +774,7 @@ export class Renderer {
   /// Both kinds converge to the SAME native size at max zoom: up close the art's
   /// SHAPE distinguishes convoy vs raider, so identical native size is intended.
   private shipSizePx(kind: ShipKind, nativeW: number): number {
-    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : SHIP_PX_SCOUT;
+    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : SHIP_PX_SCOUT;
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
     if (r <= SHIP_NATIVE_ZOOM_START) return indicator;
@@ -774,7 +788,7 @@ export class Renderer {
   /// clickable as they enlarge in the deep-zoom band. Falls back to a 256px native
   /// assumption before the texture loads. Consumed by main.ts's map hit-test.
   shipHitRadius(kind: ShipKind): number {
-    const tex = kind === "convoy" ? this.texConvoy : kind === "raider" ? this.texRaider : this.texScout;
+    const tex = this.texFor(kind);
     return this.shipSizePx(kind, tex ? tex.width : 256) / 2;
   }
 
@@ -845,7 +859,7 @@ export class Renderer {
     // crisp — with a higher floor so you never "lose" your fleet.
     const fade = Math.min(ghost.age / FADE_AGE_S, 1);
     const alpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
-    const tex = ghost.kind === "convoy" ? this.texConvoy : ghost.kind === "raider" ? this.texRaider : this.texScout;
+    const tex = this.texFor(ghost.kind);
     sp.body.clear();
     if (tex) {
       sp.sprite.visible = true;
@@ -906,6 +920,12 @@ export class Renderer {
       txt = `⚠ RAIDER  ${stale}`;
       col = COL_THREAT;
       lalpha = 0.95;
+    } else if (ghost.kind === "corvette" && !own) {
+      // A rival corvette BROADCASTS (a declared escort deters): a visible
+      // defender, not an attack alarm.
+      txt = `ESCORT  ${stale}`;
+      col = COL_OTHER;
+      lalpha = 0.85;
     } else if (ghost.kind === "scout" && !own) {
       // A detected rival scout: a contact worth knowing about (someone is
       // LOOKING at you), but not an attack alarm — no pulsing threat ring.

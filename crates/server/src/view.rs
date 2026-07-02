@@ -513,6 +513,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",

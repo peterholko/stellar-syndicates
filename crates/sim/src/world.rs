@@ -756,6 +756,88 @@ impl World {
         }
     }
 
+    /// CORVETTE SCREENING (§ships part 2): every friendly corvette (same owner
+    /// as the attacked civilian) within [`crate::ship::CORVETTE_PROTECT_RADIUS`]
+    /// of the contact duels the attacker in nearest-first order ((distance, id)
+    /// tiebreak — deterministic) BEFORE the platform or the target itself.
+    /// One weighted seeded duel per corvette (attacker's attack vs corvette
+    /// defense 4):
+    ///   * corvette destroyed → a REAL ship is lost (ShipDestroyed + report);
+    ///     the attacker proceeds to the next screen;
+    ///   * attacker destroyed / mutual kill → the raid is STOPPED;
+    ///   * stand-off → the attacker is DRIVEN OFF (breaks off home) — stopped.
+    ///
+    /// Fighting through EVERY corvette lets the raid proceed (to the platform,
+    /// then the target). Returns (attacker_alive, raid_stopped).
+    fn corvettes_screen(
+        &mut self,
+        attacker: EntityId,
+        a_owner: PlayerId,
+        a_kind: ShipKind,
+        defender: PlayerId,
+        contact: Vec2,
+        events: &mut Vec<Event>,
+    ) -> (bool, bool) {
+        let now = self.time;
+        // Deterministic screen order: nearest corvette first, id tiebreak.
+        let mut screen: Vec<(EntityId, f64)> = self
+            .ships
+            .iter()
+            .filter(|(id, s)| {
+                **id != attacker
+                    && s.owner == defender
+                    && s.kind == ShipKind::Corvette
+                    && s.pos.distance(contact) <= crate::ship::CORVETTE_PROTECT_RADIUS
+            })
+            .map(|(id, s)| (*id, s.pos.distance(contact)))
+            .collect();
+        screen.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+
+        for (cid, _) in screen {
+            let Some(cv) = self.ships.get(&cid) else { continue };
+            let (cv_pos, cv_kind) = (cv.pos, cv.kind);
+            let outcome = self.roll_battle_weighted(a_kind.attack_weight(), cv_kind.defense_weight());
+            // Every duel is an ordinary battle: both owners get delayed reports.
+            events.push(Event::new(
+                now,
+                EventPayload::RaidResolved {
+                    attacker: a_owner,
+                    defender,
+                    attacker_ship: attacker,
+                    target_ship: cid,
+                    attacker_kind: a_kind,
+                    target_kind: cv_kind,
+                    outcome,
+                    pos: cv_pos,
+                },
+            ));
+            let (kill_attacker, kill_corvette) = outcome.kills();
+            if kill_corvette {
+                self.ships.remove(&cid);
+                events.push(Event::new(
+                    now,
+                    EventPayload::ShipDestroyed { ship: cid, owner: defender, kind: cv_kind, pos: cv_pos },
+                ));
+            }
+            if kill_attacker {
+                if let Some(att) = self.ships.remove(&attacker) {
+                    events.push(Event::new(
+                        now,
+                        EventPayload::ShipDestroyed { ship: attacker, owner: a_owner, kind: a_kind, pos: att.pos },
+                    ));
+                }
+                return (false, true);
+            }
+            if outcome == RaidOutcome::BothSurvive {
+                // Driven off by the screen — the attacker breaks for home.
+                self.send_ship_home(attacker, a_owner);
+                return (true, true);
+            }
+            // Corvette destroyed (screen thinned) → next duel.
+        }
+        (true, false) // fought through (or no screen) — the raid proceeds
+    }
+
     /// Run a DEFENSE PLATFORM's engagement against a raider attacking `defender`'s
     /// convoy at `contact` (§buildings step 2c), if a defended system covers it.
     ///
@@ -888,6 +970,25 @@ impl World {
             // both sides get their usual delayed battle reports, and the attacker
             // learns of the fortification only through the outcome (§6 identity:
             // deterrence is discovered the hard way, never leaked in the View).
+            // CORVETTE SCREEN (§ships part 2): friendly corvettes near the
+            // contact duel the attacker BEFORE anything else — escort (shadowing
+            // the convoy) and garrison (parked at the defended system) are the
+            // same rule at CORVETTE_PROTECT_RADIUS. Standing defense: works with
+            // the owner offline. Each duel reports through the ordinary
+            // RaidResolved (both sides get their usual delayed reports); dead
+            // corvettes are real losses, unlike platform tiers.
+            if !escape && t_kind == ShipKind::Convoy && a_owner != t_owner {
+                let (attacker_alive, stopped) = self.corvettes_screen(aid, a_owner, a_kind, t_owner, t_pos, events);
+                if stopped {
+                    if !attacker_alive {
+                        // ShipDestroyed + reports already emitted by the screen.
+                    }
+                    continue; // the convoy was never touched
+                }
+                if !self.ships.contains_key(&aid) {
+                    continue; // defensive (shouldn't happen: stopped covers death)
+                }
+            }
             if !escape
                 && t_kind == ShipKind::Convoy
                 && a_owner != t_owner
@@ -1113,6 +1214,11 @@ impl World {
                     return;
                 };
                 if raider.owner != *player_id {
+                    return;
+                }
+                // Raiding is the RAIDER'S verb (§ships part 2 — crisp roles):
+                // corvettes defend, scouts look, convoys haul. Soft-reject.
+                if raider.kind != ShipKind::Raider {
                     return;
                 }
                 // Fuel the intercept run (raiders are light → cheap, but not free).
@@ -3386,8 +3492,13 @@ mod tests {
             c.order = ShipOrder::Idle;
         }
         let sid = w.alloc_entity_id();
-        w.ships.insert(sid, Ship::new(sid, atk, ShipKind::Scout, cc + Vec2::new(120.0, 0.0), ShipOrder::Idle, None));
-        w.step(&[Command::CommitRaid { player_id: atk, raider_id: sid, target_id: convoy }]);
+        // CommitRaid is raider-only now (§ships part 2) — soft-rejected for a
+        // scout — so inject the Intercept directly to prove the deterministic
+        // engagement rule still protects the edge/autonomous paths.
+        w.ships.insert(
+            sid,
+            Ship::new(sid, atk, ShipKind::Scout, cc + Vec2::new(120.0, 0.0), ShipOrder::Intercept { target: convoy }, None),
+        );
         let outcome = run_until_raid(&mut w, 60, |_| vec![]).expect("the contact resolves");
         assert_eq!(outcome, RaidOutcome::AttackerDestroyed, "an attacking scout dies");
         assert!(w.ships.contains_key(&convoy), "the convoy is untouched");
@@ -4236,6 +4347,155 @@ mod tests {
         assert!((weak.0 - strong.1).abs() < 1e-12 && (weak.1 - strong.0).abs() < 1e-12 && (weak.2 - strong.2).abs() < 1e-12, "r<1 mirrors the inverse ratio");
         // Continuity at the mirror point (the even row is symmetric).
         assert_eq!(outcome_probs(1.0), outcome_probs(0.999999999), "continuous at r = 1");
+    }
+
+    // --- §ships part 2: Corvette -----------------------------------------------
+
+    /// Raiding is the raider's verb: a corvette (or any non-raider) committed to
+    /// a raid is SOFT-rejected — no intercept order, nothing spent.
+    #[test]
+    fn corvette_cannot_raid() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        let cid = w.alloc_entity_id();
+        w.ships.insert(cid, Ship::new(cid, atk, ShipKind::Corvette, cc, ShipOrder::Idle, None));
+        let fuel0 = home_fuel(&w, atk);
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: cid, target_id: convoy }]);
+        assert!(matches!(w.ships[&cid].order, ShipOrder::Idle), "soft reject — the corvette never moves");
+        assert!(w.pending_orders.iter().all(|p| p.ship_id != cid), "no intercept scheduled");
+        assert!((home_fuel(&w, atk) - fuel0).abs() < 1e-9, "nothing spent");
+    }
+
+    /// ESCORT changes the outcome (§ships part 2): the same seeded raid that
+    /// destroys an unescorted convoy (the test table is 100% convoy-destroyed)
+    /// is STOPPED by a corvette screen — the raider must fight through real
+    /// ships first, and a tall screen grinds it down before it touches the hull.
+    #[test]
+    fn corvette_escort_changes_the_outcome() {
+        // Unescorted baseline: convoy dies (the existing certainty).
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        run_until_raid(&mut w, 60, |_| vec![]).expect("baseline resolves");
+        assert!(!w.ships.contains_key(&convoy), "unescorted: the convoy is lost");
+
+        // Escorted: a screen of corvettes shadowing the convoy stops the raid.
+        let mut w = test_world();
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        let convoy_pos = w.ships[&convoy].pos;
+        for k in 0..6 {
+            let cid = w.alloc_entity_id();
+            w.ships.insert(
+                cid,
+                Ship::new(cid, def, ShipKind::Corvette, convoy_pos + Vec2::new(60.0 + k as f64 * 10.0, 0.0), ShipOrder::Idle, None),
+            );
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut vs_corvette = false;
+        let mut done = false;
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::RaidResolved { target_kind, outcome, .. } = e.payload {
+                    if target_kind == ShipKind::Corvette {
+                        vs_corvette = true;
+                    }
+                    if matches!(outcome, RaidOutcome::AttackerDestroyed | RaidOutcome::BothSurvive | RaidOutcome::BothDestroyed) {
+                        done = true;
+                    }
+                }
+            }
+            if done {
+                break;
+            }
+        }
+        assert!(vs_corvette, "the raider had to fight the screen, not the convoy");
+        assert!(done, "a 6-deep screen stops the raid (seeded)");
+        assert!(w.ships.contains_key(&convoy), "escorted: the convoy survives");
+    }
+
+    /// GARRISON stacks with the platform: corvettes parked at a defended system
+    /// screen FIRST (real ships, real losses), the platform's tiers fight next —
+    /// and the convoy behind both survives. Standing defense, owner offline.
+    #[test]
+    fn garrison_stacks_with_platform() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        let convoy_pos = w.ships[&convoy].pos;
+        let sys = grant_platform(&mut w, def, convoy_pos + Vec2::new(150.0, 0.0), 6);
+        for k in 0..4 {
+            let cid = w.alloc_entity_id();
+            w.ships.insert(
+                cid,
+                Ship::new(cid, def, ShipKind::Corvette, convoy_pos + Vec2::new(150.0 + k as f64 * 10.0, 0.0), ShipOrder::Idle, None),
+            );
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut first_corvette_at: Option<usize> = None;
+        let mut first_platform_at: Option<usize> = None;
+        let mut seq = 0usize;
+        let mut done = false;
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::RaidResolved { target_kind: ShipKind::Corvette, .. } => {
+                        seq += 1;
+                        first_corvette_at.get_or_insert(seq);
+                    }
+                    EventPayload::PlatformEngaged { .. } => {
+                        seq += 1;
+                        first_platform_at.get_or_insert(seq);
+                        done = true; // the platform only engages once the screen is spent OR the raid ended at the screen
+                    }
+                    EventPayload::RaidResolved { outcome, .. }
+                        if matches!(outcome, RaidOutcome::AttackerDestroyed | RaidOutcome::BothSurvive) =>
+                    {
+                        done = true;
+                    }
+                    _ => {}
+                }
+            }
+            if done {
+                break;
+            }
+        }
+        assert!(first_corvette_at.is_some(), "the garrison screened");
+        if let (Some(cv), Some(pf)) = (first_corvette_at, first_platform_at) {
+            assert!(cv < pf, "corvettes screen BEFORE the platform's tiers");
+        }
+        assert!(w.ships.contains_key(&convoy), "behind screen + platform, the convoy survives (seeded)");
+        assert!(
+            w.systems.iter().find(|s| s.id == sys).unwrap().defense_tier <= 6,
+            "platform intact or attrited, never grown"
+        );
+    }
+
+    /// Corvettes are MILITARY industry: Shipyard tier 2, like the raider.
+    #[test]
+    fn corvette_needs_shipyard_two() {
+        let mut w = test_world();
+        let id = PlayerId(44);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsShipyard { required: 2 }, .. }
+            )),
+            "home tier 1 can't build corvettes"
+        );
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().shipyard_tier = 2;
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "tier 2 builds them");
     }
 
     #[test]

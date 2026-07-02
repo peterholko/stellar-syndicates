@@ -537,6 +537,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
         ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
+        ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
         ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
         ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
         ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),

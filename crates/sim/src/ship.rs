@@ -24,6 +24,15 @@ pub enum ShipKind {
     /// Fast, light interceptor. Cuts chords across open space to run convoys
     /// down.
     Raider,
+    /// The dedicated DEFENDER (§ships part 2): moderate mass (slower than a
+    /// raider, faster than a convoy), no cargo, DEFENSE-heavy in the weighted
+    /// battle model. It CANNOT raid (raiding is the raider's verb — crisp
+    /// roles); it protects by SCREENING: any friendly corvette near a raid
+    /// contact on a civilian ship duels the raider first (escort when shadowing
+    /// a convoy, garrison when parked at an owned system — standing, offline).
+    /// BROADCASTS under the Convention: a declared escort DETERS (a dark
+    /// defender would just be a raider with extra steps).
+    Corvette,
     /// The ACTIVE-INTEL ship (§scout): the lightest hull in the game — fastest
     /// to accelerate, cheapest to fuel — with NO cargo capacity and negligible
     /// combat strength (in any engagement it is simply destroyed; its defense is
@@ -53,6 +62,8 @@ impl ShipKind {
         match self {
             ShipKind::Convoy => 6750.0,
             ShipKind::Raider => 2200.0,
+            // 4000/800 = 5 su/s² — nimbler than a convoy, no match for a raider.
+            ShipKind::Corvette => 4000.0,
             // Small engine, tiny hull: 1400/80 = 17.5 su/s² — the dartiest ship.
             ShipKind::Scout => 1400.0,
         }
@@ -67,6 +78,7 @@ impl ShipKind {
         match self {
             ShipKind::Convoy => 4500.0,
             ShipKind::Raider => 200.0,
+            ShipKind::Corvette => 800.0,
             ShipKind::Scout => 80.0,
         }
     }
@@ -78,6 +90,7 @@ impl ShipKind {
         match self {
             ShipKind::Convoy => 48.0,
             ShipKind::Raider => 120.0,
+            ShipKind::Corvette => 80.0, // keeps station with convoys, can't chase raiders
             ShipKind::Scout => 140.0, // the fastest thing flying — still < c/2
         }
     }
@@ -87,7 +100,9 @@ impl ShipKind {
     /// inside a rival's sensor coverage. One source of truth for the View's
     /// gating (a broadcasting spy would be useless).
     pub fn broadcasts(self) -> bool {
-        matches!(self, ShipKind::Convoy)
+        // Convoys (trade) and corvettes (a DECLARED escort deters) broadcast;
+        // raiders and scouts run dark.
+        matches!(self, ShipKind::Convoy | ShipKind::Corvette)
     }
 
     /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
@@ -113,6 +128,7 @@ impl ShipKind {
     pub fn attack_weight(self) -> f64 {
         match self {
             ShipKind::Raider => 3.0,   // the hunter
+            ShipKind::Corvette => 1.0, // guards; barely bites back
             ShipKind::Convoy => 0.0,   // civilians don't attack
             ShipKind::Scout => 0.0,    // dies if engaged — speed is its armor
         }
@@ -122,6 +138,7 @@ impl ShipKind {
     pub fn defense_weight(self) -> f64 {
         match self {
             ShipKind::Raider => 2.0,
+            ShipKind::Corvette => 4.0, // the armored screen — built to be attacked
             ShipKind::Convoy => 1.0,
             ShipKind::Scout => 0.0, // no armor at all
         }
@@ -132,7 +149,7 @@ impl ShipKind {
     /// excluded exactly as the old raider-count was — so raider-only worlds see
     /// identical ratios.
     pub fn is_combatant(self) -> bool {
-        matches!(self, ShipKind::Raider)
+        matches!(self, ShipKind::Raider | ShipKind::Corvette)
     }
 
     /// A combatant's weight in force-ratio comparisons (attack + defense — its
@@ -142,6 +159,13 @@ impl ShipKind {
         self.attack_weight() + self.defense_weight()
     }
 }
+
+/// Radius (sim units) within which a friendly CORVETTE screens a raid contact
+/// on a civilian ship (§ships part 2): shadowing a convoy = escort; parked at
+/// an owned system = garrison (same reach as the Defense Platform, so a
+/// garrisoned corvette covers the whole protected zone). One rule, both roles.
+/// Tunable.
+pub const CORVETTE_PROTECT_RADIUS: f64 = 1300.0;
 
 /// The scout's sensor-bubble multiplier over the standard ship bubble (its
 /// entire reason to exist: 1.5 × 2200 = 3300 su — out-seeing a tier-1 Sensor

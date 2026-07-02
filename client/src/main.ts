@@ -125,7 +125,7 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // own-ship panel can show this ship's fuel burn rate honestly. Movement burns
 // FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
 const FUEL_PER_MASS_DISTANCE = 1.0e-6;
-const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, scout: 80 };
+const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, corvette: 800, scout: 80 };
 const CARGO_MASS_PER_UNIT = 28;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
@@ -250,7 +250,7 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
-const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "scout" ? "Scout" : k);
+const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "scout" ? "Scout" : k);
 
 // Heading arrow + speed, computed in SCREEN space so it matches the map exactly.
 function headingCell(g: GhostView): string {
@@ -307,6 +307,9 @@ function ownBody(g: GhostView): string {
     `<div class="sp-line dim" style="margin-top:6px">Shared reserve across all your systems — what every ship draws on to move, not a tank on this one ship.</div>`,
   );
 
+  if (g.kind === "corvette") {
+    parts.push(`<div class="sp-sec">Role — Escort · Garrison</div><div class="sp-line">A dedicated <b>defender</b>: any raid contact on one of your convoys within its protect radius must fight THROUGH this ship first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.</div>`);
+  }
   if (g.kind === "scout") {
     const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
     parts.push(`<div class="sp-sec">Sensors</div><div class="sp-line">Projects a <b>×${mult}</b> sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses.</div>` +
@@ -607,10 +610,12 @@ function handleMapClick(sx: number, sy: number): void {
 
     const sel = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
     const haveOwn = !!sel && sel.own;
+    // Raiding is the raider's verb (mirrors the sim's CommitRaid gate).
+    const haveRaider = haveOwn && sel!.kind === "raider";
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
-      if (haveOwn && net) {
+      if (haveRaider && net) {
         // Direct your selected ship to raid the rival's TRUE position.
         net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
         state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
@@ -868,11 +873,11 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
 // rendered for systems you own (the View only sends build state to the owner).
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
-const SHIP_KEYS = new Set(["convoy", "raider", "scout"]);
+const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "scout"]);
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
-const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, scout: 1 };
+const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, corvette: 2, scout: 1 };
 
 function buildPanel(dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
@@ -953,7 +958,7 @@ function buildSystemTab(): void {
     if (el.dataset.build) {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
-      if (k === "convoy" || k === "raider" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
+      if (k === "convoy" || k === "raider" || k === "corvette" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
       else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat" || k === "refinery") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }

@@ -10,7 +10,7 @@ export interface Vec2 {
   y: number;
 }
 
-export type ShipKind = "convoy" | "raider" | "scout";
+export type ShipKind = "convoy" | "raider" | "corvette" | "scout";
 
 // A resource deposit on a system (static geology, public). Richer/more valuable
 // toward the frontier — the distance/value gradient (§4).
