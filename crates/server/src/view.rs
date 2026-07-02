@@ -403,6 +403,18 @@ pub fn filter_systems(
                         })
                 })
                 .flatten();
+            // Development slots (§buildings step 1): used = built tiers + this
+            // viewer's in-progress upgrade jobs here, so the readout matches what
+            // apply_build will actually accept next. Owner-only, like the tiers.
+            let slots_used = sys.dev_slots_built()
+                + build_queue
+                    .iter()
+                    .filter(|j| {
+                        j.system == sys.id
+                            && j.owner == viewer
+                            && matches!(j.what, sim::BuildKind::Upgrade { .. })
+                    })
+                    .count() as u32;
             SystemStateView {
                 id: sys.id,
                 owner,
@@ -413,6 +425,8 @@ pub fn filter_systems(
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
                 extractor_tier: if own { sys.extractor_tier } else { 0 },
+                slots_used: if own { slots_used } else { 0 },
+                slots_total: if own { sys.dev_slots() } else { 0 },
             }
         })
         .collect()
@@ -732,6 +746,13 @@ mod tests {
         // Development tier is owner-only too — the owner sees their own…
         assert_eq!(v10[0].extractor_tier, 2, "owner sees their own development tier");
         assert_eq!(v10[1].extractor_tier, 0, "a rival's tier must never leak (not even faster-than-light)");
+        // Development SLOTS follow the same owner-only rule (§buildings step 1):
+        // used counts built tiers (2) — the queued job at MINE is a SHIP, which
+        // holds no slot — and rivals see 0/0, never the budget or usage.
+        assert_eq!(v10[0].slots_used, 2, "owner sees slots used (built tiers; ships hold none)");
+        assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
+        assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
+        assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
         let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);
@@ -739,6 +760,7 @@ mod tests {
         // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
         assert_eq!(v25[1].extractor_tier, 0, "ownership visible, development tier still private");
+        assert_eq!((v25[1].slots_used, v25[1].slots_total), (0, 0), "ownership visible, slots still private");
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.

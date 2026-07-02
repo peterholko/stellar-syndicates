@@ -104,6 +104,19 @@ impl Timeline {
                     let name = system_name(world, *system);
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — Extractor tier {tier} (more output)."));
                 }
+                // A soft-rejected build (§buildings step 1) — owner-only, instant
+                // (your own administration): nothing was spent, the request just
+                // couldn't be hosted. Tells the player WHY so the fix is obvious.
+                EventPayload::BuildRejected { owner, system, what, reason } => {
+                    let name = system_name(world, *system);
+                    let text = match reason {
+                        sim::BuildRejectReason::NoSlot => format!(
+                            "Can't build {} at {name}: every development slot is used — systems must specialize.",
+                            build_label(*what)
+                        ),
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, text);
+                }
                 EventPayload::FuelShortfall { owner, needed, kind } => {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
                         format!("A {} was held — out of fuel (needed ~{:.0}). Stockpile fuel near your fleet.", kind.label(), needed));

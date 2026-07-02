@@ -52,8 +52,11 @@ export interface SystemStateView {
   stockpile: StockSlot[] | null;
   /// Owner-only in-progress build (§step1) — null for rivals (never leaks).
   build: BuildState | null;
-  /// Extractor upgrades built here (visible once the system is known).
+  /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
+  /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
+  slots_used: number;
+  slots_total: number;
 }
 
 // A buildable thing + its recipe (§step1), sent once in the galaxy.

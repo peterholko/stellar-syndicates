@@ -263,6 +263,13 @@ pub struct SystemStateView {
     /// Number of Extractor upgrades built here (visible to all once the system is
     /// known — it's part of the system's observable development, not private intel).
     pub extractor_tier: u32,
+    /// Development slots USED at this system (built tiers + in-progress upgrade
+    /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
+    pub slots_used: u32,
+    /// The system's development slot budget — owner-only; rivals always see 0.
+    /// (The budget derives from public geology, but exposing it only to the owner
+    /// keeps the whole slots readout on one fog rule.)
+    pub slots_total: u32,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within

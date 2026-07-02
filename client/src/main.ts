@@ -831,10 +831,23 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
 // each buildable option with its recipe cost + afford state (costs draw from THIS
 // system's stockpile), plus any in-progress build with an ETA. Fog-safe — only
 // rendered for systems you own (the View only sends build state to the owner).
+// Ship build keys — units, not developments: they never consume a development
+// slot (mirrors the sim's slot rule in world.rs apply_build).
+const SHIP_KEYS = new Set(["convoy", "raider"]);
+
 function buildPanel(dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
   if (!opts.length) return "";
-  const head = `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Build · develop</div>`;
+  // Development slots (§buildings step 1) — the scarcity that forces the
+  // Extractor-vs-Depot-vs-Shipyard choice. Owner-only fields (rivals see 0/0);
+  // this panel renders only for owned systems, so the readout is always real.
+  const slotsUsed = dyn?.slots_used ?? 0;
+  const slotsTotal = dyn?.slots_total ?? 0;
+  const slotsFull = slotsTotal > 0 && slotsUsed >= slotsTotal;
+  const slotsTag = slotsTotal > 0
+    ? ` <span class="sp-tier" title="each development (Extractor/Depot/Shipyard tier) uses one slot — ships don't">· slots ${slotsUsed}/${slotsTotal}</span>`
+    : "";
+  const head = `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Build · develop${slotsTag}</div>`;
   const building = dyn?.build ?? null;
   if (building) {
     const eta = Math.max(0, building.complete_time - state.simTime);
@@ -843,12 +856,22 @@ function buildPanel(dyn: SystemStateView | undefined): string {
   }
   const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const rows = opts.map((o) => {
+    const isDev = !SHIP_KEYS.has(o.key);
     const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+    const blocked = isDev && slotsFull; // a full system soft-rejects developments
+    const enabled = afford && !blocked;
+    const title = blocked ? "no free development slot — systems must specialize"
+      : afford ? "costs draw from this system's stockpile"
+        : "not enough resources stockpiled here";
     const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, 13)}${c.units}`).join(" ");
-    return `<button class="act build-opt" data-build="${o.key}" ${afford ? "" : "disabled"} title="${afford ? "costs draw from this system's stockpile" : "not enough resources stockpiled here"}">` +
-      `<span class="bo-name">${esc(o.label)}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
+    const gate = blocked ? `<span class="bo-gate">slots full</span>` : "";
+    return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${title}">` +
+      `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
   }).join("");
-  return head + `<div class="build-grid">${rows}</div>`;
+  const full = slotsFull
+    ? `<div class="mhint">${badge("warn", "slots full")} every development slot here is used — develop another system (specialize!).</div>`
+    : "";
+  return head + `<div class="build-grid">${rows}</div>` + full;
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
@@ -956,6 +979,9 @@ function updateSystemTab(): void {
     stat("Deposits", String(sys.deposits.length)),
     stat("Yield/s", yieldRate.toFixed(1)),
     stat("Stock", mine ? fmt(stockTotal) : "—"),
+    // Development slots (owner-only; §buildings step 1) — the specialization budget.
+    stat("Slots", mine ? `${dyn?.slots_used ?? 0}/${dyn?.slots_total ?? 0}` : "—",
+      mine && (dyn?.slots_total ?? 0) > 0 && (dyn?.slots_used ?? 0) >= (dyn?.slots_total ?? 0) ? "is-warn" : ""),
     stat("Claim", unclaimed ? `${fmt(sys.claim_cost)} Cr` : "—", unclaimed && !afford ? "is-negative" : ""),
   ]);
 

@@ -70,6 +70,27 @@ impl StarSystem {
     pub fn is_unclaimed(&self) -> bool {
         self.owner.is_none()
     }
+
+    /// This system's DEVELOPMENT SLOT budget (§buildings step 1) — how many
+    /// developments (Extractor/Depot/Shipyard tiers) it can hold in total. The
+    /// scarcity that forces specialization: you can't build everything everywhere.
+    ///
+    /// DERIVED from static geology (deposit count), not stored: deterministic,
+    /// identical for every player, and migration-free (old snapshots pick it up
+    /// automatically). 1 deposit → 3 slots … 3 deposits → 5 slots; a HOME system
+    /// (2 deposits) gets the standard 4. Tunable via the consts in `build.rs`.
+    pub fn dev_slots(&self) -> u32 {
+        (crate::build::DEV_SLOTS_BASE + (self.deposits.len() as u32).saturating_sub(1))
+            .min(crate::build::DEV_SLOTS_MAX)
+    }
+
+    /// Development slots already CONSUMED by completed tiers here. (In-progress
+    /// upgrade jobs also hold a slot; those live on the World's build queue —
+    /// see `World::dev_slots_pending` — so the full "used" count is
+    /// `dev_slots_built() + pending`.)
+    pub fn dev_slots_built(&self) -> u32 {
+        self.extractor_tier
+    }
 }
 
 /// One of the pre-generated home-anchor slots arranged around a ring. Assigned

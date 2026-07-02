@@ -82,3 +82,15 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
 /// Multiplier applied to every deposit's richness PER Extractor tier (compounding):
 /// `richness · MULT^tier`. The upgrade payoff. Tunable.
 pub const EXTRACTOR_RICHNESS_MULT: f64 = 1.5;
+
+// --- DEVELOPMENT SLOTS (§buildings step 1) ----------------------------------
+// Every development BUILT (each Extractor/Depot/Shipyard tier) consumes ONE slot
+// of the system's budget; ships are units, not developments, and consume none.
+// Scarcity is the point: maxing Extractors crowds out Depot/Shipyard, so systems
+// must SPECIALIZE ("this one's my extraction colony, THAT one's my shipyard").
+// The budget itself derives from geology — see `StarSystem::dev_slots`.
+
+/// Slot budget for a 1-deposit system; each extra deposit adds one slot.
+pub const DEV_SLOTS_BASE: u32 = 3;
+/// Hard ceiling on any system's slot budget (3-deposit frontier systems hit it).
+pub const DEV_SLOTS_MAX: u32 = 5;

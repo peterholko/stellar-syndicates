@@ -1043,11 +1043,23 @@ impl World {
         }
     }
 
+    /// Development slots HELD by in-progress upgrade jobs at `system` (each queued
+    /// Extractor/Depot/Shipyard tier reserves its slot while building, so you can't
+    /// over-commit a budget by queueing). Ships never hold slots.
+    pub fn dev_slots_pending(&self, system: EntityId) -> u32 {
+        self.build_queue
+            .iter()
+            .filter(|j| j.system == system && matches!(j.what, crate::build::BuildKind::Upgrade { .. }))
+            .count() as u32
+    }
+
     /// Validate + start a construction job (§step1 growth sink): the player must own
     /// the system and its stockpile must cover the WHOLE recipe (no partial debit —
-    /// a soft reject). Deducts the recipe NOW and enqueues a job that resolves at
-    /// `tick + build_ticks`. Determinism: pure, runs in command phase so the debit is
-    /// visible to this tick's accrual + standing orders.
+    /// a soft reject). A DEVELOPMENT additionally needs a free development slot
+    /// (§buildings step 1) — a full system soft-rejects with an owner-only notice,
+    /// forcing the specialization choice. Deducts the recipe NOW and enqueues a job
+    /// that resolves at `tick + build_ticks`. Determinism: pure, runs in command
+    /// phase so the debit is visible to this tick's accrual + standing orders.
     fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, what: crate::build::BuildKind, events: &mut Vec<Event>) {
         let recipe = crate::build::recipe_for(what);
         let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
@@ -1055,6 +1067,23 @@ impl World {
         };
         if sys.owner != Some(player_id) {
             return; // only the owner builds at their system
+        }
+        // Developments consume a SLOT of the system's budget (built tiers + jobs
+        // already in progress). No free slot → soft reject (no debit, no job), with
+        // an owner-only notice. Ships are units, not developments — never gated.
+        if matches!(what, crate::build::BuildKind::Upgrade { .. })
+            && sys.dev_slots_built() + self.dev_slots_pending(system_id) >= sys.dev_slots()
+        {
+            events.push(Event::new(
+                self.time,
+                EventPayload::BuildRejected {
+                    owner: player_id,
+                    system: system_id,
+                    what,
+                    reason: crate::event::BuildRejectReason::NoSlot,
+                },
+            ));
+            return;
         }
         let affordable = recipe
             .costs
@@ -2287,6 +2316,64 @@ mod tests {
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
         assert_eq!(sys.extractor_tier, 0, "can't upgrade a system you no longer own (resources already spent)");
+    }
+
+    // --- §buildings step 1 PART 1: development slots -------------------------
+
+    #[test]
+    fn dev_slot_exhaustion_soft_rejects_further_developments() {
+        let mut w = test_world();
+        let id = PlayerId(21);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 10_000.0)]);
+
+        // Fill every FREE slot (budget − whatever the home starts with, e.g. a
+        // seeded Shipyard) with Extractor developments — each enqueue holds a slot.
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let free = sys.dev_slots() - sys.dev_slots_built();
+        assert!(free >= 1, "the home must start with at least one free slot");
+        for _ in 0..free {
+            let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+            assert!(
+                ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
+                "a development starts while slots remain"
+            );
+        }
+
+        // One more: SOFT reject — no debit, no job, an owner-only NoSlot notice.
+        let ore_before = system_stock(&w, home, Commodity::Ore);
+        let jobs_before = w.build_queue.len();
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { owner, reason: crate::event::BuildRejectReason::NoSlot, .. } if owner == id
+            )),
+            "slot exhaustion notifies the owner"
+        );
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no build started");
+        assert_eq!(w.build_queue.len(), jobs_before, "no job enqueued");
+        let ore_after = system_stock(&w, home, Commodity::Ore);
+        assert!(ore_after > ore_before - 1.0, "nothing was debited (accrual aside)");
+
+        // Ships are UNITS, not developments — never slot-gated (only recipe-gated).
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
+            "a ship still builds at a slot-full system"
+        );
+    }
+
+    #[test]
+    fn dev_slot_budget_derives_from_geology() {
+        let w = test_world();
+        for sys in &w.systems {
+            let want = (crate::build::DEV_SLOTS_BASE + (sys.deposits.len() as u32).saturating_sub(1))
+                .min(crate::build::DEV_SLOTS_MAX);
+            assert_eq!(sys.dev_slots(), want);
+            assert!((3..=5).contains(&sys.dev_slots()), "budgets stay in the tunable 3–5 band");
+        }
     }
 
     #[test]

@@ -90,6 +90,14 @@ pub enum EventPayload {
     },
     /// A system development completed (e.g. an Extractor tier applied). Owner-only.
     SystemUpgraded { system: EntityId, owner: PlayerId, tier: u32 },
+    /// A build request was SOFT-REJECTED (no debit, no job — async-fair): the
+    /// system can't host it right now. Owner-only news; `reason` says why.
+    BuildRejected {
+        owner: PlayerId,
+        system: EntityId,
+        what: crate::build::BuildKind,
+        reason: BuildRejectReason,
+    },
     /// A dispatch was LIMITED because no owned system could cover its fuel cost
     /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
     /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").
@@ -181,6 +189,15 @@ impl RaidOutcome {
             RaidOutcome::BothSurvive | RaidOutcome::Escaped => (false, false),
         }
     }
+}
+
+/// Why a build was soft-rejected (§buildings step 1). Owner-only detail for the
+/// timeline notice; the request costs nothing (no debit, no job — async-fair).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum BuildRejectReason {
+    /// Every development slot at the system is used (built + in-progress).
+    NoSlot,
 }
 
 impl Event {
