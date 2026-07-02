@@ -125,7 +125,7 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // own-ship panel can show this ship's fuel burn rate honestly. Movement burns
 // FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
 const FUEL_PER_MASS_DISTANCE = 1.0e-6;
-const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200 };
+const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, scout: 80 };
 const CARGO_MASS_PER_UNIT = 28;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
@@ -250,7 +250,7 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
-const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k);
+const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "scout" ? "Scout" : k);
 
 // Heading arrow + speed, computed in SCREEN space so it matches the map exactly.
 function headingCell(g: GhostView): string {
@@ -307,6 +307,11 @@ function ownBody(g: GhostView): string {
     `<div class="sp-line dim" style="margin-top:6px">Shared reserve across all your systems — what every ship draws on to move, not a tank on this one ship.</div>`,
   );
 
+  if (g.kind === "scout") {
+    const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
+    parts.push(`<div class="sp-sec">Sensors</div><div class="sp-line">Projects a <b>×${mult}</b> sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses.</div>` +
+      `<div class="sp-line dim" style="margin-top:4px">No cargo, no weapons: if anything engages it, it dies. Cheap on purpose.</div>`);
+  }
   parts.push(`<div class="sp-sec">Actions</div>`);
   if (g.kind === "raider") {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
@@ -330,7 +335,11 @@ function rivalBody(g: GhostView): string {
       ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)} <span class="dim">— in sensor range</span></div>`
       : `<span class="dim">unknown — out of sensor range</span>`));
   } else {
-    parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">A raider runs silent — no route or cargo is observable. You see it only because it is within your sensor range right now.</div>`);
+    const what = g.kind === "scout" ? "scout" : "raider";
+    const hint = g.kind === "scout"
+      ? "A scout runs silent — someone is LOOKING at your space. It carries no cargo and no weapons."
+      : "A raider runs silent — no route or cargo is observable.";
+    parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">${hint} You see this ${what} only because it is within your sensor range right now.</div>`);
   }
   parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">${uiIcon("action-attack-raid", 12)} Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
   return parts.join("");
@@ -859,11 +868,11 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
 // rendered for systems you own (the View only sends build state to the owner).
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
-const SHIP_KEYS = new Set(["convoy", "raider"]);
+const SHIP_KEYS = new Set(["convoy", "raider", "scout"]);
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
-const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2 };
+const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, scout: 1 };
 
 function buildPanel(dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
@@ -944,7 +953,7 @@ function buildSystemTab(): void {
     if (el.dataset.build) {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
-      if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
+      if (k === "convoy" || k === "raider" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
       else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat" || k === "refinery") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }

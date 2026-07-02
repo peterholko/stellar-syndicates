@@ -98,6 +98,7 @@ const SHIP_ART_FACING = Math.PI / 2;
 // Tunable. They scale modestly with zoom (clamped) so they stay sensible.
 const SHIP_PX_CONVOY = 56;
 const SHIP_PX_RAIDER = 40;
+const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // Deep-zoom NATIVE-size ramp: the zoom ratio r (= scale / fitScale) at which
@@ -142,6 +143,7 @@ export class Renderer {
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
+  private texScout: Texture | null = null;
 
   // The schematic System View scene (its own camera). Presentation only.
   private systemScene = new SystemViewScene();
@@ -213,14 +215,16 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [station, convoy, raider] = await Promise.all([
+    const [station, convoy, raider, scout] = await Promise.all([
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
+      load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
     this.texStation = station;
     this.texConvoy = convoy;
     this.texRaider = raider;
+    this.texScout = scout;
     // The star-type icons (each independent; a missing one falls back to the dot).
     await Promise.all(
       STAR_TYPES.map(async (t) => {
@@ -624,7 +628,10 @@ export class Renderer {
     const baseR = state.galaxy.sensor_range;
     const sources: { x: number; y: number; r: number }[] = [{ ...state.commandCenter, r: baseR }];
     for (const gh of state.ghosts) {
-      if (gh.own) sources.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt, r: baseR });
+      // Each own ship projects its KIND's bubble — a scout an oversized one
+      // (scout_sensor_mult; mobile vision, mirroring the server's coverage).
+      const r = gh.kind === "scout" ? baseR * (state.galaxy.scout_sensor_mult ?? 1.5) : baseR;
+      if (gh.own) sources.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt, r });
     }
     // Standing array bubbles at OUR systems (sensor_tier is owner-only in the View).
     for (const dyn of state.systems) {
@@ -753,7 +760,7 @@ export class Renderer {
   /// Both kinds converge to the SAME native size at max zoom: up close the art's
   /// SHAPE distinguishes convoy vs raider, so identical native size is intended.
   private shipSizePx(kind: ShipKind, nativeW: number): number {
-    const base = kind === "convoy" ? SHIP_PX_CONVOY : SHIP_PX_RAIDER;
+    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : SHIP_PX_SCOUT;
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
     if (r <= SHIP_NATIVE_ZOOM_START) return indicator;
@@ -767,7 +774,7 @@ export class Renderer {
   /// clickable as they enlarge in the deep-zoom band. Falls back to a 256px native
   /// assumption before the texture loads. Consumed by main.ts's map hit-test.
   shipHitRadius(kind: ShipKind): number {
-    const tex = kind === "convoy" ? this.texConvoy : this.texRaider;
+    const tex = kind === "convoy" ? this.texConvoy : kind === "raider" ? this.texRaider : this.texScout;
     return this.shipSizePx(kind, tex ? tex.width : 256) / 2;
   }
 
@@ -838,7 +845,7 @@ export class Renderer {
     // crisp — with a higher floor so you never "lose" your fleet.
     const fade = Math.min(ghost.age / FADE_AGE_S, 1);
     const alpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
-    const tex = ghost.kind === "convoy" ? this.texConvoy : this.texRaider;
+    const tex = ghost.kind === "convoy" ? this.texConvoy : ghost.kind === "raider" ? this.texRaider : this.texScout;
     sp.body.clear();
     if (tex) {
       sp.sprite.visible = true;
@@ -899,6 +906,12 @@ export class Renderer {
       txt = `⚠ RAIDER  ${stale}`;
       col = COL_THREAT;
       lalpha = 0.95;
+    } else if (ghost.kind === "scout" && !own) {
+      // A detected rival scout: a contact worth knowing about (someone is
+      // LOOKING at you), but not an attack alarm — no pulsing threat ring.
+      txt = `SCOUT  ${stale}`;
+      col = COL_OTHER;
+      lalpha = 0.9;
     } else if (own) {
       // Own ships are light-delayed too now — always surface staleness so the fog
       // reads as "reporting from Xs ago," not a glitch. Convoys also show cargo.

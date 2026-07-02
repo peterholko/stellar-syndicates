@@ -10,7 +10,7 @@ export interface Vec2 {
   y: number;
 }
 
-export type ShipKind = "convoy" | "raider";
+export type ShipKind = "convoy" | "raider" | "scout";
 
 // A resource deposit on a system (static geology, public). Richer/more valuable
 // toward the frontier — the distance/value gradient (§4).
@@ -95,6 +95,9 @@ export interface GalaxyInfo {
   c: number; // speed of light, sim units / s
   sensor_range: number; // detection radius each of your assets projects
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
+  /// The sensor-bubble multiplier a SCOUT projects over the standard ship
+  /// bubble (§scout) — for the coverage rendering.
+  scout_sensor_mult: number;
   /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
   /// base + per_tier·(N−1) — for drawing our own arrays' coverage.
   sensor_array_base: number;

@@ -167,6 +167,8 @@ impl GameLoop {
                             raider_speed: sim::ShipKind::Raider.max_speed(),
                             // Array-bubble tunables so the client renders its own
                             // arrays' coverage (§buildings step 2b).
+                            // Scout bubble multiplier, for the client's coverage draw.
+                            scout_sensor_mult: sim::ship::SCOUT_SENSOR_MULT,
                             sensor_array_base: sim::build::SENSOR_ARRAY_BASE,
                             sensor_array_per_tier: sim::build::SENSOR_ARRAY_PER_TIER,
                             // Platform protection radius, for the owner's own
@@ -533,6 +535,7 @@ fn build_options() -> Vec<BuildOptionView> {
     [
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
+        ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
         ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
         ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
         ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),

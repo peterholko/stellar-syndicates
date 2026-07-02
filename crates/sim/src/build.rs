@@ -104,6 +104,9 @@ const HZ: u64 = TICK_HZ as u64;
 pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 35.0)], build_ticks: 12 * HZ };
 /// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
 pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 18.0), (Commodity::Fuel, 12.0)], build_ticks: 10 * HZ };
+/// Scout: cheap **Ore + Fuel** — the entry unit, buildable at the home turn one
+/// (cheap enough that a caught scout is an acceptable loss).
+pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 20.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
 /// Extractor (system development): bulk **Ore** — a structure that grows the system's output.
 pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0)], build_ticks: 18 * HZ };
 /// Depot (system development): light **Ore** — cheaper than an Extractor, so early
@@ -128,6 +131,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
         BuildKind::Ship { ship: ShipKind::Convoy } => &CONVOY_RECIPE,
         BuildKind::Ship { ship: ShipKind::Raider } => &RAIDER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Scout } => &SCOUT_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor } => &EXTRACTOR_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
@@ -194,12 +198,14 @@ pub fn sensor_array_radius(tier: u32) -> f64 {
 // --- SHIPYARD GATING (§buildings step 3) --------------------------------------
 
 /// The Shipyard tier a system needs to build each ship kind: the workhorse
-/// Convoy at tier 1, the advanced Raider only at tier 2 (military industry must
-/// be EARNED). Homes are seeded at tier 1, so convoys build turn one. Tunable.
+/// Convoy and the cheap Scout at tier 1, the advanced Raider only at tier 2
+/// (military industry must be EARNED). Homes are seeded at tier 1, so convoys
+/// AND scouts build turn one. Tunable.
 pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
     match kind {
         ShipKind::Convoy => 1,
         ShipKind::Raider => 2,
+        ShipKind::Scout => 1,
     }
 }
 

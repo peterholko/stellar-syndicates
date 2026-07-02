@@ -471,10 +471,18 @@ impl World {
                 .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)))
                 .map(|s| s.pos)
         };
-        // Nearest sensed hostile raider, ANY heading (the proactive-hunt target).
+        // Nearest sensed hostile DARK ship, ANY heading (the proactive-hunt
+        // target). EngageAny pickets hunt raiders AND scouts — a caught scout
+        // simply dies (cheap, acceptable losses). The force-ratio and
+        // threat-on-ward checks still count RAIDERS only: a scout has no combat
+        // strength and can't threaten a convoy.
         let nearest_hostile = |ppos: Vec2, owner: PlayerId| -> Option<EntityId> {
             snap.iter()
-                .filter(|s| s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos))
+                .filter(|s| {
+                    s.owner != owner
+                        && matches!(s.kind, ShipKind::Raider | ShipKind::Scout)
+                        && sensed(owner, ppos, s.pos)
+                })
                 .min_by(|a, b| {
                     ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id))
                 })
@@ -657,6 +665,9 @@ impl World {
         let (pt, pa, pb) = match target_kind {
             ShipKind::Convoy => RVC_PROBS,
             ShipKind::Raider => RVR_PROBS,
+            // Defensive only — scout engagements are resolved deterministically
+            // in resolve_raids (a scout always simply dies) before any roll.
+            ShipKind::Scout => (1.0, 0.0, 0.0),
         };
         let r = self.rng.next_f64();
         if r < pt {
@@ -839,6 +850,13 @@ impl World {
 
             let outcome = if escape {
                 RaidOutcome::Escaped
+            } else if t_kind == ShipKind::Scout {
+                // A scout has negligible combat strength: in ANY engagement it is
+                // simply destroyed (its defense was speed and darkness). No roll.
+                RaidOutcome::TargetDestroyed
+            } else if a_kind == ShipKind::Scout {
+                // …and a scout that somehow ATTACKS anything dies just the same.
+                RaidOutcome::AttackerDestroyed
             } else {
                 self.roll_battle(t_kind)
             };
@@ -3153,6 +3171,84 @@ mod tests {
             }
         }
         assert!(!held, "the move runs on refinery-produced fuel — no shortfall hold");
+    }
+
+    // --- §scout part 1: the Scout ship kind ------------------------------------
+
+    /// The cheap entry unit: a Scout builds at the HOME's tier-1 shipyard turn
+    /// one and spawns after its short build time.
+    #[test]
+    fn scout_builds_cheap_at_home_turn_one() {
+        let mut w = test_world();
+        let id = PlayerId(41);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Ore, 50.0)]); // fuel seed covers the 8 Fuel
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Scout }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "a tier-1 shipyard builds scouts");
+        let mut spawned = false;
+        for _ in 0..(crate::build::SCOUT_RECIPE.build_ticks + 3) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::ShipSpawned { kind: ShipKind::Scout, owner, .. } if owner == id) {
+                    spawned = true;
+                }
+            }
+        }
+        assert!(spawned, "the scout completes and spawns");
+        let scout = w.ships.values().find(|s| s.owner == id && s.kind == ShipKind::Scout).unwrap();
+        assert!(scout.accel() > ShipKind::Raider.thrust() / ShipKind::Raider.hull_mass(), "the dartiest ship flying");
+    }
+
+    /// A scout has NO combat strength: engaged as a TARGET it simply dies (no
+    /// roll — deterministic), and as a would-be ATTACKER it dies just the same.
+    /// Its defense is speed and darkness, never armor.
+    #[test]
+    fn scout_dies_in_any_engagement() {
+        // As target: a raider runs it down → scout destroyed, raider survives.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let sid = w.alloc_entity_id();
+        w.ships.insert(sid, Ship::new(sid, def, ShipKind::Scout, cc + Vec2::new(420.0, 0.0), ShipOrder::Idle, None));
+        {
+            let r = w.ships.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = ShipOrder::Idle;
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: sid }]);
+        let outcome = run_until_raid(&mut w, 60, |_| vec![]).expect("the intercept resolves");
+        assert_eq!(outcome, RaidOutcome::TargetDestroyed, "a caught scout simply dies");
+        assert!(!w.ships.contains_key(&sid), "scout gone");
+        assert!(w.ships.contains_key(&raider), "the raider is never at risk from a scout");
+
+        // As attacker: a scout committed against a convoy dies; the convoy is safe.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(3), PlayerId(4));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        {
+            let c = w.ships.get_mut(&convoy).unwrap();
+            c.pos = cc + Vec2::new(420.0, 0.0);
+            c.vel = Vec2::ZERO;
+            c.order = ShipOrder::Idle;
+        }
+        let sid = w.alloc_entity_id();
+        w.ships.insert(sid, Ship::new(sid, atk, ShipKind::Scout, cc + Vec2::new(120.0, 0.0), ShipOrder::Idle, None));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: sid, target_id: convoy }]);
+        let outcome = run_until_raid(&mut w, 60, |_| vec![]).expect("the contact resolves");
+        assert_eq!(outcome, RaidOutcome::AttackerDestroyed, "an attacking scout dies");
+        assert!(w.ships.contains_key(&convoy), "the convoy is untouched");
+        assert!(!w.ships.contains_key(&sid));
     }
 
     #[test]

@@ -216,6 +216,9 @@ pub struct GalaxyInfo {
     /// Raider cruise speed (sim units / s) — lets the client compute a CRUDE,
     /// drifting intercept estimate for a committed raid (rendered as a soft zone).
     pub raider_speed: f64,
+    /// The sensor-bubble multiplier a SCOUT projects over the standard ship
+    /// bubble (§scout) — for the client's coverage rendering.
+    pub scout_sensor_mult: f64,
     /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
     /// `base + per_tier · (N−1)` — lets the client draw its own arrays' coverage.
     pub sensor_array_base: f64,

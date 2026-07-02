@@ -215,13 +215,16 @@ impl PositionHistory {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
-                coverage.push((sample.pos, self.sensor_range));
+                // Each own ship projects its KIND's bubble — scouts an oversized
+                // one (`sensor_mult`, their whole point: mobile vision).
+                coverage.push((sample.pos, self.sensor_range * track.kind.sensor_mult()));
             }
-            // For a destroyed raider, decide visibility in the ghost's OWN retarded
-            // frame (the world as the arriving light shows it), not the `now` frame
-            // whose coverage already reflects the post-kill break-off.
+            // For a destroyed DARK ship (raider/scout), decide visibility in the
+            // ghost's OWN retarded frame (the world as the arriving light shows
+            // it), not the `now` frame whose coverage already reflects the
+            // post-kill break-off.
             let destroyed_detected = track.destroyed.is_some()
-                && track.kind == ShipKind::Raider
+                && !track.kind.broadcasts()
                 && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays);
             pre.push(Pre {
                 id: *id,
@@ -242,10 +245,11 @@ impl PositionHistory {
             // live raider/convoy uses the ordinary `now`-frame coverage.
             let detected = p.destroyed_detected || within_coverage(&coverage, p.sample.pos);
 
-            // A dark raider is present ONLY inside sensor coverage. (A player's
-            // own raider sits at the centre of its own sensor circle, so it is
-            // always present.) Omitted entirely otherwise — never sent-and-hidden.
-            if p.kind == ShipKind::Raider && !detected {
+            // A DARK ship (raider or scout — anything that doesn't broadcast) is
+            // present ONLY inside sensor coverage. (A player's own dark ship sits
+            // at the centre of its own sensor circle, so it is always present.)
+            // Omitted entirely otherwise — never sent-and-hidden.
+            if !p.kind.broadcasts() && !detected {
                 continue;
             }
 
@@ -338,7 +342,7 @@ impl PositionHistory {
                 continue;
             }
             if let Some(s) = sample_at(&track.samples, t_r)
-                && s.pos.distance(ghost_pos) <= self.sensor_range
+                && s.pos.distance(ghost_pos) <= self.sensor_range * track.kind.sensor_mult()
             {
                 return true;
             }
@@ -490,6 +494,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "shipyard",
@@ -996,6 +1001,53 @@ mod tests {
         let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
         assert!(convoy.cargo.is_some(), "cargo revealed at array range");
         assert!(seen.iter().any(|g| g.kind == ShipKind::Raider), "raider detected via the array");
+    }
+
+    /// A SCOUT (§scout) projects an OVERSIZED bubble (sensor_mult × range): a
+    /// dark rival raider that an ordinary ship at the same spot would miss is
+    /// detected by a scout there — mobile vision, the scout's whole point.
+    /// (Also proves rival convoy cargo reveals at scout range.)
+    #[test]
+    fn scout_bubble_out_sees_an_ordinary_ship() {
+        let cc = Vec2::new(0.0, 0.0);
+        // Contacts 5000 su out; own ship at 3600 → 1400 su from them: beyond the
+        // 1000 su ship bubble, inside the scout's 1.5× = 1500 su bubble.
+        let with_raider = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 5000.0, 0.0, RIVAL, ShipKind::Convoy),
+                at(3, 3600.0, 0.0, VIEWER, ShipKind::Raider),
+            ],
+            1000.0,
+        );
+        let v = with_raider.view_for(VIEWER, cc, 300.0, 60.0);
+        assert!(!v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "an ordinary ship at 1400 su misses the dark raider");
+
+        let with_scout = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 5000.0, 0.0, RIVAL, ShipKind::Convoy),
+                at(3, 3600.0, 0.0, VIEWER, ShipKind::Scout),
+            ],
+            1000.0,
+        );
+        let v = with_scout.view_for(VIEWER, cc, 300.0, 60.0);
+        assert!(v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "the scout's oversized bubble detects it");
+        let convoy = v.iter().find(|g| g.kind == ShipKind::Convoy && !g.own).unwrap();
+        assert!(convoy.cargo.is_some(), "…and reveals convoy cargo at scout range");
+    }
+
+    /// A rival SCOUT runs DARK exactly like a raider: omitted entirely outside
+    /// the viewer's coverage, a detected contact inside it. A spy that broadcast
+    /// would be useless — and a never-detected scout leaves no trace.
+    #[test]
+    fn rival_scout_is_dark_outside_coverage() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Scout)], 1000.0);
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert!(far.is_empty(), "a dark scout out of coverage must not appear at all");
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(near.len(), 1, "inside coverage it's a detected contact like any dark ship");
+        assert_eq!(near[0].kind, ShipKind::Scout);
     }
 
     /// A player's OWN raider sits at the centre of its own sensor circle, so it

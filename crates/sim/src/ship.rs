@@ -24,6 +24,13 @@ pub enum ShipKind {
     /// Fast, light interceptor. Cuts chords across open space to run convoys
     /// down.
     Raider,
+    /// The ACTIVE-INTEL ship (§scout): the lightest hull in the game — fastest
+    /// to accelerate, cheapest to fuel — with NO cargo capacity and negligible
+    /// combat strength (in any engagement it is simply destroyed; its defense is
+    /// speed and darkness, not armor). Runs DARK like a raider, projects an
+    /// oversized sensor bubble (`sensor_mult`), and near rival systems captures
+    /// timestamped intel snapshots of their fortifications.
+    Scout,
 }
 
 /// Mass added per unit of cargo carried. A fully-loaded convoy is meaningfully
@@ -46,29 +53,65 @@ impl ShipKind {
         match self {
             ShipKind::Convoy => 6750.0,
             ShipKind::Raider => 2200.0,
+            // Small engine, tiny hull: 1400/80 = 17.5 su/s² — the dartiest ship.
+            ShipKind::Scout => 1400.0,
         }
     }
 
     /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
     /// than raiders (here ~22×), which is what makes them ponderous — the
     /// acceleration asymmetry emerges from this, not from hand-set accel consts.
+    /// The scout is the LIGHTEST hull (mass drives both acceleration and the
+    /// fuel-∝-mass trip cost, so light = fast AND cheap to run).
     pub fn hull_mass(self) -> f64 {
         match self {
             ShipKind::Convoy => 4500.0,
             ShipKind::Raider => 200.0,
+            ShipKind::Scout => 80.0,
         }
     }
 
-    /// Cruise speed cap (sim units / s). Both stay well below `c` (= 300) so
+    /// Cruise speed cap (sim units / s). All stay well below `c` (= 300) so
     /// relativity is respected — nothing outruns its own light. Acceleration
     /// (above) ramps velocity up to this cap.
     pub fn max_speed(self) -> f64 {
         match self {
             ShipKind::Convoy => 48.0,
             ShipKind::Raider => 120.0,
+            ShipKind::Scout => 140.0, // the fastest thing flying — still < c/2
+        }
+    }
+
+    /// Whether this kind BROADCASTS under the Convention (visible galaxy-wide,
+    /// light-delayed). Convoys do; raiders and scouts run DARK — visible only
+    /// inside a rival's sensor coverage. One source of truth for the View's
+    /// gating (a broadcasting spy would be useless).
+    pub fn broadcasts(self) -> bool {
+        matches!(self, ShipKind::Convoy)
+    }
+
+    /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
+    /// projects into its owner's coverage union. The scout's whole point:
+    /// `SCOUT_SENSOR_MULT` × the standard bubble — mobile vision that out-sees
+    /// any other ship. Tunable.
+    pub fn sensor_mult(self) -> f64 {
+        match self {
+            ShipKind::Scout => SCOUT_SENSOR_MULT,
+            _ => 1.0,
         }
     }
 }
+
+/// The scout's sensor-bubble multiplier over the standard ship bubble (its
+/// entire reason to exist: 1.5 × 2200 = 3300 su — out-seeing a tier-1 Sensor
+/// Array). Tunable.
+pub const SCOUT_SENSOR_MULT: f64 = 1.5;
+
+/// Range (sim units) at which a SCOUT passing a RIVAL-owned system captures an
+/// intel snapshot of its fortifications (§scout part 2). ≈ the Defense
+/// Platform's protection radius — close enough to be engageable, so scouting a
+/// defended system is a risk. Tunable.
+pub const SCOUT_INTEL_RANGE: f64 = 1300.0;
 
 /// Seconds a patrolling ship waits at each waypoint before moving on.
 const PATROL_DWELL: f64 = 2.5;

@@ -248,6 +248,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
     match what {
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
@@ -262,6 +263,7 @@ fn kind_word(k: ShipKind) -> &'static str {
     match k {
         ShipKind::Convoy => "convoy",
         ShipKind::Raider => "raider",
+        ShipKind::Scout => "scout",
     }
 }
 
