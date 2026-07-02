@@ -87,6 +87,12 @@ pub enum ClientMsg {
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
 
+    /// Ask for a PROJECTED engagement estimate (§FLEETS Part 3): if `attacker`
+    /// (one of the player's fleets) raided `target`, what would the losses be?
+    /// Computed from the player's OWN view data only — exact where they have
+    /// sensor coverage, an honest typical-hull estimate where they don't.
+    EstimateEngagement { attacker: EntityId, target: EntityId },
+
     /// Merge one of the player's fleets INTO another (§FLEETS management v1). Both
     /// must be the player's, idle, and docked together at an owned system.
     MergeFleets { into: EntityId, from: EntityId },
@@ -180,6 +186,36 @@ pub struct RaidReport {
     pub attacker_losses: Vec<CompCount>,
     /// Per-kind ships the defender (target side) lost over the engagement.
     pub target_losses: Vec<CompCount>,
+}
+
+/// A PROJECTED engagement estimate (§FLEETS Part 3), computed by running the
+/// SAME shared Lanchester attrition forward on the observer's own view data. It
+/// is honest about staleness: `composition_age` is how old the target sighting
+/// is, `defenses_age` how old the scout snapshot of its fortifications is, and
+/// `target_known = false` means the target was OUT of sensor coverage so the
+/// projection assumed a typical warfleet of the estimated bucket size (never the
+/// true count). Deterministic; never touches authoritative state.
+#[derive(Debug, Clone, Serialize)]
+pub struct EngagementEstimate {
+    pub attacker: EntityId,
+    pub target: EntityId,
+    /// Projected per-kind losses on each side.
+    pub own_losses: Vec<CompCount>,
+    pub target_losses: Vec<CompCount>,
+    /// Projected survivors on each side.
+    pub own_survivors: Vec<CompCount>,
+    pub target_survivors: Vec<CompCount>,
+    /// True if the target's exact composition was known (in sensor coverage);
+    /// false if the projection used the bucket-midpoint typical-hull assumption.
+    pub target_known: bool,
+    /// The target's estimated-size bucket (always available).
+    pub target_count_class: CountClass,
+    /// Age of the target sighting the estimate is built on (seconds).
+    pub composition_age: f64,
+    /// Age of the scouted-defenses snapshot folded in, if any (seconds).
+    pub defenses_age: Option<f64>,
+    /// Scouted platform tiers folded into the target, if a snapshot covered it.
+    pub platform_tiers: Option<u32>,
 }
 
 /// Severity of a check-in timeline entry — drives the client's colour/icon.
@@ -516,6 +552,9 @@ pub enum ServerMsg {
         depart_time: f64,
         arrive_time: f64,
     },
+
+    /// A projected engagement estimate the player asked for (§FLEETS Part 3).
+    EngagementEstimate(EngagementEstimate),
 
     /// A protocol-level error (e.g. a malformed first message).
     Error { message: String },

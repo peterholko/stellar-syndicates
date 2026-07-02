@@ -338,6 +338,8 @@ export type ClientMsg =
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
+  // §FLEETS Part 3 — request a projected engagement estimate (read-only query).
+  | { type: "EstimateEngagement"; attacker: EntityId; target: EntityId }
   // §FLEETS management v1 — compose fleets at an owned system.
   | { type: "MergeFleets"; into: EntityId; from: EntityId }
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
@@ -368,6 +370,24 @@ export interface RaidReport {
   you: "attacker" | "defender";
   attacker_losses: CompCount[];
   target_losses: CompCount[];
+}
+
+// A projected engagement estimate (§FLEETS Part 3), computed server-side by
+// running the SAME Lanchester attrition forward on YOUR view data. Honest about
+// staleness: `target_known = false` means the target was out of sensor coverage,
+// so it assumed a typical warfleet of the bucket size (never the true count).
+export interface EngagementEstimate {
+  attacker: EntityId;
+  target: EntityId;
+  own_losses: CompCount[];
+  target_losses: CompCount[];
+  own_survivors: CompCount[];
+  target_survivors: CompCount[];
+  target_known: boolean;
+  target_count_class: CountClass;
+  composition_age: number; // age of the target sighting (s)
+  defenses_age: number | null; // age of the scouted-defenses snapshot (s), if any
+  platform_tiers: number | null;
 }
 
 // Server → client.
@@ -408,4 +428,5 @@ export type ServerMsg =
       depart_time: number;
       arrive_time: number;
     }
+  | ({ type: "EngagementEstimate" } & EngagementEstimate)
   | { type: "Error"; message: string };

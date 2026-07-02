@@ -698,6 +698,9 @@ function handleMapClick(sx: number, sy: number): void {
       if (haveRaider && net) {
         // Direct your selected ship to raid the rival's TRUE position.
         net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
+        // §FLEETS Part 3: ask for a projected engagement estimate to show at
+        // commit time (computed server-side from your own view data).
+        net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
         state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
         delete state.orders[sel!.id];
         updateShipPanel();
@@ -1265,6 +1268,30 @@ function addReport(r: import("./protocol").RaidReport): void {
   setTimeout(() => el.classList.add("fade"), 12000);
 }
 
+// §FLEETS Part 3: the commit-time STALE-INTEL battle calculator panel. Renders
+// the server's projection (computed from YOUR view data) into the report stream —
+// projected per-kind losses on both sides, honest about the age of every input
+// and about whether the target's makeup was known or a typical-hull estimate.
+function showEngagementEstimate(e: import("./protocol").EngagementEstimate): void {
+  const log = $("reports-log");
+  const fmt = (l: import("./protocol").CompCount[]): string =>
+    l.filter((c) => c.count > 0).map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") || "none";
+  const targetDesc = e.target_known
+    ? "their exact composition"
+    : `est. ${countClassLabel(e.target_count_class)} ships — <b>assuming typical hulls</b>`;
+  const ages: string[] = [`their composition: ${e.composition_age.toFixed(0)}s old`];
+  ages.push(e.defenses_age != null ? `defenses: scouted ${e.defenses_age.toFixed(0)}s ago` : `defenses: unknown`);
+  const el = document.createElement("div");
+  el.className = "report good";
+  el.innerHTML =
+    `<span class="ic">⟿</span> <b>Projected raid</b> — ${targetDesc}` +
+    `<div class="sp-line dim" style="margin-top:2px">You'd lose: ${esc(fmt(e.own_losses))} · They'd lose: ${esc(fmt(e.target_losses))}${e.platform_tiers != null ? ` · through a ${e.platform_tiers}-tier platform` : ""}</div>` +
+    `<div class="sp-line dim">${esc(ages.join(" · "))} — exact arithmetic on stale inputs</div>`;
+  log.prepend(el);
+  while (log.children.length > 6) log.removeChild(log.lastChild!);
+  setTimeout(() => el.classList.add("fade"), 15000);
+}
+
 // --- Hub Exchange (§9) — MARKET tab: a price board with observed-history
 // sparklines + honest staleness, and a buy/sell composer that surfaces the
 // buy(instant)/sell(raidable convoy, clears on arrival) asymmetry. Inspired by
@@ -1795,6 +1822,9 @@ function join(): void {
           delete state.raids[msg.report.attacker_ship];
           break;
         }
+        case "EngagementEstimate":
+          showEngagementEstimate(msg);
+          break;
         case "Timeline":
           state.timeline = msg.entries;
           // Latch the "while you were away" boundary from the FIRST digest of the

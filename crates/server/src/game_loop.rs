@@ -330,6 +330,24 @@ impl GameLoop {
                         self.pending.push(Command::SplitFleet { player_id, fleet_id, counts });
                     }
                 }
+                ClientMsg::EstimateEngagement { attacker, target } => {
+                    // A read-only QUERY (§FLEETS Part 3): compute the projection
+                    // from this player's OWN view and reply immediately. Touches
+                    // no authoritative state.
+                    if let Some(player_id) = self.sessions.player_of(conn_id)
+                        && let Some(corp) = self.world.players.get(&player_id)
+                    {
+                        let cc = corp.command_center;
+                        let c = self.world.config.c;
+                        let now = self.world.time;
+                        let arrays = self.world.array_sensor_sources(player_id);
+                        if let Some(est) = crate::estimate::estimate_engagement(
+                            &self.world, &self.history, player_id, cc, c, now, &arrays, attacker, target,
+                        ) {
+                            self.sessions.send_to_conn(conn_id, ServerMsg::EngagementEstimate(est));
+                        }
+                    }
+                }
                 // Join is handled at the WebSocket layer before the loop ever
                 // sees intents on this connection; ignore a stray re-join.
                 ClientMsg::Join { .. } => {

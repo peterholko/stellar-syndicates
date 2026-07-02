@@ -191,6 +191,25 @@ impl Forces {
     }
 }
 
+/// A "typical warfleet" of the estimated bucket size (§Part 3 stale-intel
+/// calculator): the bucket MIDPOINT split across the combatant kinds (an
+/// average-hull assumption). Used when the target is OUT of sensor coverage — the
+/// projection then assumes typical hulls, provably from the bucket midpoint,
+/// never the target's true composition (the fog-leak invariant).
+pub fn typical_forces(class: crate::ship::CountClass) -> Forces {
+    let n = class.midpoint();
+    let raiders = n.div_ceil(2);
+    let corvettes = n - raiders;
+    let mut comp = BTreeMap::new();
+    if raiders > 0 {
+        comp.insert(ShipKind::Raider, raiders);
+    }
+    if corvettes > 0 {
+        comp.insert(ShipKind::Corvette, corvettes);
+    }
+    Forces { comp, ..Default::default() }
+}
+
 /// One symmetric Lanchester attrition tick between two pooled sides. `rate` is
 /// the already-scaled per-tick fraction (`DMG_RATE`, times the raid-skirmish
 /// multiplier for a cargo raid). Each side deals `rate × attack_power` to the

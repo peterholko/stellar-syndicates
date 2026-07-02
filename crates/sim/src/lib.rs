@@ -31,7 +31,7 @@ pub mod world;
 
 pub use build::{BuildJob, BuildKind, SystemUpgrade};
 pub use cargo::{Cargo, Commodity};
-pub use combat::{attrition_tick, project_engagement, Forces, Losses};
+pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Losses};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{
