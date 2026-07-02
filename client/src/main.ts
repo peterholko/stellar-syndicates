@@ -811,20 +811,35 @@ const EXTRACTOR_RICHNESS_MULT = 1.5;
 function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const tier = dyn?.extractor_tier ?? 0;
-  const mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
+  let mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
+  // A FED Habitat multiplies the whole system's output on top of the Extractor
+  // (§buildings step 3a); unfed = suspended (shown, not applied). Owner-only.
+  const habTier = dyn?.habitat_tier ?? 0;
+  const habMult = state.galaxy?.habitat_output_mult ?? 1.25;
+  const habFed = !!dyn?.habitat_fed;
+  if (habTier > 0 && habFed) mult *= Math.pow(habMult, habTier);
   const rateOf = new Map<Commodity, number>();
   for (const d of sys.deposits) rateOf.set(d.resource, (rateOf.get(d.resource) ?? 0) + d.richness * mult);
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
   const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
-  return `<div class="deps-head" style="margin-top:8px">Stockpile · production${tierTag}</div>` +
+  const habTag = habTier > 0
+    ? (habFed
+      ? ` <span class="sp-tier" title="a fed Habitat boosts ALL output ×${habMult} per tier">· Habitat ×${habTier}</span>`
+      : ` <span class="sp-tier" style="color:var(--warn)" title="unfed — boost suspended until Provisions arrive (nothing is lost)">· Habitat UNFED</span>`)
+    : "";
+  // Standing upkeep line (the game's first continuous consumption).
+  const upkeep = habTier > 0
+    ? `<div class="mhint" style="margin-top:4px">Habitat upkeep: −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} provisions/s from this stockpile${habFed ? "" : ` — <span style="color:var(--warn)">UNFED: output boost suspended (nothing lost; resupply to restore)</span>`}.</div>`
+    : "";
+  return `<div class="deps-head" style="margin-top:8px">Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, 16)}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("");
+    }).join("") + upkeep;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
@@ -919,7 +934,7 @@ function buildSystemTab(): void {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
       if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-      else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
+      else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }
     switch (el.dataset.action) {
@@ -1008,10 +1023,15 @@ function updateSystemTab(): void {
     : "";
   // The system's DEVELOPMENTS at a glance (owner-only): what it has specialized
   // into, inside its slot budget.
+  // Habitat FED/UNFED tag rides next to its tier (owner-only; §buildings 3a).
+  const habTier = dyn?.habitat_tier ?? 0;
+  const habTag = habTier > 0
+    ? (dyn?.habitat_fed ? ` ${badge("positive", "fed")}` : ` ${badge("warn", "unfed")}`)
+    : "";
   const devs = mine
     ? `<div class="devs-row">` +
-      [["Extractor", dyn?.extractor_tier ?? 0], ["Depot", dyn?.depot_tier ?? 0], ["Shipyard", dyn?.shipyard_tier ?? 0], ["Sensor", dyn?.sensor_tier ?? 0], ["Defense", dyn?.defense_tier ?? 0]]
-        .map(([n, t]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}</span>`)
+      ([["Extractor", dyn?.extractor_tier ?? 0, ""], ["Depot", dyn?.depot_tier ?? 0, ""], ["Shipyard", dyn?.shipyard_tier ?? 0, ""], ["Sensor", dyn?.sensor_tier ?? 0, ""], ["Defense", dyn?.defense_tier ?? 0, ""], ["Habitat", habTier, habTag]] as [string, number, string][])
+        .map(([n, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}${tag}</span>`)
         .join(`<span class="dev-sep">·</span>`) +
       `</div>`
     : "";
@@ -1435,6 +1455,13 @@ function computeAttention(): Attn[] {
   for (const s of owned) {
     if (s.storage_cap > 0 && s.storage_used >= s.storage_cap) {
       items.push({ severity: "warn", text: `${systemName(s.id)}: storage FULL (${s.storage_used}/${s.storage_cap}) — production idling. Ship goods out or build a Depot.` });
+    }
+  }
+  // 0b. UNFED HABITAT (§buildings step 3a) — the boost is suspended right now;
+  //     a Provisions haul (or standing order) restores it. Owner-only fields.
+  for (const s of owned) {
+    if (s.habitat_tier >= 1 && !s.habitat_fed) {
+      items.push({ severity: "warn", text: `${systemName(s.id)}: Habitat UNFED — output boost suspended. Ship Provisions there (nothing is lost).` });
     }
   }
   // 1. Idle stockpile not covered by a standing order sourced there → automate it.

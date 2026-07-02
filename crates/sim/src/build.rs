@@ -50,6 +50,14 @@ pub enum SystemUpgrade {
     /// it can touch the convoy. Makes PLACE defensible — the fortress
     /// specialization, and the prerequisite for any future siege mechanics.
     DefensePlatform,
+    /// POPULATION (§buildings step 3a — the Travian-crop analogue): each tier
+    /// BOOSTS the system's total output ×`HABITAT_OUTPUT_MULT` but CONSUMES
+    /// Provisions continuously (`HABITAT_UPKEEP_PER_TIER`/s) from the system's
+    /// own stockpile — the game's first STANDING consumption. A shortfall makes
+    /// the habitat UNFED: the boost suspends (never destroys anything) until
+    /// food arrives again. Sustaining boosted frontier output becomes a supply
+    /// line rivals can raid.
+    Habitat,
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -104,6 +112,8 @@ pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 40.0)
 /// Defense Platform (system development): the priciest development yet —
 /// fortification is an INVESTMENT (**Ore + Alloys** per tier).
 pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
+/// Habitat (system development): **Ore + Provisions** — food to found a colony.
+pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
@@ -114,8 +124,24 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray } => &SENSOR_ARRAY_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform } => &DEFENSE_PLATFORM_RECIPE,
+        BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat } => &HABITAT_RECIPE,
     }
 }
+
+// --- HABITAT (§buildings step 3a) ----------------------------------------------
+
+/// Output multiplier per FED Habitat tier, applied to the system's TOTAL
+/// production (compounding, and stacking multiplicatively with the Extractor's
+/// per-deposit multiplier). Deliberately smaller than the Extractor's 1.5 — the
+/// Habitat's edge is that it boosts ALL deposits, including what Extractors
+/// already multiplied. Tunable.
+pub const HABITAT_OUTPUT_MULT: f64 = 1.25;
+/// Provisions consumed per second PER Habitat tier, drawn from the system's own
+/// stockpile each tick. Sized so the HOME's renewable Provisions deposit
+/// (0.45 × [0.85, 1.15] ≈ 0.38–0.52/s, un-boosted worst case 0.3825/s)
+/// comfortably feeds TWO tiers (2 × 0.15 = 0.30/s) even before the boost — the
+/// natural first Habitats are self-sustaining, never a starving home. Tunable.
+pub const HABITAT_UPKEEP_PER_TIER: f64 = 0.15;
 
 // --- DEFENSE PLATFORM (§buildings step 2c) ------------------------------------
 

@@ -289,7 +289,7 @@ impl World {
 
         // 5b. Accrue production at every claimed system (§5.1 continuous progress)
         //     — happens whether or not the owner is logged in.
-        self.accrue_production();
+        self.accrue_production(&mut events);
 
         // 5b'. Resolve construction jobs whose completion tick has arrived (§step1
         //      growth sink): spawn built ships / apply system upgrades. Server-driven
@@ -1354,6 +1354,13 @@ impl World {
                                 sys.defense_tier += 1;
                                 sys.defense_tier
                             }
+                            crate::build::SystemUpgrade::Habitat => {
+                                sys.habitat_tier += 1;
+                                // A fresh habitat is presumed FED, so its FIRST
+                                // shortfall emits the unfed transition notice.
+                                sys.habitat_fed = true;
+                                sys.habitat_tier
+                            }
                         };
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
                     }
@@ -1540,18 +1547,51 @@ impl World {
     /// grandfathered over-cap stockpile is untouched — the cap blocks NEW inflow
     /// only). Reserves are drawn down only by what actually accrues, so a full
     /// depot never wastes a finite deposit.
-    fn accrue_production(&mut self) {
+    ///
+    /// HABITAT (§buildings step 3a) — ordering rule, per owned system each tick:
+    /// UPKEEP DRAWS FIRST (before accrual), so a colony must hold a standing food
+    /// stock — this tick's fresh production replenishes it for the next tick.
+    /// The draw is ATOMIC per tick (all `tier · UPKEEP · DT` Provisions or
+    /// nothing — a shortfall never partially eats food): covered → FED, the
+    /// system's whole output is boosted ×`HABITAT_OUTPUT_MULT^tier` (stacking
+    /// multiplicatively on the Extractor's per-deposit multiplier); short →
+    /// UNFED, the boost is suspended and NOTHING else happens (no destruction,
+    /// no tier loss — async-fair). Transitions emit owner-only notices.
+    fn accrue_production(&mut self, events: &mut Vec<Event>) {
         for sys in &mut self.systems {
-            if sys.owner.is_none() {
+            let Some(owner) = sys.owner else {
                 continue;
+            };
+            // --- Habitat upkeep (before accrual; atomic per tick) ---
+            if sys.habitat_tier >= 1 {
+                let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER * sys.habitat_tier as f64 * DT;
+                let have = sys.stockpile.get(&crate::cargo::Commodity::Provisions).copied().unwrap_or(0.0);
+                let fed = have + 1e-12 >= upkeep;
+                if fed {
+                    *sys.stockpile.entry(crate::cargo::Commodity::Provisions).or_insert(0.0) -= upkeep;
+                }
+                if fed != sys.habitat_fed {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::HabitatSupplyChanged { owner, system: sys.id, fed },
+                    ));
+                }
+                sys.habitat_fed = fed;
+            } else {
+                sys.habitat_fed = false; // no habitat — flag is meaningless/off
             }
+
             let mut headroom = sys.storage_headroom();
             if headroom <= 0.0 {
                 continue; // full — production idles (nothing destroyed, nothing drawn)
             }
             // Extractor upgrades (§step1 structure sink) multiply every deposit's
-            // output: richness · MULT^tier (compounding, deterministic).
-            let mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
+            // output: richness · MULT^tier; a FED Habitat multiplies the system's
+            // ENTIRE output on top (compounding, deterministic).
+            let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
+            if sys.habitat_tier >= 1 && sys.habitat_fed {
+                mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.habitat_tier as i32);
+            }
             for dep in &mut sys.deposits {
                 let mut amount = (dep.richness * mult * DT).min(headroom);
                 if let Some(reserves) = dep.reserves.as_mut() {
@@ -2834,6 +2874,8 @@ mod tests {
             let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             sys.extractor_tier = 2;
             sys.depot_tier = 1;
+            sys.habitat_tier = 1;
+            sys.habitat_fed = true;
             sys.stockpile.insert(Commodity::Ore, 123.5);
         }
         let json = serde_json::to_string(&w).unwrap();
@@ -2841,6 +2883,7 @@ mod tests {
         let a = w.systems.iter().find(|s| s.id == home).unwrap();
         let b = w2.systems.iter().find(|s| s.id == home).unwrap();
         assert_eq!((a.extractor_tier, a.depot_tier, a.shipyard_tier), (b.extractor_tier, b.depot_tier, b.shipyard_tier));
+        assert_eq!((a.habitat_tier, a.habitat_fed), (b.habitat_tier, b.habitat_fed), "habitat tier + fed state round-trip");
         assert_eq!(a.dev_slots(), b.dev_slots(), "derived slot budget identical after reload");
         assert!((a.storage_cap() - b.storage_cap()).abs() < 1e-12);
         // Stockpiles match commodity-for-commodity (tolerating the last-ulp
@@ -2849,6 +2892,122 @@ mod tests {
         for (c, v) in &a.stockpile {
             assert!((v - b.stockpile[c]).abs() < 1e-9, "{c:?} round-trips");
         }
+    }
+
+    // --- §buildings step 3a: Habitat ------------------------------------------
+
+    fn deposit_rate(w: &World, sys: EntityId, c: Commodity) -> f64 {
+        w.systems
+            .iter()
+            .find(|s| s.id == sys)
+            .unwrap()
+            .deposits
+            .iter()
+            .filter(|d| d.resource == c)
+            .map(|d| d.richness)
+            .sum()
+    }
+
+    /// A FED Habitat boosts the whole system's output ×MULT^tier and draws its
+    /// Provisions upkeep from the system's own stockpile — measured exactly over
+    /// one tick (upkeep-BEFORE-accrual ordering).
+    #[test]
+    fn fed_habitat_boosts_output_and_draws_upkeep() {
+        let mut w = test_world();
+        let id = PlayerId(31);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().habitat_tier = 1;
+        seed_stock(&mut w, home, &[(Commodity::Provisions, 50.0)]);
+
+        let ore_rate = deposit_rate(&w, home, Commodity::Ore);
+        let prov_rate = deposit_rate(&w, home, Commodity::Provisions);
+        let ore0 = system_stock(&w, home, Commodity::Ore);
+        let prov0 = system_stock(&w, home, Commodity::Provisions);
+        w.step(&[]);
+        let dt = crate::config::DT;
+        let mult = crate::build::HABITAT_OUTPUT_MULT;
+        let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER;
+
+        let ore_gain = system_stock(&w, home, Commodity::Ore) - ore0;
+        assert!((ore_gain - ore_rate * mult * dt).abs() < 1e-9, "every deposit is boosted ×{mult} (got {ore_gain})");
+        let prov_delta = system_stock(&w, home, Commodity::Provisions) - prov0;
+        let expect = prov_rate * mult * dt - upkeep * dt;
+        assert!((prov_delta - expect).abs() < 1e-9, "provisions = boosted accrual − upkeep (got {prov_delta}, want {expect})");
+        assert!(w.systems.iter().find(|s| s.id == home).unwrap().habitat_fed, "covered upkeep = FED");
+    }
+
+    /// UNFED merely SUSPENDS the boost: no destruction, no tier loss, and the
+    /// habitat recovers the tick food is available again (transition notices
+    /// both ways). Uses an ore-only system so geology can't self-feed it.
+    #[test]
+    fn unfed_habitat_suspends_boost_and_recovers() {
+        let mut w = test_world();
+        let id = PlayerId(32);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // A claimed system with ONLY an Ore deposit + a habitat and NO food.
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.habitat_tier = 1;
+        sys.habitat_fed = true; // as a fresh build leaves it (presumed fed)
+        sys.deposits = vec![crate::galaxy::Deposit {
+            resource: Commodity::Ore,
+            richness: 1.0,
+            reserves: None,
+            accessibility: 0.5,
+        }];
+        let sid = sys.id;
+
+        // Tick 1: no Provisions → UNFED (notice), output UN-boosted, tier intact.
+        let ore0 = system_stock(&w, sid, Commodity::Ore);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::HabitatSupplyChanged { system, fed: false, .. } if system == sid)),
+            "the owner is told the habitat went unfed"
+        );
+        let dt = crate::config::DT;
+        let gain = system_stock(&w, sid, Commodity::Ore) - ore0;
+        assert!((gain - 1.0 * dt).abs() < 1e-9, "unfed = plain un-boosted output (got {gain})");
+        let s = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert_eq!(s.habitat_tier, 1, "nothing is destroyed, no tier lost");
+        assert!(!s.habitat_fed);
+
+        // Resupply (a hauled delivery) → FED again next tick, boost restored.
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 10.0)]);
+        let ore1 = system_stock(&w, sid, Commodity::Ore);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::HabitatSupplyChanged { system, fed: true, .. } if system == sid)),
+            "recovery is announced"
+        );
+        let gain = system_stock(&w, sid, Commodity::Ore) - ore1;
+        let mult = crate::build::HABITAT_OUTPUT_MULT;
+        assert!((gain - 1.0 * mult * dt).abs() < 1e-9, "boost restored once fed (got {gain})");
+    }
+
+    /// BALANCE SANITY: the home's renewable Provisions output feeds TWO Habitat
+    /// tiers from a standing start — the natural first Habitats are
+    /// self-sustaining, never a starving home. (Worst-case home provisions
+    /// richness 0.3825/s vs 2 × 0.15 = 0.30/s upkeep.)
+    #[test]
+    fn home_two_tier_habitat_is_self_sufficient() {
+        let mut w = test_world();
+        let id = PlayerId(33);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().habitat_tier = 2;
+        // From ZERO stored food: tick 1 runs unfed, geology replenishes, then the
+        // colony feeds itself indefinitely with a growing surplus.
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let s = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert!(s.habitat_fed, "a 2-tier home habitat sustains itself on home geology");
+        assert!(
+            system_stock(&w, home, Commodity::Provisions) > 1.0,
+            "…with a growing food surplus, not a knife-edge"
+        );
     }
 
     #[test]

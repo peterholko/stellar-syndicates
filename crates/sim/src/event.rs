@@ -105,6 +105,12 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         reason: BuildRejectReason,
     },
+    /// A Habitat's supply state flipped (§buildings step 3a). OWNER-ONLY news:
+    /// `fed = false` means this tick's Provisions upkeep couldn't be covered, so
+    /// the output boost is SUSPENDED (nothing destroyed, no tier lost — it
+    /// recovers the tick food is available again); `fed = true` is the recovery.
+    /// Emitted only on TRANSITIONS, never per-tick (no spam).
+    HabitatSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
     /// A Defense Platform engaged a hostile raider attacking one of the owner's
     /// convoys inside its protection radius (§buildings step 2c). OWNER-ONLY
     /// detail (tiers lost, result) — the ATTACKER learns only the standard

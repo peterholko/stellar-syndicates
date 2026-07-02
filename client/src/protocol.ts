@@ -65,6 +65,11 @@ export interface SystemStateView {
   /// Defense Platform tiers standing here (§buildings step 2c) — owner-only;
   /// rivals see 0 (a platform reveals itself only via engagement outcomes).
   defense_tier: number;
+  /// Habitat tiers here (§buildings step 3a) — owner-only; rivals see 0.
+  habitat_tier: number;
+  /// Whether the Habitat's Provisions upkeep is covered — owner-only; rivals
+  /// always see false. UNFED = boost suspended (nothing destroyed).
+  habitat_fed: boolean;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
   slots_used: number;
   slots_total: number;
@@ -95,6 +100,10 @@ export interface GalaxyInfo {
   /// Defense Platform protection radius (§buildings step 2c) — for the subtle
   /// ring on our OWN defended systems (owner-only by construction).
   defense_platform_radius: number;
+  /// Habitat tunables (§buildings step 3a): output ×mult^tier when fed; upkeep
+  /// per_tier·tier Provisions/s — for the owner-only readout.
+  habitat_output_mult: number;
+  habitat_upkeep_per_tier: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -258,7 +267,7 @@ export type ClientMsg =
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" }
   | { type: "Ping" };
 
 export type RaidOutcome =

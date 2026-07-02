@@ -89,6 +89,19 @@ pub struct StarSystem {
     /// through engagement outcomes (delayed battle reports).
     #[serde(default)]
     pub defense_tier: u32,
+    /// Number of Habitat tiers here (§buildings step 3a). When FED, boosts the
+    /// system's total output ×`HABITAT_OUTPUT_MULT^tier`; consumes
+    /// `HABITAT_UPKEEP_PER_TIER`/s of Provisions from this stockpile. Owner-only.
+    #[serde(default)]
+    pub habitat_tier: u32,
+    /// Whether the Habitat's upkeep was covered last tick (§buildings step 3a).
+    /// UNFED merely SUSPENDS the boost — nothing is destroyed, no tier is lost;
+    /// it recovers the tick food is available again (async-fair: an offline
+    /// player's colony underperforms, it never starves away). Recomputed every
+    /// tick for owned systems; owner-only in the View. `default` (false) is
+    /// harmless on old snapshots — corrected on the first tick.
+    #[serde(default)]
+    pub habitat_fed: bool,
 }
 
 impl StarSystem {
@@ -115,7 +128,12 @@ impl StarSystem {
     /// see `World::dev_slots_pending` — so the full "used" count is
     /// `dev_slots_built() + pending`.)
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier + self.depot_tier + self.shipyard_tier + self.sensor_tier + self.defense_tier
+        self.extractor_tier
+            + self.depot_tier
+            + self.shipyard_tier
+            + self.sensor_tier
+            + self.defense_tier
+            + self.habitat_tier
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
@@ -216,6 +234,8 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             shipyard_tier: 0, // frontier systems must EARN their shipyards
             sensor_tier: 0,
             defense_tier: 0,
+            habitat_tier: 0,
+            habitat_fed: false,
         });
     }
     systems
@@ -329,6 +349,8 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
         sensor_tier: 0,
         defense_tier: 0,
+        habitat_tier: 0,
+        habitat_fed: false,
     }
 }
 

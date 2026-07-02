@@ -172,6 +172,10 @@ impl GameLoop {
                             // Platform protection radius, for the owner's own
                             // defended-system ring (§buildings step 2c).
                             defense_platform_radius: sim::build::DEFENSE_PLATFORM_RADIUS,
+                            // Habitat tunables, for the owner-only boost/upkeep
+                            // readout (§buildings step 3a).
+                            habitat_output_mult: sim::build::HABITAT_OUTPUT_MULT,
+                            habitat_upkeep_per_tier: sim::build::HABITAT_UPKEEP_PER_TIER,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -531,6 +535,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
         ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
         ("defense_platform", "Defense Platform", BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform }),
+        ("habitat", "Habitat", BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat }),
     ]
     .into_iter()
     .map(|(key, label, what)| {

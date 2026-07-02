@@ -223,6 +223,10 @@ pub struct GalaxyInfo {
     /// Defense Platform protection radius (§buildings step 2c) — lets the client
     /// draw a subtle ring on the OWNER's own defended systems.
     pub defense_platform_radius: f64,
+    /// Habitat tunables (§buildings step 3a): output ×`mult^tier` when fed;
+    /// upkeep `per_tier · tier` Provisions/s — for the owner-only readout.
+    pub habitat_output_mult: f64,
+    pub habitat_upkeep_per_tier: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -282,6 +286,11 @@ pub struct SystemStateView {
     /// owner-only. A rival learns a platform exists only through engagement
     /// outcomes (delayed battle reports), never through the View.
     pub defense_tier: u32,
+    /// Number of Habitat tiers here (§buildings step 3a) — owner-only.
+    pub habitat_tier: u32,
+    /// Whether the Habitat's Provisions upkeep is currently covered — owner-only
+    /// (rivals always see false). UNFED = the output boost is suspended.
+    pub habitat_fed: bool,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,

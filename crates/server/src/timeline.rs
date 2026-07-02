@@ -108,6 +108,7 @@ impl Timeline {
                         sim::SystemUpgrade::Shipyard => format!("Shipyard tier {tier} (builds ships)"),
                         sim::SystemUpgrade::SensorArray => format!("Sensor Array tier {tier} (standing vision)"),
                         sim::SystemUpgrade::DefensePlatform => format!("Defense Platform tier {tier} (static defense)"),
+                        sim::SystemUpgrade::Habitat => format!("Habitat tier {tier} (boosts output; consumes Provisions)"),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
@@ -127,6 +128,18 @@ impl Timeline {
                         ),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
+                }
+                // A Habitat's supply state flipped (§buildings step 3a) — OWNER-ONLY,
+                // on the owner's own clock (own-economy precedent, like stockpiles
+                // and FuelShortfall). Transitions only, so it never spams.
+                EventPayload::HabitatSupplyChanged { owner, system, fed } => {
+                    let name = system_name(world, *system);
+                    let (sev, text) = if *fed {
+                        (TimelineSeverity::Good, format!("Habitat at {name} is fed again — output boost restored."))
+                    } else {
+                        (TimelineSeverity::Warn, format!("Habitat at {name} is UNFED — output boost suspended. Ship Provisions there (nothing is lost)."))
+                    };
+                    self.push(*owner, e.time, sev, text);
                 }
                 // A Defense Platform fought (§buildings step 2c) — OWNER-ONLY
                 // detail (tiers lost / result), light-delayed from the battle
@@ -239,6 +252,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "a Sensor Array",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "a Defense Platform",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "a Habitat",
     }
 }
 
