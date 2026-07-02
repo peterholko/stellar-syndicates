@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
+import { formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { SystemBodyDetail } from "./systemview";
 
@@ -955,7 +955,23 @@ function buildSystemTab(): void {
         break;
       }
       case "claim": net.send({ type: "ClaimSystem", system_id: sid }); break;
-      case "ship": net.send({ type: "ShipProduction", system_id: sid }); break;
+      case "ship": {
+        // Immediate, honest feedback: list what THIS click dispatches (the same
+        // non-fuel whole-units rule the sim applies), instead of silence.
+        const manifest = shippableStock(state.systems.find((s) => s.id === sid));
+        if (!manifest.length) {
+          readout().innerHTML =
+            `<b>Nothing to ship</b> — Fuel is retained as this system's operating reserve ` +
+            `(sell it via the <b>Market</b>); other goods ship in whole units once produced.`;
+          break; // save the round-trip: the sim would dispatch nothing anyway
+        }
+        net.send({ type: "ShipProduction", system_id: sid });
+        readout().innerHTML =
+          `Shipping <b>${manifest.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ")}</b> → hub — ` +
+          `one raidable convoy per commodity, selling on arrival. ` +
+          `<span class="dim">Fuel stays as the reserve; a fuel-short convoy is held (see the Log).</span>`;
+        break;
+      }
       case "standing": {
         openRail("logistics");
         updateStandingPanel();
@@ -966,6 +982,15 @@ function buildSystemTab(): void {
       case "market": openMarket(); break;
     }
   });
+}
+
+// What "Ship production → hub" will ACTUALLY dispatch: the system's NON-FUEL
+// stock in whole units. MIRRORS the sim's apply_ship_production rule — Fuel is
+// retained as the system's operating reserve (it powers movement; sell it via
+// the Market), so it must neither light the button nor be promised in feedback.
+// The View's stockpile is already owner-only whole units, so this is exact.
+function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
+  return (dyn?.stockpile ?? []).filter((s) => s.commodity !== "fuel" && s.units >= 1);
 }
 
 function updateSystemTab(): void {
@@ -1059,7 +1084,14 @@ function updateSystemTab(): void {
     actions = `<button class="act act--primary" data-action="claim" ${afford ? "" : "disabled"}>` +
       `${uiIcon("action-claim-system", 16)} ${afford ? "Claim system" : "Can't afford claim"}</button>`;
   } else if (mine) {
-    actions = `<button class="act" data-action="ship" ${stockTotal > 0 ? "" : "disabled"}>${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
+    // Gate "Ship → hub" on what the sim will ACTUALLY dispatch (non-fuel whole
+    // units), not the raw stock total — the home's Fuel reserve used to keep
+    // this button lit while a click shipped nothing.
+    const canShip = shippableStock(dyn).length > 0;
+    const shipTitle = canShip
+      ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)"
+      : "nothing shippable — Fuel is retained as the operating reserve (sell it via the Market); other goods ship in whole units";
+    actions = `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${shipTitle}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
       `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
       `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button>`;
   } else {
