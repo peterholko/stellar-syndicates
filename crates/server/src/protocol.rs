@@ -220,6 +220,9 @@ pub struct GalaxyInfo {
     /// `base + per_tier · (N−1)` — lets the client draw its own arrays' coverage.
     pub sensor_array_base: f64,
     pub sensor_array_per_tier: f64,
+    /// Defense Platform protection radius (§buildings step 2c) — lets the client
+    /// draw a subtle ring on the OWNER's own defended systems.
+    pub defense_platform_radius: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -275,6 +278,10 @@ pub struct SystemStateView {
     /// Number of Sensor Array upgrades built here (§buildings step 2b) —
     /// owner-only. Projects a standing sensor bubble for the owner.
     pub sensor_tier: u32,
+    /// Number of Defense Platform tiers standing here (§buildings step 2c) —
+    /// owner-only. A rival learns a platform exists only through engagement
+    /// outcomes (delayed battle reports), never through the View.
+    pub defense_tier: u32,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,

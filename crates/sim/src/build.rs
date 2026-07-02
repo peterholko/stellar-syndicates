@@ -43,6 +43,13 @@ pub enum SystemUpgrade {
     /// on-identity building in a game about information. Feeds the SAME
     /// coverage model as ship bubbles (detection, cargo reveal, pickets, View).
     SensorArray,
+    /// STATIC system defense (§buildings step 2c): within
+    /// `DEFENSE_PLATFORM_RADIUS` of the system, a hostile raider committing on
+    /// one of the owner's convoys must fight THROUGH the platform (tier =
+    /// stationary defender units, resolved by the existing seeded battle) before
+    /// it can touch the convoy. Makes PLACE defensible — the fortress
+    /// specialization, and the prerequisite for any future siege mechanics.
+    DefensePlatform,
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -94,6 +101,9 @@ pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (C
 /// Sensor Array (system development): **Ore + Alloys** — advanced intel
 /// infrastructure stays tied to frontier material.
 pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 40.0), (Commodity::Alloys, 15.0)], build_ticks: 18 * HZ };
+/// Defense Platform (system development): the priciest development yet —
+/// fortification is an INVESTMENT (**Ore + Alloys** per tier).
+pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
@@ -103,8 +113,18 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray } => &SENSOR_ARRAY_RECIPE,
+        BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform } => &DEFENSE_PLATFORM_RECIPE,
     }
 }
+
+// --- DEFENSE PLATFORM (§buildings step 2c) ------------------------------------
+
+/// The protection radius a Defense Platform projects around its system (~60% of
+/// a sensor bubble). The platform "senses" exactly its own radius — a raid
+/// CONTACT occurring inside it is met by the platform; nothing outside it is
+/// affected. Simple, deterministic, and fog-clean (the contact is physically
+/// there). Tunable.
+pub const DEFENSE_PLATFORM_RADIUS: f64 = 1300.0;
 
 // --- SENSOR ARRAY (§buildings step 2b) ----------------------------------------
 

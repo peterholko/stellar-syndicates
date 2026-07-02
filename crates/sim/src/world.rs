@@ -670,6 +670,94 @@ impl World {
         }
     }
 
+    /// Run a DEFENSE PLATFORM's engagement against a raider attacking `defender`'s
+    /// convoy at `contact` (§buildings step 2c), if a defended system covers it.
+    ///
+    /// Picks the NEAREST covering system owned by the defender with a platform
+    /// (`(distance, id)` tiebreak — deterministic; one platform engages per
+    /// contact). The raider then fights the platform's `tier` stationary units in
+    /// sequential SEEDED duels on the existing raider-vs-raider table:
+    ///   * unit destroyed  → the platform LOSES A TIER (damage; the slot frees
+    ///     up) and the raider proceeds to the next unit;
+    ///   * raider destroyed / mutual kill → the raid is STOPPED;
+    ///   * stand-off (both survive) → the raider is DRIVEN OFF — stopped, and
+    ///     the platform holds that duel undamaged.
+    ///
+    /// Defeating EVERY unit fights THROUGH: the raid proceeds to the convoy.
+    /// The system itself is never destroyed — tiers are the stakes.
+    ///
+    /// Emits the owner-only `PlatformEngaged` detail event and returns
+    /// `Some((raider_survives, raid_stopped))`, or `None` if no platform covers
+    /// the contact (nothing changes anywhere outside a platform's radius).
+    fn platform_defends(
+        &mut self,
+        defender: PlayerId,
+        contact: Vec2,
+        events: &mut Vec<Event>,
+    ) -> Option<(bool, bool)> {
+        let radius = crate::build::DEFENSE_PLATFORM_RADIUS;
+        let sys_id = self
+            .systems
+            .iter()
+            .filter(|s| {
+                s.owner == Some(defender) && s.defense_tier >= 1 && s.pos.distance(contact) <= radius
+            })
+            .min_by(|a, b| {
+                a.pos.distance(contact).total_cmp(&b.pos.distance(contact)).then(a.id.cmp(&b.id))
+            })
+            .map(|s| s.id)?;
+
+        let mut tiers_lost = 0u32;
+        let mut raider_survives = true;
+        let mut driven_off = false;
+        loop {
+            let tier = self.systems.iter().find(|s| s.id == sys_id).map(|s| s.defense_tier).unwrap_or(0);
+            if tier == 0 {
+                break; // every unit defeated — the raider fights through
+            }
+            // One stationary defender unit ≈ a raider-vs-raider duel (reuses the
+            // seeded table unchanged; Escaped can't occur in RVR, treat as a
+            // stand-off defensively).
+            match self.roll_battle(ShipKind::Raider) {
+                RaidOutcome::TargetDestroyed => {
+                    tiers_lost += 1;
+                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+                        sys.defense_tier -= 1;
+                    }
+                }
+                RaidOutcome::AttackerDestroyed => {
+                    raider_survives = false;
+                    break;
+                }
+                RaidOutcome::BothDestroyed => {
+                    tiers_lost += 1;
+                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+                        sys.defense_tier -= 1;
+                    }
+                    raider_survives = false;
+                    break;
+                }
+                RaidOutcome::BothSurvive | RaidOutcome::Escaped => {
+                    driven_off = true;
+                    break;
+                }
+            }
+        }
+        let stopped = !raider_survives || driven_off;
+        events.push(Event::new(
+            self.time,
+            EventPayload::PlatformEngaged {
+                owner: defender,
+                system: sys_id,
+                pos: contact,
+                raider_destroyed: !raider_survives,
+                driven_off,
+                tiers_lost,
+            },
+        ));
+        Some((raider_survives, stopped))
+    }
+
     /// Detect and apply battle resolutions. A raider within [`CONTACT_RADIUS`] of
     /// its target fights a randomised battle (raider-vs-convoy OR raider-vs-
     /// raider); a convoy within [`HUB_SAFE_RADIUS`] of the hub escapes before
@@ -701,6 +789,53 @@ impl World {
             let (a_owner, t_owner) = (att.owner, tgt.owner);
             let (a_kind, t_kind) = (att.kind, tgt.kind);
             let (a_pos, t_pos) = (att.pos, tgt.pos);
+
+            // DEFENSE PLATFORM (§buildings step 2c): a convoy attacked inside a
+            // defended friendly system's protection radius is shielded — the
+            // raider must fight THROUGH the platform (tier = stationary defender
+            // units, sequential seeded duels on the existing RVR table) before it
+            // can touch the convoy. STANDING defense: runs owner-online-or-not,
+            // and "senses" exactly its own radius (the contact is physically
+            // inside it — deterministic, fog-clean). If the platform stops the
+            // raid, the result reports through the ORDINARY RaidResolved event —
+            // both sides get their usual delayed battle reports, and the attacker
+            // learns of the fortification only through the outcome (§6 identity:
+            // deterrence is discovered the hard way, never leaked in the View).
+            if !escape
+                && t_kind == ShipKind::Convoy
+                && a_owner != t_owner
+                && let Some((raider_survives, stopped)) = self.platform_defends(t_owner, t_pos, events)
+                && stopped
+            {
+                let outcome = if raider_survives {
+                    RaidOutcome::BothSurvive // driven off — no losses either side
+                } else {
+                    RaidOutcome::AttackerDestroyed
+                };
+                events.push(Event::new(
+                    now,
+                    EventPayload::RaidResolved {
+                        attacker: a_owner,
+                        defender: t_owner,
+                        attacker_ship: aid,
+                        target_ship: tid,
+                        attacker_kind: a_kind,
+                        target_kind: t_kind,
+                        outcome,
+                        pos: a_pos,
+                    },
+                ));
+                if raider_survives {
+                    self.send_ship_home(aid, a_owner); // driven off — breaks off
+                } else {
+                    self.ships.remove(&aid);
+                    events.push(Event::new(
+                        now,
+                        EventPayload::ShipDestroyed { ship: aid, owner: a_owner, kind: a_kind, pos: a_pos },
+                    ));
+                }
+                continue; // the convoy was never touched (fought-through falls past)
+            }
 
             let outcome = if escape {
                 RaidOutcome::Escaped
@@ -1214,6 +1349,10 @@ impl World {
                             crate::build::SystemUpgrade::SensorArray => {
                                 sys.sensor_tier += 1;
                                 sys.sensor_tier
+                            }
+                            crate::build::SystemUpgrade::DefensePlatform => {
+                                sys.defense_tier += 1;
+                                sys.defense_tier
                             }
                         };
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
@@ -3321,6 +3460,129 @@ mod tests {
         w.step(&[]);
         assert!(w.ships[&patrol].defense.is_none(), "defense cleared once the threat is gone");
         assert!(matches!(w.ships[&patrol].order, ShipOrder::Patrol { .. }), "the defender resumes its standing patrol");
+    }
+
+    // --- §buildings step 2c: Defense Platform ---------------------------------
+
+    /// Grant `owner` a defended system at `pos` with `tier` platform tiers.
+    fn grant_platform(w: &mut World, owner: PlayerId, pos: Vec2, tier: u32) -> EntityId {
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.pos = pos;
+        sys.defense_tier = tier;
+        sys.id
+    }
+
+    /// A raid contact on a convoy INSIDE a defended friendly system's protection
+    /// radius must fight THROUGH the platform. With a tall platform the seeded
+    /// duels stop the raider (deterministically for this seed); the convoy
+    /// survives, the raid resolves via the ordinary RaidResolved (delayed reports
+    /// both sides), and the platform's own engagement detail is owner-only news.
+    /// Works with the owner OFFLINE by construction (pure sim, no player input).
+    #[test]
+    fn platform_defends_convoy_inside_radius() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        let convoy_pos = w.ships[&convoy].pos;
+        // Defended system right at the convoy (contact well inside the radius).
+        let sys = grant_platform(&mut w, def, convoy_pos + Vec2::new(200.0, 0.0), 10);
+
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut platform_evt: Option<(PlayerId, EntityId, bool, bool)> = None;
+        let mut outcome = None;
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::PlatformEngaged { owner, system, raider_destroyed, driven_off, .. } => {
+                        platform_evt = Some((owner, system, raider_destroyed, driven_off));
+                    }
+                    EventPayload::RaidResolved { outcome: o, .. } => outcome = Some(o),
+                    _ => {}
+                }
+            }
+            if outcome.is_some() {
+                break;
+            }
+        }
+        let (owner, system, raider_destroyed, driven_off) = platform_evt.expect("the platform engaged");
+        assert_eq!((owner, system), (def, sys), "the engagement detail is the DEFENDER's news");
+        assert!(raider_destroyed || driven_off, "a 10-tier platform stops the raider (seeded)");
+        let outcome = outcome.expect("the raid still resolves via the ordinary report channel");
+        assert!(
+            matches!(outcome, RaidOutcome::AttackerDestroyed | RaidOutcome::BothSurvive),
+            "the attacker learns only a standard battle outcome ({outcome:?})"
+        );
+        assert!(w.ships.contains_key(&convoy), "the convoy was never touched");
+        assert_eq!(raider_destroyed, !w.ships.contains_key(&raider), "ship state matches the outcome");
+    }
+
+    /// Outside the platform's protection radius NOTHING changes: the raid
+    /// resolves exactly as before (with the test's 100% raider-vs-convoy table,
+    /// the convoy is lost) and no platform engagement fires.
+    #[test]
+    fn raid_outside_platform_radius_is_unchanged() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        let convoy_pos = w.ships[&convoy].pos;
+        // Defended system FAR from the convoy — its radius can't cover the contact.
+        grant_platform(&mut w, def, convoy_pos + Vec2::new(crate::build::DEFENSE_PLATFORM_RADIUS * 3.0, 0.0), 10);
+
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut platform_fired = false;
+        let mut outcome = None;
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::PlatformEngaged { .. } => platform_fired = true,
+                    EventPayload::RaidResolved { outcome: o, .. } => outcome = Some(o),
+                    _ => {}
+                }
+            }
+            if outcome.is_some() {
+                break;
+            }
+        }
+        assert!(!platform_fired, "a distant platform never engages");
+        assert_eq!(outcome, Some(RaidOutcome::TargetDestroyed), "the raid resolves exactly as before");
+        assert!(!w.ships.contains_key(&convoy), "convoy lost — positioning matters");
+    }
+
+    /// Platform DAMAGE: tiers lost in the engagement (reported in the owner event)
+    /// match the tier drop on the system — stakes without ever destroying the
+    /// system. Also: a platform tier consumes a development slot, and the whole
+    /// engagement is deterministic from the seed.
+    #[test]
+    fn platform_damage_matches_tiers_lost_and_is_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+            let convoy_pos = w.ships[&convoy].pos;
+            let sys = grant_platform(&mut w, def, convoy_pos, 3);
+            let tier0 = w.systems.iter().find(|s| s.id == sys).unwrap().defense_tier;
+            assert!(w.systems.iter().find(|s| s.id == sys).unwrap().dev_slots_built() >= 3, "platform tiers consume slots");
+
+            w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+            let mut lost_reported = None;
+            for _ in 0..(60 * crate::config::TICK_HZ) {
+                for e in w.step(&[]) {
+                    if let EventPayload::PlatformEngaged { tiers_lost, .. } = e.payload {
+                        lost_reported = Some(tiers_lost);
+                    }
+                }
+                if lost_reported.is_some() {
+                    break;
+                }
+            }
+            let lost = lost_reported.expect("platform engaged");
+            let tier1 = w.systems.iter().find(|s| s.id == sys).unwrap().defense_tier;
+            assert_eq!(tier0 - tier1, lost, "reported damage matches the tier drop");
+            (lost, tier1)
+        };
+        assert_eq!(run(), run(), "the platform engagement is deterministic from the seed");
     }
 
     #[test]

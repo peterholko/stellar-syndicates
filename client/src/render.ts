@@ -641,6 +641,22 @@ export class Renderer {
       const rPx = c.r * this.scale;
       g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: 0.045 }).stroke({ width: 1, color: COL_SENSOR, alpha: 0.14 });
     }
+
+    // DEFENSE PLATFORM protection rings on OUR OWN defended systems (§buildings
+    // step 2c) — owner-only by construction (defense_tier is 0 for rivals in the
+    // View). Drawn in the coverage idiom but visually DISTINCT from the teal
+    // sensor bubbles: a dashed cyan ring, no fill — "protected zone", not vision.
+    for (const dyn of state.systems) {
+      if (dyn.owner === state.playerId && dyn.defense_tier >= 1) {
+        const sys = state.galaxy.systems.find((s) => s.id === dyn.id);
+        if (sys) {
+          const s = this.worldToScreen(sys.pos);
+          const rPx = state.galaxy.defense_platform_radius * this.scale;
+          dashedCircle(g, s.x, s.y, rPx, 10, 8);
+          g.stroke({ width: 1.2, color: COL_OWN, alpha: 0.22 });
+        }
+      }
+    }
   }
 
   /// Convoy broadcast routes: because convoys broadcast position + heading, show
@@ -1055,6 +1071,21 @@ function arrowhead(g: Graphics, x: number, y: number, dx: number, dy: number, si
   const brX = x - dx * size * 0.2 - px * size * 0.7;
   const brY = y - dy * size * 0.2 - py * size * 0.7;
   g.poly([tipX, tipY, blX, blY, brX, brY]).fill({ color, alpha });
+}
+
+// A dashed circle (screen px), for the platform protection ring — distinct from
+// the solid sensor-bubble strokes.
+function dashedCircle(g: Graphics, cx: number, cy: number, r: number, dash: number, gap: number): void {
+  if (r < 4) return;
+  const step = (dash + gap) / r; // radians per dash+gap
+  for (let a = 0; a < Math.PI * 2; a += step) {
+    const b = Math.min(a + dash / r, Math.PI * 2);
+    g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    // Approximate the arc with a couple of segments (short dashes → fine).
+    const mid = (a + b) / 2;
+    g.lineTo(cx + Math.cos(mid) * r, cy + Math.sin(mid) * r);
+    g.lineTo(cx + Math.cos(b) * r, cy + Math.sin(b) * r);
+  }
 }
 
 function dashedLine(g: Graphics, x1: number, y1: number, x2: number, y2: number, dash: number, gap: number): void {

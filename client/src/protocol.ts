@@ -62,6 +62,9 @@ export interface SystemStateView {
   /// Sensor Array upgrades built here (§buildings step 2b) — owner-only; rivals
   /// see 0. Projects a standing sensor bubble for the owner.
   sensor_tier: number;
+  /// Defense Platform tiers standing here (§buildings step 2c) — owner-only;
+  /// rivals see 0 (a platform reveals itself only via engagement outcomes).
+  defense_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
   slots_used: number;
   slots_total: number;
@@ -89,6 +92,9 @@ export interface GalaxyInfo {
   /// base + per_tier·(N−1) — for drawing our own arrays' coverage.
   sensor_array_base: number;
   sensor_array_per_tier: number;
+  /// Defense Platform protection radius (§buildings step 2c) — for the subtle
+  /// ring on our OWN defended systems (owner-only by construction).
+  defense_platform_radius: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -252,7 +258,7 @@ export type ClientMsg =
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" }
   | { type: "Ping" };
 
 export type RaidOutcome =

@@ -169,6 +169,9 @@ impl GameLoop {
                             // arrays' coverage (§buildings step 2b).
                             sensor_array_base: sim::build::SENSOR_ARRAY_BASE,
                             sensor_array_per_tier: sim::build::SENSOR_ARRAY_PER_TIER,
+                            // Platform protection radius, for the owner's own
+                            // defended-system ring (§buildings step 2c).
+                            defense_platform_radius: sim::build::DEFENSE_PLATFORM_RADIUS,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -527,6 +530,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
         ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
         ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
+        ("defense_platform", "Defense Platform", BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform }),
     ]
     .into_iter()
     .map(|(key, label, what)| {

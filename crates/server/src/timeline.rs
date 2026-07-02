@@ -107,6 +107,7 @@ impl Timeline {
                         sim::SystemUpgrade::Depot => format!("Depot tier {tier} (more storage)"),
                         sim::SystemUpgrade::Shipyard => format!("Shipyard tier {tier} (builds ships)"),
                         sim::SystemUpgrade::SensorArray => format!("Sensor Array tier {tier} (standing vision)"),
+                        sim::SystemUpgrade::DefensePlatform => format!("Defense Platform tier {tier} (static defense)"),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
@@ -126,6 +127,30 @@ impl Timeline {
                         ),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
+                }
+                // A Defense Platform fought (§buildings step 2c) — OWNER-ONLY
+                // detail (tiers lost / result), light-delayed from the battle
+                // like any combat news. The attacker's side of the story arrives
+                // separately via the ordinary RaidResolved report.
+                EventPayload::PlatformEngaged { owner, system, pos, raider_destroyed, driven_off, tiers_lost } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        let result = if *raider_destroyed {
+                            "destroyed the raider"
+                        } else if *driven_off {
+                            "drove the raider off"
+                        } else {
+                            "was fought through"
+                        };
+                        let damage = if *tiers_lost > 0 {
+                            format!(" — {tiers_lost} platform tier(s) lost")
+                        } else {
+                            String::new()
+                        };
+                        let sev = if *raider_destroyed || *driven_off { TimelineSeverity::Good } else { TimelineSeverity::Bad };
+                        self.push(*owner, observe, sev, format!("Defense Platform at {name} engaged a hostile raider and {result}{damage}."));
+                    }
                 }
                 EventPayload::FuelShortfall { owner, needed, kind } => {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
@@ -213,6 +238,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "a Sensor Array",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "a Defense Platform",
     }
 }
 

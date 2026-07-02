@@ -105,6 +105,23 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         reason: BuildRejectReason,
     },
+    /// A Defense Platform engaged a hostile raider attacking one of the owner's
+    /// convoys inside its protection radius (§buildings step 2c). OWNER-ONLY
+    /// detail (tiers lost, result) — the ATTACKER learns only the standard
+    /// battle outcome via the accompanying `RaidResolved` (a platform reveals
+    /// itself exclusively through engagement results). `pos` is the contact
+    /// point, for light-delaying the owner's news like any battle.
+    PlatformEngaged {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        /// The attacking raider was destroyed by the platform.
+        raider_destroyed: bool,
+        /// The raider was driven off (broke off home; platform intact that duel).
+        driven_off: bool,
+        /// Platform tiers lost in the engagement (damage; slots free up).
+        tiers_lost: u32,
+    },
     /// A dispatch was LIMITED because no owned system could cover its fuel cost
     /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
     /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").

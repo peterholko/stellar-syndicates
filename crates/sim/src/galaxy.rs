@@ -80,6 +80,15 @@ pub struct StarSystem {
     /// ship bubbles. Owner-only in the View, like every tier.
     #[serde(default)]
     pub sensor_tier: u32,
+    /// Number of Defense Platform tiers standing here (§buildings step 2c). A
+    /// hostile raider making contact with one of the owner's convoys within
+    /// `DEFENSE_PLATFORM_RADIUS` must fight through `tier` stationary defender
+    /// units first (seeded battles). Tiers can be LOST in those engagements
+    /// (damage), so this can go down as well as up; the system itself is never
+    /// destroyed. Owner-only in the View — a rival learns a platform exists only
+    /// through engagement outcomes (delayed battle reports).
+    #[serde(default)]
+    pub defense_tier: u32,
 }
 
 impl StarSystem {
@@ -106,7 +115,7 @@ impl StarSystem {
     /// see `World::dev_slots_pending` — so the full "used" count is
     /// `dev_slots_built() + pending`.)
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier + self.depot_tier + self.shipyard_tier + self.sensor_tier
+        self.extractor_tier + self.depot_tier + self.shipyard_tier + self.sensor_tier + self.defense_tier
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
@@ -206,6 +215,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             depot_tier: 0,
             shipyard_tier: 0, // frontier systems must EARN their shipyards
             sensor_tier: 0,
+            defense_tier: 0,
         });
     }
     systems
@@ -318,6 +328,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         // must be EARNED.
         shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
         sensor_tier: 0,
+        defense_tier: 0,
     }
 }
 

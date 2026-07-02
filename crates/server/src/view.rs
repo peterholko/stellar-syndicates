@@ -467,6 +467,9 @@ pub fn filter_systems(
                 depot_tier: if own { sys.depot_tier } else { 0 },
                 shipyard_tier: if own { sys.shipyard_tier } else { 0 },
                 sensor_tier: if own { sys.sensor_tier } else { 0 },
+                // A rival NEVER sees a platform in the View — it reveals itself
+                // only through engagement outcomes (delayed battle reports).
+                defense_tier: if own { sys.defense_tier } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
                 // Storage (§buildings step 2) — owner-only like everything above.
@@ -487,6 +490,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "shipyard",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "sensor_array",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "defense_platform",
     }
 }
 
@@ -768,6 +772,7 @@ mod tests {
             depot_tier: 0,
             shipyard_tier: 0,
             sensor_tier: 0,
+            defense_tier: 0,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -778,9 +783,11 @@ mod tests {
         systems[0].extractor_tier = 2; // mine — developed
         systems[0].shipyard_tier = 1; // mine — a shipyard (visible to me only)
         systems[0].sensor_tier = 1; // mine — an array (visible to me only)
+        systems[0].defense_tier = 1; // mine — a platform (visible to me only)
         systems[1].extractor_tier = 3; // rival — must stay hidden
         systems[1].shipyard_tier = 2; // rival — their military industry must stay hidden
         systems[1].sensor_tier = 2; // rival — their intel infrastructure must stay hidden
+        systems[1].defense_tier = 3; // rival — their fortification must stay hidden
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
@@ -808,7 +815,7 @@ mod tests {
         // Development SLOTS follow the same owner-only rule (§buildings step 1):
         // used counts built tiers (2) — the queued job at MINE is a SHIP, which
         // holds no slot — and rivals see 0/0, never the budget or usage.
-        assert_eq!(v10[0].slots_used, 4, "owner sees slots used (all built tiers; ships hold none)");
+        assert_eq!(v10[0].slots_used, 5, "owner sees slots used (all built tiers; ships hold none)");
         assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
         assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
         assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
@@ -824,6 +831,11 @@ mod tests {
         // a rival must never learn where you can see.
         assert_eq!(v10[0].sensor_tier, systems[0].sensor_tier, "owner sees their sensor tier");
         assert_eq!(v10[1].sensor_tier, 0, "a rival's sensor tier never leaks");
+        // Defense Platform tier (§buildings step 2c) — owner-only: a rival
+        // weighing a raid learns fortification ONLY the hard way (via the
+        // engagement outcome), never from the View.
+        assert_eq!(v10[0].defense_tier, systems[0].defense_tier, "owner sees their platform tier");
+        assert_eq!(v10[1].defense_tier, 0, "a rival's platform never leaks — deterrence is discovered by engagement");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
         let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);
