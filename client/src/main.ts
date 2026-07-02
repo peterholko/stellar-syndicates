@@ -834,6 +834,10 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
 const SHIP_KEYS = new Set(["convoy", "raider"]);
+// Shipyard tier each ship kind requires — MIRRORS the sim's
+// `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
+// Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
+const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2 };
 
 function buildPanel(dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
@@ -855,16 +859,23 @@ function buildPanel(dyn: SystemStateView | undefined): string {
     return head + `<div class="mhint">${uiIcon("action-build", 13)} Building <b>${label}</b> — ETA <b>${eta.toFixed(0)}s</b>. <span class="dim">One job at a time.</span></div>`;
   }
   const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const yard = dyn?.shipyard_tier ?? 0;
   const rows = opts.map((o) => {
     const isDev = !SHIP_KEYS.has(o.key);
     const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
-    const blocked = isDev && slotsFull; // a full system soft-rejects developments
+    // Two gates, mirroring the sim's soft-rejects: a DEVELOPMENT needs a free
+    // slot; a SHIP needs this system's Shipyard at the required tier.
+    const needYard = SHIP_KEYS.has(o.key) ? SHIP_REQ[o.key] ?? 1 : 0;
+    const yardShort = needYard > 0 && yard < needYard;
+    const blocked = (isDev && slotsFull) || yardShort;
     const enabled = afford && !blocked;
-    const title = blocked ? "no free development slot — systems must specialize"
-      : afford ? "costs draw from this system's stockpile"
-        : "not enough resources stockpiled here";
+    const title = isDev && slotsFull ? "no free development slot — systems must specialize"
+      : yardShort ? `ships build only at a Shipyard system (this needs tier ${needYard})`
+        : afford ? "costs draw from this system's stockpile"
+          : "not enough resources stockpiled here";
     const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, 13)}${c.units}`).join(" ");
-    const gate = blocked ? `<span class="bo-gate">slots full</span>` : "";
+    const gate = isDev && slotsFull ? `<span class="bo-gate">slots full</span>`
+      : yardShort ? `<span class="bo-gate">requires Shipyard ${needYard}</span>` : "";
     return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${title}">` +
       `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
   }).join("");
@@ -908,7 +919,7 @@ function buildSystemTab(): void {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
       if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-      else if (k === "extractor" || k === "depot") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
+      else if (k === "extractor" || k === "depot" || k === "shipyard") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }
     switch (el.dataset.action) {
@@ -995,6 +1006,15 @@ function updateSystemTab(): void {
       (storageFull ? `<span class="storage-warn">${badge("warn", "storage full")} production idling — ship goods out or build a Depot</span>` : "") +
       `</div>`
     : "";
+  // The system's DEVELOPMENTS at a glance (owner-only): what it has specialized
+  // into, inside its slot budget.
+  const devs = mine
+    ? `<div class="devs-row">` +
+      [["Extractor", dyn?.extractor_tier ?? 0], ["Depot", dyn?.depot_tier ?? 0], ["Shipyard", dyn?.shipyard_tier ?? 0]]
+        .map(([n, t]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}</span>`)
+        .join(`<span class="dev-sep">·</span>`) +
+      `</div>`
+    : "";
 
   const deps = `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
     sys.deposits.map(depositRow).join("") + `</div>`;
@@ -1027,7 +1047,7 @@ function updateSystemTab(): void {
         ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
         : "";
 
-  root.innerHTML = rail + header + starFeature + strip + storageBar + deps + prod + build + actions + hint;
+  root.innerHTML = rail + header + starFeature + strip + storageBar + devs + deps + prod + build + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------

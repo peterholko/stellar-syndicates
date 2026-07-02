@@ -426,6 +426,7 @@ pub fn filter_systems(
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
                 extractor_tier: if own { sys.extractor_tier } else { 0 },
                 depot_tier: if own { sys.depot_tier } else { 0 },
+                shipyard_tier: if own { sys.shipyard_tier } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
                 // Storage (§buildings step 2) — owner-only like everything above.
@@ -444,6 +445,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "shipyard",
     }
 }
 
@@ -720,6 +722,7 @@ mod tests {
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
             extractor_tier: 0,
             depot_tier: 0,
+            shipyard_tier: 0,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -728,7 +731,9 @@ mod tests {
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
         systems[0].extractor_tier = 2; // mine — developed
+        systems[0].shipyard_tier = 1; // mine — a shipyard (visible to me only)
         systems[1].extractor_tier = 3; // rival — must stay hidden
+        systems[1].shipyard_tier = 2; // rival — their military industry must stay hidden
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
@@ -756,7 +761,7 @@ mod tests {
         // Development SLOTS follow the same owner-only rule (§buildings step 1):
         // used counts built tiers (2) — the queued job at MINE is a SHIP, which
         // holds no slot — and rivals see 0/0, never the budget or usage.
-        assert_eq!(v10[0].slots_used, 2, "owner sees slots used (built tiers; ships hold none)");
+        assert_eq!(v10[0].slots_used, 3, "owner sees slots used (built tiers incl. shipyard; ships hold none)");
         assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
         assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
         assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
@@ -765,6 +770,9 @@ mod tests {
         assert_eq!(v10[0].storage_used, 12, "owner sees fill in whole units");
         assert_eq!(v10[0].depot_tier, 0);
         assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].depot_tier), (0, 0, 0), "a rival's storage never leaks");
+        // Shipyard tier (§buildings step 3) — owner-only on the same rule.
+        assert_eq!(v10[0].shipyard_tier, systems[0].shipyard_tier, "owner sees their shipyard tier");
+        assert_eq!(v10[1].shipyard_tier, 0, "a rival's shipyard tier never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
         let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);

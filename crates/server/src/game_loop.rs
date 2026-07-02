@@ -518,6 +518,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
         ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
         ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
+        ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
     ]
     .into_iter()
     .map(|(key, label, what)| {

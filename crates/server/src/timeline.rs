@@ -105,6 +105,7 @@ impl Timeline {
                     let what = match upgrade {
                         sim::SystemUpgrade::Extractor => format!("Extractor tier {tier} (more output)"),
                         sim::SystemUpgrade::Depot => format!("Depot tier {tier} (more storage)"),
+                        sim::SystemUpgrade::Shipyard => format!("Shipyard tier {tier} (builds ships)"),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
@@ -116,6 +117,10 @@ impl Timeline {
                     let text = match reason {
                         sim::BuildRejectReason::NoSlot => format!(
                             "Can't build {} at {name}: every development slot is used — systems must specialize.",
+                            build_label(*what)
+                        ),
+                        sim::BuildRejectReason::NeedsShipyard { required } => format!(
+                            "Can't build {} at {name}: needs Shipyard tier {required} there.",
                             build_label(*what)
                         ),
                     };
@@ -205,6 +210,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
     }
 }
 

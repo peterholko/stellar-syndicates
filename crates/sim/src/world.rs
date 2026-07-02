@@ -778,6 +778,11 @@ impl World {
                 if let Some(sys) = self.systems.iter_mut().find(|s| s.id == home_system) {
                     let seed = crate::fuel::FUEL_HOME_SEED.min(sys.storage_headroom());
                     *sys.stockpile.entry(crate::fuel::MOVEMENT_FUEL).or_insert(0.0) += seed;
+                    // HOME BOOTSTRAP (§buildings step 3): guarantee Shipyard tier 1
+                    // even on a pre-shipyard snapshot (freshly-generated homes
+                    // already carry it), so a joining player can always build
+                    // convoys turn one. max() never removes an earned higher tier.
+                    sys.shipyard_tier = sys.shipyard_tier.max(crate::build::HOME_SHIPYARD_TIER);
                 }
                 // Starting inventory: a stock of each commodity to sell, plus a
                 // treasury to buy with.
@@ -1073,7 +1078,7 @@ impl World {
         }
         // Developments consume a SLOT of the system's budget (built tiers + jobs
         // already in progress). No free slot → soft reject (no debit, no job), with
-        // an owner-only notice. Ships are units, not developments — never gated.
+        // an owner-only notice. Ships are units, not developments — never slot-gated.
         if matches!(what, crate::build::BuildKind::Upgrade { .. })
             && sys.dev_slots_built() + self.dev_slots_pending(system_id) >= sys.dev_slots()
         {
@@ -1087,6 +1092,25 @@ impl World {
                 },
             ));
             return;
+        }
+        // SHIPS need a Shipyard (§buildings step 3): the system's tier must cover
+        // the kind (Convoy ≥ 1, Raider ≥ 2). Below it → soft reject with an
+        // owner-only notice — the recipe is never eaten, the build simply holds
+        // until the industry exists. This is what makes shipbuilding GEOGRAPHY.
+        if let crate::build::BuildKind::Ship { ship } = what {
+            let required = crate::build::required_shipyard_tier(ship);
+            if sys.shipyard_tier < required {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NeedsShipyard { required },
+                    },
+                ));
+                return;
+            }
         }
         let affordable = recipe
             .costs
@@ -1152,6 +1176,10 @@ impl World {
                             crate::build::SystemUpgrade::Depot => {
                                 sys.depot_tier += 1;
                                 sys.depot_tier
+                            }
+                            crate::build::SystemUpgrade::Shipyard => {
+                                sys.shipyard_tier += 1;
+                                sys.shipyard_tier
                             }
                         };
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
@@ -2489,6 +2517,7 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::Ore, 100.0)]);
         let cap0 = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
+        let slots0 = w.systems.iter().find(|s| s.id == home).unwrap().dev_slots_built();
 
         w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Depot }]);
         for _ in 0..(crate::build::DEPOT_RECIPE.build_ticks + 3) {
@@ -2500,7 +2529,7 @@ mod tests {
             (sys.storage_cap() - cap0 - crate::build::STORAGE_PER_DEPOT_TIER).abs() < 1e-9,
             "each depot tier adds STORAGE_PER_DEPOT_TIER capacity"
         );
-        assert_eq!(sys.dev_slots_built(), 1, "a depot tier consumes a development slot");
+        assert_eq!(sys.dev_slots_built(), slots0 + 1, "a depot tier consumes a development slot");
     }
 
     #[test]
@@ -2548,6 +2577,105 @@ mod tests {
         let ship = w.ships.get(&sid).expect("convoy survives with the overflow");
         assert_eq!(ship.mission, Some(TradeMission::SellAtHub), "re-routed to sell at the hub");
         assert_eq!(ship.cargo.unwrap().units, 30, "carries exactly the unstored excess");
+    }
+
+    // --- §buildings step 3: Shipyard gating -----------------------------------
+
+    #[test]
+    fn home_starts_with_shipyard_one_and_builds_a_convoy_turn_one() {
+        let mut w = test_world();
+        let id = PlayerId(26);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.shipyard_tier, crate::build::HOME_SHIPYARD_TIER, "home bootstraps at Shipyard 1");
+        assert!(sys.dev_slots_built() >= 1, "the seeded shipyard consumes a development slot");
+
+        // Convoy (needs tier 1) builds turn one — no chicken-and-egg stall.
+        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0)]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "convoy builds at the home shipyard");
+    }
+
+    #[test]
+    fn raider_needs_shipyard_two() {
+        let mut w = test_world();
+        let id = PlayerId(27);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 100.0), (Commodity::Fuel, 100.0), (Commodity::Ore, 200.0)]);
+
+        // Home is tier 1 → a Raider (needs 2) SOFT-rejects with the owner notice.
+        let alloys0 = system_stock(&w, home, Commodity::Alloys);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { owner, reason: crate::event::BuildRejectReason::NeedsShipyard { required: 2 }, .. } if owner == id
+            )),
+            "the raider rejection names the required tier"
+        );
+        assert!(w.build_queue.is_empty(), "no job on a shipyard-short system");
+        assert!((system_stock(&w, home, Commodity::Alloys) - alloys0).abs() < 1e-9, "recipe never eaten");
+
+        // Build Shipyard tier 2 → the raider now starts.
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Shipyard }]);
+        for _ in 0..(crate::build::SHIPYARD_RECIPE.build_ticks + 3) {
+            w.step(&[]);
+        }
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().shipyard_tier, 2);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "raider builds at Shipyard 2");
+    }
+
+    #[test]
+    fn frontier_system_cannot_build_ships_without_a_shipyard() {
+        let mut w = test_world();
+        let id = PlayerId(28);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Claim a frontier system (shipyard 0) and stock it for a convoy.
+        let claim = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        w.step(&[Command::ClaimSystem { player_id: id, system_id: claim }]);
+        assert_eq!(w.systems.iter().find(|s| s.id == claim).unwrap().owner, Some(id), "claimed");
+        seed_stock(&mut w, claim, &[(Commodity::Ore, 100.0)]);
+
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: claim, ship_kind: ShipKind::Convoy }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsShipyard { required: 1 }, .. }
+            )),
+            "frontier shipbuilding must be earned (no shipyard → soft reject)"
+        );
+        assert!(w.build_queue.is_empty());
+    }
+
+    #[test]
+    fn tiers_and_stockpiles_round_trip_through_serde() {
+        let mut w = test_world();
+        let id = PlayerId(29);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Give the home distinctive development + storage state.
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            sys.extractor_tier = 2;
+            sys.depot_tier = 1;
+            sys.stockpile.insert(Commodity::Ore, 123.5);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        let a = w.systems.iter().find(|s| s.id == home).unwrap();
+        let b = w2.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!((a.extractor_tier, a.depot_tier, a.shipyard_tier), (b.extractor_tier, b.depot_tier, b.shipyard_tier));
+        assert_eq!(a.dev_slots(), b.dev_slots(), "derived slot budget identical after reload");
+        assert!((a.storage_cap() - b.storage_cap()).abs() < 1e-12);
+        // Stockpiles match commodity-for-commodity (tolerating the last-ulp
+        // wobble of a JSON float round-trip).
+        assert_eq!(a.stockpile.len(), b.stockpile.len());
+        for (c, v) in &a.stockpile {
+            assert!((v - b.stockpile[c]).abs() < 1e-9, "{c:?} round-trips");
+        }
     }
 
     #[test]

@@ -212,6 +212,9 @@ impl RaidOutcome {
 pub enum BuildRejectReason {
     /// Every development slot at the system is used (built + in-progress).
     NoSlot,
+    /// The system's Shipyard tier is below what this ship kind needs
+    /// (§buildings step 3: Convoy ≥ 1, Raider ≥ 2).
+    NeedsShipyard { required: u32 },
 }
 
 impl Event {

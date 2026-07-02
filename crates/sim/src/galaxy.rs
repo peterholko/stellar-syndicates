@@ -69,6 +69,11 @@ pub struct StarSystem {
     /// the cap blocks NEW inflow only, it never destroys what's stored).
     #[serde(default)]
     pub depot_tier: u32,
+    /// Number of Shipyard upgrades built here (§buildings step 3). Gates ship
+    /// construction: Convoy needs tier ≥ 1, Raider ≥ 2 (`required_shipyard_tier`).
+    /// HOME systems generate at tier 1 (the turn-one convoy bootstrap).
+    #[serde(default)]
+    pub shipyard_tier: u32,
 }
 
 impl StarSystem {
@@ -95,7 +100,7 @@ impl StarSystem {
     /// see `World::dev_slots_pending` — so the full "used" count is
     /// `dev_slots_built() + pending`.)
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier + self.depot_tier
+        self.extractor_tier + self.depot_tier + self.shipyard_tier
     }
 
     /// This system's TOTAL storage capacity (§buildings step 2): a base every
@@ -188,6 +193,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             stockpile: BTreeMap::new(),
             extractor_tier: 0,
             depot_tier: 0,
+            shipyard_tier: 0, // frontier systems must EARN their shipyards
         });
     }
     systems
@@ -294,6 +300,11 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         stockpile: BTreeMap::new(),
         extractor_tier: 0,
         depot_tier: 0,
+        // HOME BOOTSTRAP (§buildings step 3): every home starts with Shipyard
+        // tier 1 already built (consuming one development slot), so a new player
+        // can build convoys turn one. Raiders (tier 2) and frontier shipbuilding
+        // must be EARNED.
+        shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
     }
 }
 

@@ -265,6 +265,9 @@ pub struct SystemStateView {
     pub extractor_tier: u32,
     /// Number of Depot upgrades built here (§buildings step 2) — owner-only.
     pub depot_tier: u32,
+    /// Number of Shipyard upgrades built here (§buildings step 3) — owner-only.
+    /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
+    pub shipyard_tier: u32,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,

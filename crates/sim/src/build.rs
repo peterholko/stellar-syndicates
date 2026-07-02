@@ -34,6 +34,10 @@ pub enum SystemUpgrade {
     /// `STORAGE_BASE_CAP + STORAGE_PER_DEPOT_TIER · tier`. Caps create the
     /// "ship it / sell it / spend it before it overflows" logistics pressure.
     Depot,
+    /// GATES ship construction (§buildings step 3): a system can only build
+    /// ships up to its Shipyard tier (`required_shipyard_tier`). Industrial
+    /// geography — your shipyard system becomes strategically important.
+    Shipyard,
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -78,6 +82,10 @@ pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0)], 
 /// Depot (system development): light **Ore** — cheaper than an Extractor, so early
 /// storage capacity is accessible before income compounds.
 pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0)], build_ticks: 15 * HZ };
+/// Shipyard (system development): **Ore + Alloys** per tier — the Alloys component
+/// means expanding military industry needs FRONTIER material shipped in (Ore and
+/// Alloys rarely co-occur), reinforcing the industrial geography.
+pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 10.0)], build_ticks: 20 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
@@ -85,8 +93,25 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Raider } => &RAIDER_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor } => &EXTRACTOR_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
+        BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
     }
 }
+
+// --- SHIPYARD GATING (§buildings step 3) --------------------------------------
+
+/// The Shipyard tier a system needs to build each ship kind: the workhorse
+/// Convoy at tier 1, the advanced Raider only at tier 2 (military industry must
+/// be EARNED). Homes are seeded at tier 1, so convoys build turn one. Tunable.
+pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
+    match kind {
+        ShipKind::Convoy => 1,
+        ShipKind::Raider => 2,
+    }
+}
+
+/// The Shipyard tier every HOME system starts with (consuming one development
+/// slot) — the bootstrap that avoids a convoy chicken-and-egg stall on turn one.
+pub const HOME_SHIPYARD_TIER: u32 = 1;
 
 /// Multiplier applied to every deposit's richness PER Extractor tier (compounding):
 /// `richness · MULT^tier`. The upgrade payoff. Tunable.

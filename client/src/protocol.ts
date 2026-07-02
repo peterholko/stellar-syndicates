@@ -56,6 +56,9 @@ export interface SystemStateView {
   extractor_tier: number;
   /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.
   depot_tier: number;
+  /// Shipyard upgrades built here (§buildings step 3) — owner-only; rivals see 0.
+  /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
+  shipyard_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
   slots_used: number;
   slots_total: number;
@@ -242,7 +245,7 @@ export type ClientMsg =
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" }
   | { type: "Ping" };
 
 export type RaidOutcome =
