@@ -250,6 +250,41 @@ export interface TimelineEntry {
 // holds for OWN ships too — there is no FTL tether to your fleet, so a distant
 // own ship is as uncertain as a distant enemy; `own` is only a "this is mine"
 // marker, never a certainty grant.
+// The estimated-size BUCKET for a fleet seen through the fog (§13.1 intel
+// ladder). Deterministic classes `1 · 2–3 · 4–7 · 8–15 · 16–30 · 31+` — an
+// honest, un-invertible size estimate you get even for a far, out-of-coverage
+// fleet. Mirrors the Rust `CountClass` serde form.
+export type CountClass =
+  | "one"
+  | "two_to_three"
+  | "four_to_seven"
+  | "eight_to_fifteen"
+  | "sixteen_to_thirty"
+  | "thirty_one_plus";
+
+// The human-facing bucket label ("est. 4–7 ships").
+export function countClassLabel(c: CountClass): string {
+  switch (c) {
+    case "one": return "1";
+    case "two_to_three": return "2–3";
+    case "four_to_seven": return "4–7";
+    case "eight_to_fifteen": return "8–15";
+    case "sixteen_to_thirty": return "16–30";
+    case "thirty_one_plus": return "31+";
+  }
+}
+
+// One (kind, count) entry of a fleet's exact composition — present only in
+// coverage / for your own fleets.
+export interface CompCount {
+  kind: ShipKind;
+  count: number;
+}
+
+// A FLEET as you perceive it (§13.1). `kind` is the flagship (what it's drawn
+// as). The two-tier intel ladder: `count_class` (size bucket) is ALWAYS present;
+// `composition` (exact kinds + counts) only for your own fleets or a rival fleet
+// inside your sensor coverage — never leaking the true count outside it.
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
@@ -263,6 +298,17 @@ export interface GhostView {
   route: Vec2[] | null;
   // Cargo present only when this convoy is within your sensor coverage.
   cargo: CargoView | null;
+  // Estimated-size bucket — always present on a visible fleet.
+  count_class: CountClass;
+  // Exact composition — present only in coverage or for your own fleet.
+  composition: CompCount[] | null;
+}
+
+// Total ship count implied by a ghost: exact when composition is known,
+// otherwise null (you only have the bucket).
+export function fleetExactCount(g: GhostView): number | null {
+  if (!g.composition) return null;
+  return g.composition.reduce((a, c) => a + c.count, 0);
 }
 
 // Render a decimal-string PlayerId as the canonical "P<hex>" form used by the
@@ -288,8 +334,13 @@ export type ClientMsg =
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
-  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
+  // `join` (optional): a fleet docked at that system for the finished ship to
+  // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
+  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
+  // §FLEETS management v1 — compose fleets at an owned system.
+  | { type: "MergeFleets"; into: EntityId; from: EntityId }
+  | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
   | { type: "Ping" };
 
 export type RaidOutcome =
@@ -321,6 +372,8 @@ export type ServerMsg =
       type: "Welcome";
       player_id: PlayerId;
       name: string;
+      // Wire protocol version (§FLEETS bumped it to 2) — a stale client can warn.
+      protocol_version: number;
       tick_hz: number;
       tick: number;
       sim_time: number;

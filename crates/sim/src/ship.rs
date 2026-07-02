@@ -9,6 +9,8 @@
 //! world advances each ship once per tick. There is no real-time piloting — the
 //! async-native, lightspeed-bound design demands standing orders, not micro.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::cargo::Cargo;
@@ -16,7 +18,7 @@ use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
 use crate::movement::flip_and_burn;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShipKind {
     /// Slow, heavy hauler — the largest ship in the game (§7). Carries trade.
@@ -175,6 +177,90 @@ impl ShipKind {
     }
 }
 
+/// The FLAGSHIP precedence (GDD §13.1): a fleet is DRAWN and named for its
+/// most-significant member — colony first (the point of the whole voyage),
+/// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A
+/// fleet-of-one resolves to that ship's own kind, so nothing changes for the
+/// N=1 world. Highest precedence first.
+pub const FLAGSHIP_PRECEDENCE: [ShipKind; 5] = [
+    ShipKind::Colony,
+    ShipKind::Convoy,
+    ShipKind::Corvette,
+    ShipKind::Raider,
+    ShipKind::Scout,
+];
+
+/// All ship kinds, in a fixed deterministic order (composition iteration,
+/// damage-pool distribution, report ordering). Kept in sync with [`ShipKind`].
+pub const ALL_SHIP_KINDS: [ShipKind; 5] = [
+    ShipKind::Convoy,
+    ShipKind::Raider,
+    ShipKind::Corvette,
+    ShipKind::Colony,
+    ShipKind::Scout,
+];
+
+/// An ESTIMATED-SIZE BUCKET for a fleet seen through the fog (GDD §13.1 intel
+/// ladder). A far observer of a broadcasting hammer knows roughly HOW BIG it is
+/// — never the exact count, and never what's IN it (that needs sensor coverage).
+///
+/// Buckets, not ± ranges, on purpose: an exact N can't be inverted out of a
+/// bucket the way it could from "±2". Thresholds are tunable but must only ever
+/// WIDEN the estimate (the fog-leak tests assert the class is never narrower
+/// than the true count warrants).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CountClass {
+    One,
+    TwoToThree,
+    FourToSeven,
+    EightToFifteen,
+    SixteenToThirty,
+    ThirtyOnePlus,
+}
+
+impl CountClass {
+    /// The deterministic bucket for an exact total count. Tunable thresholds:
+    /// `1 · 2–3 · 4–7 · 8–15 · 16–30 · 31+`.
+    pub fn from_count(n: u32) -> Self {
+        match n {
+            0..=1 => CountClass::One,
+            2..=3 => CountClass::TwoToThree,
+            4..=7 => CountClass::FourToSeven,
+            8..=15 => CountClass::EightToFifteen,
+            16..=30 => CountClass::SixteenToThirty,
+            _ => CountClass::ThirtyOnePlus,
+        }
+    }
+
+    /// The human-facing label ("est. 4–7 ships").
+    pub fn label(self) -> &'static str {
+        match self {
+            CountClass::One => "1",
+            CountClass::TwoToThree => "2–3",
+            CountClass::FourToSeven => "4–7",
+            CountClass::EightToFifteen => "8–15",
+            CountClass::SixteenToThirty => "16–30",
+            CountClass::ThirtyOnePlus => "31+",
+        }
+    }
+
+    /// A representative count for the STALE-INTEL calculator (Part 3): when an
+    /// observer has only the bucket (target out of sensor coverage), the
+    /// projected battle assumes this many ships of "typical" composition. It is
+    /// deliberately the bucket MIDPOINT, never the true count (leak-checked).
+    pub fn midpoint(self) -> u32 {
+        match self {
+            CountClass::One => 1,
+            CountClass::TwoToThree => 2,
+            CountClass::FourToSeven => 5,
+            CountClass::EightToFifteen => 11,
+            CountClass::SixteenToThirty => 23,
+            CountClass::ThirtyOnePlus => 40,
+        }
+    }
+}
+
 /// Radius (sim units) within which an arriving COLONY SHIP settles an
 /// unclaimed system (§ships part 3) — matches the raid contact radius, so
 /// "arrival" means the same thing everywhere. Tunable.
@@ -207,13 +293,15 @@ pub const SCOUT_INTEL_RENOTIFY_S: f64 = 60.0;
 /// Seconds a patrolling ship waits at each waypoint before moving on.
 const PATROL_DWELL: f64 = 2.5;
 
-/// A ship's standing order — what it does without further input.
+/// A fleet's standing order — what it does without further input. Orders are
+/// FLEET-LEVEL (GDD §13.1): the whole formation moves, intercepts, and holds as
+/// one entity. A fleet-of-one behaves exactly as the old single ship did.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
-pub enum ShipOrder {
+pub enum FleetOrder {
     /// At rest, no goal.
     Idle,
-    /// Flip-and-burn to a fixed point, then go [`ShipOrder::Idle`].
+    /// Flip-and-burn to a fixed point, then go [`FleetOrder::Idle`].
     MoveTo { dest: Vec2 },
     /// Cycle forever through a list of waypoints, dwelling briefly at each.
     /// (M2 demo behaviour so the shared world is visibly alive; real
@@ -259,44 +347,65 @@ pub struct DefenseEngagement {
     pub patrol: Vec<Vec2>,
 }
 
+/// A FLEET: the map/sim unit (GDD §13.1). One or more ships of mixed kinds
+/// moving, fighting, and being observed as a SINGLE entity. A fleet-of-one is
+/// the N=1 case and behaves exactly as the old single [`Ship`]-per-unit world.
+///
+/// `composition` is a deterministic `BTreeMap` (id-sorted kind iteration) of how
+/// many of each kind ride in the formation. It is never empty for a live fleet —
+/// an emptied fleet is removed from the world.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Ship {
+pub struct Fleet {
     pub id: EntityId,
     pub owner: PlayerId,
-    pub kind: ShipKind,
+    /// How many of each ship kind ride in this formation (deterministic order).
+    pub composition: BTreeMap<ShipKind, u32>,
     pub pos: Vec2,
     pub vel: Vec2,
-    pub order: ShipOrder,
+    pub order: FleetOrder,
     /// Cargo carried (convoys only; raiders carry none). Broadcast withholds
-    /// this — it is revealed by sensor range, not by the Convention.
+    /// this — it is revealed by sensor range, not by the Convention. Capacity
+    /// scales with the number of convoys aboard; existing single-convoy rules
+    /// are the N=1 case, unchanged.
     pub cargo: Option<Cargo>,
-    /// If set, this is a trade convoy that resolves on arrival (§9).
+    /// If set, this is a trade convoy fleet that resolves on arrival (§9).
     pub mission: Option<TradeMission>,
-    /// If set, this raider is on an AUTONOMOUS defensive intercept (it broke off
+    /// If set, this fleet is on an AUTONOMOUS defensive intercept (it broke off
     /// patrol to engage a threat) — server-driven standing doctrine, runs whether
     /// or not the owner is connected.
     #[serde(default)]
     pub defense: Option<DefenseEngagement>,
-    /// COLONY ships only (§ships part 3): the "arrived at an already-claimed
+    /// COLONY fleets only (§ships part 3): the "arrived at an already-claimed
     /// system" notice has been sent for the current hold, so it isn't re-sent
-    /// every tick. Cleared whenever the ship moves again. serde default = false.
+    /// every tick. Cleared whenever the fleet moves again. serde default = false.
     #[serde(default)]
     pub notified_held: bool,
+    /// Per-kind DAMAGE POOLS accumulated in an ongoing engagement (Part 2,
+    /// Lanchester attrition). Empty when not/never engaged; serde default keeps
+    /// old snapshots loading. A kind's ships die whole once its pool ≥ its hull,
+    /// carrying the remainder forward.
+    #[serde(default)]
+    pub damage: BTreeMap<ShipKind, f64>,
 }
 
-impl Ship {
-    pub fn new(
+impl Fleet {
+    /// Build a FLEET-OF-ONE — the migration/spawn primitive. Every place the old
+    /// world made a `Ship::new(...)` makes a `Fleet::single(...)`, so the N=1
+    /// world is byte-for-byte the same behaviour.
+    pub fn single(
         id: EntityId,
         owner: PlayerId,
         kind: ShipKind,
         pos: Vec2,
-        order: ShipOrder,
+        order: FleetOrder,
         cargo: Option<Cargo>,
     ) -> Self {
-        Ship {
+        let mut composition = BTreeMap::new();
+        composition.insert(kind, 1);
+        Fleet {
             id,
             owner,
-            kind,
+            composition,
             pos,
             vel: Vec2::ZERO,
             order,
@@ -304,44 +413,193 @@ impl Ship {
             mission: None,
             defense: None,
             notified_held: false,
+            damage: BTreeMap::new(),
         }
     }
 
-    /// Total mass = hull + cargo (§7). A loaded ship is heavier, so slower to
-    /// accelerate. Recomputed from current cargo, so dropping/gaining cargo
-    /// changes how the ship handles.
+    /// How many ships of `kind` ride in this fleet (0 if none).
+    pub fn count(&self, kind: ShipKind) -> u32 {
+        self.composition.get(&kind).copied().unwrap_or(0)
+    }
+
+    /// Does the fleet contain at least one ship of `kind`?
+    pub fn contains(&self, kind: ShipKind) -> bool {
+        self.count(kind) > 0
+    }
+
+    /// Total ship count across all kinds.
+    pub fn total_count(&self) -> u32 {
+        self.composition.values().copied().sum()
+    }
+
+    /// The estimated-size bucket a fog observer sees (never the exact count).
+    pub fn count_class(&self) -> CountClass {
+        CountClass::from_count(self.total_count())
+    }
+
+    /// Add `n` ships of `kind` to the composition.
+    pub fn add(&mut self, kind: ShipKind, n: u32) {
+        if n > 0 {
+            *self.composition.entry(kind).or_insert(0) += n;
+        }
+    }
+
+    /// Remove up to `n` ships of `kind`, dropping the entry when it hits zero.
+    /// Returns how many were actually removed.
+    pub fn remove(&mut self, kind: ShipKind, n: u32) -> u32 {
+        let have = self.count(kind);
+        let take = have.min(n);
+        if take == 0 {
+            return 0;
+        }
+        if take == have {
+            self.composition.remove(&kind);
+            self.damage.remove(&kind);
+        } else {
+            self.composition.insert(kind, have - take);
+        }
+        take
+    }
+
+    /// Remove exactly one ship of `kind` (e.g. a colony consumed on claim).
+    /// Returns true if one was present and removed.
+    pub fn remove_one(&mut self, kind: ShipKind) -> bool {
+        self.remove(kind, 1) == 1
+    }
+
+    /// True once the fleet has no ships left — it should be removed from the world.
+    pub fn is_empty(&self) -> bool {
+        self.total_count() == 0
+    }
+
+    /// The kind this fleet is DRAWN and named for (flagship precedence). For a
+    /// fleet-of-one this is simply that ship's kind.
+    pub fn flagship_kind(&self) -> ShipKind {
+        for k in FLAGSHIP_PRECEDENCE {
+            if self.contains(k) {
+                return k;
+            }
+        }
+        // A live fleet is never empty; fall back defensively.
+        ShipKind::Scout
+    }
+
+    /// A fleet BROADCASTS (Convention, visible galaxy-wide) if ANY member kind
+    /// broadcasts — you cannot hide a freighter by parking a raider beside it.
+    /// A fleet of only raiders and/or scouts runs DARK.
+    pub fn broadcasts(&self) -> bool {
+        self.composition.keys().any(|k| k.broadcasts())
+    }
+
+    /// The best sensor bubble this fleet projects into its owner's coverage —
+    /// the MAX `sensor_mult` among its members (a scout aboard extends vision).
+    pub fn sensor_mult(&self) -> f64 {
+        self.composition
+            .keys()
+            .map(|k| k.sensor_mult())
+            .fold(1.0_f64, f64::max)
+    }
+
+    /// Total EMPTY-HULL mass = Σ hull_mass(kind) × count.
+    pub fn hull_mass(&self) -> f64 {
+        self.composition
+            .iter()
+            .map(|(k, n)| k.hull_mass() * *n as f64)
+            .sum()
+    }
+
+    /// Cargo mass carried by the fleet (§7).
+    pub fn cargo_mass(&self) -> f64 {
+        self.cargo.map(|c| c.units as f64 * CARGO_MASS_PER_UNIT).unwrap_or(0.0)
+    }
+
+    /// Total mass = Σ hull + cargo (§7). Drives fuel-∝-distance×mass exactly as
+    /// before; a fleet-of-one convoy with cargo reduces to the old `Ship::mass`.
     pub fn mass(&self) -> f64 {
-        let cargo = self.cargo.map(|c| c.units as f64 * CARGO_MASS_PER_UNIT).unwrap_or(0.0);
-        self.kind.hull_mass() + cargo
+        self.hull_mass() + self.cargo_mass()
     }
 
-    /// Acceleration DERIVED from thrust and mass: `a = F / m` (§7). Higher mass
-    /// (bigger hull, fuller hold) → weaker acceleration for the same thrust. This
-    /// is the single source of the raider-vs-convoy nimbleness asymmetry and of
-    /// the loaded-convoy penalty — not a hand-set per-kind acceleration.
+    /// FORMATION acceleration (GDD §14.2): the slowest member sets the pace.
+    /// Taken as the minimum thrust-to-weight ratio among present kinds, scaled
+    /// by the cargo-drag factor `hull / (hull + cargo)`. For a fleet-of-one this
+    /// is exactly `thrust / (hull + cargo)` = the old `Ship::accel` — a loaded
+    /// convoy still lumbers, and a hammer carrying a colony ship crawls at the
+    /// colony's pace, telegraphing itself by physics.
     pub fn accel(&self) -> f64 {
-        self.kind.thrust() / self.mass()
+        let hull = self.hull_mass();
+        if hull <= 0.0 {
+            return 0.0;
+        }
+        let min_twr = self
+            .composition
+            .keys()
+            .map(|k| k.thrust() / k.hull_mass())
+            .fold(f64::INFINITY, f64::min);
+        let drag = hull / (hull + self.cargo_mass());
+        min_twr * drag
     }
 
-    /// Advance this ship one timestep at simulation time `time`.
+    /// FORMATION cruise speed: capped by the slowest member (min max_speed).
+    /// A fleet-of-one is that ship's own cap.
+    pub fn max_speed(&self) -> f64 {
+        self.composition
+            .keys()
+            .map(|k| k.max_speed())
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// Total offensive weight = Σ attack_weight(kind) × count.
+    pub fn attack_power(&self) -> f64 {
+        self.composition
+            .iter()
+            .map(|(k, n)| k.attack_weight() * *n as f64)
+            .sum()
+    }
+
+    /// Total defensive weight = Σ defense_weight(kind) × count.
+    pub fn defense_power(&self) -> f64 {
+        self.composition
+            .iter()
+            .map(|(k, n)| k.defense_weight() * *n as f64)
+            .sum()
+    }
+
+    /// Total combat weight (force-ratio presence) = Σ combat_weight(kind) × count.
+    /// Non-combatant kinds contribute their (small) defense weight only, exactly
+    /// as head-count comparisons did for the N=1 world.
+    pub fn combat_weight(&self) -> f64 {
+        self.composition
+            .iter()
+            .map(|(k, n)| k.combat_weight() * *n as f64)
+            .sum()
+    }
+
+    /// Whether the fleet carries any teeth (a combatant kind) for doctrine
+    /// force-ratio assessments.
+    pub fn is_combatant(&self) -> bool {
+        self.composition.keys().any(|k| k.is_combatant())
+    }
+
+    /// Advance this fleet one timestep at simulation time `time`. Moves under the
+    /// FORMATION accel/speed (slowest member sets the pace).
     pub fn advance(&mut self, time: f64, dt: f64) {
         let accel = self.accel();
-        let max_speed = self.kind.max_speed();
+        let max_speed = self.max_speed();
 
         match &mut self.order {
-            ShipOrder::Idle => {
+            FleetOrder::Idle => {
                 // Holds station. (Drag-free space; already at rest.)
                 self.vel = Vec2::ZERO;
             }
-            ShipOrder::MoveTo { dest } => {
+            FleetOrder::MoveTo { dest } => {
                 let step = flip_and_burn(self.pos, self.vel, *dest, accel, max_speed, dt);
                 self.pos = step.pos;
                 self.vel = step.vel;
                 if step.arrived {
-                    self.order = ShipOrder::Idle;
+                    self.order = FleetOrder::Idle;
                 }
             }
-            ShipOrder::Patrol {
+            FleetOrder::Patrol {
                 waypoints,
                 index,
                 dwell_until,
@@ -364,8 +622,122 @@ impl Ship {
                 }
             }
             // Interception is driven by the world (it needs the target's state),
-            // so there is nothing to do in the self-contained per-ship advance.
-            ShipOrder::Intercept { .. } => {}
+            // so there is nothing to do in the self-contained per-fleet advance.
+            FleetOrder::Intercept { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cargo::{Cargo, Commodity};
+    use crate::ids::{EntityId, PlayerId};
+    use crate::math::Vec2;
+
+    fn fleet(comp: &[(ShipKind, u32)], cargo: Option<Cargo>) -> Fleet {
+        let mut f = Fleet::single(EntityId(1), PlayerId(1), ShipKind::Scout, Vec2::ZERO, FleetOrder::Idle, cargo);
+        f.composition.clear();
+        for (k, n) in comp {
+            f.add(*k, *n);
+        }
+        f
+    }
+
+    #[test]
+    fn fleet_of_one_matches_the_old_single_ship_exactly() {
+        // A loaded convoy fleet-of-one reproduces the old a = F/(hull+cargo).
+        let cargo = Some(Cargo { commodity: Commodity::Ore, units: 100 });
+        let f = fleet(&[(ShipKind::Convoy, 1)], cargo);
+        let expected = ShipKind::Convoy.thrust() / (ShipKind::Convoy.hull_mass() + 100.0 * CARGO_MASS_PER_UNIT);
+        assert!((f.accel() - expected).abs() < 1e-9, "fleet-of-one accel == old Ship::accel");
+        assert_eq!(f.max_speed(), ShipKind::Convoy.max_speed());
+        assert_eq!(f.flagship_kind(), ShipKind::Convoy);
+        assert_eq!(f.total_count(), 1);
+    }
+
+    #[test]
+    fn formation_accel_and_speed_are_set_by_the_slowest_member() {
+        // A hammer (raider) carrying a colony ship lumbers at the COLONY's pace.
+        let f = fleet(&[(ShipKind::Raider, 3), (ShipKind::Colony, 1)], None);
+        let colony_twr = ShipKind::Colony.thrust() / ShipKind::Colony.hull_mass();
+        // No cargo → drag factor 1, so accel == the slowest member's TWR.
+        assert!((f.accel() - colony_twr).abs() < 1e-9, "slowest member sets accel");
+        assert_eq!(f.max_speed(), ShipKind::Colony.max_speed(), "slowest member caps speed");
+        // Raider alone would be far nimbler — proving the formation penalty.
+        let raider = fleet(&[(ShipKind::Raider, 1)], None);
+        assert!(raider.accel() > f.accel() * 5.0);
+    }
+
+    #[test]
+    fn mass_and_fuel_sum_over_the_whole_convoy_count() {
+        let cargo = Some(Cargo { commodity: Commodity::Ore, units: 50 });
+        let f = fleet(&[(ShipKind::Convoy, 3)], cargo);
+        let expected = 3.0 * ShipKind::Convoy.hull_mass() + 50.0 * CARGO_MASS_PER_UNIT;
+        assert!((f.mass() - expected).abs() < 1e-9, "mass = Σ hull×count + cargo");
+        // Fuel ∝ distance × total mass, so a 3-convoy fleet burns 3× a 1-convoy
+        // fleet's hull share over the same leg (cargo held equal).
+        let one = fleet(&[(ShipKind::Convoy, 1)], None);
+        let three = fleet(&[(ShipKind::Convoy, 3)], None);
+        let d = 1000.0;
+        assert!((crate::fuel::fuel_cost(d, three.mass()) - 3.0 * crate::fuel::fuel_cost(d, one.mass())).abs() < 1e-6);
+    }
+
+    #[test]
+    fn broadcasts_if_any_member_broadcasts() {
+        // You cannot hide a freighter by parking a raider beside it.
+        assert!(fleet(&[(ShipKind::Raider, 2), (ShipKind::Convoy, 1)], None).broadcasts());
+        assert!(fleet(&[(ShipKind::Corvette, 1)], None).broadcasts());
+        // Raiders and/or scouts only → dark.
+        assert!(!fleet(&[(ShipKind::Raider, 3)], None).broadcasts());
+        assert!(!fleet(&[(ShipKind::Raider, 2), (ShipKind::Scout, 1)], None).broadcasts());
+    }
+
+    #[test]
+    fn flagship_follows_precedence_colony_convoy_corvette_raider_scout() {
+        assert_eq!(fleet(&[(ShipKind::Convoy, 1), (ShipKind::Colony, 1)], None).flagship_kind(), ShipKind::Colony);
+        assert_eq!(fleet(&[(ShipKind::Convoy, 1), (ShipKind::Corvette, 2)], None).flagship_kind(), ShipKind::Convoy);
+        assert_eq!(fleet(&[(ShipKind::Raider, 5), (ShipKind::Scout, 1)], None).flagship_kind(), ShipKind::Raider);
+        assert_eq!(fleet(&[(ShipKind::Scout, 2)], None).flagship_kind(), ShipKind::Scout);
+    }
+
+    #[test]
+    fn count_class_buckets_are_deterministic_and_never_narrower_than_the_count() {
+        // The exact bucket at each threshold edge.
+        let cases = [
+            (1, CountClass::One),
+            (2, CountClass::TwoToThree),
+            (3, CountClass::TwoToThree),
+            (4, CountClass::FourToSeven),
+            (7, CountClass::FourToSeven),
+            (8, CountClass::EightToFifteen),
+            (15, CountClass::EightToFifteen),
+            (16, CountClass::SixteenToThirty),
+            (30, CountClass::SixteenToThirty),
+            (31, CountClass::ThirtyOnePlus),
+            (999, CountClass::ThirtyOnePlus),
+        ];
+        for (n, class) in cases {
+            assert_eq!(CountClass::from_count(n), class, "n={n}");
+            // The bucket never rules the true count OUT (leak-safety invariant).
+            let lo_hi = match class {
+                CountClass::One => (1, 1),
+                CountClass::TwoToThree => (2, 3),
+                CountClass::FourToSeven => (4, 7),
+                CountClass::EightToFifteen => (8, 15),
+                CountClass::SixteenToThirty => (16, 30),
+                CountClass::ThirtyOnePlus => (31, u32::MAX),
+            };
+            assert!(n >= lo_hi.0 && n <= lo_hi.1, "count must lie inside its own bucket");
+        }
+    }
+
+    #[test]
+    fn combat_power_sums_over_composition() {
+        let f = fleet(&[(ShipKind::Raider, 2), (ShipKind::Corvette, 1)], None);
+        assert_eq!(f.attack_power(), 2.0 * 3.0 + 1.0); // raiders(3) + corvette(1)
+        assert_eq!(f.defense_power(), 2.0 * 2.0 + 4.0); // raiders(2) + corvette(4)
+        assert!(f.is_combatant());
+        assert!(!fleet(&[(ShipKind::Convoy, 4)], None).is_combatant());
     }
 }

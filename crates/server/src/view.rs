@@ -27,9 +27,15 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, StarSystem, Vec2, World};
+use sim::{
+    Cargo, Commodity, CountClass, EntityId, FleetOrder, HomeSlot, PlayerId, ShipKind, StarSystem,
+    Vec2, World,
+};
 
-use crate::protocol::{AnchorView, BuildStateView, CargoView, GhostView, IntelView, StockSlot, SystemStateView};
+use crate::protocol::{
+    AnchorView, BuildStateView, CargoView, CompCount, GhostView, IntelView, StockSlot,
+    SystemStateView,
+};
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -39,10 +45,24 @@ struct Sample {
     vel: Vec2,
 }
 
-/// Position history + current metadata for one ship.
+/// Position history + current metadata for one FLEET. Fleet-derived scalars
+/// (flagship, broadcast, sensor bubble, cap speed, size bucket) are snapshotted
+/// at record time so the view filter never needs the live sim `Fleet`.
 struct Track {
     owner: PlayerId,
-    kind: ShipKind,
+    /// Exact composition (kinds → counts) at the last record — revealed only in
+    /// coverage / to the owner.
+    composition: BTreeMap<ShipKind, u32>,
+    /// The fleet's flagship kind (what it's drawn as).
+    flagship: ShipKind,
+    /// Whether the fleet broadcasts (any member broadcasts).
+    broadcasts: bool,
+    /// The best sensor bubble the fleet projects (max member `sensor_mult`).
+    sensor_mult: f64,
+    /// Formation cruise cap (min member `max_speed`) — drives uncertainty.
+    max_speed: f64,
+    /// The estimated-size bucket a fog observer sees.
+    count_class: CountClass,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
@@ -88,10 +108,15 @@ impl PositionHistory {
     /// retarded-time boundary is resolved at full temporal resolution.
     pub fn record(&mut self, world: &World) {
         let now = world.time;
-        for (id, ship) in &world.ships {
+        for (id, ship) in &world.fleets {
             let track = self.tracks.entry(*id).or_insert_with(|| Track {
                 owner: ship.owner,
-                kind: ship.kind,
+                composition: BTreeMap::new(),
+                flagship: ship.flagship_kind(),
+                broadcasts: ship.broadcasts(),
+                sensor_mult: ship.sensor_mult(),
+                max_speed: ship.max_speed(),
+                count_class: ship.count_class(),
                 samples: VecDeque::new(),
                 last_seen: now,
                 cargo: None,
@@ -99,7 +124,12 @@ impl PositionHistory {
                 destroyed: None,
             });
             track.owner = ship.owner;
-            track.kind = ship.kind;
+            track.composition = ship.composition.clone();
+            track.flagship = ship.flagship_kind();
+            track.broadcasts = ship.broadcasts();
+            track.sensor_mult = ship.sensor_mult();
+            track.max_speed = ship.max_speed();
+            track.count_class = ship.count_class();
             track.last_seen = now;
             track.cargo = ship.cargo;
             track.route = route_of(&ship.order);
@@ -184,7 +214,11 @@ impl PositionHistory {
         struct Pre<'a> {
             id: EntityId,
             owner: PlayerId,
-            kind: ShipKind,
+            flagship: ShipKind,
+            broadcasts: bool,
+            max_speed: f64,
+            count_class: CountClass,
+            composition: &'a BTreeMap<ShipKind, u32>,
             sample: Sample,
             cargo: Option<Cargo>,
             route: &'a Option<Vec<Vec2>>,
@@ -215,21 +249,25 @@ impl PositionHistory {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
-                // Each own ship projects its KIND's bubble — scouts an oversized
-                // one (`sensor_mult`, their whole point: mobile vision).
-                coverage.push((sample.pos, self.sensor_range * track.kind.sensor_mult()));
+                // Each own fleet projects its best bubble — a scout aboard gives
+                // an oversized one (`sensor_mult`: mobile vision).
+                coverage.push((sample.pos, self.sensor_range * track.sensor_mult));
             }
-            // For a destroyed DARK ship (raider/scout), decide visibility in the
-            // ghost's OWN retarded frame (the world as the arriving light shows
-            // it), not the `now` frame whose coverage already reflects the
+            // For a destroyed DARK fleet (raiders/scouts only), decide visibility
+            // in the ghost's OWN retarded frame (the world as the arriving light
+            // shows it), not the `now` frame whose coverage already reflects the
             // post-kill break-off.
             let destroyed_detected = track.destroyed.is_some()
-                && !track.kind.broadcasts()
+                && !track.broadcasts
                 && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays);
             pre.push(Pre {
                 id: *id,
                 owner: track.owner,
-                kind: track.kind,
+                flagship: track.flagship,
+                broadcasts: track.broadcasts,
+                max_speed: track.max_speed,
+                count_class: track.count_class,
+                composition: &track.composition,
                 sample,
                 cargo: track.cargo,
                 route: &track.route,
@@ -245,11 +283,13 @@ impl PositionHistory {
             // live raider/convoy uses the ordinary `now`-frame coverage.
             let detected = p.destroyed_detected || within_coverage(&coverage, p.sample.pos);
 
-            // A DARK ship (raider or scout — anything that doesn't broadcast) is
-            // present ONLY inside sensor coverage. (A player's own dark ship sits
+            // A DARK fleet (raiders/scouts only — nothing aboard broadcasts) is
+            // present ONLY inside sensor coverage. (A player's own dark fleet sits
             // at the centre of its own sensor circle, so it is always present.)
-            // Omitted entirely otherwise — never sent-and-hidden.
-            if !p.kind.broadcasts() && !detected {
+            // Omitted entirely otherwise — never sent-and-hidden. Because a dark
+            // fleet is only ever SEEN inside coverage, its composition is always
+            // revealed when visible (consistent — no half-seen dark fleet).
+            if !p.broadcasts && !detected {
                 continue;
             }
 
@@ -263,11 +303,12 @@ impl PositionHistory {
             // poorly as an enemy at the same distance; one close to the command
             // center is fresh and near-certain because its light barely lags.
             // `own` remains only a "this is mine" marker, never a certainty grant.
-            let uncertainty = age * p.kind.max_speed();
-            let is_convoy = p.kind == ShipKind::Convoy;
-            // Convoys broadcast their route; cargo only within sensor coverage.
+            let uncertainty = age * p.max_speed;
+            let is_convoy = p.flagship == ShipKind::Convoy;
+            // Convoy fleets broadcast their route; cargo only within sensor
+            // coverage (Tier 2), exactly as before.
             let route = if is_convoy { p.route.clone() } else { None };
-            let cargo = if is_convoy && detected {
+            let cargo = if detected {
                 p.cargo.map(|cg| CargoView {
                     commodity: cg.commodity,
                     units: cg.units,
@@ -275,11 +316,24 @@ impl PositionHistory {
             } else {
                 None
             };
+            // The INTEL LADDER (§13.1): the size bucket is ALWAYS available on a
+            // visible fleet; the exact composition ONLY to the owner or inside
+            // sensor coverage — never leaking the true count outside it.
+            let composition = if own || detected {
+                Some(
+                    p.composition
+                        .iter()
+                        .map(|(k, n)| CompCount { kind: *k, count: *n })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
 
             ghosts.push(GhostView {
                 id: p.id,
                 owner: p.owner,
-                kind: p.kind,
+                kind: p.flagship,
                 pos: p.sample.pos,
                 vel: p.sample.vel,
                 age,
@@ -287,6 +341,8 @@ impl PositionHistory {
                 own,
                 route,
                 cargo,
+                count_class: p.count_class,
+                composition,
             });
         }
         // Deterministic ordering by id.
@@ -342,7 +398,7 @@ impl PositionHistory {
                 continue;
             }
             if let Some(s) = sample_at(&track.samples, t_r)
-                && s.pos.distance(ghost_pos) <= self.sensor_range * track.kind.sensor_mult()
+                && s.pos.distance(ghost_pos) <= self.sensor_range * track.sensor_mult
             {
                 return true;
             }
@@ -580,10 +636,10 @@ fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
 }
 
 /// The broadcast route (waypoints) implied by a ship's current order, if any.
-fn route_of(order: &ShipOrder) -> Option<Vec<Vec2>> {
+fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
     match order {
-        ShipOrder::Patrol { waypoints, .. } => Some(waypoints.clone()),
-        ShipOrder::MoveTo { dest } => Some(vec![*dest]),
+        FleetOrder::Patrol { waypoints, .. } => Some(waypoints.clone()),
+        FleetOrder::MoveTo { dest } => Some(vec![*dest]),
         _ => None,
     }
 }
@@ -627,9 +683,16 @@ mod tests {
             commodity: sim::Commodity::Fuel,
             units: 100,
         });
+        let mut composition = BTreeMap::new();
+        composition.insert(kind, 1u32);
         Track {
             owner,
-            kind,
+            composition,
+            flagship: kind,
+            broadcasts: kind.broadcasts(),
+            sensor_mult: kind.sensor_mult(),
+            max_speed: kind.max_speed(),
+            count_class: CountClass::from_count(1),
             samples: samples.into(),
             last_seen: last,
             cargo,
@@ -832,8 +895,8 @@ mod tests {
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
-            sim::BuildJob { id: 1, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300 },
-            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300 },
+            sim::BuildJob { id: 1, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None },
+            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None },
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
@@ -1033,6 +1096,112 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
         assert_eq!(view.len(), 1);
         assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
+    }
+
+    /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
+    /// scalars `record()` snapshots from a real `sim::Fleet`.
+    fn fleet_track(owner: PlayerId, pos: Vec2, comp: &[(ShipKind, u32)]) -> Track {
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 100.0 {
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            t += 0.1;
+        }
+        let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
+        f.composition.clear();
+        let mut composition = BTreeMap::new();
+        for (k, n) in comp {
+            f.composition.insert(*k, *n);
+            composition.insert(*k, *n);
+        }
+        Track {
+            owner,
+            composition,
+            flagship: f.flagship_kind(),
+            broadcasts: f.broadcasts(),
+            sensor_mult: f.sensor_mult(),
+            max_speed: f.max_speed(),
+            count_class: f.count_class(),
+            samples: samples.into(),
+            last_seen: 100.0,
+            cargo: None,
+            route: None,
+            destroyed: None,
+        }
+    }
+
+    /// LEAK CHECK (broadcasting fleet, outside coverage): the size BUCKET is
+    /// present, but the exact composition is NEVER revealed — a far observer of a
+    /// broadcasting hammer knows roughly how big it is, not what's in it.
+    #[test]
+    fn broadcasting_fleet_shows_bucket_but_hides_composition_outside_coverage() {
+        // 3 convoys + 2 corvettes + 1 raider = 6 ships (broadcasts: has convoys).
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert_eq!(view.len(), 1, "the broadcasting fleet is visible galaxy-wide");
+        let g = &view[0];
+        assert_eq!(g.count_class, CountClass::from_count(6), "size bucket always present");
+        assert_eq!(g.count_class, CountClass::FourToSeven, "6 ships → the 4–7 bucket");
+        assert!(g.composition.is_none(), "composition must NOT leak outside sensor coverage");
+        assert_eq!(g.kind, ShipKind::Convoy, "drawn as its flagship");
+    }
+
+    /// LEAK CHECK (the other direction — inside coverage): the exact composition
+    /// is revealed within sensor range, and it matches the true makeup.
+    #[test]
+    fn composition_revealed_inside_sensor_coverage() {
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        // Command center 200 su from the fleet → inside the 1000 su sensor range.
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let g = &view[0];
+        let revealed = g.composition.as_ref().expect("composition revealed inside coverage");
+        let got: BTreeMap<ShipKind, u32> = revealed.iter().map(|c| (c.kind, c.count)).collect();
+        assert_eq!(got[&ShipKind::Convoy], 3);
+        assert_eq!(got[&ShipKind::Corvette], 2);
+        assert_eq!(got[&ShipKind::Raider], 1);
+    }
+
+    /// Own fleets are always exact — the owner sees their full composition even
+    /// far outside any sensor bubble (the light-delay still applies to position).
+    #[test]
+    fn own_fleet_always_shows_exact_composition() {
+        let comp = [(ShipKind::Convoy, 2), (ShipKind::Colony, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(VIEWER, Vec2::new(8000.0, 0.0), &comp))], 500.0);
+        // Viewer's own fleet, far from the command center (out of the 500 su bubble).
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let g = &view[0];
+        assert!(g.own);
+        assert!(g.composition.is_some(), "own fleet composition is always exact");
+    }
+
+    /// A DARK fleet (raiders/scouts only) is omitted entirely outside coverage;
+    /// when it IS seen (inside coverage) its composition shows in full — there is
+    /// no half-seen dark fleet, so the reveal is consistent.
+    #[test]
+    fn dark_fleet_hidden_outside_but_full_composition_when_seen() {
+        let comp = [(ShipKind::Raider, 4), (ShipKind::Scout, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        // Outside coverage: omitted entirely.
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert!(far.is_empty(), "a dark fleet out of coverage must not appear at all");
+        // Inside coverage: seen, with full composition.
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(near.len(), 1);
+        assert!(near[0].composition.is_some(), "a seen dark fleet shows its full composition");
+        assert_eq!(near[0].count_class, CountClass::from_count(5));
+    }
+
+    /// LEAK CHECK (size bucket, big fleet): the class must be WIDE enough to
+    /// contain the true count — never a tell that pins the exact number.
+    #[test]
+    fn count_bucket_contains_true_size_without_revealing_it() {
+        let comp = [(ShipKind::Convoy, 20)]; // 20 broadcasting convoys, far away
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(6000.0, 0.0), &comp))], 800.0);
+        let g = &hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0)[0];
+        assert_eq!(g.count_class, CountClass::SixteenToThirty, "20 → the 16–30 bucket");
+        assert!(g.composition.is_none(), "the exact 20 is never revealed outside coverage");
     }
 
     /// A dark rival raider outside the viewer's sensor coverage must be OMITTED

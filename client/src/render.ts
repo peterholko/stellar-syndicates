@@ -10,6 +10,7 @@
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
+import { countClassLabel, fleetExactCount } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
@@ -86,6 +87,8 @@ interface GhostSprite {
   label: Text;
   ring: Graphics; // selection ring
   pip: Graphics; // ownership tag (cyan = yours, red = rival) — the friend/foe cue
+  badge: Graphics; // fleet count pill (exact Σ, or the fog size bucket)
+  badgeText: Text; // the number / bucket label drawn on the badge
   seen: boolean;
 }
 
@@ -759,10 +762,15 @@ export class Renderer {
       const label = new Text({ text: "", style: new TextStyle({ fill: COL_OTHER, fontFamily: "ui-monospace, monospace", fontSize: 9 }) });
       label.anchor.set(0, 0.5);
       const pip = new Graphics();
+      // Fleet count badge: a small pill at the sprite's lower-right showing the
+      // fleet size (exact when known, the fog bucket otherwise).
+      const badge = new Graphics();
+      const badgeText = new Text({ text: "", style: new TextStyle({ fill: 0xffffff, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "bold" }) });
+      badgeText.anchor.set(0.5, 0.5);
       // Pip is topmost so the friend/foe tag is never hidden by the sprite/label.
-      container.addChild(cone, ring, body, sprite, label, pip);
+      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, sprite, label, ring, pip, seen: true };
+      sp = { container, cone, body, sprite, label, ring, pip, badge, badgeText, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
@@ -962,6 +970,42 @@ export class Renderer {
     sp.label.style.fill = col;
     sp.label.alpha = lalpha;
     sp.label.position.set(11, -10);
+
+    // FLEET COUNT BADGE (§13.1 intel ladder). Exact Σ when the composition is
+    // known (your own fleet, or a rival inside your sensor coverage); otherwise
+    // the fog SIZE BUCKET ("4–7"), drawn dimmer to read as an estimate. A
+    // fleet-of-one shows no badge — it looks exactly like the old single ship.
+    const exact = fleetExactCount(ghost);
+    let badgeStr = "";
+    let estimate = false;
+    if (exact !== null) {
+      if (exact > 1) badgeStr = String(exact);
+    } else if (ghost.count_class !== "one") {
+      badgeStr = countClassLabel(ghost.count_class);
+      estimate = true;
+    }
+    sp.badge.clear();
+    if (badgeStr) {
+      const halfB = this.shipHitRadius(ghost.kind);
+      const w = Math.max(13, badgeStr.length * 6 + 7);
+      const h = 12;
+      const bx = halfB * 0.66;
+      const by = halfB * 0.55;
+      const edge = own ? COL_OWN : COL_OTHER;
+      const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
+      sp.badge
+        .roundRect(bx - w / 2, by - h / 2, w, h, 5)
+        .fill({ color: 0x05070d, alpha: 0.82 * bAlpha })
+        .stroke({ width: 1, color: edge, alpha: (estimate ? 0.5 : 0.9) * bAlpha });
+      sp.badge.alpha = 1;
+      sp.badgeText.text = badgeStr;
+      sp.badgeText.visible = true;
+      sp.badgeText.position.set(bx, by);
+      sp.badgeText.style.fill = estimate ? 0x9fb2c9 : 0xffffff;
+      sp.badgeText.alpha = bAlpha;
+    } else {
+      sp.badgeText.visible = false;
+    }
 
     return s;
   }

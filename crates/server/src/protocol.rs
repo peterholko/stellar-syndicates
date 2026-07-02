@@ -10,11 +10,20 @@
 //! reconstruction — the wire types here are deliberately explicit (not the raw
 //! sim structs) so that step exposes exactly what each player is allowed to see.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use sim::{
-    Commodity, EntityId, FleetDoctrine, PlayerId, RaidOutcome, ShipKind, Side, StandingOrder,
-    SystemUpgrade, TradeEvent, Vec2,
+    Commodity, CountClass, EntityId, FleetDoctrine, PlayerId, RaidOutcome, ShipKind, Side,
+    StandingOrder, SystemUpgrade, TradeEvent, Vec2,
 };
+
+/// The client↔server wire protocol version. BUMPED to 2 by the §FLEETS change:
+/// the entity in a `View` is now a FLEET — `GhostView` gained `count_class`
+/// (always) and `composition` (coverage-gated), and the entity is drawn/named by
+/// its flagship kind. A client seeing an unexpected version can warn the user to
+/// refresh; the server sends it in [`ServerMsg::Welcome`].
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -65,11 +74,26 @@ pub enum ClientMsg {
 
     /// Build a ship at one of the player's owned systems (§step1 growth sink) — costs
     /// a commodity recipe from that system's stockpile and completes over time.
-    BuildShip { system_id: EntityId, ship_kind: ShipKind },
+    /// `join` (optional) names a fleet docked at that system for the finished ship
+    /// to JOIN; omitted / `null` forms a new fleet-of-one (§FLEETS management v1).
+    BuildShip {
+        system_id: EntityId,
+        ship_kind: ShipKind,
+        #[serde(default)]
+        join: Option<EntityId>,
+    },
 
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
+
+    /// Merge one of the player's fleets INTO another (§FLEETS management v1). Both
+    /// must be the player's, idle, and docked together at an owned system.
+    MergeFleets { into: EntityId, from: EntityId },
+
+    /// Split ships off one of the player's fleets into a new fleet at an owned
+    /// system (§FLEETS management v1). `counts` = how many of each kind to detach.
+    SplitFleet { fleet_id: EntityId, counts: BTreeMap<ShipKind, u32> },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -346,15 +370,33 @@ pub struct AnchorView {
     pub owner: Option<PlayerId>,
 }
 
-/// A ship as a player perceives it: a delayed "ghost" — the position the light
+/// One (kind, count) entry of a fleet's exact composition — revealed only to
+/// the owner, or to a rival whose sensors cover the fleet (Tier 2). Ordered by
+/// kind for a stable wire form.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CompCount {
+    pub kind: ShipKind,
+    pub count: u32,
+}
+
+/// A FLEET as a player perceives it: a delayed "ghost" — the position the light
 /// now arriving at their command center shows, plus how stale that is and how
-/// much the object could have moved since (§6). This is the ONLY ship
+/// much the object could have moved since (§6). This is the ONLY fleet
 /// information a player receives; never the true present state, never another
-/// player's view. Deliberately omits the ship's standing order (internal truth).
+/// player's view. Deliberately omits the fleet's standing order (internal truth).
+///
+/// The two-tier INTEL LADDER (GDD §13.1): `count_class` (an estimated-size
+/// bucket) is present on every visible fleet — a far observer of a broadcasting
+/// hammer knows roughly HOW BIG it is; `composition` (exact kinds + counts) is
+/// revealed ONLY within sensor coverage (or for your own fleets), exactly like
+/// cargo. You know a fleet is inbound and roughly its size long before you learn
+/// what is IN it.
 #[derive(Debug, Clone, Serialize)]
 pub struct GhostView {
     pub id: EntityId,
     pub owner: PlayerId,
+    /// The FLAGSHIP kind — what the fleet is drawn and named for (precedence
+    /// colony > convoy > corvette > raider > scout). A fleet-of-one is that ship.
     pub kind: ShipKind,
     /// Where the object was when the arriving light left it (retarded position).
     pub pos: Vec2,
@@ -377,6 +419,14 @@ pub struct GhostView {
     /// The convoy's cargo — present ONLY when this convoy is within the viewing
     /// player's sensor coverage (Tier 2). `None` out of range, or for raiders.
     pub cargo: Option<CargoView>,
+    /// The estimated-size BUCKET (`1 · 2–3 · 4–7 · 8–15 · 16–30 · 31+`). Always
+    /// present on any visible fleet — the honest, un-invertible size estimate a
+    /// fog observer gets even for a fleet far outside sensor coverage.
+    pub count_class: CountClass,
+    /// The EXACT composition (kinds + counts). Present ONLY for the viewer's own
+    /// fleets, or a rival fleet inside sensor coverage (Tier 2). `None` otherwise
+    /// — you have the size bucket but not the makeup. Never leaks the true count.
+    pub composition: Option<Vec<CompCount>>,
 }
 
 /// Messages pushed by the server to a single player's connection.
@@ -387,6 +437,9 @@ pub enum ServerMsg {
     Welcome {
         player_id: PlayerId,
         name: String,
+        /// The wire protocol version ([`PROTOCOL_VERSION`]) — lets the client
+        /// detect a stale build against a newer server.
+        protocol_version: u32,
         /// Sim tick rate (Hz) — lets the client display time correctly.
         tick_hz: u32,
         tick: u64,

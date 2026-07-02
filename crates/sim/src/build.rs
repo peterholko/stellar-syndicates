@@ -81,6 +81,12 @@ pub struct BuildJob {
     pub what: BuildKind,
     /// Absolute sim tick of completion.
     pub complete_tick: u64,
+    /// For a ship build (§FLEETS management v1): the fleet to JOIN on completion
+    /// if it's still the owner's and docked at this system — otherwise the new
+    /// ship forms its own fleet-of-one. `None` always forms a new fleet.
+    /// serde default keeps pre-FLEETS build jobs loading.
+    #[serde(default)]
+    pub join: Option<EntityId>,
 }
 
 /// One recipe: commodity costs (whole units; the stockpile is f64) + duration in

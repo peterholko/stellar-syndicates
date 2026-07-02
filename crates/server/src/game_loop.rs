@@ -98,7 +98,7 @@ impl GameLoop {
         };
         let owns = self
             .world
-            .ships
+            .fleets
             .get(&ship_id)
             .map(|s| s.owner == player_id)
             .unwrap_or(false);
@@ -156,6 +156,7 @@ impl GameLoop {
                     ServerMsg::Welcome {
                         player_id,
                         name: name.clone(),
+                        protocol_version: crate::protocol::PROTOCOL_VERSION,
                         tick_hz: TICK_HZ,
                         tick: self.world.tick,
                         sim_time: self.world.time,
@@ -309,14 +310,24 @@ impl GameLoop {
                         self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
                     }
                 }
-                ClientMsg::BuildShip { system_id, ship_kind } => {
+                ClientMsg::BuildShip { system_id, ship_kind, join } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind });
+                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join });
                     }
                 }
                 ClientMsg::DevelopSystem { system_id, upgrade } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
+                    }
+                }
+                ClientMsg::MergeFleets { into, from } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MergeFleets { player_id, into, from });
+                    }
+                }
+                ClientMsg::SplitFleet { fleet_id, counts } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SplitFleet { player_id, fleet_id, counts });
                     }
                 }
                 // Join is handled at the WebSocket layer before the loop ever

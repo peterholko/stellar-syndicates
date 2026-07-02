@@ -3,13 +3,16 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
+import { countClassLabel, formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { SystemBodyDetail } from "./systemview";
 
 const state: ViewState = initialState();
 
 // --- DOM handles -----------------------------------------------------------
+// Wire protocol version this build speaks — kept in sync with the server's
+// PROTOCOL_VERSION (§FLEETS = 2).
+const EXPECTED_PROTOCOL_VERSION = 2;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -234,6 +237,16 @@ function buildShipPanel(): void {
       net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
       delete state.raids[state.selectedShipId]; // break off the intercept estimate
       updateShipPanel();
+    } else if (act === "split" && state.selectedShipId && net) {
+      const kind = (b as HTMLElement).dataset.kind as ShipKind | undefined;
+      if (kind) {
+        net.send({ type: "SplitFleet", fleet_id: state.selectedShipId, counts: { [kind]: 1 } });
+      }
+    } else if (act === "merge" && state.selectedShipId && net) {
+      const from = (b as HTMLElement).dataset.from;
+      if (from) {
+        net.send({ type: "MergeFleets", into: state.selectedShipId, from });
+      }
     }
   });
 }
@@ -251,6 +264,67 @@ function deselectShip(): void {
 }
 
 const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "colony" ? "Colony Ship" : k === "scout" ? "Scout" : k);
+
+// Flagship precedence (drawn/named order) — also the composition display order.
+const FLAGSHIP_ORDER: ShipKind[] = ["colony", "convoy", "corvette", "raider", "scout"];
+
+// The COMPOSITION section of the fleet panel — mirrors the §13.1 intel ladder:
+// full composition for own fleets and rivals inside sensor coverage; a bucket-only
+// estimate ("est. 4–7 ships — composition unknown") outside coverage.
+function compositionSection(g: GhostView): string {
+  if (g.composition && g.composition.length) {
+    const items = [...g.composition]
+      .sort((a, b) => FLAGSHIP_ORDER.indexOf(a.kind) - FLAGSHIP_ORDER.indexOf(b.kind))
+      .map((c) => `${esc(shipKindLabel(c.kind))} <b>×${c.count}</b>`)
+      .join(" · ");
+    const total = g.composition.reduce((a, c) => a + c.count, 0);
+    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>`;
+  }
+  return `<div class="sp-sec">Composition</div><div class="sp-line dim">est. <b>${countClassLabel(g.count_class)}</b> ships — composition unknown (out of sensor range)</div>`;
+}
+
+// Another of your OWN fleets co-located with `g` (within the claim radius) — the
+// merge candidate. Composition/merge is done at a berth; the server enforces the
+// "at an owned system, idle" rule and soft-rejects otherwise.
+const MERGE_COLOCATE_RADIUS = 80; // matches COLONY_CLAIM_RADIUS on the server
+function coLocatedOwnFleet(g: GhostView): GhostView | null {
+  let best: GhostView | null = null;
+  let bestD = MERGE_COLOCATE_RADIUS;
+  for (const o of state.ghosts) {
+    if (!o.own || o.id === g.id) continue;
+    const d = Math.hypot(o.pos.x - g.pos.x, o.pos.y - g.pos.y);
+    if (d <= bestD) {
+      best = o;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+// Fleet-management controls (§FLEETS v1): split off a ship, or merge a co-located
+// fleet. Only meaningful for your own fleet at an owned berth — offered by the
+// client, enforced (idle + owned system) by the server.
+function fleetManagementSection(g: GhostView): string {
+  const parts: string[] = [];
+  const comp = g.composition ?? [];
+  const total = comp.reduce((a, c) => a + c.count, 0);
+  const merge = coLocatedOwnFleet(g);
+  if (total < 2 && !merge) return "";
+  parts.push(`<div class="sp-sec">Fleet management</div>`);
+  if (total >= 2) {
+    const splitBtns = [...comp]
+      .sort((a, b) => FLAGSHIP_ORDER.indexOf(a.kind) - FLAGSHIP_ORDER.indexOf(b.kind))
+      .filter((c) => c.count >= 1)
+      .map((c) => `<button class="act" data-act="split" data-kind="${c.kind}" title="Detach one ${esc(shipKindLabel(c.kind))} into a new fleet (at an owned system)">Split 1 ${esc(shipKindLabel(c.kind))}</button>`)
+      .join("");
+    parts.push(`<div class="sp-line">${splitBtns}</div>`);
+  }
+  if (merge) {
+    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one (at an owned system)">${uiIcon("concept-fleet", 13)} Merge co-located fleet</button>`);
+  }
+  parts.push(`<div class="sp-line dim" style="margin-top:4px">Composing fleets works only at one of your owned systems.</div>`);
+  return parts.join("");
+}
 
 // Heading arrow + speed, computed in SCREEN space so it matches the map exactly.
 function headingCell(g: GhostView): string {
@@ -277,6 +351,7 @@ function ownActivity(g: GhostView): string {
 // the shared FLEET fuel reserve, and the relevant actions.
 function ownBody(g: GhostView): string {
   const parts: string[] = [];
+  parts.push(compositionSection(g));
   parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
 
   if (g.kind === "convoy") {
@@ -322,7 +397,8 @@ function ownBody(g: GhostView): string {
   if (g.kind === "raider") {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
-  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this ship${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
+  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
+  parts.push(fleetManagementSection(g));
   return parts.join("");
 }
 
@@ -331,6 +407,7 @@ function ownBody(g: GhostView): string {
 // runs dark. Never any order/intent/fuel/internal state.
 function rivalBody(g: GhostView): string {
   const parts: string[] = [];
+  parts.push(compositionSection(g));
   if (g.kind === "convoy") {
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
@@ -1614,6 +1691,11 @@ function join(): void {
     onMessage: (msg) => {
       switch (msg.type) {
         case "Welcome":
+          // Wire protocol check (§FLEETS bumped to 2): warn if the server speaks a
+          // newer dialect than this build — the View shape may have drifted.
+          if (typeof msg.protocol_version === "number" && msg.protocol_version !== EXPECTED_PROTOCOL_VERSION) {
+            console.warn(`protocol mismatch: server v${msg.protocol_version}, client expects v${EXPECTED_PROTOCOL_VERSION} — a refresh may be needed`);
+          }
           state.playerId = msg.player_id;
           state.name = msg.name;
           state.tickHz = msg.tick_hz;

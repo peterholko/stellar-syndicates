@@ -135,6 +135,34 @@ pub enum Command {
         player_id: PlayerId,
         system_id: EntityId,
         ship_kind: crate::ship::ShipKind,
+        /// (§FLEETS management v1) The fleet to JOIN when the build completes, if
+        /// it's still docked at this system — else a new fleet-of-one is formed.
+        /// `None` always forms a new fleet (the pre-FLEETS behaviour). serde
+        /// default so old clients omitting it still parse.
+        #[serde(default)]
+        join: Option<EntityId>,
+    },
+
+    /// Merge one of the player's fleets INTO another (§FLEETS management v1).
+    /// Both must be the player's, Idle, and co-located at one of the player's
+    /// OWNED systems. `from`'s composition (and cargo, if `into` carries none) is
+    /// absorbed into `into`; `from` is removed. Soft-reject on any violation — an
+    /// in-flight fleet can't be merged (no in-flight detachment in v1).
+    MergeFleets {
+        player_id: PlayerId,
+        into: EntityId,
+        from: EntityId,
+    },
+
+    /// Split ships off one of the player's fleets into a NEW fleet (§FLEETS
+    /// management v1). The source must be the player's, Idle, and at one of their
+    /// OWNED systems. `counts` names how many of each kind to detach; the new
+    /// fleet spawns Idle beside the source. Soft-reject if the counts are empty,
+    /// exceed what's aboard, or would empty the source (split SOME, keep SOME).
+    SplitFleet {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        counts: std::collections::BTreeMap<crate::ship::ShipKind, u32>,
     },
 
     /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an
