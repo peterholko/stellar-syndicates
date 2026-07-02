@@ -74,6 +74,12 @@ pub struct StarSystem {
     /// HOME systems generate at tier 1 (the turn-one convoy bootstrap).
     #[serde(default)]
     pub shipyard_tier: u32,
+    /// Number of Sensor Array upgrades built here (§buildings step 2b). An owned
+    /// system with tier ≥ 1 projects a standing sensor bubble for its OWNER
+    /// (radius `sensor_array_radius(tier)`), feeding the same coverage model as
+    /// ship bubbles. Owner-only in the View, like every tier.
+    #[serde(default)]
+    pub sensor_tier: u32,
 }
 
 impl StarSystem {
@@ -100,7 +106,12 @@ impl StarSystem {
     /// see `World::dev_slots_pending` — so the full "used" count is
     /// `dev_slots_built() + pending`.)
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier + self.depot_tier + self.shipyard_tier
+        self.extractor_tier + self.depot_tier + self.shipyard_tier + self.sensor_tier
+    }
+
+    /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
+    pub fn sensor_bubble(&self) -> f64 {
+        crate::build::sensor_array_radius(self.sensor_tier)
     }
 
     /// This system's TOTAL storage capacity (§buildings step 2): a base every
@@ -194,6 +205,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             extractor_tier: 0,
             depot_tier: 0,
             shipyard_tier: 0, // frontier systems must EARN their shipyards
+            sensor_tier: 0,
         });
     }
     systems
@@ -305,6 +317,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         // can build convoys turn one. Raiders (tier 2) and frontier shipbuilding
         // must be EARNED.
         shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
+        sensor_tier: 0,
     }
 }
 

@@ -38,6 +38,11 @@ pub enum SystemUpgrade {
     /// ships up to its Shipyard tier (`required_shipyard_tier`). Industrial
     /// geography — your shipyard system becomes strategically important.
     Shipyard,
+    /// Projects a per-system SENSOR BUBBLE for the system's owner (§buildings
+    /// step 2b): radius `sensor_array_radius(tier)`. Buying VISION — the most
+    /// on-identity building in a game about information. Feeds the SAME
+    /// coverage model as ship bubbles (detection, cargo reveal, pickets, View).
+    SensorArray,
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -86,6 +91,9 @@ pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0)], buil
 /// means expanding military industry needs FRONTIER material shipped in (Ore and
 /// Alloys rarely co-occur), reinforcing the industrial geography.
 pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 10.0)], build_ticks: 20 * HZ };
+/// Sensor Array (system development): **Ore + Alloys** — advanced intel
+/// infrastructure stays tied to frontier material.
+pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 40.0), (Commodity::Alloys, 15.0)], build_ticks: 18 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
@@ -94,6 +102,25 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor } => &EXTRACTOR_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
         BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
+        BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray } => &SENSOR_ARRAY_RECIPE,
+    }
+}
+
+// --- SENSOR ARRAY (§buildings step 2b) ----------------------------------------
+
+/// Bubble radius of a tier-1 array — matches the global ship/CC bubble, so one
+/// tier buys a ship's worth of standing vision at the system. Tunable.
+pub const SENSOR_ARRAY_BASE: f64 = 2200.0;
+/// Extra radius per tier past the first (+40% of base) — a tier-2 array outsees
+/// any ship. Tunable.
+pub const SENSOR_ARRAY_PER_TIER: f64 = 880.0;
+
+/// The sensor bubble radius an array of `tier` projects (0 = no array).
+pub fn sensor_array_radius(tier: u32) -> f64 {
+    if tier == 0 {
+        0.0
+    } else {
+        SENSOR_ARRAY_BASE + SENSOR_ARRAY_PER_TIER * (tier - 1) as f64
     }
 }
 

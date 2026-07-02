@@ -610,21 +610,35 @@ export class Renderer {
     this.anchorsLayer.addChild(g);
   }
 
-  /// Sensor coverage: a soft bubble around each of the player's assets (their
-  /// own ships + command center), radius = the server-provided sensor range.
-  /// The union shows where the player can detect raiders and read cargo — and,
-  /// by what it doesn't cover, where they are blind.
+  /// Sensor coverage: a soft bubble around each of the player's assets — their
+  /// own ships + command center at the global sensor range, plus any OWNED
+  /// SENSOR-ARRAY systems at their per-tier radius (§buildings step 2b; the
+  /// same coverage union the server computes — one source of truth). The union
+  /// shows where the player can detect raiders and read cargo — and, by what it
+  /// doesn't cover, where they are blind. Owner-only by construction: array
+  /// tiers come from the light-gated View, which reports 0 for rival systems.
   private drawSensorCoverage(state: ViewState, dt: number): void {
     const g = this.sensorGfx;
     g.clear();
     if (!state.galaxy || !state.commandCenter) return;
-    const rPx = state.galaxy.sensor_range * this.scale;
-    const centers: { x: number; y: number }[] = [state.commandCenter];
+    const baseR = state.galaxy.sensor_range;
+    const sources: { x: number; y: number; r: number }[] = [{ ...state.commandCenter, r: baseR }];
     for (const gh of state.ghosts) {
-      if (gh.own) centers.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt });
+      if (gh.own) sources.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt, r: baseR });
     }
-    for (const c of centers) {
+    // Standing array bubbles at OUR systems (sensor_tier is owner-only in the View).
+    for (const dyn of state.systems) {
+      if (dyn.owner === state.playerId && dyn.sensor_tier >= 1) {
+        const sys = state.galaxy.systems.find((s) => s.id === dyn.id);
+        if (sys) {
+          const r = state.galaxy.sensor_array_base + state.galaxy.sensor_array_per_tier * (dyn.sensor_tier - 1);
+          sources.push({ x: sys.pos.x, y: sys.pos.y, r });
+        }
+      }
+    }
+    for (const c of sources) {
       const s = this.worldToScreen(c);
+      const rPx = c.r * this.scale;
       g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: 0.045 }).stroke({ width: 1, color: COL_SENSOR, alpha: 0.14 });
     }
   }

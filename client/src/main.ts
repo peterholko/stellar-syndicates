@@ -919,7 +919,7 @@ function buildSystemTab(): void {
       // §step1 build sink: convoy/raider → BuildShip; developments → DevelopSystem.
       const k = el.dataset.build;
       if (k === "convoy" || k === "raider") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-      else if (k === "extractor" || k === "depot" || k === "shipyard") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
+      else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
       return;
     }
     switch (el.dataset.action) {
@@ -1010,7 +1010,7 @@ function updateSystemTab(): void {
   // into, inside its slot budget.
   const devs = mine
     ? `<div class="devs-row">` +
-      [["Extractor", dyn?.extractor_tier ?? 0], ["Depot", dyn?.depot_tier ?? 0], ["Shipyard", dyn?.shipyard_tier ?? 0]]
+      [["Extractor", dyn?.extractor_tier ?? 0], ["Depot", dyn?.depot_tier ?? 0], ["Shipyard", dyn?.shipyard_tier ?? 0], ["Sensor", dyn?.sensor_tier ?? 0]]
         .map(([n, t]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}</span>`)
         .join(`<span class="dev-sep">·</span>`) +
       `</div>`

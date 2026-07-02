@@ -106,6 +106,7 @@ impl Timeline {
                         sim::SystemUpgrade::Extractor => format!("Extractor tier {tier} (more output)"),
                         sim::SystemUpgrade::Depot => format!("Depot tier {tier} (more storage)"),
                         sim::SystemUpgrade::Shipyard => format!("Shipyard tier {tier} (builds ships)"),
+                        sim::SystemUpgrade::SensorArray => format!("Sensor Array tier {tier} (standing vision)"),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
@@ -211,6 +212,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
         sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "a Sensor Array",
     }
 }
 

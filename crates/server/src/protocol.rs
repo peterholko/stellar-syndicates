@@ -216,6 +216,10 @@ pub struct GalaxyInfo {
     /// Raider cruise speed (sim units / s) — lets the client compute a CRUDE,
     /// drifting intercept estimate for a committed raid (rendered as a soft zone).
     pub raider_speed: f64,
+    /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
+    /// `base + per_tier · (N−1)` — lets the client draw its own arrays' coverage.
+    pub sensor_array_base: f64,
+    pub sensor_array_per_tier: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -268,6 +272,9 @@ pub struct SystemStateView {
     /// Number of Shipyard upgrades built here (§buildings step 3) — owner-only.
     /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
     pub shipyard_tier: u32,
+    /// Number of Sensor Array upgrades built here (§buildings step 2b) —
+    /// owner-only. Projects a standing sensor bubble for the owner.
+    pub sensor_tier: u32,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,

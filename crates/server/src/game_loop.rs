@@ -165,6 +165,10 @@ impl GameLoop {
                             c: self.world.config.c,
                             sensor_range: self.world.config.sensor_range,
                             raider_speed: sim::ShipKind::Raider.max_speed(),
+                            // Array-bubble tunables so the client renders its own
+                            // arrays' coverage (§buildings step 2b).
+                            sensor_array_base: sim::build::SENSOR_ARRAY_BASE,
+                            sensor_array_per_tier: sim::build::SENSOR_ARRAY_PER_TIER,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -399,7 +403,10 @@ impl GameLoop {
                 continue;
             };
             let cc = corp.command_center;
-            let ghosts = self.history.view_for(player_id, cc, c, now);
+            // The viewer's standing SENSOR-ARRAY bubbles (§buildings step 2b) join
+            // their coverage — same shared source of truth as the sim's pickets.
+            let arrays = self.world.array_sensor_sources(player_id);
+            let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays);
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             let systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
@@ -519,6 +526,7 @@ fn build_options() -> Vec<BuildOptionView> {
         ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
         ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
         ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
+        ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
     ]
     .into_iter()
     .map(|(key, label, what)| {

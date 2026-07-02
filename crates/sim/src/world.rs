@@ -432,12 +432,27 @@ impl World {
             self.players.iter().map(|(id, c)| (*id, c.doctrine)).collect();
         let find = |id: EntityId| snap.iter().find(|s| s.id == id).copied();
 
-        // --- Sensing helpers (all fog-respecting: within `sensor` of the picket). ---
+        // SENSOR ARRAYS (§buildings step 2b): an owned array system extends its
+        // owner's DETECTION — a contact counts as sensed if it's within the
+        // picket's own bubble OR inside any of the owner's array bubbles (the
+        // shared coverage source of truth, `array_sensor_sources`). Escort ward
+        // CHOICE stays picket-local (guarding is physical proximity, not intel).
+        let arrays: BTreeMap<PlayerId, Vec<(Vec2, f64)>> =
+            self.players.keys().map(|&p| (p, self.array_sensor_sources(p))).collect();
+        let sensed = |owner: PlayerId, ppos: Vec2, target: Vec2| -> bool {
+            ppos.distance(target) <= sensor
+                || arrays
+                    .get(&owner)
+                    .is_some_and(|srcs| srcs.iter().any(|(c, r)| c.distance(target) <= *r))
+        };
+
+        // --- Sensing helpers (all fog-respecting: within the owner's coverage —
+        // the picket's bubble or an owned sensor array's). ---
         // Local raider force as (friendly incl. self, hostile), for the force-ratio
         // gates.
         let force = |ppos: Vec2, owner: PlayerId| -> (usize, usize) {
             let (mut f, mut h) = (0usize, 0usize);
-            for s in snap.iter().filter(|s| s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor) {
+            for s in snap.iter().filter(|s| s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos)) {
                 if s.owner == owner {
                     f += 1;
                 } else {
@@ -459,7 +474,7 @@ impl World {
         // Nearest sensed hostile raider, ANY heading (the proactive-hunt target).
         let nearest_hostile = |ppos: Vec2, owner: PlayerId| -> Option<EntityId> {
             snap.iter()
-                .filter(|s| s.owner != owner && s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor)
+                .filter(|s| s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos))
                 .min_by(|a, b| {
                     ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id))
                 })
@@ -470,7 +485,7 @@ impl World {
         let nearest_threat_on = |ppos: Vec2, owner: PlayerId, guard: Vec2| -> Option<EntityId> {
             let mut best: Option<(EntityId, f64)> = None;
             for h in snap.iter().filter(|s| {
-                s.owner != owner && s.kind == ShipKind::Raider && ppos.distance(s.pos) <= sensor
+                s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos)
             }) {
                 if h.vel.length() < THREAT_MIN_SPEED {
                     continue; // not actually inbound
@@ -1051,6 +1066,21 @@ impl World {
         }
     }
 
+    /// The STANDING sensor sources `owner`'s SENSOR ARRAYS project (§buildings
+    /// step 2b): every owned system with an array, as `(position, radius)`.
+    /// The ONE source of truth every consumer shares — the sim's picket sensing
+    /// here, and (via the game loop) the View's sensor-gating + the client's
+    /// coverage rendering — so everything that keys off sensor range inherits
+    /// arrays consistently. Systems are static, so including them in the View's
+    /// delayed composite frame is exactly as leak-free as ship bubbles.
+    pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
+        self.systems
+            .iter()
+            .filter(|s| s.owner == Some(owner) && s.sensor_tier >= 1)
+            .map(|s| (s.pos, s.sensor_bubble()))
+            .collect()
+    }
+
     /// Development slots HELD by in-progress upgrade jobs at `system` (each queued
     /// Extractor/Depot/Shipyard tier reserves its slot while building, so you can't
     /// over-commit a budget by queueing). Ships never hold slots.
@@ -1180,6 +1210,10 @@ impl World {
                             crate::build::SystemUpgrade::Shipyard => {
                                 sys.shipyard_tier += 1;
                                 sys.shipyard_tier
+                            }
+                            crate::build::SystemUpgrade::SensorArray => {
+                                sys.sensor_tier += 1;
+                                sys.sensor_tier
                             }
                         };
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
@@ -3226,6 +3260,41 @@ mod tests {
         }
         assert!(!far_engaged, "a patrol off the approach vector never senses the threat");
         assert!(convoy_lost, "with no defender in reach, the convoy is lost — positioning matters");
+    }
+
+    /// A SENSOR ARRAY (§buildings step 2b) extends the owner's DETECTION for
+    /// pickets: a hostile beyond the picket's own bubble — which it would
+    /// otherwise ignore (see `patrol_ignores_a_threat_beyond_sensor_range`) — is
+    /// sensed once an owned array system's bubble covers it, and the picket
+    /// engages. Same shared coverage source of truth as the View.
+    #[test]
+    fn sensor_array_extends_picket_sensing() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let sensor = w.config.sensor_range;
+        // Hostile inbound from FAR beyond the picket's own bubble.
+        let hostile_pos = convoy_pos + Vec2::new(sensor * 2.0 + 1000.0, 0.0);
+        let (patrol, _c, hostile) = defense_setup(&mut w, d, a, convoy_pos, convoy_pos, hostile_pos);
+
+        // WITHOUT an array the picket ignores it (proven by the ignore test).
+        // Grant the DEFENDER an array system whose bubble covers the hostile.
+        {
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.owner = Some(d);
+            sys.claimed_at = Some(0.0);
+            sys.pos = hostile_pos + Vec2::new(500.0, 0.0); // bubble (2200) covers it
+            sys.sensor_tier = 1;
+        }
+        let mut engaged = false;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if engaged_on(&w, patrol, hostile) {
+                engaged = true;
+                break;
+            }
+        }
+        assert!(engaged, "the array's standing vision lets the picket react to the distant threat");
     }
 
     /// Once the threat is gone, the defender RESUMES its patrol (not a chase, not

@@ -59,6 +59,9 @@ export interface SystemStateView {
   /// Shipyard upgrades built here (§buildings step 3) — owner-only; rivals see 0.
   /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
   shipyard_tier: number;
+  /// Sensor Array upgrades built here (§buildings step 2b) — owner-only; rivals
+  /// see 0. Projects a standing sensor bubble for the owner.
+  sensor_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
   slots_used: number;
   slots_total: number;
@@ -82,6 +85,10 @@ export interface GalaxyInfo {
   c: number; // speed of light, sim units / s
   sensor_range: number; // detection radius each of your assets projects
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
+  /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
+  /// base + per_tier·(N−1) — for drawing our own arrays' coverage.
+  sensor_array_base: number;
+  sensor_array_per_tier: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -245,7 +252,7 @@ export type ClientMsg =
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" }
   | { type: "Ping" };
 
 export type RaidOutcome =
