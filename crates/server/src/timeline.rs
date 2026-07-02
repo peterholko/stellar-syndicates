@@ -130,6 +130,18 @@ impl Timeline {
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
+                // A scout captured intel (§scout part 2) — OWNER-ONLY, delivered
+                // when the capture's light (from the scout's position) reaches
+                // the owner's command center: knowledge travels home at c.
+                EventPayload::IntelGathered { owner, system, defense_tier, shipyard_tier, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Info, format!(
+                            "Scout report: {name} — Defense ×{defense_tier} · Shipyard ×{shipyard_tier}."
+                        ));
+                    }
+                }
                 // A Habitat's supply state flipped (§buildings step 3a) — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
                 // and FuelShortfall). Transitions only, so it never spams.

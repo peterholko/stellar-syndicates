@@ -265,6 +265,18 @@ pub struct BuildStateView {
     pub complete_time: f64,
 }
 
+/// A stored SCOUT-INTEL snapshot of a RIVAL system's fortifications (§scout
+/// part 2), as delivered to the scout's owner — and to nobody else. It is a
+/// SNAPSHOT: `observed_at` is when the scout saw it (the client ages it); it is
+/// never live and never auto-updates — the rival may have built since.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct IntelView {
+    pub defense_tier: u32,
+    pub shipyard_tier: u32,
+    /// Sim-time of the observation ("as of T").
+    pub observed_at: f64,
+}
+
 /// The DYNAMIC, per-tick, light-gated state of a star system (companion to the
 /// static [`SystemInfo`]). `owner` is revealed to rivals only once the claim's
 /// light has reached the viewer's command center — the owner sees their own claim
@@ -313,6 +325,11 @@ pub struct SystemStateView {
     /// Units currently stored against that cap — owner-only; rivals always see 0.
     /// (May exceed `storage_cap` for a grandfathered pre-cap stockpile.)
     pub storage_used: u32,
+    /// The VIEWER'S own scout-intel snapshot of this (rival) system, if any —
+    /// present only once the capture's light has reached the viewer's command
+    /// center (§scout part 2). Never present on the viewer's own systems, and a
+    /// scouted rival never sees anything here about being scouted.
+    pub intel: Option<IntelView>,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within

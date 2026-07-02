@@ -105,6 +105,20 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         reason: BuildRejectReason,
     },
+    /// A SCOUT captured an intel snapshot of a rival system's fortifications
+    /// (§scout part 2). OWNER-ONLY: the knowledge exists on the scout at `pos`
+    /// at the capture moment — the owner learns it when that light reaches
+    /// their command center (the timeline delays it accordingly); the scouted
+    /// rival learns NOTHING. Emitted on fresh approaches / value changes only,
+    /// never per-tick.
+    IntelGathered {
+        owner: PlayerId,
+        system: EntityId,
+        defense_tier: u32,
+        shipyard_tier: u32,
+        /// The scout's position at capture — the report's light source.
+        pos: crate::math::Vec2,
+    },
     /// A Habitat's supply state flipped (§buildings step 3a). OWNER-ONLY news:
     /// `fed = false` means this tick's Provisions upkeep couldn't be covered, so
     /// the output boost is SUSPENDED (nothing destroyed, no tier lost — it

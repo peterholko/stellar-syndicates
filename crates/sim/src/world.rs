@@ -66,6 +66,28 @@ pub struct Corporation {
     /// Defaults to today's behaviour. See [`crate::doctrine`].
     #[serde(default)]
     pub doctrine: FleetDoctrine,
+    /// INTEL SNAPSHOTS (§scout part 2), keyed by scouted system: what this
+    /// corp's scouts physically observed of RIVAL fortifications at contact
+    /// range. A snapshot is knowledge captured at a moment — it AGES and is
+    /// never live (the rival may have built since; re-scout to refresh). The
+    /// View delivers it to the owner only once the capture's light has reached
+    /// their command center, and to NOBODY else.
+    #[serde(default)]
+    pub intel: BTreeMap<EntityId, IntelSnapshot>,
+}
+
+/// One scouted observation of a rival system's fortifications (§scout part 2):
+/// the raid/siege-relevant tiers, WHEN it was seen, and WHERE the scout stood
+/// (the light source for delivering the report). Deliberately narrow — no
+/// stockpiles, no habitat state — the prize stays focused.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct IntelSnapshot {
+    pub defense_tier: u32,
+    pub shipyard_tier: u32,
+    /// Sim-time of the observation (the "as of T" the readout ages from).
+    pub observed_at: f64,
+    /// Where the scout was at capture — the point the report's light travels from.
+    pub pos: Vec2,
 }
 
 /// An order in flight: a player's command that has left their command center
@@ -295,6 +317,12 @@ impl World {
         //      growth sink): spawn built ships / apply system upgrades. Server-driven
         //      — a build started before logging off still completes on the clock.
         self.resolve_builds(&mut events);
+
+        // 5b''. SCOUT INTEL (§scout part 2): scouts passing rival systems capture
+        //       timestamped snapshots of their fortifications. After movement, so
+        //       positions are this tick's truth; standing behavior (owner online
+        //       or off — the scout gathers regardless).
+        self.gather_intel(&mut events);
 
         // 5c. Standing logistics orders (§15): reconcile each rule's in-flight
         //     convoy against reality (raids/arrivals above may have removed it),
@@ -973,6 +1001,7 @@ impl World {
                         standing_orders: Vec::new(),
                         next_standing_id: 0,
                         doctrine: FleetDoctrine::default(),
+                        intel: BTreeMap::new(),
                     },
                 );
                 events.push(Event::new(
@@ -1232,6 +1261,60 @@ impl World {
             .filter(|s| s.owner == Some(owner) && s.sensor_tier >= 1)
             .map(|s| (s.pos, s.sensor_bubble()))
             .collect()
+    }
+
+    /// SCOUT INTEL (§scout part 2): every SCOUT within [`crate::ship::SCOUT_INTEL_RANGE`]
+    /// of a RIVAL-owned system captures/refreshes its owner's snapshot of that
+    /// system's fortifications — `{ defense_tier, shipyard_tier, observed_at,
+    /// pos }`. The stored snapshot updates every tick the scout stays in range
+    /// (it is physically there, looking); the OWNER-ONLY `IntelGathered` notice
+    /// fires only on a FRESH approach or when the observed tiers changed —
+    /// never per-tick (no spam). Fog discipline: this is data the scout
+    /// gathered at contact range, not a live link — the View delivers the
+    /// stored snapshot to its owner light-delayed from `pos`, and the scouted
+    /// rival learns NOTHING (a never-detected dark scout leaves no trace).
+    fn gather_intel(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        // Collect first (immutable pass over ships × systems), then apply.
+        let mut captures: Vec<(PlayerId, EntityId, u32, u32, Vec2)> = Vec::new();
+        for ship in self.ships.values() {
+            if ship.kind != ShipKind::Scout {
+                continue;
+            }
+            for sys in &self.systems {
+                let Some(sys_owner) = sys.owner else { continue };
+                if sys_owner == ship.owner {
+                    continue; // your own systems need no spying
+                }
+                if ship.pos.distance(sys.pos) <= crate::ship::SCOUT_INTEL_RANGE {
+                    captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, ship.pos));
+                }
+            }
+        }
+        for (owner, system, defense_tier, shipyard_tier, pos) in captures {
+            let Some(corp) = self.players.get_mut(&owner) else { continue };
+            let prev = corp.intel.get(&system);
+            // Notify on a fresh approach (no snapshot, or the last one has gone
+            // stale — the scout left and came back) or on changed tiers.
+            let notify = match prev {
+                None => true,
+                Some(p) => {
+                    p.defense_tier != defense_tier
+                        || p.shipyard_tier != shipyard_tier
+                        || now - p.observed_at > crate::ship::SCOUT_INTEL_RENOTIFY_S
+                }
+            };
+            corp.intel.insert(
+                system,
+                crate::world::IntelSnapshot { defense_tier, shipyard_tier, observed_at: now, pos },
+            );
+            if notify {
+                events.push(Event::new(
+                    now,
+                    EventPayload::IntelGathered { owner, system, defense_tier, shipyard_tier, pos },
+                ));
+            }
+        }
     }
 
     /// Development slots HELD by in-progress upgrade jobs at `system` (each queued
@@ -2931,8 +3014,17 @@ mod tests {
             sys.habitat_fed = true;
             sys.stockpile.insert(Commodity::Ore, 123.5);
         }
+        // Scout intel rides the snapshot too (§scout part 2).
+        w.players.get_mut(&id).unwrap().intel.insert(
+            EntityId(999),
+            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
+        );
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            w.players[&id].intel, w2.players[&id].intel,
+            "intel snapshots round-trip through serde"
+        );
         let a = w.systems.iter().find(|s| s.id == home).unwrap();
         let b = w2.systems.iter().find(|s| s.id == home).unwrap();
         assert_eq!((a.extractor_tier, a.depot_tier, a.shipyard_tier), (b.extractor_tier, b.depot_tier, b.shipyard_tier));
@@ -3249,6 +3341,92 @@ mod tests {
         assert_eq!(outcome, RaidOutcome::AttackerDestroyed, "an attacking scout dies");
         assert!(w.ships.contains_key(&convoy), "the convoy is untouched");
         assert!(!w.ships.contains_key(&sid));
+    }
+
+    // --- §scout part 2: intel snapshots ----------------------------------------
+
+    /// A scout inside SCOUT_INTEL_RANGE of a RIVAL system captures a snapshot of
+    /// its fortifications: correct tiers, timestamped, ONE notice per approach
+    /// (silent refresh while parked), re-noticed when the observed tiers change.
+    /// Out of range, nothing is gathered.
+    #[test]
+    fn scout_gathers_aging_intel_snapshots() {
+        let mut w = test_world();
+        let (spy, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: spy, name: "Spy".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        // A rival-owned fortified system.
+        let sys_id = {
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.owner = Some(def);
+            sys.claimed_at = Some(0.0);
+            sys.defense_tier = 2;
+            sys.shipyard_tier = 1;
+            (sys.id, sys.pos)
+        };
+        let (sid_sys, sys_pos) = sys_id;
+
+        // A scout parked just inside intel range.
+        let scout = w.alloc_entity_id();
+        w.ships.insert(
+            scout,
+            Ship::new(scout, spy, ShipKind::Scout, sys_pos + Vec2::new(crate::ship::SCOUT_INTEL_RANGE - 50.0, 0.0), ShipOrder::Idle, None),
+        );
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::IntelGathered { owner, system, defense_tier: 2, shipyard_tier: 1, .. }
+                    if owner == spy && system == sid_sys
+            )),
+            "a fresh approach captures + notices the snapshot"
+        );
+        let snap0 = w.players[&spy].intel[&sid_sys];
+        assert_eq!((snap0.defense_tier, snap0.shipyard_tier), (2, 1));
+
+        // Parked: the snapshot refreshes SILENTLY (observed_at advances, no event).
+        let ev = w.step(&[]);
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::IntelGathered { .. })), "no per-tick spam");
+        let snap1 = w.players[&spy].intel[&sid_sys];
+        assert!(snap1.observed_at > snap0.observed_at, "parked scout keeps the snapshot fresh");
+
+        // The rival builds (tier changes) → a NEW notice fires.
+        w.systems.iter_mut().find(|s| s.id == sid_sys).unwrap().defense_tier = 3;
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::IntelGathered { defense_tier: 3, .. })),
+            "changed tiers re-notice"
+        );
+
+        // Move the scout out of range: the snapshot stops refreshing — it AGES.
+        w.ships.get_mut(&scout).unwrap().pos = sys_pos + Vec2::new(crate::ship::SCOUT_INTEL_RANGE * 3.0, 0.0);
+        let frozen = w.players[&spy].intel[&sid_sys].observed_at;
+        for _ in 0..10 {
+            w.step(&[]);
+        }
+        assert_eq!(w.players[&spy].intel[&sid_sys].observed_at, frozen, "a snapshot is a snapshot — it ages, never auto-updates");
+
+        // The SCOUTED side learns nothing: no intel entry, no event addressed to def.
+        assert!(w.players[&def].intel.is_empty(), "the scouted rival gathers nothing");
+
+        // Non-scouts never gather: a raider parked at the same spot adds nothing.
+        let mut w2 = test_world();
+        w2.step(&[
+            Command::AddPlayer { id: spy, name: "Spy".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let (sid2, pos2) = {
+            let sys = w2.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.owner = Some(def);
+            sys.claimed_at = Some(0.0);
+            (sys.id, sys.pos)
+        };
+        let raider = w2.alloc_entity_id();
+        w2.ships.insert(raider, Ship::new(raider, spy, ShipKind::Raider, pos2, ShipOrder::Idle, None));
+        w2.step(&[]);
+        assert!(!w2.players[&spy].intel.contains_key(&sid2), "only scouts gather intel");
     }
 
     #[test]

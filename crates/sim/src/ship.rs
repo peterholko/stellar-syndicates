@@ -113,6 +113,12 @@ pub const SCOUT_SENSOR_MULT: f64 = 1.5;
 /// defended system is a risk. Tunable.
 pub const SCOUT_INTEL_RANGE: f64 = 1300.0;
 
+/// A scout that stays parked in range keeps its snapshot fresh SILENTLY; the
+/// owner-only "Scout report" notice re-fires only when a snapshot had gone
+/// stale by this much (the scout left and returned) or the observed tiers
+/// changed. Anti-spam. Tunable.
+pub const SCOUT_INTEL_RENOTIFY_S: f64 = 60.0;
+
 /// Seconds a patrolling ship waits at each waypoint before moving on.
 const PATROL_DWELL: f64 = 2.5;
 

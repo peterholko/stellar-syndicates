@@ -79,6 +79,18 @@ export interface SystemStateView {
   /// rivals see 0/0. `storage_used` may exceed the cap (grandfathered stockpile).
   storage_cap: number;
   storage_used: number;
+  /// OUR scout-intel snapshot of this (rival) system, if any (§scout part 2) —
+  /// delivered only once its light reached our command center. A SNAPSHOT: it
+  /// ages and never auto-updates; re-scout to refresh.
+  intel: IntelView | null;
+}
+
+/// A stored scout-intel snapshot of a rival system's fortifications.
+export interface IntelView {
+  defense_tier: number;
+  shipyard_tier: number;
+  /// Sim-time of the observation ("as of T") — the client ages it.
+  observed_at: number;
 }
 
 // A buildable thing + its recipe (§step1), sent once in the galaxy.

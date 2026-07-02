@@ -29,7 +29,7 @@ use std::collections::VecDeque;
 
 use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, StarSystem, Vec2, World};
 
-use crate::protocol::{AnchorView, BuildStateView, CargoView, GhostView, StockSlot, SystemStateView};
+use crate::protocol::{AnchorView, BuildStateView, CargoView, GhostView, IntelView, StockSlot, SystemStateView};
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -406,6 +406,7 @@ pub fn filter_systems(
     build_queue: &[sim::BuildJob],
     tick: u64,
     dt: f64,
+    intel: &BTreeMap<EntityId, sim::IntelSnapshot>,
 ) -> Vec<SystemStateView> {
     systems
         .iter()
@@ -484,6 +485,24 @@ pub fn filter_systems(
                 // `used` is floored to whole units to match the stockpile readout.
                 storage_cap: if own { sys.storage_cap() as u32 } else { 0 },
                 storage_used: if own { sys.storage_used().floor() as u32 } else { 0 },
+                // The viewer's OWN scout intel about this rival system (§scout
+                // part 2), delivered only once the capture's light — from where
+                // the scout stood — has reached the viewer's command center. It
+                // is the viewer's own gathered knowledge: no rival data flows
+                // here beyond what the scout physically saw, and the scouted
+                // side never learns anything.
+                intel: if own {
+                    None // your own systems need no spying
+                } else {
+                    intel.get(&sys.id).and_then(|snap| {
+                        let arrival = snap.observed_at + snap.pos.distance(cc) / c;
+                        (arrival <= now).then_some(IntelView {
+                            defense_tier: snap.defense_tier,
+                            shipyard_tier: snap.shipyard_tier,
+                            observed_at: snap.observed_at,
+                        })
+                    })
+                },
             }
         })
         .collect()
@@ -816,7 +835,7 @@ mod tests {
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT);
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new());
         assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
         assert!(v10[1].build.is_none(), "a rival's build state must never leak");
         assert_eq!(v10[0].owner, Some(me), "own claim is visible instantly");
@@ -865,12 +884,71 @@ mod tests {
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT);
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new());
         assert_eq!(v25[1].owner, Some(rival));
         // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
         assert_eq!(v25[1].extractor_tier, 0, "ownership visible, development tier still private");
         assert_eq!((v25[1].slots_used, v25[1].slots_total), (0, 0), "ownership visible, slots still private");
+    }
+
+    /// SCOUT INTEL delivery obeys light (§scout part 2): the snapshot is
+    /// knowledge on the scout at the capture moment — the View withholds it
+    /// until that light reaches the viewer's command center, then shows the
+    /// stored (aging) values. And it is the VIEWER'S OWN intel: a viewer with
+    /// no snapshot sees nothing, the viewer's own systems never carry intel,
+    /// and the scouted rival's view is untouched (leak checks).
+    #[test]
+    fn scout_intel_is_light_delayed_and_owner_only() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let me = PlayerId(7);
+        let rival = PlayerId(8);
+        let cc = Vec2::new(0.0, 0.0);
+        // Rival system 6000 su out; my scout captured intel there at t=0
+        // (capture pos = the system's neighborhood → 20 s of light to me).
+        let systems = vec![StarSystem {
+            id: EntityId(1),
+            pos: Vec2::new(6000.0, 0.0),
+            name: "S".into(),
+            deposits: vec![],
+            claim_cost: 1000.0,
+            owner: Some(rival),
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            extractor_tier: 0,
+            depot_tier: 0,
+            shipyard_tier: 0,
+            sensor_tier: 0,
+            defense_tier: 0,
+            habitat_tier: 0,
+            habitat_fed: false,
+            refinery_tier: 0,
+        }];
+        let mut intel = BTreeMap::new();
+        intel.insert(
+            EntityId(1),
+            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
+        );
+        let builds: Vec<sim::BuildJob> = vec![];
+
+        // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel);
+        assert!(v10[0].intel.is_none(), "intel must not appear before its light arrives");
+
+        // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel);
+        let iv = v25[0].intel.expect("intel delivered once its light arrives");
+        assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
+        assert!((iv.observed_at - 0.0).abs() < 1e-9, "a snapshot keeps its capture time — it ages");
+
+        // Leak checks: a viewer WITHOUT snapshots sees nothing…
+        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new());
+        assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
+        // …and the SCOUTED RIVAL's own view is untouched: their own system never
+        // carries intel (own => None), even if a stale map were passed in.
+        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel);
+        assert!(v_rival[0].intel.is_none(), "the scouted side learns nothing — not even that it was scouted");
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.

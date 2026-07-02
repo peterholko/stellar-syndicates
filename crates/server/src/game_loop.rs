@@ -422,6 +422,7 @@ impl GameLoop {
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             let systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
+                &corp.intel,
             );
 
             // Lagged hub ticker: prices as of the light that has reached this

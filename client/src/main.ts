@@ -1106,6 +1106,17 @@ function updateSystemTab(): void {
   } else {
     actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
   }
+  // OUR scout intel about a system we don't own (§scout part 2): a timestamped
+  // SNAPSHOT of its fortifications — never live, aging until re-scouted. Shown
+  // only to us (the View carries only our own snapshots, light-delayed).
+  let intelBlock = "";
+  if (!mine && dyn?.intel) {
+    const age = Math.max(0, state.simTime - dyn.intel.observed_at);
+    const ageTxt = age < 90 ? `${age.toFixed(0)}s ago` : `${(age / 60).toFixed(0)}m ago`;
+    intelBlock = `<div class="deps-head" style="margin-top:8px">${uiIcon("concept-sensor-range", 12)} Scout intel — snapshot</div>` +
+      `<div class="sp-line">Defense ×${dyn.intel.defense_tier} · Shipyard ×${dyn.intel.shipyard_tier} <span class="dim">· scouted ${ageTxt}</span></div>` +
+      `<div class="mhint">A snapshot, not a feed — they may have built since. Re-scout to refresh.</div>`;
+  }
   // Inspect → the presentation-only schematic System View. Offered for ANY system
   // (its geography is public); it is a VIEW, never a gameplay action. Also reachable
   // by double-click or deep-zoom on the map.
@@ -1119,7 +1130,7 @@ function updateSystemTab(): void {
         ? `<div class="mhint">Claiming starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
         : "";
 
-  root.innerHTML = rail + header + starFeature + strip + storageBar + devs + deps + prod + build + actions + hint;
+  root.innerHTML = rail + header + starFeature + strip + storageBar + devs + deps + intelBlock + prod + build + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------
