@@ -54,7 +54,7 @@ pub fn estimate_engagement(
     let own = sim::Forces::from_fleet(&own_fleet.composition, &own_fleet.damage);
 
     // TARGET — only what the observer's view reveals. Find its ghost.
-    let ghosts = history.view_for_with_arrays(viewer, cc, c, now, arrays);
+    let ghosts = history.view_for_with_arrays(viewer, cc, c, now, arrays, &std::collections::BTreeSet::new());
     let ghost = ghosts.into_iter().find(|g| g.id == target)?;
     let composition_age = ghost.age;
 
@@ -93,7 +93,12 @@ pub fn estimate_engagement(
     // flagship convoy) is a skirmish; own doctrine's threshold governs when the
     // attacker would withdraw (the target's is unknown → assume it fights on).
     let raid = ghost.kind == sim::ShipKind::Convoy;
-    let rate = sim::combat::DMG_RATE * if raid { sim::combat::RAID_SKIRMISH_MULT } else { 1.0 };
+    // A raid uses the fixed quick RAID_RATE; a battle uses the config-scaled rate.
+    let rate = if raid {
+        sim::combat::RAID_RATE
+    } else {
+        sim::combat::dmg_rate(world.config.battle_target_secs)
+    };
     let own_retreat = world
         .players
         .get(&viewer)

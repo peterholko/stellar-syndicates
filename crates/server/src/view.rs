@@ -24,6 +24,7 @@
 //! that one and nothing fresher — provably no leak.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -189,7 +190,7 @@ impl PositionHistory {
     /// [`Self::view_for_with_arrays`]; the many fairness tests use this form.)
     #[cfg(test)]
     pub fn view_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<GhostView> {
-        self.view_for_with_arrays(viewer, cc, c, now, &[])
+        self.view_for_with_arrays(viewer, cc, c, now, &[], &BTreeSet::new())
     }
 
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
@@ -208,6 +209,10 @@ impl PositionHistory {
         c: f64,
         now: f64,
         arrays: &[(Vec2, f64)],
+        // Fleets FORCE-REVEALED by weapons fire (§battles-take-time): battle
+        // participants whose battle-light has reached the viewer are shown at the
+        // site even if dark and out of coverage — fighting means being seen.
+        battle_reveal: &BTreeSet<EntityId>,
     ) -> Vec<GhostView> {
         // Pass 1: retarded ghost for every observable ship, and gather the
         // viewer's sensor coverage (command center + their own ships' ghosts).
@@ -292,7 +297,12 @@ impl PositionHistory {
                 sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
             };
             let in_coverage = within_coverage(&coverage, p.sample.pos);
+            // Weapons fire is LOUD: a battle participant whose battle-light has
+            // reached the viewer is revealed at the site even if dark and out of
+            // coverage — this overrides the quiet-when-slow detection rule.
+            let at_battle = battle_reveal.contains(&p.id);
             let dark_detected = own
+                || at_battle
                 || p.destroyed_detected
                 || sim::detection::detected(signature, &coverage, p.sample.pos);
 
@@ -1175,6 +1185,24 @@ mod tests {
         assert_eq!(seen.len(), 1, "the old full-speed flare is what arrives — detected on schedule");
     }
 
+    /// §battles-take-time: WEAPONS FIRE IS LOUD — a dark battle participant that
+    /// is normally omitted (out of coverage) is REVEALED at the site once it's in
+    /// the battle-reveal set. Leak-safe: without the reveal it stays hidden, so
+    /// the reveal is exactly the (light-gated) weapons-fire override.
+    #[test]
+    fn weapons_fire_reveals_a_dark_participant_at_the_site() {
+        let pos = Vec2::new(6000.0, 0.0); // far outside the 1000 su bubble
+        let full = ShipKind::Raider.max_speed();
+        let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 2)])], 1000.0);
+        // Out of coverage → omitted entirely (the fog default).
+        assert!(hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
+        // As a battle participant, weapons fire reveals it at the site, in full.
+        let reveal: BTreeSet<EntityId> = [EntityId(1)].into_iter().collect();
+        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &reveal);
+        assert_eq!(seen.len(), 1, "weapons fire reveals the dark participant at the battle site");
+        assert!(seen[0].composition.is_some(), "and its full composition is seen there");
+    }
+
     /// VIEW / SIM PARITY: the View's dark-fleet gating and the sim's shared
     /// `detection::detected` agree for the same signature + coverage + position.
     #[test]
@@ -1339,7 +1367,7 @@ mod tests {
         assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
         // An owned array system near them (bubble 1200 su) covers both.
         let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
-        let seen = hist.view_for_with_arrays(VIEWER, cc, 300.0, 60.0, &arrays);
+        let seen = hist.view_for_with_arrays(VIEWER, cc, 300.0, 60.0, &arrays, &BTreeSet::new());
         assert_eq!(seen.len(), 2, "the array detects the dark raider");
         let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
         assert!(convoy.cargo.is_some(), "cargo revealed at array range");

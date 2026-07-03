@@ -23,6 +23,8 @@ pub enum OrderKind {
     Move,
     Raid,
     Recall,
+    /// A mid-battle WITHDRAW (§battles-take-time) — disengage an engaged fleet.
+    Withdraw,
 }
 
 impl OrderKind {
@@ -32,6 +34,7 @@ impl OrderKind {
             OrderKind::Move => "move",
             OrderKind::Raid => "raid",
             OrderKind::Recall => "recall",
+            OrderKind::Withdraw => "withdraw",
         }
     }
 }

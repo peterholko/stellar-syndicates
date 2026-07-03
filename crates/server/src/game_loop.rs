@@ -320,6 +320,11 @@ impl GameLoop {
                         self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
                     }
                 }
+                ClientMsg::Withdraw { fleet_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::Withdraw { player_id, fleet_id });
+                    }
+                }
                 ClientMsg::SetFleetTransit { fleet_id, mode } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetFleetTransit { player_id, fleet_id, mode });
@@ -447,7 +452,23 @@ impl GameLoop {
             // The viewer's standing SENSOR-ARRAY bubbles (§buildings step 2b) join
             // their coverage — same shared source of truth as the sim's pickets.
             let arrays = self.world.array_sensor_sources(player_id);
-            let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays);
+            // BATTLES (§battles-take-time), STRICTLY light-gated: a battle (and its
+            // participants, revealed by weapons fire) appears only once the light
+            // of its start has reached THIS player's command center.
+            let mut battles: Vec<crate::protocol::BattleView> = Vec::new();
+            let mut battle_reveal: std::collections::BTreeSet<sim::EntityId> = std::collections::BTreeSet::new();
+            for b in self.world.active_battles() {
+                let delay = b.pos.distance(cc) / c;
+                if now >= b.started_at + delay {
+                    battles.push(crate::protocol::BattleView {
+                        pos: b.pos,
+                        age: delay,
+                        own: player_id == b.a_owner || player_id == b.d_owner,
+                    });
+                    battle_reveal.extend(b.participants);
+                }
+            }
+            let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             let systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
@@ -530,6 +551,7 @@ impl GameLoop {
                             kind: p.kind,
                         })
                         .collect(),
+                    battles,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

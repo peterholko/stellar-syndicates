@@ -62,6 +62,8 @@ export interface ViewState {
   /// §order-lifecycle: the player's in-flight order timestamps, keyed by fleet id
   /// (owner-only). Drives the panel countdowns + map dashed hint / echo badge.
   pendingOrders: Map<string, PendingOrderView>;
+  /// §battles-take-time: ongoing battles visible to this player (light-gated).
+  battles: import("./protocol").BattleView[];
   /// The check-in timeline (§16, Layer 3): what became observable, newest last.
   timeline: TimelineEntry[];
   /// Sim-time the player was last online — the "while you were away" boundary.
@@ -113,6 +115,7 @@ export function initialState(): ViewState {
     standingOrders: [],
     doctrine: defaultDoctrine(),
     pendingOrders: new Map(),
+    battles: [],
     timeline: [],
     awaySince: 0,
     awaySet: false,

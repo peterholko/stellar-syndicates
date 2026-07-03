@@ -44,6 +44,23 @@ pub struct SimConfig {
     /// sensor coverage is the union of these radii. Within coverage they detect
     /// dark raiders and read convoy cargo; outside it they are blind to raiders.
     pub sensor_range: f64,
+
+    /// The target DURATION (seconds) two EQUAL reference forces take to grind to
+    /// their retreat thresholds — the strategic timescale of a decisive battle.
+    /// Drives the Lanchester damage rate ([`crate::combat::dmg_rate`] =
+    /// `DMG_RATE_CALIBRATION / battle_target_secs`). PRESETS: **playtest ≈ 45 s**
+    /// (30–60 s band — travel is quick in the 12-player galaxy) · **production
+    /// ≈ 2700 s** (30–60 min — battles at the scale of light-delays and relief
+    /// travel). Lopsided fights still end fast; a safety valve
+    /// ([`crate::combat::MAX_BATTLE_MULT`]) caps a no-retreat grind. serde default
+    /// keeps old snapshots loading.
+    #[serde(default = "default_battle_target_secs")]
+    pub battle_target_secs: f64,
+}
+
+/// The default battle timescale (the PLAYTEST preset) — see `battle_target_secs`.
+fn default_battle_target_secs() -> f64 {
+    45.0
 }
 
 impl SimConfig {
@@ -68,6 +85,9 @@ impl SimConfig {
             // around your assets, so most of the dark between homes is blind to
             // raiders — the tension the model wants.
             sensor_range: 2200.0,
+            // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
+            // ~2700 s / 45 min — battles at the scale of light-delays + relief).
+            battle_target_secs: default_battle_target_secs(),
         }
     }
 }

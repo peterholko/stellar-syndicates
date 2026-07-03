@@ -53,5 +53,5 @@ pub use ship::{
     ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
-pub use world::{Corporation, IntelSnapshot, PendingCommandView, World};
+pub use world::{BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView, World};
 

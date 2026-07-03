@@ -345,6 +345,8 @@ export type ClientMsg =
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
+  // §battles-take-time — withdraw an engaged fleet (light-delayed).
+  | { type: "Withdraw"; fleet_id: EntityId }
   // §Part 4 — set a fleet's transit throttle (Full/Stealth).
   | { type: "SetFleetTransit"; fleet_id: EntityId; mode: TransitMode }
   // §FLEETS Part 3 — request a projected engagement estimate (read-only query).
@@ -400,7 +402,14 @@ export interface EngagementEstimate {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "raid" | "recall";
+export type OrderKind = "move" | "raid" | "recall" | "withdraw";
+
+// §battles-take-time: an ongoing battle as this player perceives it, light-gated.
+export interface BattleView {
+  pos: Vec2;
+  age: number; // light delay of the sighting (s) — "battle raging, as of N ago"
+  own: boolean; // the viewer is one of the two sides
+}
 
 // One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
 // the phase from `sim_time`: IN TRANSIT until `delivered_at`, AWAITING ECHO until
@@ -439,6 +448,8 @@ export type ServerMsg =
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
+      // §battles-take-time — ongoing battles visible to this player (light-gated).
+      battles: BattleView[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

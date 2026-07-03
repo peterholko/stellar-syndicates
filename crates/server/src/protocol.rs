@@ -87,6 +87,10 @@ pub enum ClientMsg {
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
 
+    /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
+    /// light-delayed break-off order.
+    Withdraw { fleet_id: EntityId },
+
     /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
     /// administration on the player's own fleet.
     SetFleetTransit { fleet_id: EntityId, mode: TransitMode },
@@ -419,6 +423,21 @@ pub struct PendingOrderView {
     pub kind: OrderKind,
 }
 
+/// An ongoing BATTLE as any observer perceives it (§battles-take-time), STRICTLY
+/// light-gated: it appears only once the light of its start has reached the
+/// viewer's command center. Weapons fire is loud — all participants (even dark
+/// fleets) are revealed at the site by that same old light. `age` is how stale
+/// the sighting is ("battle raging — as of N ago").
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct BattleView {
+    pub pos: Vec2,
+    /// Light delay of the battle sighting (seconds) — `distance(pos, cc) / c`.
+    pub age: f64,
+    /// True if the viewer is one of the two sides (they read their own running
+    /// losses by their own light via the delayed reports).
+    pub own: bool,
+}
+
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
 /// is light-gated by the view filter — it is `None` to a player until the light
 /// of the claim event has reached their command center (a rival's presence must
@@ -544,6 +563,9 @@ pub enum ServerMsg {
         /// TRANSIT → AWAITING ECHO. OWNER-ONLY private command data (like the
         /// wallet); a rival's view carries none of it.
         pending_orders: Vec<PendingOrderView>,
+        /// Ongoing BATTLES visible to this player (§battles-take-time) — strictly
+        /// light-gated; a third-party observer sees them only by their own light.
+        battles: Vec<BattleView>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

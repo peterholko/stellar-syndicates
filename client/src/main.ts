@@ -237,6 +237,10 @@ function buildShipPanel(): void {
       net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
       delete state.raids[state.selectedShipId]; // break off the intercept estimate
       updateShipPanel();
+    } else if (act === "withdraw" && state.selectedShipId && net) {
+      // §battles-take-time: light-delayed break-off; the echo lifecycle tracks it.
+      net.send({ type: "Withdraw", fleet_id: state.selectedShipId });
+      updateShipPanel();
     } else if (act === "split" && state.selectedShipId && net) {
       const kind = (b as HTMLElement).dataset.kind as ShipKind | undefined;
       if (kind) {
@@ -302,6 +306,29 @@ const fmtCountdown = (secs: number): string => {
   const s = Math.max(0, Math.round(secs));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
+
+// §battles-take-time: notify ONCE when a battle first becomes visible (light-
+// gated by the server). Keyed by a coarse location so it re-fires only for a
+// genuinely new battle after an old one ends.
+const seenBattles = new Set<string>();
+function notifyNewBattles(battles: import("./protocol").BattleView[]): void {
+  const nowKeys = new Set<string>();
+  for (const b of battles) {
+    const key = `${Math.round(b.pos.x / 200)},${Math.round(b.pos.y / 200)}`;
+    nowKeys.add(key);
+    if (!seenBattles.has(key)) {
+      const log = $("reports-log");
+      const el = document.createElement("div");
+      el.className = "report bad";
+      el.innerHTML = `<span class="ic">⚔</span> <b>Battle raging</b> near (${b.pos.x.toFixed(0)}, ${b.pos.y.toFixed(0)}) <span class="dim">— as of ${fmtCountdown(b.age)} ago${b.own ? " · your fleet is engaged" : ""}</span>`;
+      log.prepend(el);
+      while (log.children.length > 6) log.removeChild(log.lastChild!);
+      setTimeout(() => el.classList.add("fade"), 12000);
+    }
+  }
+  seenBattles.clear();
+  for (const k of nowKeys) seenBattles.add(k);
+}
 
 // The order-lifecycle status line for the fleet panel (the star).
 function orderLifecycleLine(g: GhostView): string {
@@ -471,6 +498,11 @@ function ownBody(g: GhostView): string {
       `<div class="sp-line dim" style="margin-top:4px">No cargo, no weapons: if anything engages it, it dies. Cheap on purpose.</div>`);
   }
   parts.push(`<div class="sp-sec">Actions</div>`);
+  // §battles-take-time: WITHDRAW when this fleet is in/near a visible battle.
+  const inBattle = state.battles.some((b) => Math.hypot(b.pos.x - g.pos.x, b.pos.y - g.pos.y) <= 220);
+  if (inBattle && (g.kind === "raider" || g.kind === "corvette")) {
+    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you)">↩ Withdraw from battle</button>`);
+  }
   if (g.kind === "raider") {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
@@ -1865,6 +1897,8 @@ function join(): void {
           state.wallet = msg.wallet;
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
+          state.battles = msg.battles;
+          notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
           // sparklines), even when the Market tab is closed.

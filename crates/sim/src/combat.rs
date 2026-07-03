@@ -20,16 +20,55 @@ use serde::{Deserialize, Serialize};
 use crate::ship::ShipKind;
 
 // --- TUNABLE COMBAT BLOCK (the Lanchester knobs) --------------------------
-/// Fraction of a side's weighted attack power dealt as damage per tick. Tuned
-/// so a full-rate engagement plays out over a watchable few seconds at 30 Hz
-/// (a lone raider, attack 3, wears down a convoy hull of 10 in ~33 ticks ≈ 1 s;
-/// grinds a corvette screen, hull 40, over ~130 ticks ≈ 4 s).
-pub const DMG_RATE: f64 = 0.1;
-/// Raids are survivable SKIRMISHES: a cargo-raid engagement runs at this
-/// fraction of the full rate (both sides bleed slowly), so a raider can seize
-/// and run without a decisive bloodbath. Blockade/siege/defense-of-place run at
-/// full rate — decisive battles. Travian's two formulas.
+/// The per-tick damage fraction is DERIVED from `Config.battle_target_secs`, not
+/// hardcoded — battle DURATION is a config-scaled strategic timescale (playtest
+/// ≈45 s, production ≈45 min). See [`dmg_rate`].
+///
+/// CALIBRATION: for equal aimed-fire forces the strength decays ≈ exponentially,
+/// so the time to a given loss fraction is `≈ C / rate` (independent of force
+/// SIZE — both counts cancel). Measured empirically against the reference (equal
+/// RAIDER forces grinding to the 50 % retreat threshold): `C ≈ 0.1435`
+/// (rock-stable across rates — `duration × rate` is constant). Hence:
+///
+/// ```text
+/// dmg_rate(target) = DMG_RATE_CALIBRATION / target
+/// ```
+///
+/// so equal reference forces reach their retreat thresholds in
+/// `≈ battle_target_secs` (the REQUIRED test proves it under both presets).
+/// Lopsided fights end faster — Lanchester compounds the edge (concentration
+/// test). A safety valve ([`MAX_BATTLE_MULT`]) forces mutual disengage if neither
+/// threshold trips.
+pub const DMG_RATE_CALIBRATION: f64 = 0.1435;
+
+/// The per-tick damage fraction for a battle whose target duration is
+/// `battle_target_secs`. `max(1.0)` guards a degenerate config.
+pub fn dmg_rate(battle_target_secs: f64) -> f64 {
+    DMG_RATE_CALIBRATION / battle_target_secs.max(1.0)
+}
+
+/// The per-tick damage rate for a cargo RAID — a FIXED quick rate, NOT the
+/// config-scaled battle rate: slow battles must not slow raids (a raid is a
+/// smash-and-grab, so a raider overpowers a defenceless convoy in ~1 s and seizes
+/// its cargo whatever the battle timescale). Only DEFENDED targets (escort /
+/// platform) turn a raid into a full-rate BATTLE. Tunable.
+pub const RAID_RATE: f64 = 0.1;
+/// Raids are survivable SKIRMISHES: a mild tunable expressing how much gentler a
+/// raid is than a full battle (kept for the pure-function skirmish demonstration;
+/// the authoritative raid rate is the fixed [`RAID_RATE`], and the low mutual
+/// casualties come mainly from raid BREVITY — the short cap + early disengage).
 pub const RAID_SKIRMISH_MULT: f64 = 0.3;
+/// A raid engagement ends after at most this fraction of `battle_target_secs`
+/// (whichever comes first with cargo-seized / retreat) — raids stay quick
+/// smash-and-grabs even as battles get slow. Tunable.
+pub const RAID_CAP_FRAC: f64 = 0.15;
+/// SAFETY VALVE: an engagement that has run this multiple of `battle_target_secs`
+/// without either side hitting a retreat threshold forces a MUTUAL DISENGAGE —
+/// no infinite grind between two no-retreat (doctrine Never) fleets. Tunable.
+pub const MAX_BATTLE_MULT: f64 = 2.0;
+/// The reference RETREAT fraction the duration calibration is anchored to (equal
+/// forces withdraw when half their weighted strength is gone).
+pub const REFERENCE_RETREAT_FRAC: f64 = 0.5;
 /// Hull per point of defense weight (see [`ShipKind::hull`]).
 pub const HULL_PER_DEFENSE: f64 = 10.0;
 /// Minimum hull, so a zero-defense scout is still attritable (dies fast).
@@ -211,7 +250,7 @@ pub fn typical_forces(class: crate::ship::CountClass) -> Forces {
 }
 
 /// One symmetric Lanchester attrition tick between two pooled sides. `rate` is
-/// the already-scaled per-tick fraction (`DMG_RATE`, times the raid-skirmish
+/// the already-scaled per-tick fraction (`dmg_rate(3.0)`, times the raid-skirmish
 /// multiplier for a cargo raid). Each side deals `rate × attack_power` to the
 /// other, spread by hull share; returns `(losses_a, losses_b)`.
 ///
@@ -285,7 +324,7 @@ mod tests {
         // Two even 6-raider fleets clash — both take real, partial losses.
         let a = forces(&[(ShipKind::Raider, 6)]);
         let b = forces(&[(ShipKind::Raider, 6)]);
-        let (fa, fb, la, lb) = project_engagement(&a, &b, DMG_RATE, None, None, 100_000);
+        let (fa, fb, la, lb) = project_engagement(&a, &b, dmg_rate(3.0), None, None, 100_000);
         // One side wins but the loser inflicted casualties on the way down.
         assert!(la.total_ships() > 0 && lb.total_ships() > 0, "both sides bled");
         assert!(fa.ship_count() == 0 || fb.ship_count() == 0, "a fight to the finish resolves");
@@ -294,7 +333,7 @@ mod tests {
     #[test]
     fn concentration_law_one_big_fleet_beats_two_sequential_halves() {
         // A 20-raider fleet fights two 10-raider fleets ONE AFTER THE OTHER.
-        let rate = DMG_RATE;
+        let rate = dmg_rate(3.0);
         let mut big = forces(&[(ShipKind::Raider, 20)]);
         // First 10.
         let first = forces(&[(ShipKind::Raider, 10)]);
@@ -316,7 +355,7 @@ mod tests {
         // 20 vs 10 leaves far more survivors than the strength ratio alone (2:1)
         // would suggest — the square-law concentration advantage, numerically.
         let (big, _small, _lb, _ls) =
-            project_engagement(&forces(&[(ShipKind::Raider, 20)]), &forces(&[(ShipKind::Raider, 10)]), DMG_RATE, None, None, 1_000_000);
+            project_engagement(&forces(&[(ShipKind::Raider, 20)]), &forces(&[(ShipKind::Raider, 10)]), dmg_rate(3.0), None, None, 1_000_000);
         // Linear expectation would be 10 survivors; Lanchester keeps ~√(20²−10²)≈17.
         assert!(big.ship_count() >= 15, "square-law survivors exceed the linear 10 (got {})", big.ship_count());
     }
@@ -329,8 +368,8 @@ mod tests {
         let b = forces(&[(ShipKind::Convoy, 4)]);
         // A window long enough to finish the full-rate fight but not the raid.
         let window = 40;
-        let (_ra, _rb, _rla, rlb) = project_engagement(&a, &b, DMG_RATE * RAID_SKIRMISH_MULT, None, None, window);
-        let (_ba, _bb, _bla, blb) = project_engagement(&a, &b, DMG_RATE, None, None, window);
+        let (_ra, _rb, _rla, rlb) = project_engagement(&a, &b, dmg_rate(3.0) * RAID_SKIRMISH_MULT, None, None, window);
+        let (_ba, _bb, _bla, blb) = project_engagement(&a, &b, dmg_rate(3.0), None, None, window);
         assert!(rlb.total_ships() < blb.total_ships(), "raid rate spares more of the convoy over the same time");
     }
 
@@ -342,11 +381,11 @@ mod tests {
         let bare = forces(&[(ShipKind::Convoy, 3)]);
         let attacker = || forces(&[(ShipKind::Raider, 4)]);
         let window = 60;
-        let (esc_after, _e1, _l1, _l2) = project_engagement(&attacker(), &escorted, DMG_RATE, None, None, window);
-        let (bare_after, _b1, _b2, _b3) = project_engagement(&attacker(), &bare, DMG_RATE, None, None, window);
+        let (esc_after, _e1, _l1, _l2) = project_engagement(&attacker(), &escorted, dmg_rate(3.0), None, None, window);
+        let (bare_after, _b1, _b2, _b3) = project_engagement(&attacker(), &bare, dmg_rate(3.0), None, None, window);
         // `esc_after`/`bare_after` are the ATTACKER's survivors; compare convoy loss on the defender via a fresh run.
-        let (_x, esc_def, _lx, _ly) = project_engagement(&attacker(), &escorted, DMG_RATE, None, None, window);
-        let (_p, bare_def, _lp, _lq) = project_engagement(&attacker(), &bare, DMG_RATE, None, None, window);
+        let (_x, esc_def, _lx, _ly) = project_engagement(&attacker(), &escorted, dmg_rate(3.0), None, None, window);
+        let (_p, bare_def, _lp, _lq) = project_engagement(&attacker(), &bare, dmg_rate(3.0), None, None, window);
         let esc_convoys = esc_def.comp.get(&ShipKind::Convoy).copied().unwrap_or(0);
         let bare_convoys = bare_def.comp.get(&ShipKind::Convoy).copied().unwrap_or(0);
         let _ = (esc_after, bare_after);
@@ -358,9 +397,61 @@ mod tests {
         // A raider grinds a defended, empty system (platform only): tiers fall.
         let attacker = forces(&[(ShipKind::Raider, 3)]);
         let defender = Forces::default().with_platform(2, 0.0);
-        let (_a, def, _la, lb) = project_engagement(&attacker, &defender, DMG_RATE, None, None, 1_000_000);
+        let (_a, def, _la, lb) = project_engagement(&attacker, &defender, dmg_rate(3.0), None, None, 1_000_000);
         assert!(lb.platform_tiers >= 1, "the platform loses tiers to sustained attack");
         assert!(def.platform_tiers < 2 || !attacker.alive());
+    }
+
+    /// Ticks for equal reference forces (10 raiders each) to grind to the 50 %
+    /// retreat threshold at a given target duration → seconds.
+    fn reference_duration_secs(target: f64) -> f64 {
+        let rate = dmg_rate(target);
+        let mut a = forces(&[(ShipKind::Raider, 10)]);
+        let mut b = forces(&[(ShipKind::Raider, 10)]);
+        let (a0, b0) = (a.strength(), b.strength());
+        let mut ticks = 0u64;
+        loop {
+            if !a.alive() || !b.alive() { break; }
+            if 1.0 - a.strength() / a0 >= REFERENCE_RETREAT_FRAC { break; }
+            if 1.0 - b.strength() / b0 >= REFERENCE_RETREAT_FRAC { break; }
+            attrition_tick(&mut a, &mut b, rate);
+            ticks += 1;
+            if ticks > 20_000_000 { break; }
+        }
+        ticks as f64 / 30.0
+    }
+
+    #[test]
+    fn equal_forces_duration_matches_target_under_both_presets() {
+        // REQUIRED: equal reference forces reach their retreat thresholds in
+        // ≈ battle_target_secs under BOTH the playtest and production presets.
+        for target in [45.0, 2700.0] {
+            let d = reference_duration_secs(target);
+            let err = (d - target).abs() / target;
+            assert!(err < 0.05, "target {target}s → measured {d:.1}s (err {:.1}%)", err * 100.0);
+        }
+    }
+
+    #[test]
+    fn lopsided_battle_ends_faster_than_an_equal_one() {
+        // Lanchester compounds the edge: 14 vs 10 resolves well before equal 10v10.
+        let target = 45.0;
+        let rate = dmg_rate(target);
+        let dur = |a0: u32, b0: u32| -> f64 {
+            let mut a = forces(&[(ShipKind::Raider, a0)]);
+            let mut b = forces(&[(ShipKind::Raider, b0)]);
+            let (sa, sb) = (a.strength(), b.strength());
+            let mut t = 0u64;
+            loop {
+                if !a.alive() || !b.alive() { break; }
+                if 1.0 - a.strength() / sa >= 0.5 || 1.0 - b.strength() / sb >= 0.5 { break; }
+                attrition_tick(&mut a, &mut b, rate);
+                t += 1;
+                if t > 20_000_000 { break; }
+            }
+            t as f64 / 30.0
+        };
+        assert!(dur(14, 10) < dur(10, 10) * 0.8, "the lopsided fight ends markedly faster");
     }
 
     #[test]
@@ -368,7 +459,7 @@ mod tests {
         // Without relief: the attacker (8 raiders) beats the defender (5) outright.
         let atk = forces(&[(ShipKind::Raider, 8)]);
         let def = || forces(&[(ShipKind::Raider, 5)]);
-        let (a_no, d_no, _, _) = project_engagement(&atk, &def(), DMG_RATE, None, None, 1_000_000);
+        let (a_no, d_no, _, _) = project_engagement(&atk, &def(), dmg_rate(3.0), None, None, 1_000_000);
         assert!(a_no.ship_count() > 0 && d_no.ship_count() == 0, "attacker wins without relief");
 
         // With relief: fight partway, THEN reinforce the defender mid-battle — the
@@ -377,10 +468,10 @@ mod tests {
         let mut a = atk.clone();
         let mut d = def();
         for _ in 0..25 {
-            attrition_tick(&mut a, &mut d, DMG_RATE);
+            attrition_tick(&mut a, &mut d, dmg_rate(3.0));
         }
         *d.comp.entry(ShipKind::Raider).or_insert(0) += 7; // relief merges in
-        let (a2, d2, _, _) = project_engagement(&a, &d, DMG_RATE, None, None, 1_000_000);
+        let (a2, d2, _, _) = project_engagement(&a, &d, dmg_rate(3.0), None, None, 1_000_000);
         assert!(d2.ship_count() > 0 && a2.ship_count() == 0, "mid-battle relief flips the outcome");
     }
 
@@ -390,8 +481,8 @@ mod tests {
         // fight-to-the-death would have spent.
         let a = forces(&[(ShipKind::Raider, 6)]);
         let b = forces(&[(ShipKind::Raider, 6)]);
-        let (_, b_retreat, _, _) = project_engagement(&a, &b, DMG_RATE, None, Some(0.5), 1_000_000);
-        let (_, b_death, _, _) = project_engagement(&a, &b, DMG_RATE, None, None, 1_000_000);
+        let (_, b_retreat, _, _) = project_engagement(&a, &b, dmg_rate(3.0), None, Some(0.5), 1_000_000);
+        let (_, b_death, _, _) = project_engagement(&a, &b, dmg_rate(3.0), None, None, 1_000_000);
         assert!(b_retreat.ship_count() > b_death.ship_count(), "withdrawing at 50% saves ships");
     }
 
@@ -399,8 +490,8 @@ mod tests {
     fn deterministic_no_seed() {
         let a = forces(&[(ShipKind::Raider, 5), (ShipKind::Corvette, 2)]);
         let b = forces(&[(ShipKind::Raider, 7)]);
-        let r1 = project_engagement(&a, &b, DMG_RATE, Some(0.5), None, 10_000);
-        let r2 = project_engagement(&a, &b, DMG_RATE, Some(0.5), None, 10_000);
+        let r1 = project_engagement(&a, &b, dmg_rate(3.0), Some(0.5), None, 10_000);
+        let r2 = project_engagement(&a, &b, dmg_rate(3.0), Some(0.5), None, 10_000);
         assert_eq!(r1.2, r2.2, "same inputs → same losses (seed-free)");
         assert_eq!(r1.3, r2.3);
     }

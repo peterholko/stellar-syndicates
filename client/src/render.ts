@@ -599,6 +599,25 @@ export class Renderer {
     }
   }
 
+  /// §battles-take-time: a pulsing BATTLE MARKER at each ongoing engagement the
+  /// player can see (strictly light-gated by the server). Drawn on the intercept
+  /// layer, over the map, under the ghosts — "something is happening HERE".
+  private drawBattles(state: ViewState): void {
+    const g = this.interceptGfx;
+    const now = performance.now();
+    for (const b of state.battles) {
+      const s = this.worldToScreen(b.pos);
+      const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+      const r = 14 + pulse * 6;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + now / 1400;
+        g.moveTo(s.x + Math.cos(a) * r * 0.5, s.y + Math.sin(a) * r * 0.5).lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+      }
+      g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
+      g.circle(s.x, s.y, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
+    }
+  }
+
   private interceptLabel(id: string): Text {
     let t = this.interceptLabels.get(id);
     if (!t) {
@@ -1087,6 +1106,7 @@ export class Renderer {
 
       this.drawOrders(state, screenById);
       this.drawIntercepts(state);
+      this.drawBattles(state);
       this.drawSignals(state, dt);
     }
 

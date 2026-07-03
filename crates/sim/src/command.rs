@@ -143,6 +143,16 @@ pub enum Command {
         join: Option<EntityId>,
     },
 
+    /// WITHDRAW an engaged fleet from its battle (§battles-take-time). A coarse,
+    /// LIGHT-DELAYED mid-battle verb: it schedules a break-off-and-flee-home order
+    /// (physical disengagement at formation speed — the speed table decides who
+    /// escapes) that removes the fleet from any engagement on arrival. Wired to
+    /// the order-lifecycle indicator like any order. Soft-reject if not owned.
+    Withdraw {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+    },
+
     /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
     /// administration on the player's own fleet — governs its move speed and, via
     /// its velocity, its detection signature. Soft-reject if not the player's.
