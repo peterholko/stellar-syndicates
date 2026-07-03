@@ -38,7 +38,9 @@ pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{
     DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine, RetreatThreshold,
 };
-pub use event::{BuildRejectReason, DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
+pub use event::{
+    BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
+};
 pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
@@ -51,5 +53,5 @@ pub use ship::{
     ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
-pub use world::{Corporation, IntelSnapshot, World};
+pub use world::{Corporation, IntelSnapshot, PendingCommandView, World};
 

@@ -96,10 +96,57 @@ pub struct IntelSnapshot {
 /// recall-as-return-home).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrder {
-    /// Sim time at which the order's light reaches the ship.
+    /// Sim time at which the order's light reaches the ship (= `delivered_at`).
     apply_time: f64,
     ship_id: EntityId,
     new_order: FleetOrder,
+    /// Owner (for the owner-only lifecycle indicator). serde default for old snaps.
+    #[serde(default = "default_player")]
+    owner: PlayerId,
+    /// Sim time the CONFIRMING light (of the new behavior) reaches the command
+    /// center — `apply_time + distance(delivery point → cc)/c`. Exactly computable
+    /// at issue under constant-velocity kinematics (§order-lifecycle).
+    #[serde(default)]
+    echo_at: f64,
+    /// When the order was issued (to pick the LATEST order per fleet for display).
+    #[serde(default)]
+    issued_at: f64,
+    /// The order flavor, for the lifecycle panel/digest.
+    #[serde(default = "default_order_kind")]
+    kind: crate::event::OrderKind,
+}
+
+fn default_order_kind() -> crate::event::OrderKind {
+    crate::event::OrderKind::Move
+}
+
+fn default_player() -> PlayerId {
+    PlayerId(0)
+}
+
+/// A DELIVERED order whose confirming light hasn't yet reached the command center
+/// (the AWAITING-ECHO phase). Owner-only; transient lifecycle bookkeeping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingEcho {
+    owner: PlayerId,
+    fleet: EntityId,
+    delivered_at: f64,
+    echo_at: f64,
+    issued_at: f64,
+    kind: crate::event::OrderKind,
+}
+
+/// Owner-only lifecycle snapshot of one in-flight order (§order-lifecycle): the
+/// two exact timestamps that let the client tick down IN TRANSIT (until
+/// `delivered_at`) and AWAITING ECHO (until `echo_at`). It's the player's own
+/// command data — trivially fog-safe.
+#[derive(Debug, Clone, Copy)]
+pub struct PendingCommandView {
+    pub fleet: EntityId,
+    pub delivered_at: f64,
+    pub echo_at: f64,
+    pub issued_at: f64,
+    pub kind: crate::event::OrderKind,
 }
 
 /// Distance (sim units) at which a raider makes contact with its target.
@@ -187,6 +234,10 @@ pub struct World {
     next_order_id: u64,
     /// Orders that have been issued but whose light has not yet reached the ship.
     pending_orders: Vec<PendingOrder>,
+    /// DELIVERED orders whose confirming light hasn't yet returned to the command
+    /// center (§order-lifecycle, owner-only). serde default so old snaps load.
+    #[serde(default)]
+    pending_echoes: Vec<PendingEcho>,
     /// Monotonic allocator for entity ids.
     next_entity_id: u64,
     /// Pending construction jobs (fleets + system upgrades), resolved in step()
@@ -308,12 +359,48 @@ impl World {
             book: Vec::new(),
             next_order_id: 1,
             pending_orders: Vec::new(),
+            pending_echoes: Vec::new(),
             next_entity_id,
             build_queue: Vec::new(),
             next_build_id: 0,
             rng,
             combat_ledger: BTreeMap::new(),
         }
+    }
+
+    /// The player's in-flight ORDER LIFECYCLES (§order-lifecycle) — the LATEST
+    /// order per fleet, covering both the in-transit pending orders and the
+    /// delivered-but-awaiting-echo ones. OWNER-ONLY (a rival gets nothing). The
+    /// client ticks the IN-TRANSIT / AWAITING-ECHO countdowns from the two
+    /// timestamps against `sim_time`, and flips its dashed heading to solid at
+    /// `echo_at`.
+    pub fn pending_commands(&self, owner: PlayerId) -> Vec<PendingCommandView> {
+        let mut latest: BTreeMap<EntityId, PendingCommandView> = BTreeMap::new();
+        let mut consider = |v: PendingCommandView| match latest.get(&v.fleet) {
+            Some(cur) if cur.issued_at >= v.issued_at => {}
+            _ => {
+                latest.insert(v.fleet, v);
+            }
+        };
+        for po in self.pending_orders.iter().filter(|p| p.owner == owner) {
+            consider(PendingCommandView {
+                fleet: po.ship_id,
+                delivered_at: po.apply_time,
+                echo_at: po.echo_at,
+                issued_at: po.issued_at,
+                kind: po.kind,
+            });
+        }
+        for e in self.pending_echoes.iter().filter(|e| e.owner == owner) {
+            consider(PendingCommandView {
+                fleet: e.fleet,
+                delivered_at: e.delivered_at,
+                echo_at: e.echo_at,
+                issued_at: e.issued_at,
+                kind: e.kind,
+            });
+        }
+        latest.into_values().collect()
     }
 
     /// Allocate a fresh, deterministic entity id.
@@ -357,6 +444,11 @@ impl World {
         // 4b. COLONY ARRIVALS (§fleets part 3): settlement is physical — resolve
         //     after raids so a colony ship killed at the doorstep never claims.
         self.resolve_colony_arrivals(&mut events);
+
+        // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
+        //     settled, confirm delivered orders whose echo light has returned
+        //     (owner-only `OrderConfirmed`), and drop echoes for fleets just lost.
+        self.resolve_order_echoes(&mut events);
 
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
@@ -1087,13 +1179,51 @@ impl World {
         while i < self.pending_orders.len() {
             if self.pending_orders[i].apply_time <= now {
                 let po = self.pending_orders.remove(i);
-                if let Some(ship) = self.fleets.get_mut(&po.ship_id) {
-                    ship.order = po.new_order;
+                // A vanished fleet (destroyed before delivery) simply drops the
+                // order — no application, no echo, no phantom lifecycle.
+                let Some(ship) = self.fleets.get_mut(&po.ship_id) else {
+                    continue;
+                };
+                ship.order = po.new_order;
+                events.push(Event::new(now, EventPayload::OrderApplied { ship_id: po.ship_id }));
+                // §order-lifecycle: the order is DELIVERED. A newer order for the
+                // same fleet supersedes any older awaiting-echo entry (only the
+                // LATEST order's lifecycle is shown / confirmed).
+                self.pending_echoes.retain(|e| e.fleet != po.ship_id || e.issued_at > po.issued_at);
+                if !self.pending_echoes.iter().any(|e| e.fleet == po.ship_id && e.issued_at >= po.issued_at) {
+                    self.pending_echoes.push(PendingEcho {
+                        owner: po.owner,
+                        fleet: po.ship_id,
+                        delivered_at: now,
+                        echo_at: po.echo_at,
+                        issued_at: po.issued_at,
+                        kind: po.kind,
+                    });
                     events.push(Event::new(
                         now,
-                        EventPayload::OrderApplied { ship_id: po.ship_id },
+                        EventPayload::OrderDelivered { owner: po.owner, fleet: po.ship_id, kind: po.kind, echo_at: po.echo_at },
                     ));
                 }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// §order-lifecycle: resolve DELIVERED orders whose confirming light has now
+    /// returned to the command center — emit an owner-only `OrderConfirmed` and
+    /// drop the echo. A fleet destroyed before its echo lands drops silently (the
+    /// delayed destruction report is what the owner sees — no false "confirmed").
+    fn resolve_order_echoes(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let mut i = 0;
+        while i < self.pending_echoes.len() {
+            let e = &self.pending_echoes[i];
+            if !self.fleets.contains_key(&e.fleet) {
+                self.pending_echoes.remove(i); // destroyed — no confirmation
+            } else if e.echo_at <= now {
+                let e = self.pending_echoes.remove(i);
+                events.push(Event::new(now, EventPayload::OrderConfirmed { owner: e.owner, fleet: e.fleet, kind: e.kind }));
             } else {
                 i += 1;
             }
@@ -1185,7 +1315,7 @@ impl World {
                     ));
                     return;
                 }
-                self.schedule_for_owner(*player_id, *ship_id, FleetOrder::MoveTo { dest: *dest });
+                self.schedule_for_owner(*player_id, *ship_id, FleetOrder::MoveTo { dest: *dest }, crate::event::OrderKind::Move);
             }
             Command::CommitRaid {
                 player_id,
@@ -1232,6 +1362,7 @@ impl World {
                     *player_id,
                     *raider_id,
                     FleetOrder::Intercept { target: *target_id },
+                    crate::event::OrderKind::Raid,
                 );
             }
             Command::RecallRaid {
@@ -1241,7 +1372,7 @@ impl World {
                 let Some(home) = self.players.get(player_id).map(|c| c.home) else {
                     return;
                 };
-                self.schedule_for_owner(*player_id, *raider_id, FleetOrder::MoveTo { dest: home });
+                self.schedule_for_owner(*player_id, *raider_id, FleetOrder::MoveTo { dest: home }, crate::event::OrderKind::Recall);
             }
             Command::MarketBuy {
                 player_id,
@@ -2577,7 +2708,13 @@ impl World {
     /// Schedule an order to install on a ship the player owns, after the
     /// outbound light-travel time from their command center to the ship (§6).
     /// Ignored if the ship doesn't exist or the player doesn't own it.
-    fn schedule_for_owner(&mut self, player_id: PlayerId, ship_id: EntityId, new_order: FleetOrder) {
+    fn schedule_for_owner(
+        &mut self,
+        player_id: PlayerId,
+        ship_id: EntityId,
+        new_order: FleetOrder,
+        kind: crate::event::OrderKind,
+    ) {
         let Some(ship) = self.fleets.get(&ship_id) else {
             return;
         };
@@ -2587,11 +2724,26 @@ impl World {
         let Some(corp) = self.players.get(&player_id) else {
             return;
         };
-        let delay = ship.pos.distance(corp.command_center) / self.config.c;
+        let cc = corp.command_center;
+        let c = self.config.c;
+        // Outbound light delay from the fleet's current position (deterministic,
+        // known at issue). `delivered_at` is when the fleet gets the order.
+        let delay = ship.pos.distance(cc) / c;
+        let delivered_at = self.time + delay;
+        // The DELIVERY POINT: where the fleet will be when the order lands, by
+        // constant-velocity extrapolation of its current motion (§14.1). The echo
+        // — the first light of the new behavior — leaves there at delivery and
+        // reaches the command center `distance/c` later. Exactly computable now.
+        let delivery_point = ship.pos + ship.vel * delay;
+        let echo_at = delivered_at + delivery_point.distance(cc) / c;
         self.pending_orders.push(PendingOrder {
-            apply_time: self.time + delay,
+            apply_time: delivered_at,
             ship_id,
             new_order,
+            owner: player_id,
+            echo_at,
+            issued_at: self.time,
+            kind,
         });
     }
 
@@ -5278,6 +5430,123 @@ mod tests {
         assert_eq!(w.fleets.len(), fleets_before, "no NEW fleet — the build joined the docked one");
         assert_eq!(w.fleets[&dock].count(ShipKind::Convoy), 1, "the convoy joined the fleet");
         assert_eq!(w.fleets[&dock].count(ShipKind::Raider), 1, "the original raider is still there");
+    }
+
+    // --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED --------------
+
+    /// Park an owned fleet `d` su from the command center (Idle), fuelled to move.
+    fn lifecycle_setup(w: &mut World, id: PlayerId, d: f64) -> (EntityId, Vec2, Vec2) {
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let cc = w.players[&id].command_center;
+        let fid = *w.fleets.iter().find(|(_, f)| f.owner == id).unwrap().0;
+        let pos = cc + Vec2::new(d, 0.0);
+        {
+            let f = w.fleets.get_mut(&fid).unwrap();
+            f.pos = pos;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+        }
+        // Seed fuel at home so the move dispatches.
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(crate::cargo::Commodity::Fuel, 1000.0);
+        (fid, cc, pos)
+    }
+
+    #[test]
+    fn order_lifecycle_timestamps_match_the_analytic_round_trip() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let (fid, cc, pos) = lifecycle_setup(&mut w, id, 900.0); // 900/300 = 3 s each leg
+        let c = w.config.c;
+        let dest = pos + Vec2::new(0.0, 400.0);
+        let t0 = w.time;
+        w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest }]);
+        let pc = w.pending_commands(id).into_iter().find(|p| p.fleet == fid).expect("lifecycle present");
+        // delivered_at = issue + d/c; the fleet is Idle so the delivery point is
+        // its current pos → echo_at = delivered_at + d/c.
+        let leg = pos.distance(cc) / c;
+        assert!((pc.delivered_at - (t0 + leg)).abs() < 1e-6, "delivered_at = issue + d/c");
+        assert!((pc.echo_at - (t0 + 2.0 * leg)).abs() < 1e-6, "echo_at = delivered_at + d/c");
+        assert_eq!(pc.kind, crate::event::OrderKind::Move);
+    }
+
+    #[test]
+    fn order_lifecycle_delivers_then_confirms_at_echo() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
+        let dest = pos + Vec2::new(0.0, 400.0);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest }]);
+        let echo_at = w.pending_commands(id)[0].echo_at;
+        let mut delivered = false;
+        let mut confirmed_at = None;
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::OrderDelivered { fleet, .. } if fleet == fid => delivered = true,
+                    EventPayload::OrderConfirmed { fleet, .. } if fleet == fid => confirmed_at = Some(e.time),
+                    _ => {}
+                }
+            }
+            if confirmed_at.is_some() {
+                break;
+            }
+        }
+        assert!(delivered, "an OrderDelivered fired when the outbound light arrived");
+        let ct = confirmed_at.expect("an OrderConfirmed fired");
+        assert!((ct - echo_at).abs() <= DT + 1e-9, "confirmation fires at echo_at");
+        assert!(w.pending_commands(id).is_empty(), "the lifecycle clears once confirmed");
+    }
+
+    #[test]
+    fn order_lifecycle_is_owner_only() {
+        let mut w = test_world();
+        let (id, rival) = (PlayerId(1), PlayerId(2));
+        let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
+        w.step(&[Command::AddPlayer { id: rival, name: "Rival".into() }]);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 400.0) }]);
+        assert!(!w.pending_commands(id).is_empty(), "the owner sees their lifecycle");
+        assert!(w.pending_commands(rival).is_empty(), "a rival sees NONE of it (owner-only)");
+    }
+
+    #[test]
+    fn superseding_order_restarts_the_lifecycle_with_the_latest() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 400.0) }]);
+        let first_echo = w.pending_commands(id)[0].echo_at;
+        // A second, farther move restarts the tracked lifecycle.
+        w.step(&[]); // advance a tick so issued_at differs
+        w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 4000.0) }]);
+        let pcs = w.pending_commands(id);
+        assert_eq!(pcs.iter().filter(|p| p.fleet == fid).count(), 1, "one lifecycle shown per fleet — the latest");
+        assert!(pcs[0].echo_at != first_echo, "the panel tracks the newer order");
+    }
+
+    #[test]
+    fn destroyed_fleet_resolves_the_lifecycle_without_a_false_confirm() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 400.0) }]);
+        // Run past delivery so it's AWAITING ECHO.
+        for _ in 0..(4 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(!w.pending_commands(id).is_empty(), "awaiting echo before the loss");
+        // The fleet is destroyed before its echo lands.
+        w.fleets.remove(&fid);
+        let mut confirmed = false;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::OrderConfirmed { fleet, .. } if fleet == fid) {
+                    confirmed = true;
+                }
+            }
+        }
+        assert!(!confirmed, "a destroyed fleet never emits a phantom confirmation");
+        assert!(w.pending_commands(id).is_empty(), "the lifecycle is dropped on loss");
     }
 
     #[test]

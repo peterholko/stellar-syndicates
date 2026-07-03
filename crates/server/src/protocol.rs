@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sim::{
-    Commodity, CountClass, EntityId, FleetDoctrine, PlayerId, RaidOutcome, ShipKind, Side,
-    StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
+    Commodity, CountClass, EntityId, FleetDoctrine, OrderKind, PlayerId, RaidOutcome, ShipKind,
+    Side, StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
 };
 
 /// The client↔server wire protocol version. BUMPED to 2 by the §FLEETS change:
@@ -406,6 +406,19 @@ pub struct CargoView {
     pub units: u32,
 }
 
+/// One of the player's in-flight order LIFECYCLES (§order-lifecycle), OWNER-ONLY.
+/// The client derives the phase from `sim_time`: IN TRANSIT until `delivered_at`,
+/// AWAITING ECHO until `echo_at`, then confirmed (the entry drops). Both stamps
+/// are exact (computed at issue), so the client ticks precise countdowns with no
+/// per-second server traffic.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PendingOrderView {
+    pub fleet_id: EntityId,
+    pub delivered_at: f64,
+    pub echo_at: f64,
+    pub kind: OrderKind,
+}
+
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
 /// is light-gated by the view filter — it is `None` to a player until the light
 /// of the claim event has reached their command center (a rival's presence must
@@ -526,6 +539,11 @@ pub enum ServerMsg {
         /// The player's own fleet doctrine (§16) — fresh private policy (like the
         /// wallet), so the client can display and edit it.
         doctrine: FleetDoctrine,
+        /// The player's own in-flight ORDER LIFECYCLES (§order-lifecycle) — the
+        /// two exact timestamps per pending order that let the client tick down IN
+        /// TRANSIT → AWAITING ECHO. OWNER-ONLY private command data (like the
+        /// wallet); a rival's view carries none of it.
+        pending_orders: Vec<PendingOrderView>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

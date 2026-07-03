@@ -194,6 +194,22 @@ impl Timeline {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
                         format!("A {} was held — out of fuel (needed ~{:.0}). Stockpile fuel near your fleet.", kind.label(), needed));
                 }
+                // §order-lifecycle (OWNER-ONLY). "Delivered" is the player's own
+                // command data (they computed delivery at issue), shown on their
+                // own clock at delivery, with the exact echo countdown. "Confirmed"
+                // is genuinely observed — it fires when the echo light arrives, so
+                // its time IS the owner's observation time.
+                EventPayload::OrderDelivered { owner, fleet, kind, echo_at } => {
+                    let name = fleet_label(world, *fleet);
+                    let wait = fmt_wait(echo_at - e.time);
+                    self.push(*owner, e.time, TimelineSeverity::Info,
+                        format!("Order delivered to {name} — {} underway (echo ~{wait}).", kind.label()));
+                }
+                EventPayload::OrderConfirmed { owner, fleet, kind } => {
+                    let name = fleet_label(world, *fleet);
+                    self.push(*owner, e.time, TimelineSeverity::Good,
+                        format!("{name} confirmed its {} — you can see it complying now.", kind.label()));
+                }
                 _ => {}
             }
         }
@@ -265,6 +281,29 @@ fn system_name(world: &World, id: sim::EntityId) -> String {
         .find(|s| s.id == id)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| format!("{id}"))
+}
+
+/// A short label for a fleet in the timeline — "your <flagship> fleet".
+fn fleet_label(world: &World, id: sim::EntityId) -> String {
+    match world.fleets.get(&id) {
+        Some(f) => {
+            let k = match f.flagship_kind() {
+                sim::ShipKind::Convoy => "convoy",
+                sim::ShipKind::Raider => "raider",
+                sim::ShipKind::Corvette => "corvette",
+                sim::ShipKind::Colony => "colony",
+                sim::ShipKind::Scout => "scout",
+            };
+            format!("your {k} fleet")
+        }
+        None => "your fleet".to_string(),
+    }
+}
+
+/// Format a wait in seconds as `M:SS` for the echo countdown label.
+fn fmt_wait(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    format!("{}:{:02}", s / 60, s % 60)
 }
 
 /// Human label for a build job, for the check-in timeline (§step1).

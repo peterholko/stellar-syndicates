@@ -517,6 +517,19 @@ impl GameLoop {
                     standing_orders: corp.standing_orders.clone(),
                     // The player's own fleet doctrine (fresh private policy).
                     doctrine: corp.doctrine,
+                    // The player's own in-flight order lifecycles (§order-lifecycle)
+                    // — owner-only private command data, like the wallet.
+                    pending_orders: self
+                        .world
+                        .pending_commands(player_id)
+                        .into_iter()
+                        .map(|p| crate::protocol::PendingOrderView {
+                            fleet_id: p.fleet,
+                            delivered_at: p.delivered_at,
+                            echo_at: p.echo_at,
+                            kind: p.kind,
+                        })
+                        .collect(),
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

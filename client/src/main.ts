@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
+import { countClassLabel, formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { SystemBodyDetail } from "./systemview";
 
@@ -272,6 +272,56 @@ function deselectShip(): void {
 
 const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "colony" ? "Colony Ship" : k === "scout" ? "Scout" : k);
 
+// --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED ----------------
+// Below this, phases collapse to ~instant (a fleet near the command center) —
+// suppress the noisy sub-second states.
+const LIFECYCLE_MIN_S = 1.5;
+// After a lifecycle drops (confirmed), flash "✓ confirmed" for a moment.
+const confirmedFlashUntil = new Map<string, number>();
+
+// Live sim-time, extrapolated from the last View's wall-clock stamp so the
+// countdowns tick smoothly between messages.
+function liveSimTime(): number {
+  return state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+}
+
+// Replace the tracked lifecycles from the View; a lifecycle that DROPS while its
+// fleet is still visible has just CONFIRMED — flash it briefly.
+function syncOrderLifecycles(list: PendingOrderView[], _simTime: number): void {
+  const next = new Map<string, PendingOrderView>();
+  for (const p of list) next.set(p.fleet_id, p);
+  for (const [fid] of state.pendingOrders) {
+    if (!next.has(fid) && state.ghosts.some((g) => g.id === fid && g.own)) {
+      confirmedFlashUntil.set(fid, performance.now() + 5000);
+    }
+  }
+  state.pendingOrders = next;
+}
+
+const fmtCountdown = (secs: number): string => {
+  const s = Math.max(0, Math.round(secs));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+// The order-lifecycle status line for the fleet panel (the star).
+function orderLifecycleLine(g: GhostView): string {
+  const p = state.pendingOrders.get(g.id);
+  if (!p) {
+    const exp = confirmedFlashUntil.get(g.id);
+    if (exp && performance.now() < exp) {
+      return `<div class="sp-sec">Order</div><div class="sp-line"><span class="tone-up">✓ confirmed</span> — you can see the fleet complying.</div>`;
+    }
+    return "";
+  }
+  // Near-zero (fleet at the command center): don't flash noisy sub-second states.
+  if (p.echo_at - p.delivered_at < LIFECYCLE_MIN_S) return "";
+  const now = liveSimTime();
+  const line = now < p.delivered_at
+    ? `<span class="dim">◈</span> <b>IN TRANSIT</b> — arrives in ${fmtCountdown(p.delivered_at - now)}`
+    : `<span style="color:var(--accent)">◔</span> <b>DELIVERED — awaiting echo</b> ~${fmtCountdown(p.echo_at - now)}`;
+  return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div><div class="sp-line dim" style="margin-top:2px">The fleet has your ${esc(p.kind)} order; the light showing it hasn't returned yet.</div>`;
+}
+
 // §Part 4: the player's chosen transit throttle per own fleet (optimistic —
 // echoes the SetFleetTransit command; defaults to Full).
 const transitModes = new Map<string, "full" | "stealth">();
@@ -378,6 +428,7 @@ function ownActivity(g: GhostView): string {
 function ownBody(g: GhostView): string {
   const parts: string[] = [];
   parts.push(compositionSection(g));
+  parts.push(orderLifecycleLine(g));
   parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
 
   if (g.kind === "convoy") {
@@ -1814,6 +1865,7 @@ function join(): void {
           state.wallet = msg.wallet;
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
+          syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
           // sparklines), even when the Market tab is closed.
           recordPriceHistory();

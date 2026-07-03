@@ -830,10 +830,18 @@ export class Renderer {
       const rPx = ghost.uncertainty * this.scale;
       sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
     }
+    // §order-lifecycle: is this own fleet's LATEST order still unconfirmed (its
+    // compliance light hasn't returned)? While so, the commanded-heading hint is
+    // drawn DASHED (= commanded/claimed) and an echo-pending clock badge shows;
+    // both resolve to the normal SOLID hint / no badge at echo (= observed).
+    const pend = own ? state.pendingOrders.get(ghost.id) : undefined;
+    const liveSim = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+    const unconfirmed = !!pend && pend.echo_at - pend.delivered_at >= 1.5 && liveSim < pend.echo_at;
+
     // Own ship under orders: it's executing a course YOU set, so hint where it has
     // most likely advanced — from the ghost, along the commanded heading, up to how
     // far it could have moved (its uncertainty). Reads as "proceeding on last
-    // orders," not "lost ship."
+    // orders," not "lost ship." DASHED while the order is unconfirmed.
     if (own && ghost.uncertainty > 1) {
       const dest = state.orders[ghost.id];
       if (dest) {
@@ -845,10 +853,26 @@ export class Renderer {
           const pr = this.worldToScreen({ x: ghost.pos.x + (dx / d) * step, y: ghost.pos.y + (dy / d) * step });
           const ox = pr.x - s.x;
           const oy = pr.y - s.y;
-          sp.cone.moveTo(0, 0).lineTo(ox, oy).stroke({ width: 1, color: COL_OWN, alpha: 0.3 });
+          if (unconfirmed) {
+            dashedLine(sp.cone, 0, 0, ox, oy, 4, 4);
+            sp.cone.stroke({ width: 1, color: COL_OWN, alpha: 0.45 });
+          } else {
+            sp.cone.moveTo(0, 0).lineTo(ox, oy).stroke({ width: 1, color: COL_OWN, alpha: 0.3 });
+          }
           sp.cone.circle(ox, oy, 2.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.6 });
         }
       }
+    }
+
+    // Echo-pending badge: a small hollow clock, own-cyan, just off the pip while
+    // the order is unconfirmed — a subtle state tag, not an alarm. Gone at echo.
+    if (unconfirmed) {
+      const bx = 11;
+      const by = -(this.shipHitRadius(ghost.kind) + 5);
+      sp.cone.circle(bx, by, 3.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
+      // two little hands
+      sp.cone.moveTo(bx, by).lineTo(bx, by - 2.4).stroke({ width: 1, color: COL_OWN, alpha: 0.85 });
+      sp.cone.moveTo(bx, by).lineTo(bx + 1.8, by).stroke({ width: 1, color: COL_OWN, alpha: 0.85 });
     }
     // Detected rival raider = a threat contact (it's otherwise invisible). Make
     // it unmistakable with a pulsing alert ring — this is your only warning.

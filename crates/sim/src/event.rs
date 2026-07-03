@@ -15,6 +15,27 @@ use crate::ids::{EntityId, PlayerId};
 use crate::market::Side;
 use crate::ship::ShipKind;
 
+/// The FLAVOR of a light-delayed order, for the owner-only lifecycle indicator
+/// (IN TRANSIT → AWAITING ECHO → CONFIRMED). Purely a label for the panel/digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderKind {
+    Move,
+    Raid,
+    Recall,
+}
+
+impl OrderKind {
+    /// A short human label for the digest/panel ("confirmed <order>").
+    pub fn label(self) -> &'static str {
+        match self {
+            OrderKind::Move => "move",
+            OrderKind::Raid => "raid",
+            OrderKind::Recall => "recall",
+        }
+    }
+}
+
 /// A discrete thing that happened in the world at `time` (seconds).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
@@ -37,6 +58,25 @@ pub enum EventPayload {
     /// A player's move order finally reached a ship (its outbound light arrived)
     /// and took effect.
     OrderApplied { ship_id: EntityId },
+
+    /// OWNER-ONLY (§order-lifecycle): the player's order has been DELIVERED to the
+    /// fleet (its outbound light arrived and the fleet is now executing) — but the
+    /// light showing the new behavior hasn't returned. `echo_at` is exactly when
+    /// that confirming light reaches the command center. Owner-only, fog-safe
+    /// (it's the player's own command data); never delivered to rivals.
+    OrderDelivered {
+        owner: PlayerId,
+        fleet: EntityId,
+        kind: OrderKind,
+        echo_at: f64,
+    },
+    /// OWNER-ONLY (§order-lifecycle): the confirming light has arrived — the
+    /// player can now SEE the fleet complying with the order. Owner-only.
+    OrderConfirmed {
+        owner: PlayerId,
+        fleet: EntityId,
+        kind: OrderKind,
+    },
 
     /// Something happened in the economy (§9).
     Trade(TradeEvent),

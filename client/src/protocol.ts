@@ -399,6 +399,19 @@ export interface EngagementEstimate {
   platform_tiers: number | null;
 }
 
+// §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
+export type OrderKind = "move" | "raid" | "recall";
+
+// One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
+// the phase from `sim_time`: IN TRANSIT until `delivered_at`, AWAITING ECHO until
+// `echo_at`, then confirmed (the entry drops). Both stamps are exact.
+export interface PendingOrderView {
+  fleet_id: EntityId;
+  delivered_at: number;
+  echo_at: number;
+  kind: OrderKind;
+}
+
 // Server → client.
 export type ServerMsg =
   | {
@@ -424,6 +437,8 @@ export type ServerMsg =
       wallet: WalletView;
       standing_orders: StandingOrder[];
       doctrine: FleetDoctrine;
+      // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
+      pending_orders: PendingOrderView[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }
