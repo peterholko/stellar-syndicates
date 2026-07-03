@@ -42,7 +42,7 @@ pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
-pub use movement::{flip_and_burn, MoveStep};
+pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
 pub use rng::Rng;
 pub use ship::{
     CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission, ALL_SHIP_KINDS,

@@ -280,14 +280,25 @@ layer, free from the core rule.
 
 ## 7. Movement & Physics
 
-**Continuous-space movement with acceleration physics** (Expanse-flavored), tuned hard for async
-legibility.
+**Continuous-space movement**, tuned hard for async legibility.
 
-- **Acceleration to a G-limit, with automatic flip-and-burn.** Ships accelerate to a midpoint, flip,
-  and decelerate to arrive at rest — the engine *always* plans the arrival burn, so **the player never
-  manages momentum** (no overshoot, no Newtonian misery). Travel time is **non-linear**: roughly
-  `t ≈ 2·√(distance / acceleration)`. Doubling acceleration divides travel time by √2, so distance has
-  diminishing effect and acceleration compounding effect on who-arrives-first.
+> **IMPLEMENTATION NOTE (post-playtest, §14.1):** the flip-and-burn *acceleration*
+> model below was tried and **removed** — at the async check-in cadence the burn
+> was invisible, and its `t ≈ 2√(d/a)` law defeated the mental arithmetic a
+> lightspeed-prediction game needs. The build uses the original GDD §14.1 model:
+> **constant-velocity, piecewise-linear movement with a per-kind constant speed**
+> (Scout 115 · Raider 100 · Corvette 65 · Convoy 40 · Colony 33), so `t = d / v`
+> and interception is analytic. The acceleration prose is kept below as the
+> historical design rationale for the convoy-vs-raider *feel* (now expressed as a
+> flat speed gap rather than an accel/mass one).
+
+- **Acceleration to a G-limit, with automatic flip-and-burn.** *(SUPERSEDED — see
+  the note above.)* Ships accelerate to a midpoint, flip, and decelerate to arrive
+  at rest — the engine *always* plans the arrival burn, so **the player never
+  manages momentum** (no overshoot, no Newtonian misery). Travel time is
+  **non-linear**: roughly `t ≈ 2·√(distance / acceleration)`. Doubling acceleration
+  divides travel time by √2, so distance has diminishing effect and acceleration
+  compounding effect on who-arrives-first.
 - **Emergent danger gradient for free:** because travel time scales with √distance and higher-G ships
   gain more on long hauls, **long frontier convoys are structurally more vulnerable than short core
   runs** — the frontier is dangerous by physics, not by rule.

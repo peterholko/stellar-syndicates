@@ -419,20 +419,10 @@ impl World {
             if let FleetOrder::Intercept { target } = ship.order {
                 match snapshot.get(&target) {
                     Some(&(tp, tv)) => {
-                        // Proportional pursuit toward the target's light-delayed
-                        // observed position; acceleration derived from this ship's
-                        // current mass (a = F/m), so a laden convoy-raider would
-                        // turn worse — same loop, no closed-form solver.
-                        let step = pursue_step(
-                            ship.pos,
-                            ship.vel,
-                            tp,
-                            tv,
-                            ship.accel(),
-                            ship.max_speed(),
-                            c,
-                            DT,
-                        );
+                        // Lead pursuit toward the ANALYTIC intercept of the
+                        // target's light-delayed constant-velocity track, at this
+                        // fleet's formation speed (§14.1) — closed-form, no solver.
+                        let step = pursue_step(ship.pos, tp, tv, ship.max_speed(), c, DT);
                         ship.pos = step.pos;
                         ship.vel = step.vel;
                     }
@@ -3629,7 +3619,7 @@ mod tests {
         }
         assert!(spawned, "the scout completes and spawns");
         let scout = w.fleets.values().find(|s| s.owner == id && s.flagship_kind() == ShipKind::Scout).unwrap();
-        assert!(scout.accel() > ShipKind::Raider.thrust() / ShipKind::Raider.hull_mass(), "the dartiest ship flying");
+        assert!(scout.max_speed() > ShipKind::Raider.max_speed(), "the fastest ship flying");
     }
 
     /// A scout has NO combat strength: engaged as a TARGET it simply dies (no
@@ -4244,35 +4234,28 @@ mod tests {
         );
     }
 
-    // ---- Acceleration from mass (a = F/m) + proportional pursuit (§7, §8) ----
+    // ---- Constant per-kind speed (§14.1) + lead pursuit (§8) ----
 
     fn ship_of(kind: ShipKind, cargo: Option<Cargo>) -> Fleet {
         Fleet::single(EntityId(1), PlayerId(1), kind, Vec2::ZERO, FleetOrder::Idle, cargo)
     }
 
-    /// Acceleration is DERIVED as thrust / mass — the raider/convoy nimbleness gap
-    /// emerges from the MASS difference, and a loaded convoy accelerates worse.
+    /// Speed is a CONSTANT per kind (§14.1, no acceleration): the raider/convoy
+    /// gap is a flat speed difference, and cargo does NOT slow a ship — it costs
+    /// FUEL (mass), not time.
     #[test]
-    fn acceleration_derives_from_thrust_over_mass() {
+    fn speed_is_constant_per_kind_and_cargo_free() {
         let raider = ship_of(ShipKind::Raider, None);
         let empty = ship_of(ShipKind::Convoy, None);
         let loaded = ship_of(
             ShipKind::Convoy,
             Some(Cargo { commodity: crate::cargo::Commodity::Alloys, units: 120 }),
         );
-
-        // a = F/m exactly (not a hand-set constant).
-        assert!((raider.accel() - ShipKind::Raider.thrust() / ShipKind::Raider.hull_mass()).abs() < 1e-9);
-        // Convoy hull is orders of magnitude heavier than the raider's…
-        assert!(ShipKind::Convoy.hull_mass() >= 10.0 * ShipKind::Raider.hull_mass());
-        // …so the light raider out-accelerates the heavy convoy by a wide margin —
-        // asymmetry from MASS, via a = F/m.
-        assert!(raider.accel() > empty.accel() * 5.0,
-            "raider accel {:.2} should dwarf convoy {:.2}", raider.accel(), empty.accel());
-        // Cargo adds mass, so a loaded convoy accelerates noticeably worse.
-        assert!(loaded.mass() > empty.mass());
-        assert!(loaded.accel() < empty.accel(),
-            "loaded convoy accel {:.3} must be worse than empty {:.3}", loaded.accel(), empty.accel());
+        // Ordering preserved: a raider is much faster than a convoy.
+        assert!(raider.max_speed() > empty.max_speed() * 2.0, "the raider out-runs the convoy");
+        // Cargo adds MASS (fuel) but not speed — a loaded convoy is exactly as fast.
+        assert!(loaded.mass() > empty.mass(), "cargo adds mass");
+        assert_eq!(loaded.max_speed(), empty.max_speed(), "cargo does not slow a ship (constant speed)");
     }
 
     /// A raider runs down a MOVING convoy via proportional pursuit (full
@@ -4430,7 +4413,7 @@ mod tests {
         let (p_close, _c1, h1) =
             defense_setup(&mut w1, PlayerId(1), PlayerId(2), convoy_pos, Vec2::new(700.0, 0.0), hostile_pos);
         let mut close_engaged = false;
-        for _ in 0..(25 * crate::config::TICK_HZ) {
+        for _ in 0..(100 * crate::config::TICK_HZ) {
             w1.step(&[]);
             if engaged_on(&w1, p_close, h1) {
                 close_engaged = true;
@@ -4445,7 +4428,7 @@ mod tests {
         let (p_far, convoy2, _h2) =
             defense_setup(&mut w2, PlayerId(1), PlayerId(2), convoy_pos, Vec2::new(3000.0, sensor * 3.0), hostile_pos);
         let (mut far_engaged, mut convoy_lost) = (false, false);
-        for _ in 0..(60 * crate::config::TICK_HZ) {
+        for _ in 0..(100 * crate::config::TICK_HZ) {
             for e in w2.step(&[]) {
                 if let EventPayload::ShipDestroyed { ship, .. } = e.payload
                     && ship == convoy2
@@ -4909,7 +4892,7 @@ mod tests {
         // A delivery convoy spawned at the hub, carrying the goods.
         let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome));
         assert!(convoy.is_some(), "buy should spawn a delivery convoy");
-        assert!(convoy.unwrap().pos.distance(w.hub) < 1.0, "delivery convoy starts at the hub");
+        assert!(convoy.unwrap().pos.distance(w.hub) < 5.0, "delivery convoy starts at the hub");
         // Inventory not yet increased (goods still in transit).
         assert_eq!(w.players[&id].inventory[&Fuel], fuel0);
 
@@ -5442,7 +5425,7 @@ mod tests {
         let convoy = convoy.expect("ship-production should spawn a sell convoy");
         assert_eq!(convoy.flagship_kind(), ShipKind::Convoy, "production fleets in raidable convoys");
         assert!(convoy.cargo.is_some());
-        assert!(convoy.pos.distance(sys_pos) < 1.0, "production convoy departs from the system");
+        assert!(convoy.pos.distance(sys_pos) < 5.0, "production convoy departs from the system");
         // The system's whole-unit stockpile was emptied into the convoy(s).
         let remaining: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.values().sum();
         assert!(remaining < 1.0, "shipping should empty the whole-unit stockpile");
@@ -5616,6 +5599,10 @@ mod tests {
         grant_system(&mut w, id, source);
         w.step(&[]);
         grant_system(&mut w, id, dest);
+        // Give the depot ample headroom so the supply always has room to land —
+        // otherwise the dest's OWN production can fill the base cap before the
+        // (sub-light) convoy arrives, a race unrelated to what this test checks.
+        w.systems.iter_mut().find(|s| s.id == dest).unwrap().depot_tier = 5;
         w.step(&[]);
 
         w.step(&[Command::SetStandingOrder {

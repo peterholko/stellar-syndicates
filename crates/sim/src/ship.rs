@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::cargo::Cargo;
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
-use crate::movement::flip_and_burn;
+use crate::movement::advance_toward;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,29 +58,6 @@ pub enum ShipKind {
 pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 
 impl ShipKind {
-    /// Engine THRUST (force, F). Acceleration is NOT set directly — it's derived
-    /// as `a = F / m` (see [`Ship::accel`]). Convoys have somewhat more thrust
-    /// (bigger engines) but vastly more mass, so they still accelerate far worse.
-    ///
-    /// Tuning note: values are deliberately LOW so the build-up to speed, the
-    /// flip-and-burn, and the convoy-vs-raider nimbleness gap are all *watchable*
-    /// at the current galaxy scale — a chase plays out over tens of seconds, not
-    /// an instant. With these consts an empty raider accelerates at
-    /// `2200/200 = 11` su/s² and an empty convoy at `6750/4500 = 1.5` su/s² (a
-    /// loaded one ~0.86), so the raider visibly darts while the convoy lumbers.
-    pub fn thrust(self) -> f64 {
-        match self {
-            ShipKind::Convoy => 6750.0,
-            ShipKind::Raider => 2200.0,
-            // 4000/800 = 5 su/s² — nimbler than a convoy, no match for a raider.
-            ShipKind::Corvette => 4000.0,
-            // 7200/6000 = 1.2 su/s² — the most ponderous thing in space.
-            ShipKind::Colony => 7200.0,
-            // Small engine, tiny hull: 1400/80 = 17.5 su/s² — the dartiest ship.
-            ShipKind::Scout => 1400.0,
-        }
-    }
-
     /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
     /// than raiders (here ~22×), which is what makes them ponderous — the
     /// acceleration asymmetry emerges from this, not from hand-set accel consts.
@@ -96,16 +73,28 @@ impl ShipKind {
         }
     }
 
-    /// Cruise speed cap (sim units / s). All stay well below `c` (= 300) so
-    /// relativity is respected — nothing outruns its own light. Acceleration
-    /// (above) ramps velocity up to this cap.
+    /// CONSTANT cruise speed (sim units / s), GDD §14.1 — there is no
+    /// acceleration; a ship travels at exactly this speed (the fleet moves at its
+    /// slowest member's, [`Fleet::max_speed`]). All stay well below `c` (= 300)
+    /// so relativity is respected — nothing outruns its own light. Ordering
+    /// preserves the old relative feel (scout > raider > corvette > convoy >
+    /// colony).
+    ///
+    /// CALIBRATION (migration-gentle): magnitudes are set so a representative
+    /// galaxy-crossing trip (~8000 su, the 4-player galaxy radius) takes about as
+    /// long as the old flip-and-burn did — whose accel ramp meant its AVERAGE
+    /// speed was well under the max cap. Convoy anchors it: old convoy (a=1.5,
+    /// cap 48) crossed 8000 su in ≈199 s; constant 40 gives 8000/40 = 200 s. The
+    /// other kinds keep the old max-speed RATIOS off that anchor, so raider/
+    /// convoy chase dynamics and pacing hold (raider 8000 su: old ≈78 s, new 80 s;
+    /// colony old ≈233 s, new 242 s). Tunable.
     pub fn max_speed(self) -> f64 {
         match self {
-            ShipKind::Convoy => 48.0,
-            ShipKind::Raider => 120.0,
-            ShipKind::Corvette => 80.0, // keeps station with convoys, can't chase raiders
-            ShipKind::Colony => 40.0, // slower than a convoy — the long, visible voyage
-            ShipKind::Scout => 140.0, // the fastest thing flying — still < c/2
+            ShipKind::Convoy => 40.0,
+            ShipKind::Raider => 100.0,
+            ShipKind::Corvette => 65.0, // keeps station with convoys, can't chase raiders
+            ShipKind::Colony => 33.0, // slowest — the long, visible voyage
+            ShipKind::Scout => 115.0, // the fastest thing flying — still < c/2
         }
     }
 
@@ -528,28 +517,11 @@ impl Fleet {
         self.hull_mass() + self.cargo_mass()
     }
 
-    /// FORMATION acceleration (GDD §14.2): the slowest member sets the pace.
-    /// Taken as the minimum thrust-to-weight ratio among present kinds, scaled
-    /// by the cargo-drag factor `hull / (hull + cargo)`. For a fleet-of-one this
-    /// is exactly `thrust / (hull + cargo)` = the old `Ship::accel` — a loaded
-    /// convoy still lumbers, and a hammer carrying a colony ship crawls at the
-    /// colony's pace, telegraphing itself by physics.
-    pub fn accel(&self) -> f64 {
-        let hull = self.hull_mass();
-        if hull <= 0.0 {
-            return 0.0;
-        }
-        let min_twr = self
-            .composition
-            .keys()
-            .map(|k| k.thrust() / k.hull_mass())
-            .fold(f64::INFINITY, f64::min);
-        let drag = hull / (hull + self.cargo_mass());
-        min_twr * drag
-    }
-
-    /// FORMATION cruise speed: capped by the slowest member (min max_speed).
-    /// A fleet-of-one is that ship's own cap.
+    /// FORMATION speed (GDD §14.2): the SLOWEST member sets the pace — the
+    /// minimum constant `speed(kind)` among present kinds. For a fleet-of-one this
+    /// is that ship's own speed; a hammer carrying a colony ship crawls at the
+    /// colony's pace, telegraphing itself by physics. Cargo does NOT slow a fleet
+    /// (constant-speed model, §14.1) — it costs FUEL (mass), not time.
     pub fn max_speed(&self) -> f64 {
         self.composition
             .keys()
@@ -589,19 +561,18 @@ impl Fleet {
         self.composition.keys().any(|k| k.is_combatant())
     }
 
-    /// Advance this fleet one timestep at simulation time `time`. Moves under the
-    /// FORMATION accel/speed (slowest member sets the pace).
+    /// Advance this fleet one timestep at simulation time `time`. Moves at the
+    /// FORMATION constant speed (slowest member sets the pace).
     pub fn advance(&mut self, time: f64, dt: f64) {
-        let accel = self.accel();
-        let max_speed = self.max_speed();
+        let speed = self.max_speed();
 
         match &mut self.order {
             FleetOrder::Idle => {
-                // Holds station. (Drag-free space; already at rest.)
+                // Holds station. (Already at rest.)
                 self.vel = Vec2::ZERO;
             }
             FleetOrder::MoveTo { dest } => {
-                let step = flip_and_burn(self.pos, self.vel, *dest, accel, max_speed, dt);
+                let step = advance_toward(self.pos, *dest, speed, dt);
                 self.pos = step.pos;
                 self.vel = step.vel;
                 if step.arrived {
@@ -622,7 +593,7 @@ impl Fleet {
                     return;
                 }
                 let dest = waypoints[*index % waypoints.len()];
-                let step = flip_and_burn(self.pos, self.vel, dest, accel, max_speed, dt);
+                let step = advance_toward(self.pos, dest, speed, dt);
                 self.pos = step.pos;
                 self.vel = step.vel;
                 if step.arrived {
@@ -655,27 +626,23 @@ mod tests {
 
     #[test]
     fn fleet_of_one_matches_the_old_single_ship_exactly() {
-        // A loaded convoy fleet-of-one reproduces the old a = F/(hull+cargo).
+        // A convoy fleet-of-one moves at the convoy's constant speed (§14.1) —
+        // cargo affects fuel (mass), not speed.
         let cargo = Some(Cargo { commodity: Commodity::Ore, units: 100 });
         let f = fleet(&[(ShipKind::Convoy, 1)], cargo);
-        let expected = ShipKind::Convoy.thrust() / (ShipKind::Convoy.hull_mass() + 100.0 * CARGO_MASS_PER_UNIT);
-        assert!((f.accel() - expected).abs() < 1e-9, "fleet-of-one accel == old Ship::accel");
-        assert_eq!(f.max_speed(), ShipKind::Convoy.max_speed());
+        assert_eq!(f.max_speed(), ShipKind::Convoy.max_speed(), "fleet-of-one speed == its kind's speed");
         assert_eq!(f.flagship_kind(), ShipKind::Convoy);
         assert_eq!(f.total_count(), 1);
     }
 
     #[test]
-    fn formation_accel_and_speed_are_set_by_the_slowest_member() {
+    fn formation_speed_is_set_by_the_slowest_member() {
         // A hammer (raider) carrying a colony ship lumbers at the COLONY's pace.
         let f = fleet(&[(ShipKind::Raider, 3), (ShipKind::Colony, 1)], None);
-        let colony_twr = ShipKind::Colony.thrust() / ShipKind::Colony.hull_mass();
-        // No cargo → drag factor 1, so accel == the slowest member's TWR.
-        assert!((f.accel() - colony_twr).abs() < 1e-9, "slowest member sets accel");
-        assert_eq!(f.max_speed(), ShipKind::Colony.max_speed(), "slowest member caps speed");
-        // Raider alone would be far nimbler — proving the formation penalty.
+        assert_eq!(f.max_speed(), ShipKind::Colony.max_speed(), "slowest member sets the formation speed");
+        // Raider alone is far faster — proving the formation penalty.
         let raider = fleet(&[(ShipKind::Raider, 1)], None);
-        assert!(raider.accel() > f.accel() * 5.0);
+        assert!(raider.max_speed() > f.max_speed(), "an unencumbered raider is faster");
     }
 
     #[test]

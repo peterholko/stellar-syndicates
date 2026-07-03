@@ -549,10 +549,10 @@ export class Renderer {
     }
   }
 
-  /// Soft, fuzzy INTERCEPT ESTIMATES for committed raids (§7/§8). Computed
-  /// CRUDELY — a constant-velocity projection from the delayed ghosts, ignoring
-  /// acceleration and the light-delayed steer-and-correct pursuit — so it is
-  /// EXPECTED to drift from the real outcome. Rendered in the sensor-circle idiom
+  /// Soft, fuzzy INTERCEPT ESTIMATES for committed raids (§8, §14.1). A CRUDE
+  /// constant-velocity lead projection from the delayed ghosts — honest, since
+  /// the real pursuit acts on light-delayed sightings it hasn't seen yet, so it
+  /// is EXPECTED to drift. Rendered in the sensor-circle idiom
   /// (translucent, soft, concentric) precisely so it reads as "best guess, about
   /// here," the way a sensor circle reads as a soft boundary — honest uncertainty,
   /// not a precise promise.
@@ -567,10 +567,10 @@ export class Renderer {
         const t = state.ghosts.find((x) => x.id === targetId);
         if (!r || !t) continue; // a ship left the view — no guess to draw
 
-        // Crude constant-velocity intercept: ETA ≈ range / cruise (a 0.7 fudge
-        // for the acceleration ramp), then project the target forward.
+        // Constant-velocity intercept: ETA ≈ range / cruise speed (§14.1, no
+        // acceleration ramp), then project the target forward along its heading.
         const range = Math.hypot(t.pos.x - r.pos.x, t.pos.y - r.pos.y);
-        const eta = range / (raiderSpeed * 0.7);
+        const eta = range / raiderSpeed;
         const ip = { x: t.pos.x + t.vel.x * eta, y: t.pos.y + t.vel.y * eta };
         const s = this.worldToScreen(ip);
         const rp = this.worldToScreen({ x: r.pos.x, y: r.pos.y });
