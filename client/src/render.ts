@@ -857,6 +857,16 @@ export class Renderer {
       sp.cone.circle(0, 0, 13 + pulse * 7).stroke({ width: 1.6, color: COL_THREAT, alpha: 0.35 + 0.45 * pulse });
     }
 
+    // §Part 4 SIGNATURE FLARE: a LOUD dark contact (big and/or at flank speed,
+    // signature > 1) gets a steady plume/halo — distinct from the pulsing threat
+    // ring — that grows with how loud it is. "Flank speed lights you up."
+    if (!own && ghost.signature != null && ghost.signature > 1.05) {
+      const loud = Math.min((ghost.signature - 1) / 1.5, 1); // 0..1 over 1..2.5
+      const r = 16 + loud * 16;
+      sp.cone.circle(0, 0, r).fill({ color: COL_THREAT, alpha: 0.04 + 0.06 * loud });
+      sp.cone.circle(0, 0, r).stroke({ width: 1, color: COL_THREAT, alpha: 0.2 + 0.3 * loud });
+    }
+
     // Selection ring.
     sp.ring.clear();
     if (state.selectedShipId === ghost.id) {

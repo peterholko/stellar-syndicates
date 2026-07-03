@@ -143,6 +143,15 @@ pub enum Command {
         join: Option<EntityId>,
     },
 
+    /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
+    /// administration on the player's own fleet — governs its move speed and, via
+    /// its velocity, its detection signature. Soft-reject if not the player's.
+    SetFleetTransit {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        mode: crate::ship::TransitMode,
+    },
+
     /// Merge one of the player's fleets INTO another (§FLEETS management v1).
     /// Both must be the player's, Idle, and co-located at one of the player's
     /// OWNED systems. `from`'s composition (and cargo, if `into` carries none) is

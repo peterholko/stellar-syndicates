@@ -291,6 +291,29 @@ pub const SCOUT_INTEL_RENOTIFY_S: f64 = 60.0;
 /// Seconds a patrolling ship waits at each waypoint before moving on.
 const PATROL_DWELL: f64 = 2.5;
 
+/// A fleet's TRANSIT THROTTLE (§Part 4): the stealth-vs-speed choice. `Full`
+/// (default, behavior-preserving) runs at the formation speed and lights up the
+/// fleet's signature at flank; `Stealth` creeps at `STEALTH_FRACTION` of it (~2×
+/// trip time) to stay quiet. Applies to MoveTo/Patrol; pursuit is always Full
+/// (v1). serde default = Full keeps old snapshots loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitMode {
+    #[default]
+    Full,
+    Stealth,
+}
+
+impl TransitMode {
+    /// The fraction of formation speed this mode travels at.
+    pub fn fraction(self) -> f64 {
+        match self {
+            TransitMode::Full => 1.0,
+            TransitMode::Stealth => crate::detection::STEALTH_FRACTION,
+        }
+    }
+}
+
 /// A fleet's standing order — what it does without further input. Orders are
 /// FLEET-LEVEL (GDD §13.1): the whole formation moves, intercepts, and holds as
 /// one entity. A fleet-of-one behaves exactly as the old single ship did.
@@ -384,6 +407,10 @@ pub struct Fleet {
     /// carrying the remainder forward.
     #[serde(default)]
     pub damage: BTreeMap<ShipKind, f64>,
+    /// TRANSIT THROTTLE (§Part 4): Full (default) or Stealth. Governs move speed
+    /// and, via the retarded velocity, the fleet's detection signature.
+    #[serde(default)]
+    pub transit: TransitMode,
 }
 
 impl Fleet {
@@ -412,6 +439,7 @@ impl Fleet {
             defense: None,
             notified_held: false,
             damage: BTreeMap::new(),
+            transit: TransitMode::Full,
         }
     }
 
@@ -517,6 +545,19 @@ impl Fleet {
         self.hull_mass() + self.cargo_mass()
     }
 
+    /// The fleet's TRANSIT speed = formation speed × the throttle fraction
+    /// (§Part 4). Full = formation speed (behavior-preserving); Stealth creeps.
+    pub fn transit_speed(&self) -> f64 {
+        self.max_speed() * self.transit.fraction()
+    }
+
+    /// The fleet's detection SIGNATURE (§Part 4) at its CURRENT velocity — the
+    /// authoritative-side value (the View recomputes the same from retarded
+    /// samples). Dark fleets only; a broadcaster's is unused.
+    pub fn signature(&self) -> f64 {
+        crate::detection::signature(&self.composition, self.vel.length(), self.max_speed())
+    }
+
     /// FORMATION speed (GDD §14.2): the SLOWEST member sets the pace — the
     /// minimum constant `speed(kind)` among present kinds. For a fleet-of-one this
     /// is that ship's own speed; a hammer carrying a colony ship crawls at the
@@ -562,9 +603,10 @@ impl Fleet {
     }
 
     /// Advance this fleet one timestep at simulation time `time`. Moves at the
-    /// FORMATION constant speed (slowest member sets the pace).
+    /// FORMATION constant speed (slowest member sets the pace), scaled by the
+    /// transit throttle (§Part 4 — Full/Stealth).
     pub fn advance(&mut self, time: f64, dt: f64) {
-        let speed = self.max_speed();
+        let speed = self.transit_speed();
 
         match &mut self.order {
             FleetOrder::Idle => {
@@ -706,6 +748,21 @@ mod tests {
             };
             assert!(n >= lo_hi.0 && n <= lo_hi.1, "count must lie inside its own bucket");
         }
+    }
+
+    #[test]
+    fn stealth_transit_halves_speed_and_quiets_the_signature() {
+        let mut f = fleet(&[(ShipKind::Raider, 1)], None);
+        // Full speed → the detection anchor (signature 1.0).
+        f.vel = Vec2::new(f.max_speed(), 0.0);
+        let full_sig = f.signature();
+        assert!((full_sig - 1.0).abs() < 1e-9, "a lone raider at full speed is the 1.0 anchor");
+        assert_eq!(f.transit_speed(), f.max_speed(), "Full transit = formation speed");
+        // Stealth halves the move speed and, at that speed, quiets the signature.
+        f.transit = TransitMode::Stealth;
+        assert!((f.transit_speed() - f.max_speed() * 0.5).abs() < 1e-9, "Stealth creeps at STEALTH_FRACTION");
+        f.vel = Vec2::new(f.transit_speed(), 0.0);
+        assert!(f.signature() < full_sig, "creeping is quieter than flank speed");
     }
 
     #[test]

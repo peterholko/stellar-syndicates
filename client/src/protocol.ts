@@ -302,7 +302,14 @@ export interface GhostView {
   count_class: CountClass;
   // Exact composition — present only in coverage or for your own fleet.
   composition: CompCount[] | null;
+  // §Part 4 detection signature (how LOUD a dark fleet is; 1.0 = a lone raider at
+  // full speed). Present only for dark fleets — drives the flare treatment.
+  signature: number | null;
 }
+
+// A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
+// `stealth` = creep at STEALTH_FRACTION (quiet, ~2× trip).
+export type TransitMode = "full" | "stealth";
 
 // Total ship count implied by a ghost: exact when composition is known,
 // otherwise null (you only have the bucket).
@@ -338,6 +345,8 @@ export type ClientMsg =
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
+  // §Part 4 — set a fleet's transit throttle (Full/Stealth).
+  | { type: "SetFleetTransit"; fleet_id: EntityId; mode: TransitMode }
   // §FLEETS Part 3 — request a projected engagement estimate (read-only query).
   | { type: "EstimateEngagement"; attacker: EntityId; target: EntityId }
   // §FLEETS management v1 — compose fleets at an owned system.

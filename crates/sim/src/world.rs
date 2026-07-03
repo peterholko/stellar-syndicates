@@ -492,6 +492,9 @@ impl World {
             combat: f64,
             /// Whether the fleet carries any teeth (a combatant kind).
             combatant: bool,
+            /// Detection signature (§Part 4) at its current velocity — how far a
+            /// picket can sense it (loud pack seen farther, stealth creeper less).
+            signature: f64,
         }
         let snap: Vec<Snap> = self
             .fleets
@@ -505,6 +508,7 @@ impl World {
                 cargo: s.cargo.map(|c| c.units).unwrap_or(0),
                 combat: s.combat_weight(),
                 combatant: s.is_combatant(),
+                signature: s.signature(),
             })
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
@@ -518,11 +522,16 @@ impl World {
         // CHOICE stays picket-local (guarding is physical proximity, not intel).
         let arrays: BTreeMap<PlayerId, Vec<(Vec2, f64)>> =
             self.players.keys().map(|&p| (p, self.array_sensor_sources(p))).collect();
-        let sensed = |owner: PlayerId, ppos: Vec2, target: Vec2| -> bool {
-            ppos.distance(target) <= sensor
-                || arrays
-                    .get(&owner)
-                    .is_some_and(|srcs| srcs.iter().any(|(c, r)| c.distance(target) <= *r))
+        // SPEED-SIGNATURE DETECTION (§Part 4): a picket senses a target if any of
+        // its coverage sources (its own bubble + the owner's arrays) reaches the
+        // target's SIGNATURE — the SAME shared `detection::detected` the View uses
+        // (parity-tested), so sim-side awareness and the player's map agree.
+        let sensed = |owner: PlayerId, ppos: Vec2, target: Vec2, sig: f64| -> bool {
+            let mut sources = vec![(ppos, sensor)];
+            if let Some(a) = arrays.get(&owner) {
+                sources.extend_from_slice(a);
+            }
+            crate::detection::detected(sig, &sources, target)
         };
 
         // --- Sensing helpers (all fog-respecting: within the owner's coverage —
@@ -533,7 +542,7 @@ impl World {
         // raider-only worlds see identical ratios (equal weights cancel).
         let force = |ppos: Vec2, owner: PlayerId| -> (f64, f64) {
             let (mut f, mut h) = (0.0f64, 0.0f64);
-            for s in snap.iter().filter(|s| s.combatant && sensed(owner, ppos, s.pos)) {
+            for s in snap.iter().filter(|s| s.combatant && sensed(owner, ppos, s.pos, s.signature)) {
                 if s.owner == owner {
                     f += s.combat;
                 } else {
@@ -562,7 +571,7 @@ impl World {
                 .filter(|s| {
                     s.owner != owner
                         && matches!(s.kind, ShipKind::Raider | ShipKind::Scout)
-                        && sensed(owner, ppos, s.pos)
+                        && sensed(owner, ppos, s.pos, s.signature)
                 })
                 .min_by(|a, b| {
                     ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id))
@@ -574,7 +583,7 @@ impl World {
         let nearest_threat_on = |ppos: Vec2, owner: PlayerId, guard: Vec2| -> Option<EntityId> {
             let mut best: Option<(EntityId, f64)> = None;
             for h in snap.iter().filter(|s| {
-                s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos)
+                s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos, s.signature)
             }) {
                 if h.vel.length() < THREAT_MIN_SPEED {
                     continue; // not actually inbound
@@ -1388,6 +1397,13 @@ impl World {
             }
             Command::SplitFleet { player_id, fleet_id, counts } => {
                 self.apply_split_fleet(*player_id, *fleet_id, counts, events);
+            }
+            Command::SetFleetTransit { player_id, fleet_id, mode } => {
+                if let Some(f) = self.fleets.get_mut(fleet_id)
+                    && f.owner == *player_id
+                {
+                    f.transit = *mode;
+                }
             }
         }
     }
@@ -5262,6 +5278,19 @@ mod tests {
         assert_eq!(w.fleets.len(), fleets_before, "no NEW fleet — the build joined the docked one");
         assert_eq!(w.fleets[&dock].count(ShipKind::Convoy), 1, "the convoy joined the fleet");
         assert_eq!(w.fleets[&dock].count(ShipKind::Raider), 1, "the original raider is still there");
+    }
+
+    #[test]
+    fn transit_mode_persists_across_a_snapshot_round_trip() {
+        let mut w = test_world();
+        let id = PlayerId(2);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let fid = *w.fleets.keys().next().unwrap();
+        w.step(&[Command::SetFleetTransit { player_id: id, fleet_id: fid, mode: crate::ship::TransitMode::Stealth }]);
+        assert_eq!(w.fleets[&fid].transit, crate::ship::TransitMode::Stealth, "the command set stealth");
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w2.fleets[&fid].transit, crate::ship::TransitMode::Stealth, "transit mode survives serialization");
     }
 
     #[test]

@@ -278,23 +278,36 @@ impl PositionHistory {
         // Pass 2: apply the two-tier visibility rules using the coverage.
         let mut ghosts = Vec::new();
         for p in pre {
-            // A destroyed raider stays detected for as long as its retarded-frame
-            // latch holds (until the Pass-1 destruction-light gate removes it); a
-            // live raider/convoy uses the ordinary `now`-frame coverage.
-            let detected = p.destroyed_detected || within_coverage(&coverage, p.sample.pos);
+            let own = p.owner == viewer;
+            // SPEED-SIGNATURE DETECTION (§Part 4): a dark fleet's presence is
+            // decided by `distance ≤ capability × signature`, where the signature
+            // is computed from the RETARDED sample's velocity (its old flare) and
+            // composition — the SAME shared function the sim's pickets use. A big
+            // pack at flank speed is seen far past the plain bubble; one creeping
+            // at stealth must be nearly inside it. Broadcasters keep plain-coverage
+            // gating (signature scope is dark fleets only).
+            let signature = if p.broadcasts {
+                1.0
+            } else {
+                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
+            };
+            let in_coverage = within_coverage(&coverage, p.sample.pos);
+            let dark_detected = own
+                || p.destroyed_detected
+                || sim::detection::detected(signature, &coverage, p.sample.pos);
 
-            // A DARK fleet (raiders/scouts only — nothing aboard broadcasts) is
-            // present ONLY inside sensor coverage. (A player's own dark fleet sits
-            // at the centre of its own sensor circle, so it is always present.)
-            // Omitted entirely otherwise — never sent-and-hidden. Because a dark
-            // fleet is only ever SEEN inside coverage, its composition is always
-            // revealed when visible (consistent — no half-seen dark fleet).
-            if !p.broadcasts && !detected {
+            // A DARK fleet (raiders/scouts only) is present ONLY when detected;
+            // omitted entirely otherwise — never sent-and-hidden. A seen dark fleet
+            // always shows its full composition (consistent — no half-seen fleet).
+            if !p.broadcasts && !dark_detected {
                 continue;
             }
+            // What the viewer may READ off it: a seen dark fleet reveals all; a
+            // broadcaster reveals cargo/composition only inside plain coverage.
+            let reveal = if p.broadcasts { own || in_coverage } else { true };
+            let detected = reveal;
 
             let age = now - p.sample.time;
-            let own = p.owner == viewer;
             // ONE law governs ALL information — it travels at lightspeed with NO
             // exceptions, including the player's OWN ships (§6). There is no FTL
             // tether to your fleet: certainty is a function of PROXIMITY to the
@@ -343,6 +356,7 @@ impl PositionHistory {
                 cargo,
                 count_class: p.count_class,
                 composition,
+                signature: if p.broadcasts { None } else { Some(signature) },
             });
         }
         // Deterministic ordering by id.
@@ -702,11 +716,15 @@ mod tests {
     }
 
     fn at(id: u64, x: f64, y: f64, owner: PlayerId, kind: ShipKind) -> (EntityId, Track) {
-        // A stationary ship sitting at (x,y) for 0..100 s, sampled at 10 Hz.
+        // A ship sitting at (x,y) for 0..100 s, sampled at 10 Hz, but carrying a
+        // FULL-SPEED velocity so a dark one reads at the §Part 4 detection ANCHOR
+        // (signature 1.0 = the plain bubble) — these coverage tests assert the
+        // pre-signature detection distances, which the anchor preserves.
+        let vel = Vec2::new(kind.max_speed(), 0.0);
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -1096,6 +1114,82 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
         assert_eq!(view.len(), 1);
         assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
+    }
+
+    // ---- §Part 4: speed-signature detection ----
+
+    /// A dark raider track at `pos` with a constant velocity of `speed` (its
+    /// signature depends on this retarded velocity). One raider by default.
+    fn dark_track(owner: PlayerId, pos: Vec2, speed: f64, comp: &[(ShipKind, u32)]) -> (EntityId, Track) {
+        let mut track = fleet_track(owner, pos, comp);
+        let vel = Vec2::new(speed, 0.0);
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 100.0 {
+            samples.push(Sample { time: t, pos, vel });
+            t += 0.1;
+        }
+        track.samples = samples.into();
+        (EntityId(1), track)
+    }
+
+    /// The ANCHOR + throttle: a lone raider at FULL speed is detected out to the
+    /// plain bubble edge (signature 1.0 — pre-signature behavior); the SAME raider
+    /// creeping at STEALTH must get far closer (signature 0.4) — at 700 su it's
+    /// seen at flank speed but hidden at stealth.
+    #[test]
+    fn dark_fleet_detected_at_full_speed_but_hidden_at_stealth() {
+        let full = ShipKind::Raider.max_speed();
+        let pos = Vec2::new(700.0, 0.0); // inside 1000, outside 0.4×1000 = 400
+        let hist_full = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 1)])], 1000.0);
+        let hist_creep = history_of(vec![dark_track(RIVAL, pos, full * sim::detection::STEALTH_FRACTION, &[(ShipKind::Raider, 1)])], 1000.0);
+        assert_eq!(hist_full.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).len(), 1, "at flank speed the raider is flagged");
+        assert!(hist_creep.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "creeping at stealth it reaches the sensor edge unseen");
+    }
+
+    /// RETARDED-TIME signature (the correctness rule): a fleet that SPRINTED then
+    /// coasted is detected by its OLD flare — the signature is read from the
+    /// retarded sample's velocity, not the live state.
+    #[test]
+    fn retarded_signature_catches_the_old_flare_of_a_sprint_then_coast() {
+        // Far command center: 900 su away → ~3 s light delay at c=300. The raider
+        // sprinted at full speed until t=3, then coasted at stealth. At now=6 the
+        // observable sample is the ~t=3 one — still flaring at full speed.
+        let cc = Vec2::new(900.0, 0.0);
+        let pos = Vec2::new(0.0, 0.0);
+        let full = ShipKind::Raider.max_speed();
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 8.0 {
+            let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
+            samples.push(Sample { time: t, pos, vel });
+            t += 0.1;
+        }
+        let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
+        track.samples = samples.into();
+        let mut tracks = HashMap::new();
+        tracks.insert(EntityId(1), track);
+        // Bubble 950: full-speed sig 1.0 reaches 950 > 900; coast sig would not.
+        let hist = PositionHistory { tracks, horizon: 1e9, sensor_range: 950.0 };
+        let seen = hist.view_for(VIEWER, cc, 300.0, 6.0);
+        assert_eq!(seen.len(), 1, "the old full-speed flare is what arrives — detected on schedule");
+    }
+
+    /// VIEW / SIM PARITY: the View's dark-fleet gating and the sim's shared
+    /// `detection::detected` agree for the same signature + coverage + position.
+    #[test]
+    fn view_matches_the_shared_detection_function() {
+        let full = ShipKind::Raider.max_speed();
+        let comp: std::collections::BTreeMap<ShipKind, u32> = [(ShipKind::Raider, 3)].into_iter().collect();
+        for dist in [300.0, 700.0, 1200.0, 2500.0] {
+            let pos = Vec2::new(dist, 0.0);
+            let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], 1000.0);
+            let view_sees = !hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty();
+            // The sim's shared function, same coverage (just the CC bubble here).
+            let sig = sim::detection::signature(&comp, full, ShipKind::Raider.max_speed());
+            let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
+            assert_eq!(view_sees, sim_sees, "View and sim agree at dist {dist}");
+        }
     }
 
     /// Build a multi-kind fleet track sitting still at `pos`, deriving the same

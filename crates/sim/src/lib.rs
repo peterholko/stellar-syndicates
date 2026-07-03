@@ -16,6 +16,7 @@ pub mod cargo;
 pub mod combat;
 pub mod command;
 pub mod config;
+pub mod detection;
 pub mod doctrine;
 pub mod event;
 pub mod fuel;
@@ -44,9 +45,10 @@ pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
 pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
 pub use rng::Rng;
+pub use detection::{detected as detected_by, signature as fleet_signature};
 pub use ship::{
-    CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission, ALL_SHIP_KINDS,
-    FLAGSHIP_PRECEDENCE,
+    CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission, TransitMode,
+    ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 pub use world::{Corporation, IntelSnapshot, World};

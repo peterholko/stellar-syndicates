@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sim::{
     Commodity, CountClass, EntityId, FleetDoctrine, PlayerId, RaidOutcome, ShipKind, Side,
-    StandingOrder, SystemUpgrade, TradeEvent, Vec2,
+    StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
 };
 
 /// The client↔server wire protocol version. BUMPED to 2 by the §FLEETS change:
@@ -86,6 +86,10 @@ pub enum ClientMsg {
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
+
+    /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
+    /// administration on the player's own fleet.
+    SetFleetTransit { fleet_id: EntityId, mode: TransitMode },
 
     /// Ask for a PROJECTED engagement estimate (§FLEETS Part 3): if `attacker`
     /// (one of the player's fleets) raided `target`, what would the losses be?
@@ -469,6 +473,10 @@ pub struct GhostView {
     /// fleets, or a rival fleet inside sensor coverage (Tier 2). `None` otherwise
     /// — you have the size bucket but not the makeup. Never leaks the true count.
     pub composition: Option<Vec<CompCount>>,
+    /// The dark fleet's DETECTION SIGNATURE (§Part 4) at the retarded moment — how
+    /// LOUD it is (1.0 = a lone raider at full speed). Present only for DARK
+    /// fleets; drives the client's flare/plume treatment. `None` for broadcasters.
+    pub signature: Option<f64>,
 }
 
 /// Messages pushed by the server to a single player's connection.

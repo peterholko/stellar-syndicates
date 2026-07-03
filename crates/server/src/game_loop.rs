@@ -320,6 +320,11 @@ impl GameLoop {
                         self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
                     }
                 }
+                ClientMsg::SetFleetTransit { fleet_id, mode } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetTransit { player_id, fleet_id, mode });
+                    }
+                }
                 ClientMsg::MergeFleets { into, from } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::MergeFleets { player_id, into, from });

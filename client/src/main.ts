@@ -247,6 +247,13 @@ function buildShipPanel(): void {
       if (from) {
         net.send({ type: "MergeFleets", into: state.selectedShipId, from });
       }
+    } else if (act === "transit" && state.selectedShipId && net) {
+      const mode = (b as HTMLElement).dataset.mode as "full" | "stealth" | undefined;
+      if (mode) {
+        transitModes.set(state.selectedShipId, mode);
+        net.send({ type: "SetFleetTransit", fleet_id: state.selectedShipId, mode });
+        updateShipPanel();
+      }
     }
   });
 }
@@ -264,6 +271,25 @@ function deselectShip(): void {
 }
 
 const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "colony" ? "Colony Ship" : k === "scout" ? "Scout" : k);
+
+// §Part 4: the player's chosen transit throttle per own fleet (optimistic —
+// echoes the SetFleetTransit command; defaults to Full).
+const transitModes = new Map<string, "full" | "stealth">();
+
+// The Transit control (§Part 4) — Full/Stealth toggle for an own DARK fleet
+// (only dark fleets benefit from running quiet; broadcasters are seen anyway).
+function transitSection(g: GhostView): string {
+  // Only meaningful for a fleet that can run dark (no broadcasting member) — i.e.
+  // its flagship is a raider or scout.
+  if (g.kind !== "raider" && g.kind !== "scout") return "";
+  const mode = transitModes.get(g.id) ?? "full";
+  const btn = (m: "full" | "stealth", label: string, hint: string) =>
+    `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${hint}">${label}</button>`;
+  const state = mode === "stealth"
+    ? `<span class="tone-up">running quiet</span> — ~2× trip time, a much smaller sensor signature`
+    : `<span class="dim">full speed</span> — fastest, but flank speed lights you up (high signature)`;
+  return `<div class="sp-sec">Transit</div><div class="sp-line">${btn("full", "Full", "Formation speed — loud")} ${btn("stealth", "Stealth", "Creep at half speed — quiet")}</div><div class="sp-line dim" style="margin-top:4px">${state}.</div>`;
+}
 
 // Flagship precedence (drawn/named order) — also the composition display order.
 const FLAGSHIP_ORDER: ShipKind[] = ["colony", "convoy", "corvette", "raider", "scout"];
@@ -398,6 +424,7 @@ function ownBody(g: GhostView): string {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
   parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
+  parts.push(transitSection(g));
   parts.push(fleetManagementSection(g));
   return parts.join("");
 }
@@ -423,6 +450,13 @@ function rivalBody(g: GhostView): string {
       ? "A scout runs silent — someone is LOOKING at your space. It carries no cargo and no weapons."
       : "A raider runs silent — no route or cargo is observable.";
     parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">${hint} You see this ${what} only because it is within your sensor range right now.</div>`);
+    // §Part 4: how LOUD it is (signature) — a big pack at flank speed flares far out.
+    if (g.signature != null) {
+      const loud = g.signature >= 1.6 ? "running LOUD — flank speed and/or a big pack (flares far out)"
+        : g.signature <= 0.6 ? "running quiet — creeping or small (you caught it close)"
+        : "a moderate signature";
+      parts.push(`<div class="sp-line dim">Signature: <b>${g.signature.toFixed(2)}×</b> — ${loud}.</div>`);
+    }
   }
   parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">${uiIcon("action-attack-raid", 12)} Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
   return parts.join("");
