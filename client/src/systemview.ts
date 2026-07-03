@@ -24,7 +24,7 @@
 //   rival's claim is only ever as fresh as the player's delayed observation.
 // ============================================================================
 
-import { Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, Deposit, PlayerId, SystemInfo } from "./protocol";
 import { starAnchor, starTypeFor, starVisualRatio, type StarType } from "./stars";
 
@@ -77,6 +77,8 @@ export interface SystemBodyDetail {
   habitable: boolean;
   deposits: Deposit[];
   description: string;
+  /// The body's art (for the details-panel thumbnail); null → color swatch only.
+  icon: string | null;
 }
 
 // ---- Per-kind presentation (color + flavor). Descriptions are flavor only. ---
@@ -96,6 +98,21 @@ const KIND_META: Record<PlanetKind, KindMeta> = {
   lava: { label: "Lava world", color: 0xc2502f, hi: 0xffb14a, desc: "A molten world, crust cracked with glowing magma." },
   barren: { label: "Barren world", color: 0x8a8f9c, hi: 0xc2c8d4, desc: "An airless rock — cratered, still, and mineral-rich." },
 };
+
+// ---- Planet/moon/asteroid ART (§planet-art) -----------------------------------
+// One icon per PlanetKind (filenames match the kind slugs exactly), plus a
+// generic moon and an asteroid chunk — 256px RGBA, background-removed from the
+// generated set (real alpha). The measured VISIBLE extent of each subject on
+// its canvas, so sprites scale to exactly the radius the fallback circle used.
+const PLANET_ART_URL = (kind: PlanetKind) => `/art/celestial_sprites/planets/${kind}.png`;
+const MOON_ART_URL = "/art/celestial_sprites/planets/moon.png";
+const CHUNK_ART_URL = "/art/celestial_sprites/planets/asteroid_belt_chunk.png";
+/// Fraction of the canvas the planet disk fills (measured: 0.78–0.81 across kinds).
+const PLANET_ART_FILL = 0.79;
+const MOON_ART_FILL = 0.31;
+const CHUNK_ART_FILL = 0.43;
+/// Chunk sprites scattered along each belt ring (over the existing dust dots).
+const BELT_CHUNKS = 22;
 
 // Fallback star tints (used only when the star icon texture hasn't loaded).
 const STAR_TINT: Record<string, number> = {
@@ -242,13 +259,23 @@ export class SystemViewScene {
   readonly root = new Container();
   private vignette = new Graphics(); // screen-space backdrop
   private worldRoot = new Container(); // scaled schematic space (STATIC, cached)
-  private orbitsGfx = new Graphics(); // orbit rings + belts (static)
-  private bodiesGfx = new Graphics(); // planet + moon discs (static)
+  private orbitsGfx = new Graphics(); // orbit rings + belt dust (static)
+  private beltChunks = new Container(); // asteroid-chunk sprites on the belts (static)
+  private starLayer = new Container(); // the star (sprite or procedural fallback)
+  private bodySprites = new Container(); // planet + moon ART sprites (static)
+  private bodiesGfx = new Graphics(); // fallback discs + halos + resource pips (static)
   private starSprite: Sprite | null = null;
   private starGfx = new Graphics(); // procedural star fallback (static)
   private overlay = new Graphics(); // ownership + selection (screen-space, dynamic)
   private labels = new Container(); // screen-space labels
   private labelPool: Text[] = [];
+
+  // Planet/moon/chunk textures (lazy, same idiom as render.ts loadArt — the
+  // KIND_META tint circle stays as the fallback until each resolves).
+  private kindTex = new Map<PlanetKind, Texture>();
+  private moonTex: Texture | null = null;
+  private chunkTex: Texture | null = null;
+  private lastStarTex: Texture | null = null;
 
   private vis: VisualSystem | null = null;
   private bodies: BodyHit[] = []; // screen-space hit targets (rebuilt on layout)
@@ -258,15 +285,51 @@ export class SystemViewScene {
   private sceneScale = 1;
 
   constructor() {
-    this.worldRoot.addChild(this.orbitsGfx, this.starGfx, this.bodiesGfx);
+    this.starLayer.addChild(this.starGfx);
+    this.worldRoot.addChild(this.orbitsGfx, this.beltChunks, this.starLayer, this.bodySprites, this.bodiesGfx);
     this.root.addChild(this.vignette, this.worldRoot, this.overlay, this.labels);
     this.root.visible = false;
+    // Non-blocking: fallback circles render immediately; the scene rebuilds
+    // once (cached thereafter) when the art lands.
+    void this.loadArt();
+  }
+
+  /// Load the planet/moon/chunk textures (each independent; a missing icon
+  /// simply leaves that body on its tint-circle fallback — noted, not fatal).
+  private async loadArt(): Promise<void> {
+    const load = async (url: string): Promise<Texture | null> => {
+      try {
+        return await Assets.load(url);
+      } catch {
+        return null;
+      }
+    };
+    const kinds: PlanetKind[] = ["terrestrial", "desert", "ocean", "ice", "gas_giant", "lava", "barren"];
+    const [moon, chunk, ...planets] = await Promise.all([
+      load(MOON_ART_URL),
+      load(CHUNK_ART_URL),
+      ...kinds.map((k) => load(PLANET_ART_URL(k))),
+    ]);
+    this.moonTex = moon;
+    this.chunkTex = chunk;
+    kinds.forEach((k, i) => {
+      const t = planets[i];
+      if (t) this.kindTex.set(k, t);
+    });
+    // Art arrived after a system was already built → rebuild that one scene
+    // (still cached; this happens at most once per session).
+    if (this.vis) {
+      const v = this.vis;
+      this.vis = null;
+      this.setSystem(v, this.lastStarTex);
+    }
   }
 
   /// (Re)build the STATIC schematic for a system. No-op if already showing it.
   setSystem(vis: VisualSystem, starTex: Texture | null): void {
     if (this.vis?.systemId === vis.systemId) return;
     this.vis = vis;
+    this.lastStarTex = starTex;
     this.selected = null;
     this.buildStatic(vis, starTex);
     this.layout(this.viewW, this.viewH);
@@ -292,7 +355,7 @@ export class SystemViewScene {
       sp.anchor.set(a[0], a[1]);
       sp.scale.set(0.17 / (starVisualRatio(st) * starTex.width)); // visible star ≈ 0.17 units
       this.starSprite = sp;
-      this.worldRoot.addChildAt(sp, 1); // above orbits, under bodies
+      this.starLayer.addChild(sp); // above orbits + belt chunks, under bodies
     } else {
       const tint = STAR_TINT[st.slug] ?? 0xffe08a;
       for (const [rr, al] of [[0.13, 0.10], [0.09, 0.28], [0.06, 0.9]] as [number, number][]) {
@@ -306,6 +369,10 @@ export class SystemViewScene {
     for (const p of vis.planets) {
       this.orbitsGfx.circle(0, 0, p.orbitRadius).stroke({ width: 0.0016, color: 0x2a3a58, alpha: 0.8 });
     }
+    // Belts: the existing dust-dot ring stays (kept as fine grit under the art);
+    // ART chunks scatter along it from an INDEPENDENT seeded stream, so the
+    // dots' determinism is untouched and the chunks are stable per system too.
+    this.beltChunks.removeChildren().forEach((c) => c.destroy());
     for (const belt of vis.asteroidBelts) {
       const dots = 90;
       const rng = mulberry32(hashId(vis.systemId + "belt" + belt.radius.toFixed(3)));
@@ -314,38 +381,79 @@ export class SystemViewScene {
         const rr = belt.radius + (rng() - 0.5) * belt.width;
         this.orbitsGfx.circle(Math.cos(ang) * rr, Math.sin(ang) * rr, 0.0016 + rng() * 0.0016).fill({ color: 0x6a7488, alpha: 0.5 });
       }
+      if (this.chunkTex) {
+        const crng = mulberry32(hashId(vis.systemId + "chunks" + belt.radius.toFixed(3)));
+        for (let i = 0; i < BELT_CHUNKS; i++) {
+          const ang = (i / BELT_CHUNKS) * Math.PI * 2 + crng() * 0.25;
+          const rr = belt.radius + (crng() - 0.5) * belt.width;
+          const size = 0.008 + crng() * 0.008; // world radius of the chunk
+          const sp = new Sprite(this.chunkTex);
+          sp.anchor.set(0.5);
+          sp.position.set(Math.cos(ang) * rr, Math.sin(ang) * rr);
+          sp.scale.set((2 * size) / (CHUNK_ART_FILL * this.chunkTex.width));
+          sp.rotation = crng() * Math.PI * 2;
+          sp.alpha = 0.85 + crng() * 0.15;
+          this.beltChunks.addChild(sp);
+        }
+      }
     }
 
-    // Planet + moon discs (static, cached).
+    // Planet + moon bodies (static, cached): the kind's ART sprite when loaded,
+    // the KIND_META tint circle as the fallback — same positions, same radii,
+    // same overlays either way. The deterministic generator is untouched.
     this.bodiesGfx.clear();
+    this.bodySprites.removeChildren().forEach((c) => c.destroy());
     for (const p of vis.planets) {
       const px = Math.cos(p.angle) * p.orbitRadius;
       const py = Math.sin(p.angle) * p.orbitRadius;
-      this.drawBody(px, py, p.radius, p.kind, p.deposits, p.habitable);
+      this.drawBody(px, py, p.radius, p.kind, p.deposits, p.habitable, this.kindTex.get(p.kind) ?? null, PLANET_ART_FILL);
       for (const mn of p.moons) {
         const mx = px + Math.cos(mn.angle) * mn.orbitRadius;
         const my = py + Math.sin(mn.angle) * mn.orbitRadius;
-        // Moons render as small icy/rock specks; a deposit-bearing moon (e.g. an
-        // icy volatiles moon) gets the same resource pip as a planet.
-        this.drawBody(mx, my, mn.radius, mn.deposits.length ? "ice" : "barren", mn.deposits, false);
+        // Moons: the moon icon (tiny); fallback = the old icy/rock speck. A
+        // deposit-bearing moon keeps the same resource pip as a planet.
+        this.drawBody(mx, my, mn.radius, mn.deposits.length ? "ice" : "barren", mn.deposits, false, this.moonTex, MOON_ART_FILL);
       }
     }
   }
 
-  private drawBody(x: number, y: number, r: number, kind: PlanetKind, deposits: Deposit[], habitable: boolean): void {
+  /// One body: the ART sprite (scaled so its VISIBLE disk matches the radius
+  /// the fallback circle used) when its texture is loaded, else the original
+  /// procedural disc. Overlays — habitable halo + deposit-association pip —
+  /// draw on top in EITHER mode (the sunlit-highlight fakery applies only to
+  /// the fallback: the art is already shaded).
+  private drawBody(
+    x: number,
+    y: number,
+    r: number,
+    kind: PlanetKind,
+    deposits: Deposit[],
+    habitable: boolean,
+    tex: Texture | null,
+    artFill: number,
+  ): void {
     const g = this.bodiesGfx;
     const meta = KIND_META[kind];
-    g.circle(x, y, r).fill({ color: meta.color, alpha: 1 });
-    // Sunlit highlight toward the star (origin) and a shaded far limb — cheap "3D".
-    const toStar = Math.atan2(-y, -x);
-    const hx = x + Math.cos(toStar) * r * 0.32;
-    const hy = y + Math.sin(toStar) * r * 0.32;
-    g.circle(hx, hy, r * 0.7).fill({ color: meta.hi, alpha: 0.22 });
-    g.circle(x - Math.cos(toStar) * r * 0.28, y - Math.sin(toStar) * r * 0.28, r * 0.92).fill({ color: 0x02040a, alpha: 0.28 });
-    if (kind === "gas_giant") {
-      g.ellipse(x, y, r * 0.92, r * 0.34).fill({ color: meta.hi, alpha: 0.14 }); // band hint
+    if (tex) {
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      sp.position.set(x, y);
+      sp.scale.set((2 * r) / (artFill * tex.width));
+      this.bodySprites.addChild(sp);
+    } else {
+      // Fallback disc (pre-art rendering, unchanged).
+      g.circle(x, y, r).fill({ color: meta.color, alpha: 1 });
+      // Sunlit highlight toward the star (origin) and a shaded far limb — cheap "3D".
+      const toStar = Math.atan2(-y, -x);
+      const hx = x + Math.cos(toStar) * r * 0.32;
+      const hy = y + Math.sin(toStar) * r * 0.32;
+      g.circle(hx, hy, r * 0.7).fill({ color: meta.hi, alpha: 0.22 });
+      g.circle(x - Math.cos(toStar) * r * 0.28, y - Math.sin(toStar) * r * 0.28, r * 0.92).fill({ color: 0x02040a, alpha: 0.28 });
+      if (kind === "gas_giant") {
+        g.ellipse(x, y, r * 0.92, r * 0.34).fill({ color: meta.hi, alpha: 0.14 }); // band hint
+      }
+      g.circle(x, y, r).stroke({ width: 0.0016, color: 0x0a0f1c, alpha: 0.7 });
     }
-    g.circle(x, y, r).stroke({ width: 0.0016, color: 0x0a0f1c, alpha: 0.7 });
     if (habitable) g.circle(x, y, r * 1.25).stroke({ width: 0.0016, color: 0x7fdc8a, alpha: 0.5 }); // life halo
     // Resource pip — a small ring in the deposit's map color (VISUAL association).
     if (deposits.length) {
@@ -405,11 +513,11 @@ export class SystemViewScene {
 
   private planetDetail(p: VisualPlanet): SystemBodyDetail {
     const meta = KIND_META[p.kind];
-    return { name: p.name, kindLabel: meta.label, kindColor: meta.color, isMoon: false, habitable: p.habitable, deposits: p.deposits, description: meta.desc };
+    return { name: p.name, kindLabel: meta.label, kindColor: meta.color, isMoon: false, habitable: p.habitable, deposits: p.deposits, description: meta.desc, icon: PLANET_ART_URL(p.kind) };
   }
   private moonDetail(mn: VisualMoon): SystemBodyDetail {
     const icy = mn.deposits.some((d) => d.resource === "volatiles");
-    return { name: mn.name, kindLabel: icy ? "Icy moon" : "Moon", kindColor: KIND_META.ice.color, isMoon: true, habitable: false, deposits: mn.deposits, description: icy ? "A frozen moon — a natural store of volatiles for the system." : "A small natural satellite." };
+    return { name: mn.name, kindLabel: icy ? "Icy moon" : "Moon", kindColor: KIND_META.ice.color, isMoon: true, habitable: false, deposits: mn.deposits, description: icy ? "A frozen moon — a natural store of volatiles for the system." : "A small natural satellite.", icon: MOON_ART_URL };
   }
 
   /// Hit-test a screen point against planets/moons; selects the nearest hit (for

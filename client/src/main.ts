@@ -566,7 +566,12 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
     `<h2>${esc(d.name)}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
-  const kindLine = `<div><span class="pp-swatch" style="background:${hex6(d.kindColor)}"></span>${esc(d.kindLabel)}${habitable}</div>`;
+  // The body's art as the panel thumbnail (mirrors the star concept banner in
+  // the System tab); the color swatch stays as the no-art fallback.
+  const thumb = d.icon
+    ? `<img class="pp-thumb" src="${d.icon}" alt="" />`
+    : "";
+  const kindLine = `<div class="pp-kindrow">${thumb}<div><span class="pp-swatch" style="background:${hex6(d.kindColor)}"></span>${esc(d.kindLabel)}${habitable}</div></div>`;
   // The SYSTEM's deposits, shown here as a VISUAL ASSOCIATION with this body — the
   // deposit still belongs to the system (claim/produce/ship it at the system level).
   const deps = d.deposits.length
