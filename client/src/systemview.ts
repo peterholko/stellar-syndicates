@@ -255,6 +255,41 @@ interface BodyHit {
 
 const LABEL_STYLE = () => new TextStyle({ fill: 0x9fb0c8, fontFamily: "ui-monospace, monospace", fontSize: 10 });
 
+// ---- Scale-aware circle tessellation (§orbit-ring fix) ------------------------
+// The schematic's Graphics draw in NORMALIZED units (radii ~0.001–0.96) inside a
+// worldRoot scaled to hundreds of pixels. Pixi picks a circle's segment count
+// from the radius AT DRAW TIME, so a radius-0.5 "circle" gets a handful of
+// segments and the scale magnifies it into a visible polygon. These helpers
+// build the path manually with a segment count derived from the DISPLAYED pixel
+// radius — smooth at any window size. (Graphics redraw on layout/scale changes
+// only — the static-once philosophy holds; sprites scale cleanly and are
+// untouched.)
+const ringSegments = (pixelR: number): number => Math.max(64, Math.min(256, Math.ceil(pixelR * 0.75)));
+
+/// A circle path (for .fill()/.stroke()) tessellated for its on-screen size.
+function circlePath(g: Graphics, x: number, y: number, r: number, pixelScale: number): Graphics {
+  const n = ringSegments(r * pixelScale);
+  g.moveTo(x + r, y);
+  for (let i = 1; i <= n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+  }
+  g.closePath();
+  return g;
+}
+
+/// An axis-aligned ellipse path, same idea (the gas-band fallback).
+function ellipsePath(g: Graphics, x: number, y: number, rx: number, ry: number, pixelScale: number): Graphics {
+  const n = ringSegments(Math.max(rx, ry) * pixelScale);
+  g.moveTo(x + rx, y);
+  for (let i = 1; i <= n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    g.lineTo(x + Math.cos(a) * rx, y + Math.sin(a) * ry);
+  }
+  g.closePath();
+  return g;
+}
+
 export class SystemViewScene {
   readonly root = new Container();
   private vignette = new Graphics(); // screen-space backdrop
@@ -278,6 +313,10 @@ export class SystemViewScene {
   private lastStarTex: Texture | null = null;
 
   private vis: VisualSystem | null = null;
+  /// What the static Graphics were last drawn for — redraw only when the
+  /// system or the layout scale changes (never per frame).
+  private gfxSystem: string | null = null;
+  private gfxScale = -1;
   private bodies: BodyHit[] = []; // screen-space hit targets (rebuilt on layout)
   private selected: { sx: number; sy: number; r: number } | null = null;
   private viewW = 0;
@@ -345,9 +384,9 @@ export class SystemViewScene {
 
   private buildStatic(vis: VisualSystem, starTex: Texture | null): void {
     const st = starTypeFor(vis.systemId);
-    // Star: reuse the galaxy-map star icon (consistent art) when loaded; else a
-    // procedural corona tinted by star type.
-    this.starGfx.clear();
+    // SPRITES only — every vector circle is drawn in redrawGfx with a segment
+    // count matched to the displayed pixel size (§orbit-ring fix). Sprites are
+    // immune to the tessellation problem, so they stay built-once here.
     if (this.starSprite) { this.starSprite.destroy(); this.starSprite = null; }
     if (starTex) {
       const sp = new Sprite(starTex);
@@ -356,31 +395,12 @@ export class SystemViewScene {
       sp.scale.set(0.17 / (starVisualRatio(st) * starTex.width)); // visible star ≈ 0.17 units
       this.starSprite = sp;
       this.starLayer.addChild(sp); // above orbits + belt chunks, under bodies
-    } else {
-      const tint = STAR_TINT[st.slug] ?? 0xffe08a;
-      for (const [rr, al] of [[0.13, 0.10], [0.09, 0.28], [0.06, 0.9]] as [number, number][]) {
-        this.starGfx.circle(0, 0, rr).fill({ color: tint, alpha: al });
-      }
-      this.starGfx.circle(0, 0, 0.03).fill({ color: 0xffffff, alpha: 0.9 });
     }
 
-    // Orbit rings + asteroid belts.
-    this.orbitsGfx.clear();
-    for (const p of vis.planets) {
-      this.orbitsGfx.circle(0, 0, p.orbitRadius).stroke({ width: 0.0016, color: 0x2a3a58, alpha: 0.8 });
-    }
-    // Belts: the existing dust-dot ring stays (kept as fine grit under the art);
-    // ART chunks scatter along it from an INDEPENDENT seeded stream, so the
-    // dots' determinism is untouched and the chunks are stable per system too.
+    // Belt ART chunks (an INDEPENDENT seeded stream from the dust dots, so both
+    // stay deterministic and stable per system).
     this.beltChunks.removeChildren().forEach((c) => c.destroy());
     for (const belt of vis.asteroidBelts) {
-      const dots = 90;
-      const rng = mulberry32(hashId(vis.systemId + "belt" + belt.radius.toFixed(3)));
-      for (let i = 0; i < dots; i++) {
-        const ang = (i / dots) * Math.PI * 2 + rng() * 0.05;
-        const rr = belt.radius + (rng() - 0.5) * belt.width;
-        this.orbitsGfx.circle(Math.cos(ang) * rr, Math.sin(ang) * rr, 0.0016 + rng() * 0.0016).fill({ color: 0x6a7488, alpha: 0.5 });
-      }
       if (this.chunkTex) {
         const crng = mulberry32(hashId(vis.systemId + "chunks" + belt.radius.toFixed(3)));
         for (let i = 0; i < BELT_CHUNKS; i++) {
@@ -398,68 +418,108 @@ export class SystemViewScene {
       }
     }
 
-    // Planet + moon bodies (static, cached): the kind's ART sprite when loaded,
-    // the KIND_META tint circle as the fallback — same positions, same radii,
-    // same overlays either way. The deterministic generator is untouched.
-    this.bodiesGfx.clear();
+    // Planet + moon ART sprites (the kind's icon when loaded — the tint-circle
+    // fallback for any unloaded texture is drawn by redrawGfx).
     this.bodySprites.removeChildren().forEach((c) => c.destroy());
-    for (const p of vis.planets) {
-      const px = Math.cos(p.angle) * p.orbitRadius;
-      const py = Math.sin(p.angle) * p.orbitRadius;
-      this.drawBody(px, py, p.radius, p.kind, p.deposits, p.habitable, this.kindTex.get(p.kind) ?? null, PLANET_ART_FILL);
-      for (const mn of p.moons) {
-        const mx = px + Math.cos(mn.angle) * mn.orbitRadius;
-        const my = py + Math.sin(mn.angle) * mn.orbitRadius;
-        // Moons: the moon icon (tiny); fallback = the old icy/rock speck. A
-        // deposit-bearing moon keeps the same resource pip as a planet.
-        this.drawBody(mx, my, mn.radius, mn.deposits.length ? "ice" : "barren", mn.deposits, false, this.moonTex, MOON_ART_FILL);
-      }
-    }
-  }
-
-  /// One body: the ART sprite (scaled so its VISIBLE disk matches the radius
-  /// the fallback circle used) when its texture is loaded, else the original
-  /// procedural disc. Overlays — habitable halo + deposit-association pip —
-  /// draw on top in EITHER mode (the sunlit-highlight fakery applies only to
-  /// the fallback: the art is already shaded).
-  private drawBody(
-    x: number,
-    y: number,
-    r: number,
-    kind: PlanetKind,
-    deposits: Deposit[],
-    habitable: boolean,
-    tex: Texture | null,
-    artFill: number,
-  ): void {
-    const g = this.bodiesGfx;
-    const meta = KIND_META[kind];
-    if (tex) {
+    this.forEachBody(vis, (x, y, r, _kind, _deposits, _habitable, tex, artFill) => {
+      if (!tex) return;
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
       sp.position.set(x, y);
       sp.scale.set((2 * r) / (artFill * tex.width));
       this.bodySprites.addChild(sp);
-    } else {
-      // Fallback disc (pre-art rendering, unchanged).
-      g.circle(x, y, r).fill({ color: meta.color, alpha: 1 });
-      // Sunlit highlight toward the star (origin) and a shaded far limb — cheap "3D".
-      const toStar = Math.atan2(-y, -x);
-      const hx = x + Math.cos(toStar) * r * 0.32;
-      const hy = y + Math.sin(toStar) * r * 0.32;
-      g.circle(hx, hy, r * 0.7).fill({ color: meta.hi, alpha: 0.22 });
-      g.circle(x - Math.cos(toStar) * r * 0.28, y - Math.sin(toStar) * r * 0.28, r * 0.92).fill({ color: 0x02040a, alpha: 0.28 });
-      if (kind === "gas_giant") {
-        g.ellipse(x, y, r * 0.92, r * 0.34).fill({ color: meta.hi, alpha: 0.14 }); // band hint
+    });
+
+    // Force the vector pass on the next layout (system changed).
+    this.gfxSystem = null;
+  }
+
+  /// Visit every planet + moon with its resolved position/radius/texture — the
+  /// single geometry walk shared by the sprite build and the vector redraw, so
+  /// the two passes can never disagree.
+  private forEachBody(
+    vis: VisualSystem,
+    cb: (x: number, y: number, r: number, kind: PlanetKind, deposits: Deposit[], habitable: boolean, tex: Texture | null, artFill: number) => void,
+  ): void {
+    for (const p of vis.planets) {
+      const px = Math.cos(p.angle) * p.orbitRadius;
+      const py = Math.sin(p.angle) * p.orbitRadius;
+      cb(px, py, p.radius, p.kind, p.deposits, p.habitable, this.kindTex.get(p.kind) ?? null, PLANET_ART_FILL);
+      for (const mn of p.moons) {
+        const mx = px + Math.cos(mn.angle) * mn.orbitRadius;
+        const my = py + Math.sin(mn.angle) * mn.orbitRadius;
+        // Moons: the moon icon (tiny); fallback = the old icy/rock speck. A
+        // deposit-bearing moon keeps the same resource pip as a planet.
+        cb(mx, my, mn.radius, mn.deposits.length ? "ice" : "barren", mn.deposits, false, this.moonTex, MOON_ART_FILL);
       }
-      g.circle(x, y, r).stroke({ width: 0.0016, color: 0x0a0f1c, alpha: 0.7 });
     }
-    if (habitable) g.circle(x, y, r * 1.25).stroke({ width: 0.0016, color: 0x7fdc8a, alpha: 0.5 }); // life halo
-    // Resource pip — a small ring in the deposit's map color (VISUAL association).
-    if (deposits.length) {
-      const col = COMMODITY_COLOR[deposits[0].resource] ?? 0xffffff;
-      g.circle(x + r * 0.9, y - r * 0.9, r * 0.42).fill({ color: col, alpha: 0.95 }).stroke({ width: 0.0012, color: 0x02040a, alpha: 0.7 });
+  }
+
+  /// (Re)draw every VECTOR element of the schematic — star-fallback glow, orbit
+  /// rings, belt dust, body fallback discs, habitable halos, deposit pips — in
+  /// normalized coordinates but tessellated for the CURRENT displayed size
+  /// (§orbit-ring fix: circlePath/ellipsePath). Called from layout() only when
+  /// the system or the scene scale changed — never per frame, so the
+  /// static-once caching philosophy holds.
+  private redrawGfx(vis: VisualSystem): void {
+    const scale = this.sceneScale;
+
+    // Star fallback corona (only when the star icon isn't loaded).
+    this.starGfx.clear();
+    if (!this.starSprite) {
+      const st = starTypeFor(vis.systemId);
+      const tint = STAR_TINT[st.slug] ?? 0xffe08a;
+      for (const [rr, al] of [[0.13, 0.10], [0.09, 0.28], [0.06, 0.9]] as [number, number][]) {
+        circlePath(this.starGfx, 0, 0, rr, scale).fill({ color: tint, alpha: al });
+      }
+      circlePath(this.starGfx, 0, 0, 0.03, scale).fill({ color: 0xffffff, alpha: 0.9 });
     }
+
+    // Orbit rings — THE reported polygon bug — and the belts' dust-dot grit
+    // (same deterministic stream as ever).
+    this.orbitsGfx.clear();
+    for (const p of vis.planets) {
+      circlePath(this.orbitsGfx, 0, 0, p.orbitRadius, scale).stroke({ width: 0.0016, color: 0x2a3a58, alpha: 0.8 });
+    }
+    for (const belt of vis.asteroidBelts) {
+      const dots = 90;
+      const rng = mulberry32(hashId(vis.systemId + "belt" + belt.radius.toFixed(3)));
+      for (let i = 0; i < dots; i++) {
+        const ang = (i / dots) * Math.PI * 2 + rng() * 0.05;
+        const rr = belt.radius + (rng() - 0.5) * belt.width;
+        circlePath(this.orbitsGfx, Math.cos(ang) * rr, Math.sin(ang) * rr, 0.0016 + rng() * 0.0016, scale)
+          .fill({ color: 0x6a7488, alpha: 0.5 });
+      }
+    }
+
+    // Body fallback discs + the always-on overlays (halo, deposit pip).
+    this.bodiesGfx.clear();
+    const g = this.bodiesGfx;
+    this.forEachBody(vis, (x, y, r, kind, deposits, habitable, tex) => {
+      const meta = KIND_META[kind];
+      if (!tex) {
+        // Fallback disc (pre-art rendering, unchanged apart from tessellation).
+        circlePath(g, x, y, r, scale).fill({ color: meta.color, alpha: 1 });
+        // Sunlit highlight toward the star (origin) and a shaded far limb — cheap "3D".
+        const toStar = Math.atan2(-y, -x);
+        const hx = x + Math.cos(toStar) * r * 0.32;
+        const hy = y + Math.sin(toStar) * r * 0.32;
+        circlePath(g, hx, hy, r * 0.7, scale).fill({ color: meta.hi, alpha: 0.22 });
+        circlePath(g, x - Math.cos(toStar) * r * 0.28, y - Math.sin(toStar) * r * 0.28, r * 0.92, scale).fill({ color: 0x02040a, alpha: 0.28 });
+        if (kind === "gas_giant") {
+          ellipsePath(g, x, y, r * 0.92, r * 0.34, scale).fill({ color: meta.hi, alpha: 0.14 }); // band hint
+        }
+        circlePath(g, x, y, r, scale).stroke({ width: 0.0016, color: 0x0a0f1c, alpha: 0.7 });
+      }
+      if (habitable) circlePath(g, x, y, r * 1.25, scale).stroke({ width: 0.0016, color: 0x7fdc8a, alpha: 0.5 }); // life halo
+      // Resource pip — a small ring in the deposit's map color (VISUAL association).
+      if (deposits.length) {
+        const col = COMMODITY_COLOR[deposits[0].resource] ?? 0xffffff;
+        circlePath(g, x + r * 0.9, y - r * 0.9, r * 0.42, scale)
+          .fill({ color: col, alpha: 0.95 })
+          .stroke({ width: 0.0012, color: 0x02040a, alpha: 0.7 });
+      }
+    });
   }
 
   /// Fit the schematic to the viewport and recompute screen-space hit targets +
@@ -475,6 +535,15 @@ export class SystemViewScene {
     this.sceneScale = Math.min(viewW, viewH) * 0.42;
     this.worldRoot.position.set(cx, cy);
     this.worldRoot.scale.set(this.sceneScale);
+
+    // Vector pass (§orbit-ring fix): tessellation depends on the DISPLAYED
+    // size, so the static Graphics redraw when the system or scale changes —
+    // exactly the layout events; never per frame.
+    if (this.vis && (this.gfxSystem !== this.vis.systemId || this.gfxScale !== this.sceneScale)) {
+      this.redrawGfx(this.vis);
+      this.gfxSystem = this.vis.systemId;
+      this.gfxScale = this.sceneScale;
+    }
 
     // Backdrop vignette (subtle LOD separation from the galaxy).
     this.vignette.clear();
