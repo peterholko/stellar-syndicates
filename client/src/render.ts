@@ -130,6 +130,14 @@ const STAR_MAX_PX = 480; // a star icon's CANVAS at max zoom — a uniform 1.875
 // ships parked on it (ships are hit-tested first and stay ≤ ~65px anyway).
 const BODY_HIT_CAP_PX = 90;
 
+// §battle-aftermath tunables. The marker is SCREEN-SPACE UI (like pips/badges):
+// it never grows in the deep-zoom band. TTL hides ancient markers (the report
+// stays in the retained list / results log until the server rotates it out).
+const BATTLE_MARKER_PX = 22; // aftermath icon size on screen
+const BATTLE_MARKER_TTL_S = 1800; // hide markers learned > 30 min ago (tunable)
+const BATTLE_MARKER_HIT_PX = 14; // click radius
+const BATTLE_ONGOING_PX = 26; // the in-progress icon size (pulse scales it a bit)
+
 // FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
 // lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
 // from what the VIEWER knows (exact count when own/in-coverage, else the fog
@@ -175,6 +183,13 @@ export class Renderer {
   private anchorsLayer = new Container();
   private orderLayer = new Container();
   private interceptGfx = new Graphics(); // soft intercept-estimate zones
+  // §battle-aftermath: concluded-battle markers (owner-only UI chrome) — under
+  // the ghosts (a marker never hides a ship), over bodies/estimates.
+  private aftermathLayer = new Container();
+  private aftermathGfx = new Graphics();
+  private aftermathSprites = new Map<number, Sprite>();
+  private battleSprites = new Map<number, Sprite>(); // pooled ongoing-battle icons (keyed by index)
+  private aftermathHits: { id: number; sx: number; sy: number }[] = [];
   private ghostsLayer = new Container();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
@@ -200,6 +215,10 @@ export class Renderer {
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
+  // §battle-aftermath: the two battle icons (in-progress / aftermath). Null →
+  // the drawn fallback markers keep working (the established art idiom).
+  private texBattleOngoing: Texture | null = null;
+  private texBattleAftermath: Texture | null = null;
 
   // The schematic System View scene (its own camera). Presentation only.
   private systemScene = new SystemViewScene();
@@ -238,9 +257,11 @@ export class Renderer {
       this.routesGfx, // convoy broadcast routes, under ghosts
       this.orderLayer,
       this.interceptGfx, // soft intercept estimate, under the ghosts it guides
+      this.aftermathLayer, // §battle-aftermath markers, under the ghosts
       this.ghostsLayer,
       this.signalsLayer,
     );
+    this.aftermathLayer.addChild(this.aftermathGfx);
     // Stage: persistent starfield (bottom) · galaxy scene · system scene (top,
     // hidden until entered). The HUD/breadcrumb/panels are DOM (the "hudRoot"),
     // and persist across both scenes.
@@ -292,6 +313,15 @@ export class Renderer {
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
+    // §battle-aftermath: the battle state icons. Missing files → the drawn
+    // markers keep working; drop `battle_in_progress.png` / `battle_aftermath.png`
+    // into client/public/art/ and they light up with no code change.
+    const [battleOngoing, battleAftermath] = await Promise.all([
+      load("/art/battle_in_progress.png"),
+      load("/art/battle_aftermath.png"),
+    ]);
+    this.texBattleOngoing = battleOngoing;
+    this.texBattleAftermath = battleAftermath;
     // Fleet formation sprites (family × tier); each independent, missing ones
     // fall back to the single-ship sprite so a bad file never breaks fleets.
     const families: FleetFamily[] = ["freighter", "raider", "corvette", "scout"];
@@ -723,22 +753,124 @@ export class Renderer {
   }
 
   /// §battles-take-time: a pulsing BATTLE MARKER at each ongoing engagement the
-  /// player can see (strictly light-gated by the server). Drawn on the intercept
-  /// layer, over the map, under the ghosts — "something is happening HERE".
+  /// player can see (strictly light-gated by the server) — the "battle in
+  /// progress" icon when its art is loaded (same pulse cadence), the original
+  /// drawn burst otherwise. Under the ghosts — "something is happening HERE".
   private drawBattles(state: ViewState): void {
     const g = this.interceptGfx;
     const now = performance.now();
+    const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+    let used = 0;
     for (const b of state.battles) {
       const s = this.worldToScreen(b.pos);
-      const pulse = 0.5 + 0.5 * Math.sin(now / 200);
-      const r = 14 + pulse * 6;
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2 + now / 1400;
-        g.moveTo(s.x + Math.cos(a) * r * 0.5, s.y + Math.sin(a) * r * 0.5).lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+      if (this.texBattleOngoing) {
+        let sp = this.battleSprites.get(used);
+        if (!sp) {
+          sp = new Sprite(this.texBattleOngoing);
+          sp.anchor.set(0.5);
+          this.aftermathLayer.addChild(sp);
+          this.battleSprites.set(used, sp);
+        }
+        sp.visible = true;
+        sp.texture = this.texBattleOngoing;
+        sp.position.set(s.x, s.y);
+        sp.scale.set(((BATTLE_ONGOING_PX + pulse * 5) / this.texBattleOngoing.width));
+        sp.alpha = 0.7 + 0.3 * pulse;
+        used++;
+        // Keep the alert ring so the icon still SHOUTS like the old burst did.
+        g.circle(s.x, s.y, BATTLE_ONGOING_PX * 0.7 + pulse * 5).stroke({ width: 1.4, color: COL_THREAT, alpha: 0.25 + 0.35 * pulse });
+      } else {
+        const r = 14 + pulse * 6;
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2 + now / 1400;
+          g.moveTo(s.x + Math.cos(a) * r * 0.5, s.y + Math.sin(a) * r * 0.5).lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+        }
+        g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
+        g.circle(s.x, s.y, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
       }
-      g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
-      g.circle(s.x, s.y, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
     }
+    // Hide pooled ongoing icons beyond this frame's battle count.
+    for (const [i, sp] of this.battleSprites) {
+      if (i >= used) sp.visible = false;
+    }
+  }
+
+  /// §battle-aftermath: the concluded-battle markers — one per RETAINED report
+  /// (owner-only by construction: the server only sends reports you were in,
+  /// and each appears only once YOUR conclusion light arrived). SCREEN-SPACE
+  /// UI like pips/badges: fixed size at every zoom, never in the deep-zoom
+  /// ramp. Unviewed = subtle attention pulse; viewed = static + dimmed;
+  /// dismissed / older than BATTLE_MARKER_TTL_S = hidden. Co-located battles
+  /// fan out in a small row so each stays clickable.
+  private drawAftermath(state: ViewState): void {
+    const g = this.aftermathGfx;
+    g.clear();
+    this.aftermathHits = [];
+    const simNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+    const live = new Set<number>();
+    const slotIndex = new Map<string, number>();
+    for (const r of state.battleReports) {
+      if (state.battleDismissed.has(r.id)) continue;
+      if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
+      const s = this.worldToScreen(r.pos);
+      const key = `${Math.round(r.pos.x / 60)},${Math.round(r.pos.y / 60)}`;
+      const slot = slotIndex.get(key) ?? 0;
+      slotIndex.set(key, slot + 1);
+      const sx = s.x + slot * (BATTLE_MARKER_PX * 0.7);
+      const sy = s.y - slot * 4;
+      const viewed = state.battleViewed.has(r.id);
+      const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
+      const alpha = viewed ? 0.45 : 0.8 + 0.2 * pulse;
+      live.add(r.id);
+      if (this.texBattleAftermath) {
+        let sp = this.aftermathSprites.get(r.id);
+        if (!sp) {
+          sp = new Sprite(this.texBattleAftermath);
+          sp.anchor.set(0.5);
+          this.aftermathLayer.addChild(sp);
+          this.aftermathSprites.set(r.id, sp);
+        }
+        sp.position.set(sx, sy);
+        sp.scale.set(BATTLE_MARKER_PX / this.texBattleAftermath.width);
+        sp.alpha = alpha;
+      } else {
+        // Drawn fallback: a broken-blade cross + drifting-debris arc, in a
+        // cooled-ember tone (this is HISTORY, not the red alert of an ongoing
+        // battle). Swapped for battle_aftermath.png the moment it exists.
+        const col = viewed ? 0x8a8f9c : 0xd08a5a;
+        const r2 = BATTLE_MARKER_PX * 0.32;
+        g.moveTo(sx - r2, sy - r2).lineTo(sx + r2 * 0.4, sy + r2 * 0.4).stroke({ width: 1.8, color: col, alpha });
+        g.moveTo(sx + r2, sy - r2).lineTo(sx - r2 * 0.4, sy + r2 * 0.4).stroke({ width: 1.8, color: col, alpha });
+        g.arc(sx, sy, r2 * 1.7, -Math.PI * 0.15, Math.PI * 0.45).stroke({ width: 1, color: col, alpha: alpha * 0.7 });
+        g.circle(sx + r2 * 1.5, sy + r2 * 0.9, 1.1).fill({ color: col, alpha });
+      }
+      if (!viewed) {
+        // The new-report attention pulse (subtle — an invitation, not an alarm).
+        g.circle(sx, sy, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: 0xd08a5a, alpha: 0.15 + 0.3 * pulse });
+      }
+      this.aftermathHits.push({ id: r.id, sx, sy });
+    }
+    for (const [id, sp] of this.aftermathSprites) {
+      if (!live.has(id)) {
+        sp.destroy();
+        this.aftermathSprites.delete(id);
+      }
+    }
+  }
+
+  /// Hit-test the aftermath markers (screen-space, fixed radius). Returns the
+  /// clicked report id, or null. Consumed by main.ts's map click.
+  aftermathPick(sx: number, sy: number): number | null {
+    let best: number | null = null;
+    let bestD = BATTLE_MARKER_HIT_PX;
+    for (const h of this.aftermathHits) {
+      const d = Math.hypot(h.sx - sx, h.sy - sy);
+      if (d < bestD) {
+        bestD = d;
+        best = h.id;
+      }
+    }
+    return best;
   }
 
   private interceptLabel(id: string): Text {
@@ -1351,6 +1483,7 @@ export class Renderer {
       this.drawOrders(state, screenById);
       this.drawIntercepts(state);
       this.drawBattles(state);
+      this.drawAftermath(state);
       this.drawSignals(state, dt);
     }
 

@@ -176,6 +176,10 @@ pub enum Role {
 /// flagships, and `*_losses` carry the per-kind ships each side lost.
 #[derive(Debug, Clone, Serialize)]
 pub struct RaidReport {
+    /// §battle-aftermath: stable id shared with the RETAINED copy of this
+    /// report (`View.battle_reports`) — the news toast and the map marker /
+    /// results panel can point at the same battle.
+    pub report_id: u64,
     pub outcome: RaidOutcome,
     pub attacker: PlayerId,
     pub defender: PlayerId,
@@ -193,6 +197,29 @@ pub struct RaidReport {
     /// Per-kind ships the attacker lost over the engagement.
     pub attacker_losses: Vec<CompCount>,
     /// Per-kind ships the defender (target side) lost over the engagement.
+    pub target_losses: Vec<CompCount>,
+}
+
+/// §battle-aftermath: a RETAINED concluded-battle report, as one participant
+/// learned it — powers the aftermath map marker and the battle-results panel.
+/// Owner-only by construction (built per player from their retained journal).
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleReportView {
+    /// Stable id (shared with the transient `Report` news toast for the same
+    /// battle, and usable by the timeline to open the same results).
+    pub id: u64,
+    pub pos: Vec2,
+    /// Sim-time the battle CONCLUDED (what happened, when).
+    pub at_time: f64,
+    /// Sim-time this player's conclusion light ARRIVED (when you learned).
+    pub learned_at: f64,
+    /// The recipient's side in it.
+    pub you: Role,
+    pub attacker_kind: ShipKind,
+    pub target_kind: ShipKind,
+    pub outcome: RaidOutcome,
+    /// Composition-vs-composition per-kind losses, as this side learned them.
+    pub attacker_losses: Vec<CompCount>,
     pub target_losses: Vec<CompCount>,
 }
 
@@ -572,6 +599,13 @@ pub enum ServerMsg {
         /// Ongoing BATTLES visible to this player (§battles-take-time) — strictly
         /// light-gated; a third-party observer sees them only by their own light.
         battles: Vec<BattleView>,
+        /// §battle-aftermath: CONCLUDED battles this player PARTICIPATED in and
+        /// has LEARNED of (their conclusion light provably arrived — see
+        /// `learned_at`). Strictly per-participant: a non-participant's view
+        /// never carries a battle they weren't in. Retained server-side
+        /// (last [`crate::reports::BATTLE_REPORTS_KEPT`]), so markers/results
+        /// survive reconnects.
+        battle_reports: Vec<BattleReportView>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

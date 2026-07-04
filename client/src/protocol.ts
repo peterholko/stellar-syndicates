@@ -372,6 +372,9 @@ export type RaidOutcome =
 // composition-vs-composition report — `*_kind` are the flagships and `*_losses`
 // list the per-kind ships each side lost over the Lanchester engagement.
 export interface RaidReport {
+  /// §battle-aftermath: stable id shared with the RETAINED copy in
+  /// `View.battle_reports` — a news toast can open the same results panel.
+  report_id: number;
   outcome: RaidOutcome;
   attacker: PlayerId;
   defender: PlayerId;
@@ -415,6 +418,23 @@ export interface BattleView {
   own: boolean; // the viewer is one of the two sides
 }
 
+// §battle-aftermath: a RETAINED concluded battle this player PARTICIPATED in —
+// present only once their conclusion light arrived (`learned_at`). Powers the
+// aftermath map marker + battle-results panel; survives reconnects (server
+// keeps the last BATTLE_REPORTS_KEPT per player). Strictly owner-only.
+export interface BattleReportView {
+  id: number;
+  pos: Vec2;
+  at_time: number; // sim-time the battle concluded
+  learned_at: number; // sim-time YOUR light arrived (when you learned)
+  you: "attacker" | "defender";
+  attacker_kind: ShipKind;
+  target_kind: ShipKind;
+  outcome: RaidOutcome;
+  attacker_losses: CompCount[];
+  target_losses: CompCount[];
+}
+
 // One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
 // the phase from `sim_time`: IN TRANSIT until `delivered_at`, AWAITING ECHO until
 // `echo_at`, then confirmed (the entry drops). Both stamps are exact.
@@ -454,6 +474,8 @@ export type ServerMsg =
       pending_orders: PendingOrderView[];
       // §battles-take-time — ongoing battles visible to this player (light-gated).
       battles: BattleView[];
+      /// §battle-aftermath: retained concluded-battle reports (owner-only).
+      battle_reports: BattleReportView[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

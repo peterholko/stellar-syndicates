@@ -469,6 +469,26 @@ impl GameLoop {
                 }
             }
             let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            // §battle-aftermath: this player's RETAINED concluded-battle reports
+            // (delivered = their light provably arrived). Strictly per-
+            // participant — the scheduler holds them keyed by recipient.
+            let battle_reports: Vec<crate::protocol::BattleReportView> = self
+                .reports
+                .retained_for(player_id)
+                .iter()
+                .map(|r| crate::protocol::BattleReportView {
+                    id: r.id,
+                    pos: r.pos,
+                    at_time: r.event_time,
+                    learned_at: r.arrival_time,
+                    you: r.you,
+                    attacker_kind: r.attacker_kind,
+                    target_kind: r.target_kind,
+                    outcome: r.outcome,
+                    attacker_losses: r.attacker_losses.clone(),
+                    target_losses: r.target_losses.clone(),
+                })
+                .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             let systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
@@ -552,6 +572,7 @@ impl GameLoop {
                         })
                         .collect(),
                     battles,
+                    battle_reports,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

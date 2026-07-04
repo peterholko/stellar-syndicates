@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type Commodity, type Deposit, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent } from "./protocol";
+import { countClassLabel, formatId, type Commodity, type CompCount, type Deposit, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
 
@@ -938,6 +938,103 @@ function openPlanetPanel(d: SystemBodyDetail): void {
   $("planet-panel").classList.add("is-open");
 }
 
+// --- §battle-aftermath: the battle-results panel + marker interaction --------
+// Markers/reports come strictly from the owner-only `View.battle_reports`; the
+// client only adds presentation state: VIEWED (marker dims) and DISMISSED
+// (marker hidden — the report stays in the retained list). Both persist to
+// localStorage so a reload keeps the read/dismissed status.
+const BATTLE_LS_KEY = "ss_battle_marks";
+function loadBattleMarks(): void {
+  try {
+    const raw = localStorage.getItem(BATTLE_LS_KEY);
+    if (!raw) return;
+    const m = JSON.parse(raw) as { viewed?: number[]; dismissed?: number[] };
+    state.battleViewed = new Set(m.viewed ?? []);
+    state.battleDismissed = new Set(m.dismissed ?? []);
+  } catch { /* corrupt marks → start clean */ }
+}
+function saveBattleMarks(): void {
+  // Prune to ids the server still retains (the list is capped, so this stays tiny).
+  const live = new Set(state.battleReports.map((r) => r.id));
+  const keep = (s: Set<number>) => [...s].filter((id) => live.has(id));
+  localStorage.setItem(BATTLE_LS_KEY, JSON.stringify({ viewed: keep(state.battleViewed), dismissed: keep(state.battleDismissed) }));
+}
+loadBattleMarks();
+// Battle entries in the reports log open the same results panel as the map
+// marker (delegated once on the persistent log root — §single-click pattern).
+$("reports-log").addEventListener("click", (e) => {
+  const row = (e.target as HTMLElement).closest("[data-report-id]") as HTMLElement | null;
+  if (row) openBattlePanel(Number(row.dataset.reportId));
+});
+
+let battlePanelBuilt = false;
+function buildBattlePanel(): void {
+  if (battlePanelBuilt) return;
+  battlePanelBuilt = true;
+  $("battle-panel").addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+    if (!el) return;
+    if (el.dataset.act === "close") {
+      $("battle-panel").classList.remove("is-open");
+    } else if (el.dataset.act === "dismiss") {
+      const id = Number(el.dataset.id);
+      state.battleDismissed.add(id);
+      saveBattleMarks();
+      $("battle-panel").classList.remove("is-open");
+    }
+  });
+}
+/// The nearest system's name, as a human-readable "where" for a battle site.
+function nearestSystemName(p: Vec2): string {
+  let best = "";
+  let bestD = Infinity;
+  for (const s of state.galaxy?.systems ?? []) {
+    const d = Math.hypot(s.pos.x - p.x, s.pos.y - p.y);
+    if (d < bestD) { bestD = d; best = s.name; }
+  }
+  return bestD < 200 ? `at ${best}` : best ? `near ${best} (${bestD.toFixed(0)} su out)` : `at (${p.x.toFixed(0)}, ${p.y.toFixed(0)})`;
+}
+function openBattlePanel(id: number): void {
+  const r = state.battleReports.find((x) => x.id === id);
+  if (!r) return; // rotated out of the retained list
+  buildBattlePanel();
+  state.battleViewed.add(id); // opening = viewed → the marker goes static/dim
+  saveBattleMarks();
+  const now = liveSimTime();
+  const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
+  const youAtk = r.you === "attacker";
+  const yourKind = youAtk ? r.attacker_kind : r.target_kind;
+  const theirKind = youAtk ? r.target_kind : r.attacker_kind;
+  const yourLoss = youAtk ? r.attacker_losses : r.target_losses;
+  const theirLoss = youAtk ? r.target_losses : r.attacker_losses;
+  const lossStr = (l: CompCount[]) => l.length ? l.map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") : "nothing";
+  // Outcome in the recipient's terms (victory / withdrawal / mutual disengage).
+  const yourSideDied = r.outcome === "both_destroyed" || (youAtk ? r.outcome === "attacker_destroyed" : r.outcome === "target_destroyed");
+  const theirSideDied = r.outcome === "both_destroyed" || (youAtk ? r.outcome === "target_destroyed" : r.outcome === "attacker_destroyed");
+  const verdict = yourSideDied && theirSideDied ? badge("negative", "mutual destruction")
+    : yourSideDied ? badge("negative", "defeat — your force destroyed")
+      : theirSideDied ? badge("positive", "victory — their force destroyed")
+        : badge("neutral", "withdrawal — both sides survive");
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">battle result · delayed report</div>` +
+    `<h2>Engagement ${esc(nearestSystemName(r.pos))}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const body =
+    `<div class="sp-line">${verdict}</div>` +
+    `<div class="sp-sec">When</div>` +
+    `<div class="sp-line">Concluded <b>${ago(r.at_time)}</b> ago · you learned <b>${ago(r.learned_at)}</b> ago <span class="dim">(light delay ${fmtCountdown(Math.max(0, r.learned_at - r.at_time))})</span></div>` +
+    `<div class="sp-sec">Sides — as you learned them</div>` +
+    `<div class="sp-line"><b>You</b> (${esc(youAtk ? "attacker" : "defender")}): ${esc(shipKindLabel(yourKind))}-led force</div>` +
+    `<div class="sp-line"><b>Rival</b> (${esc(youAtk ? "defender" : "attacker")}): ${esc(shipKindLabel(theirKind))}-led force</div>` +
+    `<div class="sp-sec">Losses</div>` +
+    `<div class="sp-line">You lost: <b>${esc(lossStr(yourLoss))}</b></div>` +
+    `<div class="sp-line">They lost: <b>${esc(lossStr(theirLoss))}</b></div>` +
+    `<div class="mhint dim">Positions and outcomes are as of the light that reached your command center — the site may look different by now.</div>` +
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+  $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
+  $("battle-panel").classList.add("is-open");
+}
+
 // Click INSIDE the System View: a planet/moon opens its details; empty space
 // clears the selection/panel. No move orders, no raids — those are galaxy-only.
 function handleSystemClick(sx: number, sy: number): void {
@@ -1088,6 +1185,17 @@ function handleMapClick(sx: number, sy: number): void {
       const hs = renderer.worldToScreen(state.galaxy.hub);
       if (Math.hypot(hs.x - sx, hs.y - sy) < Math.max(24, renderer.hubHitRadius())) {
         openHubPanel();
+        return;
+      }
+    }
+
+    // §battle-aftermath: a concluded-battle marker (owner-only UI) → its full
+    // results. After ships/systems/hub — the marker is small screen-space
+    // chrome and must never steal a gameplay click — before the move order.
+    {
+      const hit = renderer.aftermathPick(sx, sy);
+      if (hit !== null) {
+        openBattlePanel(hit);
         return;
       }
     }
@@ -1724,6 +1832,10 @@ function addReport(r: import("./protocol").RaidReport): void {
   }
   const el = document.createElement("div");
   el.className = "report " + cls;
+  // §battle-aftermath: the news toast and the retained report share an id —
+  // clicking the log entry opens the same results panel as the map marker.
+  el.dataset.reportId = String(r.report_id);
+  el.title = "Open the full battle results";
   el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>${lossLine}`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
@@ -2245,6 +2357,7 @@ function join(): void {
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
+          state.battleReports = msg.battle_reports;
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the

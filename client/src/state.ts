@@ -64,6 +64,14 @@ export interface ViewState {
   pendingOrders: Map<string, PendingOrderView>;
   /// §battles-take-time: ongoing battles visible to this player (light-gated).
   battles: import("./protocol").BattleView[];
+  /// §battle-aftermath: retained concluded battles this player was IN — present
+  /// only after their conclusion light arrived (owner-only, from the View).
+  battleReports: import("./protocol").BattleReportView[];
+  /// §battle-aftermath: report ids the player has OPENED (viewed → static/dim
+  /// marker) and DISMISSED (marker hidden; the report stays in the log).
+  /// Client-local, persisted to localStorage across reloads.
+  battleViewed: Set<number>;
+  battleDismissed: Set<number>;
   /// The check-in timeline (§16, Layer 3): what became observable, newest last.
   timeline: TimelineEntry[];
   /// Sim-time the player was last online — the "while you were away" boundary.
@@ -116,6 +124,9 @@ export function initialState(): ViewState {
     doctrine: defaultDoctrine(),
     pendingOrders: new Map(),
     battles: [],
+    battleReports: [],
+    battleViewed: new Set(),
+    battleDismissed: new Set(),
     timeline: [],
     awaySince: 0,
     awaySet: false,
