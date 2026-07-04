@@ -66,6 +66,12 @@ pub const RAID_CAP_FRAC: f64 = 0.15;
 /// without either side hitting a retreat threshold forces a MUTUAL DISENGAGE —
 /// no infinite grind between two no-retreat (doctrine Never) fleets. Tunable.
 pub const MAX_BATTLE_MULT: f64 = 2.0;
+/// The brief PARTING-SHOT exposure (seconds) a fleet that does NOT accept a
+/// battle takes before its physical disengagement completes (§engagement
+/// movement — the anti-lock rule). A raider jumped on AVOID doctrine suffers this
+/// short scrape, then the SPEED TABLE decides whether it opens the gap or is
+/// caught. Independent of the battle timescale (a scrape is quick). Tunable.
+pub const DISENGAGE_EXPOSURE_SECS: f64 = 3.0;
 /// The reference RETREAT fraction the duration calibration is anchored to (equal
 /// forces withdraw when half their weighted strength is gone).
 pub const REFERENCE_RETREAT_FRAC: f64 = 0.5;

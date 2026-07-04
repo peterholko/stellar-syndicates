@@ -124,6 +124,10 @@ fn default_player() -> PlayerId {
     PlayerId(0)
 }
 
+fn default_entity() -> EntityId {
+    EntityId(0)
+}
+
 /// A DELIVERED order whose confirming light hasn't yet reached the command center
 /// (the AWAITING-ECHO phase). Owner-only; transient lifecycle bookkeeping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +312,25 @@ pub struct Engagement {
     a_start_strength: f64,
     d_start_strength: f64,
     platform_start_tiers: u32,
+    /// A representative fleet id per side (the first participant), so the battle
+    /// REPORT names real fleets even after a side is wiped out. serde default for
+    /// old snapshots (falls back to the engagement id).
+    #[serde(default = "default_entity")]
+    a_lead: EntityId,
+    #[serde(default = "default_entity")]
+    d_lead: EntityId,
+    /// Participants that did NOT accept this battle (Avoid doctrine, not the
+    /// committed attacker) → the sim time at which their brief parting-shot
+    /// exposure ends and they physically flee (§engagement movement). Persisted
+    /// so a mid-battle snapshot resumes the disengagement on schedule.
+    #[serde(default)]
+    disengaging: BTreeMap<EntityId, f64>,
+    /// A fleet on this side FLED (avoid-disengage or withdraw) and SURVIVES — so
+    /// an emptied side is a WITHDRAWAL, not a wipe, in the final report.
+    #[serde(default)]
+    a_fled: bool,
+    #[serde(default)]
+    d_fled: bool,
     /// Touched this tick? (Untouched engagements have ended — flush + remove.)
     #[serde(skip)]
     touched: bool,
@@ -567,10 +590,24 @@ impl World {
             .iter()
             .map(|(id, s)| (*id, (s.pos, s.vel)))
             .collect();
+        // ANCHOR (§engagement movement): a fleet in a battle is a STATIONARY event
+        // at the contact point — its prior mission suspends and it holds position
+        // (evasive combat maneuvering consumes the drive budget; no cruise under
+        // fire). This is what pins a slow hammer while relief travels, and what
+        // makes the battle marker / reinforce-to-location coherent.
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
         let time = self.time;
         let c = self.config.c;
         let mut lost_target = Vec::new();
         for (id, ship) in self.fleets.iter_mut() {
+            if engaged.contains(id) {
+                ship.vel = Vec2::ZERO; // anchored — the battle holds it in place
+                continue;
+            }
             if let FleetOrder::Intercept { target } = ship.order {
                 match snapshot.get(&target) {
                     Some(&(tp, tv)) => {
@@ -1098,6 +1135,11 @@ impl World {
                 a_start_strength: a_str,
                 d_start_strength: d_str,
                 platform_start_tiers: ptiers,
+                a_lead: aid,
+                d_lead: tid,
+                disengaging: BTreeMap::new(),
+                a_fled: false,
+                d_fled: false,
                 touched: true,
             });
         }
@@ -1151,6 +1193,77 @@ impl World {
                 e.defenders.retain(|f| self.fleets.contains_key(f));
                 self.engagements.insert(*eid, e);
             }
+
+            // DOCTRINE-ON-CONTACT (§engagement movement — the anti-lock rule): a
+            // fleet that does NOT ACCEPT this battle begins disengaging AT ONCE. It
+            // ACCEPTS if it committed the attack (an Intercept order) OR its corp's
+            // engagement policy isn't Avoid. A non-accepter takes a brief
+            // parting-shot exposure, then physically flees — the SPEED TABLE then
+            // decides whether it opens the gap or a faster pursuer catches it.
+            {
+                let (atkers, defers) = {
+                    let e = &self.engagements[eid];
+                    (e.attackers.clone(), e.defenders.clone())
+                };
+                // Fastest pursuer on each side (the SPEED-TABLE gate for escape).
+                let side_max = |members: &[EntityId], w: &World| -> f64 {
+                    members.iter().filter_map(|id| w.fleets.get(id)).map(|f| f.max_speed()).fold(0.0_f64, f64::max)
+                };
+                let atk_speed = side_max(&atkers, self);
+                let def_speed = side_max(&defers, self);
+                let mut set_dis: Vec<(EntityId, f64)> = Vec::new();
+                let mut flee: Vec<EntityId> = Vec::new();
+                let mut caught: Vec<EntityId> = Vec::new();
+                for fid in atkers.iter().chain(defers.iter()) {
+                    let Some(f) = self.fleets.get(fid) else { continue };
+                    let accepts = matches!(f.order, FleetOrder::Intercept { .. })
+                        || self.players.get(&f.owner).map(|c| c.doctrine.engagement != crate::doctrine::EngagementPolicy::Avoid).unwrap_or(true);
+                    if accepts {
+                        continue;
+                    }
+                    match self.engagements[eid].disengaging.get(fid).copied() {
+                        None => set_dis.push((*fid, now + crate::combat::DISENGAGE_EXPOSURE_SECS)),
+                        Some(t) if now >= t => {
+                            // Exposure over — the SPEED TABLE decides: escape iff
+                            // faster than the fastest pursuer on the OTHER side;
+                            // else CAUGHT, and the battle proceeds (it must fight).
+                            let is_atk = atkers.contains(fid);
+                            let pursuer = if is_atk { def_speed } else { atk_speed };
+                            if f.max_speed() > pursuer + 1e-9 {
+                                flee.push(*fid);
+                            } else {
+                                caught.push(*fid);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let e = self.engagements.get_mut(eid).unwrap();
+                for (fid, t) in set_dis {
+                    e.disengaging.insert(fid, t);
+                }
+                for fid in &caught {
+                    e.disengaging.remove(fid); // outrun — it stays and fights
+                }
+                for fid in &flee {
+                    if e.attackers.contains(fid) {
+                        e.a_fled = true;
+                    }
+                    if e.defenders.contains(fid) {
+                        e.d_fled = true;
+                    }
+                    e.attackers.retain(|x| x != fid);
+                    e.defenders.retain(|x| x != fid);
+                    e.disengaging.remove(fid);
+                }
+                for fid in flee {
+                    let owner = self.fleets.get(&fid).map(|f| f.owner);
+                    if let Some(owner) = owner {
+                        self.send_ship_home(fid, owner); // clean escape at formation speed
+                    }
+                }
+            }
+
             let (attackers, defenders, platform_system, raid, started_at, a_start_strength, d_start_strength, a_owner, d_owner, pos) = {
                 let e = &self.engagements[eid];
                 (e.attackers.clone(), e.defenders.clone(), e.platform_system, e.raid, e.started_at, e.a_start_strength, e.d_start_strength, e.a_owner, e.d_owner, e.pos)
@@ -1269,8 +1382,11 @@ impl World {
         let a_now = self.side_comp(&e.attackers);
         let d_now = self.side_comp(&e.defenders);
         let d_ptiers = e.platform_system.and_then(|sid| self.systems.iter().find(|s| s.id == sid)).map(|s| s.defense_tier).unwrap_or(0);
-        let a_alive = !a_now.is_empty();
-        let d_alive = !d_now.is_empty() || d_ptiers > 0;
+        // A side is ALIVE if it still has ships, a live platform, OR a fleet that
+        // FLED (withdrew/avoid-disengaged) and survives — an emptied side is a
+        // withdrawal, not a wipe.
+        let a_alive = !a_now.is_empty() || e.a_fled;
+        let d_alive = !d_now.is_empty() || d_ptiers > 0 || e.d_fled;
         let outcome = match (a_alive, d_alive) {
             (false, false) => RaidOutcome::BothDestroyed,
             (false, true) => RaidOutcome::AttackerDestroyed,
@@ -1280,8 +1396,8 @@ impl World {
         events.push(Event::new(now, EventPayload::RaidResolved {
             attacker: e.a_owner,
             defender: e.d_owner,
-            attacker_ship: e.attackers.first().copied().unwrap_or(e.id),
-            target_ship: e.defenders.first().copied().unwrap_or(e.id),
+            attacker_ship: e.attackers.first().copied().unwrap_or(e.a_lead),
+            target_ship: e.defenders.first().copied().unwrap_or(e.d_lead),
             attacker_kind: flagship_of(&e.a_start),
             target_kind: flagship_of(&e.d_start),
             outcome,
@@ -1348,6 +1464,12 @@ impl World {
                 if po.kind == crate::event::OrderKind::Withdraw {
                     let fid = po.ship_id;
                     for e in self.engagements.values_mut() {
+                        if e.attackers.contains(&fid) {
+                            e.a_fled = true;
+                        }
+                        if e.defenders.contains(&fid) {
+                            e.d_fled = true;
+                        }
                         e.attackers.retain(|f| *f != fid);
                         e.defenders.retain(|f| *f != fid);
                     }
@@ -4689,6 +4811,81 @@ mod tests {
         }
         assert!(w.fleets.contains_key(&relief) || w.fleets.contains_key(&did), "the relieved defender side survives the fight");
         assert!(!w.fleets.contains_key(&aid), "the outnumbered attacker is destroyed — the relief flipped it");
+    }
+
+    #[test]
+    fn avoid_doctrine_fleet_takes_a_scrape_then_escapes_no_coast_lock() {
+        let mut w = test_world();
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: d, name: "D".into() }]);
+        // Player a runs AVOID doctrine — its raider will bolt when jumped.
+        let mut doc = w.players[&a].doctrine;
+        doc.engagement = crate::doctrine::EngagementPolicy::Avoid;
+        w.step(&[Command::SetFleetDoctrine { player_id: a, doctrine: doc }]);
+        let pos = w.players[&a].command_center + Vec2::new(500.0, 0.0);
+        // a's raider (Avoid, Idle — didn't choose this) is jumped by d's corvettes.
+        let raider = squad(&mut w, a, pos, ShipKind::Raider, 2, FleetOrder::Idle);
+        let _corv = squad(&mut w, d, pos + Vec2::new(40.0, 0.0), ShipKind::Corvette, 3, FleetOrder::Intercept { target: raider });
+        // Brief exposure (~DISENGAGE_EXPOSURE_SECS), then it disengages and flees.
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if matches!(w.fleets.get(&raider).map(|f| &f.order), Some(FleetOrder::MoveTo { .. })) {
+                break;
+            }
+        }
+        assert!(w.fleets.contains_key(&raider), "the raider survives the scrape");
+        assert!(matches!(w.fleets.get(&raider).map(|f| &f.order), Some(FleetOrder::MoveTo { .. })), "Avoid → disengage on contact, flee");
+        assert!(!w.engagements.values().any(|e| e.attackers.contains(&raider) || e.defenders.contains(&raider)), "it left the battle — no coast-lock");
+        // Positions DIVERGE — the raider (100) physically opens the gap on the
+        // corvettes (65); no fly-through, no coast-lock.
+        let d0 = w.fleets[&raider].pos.distance(pos);
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let d1 = w.fleets.get(&raider).map(|f| f.pos.distance(pos)).unwrap_or(d0);
+        assert!(d1 > d0 + 300.0, "the raider opens the gap (positions diverge)");
+    }
+
+    #[test]
+    fn two_engage_sides_anchor_a_stationary_battle_for_the_duration() {
+        let mut w = test_world(); // battle_target_secs = 20
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: d, name: "D".into() }]);
+        let pos = w.players[&a].command_center + Vec2::new(500.0, 0.0);
+        // Two accepting 4-raider squads (the attacker committed; the defender's
+        // default doctrine accepts) → a STATIONARY anchored battle.
+        let did = squad(&mut w, d, pos, ShipKind::Raider, 4, FleetOrder::Idle);
+        let aid = squad(&mut w, a, pos + Vec2::new(40.0, 0.0), ShipKind::Raider, 4, FleetOrder::Intercept { target: did });
+        for _ in 0..(2 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(!w.engagements.is_empty(), "the battle formed");
+        let apos0 = w.fleets[&aid].pos;
+        let dpos0 = w.fleets[&did].pos;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.engagements.is_empty() {
+                break;
+            }
+        }
+        // Anchored: neither side drifts while the battle rages.
+        if let Some(f) = w.fleets.get(&aid) {
+            assert!(f.pos.distance(apos0) < 5.0, "attacker is anchored at the contact point");
+        }
+        if let Some(f) = w.fleets.get(&did) {
+            assert!(f.pos.distance(dpos0) < 5.0, "defender is anchored at the contact point");
+        }
+        // And it GRINDS for roughly the target duration (equal forces, no retreat).
+        let mut ticks = 0u32;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            if w.engagements.is_empty() {
+                break;
+            }
+            w.step(&[]);
+            ticks += 1;
+        }
+        let secs = ticks as f64 / 30.0;
+        assert!(secs > 20.0, "equal squadrons grind for ~the target duration (got {secs:.0}s)");
     }
 
     // ---- Constant per-kind speed (§14.1) + lead pursuit (§8) ----
