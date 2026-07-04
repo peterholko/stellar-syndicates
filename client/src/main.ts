@@ -40,6 +40,44 @@ function setHud(): void {
   link.className = "v " + (state.link === "online" ? "accent" : "warn");
 }
 
+// --- §single-click: the PRESS GUARD ------------------------------------------
+// Views stream every ~100ms (BROADCAST_EVERY 3 ticks @ 30Hz) and every open
+// panel re-renders on each one. A re-render landing MID-PRESS — between
+// pointerdown and pointerup, i.e. inside a normal ~100ms human click — destroys
+// the pressed button; the browser then retargets the `click` event to the old
+// and new targets' common ANCESTOR (the panel root), where the delegated
+// `closest("[data-*]")` lookup finds nothing, so the action silently never
+// fires. That was the "buttons need a double click" bug (and the unbuildable
+// Scout). Structural fix, applied to EVERY per-View-rebuilt panel: while a
+// press is down inside a panel, that panel's re-renders are DEFERRED — the
+// pressed node survives to pointerup, the click lands normally — and the
+// deferred render flushes right after the click dispatches (pointerup fires
+// mouseup+click synchronously in the same task; setTimeout(0) runs after).
+// Event delegation on the stable panel roots (already the codebase pattern)
+// handles the "handler orphaned by innerHTML" half; this guard handles the
+// "node destroyed mid-press" half. Presses elsewhere (map pans, other panels)
+// defer nothing — each panel is guarded independently.
+const pressGuard = { target: null as EventTarget | null, deferred: new Map<string, () => void>() };
+window.addEventListener("pointerdown", (e) => { pressGuard.target = e.target; }, true);
+function flushPressGuard(): void {
+  pressGuard.target = null;
+  const fns = [...pressGuard.deferred.values()];
+  pressGuard.deferred.clear();
+  for (const f of fns) f();
+}
+window.addEventListener("pointerup", () => setTimeout(flushPressGuard, 0), true);
+window.addEventListener("pointercancel", () => setTimeout(flushPressGuard, 0), true);
+/// True → a press is currently down inside `rootId`, so the caller must NOT
+/// rebuild its DOM now; the render is queued and re-runs after the press.
+function renderDeferred(rootId: string, render: () => void): boolean {
+  const t = pressGuard.target;
+  if (t instanceof Node && $(rootId).contains(t)) {
+    pressGuard.deferred.set(rootId, render);
+    return true;
+  }
+  return false;
+}
+
 // --- Renderer --------------------------------------------------------------
 const renderer = new Renderer();
 let rendererReady = false;
@@ -546,6 +584,7 @@ function rivalBody(g: GhostView): string {
 }
 
 function updateShipPanel(): void {
+  if (renderDeferred("ship-panel", updateShipPanel)) return; // §single-click
   if (!state.selectedShipId) return;
   const root = $("ship-panel");
   const g = state.ghosts.find((x) => x.id === state.selectedShipId);
@@ -783,6 +822,7 @@ function closeSysviewManage(): void {
   $("sysview-manage").classList.remove("is-open");
 }
 function updateSysviewManage(): void {
+  if (renderDeferred("sysview-manage", updateSysviewManage)) return; // §single-click
   const sid = viewedSystemId();
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
@@ -1436,6 +1476,7 @@ function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
 
 function updateSystemTab(): void {
   if (!systemTabBuilt) return;
+  if (renderDeferred("tab-system", updateSystemTab)) return; // §single-click
   const root = $("tab-system");
   const rail = ownedSystemsRail();
   const sid = state.selectedSystemId;
@@ -1749,6 +1790,7 @@ function renderRestingOrders(): void {
 }
 
 function updateMarket(): void {
+  if (renderDeferred("market", updateMarket)) return; // §single-click
   if (!state.market || !state.wallet) return;
   const stale = state.market.staleness;
   const fresh = $("market-fresh");
@@ -1826,6 +1868,12 @@ function buildStandingPanel(): void {
   };
   trig.addEventListener("change", syncForm);
   syncForm();
+  // Remove-✕ is delegated on the PERSISTENT list root — the rows rebuild every
+  // View, the listener never does (§single-click).
+  $("standing-list").addEventListener("click", (e) => {
+    const x = (e.target as HTMLElement).closest("[data-clear]") as HTMLElement | null;
+    if (x && net) net.send({ type: "ClearStandingOrder", order_id: Number(x.dataset.clear) });
+  });
   $("so-add").addEventListener("click", () => {
     if (!net) return;
     const source = ($("so-source") as HTMLSelectElement).value;
@@ -1852,6 +1900,7 @@ function buildStandingPanel(): void {
 
 function updateStandingPanel(): void {
   if (!standingBuilt) return;
+  if (renderDeferred("standing", updateStandingPanel)) return; // §single-click
   // Rebuild source/dest selects only when the owned-systems set changes (so a
   // mid-edit selection isn't clobbered every tick).
   const owned = ownedSystems();
@@ -1887,11 +1936,9 @@ function updateStandingPanel(): void {
         `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
     })
     .join("");
-  list.querySelectorAll<HTMLElement>("[data-clear]").forEach((el) => {
-    el.addEventListener("click", () => {
-      if (net) net.send({ type: "ClearStandingOrder", order_id: Number(el.dataset.clear) });
-    });
-  });
+  // ✕ handling is DELEGATED on the persistent list root (see buildStanding…) —
+  // per-render listeners on the rebuilt rows was the old pattern; §single-click
+  // standardizes on delegation everywhere.
 }
 
 // --- Fleet doctrine panel (§16) — constrained combat & logistics policy -------
@@ -2024,6 +2071,7 @@ function buildCheckinPanel(): void {
 
 function updateCheckinPanel(): void {
   if (!checkinBuilt) return;
+  if (renderDeferred("checkin", updateCheckinPanel)) return; // §single-click (the ✕ toggle sits inside)
   const tl = state.timeline;
   const away = tl.filter((e) => e.at_time > state.awaySince);
   const earlier = tl.filter((e) => e.at_time <= state.awaySince);
