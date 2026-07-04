@@ -121,7 +121,10 @@ const SHIP_NATIVE_ZOOM_START = 12;
 // Normal zoom (r ≤ SHIP_NATIVE_ZOOM_START) is pixel-identical to before.
 const SHIP_MAX_PX = 120; // a ship at max zoom (was: the art's native 256 — too big next to bodies)
 const STAR_MAX_PX = 480; // a star icon's CANVAS at max zoom — a uniform 1.875× upscale of the 256px icons; visible disks land at 96–413px by type (see starRenderedDiameter)
-const HUB_MAX_PX = 820; // the wormhole landmark at max zoom — the biggest thing on the map (512px art × 0.93 fill → ~1.72× upscale)
+// The hub has NO fixed max target: its deep-zoom ceiling is the landmark
+// texture's NATIVE width (1254px), so max zoom renders it at sprite scale
+// exactly 1.0 — pixel-crisp by construction, never upscaled (a fixed target
+// above the asset's resolution is what made it blurry). See hubRenderedPx.
 // Click-target cap for grown BODIES: a max-zoom star/hub is hundreds of px —
 // its hit circle stops at this radius so it never swallows clicks meant for
 // ships parked on it (ships are hit-tested first and stay ≤ ~65px anyway).
@@ -277,6 +280,11 @@ export class Renderer {
       load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
+    // The landmark is ONE 1254px texture drawn from a ~72px marker all the way
+    // up to native 1:1 — enable mipmap generation so the minified marker keeps
+    // trilinear filtering (no shimmer/aliasing at normal zoom); linear mag
+    // filtering (Pixi's default) covers the crisp native view at max zoom.
+    if (hub) hub.source.autoGenerateMipmaps = true;
     this.texHub = hub;
     this.texStation = station;
     this.texConvoy = convoy;
@@ -866,9 +874,14 @@ export class Renderer {
     );
   }
 
-  /// The hub landmark's rendered VISIBLE size at the current zoom.
+  /// The hub landmark's rendered VISIBLE size at the current zoom. The deep-zoom
+  /// target is the texture's NATIVE extent (fill × width = 0.93 × 1254 ≈ 1166px
+  /// visible), so the sprite-scale math below lands at exactly 1.0 at max zoom —
+  /// the hub is never upscaled. Before the landmark loads, stay at the marker
+  /// size (the station fallback has no deep-zoom treatment anyway).
   private hubRenderedPx(): number {
-    return this.deepZoomPx(HUB_PX, HUB_MAX_PX);
+    const maxPx = this.texHub ? HUB_ART_FILL * this.texHub.width : HUB_PX;
+    return this.deepZoomPx(HUB_PX, maxPx);
   }
 
   /// Half the hub landmark's on-screen size — its click hit radius (main.ts) —
