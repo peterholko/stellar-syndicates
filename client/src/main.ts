@@ -608,6 +608,40 @@ function toggleMarket(): void {
   else openMarket();
 }
 
+// --- Wormhole Hub detail panel (§hub-art) --------------------------------------
+// The hub is PUBLIC geography (nothing to fog-gate): selecting it shows its
+// concept portrait, a role blurb, and the natural shortcut — Open Market
+// (the hub IS the market). Mirrors the planet-panel idiom (left dock).
+let hubPanelBuilt = false;
+function buildHubPanel(): void {
+  if (hubPanelBuilt) return;
+  hubPanelBuilt = true;
+  $("hub-panel").addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+    if (!el) return;
+    if (el.dataset.act === "close") closeHubPanel();
+    else if (el.dataset.act === "market") openMarket();
+  });
+}
+function openHubPanel(): void {
+  buildHubPanel();
+  $("hub-panel").innerHTML =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">the shared commons</div>` +
+    `<h2>Wormhole Hub</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
+    `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
+    `<div class="pp-body">` +
+    `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
+    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", 14)} Open Market</button>` +
+    `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
+    `</div>`;
+  $("hub-panel").classList.add("is-open");
+  readout().innerHTML = `<b>Wormhole Hub</b> selected — the market lives here. <span class="dim">Press <b>M</b> or use the panel to trade.</span>`;
+}
+function closeHubPanel(): void {
+  $("hub-panel").classList.remove("is-open");
+}
+
 // --- Check-in modal (top-navbar destination; the welcome-back digest) ----------
 function openCheckin(): void {
   $("checkin").style.display = "block";
@@ -839,6 +873,17 @@ function handleMapClick(sx: number, sy: number): void {
       return;
     }
 
+    // The WORMHOLE HUB landmark (public geography): show its detail panel.
+    // Checked AFTER ships/rivals so fleets parked at the hub stay individually
+    // selectable/raid-targetable; before the empty-space move order.
+    if (state.galaxy) {
+      const hs = renderer.worldToScreen(state.galaxy.hub);
+      if (Math.hypot(hs.x - sx, hs.y - sy) < Math.max(24, renderer.hubHitRadius())) {
+        openHubPanel();
+        return;
+      }
+    }
+
     // Empty space → move order for the selected OWN ship (a rival can't be moved).
     if (haveOwn && net) {
       const dest = renderer.screenToWorld(sx, sy);
@@ -972,6 +1017,7 @@ function installInteraction(): void {
       } else {
         closeMarket();
         closeRail();
+        closeHubPanel();
         deselectShip();
       }
     } else if (e.key === "+" || e.key === "=") {

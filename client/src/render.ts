@@ -114,6 +114,15 @@ const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // last-sliver "snap," or lower for an earlier, gentler ramp.
 const SHIP_NATIVE_ZOOM_START = 12;
 
+// The WORMHOLE HUB map sprite (§hub-art): the game's most important location
+// reads as a LANDMARK — clearly the largest body on the map at normal zoom
+// (stars top out at 46px). Tunable. NOTE: the max-zoom size hierarchy for
+// BODIES hasn't landed (the two-phase curve covers ships only) — when it does,
+// wire this sprite into it for the monumental (~800px) deep-zoom treatment.
+const HUB_PX = 72;
+/// Fraction of the hub sprite's canvas its visible subject fills (measured).
+const HUB_ART_FILL = 0.93;
+
 export class Renderer {
   private app = new Application();
   // A persistent starfield behind BOTH scenes (never faded), so the backdrop is
@@ -145,6 +154,7 @@ export class Renderer {
   // deterministically-assigned type (stars.ts). Loaded lazily in loadArt.
   private starTex = new Map<string, Texture>();
   private texStation: Texture | null = null;
+  private texHub: Texture | null = null; // the wormhole aperture + station landmark
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
@@ -222,7 +232,8 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [station, convoy, raider, corvette, colony, scout] = await Promise.all([
+    const [hub, station, convoy, raider, corvette, colony, scout] = await Promise.all([
+      load("/art/wormhole_hub.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
@@ -230,6 +241,7 @@ export class Renderer {
       load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
+    this.texHub = hub;
     this.texStation = station;
     this.texConvoy = convoy;
     this.texRaider = raider;
@@ -743,18 +755,29 @@ export class Renderer {
     return sp;
   }
 
-  /// The hub body: a station sprite at the wormhole hub (over its teal glow, which
-  /// stays in the background). Positioned each frame so it tracks zoom/pan.
+  /// The hub body: the WORMHOLE landmark sprite (swirling aperture + station)
+  /// at the hub, over its teal glow (which stays in the background). Sized to
+  /// out-scale every star on the map; the old mining-station sprite remains the
+  /// fallback until the landmark art loads. Positioned each frame (zoom/pan).
   private drawHubBody(): void {
-    if (!this.galaxy || !this.texStation) return;
+    const tex = this.texHub ?? this.texStation;
+    if (!this.galaxy || !tex) return;
     if (!this.hubSprite) {
-      this.hubSprite = new Sprite(this.texStation);
+      this.hubSprite = new Sprite(tex);
       this.hubSprite.anchor.set(0.5);
       this.bodyLayer.addChild(this.hubSprite);
     }
+    if (this.hubSprite.texture !== tex) this.hubSprite.texture = tex;
     const h = this.worldToScreen(this.galaxy.hub);
     this.hubSprite.position.set(h.x, h.y);
-    this.hubSprite.scale.set(28 / this.texStation.width);
+    this.hubSprite.scale.set(
+      tex === this.texHub ? HUB_PX / (HUB_ART_FILL * tex.width) : 28 / tex.width,
+    );
+  }
+
+  /// Half the hub landmark's on-screen size — its click hit radius (main.ts).
+  hubHitRadius(): number {
+    return HUB_PX / 2;
   }
 
   /// The ship art for a kind (null until loaded — primitive fallback covers it).
