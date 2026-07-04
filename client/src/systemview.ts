@@ -14,6 +14,14 @@
 //   wants planet-level gameplay, that is a MAJOR sim/protocol decision (promoting
 //   these to authoritative entities) — NOT something to slip in here.
 //
+//   §management-home does NOT soften this. The System View is now where an owned
+//   system is RUN (the city-screen pattern), but every mechanic stays SYSTEM
+//   level: the build menu it hosts issues the SAME system-level commands as the
+//   old galaxy rail, buildings consume SYSTEM dev slots, and the structure
+//   markers drawn at planets are DECORATIVE ANCHORS (like the deposit pips) —
+//   a Habitat "on" the agri world is still the system's Habitat. There are no
+//   per-planet slots, entities, or orders.
+//
 // DETERMINISM & FOG:
 //   `buildVisualSystem` derives the schematic SHAPE deterministically from the
 //   public system id (+ public geology), so every player sees the same geography
@@ -70,6 +78,10 @@ export interface VisualSystem {
 // A body the details panel can describe — planets AND moons flow through this so
 // the caller (main.ts) needs no knowledge of the internal shape.
 export interface SystemBodyDetail {
+  /// The visual body's stable id (deterministic per system) — used by the caller
+  /// to offer the developments that ANCHOR here (contextual build sugar). Purely
+  /// a presentation handle; it never names a server entity.
+  id: string;
   name: string;
   kindLabel: string;
   kindColor: number;
@@ -79,6 +91,79 @@ export interface SystemBodyDetail {
   description: string;
   /// The body's art (for the details-panel thumbnail); null → color swatch only.
   icon: string | null;
+}
+
+// ---- Development → body VISUAL ANCHORS (§management-home) --------------------
+// Each SYSTEM-level development draws its structure marker at a natural body —
+// the same pattern as deposits getting a visual home. STILL PRESENTATION ONLY
+// (the hard boundary above holds): the building belongs to the SYSTEM, consumes
+// SYSTEM dev slots, and has no per-planet existence — the anchor merely decides
+// WHERE its decorative marker renders. Anchors are DETERMINISTIC (same body
+// every visit) because they derive from the deterministic visual system:
+//   extractor  → the body carrying the system's RICHEST deposit (tie → the
+//                first such body in inner→outer walk order)
+//   refinery   → the first volatiles body (the icy-moon motif) → else the first
+//                gas giant → else the outermost planet
+//   habitat    → the first habitable (provisions) world → else the first
+//                terrestrial/ocean world → else the innermost planet
+//   shipyard   → an orbital yard over the PRIMARY (innermost) planet
+//   depot      → an orbital warehouse, also at the primary planet
+//   sensor     → a relay dish at the OUTERMOST planet (the far vantage)
+//   defense    → a battle-station marker in close STAR orbit (bodyId null)
+//   (interdictor: no such development exists yet — add its row when it does)
+export type DevKey = "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
+/// The owner's built tiers, passed from the SAME owner-only view fields the rail
+/// used (state.systems) — rivals' views carry 0s, so markers can never leak.
+export interface DevTiers {
+  extractor: number;
+  depot: number;
+  shipyard: number;
+  sensor_array: number;
+  defense_platform: number;
+  habitat: number;
+  refinery: number;
+  habitat_fed: boolean;
+}
+
+/// bodyId per development (null = anchors at the star). Walk order is the
+/// sorted (inner→outer) planet list, moons after their planet — fixed, so the
+/// choice is stable across visits.
+export function developmentAnchors(vis: VisualSystem): Record<DevKey, string | null> {
+  interface Walk { id: string; kind: PlanetKind; habitable: boolean; deposits: Deposit[]; isMoon: boolean }
+  const walk: Walk[] = [];
+  for (const p of vis.planets) {
+    walk.push({ id: p.id, kind: p.kind, habitable: p.habitable, deposits: p.deposits, isMoon: false });
+    for (const mn of p.moons) walk.push({ id: mn.id, kind: "ice", habitable: false, deposits: mn.deposits, isMoon: true });
+  }
+  let richest: Walk | null = null;
+  let richestVal = -1;
+  for (const b of walk) {
+    for (const d of b.deposits) {
+      if (d.richness > richestVal) { richestVal = d.richness; richest = b; }
+    }
+  }
+  const first = (pred: (b: Walk) => boolean): string | null => walk.find(pred)?.id ?? null;
+  const primary = vis.planets[0]?.id ?? null; // planets are sorted inner→outer
+  const outermost = vis.planets[vis.planets.length - 1]?.id ?? null;
+  return {
+    extractor: richest?.id ?? primary,
+    refinery: first((b) => b.deposits.some((d) => d.resource === "volatiles"))
+      ?? first((b) => b.kind === "gas_giant") ?? outermost,
+    habitat: first((b) => b.habitable)
+      ?? first((b) => !b.isMoon && (b.kind === "terrestrial" || b.kind === "ocean")) ?? primary,
+    shipyard: primary,
+    depot: primary,
+    sensor_array: outermost,
+    defense_platform: null, // the star — guarding the system core
+  };
+}
+
+/// Which developments ANCHOR at a given body — the caller's contextual build
+/// sugar ("this icy moon would host the Refinery"). Same system-level build
+/// either way; this only picks a friendlier entry point.
+export function anchorsAtBody(vis: VisualSystem, bodyId: string): DevKey[] {
+  const a = developmentAnchors(vis);
+  return (Object.keys(a) as DevKey[]).filter((k) => a[k] === bodyId);
 }
 
 // ---- Per-kind presentation (color + flavor). Descriptions are flavor only. ---
@@ -251,6 +336,9 @@ export function buildVisualSystem(sys: SystemInfo): VisualSystem {
 interface BodyHit {
   sx: number; sy: number; r: number; // screen-space center + hit radius
   detail: SystemBodyDetail;
+  /// §management-home: true for a structure-marker hit target (resolves to its
+  /// anchor body's detail) — filtered out and re-added on marker rebuilds.
+  isMarker?: boolean;
 }
 
 const LABEL_STYLE = () => new TextStyle({ fill: 0x9fb0c8, fontFamily: "ui-monospace, monospace", fontSize: 10 });
@@ -304,6 +392,13 @@ export class SystemViewScene {
   private overlay = new Graphics(); // ownership + selection (screen-space, dynamic)
   private labels = new Container(); // screen-space labels
   private labelPool: Text[] = [];
+  // §management-home: DECORATIVE structure markers at the developments' anchor
+  // bodies (owner's systems only — see setDevelopments). Screen-space like the
+  // labels; rebuilt on layout and when the tiers change (build completion), never
+  // per frame. These are markers, NOT entities — the hard boundary above holds.
+  private markers = new Container();
+  private devTiers: DevTiers | null = null;
+  private devSig = ""; // last-rendered tier signature — skip rebuilds when unchanged
 
   // Planet/moon/chunk textures (lazy, same idiom as render.ts loadArt — the
   // KIND_META tint circle stays as the fallback until each resolves).
@@ -318,6 +413,8 @@ export class SystemViewScene {
   private gfxSystem: string | null = null;
   private gfxScale = -1;
   private bodies: BodyHit[] = []; // screen-space hit targets (rebuilt on layout)
+  /// Body screen positions keyed by visual body id — the markers' anchor lookup.
+  private bodyScreen = new Map<string, { sx: number; sy: number; r: number; detail: SystemBodyDetail }>();
   private selected: { sx: number; sy: number; r: number } | null = null;
   private viewW = 0;
   private viewH = 0;
@@ -326,7 +423,7 @@ export class SystemViewScene {
   constructor() {
     this.starLayer.addChild(this.starGfx);
     this.worldRoot.addChild(this.orbitsGfx, this.beltChunks, this.starLayer, this.bodySprites, this.bodiesGfx);
-    this.root.addChild(this.vignette, this.worldRoot, this.overlay, this.labels);
+    this.root.addChild(this.vignette, this.worldRoot, this.markers, this.overlay, this.labels);
     this.root.visible = false;
     // Non-blocking: fallback circles render immediately; the scene rebuilds
     // once (cached thereafter) when the art lands.
@@ -380,6 +477,22 @@ export class SystemViewScene {
 
   clearSelection(): void {
     this.selected = null;
+  }
+
+  /// §management-home: set (or clear) the developments to render as structure
+  /// markers. The caller passes tiers ONLY for the viewer's OWN system — sourced
+  /// from the same owner-only view fields the management panel reads, so a rival
+  /// system always gets null and renders as pure scenery (fog holds). Cached:
+  /// markers rebuild only when the signature changes (i.e. a build completed or
+  /// the system/owner changed) or on layout.
+  setDevelopments(tiers: DevTiers | null): void {
+    const sig = tiers
+      ? `${this.vis?.systemId ?? ""}|${tiers.extractor},${tiers.depot},${tiers.shipyard},${tiers.sensor_array},${tiers.defense_platform},${tiers.habitat},${tiers.refinery},${tiers.habitat_fed}`
+      : "";
+    if (sig === this.devSig) return; // same picture — keep the cached markers
+    this.devTiers = tiers;
+    this.devSig = sig;
+    this.rebuildMarkers();
   }
 
   private buildStatic(vis: VisualSystem, starTex: Texture | null): void {
@@ -552,6 +665,7 @@ export class SystemViewScene {
 
     // Rebuild screen-space hit targets + labels from the cached schematic.
     this.bodies = [];
+    this.bodyScreen.clear();
     let li = 0;
     const label = (text: string, sx: number, sy: number, screenR: number, col: number) => {
       let t = this.labelPool[li];
@@ -565,28 +679,139 @@ export class SystemViewScene {
         const px = cx + Math.cos(p.angle) * p.orbitRadius * this.sceneScale;
         const py = cy + Math.sin(p.angle) * p.orbitRadius * this.sceneScale;
         const screenR = Math.max(p.radius * this.sceneScale, 13);
-        this.bodies.push({ sx: px, sy: py, r: screenR, detail: this.planetDetail(p) });
+        const pd = this.planetDetail(p);
+        this.bodies.push({ sx: px, sy: py, r: screenR, detail: pd });
+        this.bodyScreen.set(p.id, { sx: px, sy: py, r: screenR, detail: pd });
         const depCol = p.deposits.length ? COMMODITY_COLOR[p.deposits[0].resource] : 0x9fb0c8;
         label(p.name, px, py, screenR, depCol);
         for (const mn of p.moons) {
           const mx = px + Math.cos(mn.angle) * mn.orbitRadius * this.sceneScale;
           const my = py + Math.sin(mn.angle) * mn.orbitRadius * this.sceneScale;
           const mr = Math.max(mn.radius * this.sceneScale, 9);
-          this.bodies.push({ sx: mx, sy: my, r: mr, detail: this.moonDetail(mn) });
+          const md = this.moonDetail(mn);
+          this.bodies.push({ sx: mx, sy: my, r: mr, detail: md });
+          this.bodyScreen.set(mn.id, { sx: mx, sy: my, r: mr, detail: md });
           if (mn.deposits.length) label(mn.name, mx, my, mr, COMMODITY_COLOR[mn.deposits[0].resource]);
         }
       }
     }
     for (let k = li; k < this.labelPool.length; k++) this.labelPool[k].visible = false;
+    // §management-home: marker positions derive from the body screen positions
+    // just computed — rebuild them on every layout (still never per frame).
+    this.rebuildMarkers();
   }
 
   private planetDetail(p: VisualPlanet): SystemBodyDetail {
     const meta = KIND_META[p.kind];
-    return { name: p.name, kindLabel: meta.label, kindColor: meta.color, isMoon: false, habitable: p.habitable, deposits: p.deposits, description: meta.desc, icon: PLANET_ART_URL(p.kind) };
+    return { id: p.id, name: p.name, kindLabel: meta.label, kindColor: meta.color, isMoon: false, habitable: p.habitable, deposits: p.deposits, description: meta.desc, icon: PLANET_ART_URL(p.kind) };
   }
   private moonDetail(mn: VisualMoon): SystemBodyDetail {
     const icy = mn.deposits.some((d) => d.resource === "volatiles");
-    return { name: mn.name, kindLabel: icy ? "Icy moon" : "Moon", kindColor: KIND_META.ice.color, isMoon: true, habitable: false, deposits: mn.deposits, description: icy ? "A frozen moon — a natural store of volatiles for the system." : "A small natural satellite.", icon: MOON_ART_URL };
+    return { id: mn.id, name: mn.name, kindLabel: icy ? "Icy moon" : "Moon", kindColor: KIND_META.ice.color, isMoon: true, habitable: false, deposits: mn.deposits, description: icy ? "A frozen moon — a natural store of volatiles for the system." : "A small natural satellite.", icon: MOON_ART_URL };
+  }
+
+  // §management-home: draw the structure markers at their anchor bodies.
+  // Screen-space (like the labels), rebuilt from the cached body positions on
+  // layout / tier changes — never per frame. One small glyph per BUILT
+  // development + a small ×N tier tag; stacked around the body when several
+  // developments share an anchor (fixed dev order → deterministic placement).
+  // Each marker also registers a hit target that resolves to its ANCHOR BODY,
+  // so clicking a rig selects the body it sits on (focus, not a new action).
+  private rebuildMarkers(): void {
+    this.markers.removeChildren().forEach((c) => c.destroy());
+    this.bodies = this.bodies.filter((b) => !b.isMarker);
+    if (!this.vis || !this.devTiers || !this.viewW) return;
+    const anchors = developmentAnchors(this.vis);
+    const cx = this.viewW / 2;
+    const cy = this.viewH / 2;
+    // Fixed draw order → stable stacking offsets when anchors coincide.
+    const ORDER: DevKey[] = ["extractor", "refinery", "habitat", "shipyard", "depot", "sensor_array", "defense_platform"];
+    const perBody = new Map<string, number>(); // stack index per anchor body
+    const tagStyle = () => new TextStyle({ fill: 0x9fb0c8, fontFamily: "ui-monospace, monospace", fontSize: 9 });
+    for (const key of ORDER) {
+      const tier = this.devTiers[key];
+      if (!tier) continue;
+      const bodyId = anchors[key];
+      let mx: number;
+      let my: number;
+      let anchorDetail: SystemBodyDetail | null = null;
+      if (bodyId) {
+        const bs = this.bodyScreen.get(bodyId);
+        if (!bs) continue;
+        const slot = perBody.get(bodyId) ?? 0;
+        perBody.set(bodyId, slot + 1);
+        // Arc the markers around the body's upper rim, one slot per development.
+        const ang = -Math.PI * 0.42 + slot * 0.7;
+        mx = bs.sx + Math.cos(ang) * (bs.r + 11);
+        my = bs.sy + Math.sin(ang) * (bs.r + 11);
+        anchorDetail = bs.detail;
+      } else {
+        // Star anchor (defense platform): a station in close orbit.
+        const slot = perBody.get("star") ?? 0;
+        perBody.set("star", slot + 1);
+        const ang = -Math.PI / 5 + slot * 0.6;
+        const rr = 0.135 * this.sceneScale;
+        mx = cx + Math.cos(ang) * rr;
+        my = cy + Math.sin(ang) * rr;
+      }
+      const g = new Graphics();
+      this.drawDevGlyph(g, key, this.devTiers);
+      g.position.set(mx, my);
+      this.markers.addChild(g);
+      const tag = new Text({ text: `×${tier}`, style: tagStyle() });
+      tag.anchor.set(0, 0.5);
+      tag.position.set(mx + 7, my);
+      this.markers.addChild(tag);
+      if (anchorDetail) {
+        // A marker click selects its anchor body (r ≈ glyph + tag extent).
+        this.bodies.push({ sx: mx, sy: my, r: 11, detail: anchorDetail, isMarker: true });
+      }
+    }
+  }
+
+  /// The per-development glyph — small distinct silhouettes in the schematic
+  /// style (bundled SVG icons stay in the DOM panels where they render crisply;
+  /// at ~7px these hand shapes read better than rasterized icons).
+  private drawDevGlyph(g: Graphics, key: DevKey, tiers: DevTiers): void {
+    switch (key) {
+      case "extractor": // amber mining rig: derrick triangle + drill line
+        g.poly([-4, 2, 0, -5, 4, 2]).stroke({ width: 1.4, color: 0xd8a54a, alpha: 0.95 });
+        g.moveTo(0, -5).lineTo(0, 4).stroke({ width: 1.2, color: 0xd8a54a, alpha: 0.8 });
+        break;
+      case "refinery": // orange stacked tanks + flare
+        g.roundRect(-4.5, -2, 4, 6, 1).stroke({ width: 1.2, color: 0xff9d5c, alpha: 0.95 });
+        g.roundRect(0.5, -4, 4, 8, 1).stroke({ width: 1.2, color: 0xff9d5c, alpha: 0.95 });
+        g.circle(2.5, -5.5, 1.1).fill({ color: 0xffc46b, alpha: 0.9 }); // the flare
+        break;
+      case "habitat": { // green dome on a base line (+ warn tint when unfed)
+        const col = tiers.habitat_fed ? 0x7fdc8a : 0xffc46b;
+        g.arc(0, 2, 5, Math.PI, 0).stroke({ width: 1.4, color: col, alpha: 0.95 });
+        g.moveTo(-5.5, 2).lineTo(5.5, 2).stroke({ width: 1.2, color: col, alpha: 0.8 });
+        g.circle(0, -0.5, 1).fill({ color: col, alpha: 0.9 });
+        break;
+      }
+      case "shipyard": // cyan orbital gantry: open bracket frame
+        g.poly([-5, -4, -5, 4, -2, 4]).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
+        g.poly([5, -4, 5, 4, 2, 4]).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
+        g.moveTo(-5, -4).lineTo(5, -4).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
+        break;
+      case "depot": // violet crate: square with a band
+        g.rect(-4, -4, 8, 8).stroke({ width: 1.3, color: 0xc99bff, alpha: 0.95 });
+        g.moveTo(-4, 0).lineTo(4, 0).stroke({ width: 1, color: 0xc99bff, alpha: 0.7 });
+        break;
+      case "sensor_array": // teal dish: arc + stem
+        g.arc(0, -1, 4.5, Math.PI * 0.15, Math.PI * 0.85).stroke({ width: 1.4, color: 0x62d6c3, alpha: 0.95 });
+        g.moveTo(0, 3).lineTo(0, 5.5).stroke({ width: 1.2, color: 0x62d6c3, alpha: 0.8 });
+        g.circle(0, -2.5, 1).fill({ color: 0x62d6c3, alpha: 0.9 });
+        break;
+      case "defense_platform": // red battle station: ring + spokes
+        g.circle(0, 0, 4.5).stroke({ width: 1.4, color: 0xff7a6b, alpha: 0.95 });
+        for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+          g.moveTo(Math.cos(a) * 4.5, Math.sin(a) * 4.5).lineTo(Math.cos(a) * 6.5, Math.sin(a) * 6.5).stroke({ width: 1.2, color: 0xff7a6b, alpha: 0.85 });
+        }
+        g.circle(0, 0, 1.4).fill({ color: 0xff7a6b, alpha: 0.9 });
+        break;
+    }
   }
 
   /// Hit-test a screen point against planets/moons; selects the nearest hit (for

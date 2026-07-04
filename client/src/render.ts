@@ -13,7 +13,7 @@ import type { Commodity, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } fro
 import { countClassLabel, fleetExactCount } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
-import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
+import { anchorsAtBody, buildVisualSystem, SystemViewScene, type DevKey, type DevTiers, type SystemBodyDetail } from "./systemview";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
 // The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
@@ -420,6 +420,20 @@ export class Renderer {
   /// planet interaction; no per-planet gameplay, no deeper camera level).
   systemPick(sx: number, sy: number): SystemBodyDetail | null {
     return this.systemScene.pickBody(sx, sy);
+  }
+
+  /// §management-home: forward the OWNER-ONLY development tiers to the scene's
+  /// decorative structure markers (null for rival/unclaimed systems — a rival's
+  /// System View stays pure scenery; the caller sources tiers from the same
+  /// light-gated view fields the management panel reads).
+  setSystemDevelopments(tiers: DevTiers | null): void {
+    this.systemScene.setDevelopments(tiers);
+  }
+
+  /// The contextual-build helper: which developments would ANCHOR at this visual
+  /// body in the CURRENT System View (presentation sugar for the panel).
+  systemAnchorsAtBody(sys: SystemInfo, bodyId: string): DevKey[] {
+    return anchorsAtBody(buildVisualSystem(sys), bodyId);
   }
 
   setGalaxy(galaxy: GalaxyInfo): void {
