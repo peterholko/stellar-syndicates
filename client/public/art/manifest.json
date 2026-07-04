@@ -124,6 +124,66 @@
           "slug": "raider-attack-ship",
           "title": "Raider Attack Ship",
           "png": "ship_sprites/raider_attack_ship.png"
+        },
+        {
+          "slug": "fleet-freighter-wing",
+          "title": "Freighter Wing Formation",
+          "png": "ship_sprites/fleet_freighter_wing.png"
+        },
+        {
+          "slug": "fleet-freighter-squadron",
+          "title": "Freighter Squadron Formation",
+          "png": "ship_sprites/fleet_freighter_squadron.png"
+        },
+        {
+          "slug": "fleet-freighter-armada",
+          "title": "Freighter Armada Formation",
+          "png": "ship_sprites/fleet_freighter_armada.png"
+        },
+        {
+          "slug": "fleet-raider-wing",
+          "title": "Raider Wing Formation",
+          "png": "ship_sprites/fleet_raider_wing.png"
+        },
+        {
+          "slug": "fleet-raider-squadron",
+          "title": "Raider Squadron Formation",
+          "png": "ship_sprites/fleet_raider_squadron.png"
+        },
+        {
+          "slug": "fleet-raider-armada",
+          "title": "Raider Armada Formation",
+          "png": "ship_sprites/fleet_raider_armada.png"
+        },
+        {
+          "slug": "fleet-corvette-wing",
+          "title": "Corvette Wing Formation",
+          "png": "ship_sprites/fleet_corvette_wing.png"
+        },
+        {
+          "slug": "fleet-corvette-squadron",
+          "title": "Corvette Squadron Formation",
+          "png": "ship_sprites/fleet_corvette_squadron.png"
+        },
+        {
+          "slug": "fleet-corvette-armada",
+          "title": "Corvette Armada Formation",
+          "png": "ship_sprites/fleet_corvette_armada.png"
+        },
+        {
+          "slug": "fleet-scout-wing",
+          "title": "Scout Wing Formation",
+          "png": "ship_sprites/fleet_scout_wing.png"
+        },
+        {
+          "slug": "fleet-scout-squadron",
+          "title": "Scout Squadron Formation",
+          "png": "ship_sprites/fleet_scout_squadron.png"
+        },
+        {
+          "slug": "fleet-scout-armada",
+          "title": "Scout Armada Formation",
+          "png": "ship_sprites/fleet_scout_armada.png"
         }
       ]
     },

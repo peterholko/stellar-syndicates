@@ -760,10 +760,10 @@ function handleMapClick(sx: number, sy: number): void {
       if (!g.own) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      // Hit radius tracks the ship's CURRENT on-screen size, so it grows with the
-      // sprite in the deep-zoom native-size band; floored at 24px so normal-zoom
-      // clicking feels exactly as before.
-      const rad = Math.max(24, renderer.shipHitRadius(g.kind));
+      // Hit radius tracks the MARKER's current on-screen size (formation sprite
+      // included), so it grows with the sprite in the deep-zoom native-size band;
+      // floored at 24px so normal-zoom clicking feels exactly as before.
+      const rad = Math.max(24, renderer.fleetHitRadius(g));
       if (d < rad && d < bestShip) {
         bestShip = d;
         shipPick = g.id;
@@ -835,9 +835,9 @@ function handleMapClick(sx: number, sy: number): void {
       if (g.own) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      // Hit radius tracks the ship's current on-screen size (grows in deep zoom),
-      // floored at 24px so normal-zoom raid-targeting is unchanged.
-      const rad = Math.max(24, renderer.shipHitRadius(g.kind));
+      // Hit radius tracks the marker's current on-screen size (formation sprite
+      // included, grows in deep zoom), floored at 24px so raid-targeting is unchanged.
+      const rad = Math.max(24, renderer.fleetHitRadius(g));
       if (d < rad && d < bestE) {
         bestE = d;
         enemy = g.id;

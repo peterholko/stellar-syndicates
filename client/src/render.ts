@@ -114,6 +114,28 @@ const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // last-sliver "snap," or lower for an earlier, gentler ramp.
 const SHIP_NATIVE_ZOOM_START = 12;
 
+// FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
+// lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
+// from what the VIEWER knows (exact count when own/in-coverage, else the fog
+// bucket). 1 ship → the single-ship sprite exactly as before; colony fleets have
+// no formation art and always fall back to single sprite + count badge.
+type FleetTier = "wing" | "squadron" | "armada";
+type FleetFamily = "freighter" | "raider" | "corvette" | "scout";
+// Per-tier designer multipliers on the formation canvas (relative feel knobs —
+// e.g. make armadas read a touch grander). 1.0 = lead-ship parity (see below).
+const TIER_SCALE: Record<FleetTier, number> = { wing: 1.0, squadron: 1.0, armada: 1.0 };
+// Measured per-sprite calibration = (single sprite's subject height fraction) /
+// (formation's LEAD-ship height fraction), so the LEAD ship renders at exactly
+// the single sprite's on-screen size — no size pop when a fleet crosses a tier
+// boundary (e.g. 3 → 4 ships). Derived from the shipped art; remeasure if the
+// art changes.
+const FLEET_LEAD_CALIB: Record<FleetFamily, Record<FleetTier, number>> = {
+  freighter: { wing: 0.95, squadron: 1.08, armada: 0.99 },
+  raider: { wing: 0.86, squadron: 0.92, armada: 1.02 },
+  corvette: { wing: 0.95, squadron: 0.81, armada: 1.06 },
+  scout: { wing: 0.81, squadron: 1.07, armada: 0.96 },
+};
+
 // The WORMHOLE HUB map sprite (§hub-art): the game's most important location
 // reads as a LANDMARK — clearly the largest body on the map at normal zoom
 // (stars top out at 46px). Tunable. NOTE: the max-zoom size hierarchy for
@@ -161,6 +183,9 @@ export class Renderer {
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
+  // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
+  // tiers). A missing entry falls back to the single-ship sprite + badge.
+  private texFleet = new Map<string, Texture>();
 
   // The schematic System View scene (its own camera). Presentation only.
   private systemScene = new SystemViewScene();
@@ -248,6 +273,18 @@ export class Renderer {
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
+    // Fleet formation sprites (family × tier); each independent, missing ones
+    // fall back to the single-ship sprite so a bad file never breaks fleets.
+    const families: FleetFamily[] = ["freighter", "raider", "corvette", "scout"];
+    const tiers: FleetTier[] = ["wing", "squadron", "armada"];
+    await Promise.all(
+      families.flatMap((f) =>
+        tiers.map(async (t) => {
+          const tex = await load(`/art/ship_sprites/fleet_${f}_${t}.png`);
+          if (tex) this.texFleet.set(`${f}_${t}`, tex);
+        }),
+      ),
+    );
     // The star-type icons (each independent; a missing one falls back to the dot).
     await Promise.all(
       STAR_TYPES.map(async (t) => {
@@ -791,6 +828,57 @@ export class Renderer {
     }
   }
 
+  /// The formation-art FAMILY for a flagship kind (colony has none — a colony
+  /// fleet always draws the single colony ship + its count badge).
+  private static fleetFamily(kind: ShipKind): FleetFamily | null {
+    switch (kind) {
+      case "convoy": return "freighter";
+      case "raider": return "raider";
+      case "corvette": return "corvette";
+      case "scout": return "scout";
+      case "colony": return null;
+    }
+  }
+
+  /// The formation TIER from what the VIEWER knows about the fleet's size: the
+  /// exact count when the composition is known (own fleet, or a rival inside
+  /// sensor coverage), else the fog SIZE BUCKET. 1 → no formation (single ship),
+  /// 2–3 → wing, 4–7 → squadron, 8+ → armada — the same breakpoints as the
+  /// buckets, so the sprite never contradicts the count badge beside it.
+  private static fleetTier(ghost: GhostView): FleetTier | null {
+    const exact = fleetExactCount(ghost);
+    if (exact !== null) {
+      if (exact <= 1) return null;
+      if (exact <= 3) return "wing";
+      if (exact <= 7) return "squadron";
+      return "armada";
+    }
+    switch (ghost.count_class) {
+      case "one": return null;
+      case "two_to_three": return "wing";
+      case "four_to_seven": return "squadron";
+      default: return "armada"; // 8–15, 16–30, 31+
+    }
+  }
+
+  /// The marker art for a fleet: the formation sprite (family × tier) plus its
+  /// canvas multiplier (TIER_SCALE × measured lead-ship calibration), or the
+  /// single-ship sprite (mult 1) for fleets of one, colony fleets, and any
+  /// formation art that failed to load. The multiplier applies to a target px
+  /// computed against the SINGLE sprite's canvas, so the formation's LEAD ship
+  /// renders at exactly the single sprite's size at every zoom — growing a
+  /// fleet adds escorts around the flagship, it never inflates the flagship.
+  private fleetMarker(ghost: GhostView): { tex: Texture; mult: number } | null {
+    const fam = Renderer.fleetFamily(ghost.kind);
+    const tier = fam ? Renderer.fleetTier(ghost) : null;
+    if (fam && tier) {
+      const tex = this.texFleet.get(`${fam}_${tier}`);
+      if (tex) return { tex, mult: TIER_SCALE[tier] * FLEET_LEAD_CALIB[fam][tier] };
+    }
+    const single = this.texFor(ghost.kind);
+    return single ? { tex: single, mult: 1 } : null;
+  }
+
   private ghostSprite(id: string): GhostSprite {
     let sp = this.ghosts.get(id);
     if (!sp) {
@@ -845,6 +933,16 @@ export class Renderer {
   shipHitRadius(kind: ShipKind): number {
     const tex = this.texFor(kind);
     return this.shipSizePx(kind, tex ? tex.width : 256) / 2;
+  }
+
+  /// Half the fleet MARKER's current on-screen size — like shipHitRadius, but
+  /// including the formation sprite's canvas multiplier, so a squadron's click
+  /// target (and the overlays anchored to it) covers the whole formation, not
+  /// just the lead ship. Consumed by main.ts's map hit-test and by drawGhost's
+  /// pip/badge anchors.
+  fleetHitRadius(ghost: GhostView): number {
+    const marker = this.fleetMarker(ghost);
+    return this.shipHitRadius(ghost.kind) * (marker ? marker.mult : 1);
   }
 
   private drawGhost(ghost: GhostView, state: ViewState, dt: number): { x: number; y: number } {
@@ -910,7 +1008,7 @@ export class Renderer {
     // the order is unconfirmed — a subtle state tag, not an alarm. Gone at echo.
     if (unconfirmed) {
       const bx = 11;
-      const by = -(this.shipHitRadius(ghost.kind) + 5);
+      const by = -(this.fleetHitRadius(ghost) + 5);
       sp.cone.circle(bx, by, 3.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
       // two little hands
       sp.cone.moveTo(bx, by).lineTo(bx, by - 2.4).stroke({ width: 1, color: COL_OWN, alpha: 0.85 });
@@ -948,17 +1046,24 @@ export class Renderer {
     // crisp — with a higher floor so you never "lose" your fleet.
     const fade = Math.min(ghost.age / FADE_AGE_S, 1);
     const alpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
-    const tex = this.texFor(ghost.kind);
+    // Marker art: the single-ship sprite, or a FORMATION sprite when the viewer
+    // knows this fleet is 2+ (family × tier — see fleetMarker). The target px is
+    // computed against the SINGLE sprite's canvas and then multiplied by the
+    // formation's calibrated factor, so the LEAD ship holds exactly the single
+    // sprite's size across tier changes — a growing fleet gains escorts, with
+    // no flagship size pop (e.g. crossing 3 → 4 ships).
+    const marker = this.fleetMarker(ghost);
     sp.body.clear();
-    if (tex) {
+    if (marker) {
       sp.sprite.visible = true;
-      if (sp.sprite.texture !== tex) sp.sprite.texture = tex;
+      if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
       // Size vs zoom: a small indicator through normal zoom, ramping to TRUE
       // NATIVE texture size in the deepest band (see shipSizePx). scale =
       // targetPx / native, so it's ≤ 1.0 everywhere — downscale-or-native, always
       // crisp, and exactly 1:1 undistorted art at max zoom.
-      const targetPx = this.shipSizePx(ghost.kind, tex.width);
-      sp.sprite.scale.set(targetPx / tex.width);
+      const singleTex = this.texFor(ghost.kind);
+      const targetPx = this.shipSizePx(ghost.kind, singleTex ? singleTex.width : 256) * marker.mult;
+      sp.sprite.scale.set(targetPx / marker.tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
       sp.sprite.tint = 0xffffff; // natural art — no per-syndicate tint
       sp.sprite.alpha = alpha;
@@ -989,7 +1094,7 @@ export class Renderer {
     const pip = sp.pip;
     pip.clear();
     const pipCol = own ? COL_OWN : COL_OTHER;
-    const half = this.shipHitRadius(ghost.kind); // half the ship's current on-screen size
+    const half = this.fleetHitRadius(ghost); // half the MARKER's current on-screen size (formation included)
     const pipR = Math.max(3.2, Math.min(8, half * 0.14));
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
     const pipA = Math.max(0.85, 0.97 - 0.25 * fade); // high floor — survives staleness
@@ -1062,7 +1167,7 @@ export class Renderer {
     }
     sp.badge.clear();
     if (badgeStr) {
-      const halfB = this.shipHitRadius(ghost.kind);
+      const halfB = this.fleetHitRadius(ghost);
       const w = Math.max(13, badgeStr.length * 6 + 7);
       const h = 12;
       const bx = halfB * 0.66;
