@@ -114,6 +114,19 @@ const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // last-sliver "snap," or lower for an earlier, gentler ramp.
 const SHIP_NATIVE_ZOOM_START = 12;
 
+// §size-hierarchy: per-class DEEP-ZOOM size targets (screen px at max zoom).
+// One shared curve (deepZoomPx) grows ships AND bodies through the deep-zoom
+// band, so at max zoom the map reads with a true scale hierarchy: the hub is
+// monumental, stars are huge, ships are small machines flying past them.
+// Normal zoom (r ≤ SHIP_NATIVE_ZOOM_START) is pixel-identical to before.
+const SHIP_MAX_PX = 120; // a ship at max zoom (was: the art's native 256 — too big next to bodies)
+const STAR_MAX_PX = 480; // a star icon's CANVAS at max zoom — a uniform 1.875× upscale of the 256px icons; visible disks land at 96–413px by type (see starRenderedDiameter)
+const HUB_MAX_PX = 820; // the wormhole landmark at max zoom — the biggest thing on the map (512px art × 0.93 fill → ~1.72× upscale)
+// Click-target cap for grown BODIES: a max-zoom star/hub is hundreds of px —
+// its hit circle stops at this radius so it never swallows clicks meant for
+// ships parked on it (ships are hit-tested first and stay ≤ ~65px anyway).
+const BODY_HIT_CAP_PX = 90;
+
 // FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
 // lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
 // from what the VIEWER knows (exact count when own/in-coverage, else the fog
@@ -138,9 +151,7 @@ const FLEET_LEAD_CALIB: Record<FleetFamily, Record<FleetTier, number>> = {
 
 // The WORMHOLE HUB map sprite (§hub-art): the game's most important location
 // reads as a LANDMARK — clearly the largest body on the map at normal zoom
-// (stars top out at 46px). Tunable. NOTE: the max-zoom size hierarchy for
-// BODIES hasn't landed (the two-phase curve covers ships only) — when it does,
-// wire this sprite into it for the monumental (~800px) deep-zoom treatment.
+// (stars top out at 46px), growing to HUB_MAX_PX at max zoom (§size-hierarchy).
 const HUB_PX = 72;
 /// Fraction of the hub sprite's canvas its visible subject fills (measured).
 const HUB_ART_FILL = 0.93;
@@ -494,6 +505,16 @@ export class Renderer {
       }
       const glow = Math.min(3 + valueRate * 0.45, 18);
 
+      // §size-hierarchy: the star's rendered VISIBLE diameter — its normal-zoom
+      // deposit-value size through the whole normal range, then the shared
+      // deep-zoom curve grows it (see starDiameters). Every ownership ring /
+      // halo / label below keeps its ORIGINAL radius plus only `extra` (the
+      // radius the disk gained in the deep-zoom band) — so normal zoom is
+      // pixel-identical to before, and at deep zoom the cues ride out with the
+      // growing rim instead of drowning inside the giant disk.
+      const { base: bodyD, rendered } = this.starDiameters(sys);
+      const extra = (rendered - bodyD) / 2;
+
       const g = new Graphics();
       g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 }); // geology value-glow
 
@@ -503,20 +524,20 @@ export class Renderer {
       // only appears as rival once their claim's light has reached this player.
       if (mine) {
         // Friendly territory: cyan halo + bold ring.
-        g.circle(s.x, s.y, 10).fill({ color: COL_OWN, alpha: 0.10 });
-        g.circle(s.x, s.y, 7).stroke({ width: 1.8, color: COL_OWN, alpha: 0.95 });
+        g.circle(s.x, s.y, 10 + extra).fill({ color: COL_OWN, alpha: 0.10 });
+        g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_OWN, alpha: 0.95 });
       } else if (rival) {
         // Rival / contested territory: a slow-breathing red danger halo + a bold
         // DOUBLE ring — unmistakable as hostile-held, and clearly distinct from the
         // fast-pulsing raider-threat marker (slower cadence, static rings, sized to
         // the system body, softer COL_OTHER hue vs. the alert COL_THREAT red).
         const breath = 0.5 + 0.5 * Math.sin(performance.now() / 1100);
-        g.circle(s.x, s.y, 13).fill({ color: COL_OTHER, alpha: 0.05 + 0.07 * breath });
-        g.circle(s.x, s.y, 9.5).stroke({ width: 1, color: COL_OTHER, alpha: 0.4 });
-        g.circle(s.x, s.y, 7).stroke({ width: 2, color: COL_OTHER, alpha: 0.98 });
+        g.circle(s.x, s.y, 13 + extra).fill({ color: COL_OTHER, alpha: 0.05 + 0.07 * breath });
+        g.circle(s.x, s.y, 9.5 + extra).stroke({ width: 1, color: COL_OTHER, alpha: 0.4 });
+        g.circle(s.x, s.y, 7 + extra).stroke({ width: 2, color: COL_OTHER, alpha: 0.98 });
       }
       if (selected) {
-        g.circle(s.x, s.y, owner !== null ? 12 : glow + 4).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+        g.circle(s.x, s.y, (owner !== null ? 12 : glow + 4) + extra).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
       }
       // The BODY itself: the system's assigned STAR-TYPE icon (deterministic by id,
       // stars.ts), pooled, sized by deposit value (the frontier-richer hierarchy)
@@ -533,11 +554,10 @@ export class Renderer {
       const starTex = this.starTex.get(st.slug);
       if (starTex) {
         const bsp = this.bodyFor(sys.id, starTex);
-        const bodyD = Math.min(20 + valueRate * 0.9, 46); // target VISIBLE diameter
         const anchor = starAnchor(st);
         bsp.anchor.set(anchor[0], anchor[1]);
         bsp.position.set(s.x, s.y);
-        bsp.scale.set(bodyD / (starVisualRatio(st) * starTex.width));
+        bsp.scale.set(rendered / (starVisualRatio(st) * starTex.width));
         // Keep unclaimed stars near-full brightness so the vivid star art reads
         // (ownership is carried by the RING, not by dimming the star); owned/rival
         // still lead via their full brightness + ring.
@@ -557,10 +577,36 @@ export class Renderer {
       const col = mine ? COL_OWN : rival ? COL_OTHER : 0x55657f;
       const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
       t.anchor.set(0, 0.5);
-      t.position.set(s.x + glow + 2, s.y);
+      t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
       t.alpha = mine ? 0.95 : rival ? 0.88 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
     }
+  }
+
+  /// §size-hierarchy: a system's star VISIBLE diameter — `base` at normal zoom
+  /// (the deposit-value 20–46px, unchanged) and `rendered` at the current zoom
+  /// (the shared deep-zoom curve). One place computes both so the body sprite,
+  /// its ownership rings/label, and the click hit-test all agree.
+  /// The deep-zoom target is the icon CANVAS at STAR_MAX_PX (a uniform ~1.875×
+  /// upscale of the 256px icons), NOT the visible disk — each type's visible
+  /// star fills a different fraction of its canvas (white dwarf 0.20 … neutron
+  /// 0.86), so canvas-targeting keeps a blue giant rendering far larger than a
+  /// white dwarf at max zoom AND avoids blowing small-disk types up 9× into
+  /// mush. Computed in canvas units, returned as the visible-disk equivalent.
+  private starDiameters(sys: SystemInfo): { base: number; rendered: number } {
+    let valueRate = 0;
+    for (const d of sys.deposits) valueRate += d.richness * (COMMODITY_VALUE[d.resource] ?? 1);
+    const base = Math.min(20 + valueRate * 0.9, 46); // target VISIBLE diameter, normal zoom
+    const ratio = starVisualRatio(starTypeFor(sys.id)); // visible fraction of the canvas
+    return { base, rendered: this.deepZoomPx(base / ratio, STAR_MAX_PX) * ratio };
+  }
+
+  /// A system's click hit radius: half its rendered disk, capped so a max-zoom
+  /// giant never swallows clicks meant for the fleets parked on it (ships are
+  /// hit-tested first in main.ts and stay well under the cap). Floored by the
+  /// caller (main.ts keeps its old 15px minimum for normal zoom).
+  systemHitRadius(sys: SystemInfo): number {
+    return Math.min(this.starDiameters(sys).rendered / 2, BODY_HIT_CAP_PX);
   }
 
   private drawAnchors(state: ViewState): void {
@@ -588,11 +634,17 @@ export class Renderer {
         }
         this.anchorsLayer.addChild(g);
       }
-      // Name your own command seat "HOME" (above the home system's own label).
+      // Name your own command seat "HOME" (above the home system's own label —
+      // riding the star's rendered rim, so it clears the grown disk at deep zoom).
       if (own) {
+        const homeSys = this.galaxy.systems.find(
+          (sys) => Math.abs(sys.pos.x - a.pos.x) < 1 && Math.abs(sys.pos.y - a.pos.y) < 1,
+        );
+        const dm = homeSys ? this.starDiameters(homeSys) : null;
+        const extra = dm ? (dm.rendered - dm.base) / 2 : 0; // deep-zoom growth only — normal zoom identical
         const t = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
         t.anchor.set(0.5, 1);
-        t.position.set(s.x, s.y - 13);
+        t.position.set(s.x, s.y - 13 - extra);
         this.anchorsLayer.addChild(t);
       }
     }
@@ -794,7 +846,9 @@ export class Renderer {
 
   /// The hub body: the WORMHOLE landmark sprite (swirling aperture + station)
   /// at the hub, over its teal glow (which stays in the background). Sized to
-  /// out-scale every star on the map; the old mining-station sprite remains the
+  /// out-scale every star on the map at every zoom: HUB_PX at normal zoom, the
+  /// shared deep-zoom curve growing it to the monumental HUB_MAX_PX at max —
+  /// the top of the size hierarchy. The old mining-station sprite remains the
   /// fallback until the landmark art loads. Positioned each frame (zoom/pan).
   private drawHubBody(): void {
     const tex = this.texHub ?? this.texStation;
@@ -808,13 +862,20 @@ export class Renderer {
     const h = this.worldToScreen(this.galaxy.hub);
     this.hubSprite.position.set(h.x, h.y);
     this.hubSprite.scale.set(
-      tex === this.texHub ? HUB_PX / (HUB_ART_FILL * tex.width) : 28 / tex.width,
+      tex === this.texHub ? this.hubRenderedPx() / (HUB_ART_FILL * tex.width) : 28 / tex.width,
     );
   }
 
-  /// Half the hub landmark's on-screen size — its click hit radius (main.ts).
+  /// The hub landmark's rendered VISIBLE size at the current zoom.
+  private hubRenderedPx(): number {
+    return this.deepZoomPx(HUB_PX, HUB_MAX_PX);
+  }
+
+  /// Half the hub landmark's on-screen size — its click hit radius (main.ts) —
+  /// capped so the max-zoom monument never swallows clicks meant for the fleets
+  /// parked at the hub (ships are hit-tested first and stay under the cap).
   hubHitRadius(): number {
-    return HUB_PX / 2;
+    return Math.min(this.hubRenderedPx() / 2, BODY_HIT_CAP_PX);
   }
 
   /// The ship art for a kind (null until loaded — primitive fallback covers it).
@@ -906,33 +967,41 @@ export class Renderer {
     return sp;
   }
 
+  /// §size-hierarchy: the SHARED deep-zoom growth curve for ships AND bodies.
+  /// Below SHIP_NATIVE_ZOOM_START the object stays at its normal-zoom size
+  /// `basePx` — pixel-identical to the pre-hierarchy map — then smoothstep-ramps
+  /// up to its per-class `maxPx`, reaching it exactly at ZOOM_MAX_FACTOR.
+  /// Seamless at the threshold: both sides evaluate to basePx there, no pop.
+  private deepZoomPx(basePx: number, maxPx: number): number {
+    const r = this.scale / this.fitScale();
+    if (r <= SHIP_NATIVE_ZOOM_START) return basePx;
+    const t = Math.min((r - SHIP_NATIVE_ZOOM_START) / (ZOOM_MAX_FACTOR - SHIP_NATIVE_ZOOM_START), 1);
+    const s = t * t * (3 - 2 * t); // smoothstep — gentle growth, not linear
+    return basePx + (maxPx - basePx) * s;
+  }
+
   /// On-screen ship size (px) as a function of the current zoom, in TWO phases:
   ///  1. Normal / indicator: base × clamp(r, SHIP_ZOOM_MIN, SHIP_ZOOM_MAX) — the
   ///     small map markers, unchanged, across the whole normal zoom range.
-  ///  2. Deep-zoom (r ≥ SHIP_NATIVE_ZOOM_START): smoothly ramp from the indicator
-  ///     size UP TO the TRUE NATIVE texture width, reaching native exactly at
-  ///     ZOOM_MAX_FACTOR. Seamless at the threshold — both phases give
-  ///     base × SHIP_ZOOM_MAX there, so there's no pop — and it never exceeds
-  ///     nativeW, so the sprite scale is always ≤ 1.0 (downscale-or-native, crisp).
-  /// Both kinds converge to the SAME native size at max zoom: up close the art's
-  /// SHAPE distinguishes convoy vs raider, so identical native size is intended.
-  private shipSizePx(kind: ShipKind, nativeW: number): number {
+  ///  2. Deep-zoom: the shared curve (deepZoomPx) ramps the indicator up to
+  ///     SHIP_MAX_PX — deliberately far below the star/hub targets, so at max
+  ///     zoom a ship reads as a small machine against monumental bodies (it
+  ///     previously ramped to the art's native 256px, which dwarfed the stars).
+  /// All kinds converge to the SAME max size: up close the art's SHAPE
+  /// distinguishes convoy vs raider, so identical max size is intended.
+  private shipSizePx(kind: ShipKind): number {
     const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT;
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
-    if (r <= SHIP_NATIVE_ZOOM_START) return indicator;
-    const t = Math.min((r - SHIP_NATIVE_ZOOM_START) / (ZOOM_MAX_FACTOR - SHIP_NATIVE_ZOOM_START), 1);
-    const s = t * t * (3 - 2 * t); // smoothstep — gentle growth, not linear
-    const from = base * SHIP_ZOOM_MAX; // indicator size at the handoff (seamless)
-    return from + (nativeW - from) * s;
+    return this.deepZoomPx(indicator, SHIP_MAX_PX);
   }
 
   /// Half the ship's CURRENT on-screen size — the click hit radius, so ships stay
-  /// clickable as they enlarge in the deep-zoom band. Falls back to a 256px native
-  /// assumption before the texture loads. Consumed by main.ts's map hit-test.
+  /// clickable as they enlarge in the deep-zoom band (capped well under the body
+  /// hit cap, so ships always win the first-pass hit-test over grown bodies).
+  /// Consumed by main.ts's map hit-test.
   shipHitRadius(kind: ShipKind): number {
-    const tex = this.texFor(kind);
-    return this.shipSizePx(kind, tex ? tex.width : 256) / 2;
+    return this.shipSizePx(kind) / 2;
   }
 
   /// Half the fleet MARKER's current on-screen size — like shipHitRadius, but
@@ -1057,12 +1126,10 @@ export class Renderer {
     if (marker) {
       sp.sprite.visible = true;
       if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
-      // Size vs zoom: a small indicator through normal zoom, ramping to TRUE
-      // NATIVE texture size in the deepest band (see shipSizePx). scale =
-      // targetPx / native, so it's ≤ 1.0 everywhere — downscale-or-native, always
-      // crisp, and exactly 1:1 undistorted art at max zoom.
-      const singleTex = this.texFor(ghost.kind);
-      const targetPx = this.shipSizePx(ghost.kind, singleTex ? singleTex.width : 256) * marker.mult;
+      // Size vs zoom: a small indicator through normal zoom, ramping to
+      // SHIP_MAX_PX in the deepest band (see shipSizePx / the size hierarchy).
+      // Always ≤ the art's native px, so sprites stay downscale-crisp.
+      const targetPx = this.shipSizePx(ghost.kind) * marker.mult;
       sp.sprite.scale.set(targetPx / marker.tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
       sp.sprite.tint = 0xffffff; // natural art — no per-syndicate tint

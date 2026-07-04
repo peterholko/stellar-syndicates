@@ -771,12 +771,16 @@ function handleMapClick(sx: number, sy: number): void {
     }
 
     let sysPick: string | null = null;
-    let bestSys = 15;
+    let bestSys = Infinity;
     if (state.galaxy) {
       for (const sys of state.galaxy.systems) {
         const s = renderer.worldToScreen(sys.pos);
         const d = Math.hypot(s.x - sx, s.y - sy);
-        if (d < bestSys) {
+        // Hit radius follows the star's rendered disk in the deep-zoom band —
+        // capped (~90px) so a max-zoom giant never blankets the map — with the
+        // old 15px floor so normal-zoom clicking is unchanged.
+        const rad = Math.max(15, renderer.systemHitRadius(sys));
+        if (d < rad && d < bestSys) {
           bestSys = d;
           sysPick = sys.id;
         }
