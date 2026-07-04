@@ -123,6 +123,11 @@ export interface DevTiers {
   habitat: number;
   refinery: number;
   habitat_fed: boolean;
+  /// §build-progress: build keys currently UNDER CONSTRUCTION here (owner-only,
+  /// straight from the view's queue). A development key hangs a construction
+  /// glyph at that development's anchor body; any SHIP key hangs it at the
+  /// shipyard anchor (Travian's hammer-on-the-plot). Decoration only.
+  inProgress: string[];
 }
 
 /// bodyId per development (null = anchors at the star). Walk order is the
@@ -487,7 +492,7 @@ export class SystemViewScene {
   /// the system/owner changed) or on layout.
   setDevelopments(tiers: DevTiers | null): void {
     const sig = tiers
-      ? `${this.vis?.systemId ?? ""}|${tiers.extractor},${tiers.depot},${tiers.shipyard},${tiers.sensor_array},${tiers.defense_platform},${tiers.habitat},${tiers.refinery},${tiers.habitat_fed}`
+      ? `${this.vis?.systemId ?? ""}|${tiers.extractor},${tiers.depot},${tiers.shipyard},${tiers.sensor_array},${tiers.defense_platform},${tiers.habitat},${tiers.refinery},${tiers.habitat_fed}|${tiers.inProgress.join(",")}`
       : "";
     if (sig === this.devSig) return; // same picture — keep the cached markers
     this.devTiers = tiers;
@@ -766,6 +771,51 @@ export class SystemViewScene {
         // A marker click selects its anchor body (r ≈ glyph + tag extent).
         this.bodies.push({ sx: mx, sy: my, r: 11, detail: anchorDetail, isMarker: true });
       }
+    }
+
+    // §build-progress: CONSTRUCTION glyphs — Travian's hammer-on-the-plot. One
+    // scaffold at each anchor with work underway: a development key at its own
+    // anchor, any ship build at the shipyard anchor. Same stacking arc as the
+    // built markers (they continue the perBody slots, so nothing overlaps);
+    // cleared automatically when the job leaves the queue (tier-signature
+    // change → rebuild). Decoration on the cached scene — never per frame.
+    const SHIP_BUILD_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
+    const sites = new Set<DevKey>();
+    for (const k of this.devTiers.inProgress) {
+      if (SHIP_BUILD_KEYS.has(k)) sites.add("shipyard");
+      else if (k in anchors) sites.add(k as DevKey);
+    }
+    for (const key of sites) {
+      const bodyId = anchors[key];
+      let mx: number;
+      let my: number;
+      if (bodyId) {
+        const bs = this.bodyScreen.get(bodyId);
+        if (!bs) continue;
+        const slot = perBody.get(bodyId) ?? 0;
+        perBody.set(bodyId, slot + 1);
+        const ang = -Math.PI * 0.42 + slot * 0.7;
+        mx = bs.sx + Math.cos(ang) * (bs.r + 11);
+        my = bs.sy + Math.sin(ang) * (bs.r + 11);
+      } else {
+        const slot = perBody.get("star") ?? 0;
+        perBody.set("star", slot + 1);
+        const ang = -Math.PI / 5 + slot * 0.6;
+        const rr = 0.135 * this.sceneScale;
+        mx = this.viewW / 2 + Math.cos(ang) * rr;
+        my = this.viewH / 2 + Math.sin(ang) * rr;
+      }
+      // The scaffold: an amber dashed frame + crane jib — reads "under
+      // construction" at a glance, distinct from every finished glyph.
+      const g = new Graphics();
+      const c = 0xffc46b;
+      for (const [x1, y1, x2, y2] of [[-4, -4, -1, -4], [1, -4, 4, -4], [4, -4, 4, -1], [4, 1, 4, 4], [4, 4, 1, 4], [-1, 4, -4, 4], [-4, 4, -4, 1], [-4, -1, -4, -4]] as [number, number, number, number][]) {
+        g.moveTo(x1, y1).lineTo(x2, y2).stroke({ width: 1.2, color: c, alpha: 0.9 });
+      }
+      g.moveTo(-2, 3).lineTo(2, -3).stroke({ width: 1.3, color: c, alpha: 0.95 }); // the jib
+      g.circle(2, -3, 1).fill({ color: c, alpha: 0.95 }); // the hook
+      g.position.set(mx, my);
+      this.markers.addChild(g);
     }
   }
 

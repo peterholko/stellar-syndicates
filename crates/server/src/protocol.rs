@@ -357,9 +357,15 @@ pub struct SystemStateView {
     pub id: EntityId,
     pub owner: Option<PlayerId>,
     pub stockpile: Option<Vec<StockSlot>>,
-    /// Owner-only: the in-progress build at this system (§step1), if any. Like
-    /// `stockpile`, never present for a rival — build state never leaks.
+    /// Owner-only: the SOONEST in-progress build at this system (§step1), if
+    /// any. Like `stockpile`, never present for a rival — build state never
+    /// leaks. Kept alongside `builds` for the single-job consumers.
     pub build: Option<BuildStateView>,
+    /// Owner-only: ALL in-progress builds at this system, ordered by completion
+    /// (§build-progress — the sim has always allowed concurrent jobs; the view
+    /// used to collapse them to the soonest). Same fog rule as `build`: a rival
+    /// always sees an empty list.
+    pub builds: Vec<BuildStateView>,
     /// Number of Extractor upgrades built here (visible to all once the system is
     /// known — it's part of the system's observable development, not private intel).
     pub extractor_tier: u32,

@@ -514,19 +514,25 @@ pub fn filter_systems(
                     })
                     .collect()
             });
-            // Owner-only: the soonest in-progress build here (the UI shows one job).
-            let build = own
-                .then(|| {
-                    build_queue
-                        .iter()
-                        .filter(|j| j.system == sys.id && j.owner == viewer)
-                        .min_by_key(|j| j.complete_tick)
-                        .map(|j| BuildStateView {
-                            key: build_key(j.what).to_string(),
-                            complete_time: now + (j.complete_tick.saturating_sub(tick)) as f64 * dt,
-                        })
-                })
-                .flatten();
+            // Owner-only: ALL in-progress builds here, ordered by completion
+            // (§build-progress). `build` stays the soonest for single-job
+            // consumers; a rival gets None + an empty list — never a leak.
+            let builds: Vec<BuildStateView> = if own {
+                let mut jobs: Vec<_> = build_queue
+                    .iter()
+                    .filter(|j| j.system == sys.id && j.owner == viewer)
+                    .collect();
+                jobs.sort_by_key(|j| j.complete_tick);
+                jobs.into_iter()
+                    .map(|j| BuildStateView {
+                        key: build_key(j.what).to_string(),
+                        complete_time: now + (j.complete_tick.saturating_sub(tick)) as f64 * dt,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let build = builds.first().cloned();
             // Development slots (§buildings step 1): used = built tiers + this
             // viewer's in-progress upgrade jobs here, so the readout matches what
             // apply_build will actually accept next. Owner-only, like the tiers.
@@ -544,6 +550,7 @@ pub fn filter_systems(
                 owner,
                 stockpile,
                 build,
+                builds,
                 // Owner-only, like the stockpile: a system's development tier is
                 // private intel. Gating it also avoids leaking an upgrade to a rival
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
@@ -925,12 +932,22 @@ mod tests {
         let builds = vec![
             sim::BuildJob { id: 1, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None },
             sim::BuildJob { id: 2, owner: rival, system: EntityId(2), what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None },
+            // A second concurrent job of mine, finishing FIRST — the queue list
+            // must come back completion-ordered (§build-progress).
+            sim::BuildJob { id: 3, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None },
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
         let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new());
         assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
         assert!(v10[1].build.is_none(), "a rival's build state must never leak");
+        // The full queue list (§build-progress) follows the same fog rule and
+        // comes back completion-ordered; `build` stays the soonest job.
+        assert_eq!(v10[0].builds.len(), 2, "owner sees their whole build QUEUE");
+        assert_eq!(v10[0].builds[0].key, "scout", "queue is completion-ordered");
+        assert_eq!(v10[0].builds[1].key, "convoy");
+        assert_eq!(v10[0].build.as_ref().unwrap().key, "scout", "`build` = the soonest job");
+        assert!(v10[1].builds.is_empty(), "a rival's build queue must never leak");
         assert_eq!(v10[0].owner, Some(me), "own claim is visible instantly");
         assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
         assert_eq!(v10[2].owner, None);

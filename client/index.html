@@ -395,6 +395,16 @@
       /* Gate tag on a blocked build option (slots full / requires Shipyard N). */
       .build-opt .bo-gate { margin-left: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--warn); }
       /* Storage fill bar (X / CAP) under the stat strip; warns when full. */
+      /* §build-progress: construction queue rows (Travian-style). */
+      .bq-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+      .bq-row { display: flex; align-items: center; gap: 8px; }
+      .bq-row .bq-ic { flex: none; width: 16px; text-align: center; }
+      .bq-row .bq-main { flex: 1; min-width: 0; }
+      .bq-row .bq-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+      .bq-row .bq-eta { color: var(--dim); font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .bq-row.bq-done { color: var(--ink); }
+      .bq-row.bq-done .tone-up { font-weight: 700; }
+
       .storage-row { margin: -6px 0 10px; }
       .storage-row .bar { margin-bottom: 4px; }
       .storage-row .storage-warn { font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 6px; line-height: 1.4; }

@@ -53,7 +53,11 @@ export interface SystemStateView {
   owner: PlayerId | null;
   stockpile: StockSlot[] | null;
   /// Owner-only in-progress build (§step1) — null for rivals (never leaks).
+  /// The SOONEST job; `builds` carries the full queue.
   build: BuildState | null;
+  /// Owner-only FULL build queue, completion-ordered (§build-progress) — the
+  /// sim always allowed concurrent jobs; rivals always get an empty list.
+  builds: BuildState[];
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
   /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.

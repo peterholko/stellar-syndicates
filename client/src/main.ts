@@ -772,6 +772,7 @@ function devTiersFor(sid: string): DevTiers | null {
     habitat: dyn.habitat_tier ?? 0,
     refinery: dyn.refinery_tier ?? 0,
     habitat_fed: dyn.habitat_fed ?? false,
+    inProgress: (dyn.builds ?? []).map((b) => b.key), // §build-progress site glyphs
   };
 }
 /// Per-View refresh while inside the System View: feed the scene's markers (a
@@ -828,7 +829,7 @@ function updateSysviewManage(): void {
   const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
   const mine = !!dyn && dyn.owner !== null && dyn.owner === state.playerId;
   const panel = $("sysview-manage");
-  if (!sys || !mine) {
+  if (!sid || !sys || !mine) {
     // Rival/unclaimed system view: pure scenery — no management column at all.
     panel.classList.remove("is-open");
     return;
@@ -868,7 +869,7 @@ function updateSysviewManage(): void {
     `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
     `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button></div>`;
   const guard = `<div class="mhint dim" style="margin-top:8px">Buildings are SYSTEM developments — the markers on the map are where each one anchors, not separate colonies. Click a body to see what would anchor there.</div>`;
-  $("svm-body").innerHTML = storageBar + devs + productionReadout(sys, dyn) + buildPanel(dyn) + actions + guard;
+  $("svm-body").innerHTML = storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
 }
 
 let planetPanelBuilt = false;
@@ -1337,6 +1338,83 @@ const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
 const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1 };
 
+// --- §build-progress: the construction QUEUE (Travian-style) -----------------
+// Rows derive ENTIRELY from the job timestamps the view already carries:
+// `complete_time` (sim-time) from the server + the recipe's `build_secs` from
+// the public build options give start = complete − total, so the bar fill and
+// the countdown recompute from scratch every render — correct across reconnects
+// and offline gaps by construction (no client-accumulated time, same pattern as
+// the order-echo countdowns; no per-second traffic).
+const BUILD_ICON: Record<string, string> = {
+  convoy: "concept-convoy", raider: "action-attack-raid", corvette: "concept-fleet",
+  colony: "action-claim-system", scout: "action-survey-scout",
+  extractor: "resource-metals", depot: "action-load-cargo", shipyard: "action-build",
+  sensor_array: "concept-sensor-range", defense_platform: "status-warning-threat",
+  habitat: "resource-supplies", refinery: "resource-fuel",
+};
+const buildOption = (key: string) => state.galaxy?.build_options.find((o) => o.key === key);
+const buildLabel = (key: string): string => buildOption(key)?.label ?? key;
+/// The absolute wall-clock completion ("done 14:32" local) — the async-planning
+/// detail: sim-time delta mapped onto the player's clock.
+function doneAtLocal(completeTime: number): string {
+  const ms = Date.now() + Math.max(0, completeTime - liveSimTime()) * 1000;
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+// Brief ✓ resolve when a watched job leaves the queue (the completion notice /
+// digest entry are unchanged — this is just the row's exit animation). The
+// last-seen stamp keeps a long-closed panel from "flashing" stale history.
+const buildQueueSeen = new Map<string, { keys: string[]; at: number }>();
+const buildDoneFlash = new Map<string, { label: string; until: number }[]>();
+function buildQueueRows(sid: string, dyn: SystemStateView | undefined): string {
+  const jobs = dyn?.builds ?? [];
+  const now = liveSimTime();
+  // Diff vs the previous render to catch completions (only if seen recently).
+  const prev = buildQueueSeen.get(sid);
+  const keys = jobs.map((j) => j.key);
+  if (prev && performance.now() - prev.at < 2000) {
+    const remaining = [...keys];
+    for (const k of prev.keys) {
+      const i = remaining.indexOf(k);
+      if (i >= 0) remaining.splice(i, 1);
+      else {
+        const flashes = buildDoneFlash.get(sid) ?? [];
+        flashes.push({ label: buildLabel(k), until: performance.now() + 4000 });
+        buildDoneFlash.set(sid, flashes);
+      }
+    }
+  }
+  buildQueueSeen.set(sid, { keys, at: performance.now() });
+  const flashes = (buildDoneFlash.get(sid) ?? []).filter((f) => f.until > performance.now());
+  buildDoneFlash.set(sid, flashes);
+  if (!jobs.length && !flashes.length) return "";
+
+  // Resulting tier per development job: current tier + 1 + same-key jobs ahead.
+  const tierOf: Record<string, number> = {
+    extractor: dyn?.extractor_tier ?? 0, depot: dyn?.depot_tier ?? 0, shipyard: dyn?.shipyard_tier ?? 0,
+    sensor_array: dyn?.sensor_tier ?? 0, defense_platform: dyn?.defense_tier ?? 0,
+    habitat: dyn?.habitat_tier ?? 0, refinery: dyn?.refinery_tier ?? 0,
+  };
+  const aheadCount: Record<string, number> = {};
+  const rows = jobs.map((j) => {
+    const total = buildOption(j.key)?.build_secs ?? 0;
+    const start = j.complete_time - total;
+    const pct = total > 0 ? Math.max(0, Math.min(100, ((now - start) / total) * 100)) : 0;
+    const left = Math.max(0, j.complete_time - now);
+    const isDev = !SHIP_KEYS.has(j.key);
+    const ahead = aheadCount[j.key] ?? 0;
+    aheadCount[j.key] = ahead + 1;
+    const name = isDev ? `${buildLabel(j.key)} ×${(tierOf[j.key] ?? 0) + 1 + ahead}` : buildLabel(j.key);
+    return `<div class="bq-row"><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", 14)}</span>` +
+      `<div class="bq-main"><div class="bq-head"><b>${esc(name)}</b>` +
+      `<span class="bq-eta">${fmtCountdown(left)} · done ${doneAtLocal(j.complete_time)}</span></div>` +
+      `${bar(pct)}</div></div>`;
+  }).join("");
+  const doneRows = flashes.map((f) =>
+    `<div class="bq-row bq-done"><span class="bq-ic tone-up">✓</span><div class="bq-main"><b>${esc(f.label)}</b> <span class="dim">complete</span></div></div>`).join("");
+  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Under construction</div>` +
+    `<div class="bq-list">${rows}${doneRows}</div>`;
+}
+
 // One build/develop option row — cost, afford state, and the two sim-mirroring
 // gates (dev slot / shipyard tier). Shared by the full build menu and the
 // System View's contextual per-body offers, so gating can never diverge.
@@ -1360,7 +1438,7 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
     `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
 }
 
-function buildPanel(dyn: SystemStateView | undefined): string {
+function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
   if (!opts.length) return "";
   // Development slots (§buildings step 1) — the scarcity that forces the
@@ -1373,17 +1451,16 @@ function buildPanel(dyn: SystemStateView | undefined): string {
     ? ` <span class="sp-tier" title="each development (Extractor/Depot/Shipyard tier) uses one slot — ships don't">· slots ${slotsUsed}/${slotsTotal}</span>`
     : "";
   const head = `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Build · develop${slotsTag}</div>`;
-  const building = dyn?.build ?? null;
-  if (building) {
-    const eta = Math.max(0, building.complete_time - state.simTime);
-    const label = building.key.charAt(0).toUpperCase() + building.key.slice(1);
-    return head + `<div class="mhint">${uiIcon("action-build", 13)} Building <b>${label}</b> — ETA <b>${eta.toFixed(0)}s</b>. <span class="dim">One job at a time.</span></div>`;
-  }
+  // §build-progress: the construction QUEUE renders above a menu that STAYS
+  // open — concurrent jobs were always legal in the sim (costs debit up front;
+  // pending upgrades already count against slots); the old "one job at a time"
+  // was only this panel hiding itself.
+  const queue = buildQueueRows(sid, dyn);
   const rows = opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
   const full = slotsFull
     ? `<div class="mhint">${badge("warn", "slots full")} every development slot here is used — develop another system (specialize!).</div>`
     : "";
-  return head + `<div class="build-grid">${rows}</div>` + full;
+  return queue + head + `<div class="build-grid">${rows}</div>` + full;
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
@@ -1546,7 +1623,14 @@ function updateSystemTab(): void {
   if (mine) {
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
     if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
-    if (dyn?.build) cues.push(`${uiIcon("action-build", 12)} building <b>${esc(dyn.build.key)}</b> — ${Math.max(0, dyn.build.complete_time - state.simTime).toFixed(0)}s`);
+    // §build-progress: the compact construction line — a glance from the map
+    // says work is running (and when the next job lands) without opening the view.
+    const jobs = dyn?.builds ?? [];
+    if (jobs.length === 1) {
+      cues.push(`${uiIcon("action-build", 12)} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+    } else if (jobs.length > 1) {
+      cues.push(`${uiIcon("action-build", 12)} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+    }
   }
   const attention = cues.length ? `<div class="mhint" style="margin-top:6px">${cues.join(" · ")}</div>` : "";
 
