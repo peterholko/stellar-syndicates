@@ -1054,11 +1054,20 @@ export class Renderer {
     }
     // §order-lifecycle: is this own fleet's LATEST order still unconfirmed (its
     // compliance light hasn't returned)? While so, the commanded-heading hint is
-    // drawn DASHED (= commanded/claimed) and an echo-pending clock badge shows;
-    // both resolve to the normal SOLID hint / no badge at echo (= observed).
+    // drawn DASHED (= commanded/claimed) and a pending badge shows; both resolve
+    // to the normal SOLID hint / no badge at echo (= observed). The TWO pending
+    // phases get subtly different treatments, mirroring the fleet panel's ◈/◔
+    // vocabulary with the SAME boundary (liveSim vs delivered_at, then echo_at):
+    //   phase 1 IN TRANSIT (before delivered_at): the fleet doesn't know yet —
+    //     hollow-diamond badge (the signal motif), sparser/dimmer dashes.
+    //   phase 2 AWAITING ECHO (before echo_at): they have it and are executing,
+    //     you just haven't seen it — quarter-filled clock, tighter/brighter dashes.
+    // The 1.5s suppression matches the panel's LIFECYCLE_MIN_S (no sub-second
+    // flicker for a fleet at the command center).
     const pend = own ? state.pendingOrders.get(ghost.id) : undefined;
     const liveSim = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
     const unconfirmed = !!pend && pend.echo_at - pend.delivered_at >= 1.5 && liveSim < pend.echo_at;
+    const inTransit = unconfirmed && liveSim < pend!.delivered_at; // phase 1, else phase 2
 
     // Own ship under orders: it's executing a course YOU set, so hint where it has
     // most likely advanced — from the ghost, along the commanded heading, up to how
@@ -1076,8 +1085,13 @@ export class Renderer {
           const ox = pr.x - s.x;
           const oy = pr.y - s.y;
           if (unconfirmed) {
-            dashedLine(sp.cone, 0, 0, ox, oy, 4, 4);
-            sp.cone.stroke({ width: 1, color: COL_OWN, alpha: 0.45 });
+            // Phase-stepped dashes — a second read, not a new color: in transit
+            // = sparse + dim (pure intention), awaiting echo = tighter + brighter
+            // (being executed, unconfirmed). Both clearly dashed vs the solid
+            // confirmed hint below.
+            if (inTransit) dashedLine(sp.cone, 0, 0, ox, oy, 3, 6);
+            else dashedLine(sp.cone, 0, 0, ox, oy, 5, 3);
+            sp.cone.stroke({ width: 1, color: COL_OWN, alpha: inTransit ? 0.35 : 0.55 });
           } else {
             sp.cone.moveTo(0, 0).lineTo(ox, oy).stroke({ width: 1, color: COL_OWN, alpha: 0.3 });
           }
@@ -1086,15 +1100,23 @@ export class Renderer {
       }
     }
 
-    // Echo-pending badge: a small hollow clock, own-cyan, just off the pip while
-    // the order is unconfirmed — a subtle state tag, not an alarm. Gone at echo.
+    // Pending badge, own-cyan, just off the pip while the order is unconfirmed —
+    // a subtle state tag, not an alarm. Gone at echo. The glyph steps with the
+    // phase at delivered_at, mirroring the panel: ◈ hollow diamond while the
+    // signal is IN TRANSIT, ◔ quarter-filled clock while AWAITING ECHO.
     if (unconfirmed) {
       const bx = 11;
       const by = -(this.fleetHitRadius(ghost) + 5);
-      sp.cone.circle(bx, by, 3.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
-      // two little hands
-      sp.cone.moveTo(bx, by).lineTo(bx, by - 2.4).stroke({ width: 1, color: COL_OWN, alpha: 0.85 });
-      sp.cone.moveTo(bx, by).lineTo(bx + 1.8, by).stroke({ width: 1, color: COL_OWN, alpha: 0.85 });
+      if (inTransit) {
+        // ◈ — hollow diamond (the signal motif) with a tiny center pip.
+        const dr = 3.8;
+        sp.cone.poly([bx, by - dr, bx + dr, by, bx, by + dr, bx - dr, by]).stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
+        sp.cone.circle(bx, by, 0.9).fill({ color: COL_OWN, alpha: 0.85 });
+      } else {
+        // ◔ — clock outline with the first quarter filled (delivered, unechoed).
+        sp.cone.circle(bx, by, 3.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
+        sp.cone.moveTo(bx, by).arc(bx, by, 3.6, -Math.PI / 2, 0).lineTo(bx, by).fill({ color: COL_OWN, alpha: 0.85 });
+      }
     }
     // Detected rival raider = a threat contact (it's otherwise invisible). Make
     // it unmistakable with a pulsing alert ring — this is your only warning.
