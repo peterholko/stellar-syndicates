@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type Commodity, type CompCount, type Deposit, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
 
@@ -994,10 +994,12 @@ function buildBattlePanel(): void {
     if (!el) return;
     if (el.dataset.act === "close") {
       openOngoingBattleId = null;
+      renderer.selectedBattleMarkerId = null; // §aftermath-select: drop the ring
       $("battle-panel").classList.remove("is-open");
     } else if (el.dataset.act === "dismiss") {
       const id = Number(el.dataset.id);
       state.battleDismissed.add(id);
+      if (renderer.selectedBattleMarkerId === id) renderer.selectedBattleMarkerId = null;
       saveBattleMarks();
       $("battle-panel").classList.remove("is-open");
     } else if (el.dataset.act === "withdraw" && net) {
@@ -1077,6 +1079,36 @@ function openOngoingBattlePanel(id: string): void {
   updateOngoingBattlePanel();
   $("battle-panel").classList.add("is-open");
 }
+// §live-battle-panel running-loss tracking. Purely a HIGH-WATER of the viewer's
+// ALREADY-DELIVERED light — never anything the ghosts didn't carry, so it can't
+// leak: own fleets are tracked at EXACT counts (own light); rivals only at the
+// site-revealed SIZE BUCKET (the fog never grants exact rival counts). Keyed by
+// battle id; a distant viewer's staler ghosts naturally yield a laggier tally.
+type BattleForceHW = { own: Map<ShipKind, number>; rivalPeak: Map<EntityId, CountClass> };
+const battleForceHW = new Map<string, BattleForceHW>();
+const COUNT_CLASS_ORD: Record<CountClass, number> = {
+  one: 0, two_to_three: 1, four_to_seven: 2, eight_to_fifteen: 3, sixteen_to_thirty: 4, thirty_one_plus: 5,
+};
+// Sum a set of own ghosts' EXACT compositions into a per-kind tally.
+function sumOwnComposition(ghosts: GhostView[]): Map<ShipKind, number> {
+  const m = new Map<ShipKind, number>();
+  for (const g of ghosts) {
+    const comp = g.composition ?? [{ kind: g.kind, count: 1 }];
+    for (const c of comp) m.set(c.kind, (m.get(c.kind) ?? 0) + c.count);
+  }
+  return m;
+}
+// One-way COMMAND delay (§3): command-center → battle anchor, at light speed.
+// The same math the order echo-lifecycle uses; null before the galaxy/CC arrive.
+function battleCommandDelay(b: BattleView): number | null {
+  if (!state.commandCenter || !state.galaxy) return null;
+  return Math.hypot(b.pos.x - state.commandCenter.x, b.pos.y - state.commandCenter.y) / state.galaxy.c;
+}
+// A one-way delay mapped onto the player's wall-clock, to the second ("~14:32:10").
+function arrivalLocal(delaySecs: number): string {
+  return new Date(Date.now() + delaySecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function updateOngoingBattlePanel(): void {
   const id = openOngoingBattleId;
   if (id === null) return;
@@ -1084,7 +1116,8 @@ function updateOngoingBattlePanel(): void {
   const panel = $("battle-panel");
   if (!b) {
     // The battle's light now shows it CONCLUDED (it left the live set). Close;
-    // the aftermath marker + report carry the outcome.
+    // the aftermath marker + report carry the outcome. Drop its loss tracking.
+    battleForceHW.delete(id);
     openOngoingBattleId = null;
     panel.classList.remove("is-open");
     return;
@@ -1101,6 +1134,29 @@ function updateOngoingBattlePanel(): void {
     const comp = g.composition ?? [];
     return comp.length ? comp.map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") : shipKindLabel(g.kind);
   };
+
+  // Advance the high-water tally from THIS view's already-delivered light.
+  const hw: BattleForceHW = battleForceHW.get(id) ?? { own: new Map<ShipKind, number>(), rivalPeak: new Map<EntityId, CountClass>() };
+  const ownNow = sumOwnComposition(ownFleets);
+  for (const [k, n] of ownNow) hw.own.set(k, Math.max(hw.own.get(k) ?? 0, n));
+  for (const g of rivalFleets) {
+    const prev = hw.rivalPeak.get(g.id);
+    if (prev === undefined || COUNT_CLASS_ORD[g.count_class] > COUNT_CLASS_ORD[prev]) hw.rivalPeak.set(g.id, g.count_class);
+  }
+  battleForceHW.set(id, hw);
+  // OWN running losses (exact, own light): committed peak − now, per kind.
+  const ownLost: string[] = [];
+  for (const [k, peak] of hw.own) {
+    const lost = peak - (ownNow.get(k) ?? 0);
+    if (lost > 0) ownLost.push(`${lost} ${shipKindLabel(k)}`);
+  }
+  const ownNowTotal = [...ownNow.values()].reduce((a, n) => a + n, 0);
+  const ownLossLine = ownFleets.length
+    ? `<div class="sp-line">Standing: <b>${ownNowTotal} ship${ownNowTotal === 1 ? "" : "s"}</b> across ${ownFleets.length} fleet${ownFleets.length === 1 ? "" : "s"}` +
+      (ownLost.length ? ` · <span style="color:var(--bad,#e66)">lost ${esc(ownLost.join(", "))}</span> so far` : ` · <span class="dim">no losses yet</span>`) +
+      ` <span class="dim">(exact, by your light)</span></div>`
+    : "";
+
   // Per own fleet: composition (running losses ride the composition by own light),
   // its pending-order echo state if any, and a Withdraw verb.
   const ownRows = ownFleets.map((g) => {
@@ -1108,14 +1164,36 @@ function updateOngoingBattlePanel(): void {
     let echo = "";
     if (pend && pend.echo_at - pend.delivered_at >= 1.5) {
       const inTransit = now < pend.delivered_at;
-      echo = ` <span class="dim">· ${esc(pend.kind)} ${inTransit ? "in transit" : "awaiting echo"} ${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
+      echo = ` <span class="dim">· ${esc(pend.kind)} ${inTransit ? "▸ in transit" : "▸ awaiting echo"} ${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
     }
     return `<div class="sp-line"><b>${esc(compStr(g))}</b>${echo}` +
       `<button class="act" data-act="withdraw" data-fleet="${g.id}" style="margin-top:4px" title="Break off and flee home — light-delayed; your formation speed decides the escape">↩ Withdraw this fleet</button></div>`;
   }).join("");
+  // Rival rows: site-revealed flagship + size BUCKET, with a bucket-level "was ~N"
+  // when this fleet has visibly shrunk (fog-safe — never an exact count).
   const rivalRows = rivalFleets.length
-    ? rivalFleets.map((g) => `<div class="sp-line">Rival <b>${esc(shipKindLabel(g.kind))}</b> <span class="dim">— est. ${esc(countClassLabel(g.count_class))} ships (site-revealed)</span></div>`).join("")
+    ? rivalFleets.map((g) => {
+        const peak = hw.rivalPeak.get(g.id);
+        const shrunk = peak !== undefined && COUNT_CLASS_ORD[peak] > COUNT_CLASS_ORD[g.count_class];
+        return `<div class="sp-line">Rival <b>${esc(shipKindLabel(g.kind))}</b> <span class="dim">— est. ${esc(countClassLabel(g.count_class))} ships (site-revealed)</span>` +
+          (shrunk ? ` <span style="color:var(--bad,#e66)">▾ down from ~${esc(countClassLabel(peak!))}</span>` : "") + `</div>`;
+      }).join("")
     : `<div class="sp-line dim">No rival composition observable here yet.</div>`;
+
+  // §3 COMMAND DELAY, in the player's face: one-way CC→anchor time + the local
+  // wall-clock an order issued NOW would actually land at the battle.
+  const delay = battleCommandDelay(b);
+  const cmdDelayBanner = delay !== null
+    ? `<div class="sp-line" style="border:1px solid var(--line,#2a3550);border-radius:6px;padding:6px 8px;background:rgba(255,140,60,0.06)">` +
+      `${uiIcon("action-standing-order", 13)} <b>Command delay: ${fmtCountdown(delay)}</b> — an order sent now arrives <b>~${esc(arrivalLocal(delay))}</b> ` +
+      `<span class="dim">(one-way, your CC → this fight)</span>` +
+      // ~20 s one-way ≈ 40 s round-trip to even confirm — approaching a playtest
+      // battle's whole lifetime, so a mid-fight order out here is likely futile.
+      (delay > 20 ? `<div class="dim" style="margin-top:2px">Distant frontier — mid-battle command may land too late to matter.</div>`
+                  : `<div class="dim" style="margin-top:2px">Close to home — orders can still bite.</div>`) +
+      `</div>`
+    : "";
+
   const head =
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">${badge("negative", "battle raging")} · as of ${fmtCountdown(b.age)} ago</div>` +
     `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
@@ -1123,9 +1201,9 @@ function updateOngoingBattlePanel(): void {
   const body =
     `<div class="sp-line">Raging for <b>${fmtCountdown(observed)}</b> <span class="dim">(as your light shows it — the site may be further along by now)</span></div>` +
     (b.own
-      ? `<div class="sp-sec">Your forces engaged</div>${ownRows || `<div class="sp-line dim">Your fleets here are no longer observable.</div>`}` +
+      ? `<div class="sp-sec">Your forces engaged</div>${ownLossLine}${ownRows || `<div class="sp-line dim">Your fleets here are no longer observable.</div>`}` +
         `<div class="sp-sec">Enemy</div>${rivalRows}` +
-        `<div class="sp-sec">Command</div>` +
+        `<div class="sp-sec">Command</div>${cmdDelayBanner}` +
         `<div class="mhint dim">↩ Withdraw a fleet above · ${uiIcon("action-move-travel", 12)} move any fleet to this site to <b>Reinforce</b> (it joins on arrival) · change standing <b>Doctrine</b> to shift engage/retreat behaviour. All are light-delayed.</div>` +
         `<button class="act" data-act="doctrine">${uiIcon("action-standing-order", 14)} Change fleet doctrine ▸</button>`
       : `<div class="sp-sec">Participants</div>${rivalRows}` +
@@ -1181,6 +1259,9 @@ let clickCycle: { sx: number; sy: number; keys: string; index: number } | null =
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
 function handleMapClick(sx: number, sy: number): void {
+    // §aftermath-select: any fresh map click drops the concluded-battle marker
+    // ring; the aftermath/capture branches below re-set it if they hit a marker.
+    renderer.selectedBattleMarkerId = null;
     // §contestable-territory Part 1: BLOCKADE-ON-CLICK. With one of your RAIDER
     // fleets selected, clicking a rival-owned system orders a blockade there —
     // the raider's second verb, mirroring "click a rival contact to raid." Runs
@@ -1231,8 +1312,17 @@ function handleMapClick(sx: number, sy: number): void {
     type Candidate = { key: string; sortD: number; label: string; pick: () => void; readout: string };
     const cands: Candidate[] = [];
 
+    // §one-battle-one-icon: fleets ENGAGED in a battle are represented by the
+    // single battle icon (their own markers are suppressed), so exclude them from
+    // ship/rival hit-testing — otherwise a participant ghost sitting under the
+    // icon would swallow the click meant to OPEN the battle panel. A withdrawn
+    // fleet leaves the participant set, so its marker becomes clickable again.
+    const engagedIds = new Set<string>();
+    for (const bt of state.battles) for (const p of bt.participants) engagedIds.add(p);
+
     for (const g of state.ghosts) {
       if (!g.own) continue;
+      if (engagedIds.has(g.id)) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the MARKER's current on-screen size (formation sprite
@@ -1324,6 +1414,7 @@ function handleMapClick(sx: number, sy: number): void {
     let bestE = Infinity; // nearest rival-ghost hit distance (px)
     for (const g of state.ghosts) {
       if (g.own) continue;
+      if (engagedIds.has(g.id)) continue; // engaged → reachable via the battle icon, not here
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the marker's current on-screen size (formation sprite
@@ -1391,6 +1482,10 @@ function handleMapClick(sx: number, sy: number): void {
     {
       const hit = renderer.aftermathPick(sx, sy);
       if (hit !== null) {
+        // §aftermath-select: select it like any map object — standard ring + panel.
+        deselectShip();
+        state.selectedSystemId = null;
+        renderer.selectedBattleMarkerId = hit;
         openBattlePanel(hit);
         return;
       }
@@ -1399,6 +1494,9 @@ function handleMapClick(sx: number, sy: number): void {
     {
       const hit = renderer.capturePick(sx, sy);
       if (hit !== null) {
+        deselectShip();
+        state.selectedSystemId = null;
+        renderer.selectedBattleMarkerId = hit;
         openCapturePanel(hit);
         return;
       }

@@ -141,6 +141,13 @@ const BATTLE_MARKER_PX = 44; // aftermath / capture icon size on screen
 const BATTLE_MARKER_TTL_S = 1800; // hide markers learned > 30 min ago (tunable)
 const BATTLE_MARKER_HIT_PX = 24; // click radius (scaled with the bigger markers)
 const BATTLE_ONGOING_PX = 52; // the in-progress icon size (pulse scales it a bit)
+// §aftermath-fade: a concluded-battle marker fades with time since the viewer's
+// report ARRIVED — full (with the fresh pulse) at first, a smooth decay over
+// AFTERMATH_FADE_SECS down to AFTERMATH_FLOOR_ALPHA, then held at that floor
+// (still selectable) until BATTLE_MARKER_TTL_S removes it. Old battles literally
+// fade into the dark. Both tunable.
+const AFTERMATH_FADE_SECS = 240;
+const AFTERMATH_FLOOR_ALPHA = 0.15;
 
 // FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
 // lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
@@ -195,6 +202,11 @@ export class Renderer {
   private battleSprites = new Map<string, Sprite>(); // pooled ongoing-battle icons, keyed by engagement id
   private battleHits: { id: string; sx: number; sy: number }[] = []; // §one-battle-one-icon click targets
   private aftermathHits: { id: number; sx: number; sy: number }[] = [];
+  // §aftermath-select: the concluded-battle marker (aftermath OR capture report id)
+  // that currently carries the standard selection ring. Set by main.ts on click,
+  // cleared when any other object is selected. Ring draws at full even at the fade
+  // floor, so an all-but-faded marker is still visibly selectable.
+  selectedBattleMarkerId: number | null = null;
   private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
   private signalsLayer = new Container();
@@ -887,8 +899,11 @@ export class Renderer {
       // A VIEWED marker is static (no pulse) and dimmer — history, not a live
       // alert — but the aftermath art is a low-saturation cool grey-teal, so a
       // very low alpha reads as "greyed out / broken." Keep it clearly legible.
-      const alpha = viewed ? 0.68 : 0.8 + 0.2 * pulse;
+      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse;
+      // §aftermath-fade: decay the whole marker toward the floor as its report ages.
+      const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at);
       live.add(r.id);
+      if (r.id === this.selectedBattleMarkerId) this.drawMarkerSelectionRing(g, sx, sy);
       if (this.texBattleAftermath) {
         let sp = this.aftermathSprites.get(r.id);
         if (!sp) {
@@ -913,7 +928,8 @@ export class Renderer {
       }
       if (!viewed) {
         // The new-report attention pulse (subtle — an invitation, not an alarm).
-        g.circle(sx, sy, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: 0xd08a5a, alpha: 0.15 + 0.3 * pulse });
+        // Fades with the marker so an old, never-opened report goes quiet too.
+        g.circle(sx, sy, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: 0xd08a5a, alpha: alpha * (0.2 + 0.4 * pulse) });
       }
       this.aftermathHits.push({ id: r.id, sx, sy });
     }
@@ -923,6 +939,23 @@ export class Renderer {
         this.aftermathSprites.delete(id);
       }
     }
+  }
+
+  /// §aftermath-fade: the marker's alpha given how long ago the viewer's report
+  /// arrived. `base` (fresh alpha) at age 0, a smoothstep decay over
+  /// AFTERMATH_FADE_SECS, then held at AFTERMATH_FLOOR_ALPHA until the TTL prunes
+  /// it. Monotonic — a marker only ever gets dimmer as it ages into the dark.
+  private aftermathFadeAlpha(base: number, ageSecs: number): number {
+    const t = Math.min(1, Math.max(0, ageSecs / AFTERMATH_FADE_SECS));
+    const smooth = t * t * (3 - 2 * t); // smoothstep for a soft fade, not a linear ramp
+    return AFTERMATH_FLOOR_ALPHA + (base - AFTERMATH_FLOOR_ALPHA) * (1 - smooth);
+  }
+
+  /// The STANDARD selection ring (matches a selected system: thin, white) around a
+  /// concluded-battle marker. Drawn at full alpha regardless of the marker's fade,
+  /// so a nearly-dark marker still reads as selected and stays reachable.
+  private drawMarkerSelectionRing(g: Graphics, sx: number, sy: number): void {
+    g.circle(sx, sy, BATTLE_MARKER_PX * 0.62).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
   }
 
   /// Hit-test the aftermath markers (screen-space, fixed radius). Returns the
@@ -955,16 +988,18 @@ export class Renderer {
       const s = this.worldToScreen(r.pos);
       const viewed = state.battleViewed.has(r.id);
       const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
-      const alpha = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed (see drawAftermath)
+      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed (see drawAftermath)
+      const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at); // §aftermath-fade
       const col = r.captor ? 0xffcf6b : COL_THREAT; // gold = gained, red = lost
       // A little flag on a pole (territory changed hands).
       const px = s.x;
       const py = s.y;
       const h = BATTLE_MARKER_PX * 0.5;
+      if (r.id === this.selectedBattleMarkerId) this.drawMarkerSelectionRing(g, px, py - h * 0.4);
       g.moveTo(px, py + h * 0.6).lineTo(px, py - h).stroke({ width: 1.6, color: col, alpha });
       g.poly([px, py - h, px + h * 0.9, py - h * 0.6, px, py - h * 0.2]).fill({ color: col, alpha });
       if (!viewed) {
-        g.circle(px, py - h * 0.4, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: col, alpha: 0.15 + 0.3 * pulse });
+        g.circle(px, py - h * 0.4, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: col, alpha: alpha * (0.2 + 0.4 * pulse) });
       }
       this.captureHits.push({ id: r.id, sx: px, sy: py });
     }
