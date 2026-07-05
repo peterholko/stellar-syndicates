@@ -1043,20 +1043,36 @@ function handleSystemClick(sx: number, sy: number): void {
   else closePlanetPanel();
 }
 
+// §co-location cycling: the last selection click's spot + the stack it hit, so a
+// repeat click at the same spot advances through co-located selectables instead
+// of re-picking the same one. Reset implicitly whenever the spot or stack changes.
+let clickCycle: { sx: number; sy: number; keys: string; index: number } | null = null;
+
 // The map CLICK action (select own ship · select a star system incl. home ·
 // inspect a command anchor · raid a rival ghost · move order to empty space). All
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
 function handleMapClick(sx: number, sy: number): void {
-    // Selection priority: a star SYSTEM and an own SHIP are hit-tested together,
-    // because your starting fleet sits right on your home system — letting a parked
-    // ship always swallow the click made the home system unselectable. Nearest wins,
-    // with a small bias toward the SYSTEM so a body with ships on it (the home case)
-    // still opens its System view; ships out in open space are still picked normally.
-    const SYSTEM_BIAS = 5; // px the system may be "farther" and still win the tie
+    // Selection priority + CO-LOCATION CYCLING. A star SYSTEM and your own SHIPS
+    // are hit-tested TOGETHER, because things stack at one spot all the time:
+    // your starting fleet parks on your home system, a freshly-built ship spawns
+    // right on its shipyard, several fleets sit at one berth. A fixed priority
+    // can only ever surface ONE of them — whatever loses is then permanently
+    // unclickable (the parked-ship-vs-home-system tug-of-war). So instead,
+    // REPEATED clicks at the same spot CYCLE through everything hit there. The
+    // system sorts FIRST on a near-tie (SYSTEM_BIAS), so the home body still
+    // opens on the first click — but one more click reaches the ship on top of
+    // it. Ships out in open space still select on the first click as before.
+    const SYSTEM_BIAS = 5; // px the system may be "farther" and still sort ahead on a tie
+    const CLICK_CYCLE_PX = 10; // a click within this of the last cycles the stack
 
-    let shipPick: string | null = null;
-    let bestShip = Infinity; // nearest own-ship hit distance (px)
+    // Each candidate carries its selection side-effect (`pick`), a short `label`
+    // for the cycle hint, and its base `readout` message — the readout is set
+    // FRESH per pick (never appended), so cycling to the system clears stale
+    // ship text and the hint can't accumulate across clicks.
+    type Candidate = { key: string; sortD: number; label: string; pick: () => void; readout: string };
+    const cands: Candidate[] = [];
+
     for (const g of state.ghosts) {
       if (!g.own) continue;
       const s = renderer.worldToScreen(g.pos);
@@ -1065,14 +1081,16 @@ function handleMapClick(sx: number, sy: number): void {
       // included), so it grows with the sprite in the deep-zoom native-size band;
       // floored at 24px so normal-zoom clicking feels exactly as before.
       const rad = Math.max(24, renderer.fleetHitRadius(g));
-      if (d < rad && d < bestShip) {
-        bestShip = d;
-        shipPick = g.id;
+      if (d < rad) {
+        cands.push({
+          key: `ship:${g.id}`, sortD: d, label: shipKindLabel(g.kind),
+          pick: () => selectShip(g.id), // opens the fog-aware ship panel; clears any system selection
+          readout: `<b>${esc(shipKindLabel(g.kind))}</b> selected — details in the panel. ` +
+            `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`,
+        });
       }
     }
 
-    let sysPick: string | null = null;
-    let bestSys = Infinity;
     if (state.galaxy) {
       for (const sys of state.galaxy.systems) {
         const s = renderer.worldToScreen(sys.pos);
@@ -1081,27 +1099,37 @@ function handleMapClick(sx: number, sy: number): void {
         // capped (~90px) so a max-zoom giant never blankets the map — with the
         // old 15px floor so normal-zoom clicking is unchanged.
         const rad = Math.max(15, renderer.systemHitRadius(sys));
-        if (d < rad && d < bestSys) {
-          bestSys = d;
-          sysPick = sys.id;
+        if (d < rad) {
+          cands.push({
+            key: `sys:${sys.id}`, sortD: d - SYSTEM_BIAS, label: sys.name,
+            pick: () => { state.selectedSystemId = sys.id; openRail("system"); }, // → setRailTab renders the detail
+            readout: `<b>${esc(sys.name)}</b> selected — details in the rail.`,
+          });
         }
       }
     }
 
-    // Prefer the system when it's hit and either no ship was hit, or the system is
-    // within SYSTEM_BIAS of being as close (i.e. they're essentially co-located).
-    if (sysPick && (!shipPick || bestSys <= bestShip + SYSTEM_BIAS)) {
-      state.selectedSystemId = sysPick;
-      openRail("system"); // → setRailTab("system") renders the detail
-      return;
-    }
-
-    if (shipPick) {
-      const g = state.ghosts.find((x) => x.id === shipPick)!;
-      selectShip(shipPick); // opens the fog-aware ship panel; clears any system selection
-      readout().innerHTML =
-        `<b>${esc(g.own ? shipKindLabel(g.kind) : "rival " + g.kind)}</b> selected — details in the panel. ` +
-        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
+    if (cands.length) {
+      cands.sort((a, b) => a.sortD - b.sortD);
+      const keys = cands.map((c) => c.key).join(",");
+      // Same spot + same stack as the previous click → advance to the next
+      // candidate; otherwise start at the front (the system, by the bias sort).
+      const prev = clickCycle;
+      const same = prev !== null
+        && Math.hypot(prev.sx - sx, prev.sy - sy) <= CLICK_CYCLE_PX
+        && prev.keys === keys;
+      const index = same ? (prev!.index + 1) % cands.length : 0;
+      clickCycle = { sx, sy, keys, index };
+      const chosen = cands[index];
+      chosen.pick();
+      // Fresh readout = the chosen thing's message, plus a stack hint naming what
+      // one more click reaches (so co-located things never read as unselectable).
+      let msg = chosen.readout;
+      if (cands.length > 1) {
+        const next = cands[(index + 1) % cands.length];
+        msg += ` <span class="dim">· ${cands.length} here — click again for <b>${esc(next.label)}</b>.</span>`;
+      }
+      readout().innerHTML = msg;
       return;
     }
 
