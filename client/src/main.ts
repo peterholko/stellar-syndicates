@@ -993,15 +993,28 @@ function buildBattlePanel(): void {
     const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.act === "close") {
+      openOngoingBattleId = null;
       $("battle-panel").classList.remove("is-open");
     } else if (el.dataset.act === "dismiss") {
       const id = Number(el.dataset.id);
       state.battleDismissed.add(id);
       saveBattleMarks();
       $("battle-panel").classList.remove("is-open");
+    } else if (el.dataset.act === "withdraw" && net) {
+      // §one-battle-one-icon: Withdraw an OWN engaged fleet straight from the
+      // battle panel (its map marker is suppressed — no hidden sprite to hunt).
+      const fleet = el.dataset.fleet;
+      if (fleet) { net.send({ type: "Withdraw", fleet_id: fleet }); if (openOngoingBattleId) updateOngoingBattlePanel(); }
+    } else if (el.dataset.act === "doctrine") {
+      openOngoingBattleId = null;
+      $("battle-panel").classList.remove("is-open");
+      openRail("doctrine");
     }
   });
 }
+// §one-battle-one-icon: the ongoing battle whose panel is open (client-local),
+// so the View handler can keep its elapsed / echo countdowns / losses live.
+let openOngoingBattleId: string | null = null;
 /// The nearest system's name, as a human-readable "where" for a battle site.
 function nearestSystemName(p: Vec2): string {
   let best = "";
@@ -1051,6 +1064,73 @@ function openBattlePanel(id: number): void {
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
+}
+
+// §one-battle-one-icon: open (and keep live) the ONGOING battle panel — clicking
+// the single battle icon. Participants are shown AS KNOWN TO THE VIEWER (own
+// fleets: full composition + the three verbs with echo countdowns; rivals:
+// whatever the site-reveal already granted). Own engaged fleets are reachable
+// here even though their map markers are suppressed.
+function openOngoingBattlePanel(id: string): void {
+  buildBattlePanel();
+  openOngoingBattleId = id;
+  updateOngoingBattlePanel();
+  $("battle-panel").classList.add("is-open");
+}
+function updateOngoingBattlePanel(): void {
+  const id = openOngoingBattleId;
+  if (id === null) return;
+  const b = state.battles.find((x) => x.id === id);
+  const panel = $("battle-panel");
+  if (!b) {
+    // The battle's light now shows it CONCLUDED (it left the live set). Close;
+    // the aftermath marker + report carry the outcome.
+    openOngoingBattleId = null;
+    panel.classList.remove("is-open");
+    return;
+  }
+  const now = liveSimTime();
+  // Observed elapsed: the viewer sees the battle as of (now − age); it began at
+  // started_at. Light-honest — never ahead of their light.
+  const observed = Math.max(0, now - b.age - b.started_at);
+  const parts = new Set(b.participants);
+  const involved = state.ghosts.filter((g) => parts.has(g.id));
+  const ownFleets = involved.filter((g) => g.own);
+  const rivalFleets = involved.filter((g) => !g.own);
+  const compStr = (g: GhostView): string => {
+    const comp = g.composition ?? [];
+    return comp.length ? comp.map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") : shipKindLabel(g.kind);
+  };
+  // Per own fleet: composition (running losses ride the composition by own light),
+  // its pending-order echo state if any, and a Withdraw verb.
+  const ownRows = ownFleets.map((g) => {
+    const pend = state.pendingOrders.get(g.id);
+    let echo = "";
+    if (pend && pend.echo_at - pend.delivered_at >= 1.5) {
+      const inTransit = now < pend.delivered_at;
+      echo = ` <span class="dim">· ${esc(pend.kind)} ${inTransit ? "in transit" : "awaiting echo"} ${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
+    }
+    return `<div class="sp-line"><b>${esc(compStr(g))}</b>${echo}` +
+      `<button class="act" data-act="withdraw" data-fleet="${g.id}" style="margin-top:4px" title="Break off and flee home — light-delayed; your formation speed decides the escape">↩ Withdraw this fleet</button></div>`;
+  }).join("");
+  const rivalRows = rivalFleets.length
+    ? rivalFleets.map((g) => `<div class="sp-line">Rival <b>${esc(shipKindLabel(g.kind))}</b> <span class="dim">— est. ${esc(countClassLabel(g.count_class))} ships (site-revealed)</span></div>`).join("")
+    : `<div class="sp-line dim">No rival composition observable here yet.</div>`;
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">${badge("negative", "battle raging")} · as of ${fmtCountdown(b.age)} ago</div>` +
+    `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const body =
+    `<div class="sp-line">Raging for <b>${fmtCountdown(observed)}</b> <span class="dim">(as your light shows it — the site may be further along by now)</span></div>` +
+    (b.own
+      ? `<div class="sp-sec">Your forces engaged</div>${ownRows || `<div class="sp-line dim">Your fleets here are no longer observable.</div>`}` +
+        `<div class="sp-sec">Enemy</div>${rivalRows}` +
+        `<div class="sp-sec">Command</div>` +
+        `<div class="mhint dim">↩ Withdraw a fleet above · ${uiIcon("action-move-travel", 12)} move any fleet to this site to <b>Reinforce</b> (it joins on arrival) · change standing <b>Doctrine</b> to shift engage/retreat behaviour. All are light-delayed.</div>` +
+        `<button class="act" data-act="doctrine">${uiIcon("action-standing-order", 14)} Change fleet doctrine ▸</button>`
+      : `<div class="sp-sec">Participants</div>${rivalRows}` +
+        `<div class="mhint dim">A battle you can see by its weapons-fire light — you have no forces here. Positions are as of the light that reached you.</div>`);
+  panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
 }
 
 // §contestable-territory Part 2: the CAPTURE results panel — a system changed
@@ -1295,6 +1375,16 @@ function handleMapClick(sx: number, sy: number): void {
       }
     }
 
+    // §one-battle-one-icon: the ongoing BATTLE icon → the live battle panel
+    // (its participants' own markers are suppressed, so this is how you reach
+    // your engaged fleets to Withdraw). Checked here among the map chrome.
+    {
+      const hit = renderer.battlePick(sx, sy);
+      if (hit !== null) {
+        openOngoingBattlePanel(hit);
+        return;
+      }
+    }
     // §battle-aftermath: a concluded-battle marker (owner-only UI) → its full
     // results. After ships/systems/hub — the marker is small screen-space
     // chrome and must never steal a gameplay click — before the move order.
@@ -2519,6 +2609,9 @@ function join(): void {
           // §management-home: inside the System View, refresh the management
           // column + the structure markers (a cached no-op unless tiers changed).
           updateSysviewDynamic();
+          // §one-battle-one-icon: keep an open ongoing-battle panel live (elapsed,
+          // echo countdowns, running composition; auto-closes when it concludes).
+          if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
           // The Market is a navbar overlay now — refresh it when open.
           if ($("market").classList.contains("is-open")) updateMarket();
           updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages

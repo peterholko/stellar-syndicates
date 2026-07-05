@@ -188,7 +188,8 @@ export class Renderer {
   private aftermathLayer = new Container();
   private aftermathGfx = new Graphics();
   private aftermathSprites = new Map<number, Sprite>();
-  private battleSprites = new Map<number, Sprite>(); // pooled ongoing-battle icons (keyed by index)
+  private battleSprites = new Map<string, Sprite>(); // pooled ongoing-battle icons, keyed by engagement id
+  private battleHits: { id: string; sx: number; sy: number }[] = []; // §one-battle-one-icon click targets
   private aftermathHits: { id: number; sx: number; sy: number }[] = [];
   private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
@@ -784,39 +785,76 @@ export class Renderer {
     const g = this.interceptGfx;
     const now = performance.now();
     const pulse = 0.5 + 0.5 * Math.sin(now / 200);
-    let used = 0;
+    this.battleHits = [];
+    const live = new Set<string>();
+    // §one-battle-one-icon: two SEPARATE engagements whose anchors nearly
+    // coincide fan out slightly so they stay two icons (a merged fight is one
+    // engagement id → one icon already).
+    const slotByCell = new Map<string, number>();
     for (const b of state.battles) {
-      const s = this.worldToScreen(b.pos);
+      const base = this.worldToScreen(b.pos);
+      const cell = `${Math.round(b.pos.x / 50)},${Math.round(b.pos.y / 50)}`;
+      const slot = slotByCell.get(cell) ?? 0;
+      slotByCell.set(cell, slot + 1);
+      const sx = base.x + slot * (BATTLE_ONGOING_PX * 0.85);
+      const sy = base.y - slot * 4;
+      live.add(b.id);
       if (this.texBattleOngoing) {
-        let sp = this.battleSprites.get(used);
+        let sp = this.battleSprites.get(b.id);
         if (!sp) {
           sp = new Sprite(this.texBattleOngoing);
           sp.anchor.set(0.5);
           this.aftermathLayer.addChild(sp);
-          this.battleSprites.set(used, sp);
+          this.battleSprites.set(b.id, sp);
         }
         sp.visible = true;
         sp.texture = this.texBattleOngoing;
-        sp.position.set(s.x, s.y);
+        sp.position.set(sx, sy);
         sp.scale.set(((BATTLE_ONGOING_PX + pulse * 5) / this.texBattleOngoing.width));
         sp.alpha = 0.7 + 0.3 * pulse;
-        used++;
         // Keep the alert ring so the icon still SHOUTS like the old burst did.
-        g.circle(s.x, s.y, BATTLE_ONGOING_PX * 0.7 + pulse * 5).stroke({ width: 1.4, color: COL_THREAT, alpha: 0.25 + 0.35 * pulse });
+        g.circle(sx, sy, BATTLE_ONGOING_PX * 0.7 + pulse * 5).stroke({ width: 1.4, color: COL_THREAT, alpha: 0.25 + 0.35 * pulse });
       } else {
         const r = 14 + pulse * 6;
         for (let i = 0; i < 8; i++) {
           const a = (i / 8) * Math.PI * 2 + now / 1400;
-          g.moveTo(s.x + Math.cos(a) * r * 0.5, s.y + Math.sin(a) * r * 0.5).lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+          g.moveTo(sx + Math.cos(a) * r * 0.5, sy + Math.sin(a) * r * 0.5).lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
         }
         g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
-        g.circle(s.x, s.y, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
+        g.circle(sx, sy, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
+      }
+      // OWN-INVOLVEMENT PIP: one cyan diamond on the icon's edge if the viewer
+      // has forces in this fight — "my fight" at a glance (one pip regardless of
+      // how many of their fleets are in). No rival pips beyond the site-reveal.
+      if (b.own) {
+        const pr = 4;
+        const px = sx + BATTLE_ONGOING_PX * 0.42;
+        const py = sy - BATTLE_ONGOING_PX * 0.42;
+        const diamond = (rr: number): number[] => [px, py - rr, px + rr, py, px, py + rr, px - rr, py];
+        g.poly(diamond(pr + 1.3)).fill({ color: 0x05070d, alpha: 0.8 });
+        g.poly(diamond(pr)).fill({ color: COL_OWN, alpha: 0.95 });
+      }
+      this.battleHits.push({ id: b.id, sx, sy });
+    }
+    // Destroy pooled icons for engagements that have ended.
+    for (const [id, sp] of this.battleSprites) {
+      if (!live.has(id)) {
+        sp.destroy();
+        this.battleSprites.delete(id);
       }
     }
-    // Hide pooled ongoing icons beyond this frame's battle count.
-    for (const [i, sp] of this.battleSprites) {
-      if (i >= used) sp.visible = false;
+  }
+
+  /// Hit-test the ongoing-battle icons (screen-space, fixed radius). Returns the
+  /// clicked engagement id, or null. Consumed by main.ts's map click.
+  battlePick(sx: number, sy: number): string | null {
+    let best: string | null = null;
+    let bestD = BATTLE_ONGOING_PX * 0.65;
+    for (const h of this.battleHits) {
+      const d = Math.hypot(h.sx - sx, h.sy - sy);
+      if (d < bestD) { bestD = d; best = h.id; }
     }
+    return best;
   }
 
   /// §battle-aftermath: the concluded-battle markers — one per RETAINED report
@@ -1531,7 +1569,24 @@ export class Renderer {
 
       for (const sp of this.ghosts.values()) sp.seen = false;
       const screenById = new Map<string, { x: number; y: number }>();
+      // §one-battle-one-icon: a fleet ENGAGED in a visible battle has its whole
+      // map marker SUPPRESSED (sprite, heading hint, uncertainty cone, ownership
+      // pip, count badge, echo badge) — the single battle icon carries the state.
+      // Per the observer's LIGHT: `state.battles` is already light-gated, so a
+      // distant observer whose retarded view still shows pre-battle fleets sees
+      // them converge normally until the battle's light arrives. Its participant
+      // ids are exactly the ghosts revealed at the site, so this never hides a
+      // fleet the icon doesn't represent.
+      const engaged = new Set<string>();
+      for (const b of state.battles) for (const p of b.participants) engaged.add(p);
       for (const ghost of state.ghosts) {
+        if (engaged.has(ghost.id)) {
+          const sp = this.ghosts.get(ghost.id);
+          if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
+          continue; // not in screenById → no order line either
+        }
+        const sp0 = this.ghosts.get(ghost.id);
+        if (sp0) sp0.container.visible = true; // un-suppress a fleet that broke away
         screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
       }
       // A ship is drawn only while the server is sending its ghost. A destroyed

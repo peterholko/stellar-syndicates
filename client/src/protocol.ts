@@ -423,10 +423,16 @@ export interface EngagementEstimate {
 export type OrderKind = "move" | "raid" | "recall" | "withdraw";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
+// ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
+// revealed at the site (own + site-revealed rivals), used to SUPPRESS their
+// individual markers (the icon carries the state) and to build the battle panel.
 export interface BattleView {
+  id: EntityId; // stable engagement id — keys the icon + selection
   pos: Vec2;
   age: number; // light delay of the sighting (s) — "battle raging, as of N ago"
+  started_at: number; // sim-time the battle began (for observed-elapsed)
   own: boolean; // the viewer is one of the two sides
+  participants: EntityId[]; // fleet ids in the fight (already revealed as ghosts)
 }
 
 // §battle-aftermath: a RETAINED concluded battle this player PARTICIPATED in —

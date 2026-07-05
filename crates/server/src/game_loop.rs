@@ -469,12 +469,18 @@ impl GameLoop {
             for b in self.world.active_battles() {
                 let delay = b.pos.distance(cc) / c;
                 if now >= b.started_at + delay {
+                    battle_reveal.extend(b.participants.iter().copied());
                     battles.push(crate::protocol::BattleView {
+                        id: b.id,
                         pos: b.pos,
                         age: delay,
+                        started_at: b.started_at,
                         own: player_id == b.a_owner || player_id == b.d_owner,
+                        // All participants are revealed to any observer of the
+                        // battle (the weapons-fire site-reveal above), so their
+                        // ids carry no more than the ghosts already sent.
+                        participants: b.participants,
                     });
-                    battle_reveal.extend(b.participants);
                 }
             }
             let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);

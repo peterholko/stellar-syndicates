@@ -145,6 +145,8 @@ struct PendingEcho {
 /// visibility by `distance(pos, cc)/c`.
 #[derive(Debug, Clone)]
 pub struct BattleInfo {
+    /// The engagement's stable id — one battle entity, one map icon.
+    pub id: EntityId,
     pub pos: Vec2,
     pub started_at: f64,
     pub a_owner: PlayerId,
@@ -500,6 +502,7 @@ impl World {
         self.engagements
             .values()
             .map(|e| BattleInfo {
+                id: e.id,
                 pos: e.pos,
                 started_at: e.started_at,
                 a_owner: e.a_owner,
@@ -5547,6 +5550,37 @@ mod tests {
         sys.pos = pos;
         sys.defense_tier = tier;
         sys.id
+    }
+
+    /// §one-battle-one-icon: `active_battles()` exposes each engagement as ONE
+    /// entity — a stable id, the anchor, and the FULL participant set (both
+    /// sides) — which the client renders as a single icon and uses to suppress
+    /// each participant's own marker. The participant set is exactly what the
+    /// server feeds into the weapons-fire reveal, so carrying the ids leaks
+    /// nothing beyond the ghosts already revealed at the site.
+    #[test]
+    fn active_battles_is_one_entity_per_engagement_with_all_participants() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // A corvette-escorted convoy so BOTH sides have real fleets (2 defenders).
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(360.0, 0.0));
+        let convoy_pos = w.fleets[&convoy].pos;
+        let escort = w.alloc_entity_id();
+        w.fleets.insert(escort, Fleet::single(escort, def, ShipKind::Corvette, convoy_pos + Vec2::new(20.0, 0.0), FleetOrder::Idle, None));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut found: Option<BattleInfo> = None;
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            let bs = w.active_battles();
+            if !bs.is_empty() { found = Some(bs[0].clone()); break; }
+        }
+        let b = found.expect("an engagement forms");
+        assert_eq!(w.active_battles().len(), 1, "ONE engagement entity → one icon");
+        assert!(b.participants.contains(&raider), "the attacker is a participant");
+        assert!(b.participants.contains(&convoy) || b.participants.contains(&escort), "the defender side is included");
+        assert!(b.participants.len() >= 2, "all engaged fleets ride the single entity");
+        // The id is the engagement's high-bit id (a real, stable handle).
+        assert_ne!(b.id, EntityId(0));
     }
 
     /// A raid contact on a convoy INSIDE a defended friendly system's protection

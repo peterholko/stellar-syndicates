@@ -510,14 +510,25 @@ pub struct PendingOrderView {
 /// viewer's command center. Weapons fire is loud — all participants (even dark
 /// fleets) are revealed at the site by that same old light. `age` is how stale
 /// the sighting is ("battle raging — as of N ago").
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BattleView {
+    /// The engagement's stable id — ONE battle entity, ONE map icon. Merging
+    /// reinforcements join the same entity, so the id (and the icon) is stable.
+    pub id: EntityId,
     pub pos: Vec2,
     /// Light delay of the battle sighting (seconds) — `distance(pos, cc) / c`.
     pub age: f64,
+    /// Sim-time the battle began (for the panel's observed-elapsed readout).
+    pub started_at: f64,
     /// True if the viewer is one of the two sides (they read their own running
     /// losses by their own light via the delayed reports).
     pub own: bool,
+    /// The battle's participant fleet ids — exactly the set revealed to any
+    /// observer of the battle by the existing weapons-fire site-reveal (their
+    /// ghosts are already sent). The client uses these to SUPPRESS each
+    /// participant's own map marker (the icon carries the state) and to build
+    /// the battle panel. No new information beyond the ghosts already revealed.
+    pub participants: Vec<EntityId>,
 }
 
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
