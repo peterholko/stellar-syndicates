@@ -58,10 +58,12 @@ export interface SystemStateView {
   /// Owner-only FULL build queue, completion-ordered (§build-progress) — the
   /// sim always allowed concurrent jobs; rivals always get an empty list.
   builds: BuildState[];
-  /// BLOCKADE state (§contestable-territory Part 1), fog-safe: present only for
-  /// the two participants — the besieger (`by_me`) and the owner (light-delayed).
-  /// Third parties get null. `by` = the blockading corp; `since` = onset sim-time.
-  blockade: { by: PlayerId; since: number; by_me: boolean } | null;
+  /// BLOCKADE state (§contestable-territory), fog-safe: present only for the two
+  /// participants — the besieger (`by_me`) and the owner (light-delayed). Third
+  /// parties get null. `by` = the blockading corp; `since` = onset sim-time;
+  /// `siege_since` = when the (defense-suppressed) capture clock started (§Part 2),
+  /// null if the siege can't progress yet. Progress = (now−siege_since)/siege_secs.
+  blockade: { by: PlayerId; since: number; by_me: boolean; siege_since: number | null } | null;
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
   /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.
@@ -135,6 +137,9 @@ export interface GalaxyInfo {
   /// Fuel out per Volatile — for the owner-only refining readout.
   refinery_rate_per_tier: number;
   refinery_yield: number;
+  /// §contestable-territory Part 2: siege duration (sim s) — the client renders
+  /// siege progress = (now − blockade.siege_since) / siege_secs.
+  siege_secs: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -441,6 +446,18 @@ export interface BattleReportView {
   target_losses: CompCount[];
 }
 
+// §contestable-territory Part 2: a retained CAPTURE this player participated in
+// (per-participant, light-delayed) — powers the capture aftermath marker + panel.
+// `captor` = you took the system; else you lost it. `plunder` = seized stockpile.
+export interface CaptureReportView {
+  id: number;
+  pos: Vec2;
+  at_time: number; // sim-time the system flipped
+  learned_at: number; // sim-time YOUR light arrived
+  captor: boolean;
+  plunder: StockSlot[];
+}
+
 // One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
 // the phase from `sim_time`: IN TRANSIT until `delivered_at`, AWAITING ECHO until
 // `echo_at`, then confirmed (the entry drops). Both stamps are exact.
@@ -482,6 +499,8 @@ export type ServerMsg =
       battles: BattleView[];
       /// §battle-aftermath: retained concluded-battle reports (owner-only).
       battle_reports: BattleReportView[];
+      /// §contestable-territory Part 2: retained capture reports (per-participant).
+      capture_reports: CaptureReportView[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

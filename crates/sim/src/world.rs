@@ -193,7 +193,6 @@ const BLOCKADE_STANDOFF_RADIUS: f64 = 900.0;
 /// playtest scale (~45 s battles) a siege is ~6 min; at production scale (~2700 s)
 /// it is hours, long enough that a realistic check-in cadence can mount relief.
 /// Placeholder factor, awaiting pacing data.
-#[allow(dead_code)] // wired in Part 2 (siege → capture)
 const SIEGE_DURATION_BATTLE_MULT: f64 = 8.0;
 
 // --- Autonomous defensive doctrine (§5.1, Pillar 1) — all tunable. -----------
@@ -456,6 +455,14 @@ impl World {
     /// client ticks the IN-TRANSIT / AWAITING-ECHO countdowns from the two
     /// timestamps against `sim_time`, and flips its dashed heading to solid at
     /// `echo_at`.
+    /// §contestable-territory Part 2: how long an unbroken, defense-suppressed
+    /// siege must run before a colony ship can capture — derived from the config
+    /// battle timescale so one knob scales both. Surfaced to the client so it can
+    /// render the siege-progress readout / countdown.
+    pub fn siege_duration_secs(&self) -> f64 {
+        SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs
+    }
+
     pub fn pending_commands(&self, owner: PlayerId) -> Vec<PendingCommandView> {
         let mut latest: BTreeMap<EntityId, PendingCommandView> = BTreeMap::new();
         let mut consider = |v: PendingCommandView| match latest.get(&v.fleet) {
@@ -1481,23 +1488,8 @@ impl World {
     /// Is `system_id` `owner`'s granted HOME system? Home systems can be
     /// blockaded but NEVER captured (§contestable-territory HOME PROTECTION —
     /// no elimination; a beaten player always keeps a producing base).
-    #[allow(dead_code)] // wired in Part 2 (siege → capture)
     fn is_home_system(&self, owner: PlayerId, system_id: EntityId) -> bool {
         self.players.get(&owner).and_then(|c| c.home_system) == Some(system_id)
-    }
-
-    /// A defender GARRISON fleet is on station at `system` if the owner has a
-    /// combatant fleet within the platform radius (not the given attacker, not
-    /// fleeing). Used both to assemble the establishment-battle defender side and
-    /// (§Part 2) to gate the siege clock — a garrison contests a capture.
-    #[allow(dead_code)] // wired in Part 2 (siege → capture)
-    fn garrison_present(&self, owner: PlayerId, sys_pos: Vec2, exclude: EntityId) -> bool {
-        self.fleets.iter().any(|(gid, g)| {
-            *gid != exclude
-                && g.owner == owner
-                && g.is_combatant()
-                && g.pos.distance(sys_pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
-        })
     }
 
     /// Is this system currently under blockade (§contestable-territory)?
@@ -1620,13 +1612,34 @@ impl World {
                 fids.iter().min().and_then(|f| self.fleets.get(f)).map(|f| (*sid, f.owner))
             })
             .collect();
+        // §Part 2 SIEGE CLOCK: precompute, per blocked system, the non-defense
+        // prerequisites for siege progress — NO garrison combatant on station and
+        // NOT the owner's HOME (home protection: a home is never siegeable). The
+        // `defense_tier == 0` half is read from the system in the loop below. All
+        // borrow self.fleets/self.players, so compute here before the mut loop.
+        let siege_prereq: BTreeMap<EntityId, bool> = blocked
+            .iter()
+            .map(|&sid| {
+                let sys = self.systems.iter().find(|s| s.id == sid).unwrap();
+                let owner = sys.owner.unwrap();
+                let no_garrison = !self.fleets.values().any(|g| {
+                    g.owner == owner && g.is_combatant() && g.pos.distance(sys.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+                });
+                let home = self.is_home_system(owner, sid);
+                (sid, no_garrison && !home)
+            })
+            .collect();
         for sys in &mut self.systems {
             let is_blocked = blocked.contains(&sys.id);
+            // Siege can PROGRESS only with defenses suppressed AND the prereqs met.
+            let siege_ok = is_blocked && sys.defense_tier == 0 && *siege_prereq.get(&sys.id).unwrap_or(&false);
             match (sys.blockade.is_some(), is_blocked) {
                 (false, true) => {
                     let by = blocked_by[&sys.id];
                     let owner = sys.owner.unwrap();
-                    sys.blockade = Some(crate::galaxy::Blockade { by, since: now, siege_since: None });
+                    // An undefended system starts its siege clock the instant it's
+                    // blockaded; a defended one waits for suppression.
+                    sys.blockade = Some(crate::galaxy::Blockade { by, since: now, siege_since: siege_ok.then_some(now) });
                     events.push(Event::new(now, EventPayload::BlockadeEstablished { by, owner, system: sys.id, pos: sys.pos }));
                 }
                 (true, false) => {
@@ -1635,8 +1648,20 @@ impl World {
                         events.push(Event::new(now, EventPayload::BlockadeLifted { owner, system: sys.id, pos: sys.pos }));
                     }
                 }
-                // (true, true): unbroken — keep `since` / the establisher `by`.
-                // (§Part 2 updates the siege clock in this branch.)
+                (true, true) => {
+                    // Unbroken — keep `since` / the establisher `by`; advance the
+                    // siege clock. It STARTS when conditions first hold and RESETS
+                    // the moment any breaks (defenses rebuilt, a garrison arrives).
+                    if let Some(b) = sys.blockade.as_mut() {
+                        if siege_ok {
+                            if b.siege_since.is_none() {
+                                b.siege_since = Some(now);
+                            }
+                        } else {
+                            b.siege_since = None;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -2590,8 +2615,26 @@ impl World {
                     }
                 }
                 Some(holder) if holder != owner => {
-                    // Lost the race (or it flipped en route): hold, intact, notice once.
-                    if idle && !self.fleets[&cid].notified_held {
+                    // §Part 2 SIEGE → CAPTURE: a colony ship arriving at a RIVAL
+                    // system CAPTURES it iff the besieger (== this colony's owner)
+                    // has held an unbroken, defense-suppressed siege for
+                    // SIEGE_DURATION — and it is NOT the holder's home (home
+                    // protection: a beaten player always keeps a producing base).
+                    // Otherwise the existing soft-hold: intact, redirectable,
+                    // never consumed in vain. "Sieges strangle; only colonists
+                    // conquer" — no colony ship = no capture, ever.
+                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs;
+                    let captureable = idle
+                        && !self.is_home_system(holder, sys_id)
+                        && self
+                            .systems
+                            .iter()
+                            .find(|s| s.id == sys_id)
+                            .and_then(|s| s.blockade)
+                            .is_some_and(|b| b.by == owner && b.siege_since.is_some_and(|ss| now - ss >= siege_dur));
+                    if captureable {
+                        self.capture_system(sys_id, holder, owner, cid, pos, events);
+                    } else if idle && !self.fleets[&cid].notified_held {
                         self.fleets.get_mut(&cid).unwrap().notified_held = true;
                         events.push(Event::new(now, EventPayload::ColonyHeld { owner, system: sys_id, pos }));
                     }
@@ -2601,6 +2644,59 @@ impl World {
                 }
             }
         }
+    }
+
+    /// §contestable-territory Part 2: FLIP a besieged system to the captor. All
+    /// deterministic and light-honest (`SystemCaptured` propagates by light like
+    /// a claim). Transfer rules:
+    ///   • ownership → `new_owner`, `claimed_at = now` (light-gates the reveal);
+    ///   • developments at HALF tiers (rounded down) — the occupation inherits a
+    ///     damaged base, freeing slots per the damage rule; defense pool cleared;
+    ///   • the stockpile stays on the system as PLUNDER (it's now the captor's);
+    ///     a snapshot rides the report so the defender's news itemizes the loss;
+    ///   • in-progress builds are DROPPED (the old owner paid; existing rule);
+    ///   • ONE colony ship is consumed (it became the occupation government).
+    /// Never called for a home system — the caller's home-protection gate holds.
+    fn capture_system(&mut self, sys_id: EntityId, old_owner: PlayerId, new_owner: PlayerId, colony: EntityId, pos: Vec2, events: &mut Vec<Event>) {
+        let now = self.time;
+        // Snapshot the seized stockpile (whole units) for the report BEFORE the flip.
+        let plunder: BTreeMap<crate::cargo::Commodity, u32> = self
+            .systems
+            .iter()
+            .find(|s| s.id == sys_id)
+            .map(|s| s.stockpile.iter().filter_map(|(c, a)| {
+                let u = a.floor() as u32;
+                (u >= 1).then_some((*c, u))
+            }).collect())
+            .unwrap_or_default();
+        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+            sys.owner = Some(new_owner);
+            sys.claimed_at = Some(now);
+            // Half tiers (rounded down) — a captured base is a damaged one.
+            sys.extractor_tier /= 2;
+            sys.depot_tier /= 2;
+            sys.shipyard_tier /= 2;
+            sys.sensor_tier /= 2;
+            sys.defense_tier /= 2; // 0 already (siege prerequisite), stays 0
+            sys.habitat_tier /= 2;
+            sys.refinery_tier /= 2;
+            sys.defense_pool = 0.0;
+            sys.habitat_fed = false; // recomputed next tick
+            sys.blockade = None; // it's the captor's now — no longer besieged
+        }
+        // Drop the OLD owner's in-progress builds here (they no longer own it).
+        self.build_queue.retain(|j| j.system != sys_id);
+        // Consume ONE colony ship (the occupation government), like settlement.
+        if let Some(fl) = self.fleets.get_mut(&colony) {
+            fl.remove_one(ShipKind::Colony);
+            if fl.is_empty() {
+                self.fleets.remove(&colony);
+            } else {
+                fl.order = FleetOrder::Idle;
+                fl.notified_held = false;
+            }
+        }
+        events.push(Event::new(now, EventPayload::SystemCaptured { old_owner, new_owner, system: sys_id, pos, plunder }));
     }
 
     /// Fleet a claimed system's accumulated production to the hub: one raidable
@@ -7303,5 +7399,198 @@ mod tests {
         w.step(&[Command::BlockadeSystem { player_id: atk, fleet_id: r2, system_id: unclaimed }]);
         for _ in 0..20 { w.step(&[]); }
         assert!(!matches!(w.fleets[&r2].order, FleetOrder::Blockade { .. }), "can't blockade an unowned system");
+    }
+
+    // --- §CONTESTABLE TERRITORY Part 2: SIEGE → CAPTURE ----------------------
+
+    /// Establish a blockade on an undefended `def` system and BACKDATE its siege
+    /// clock so a colony delivered now would capture (skips running the full
+    /// SIEGE_DURATION in tests). Returns the system id.
+    fn ripe_siege(w: &mut World, atk: PlayerId, def: PlayerId, pos: Vec2, tier: u32) -> EntityId {
+        let sys = grant_system_at(w, def, pos, tier);
+        blockader_on_station(w, atk, sys, if tier > 0 { 12 } else { 1 });
+        // Run until blockaded (and, if defended, until the platform is ground down).
+        for _ in 0..(300 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            if s.blockade.is_some() && s.defense_tier == 0 { break; }
+        }
+        // Backdate the (already-running, undefended) siege clock past the duration.
+        let dur = w.siege_duration_secs();
+        let now = w.time;
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().blockade.as_mut().unwrap().siege_since = Some(now - dur - 1.0);
+        sys
+    }
+
+    fn step_capture(w: &mut World) -> Option<(PlayerId, EntityId)> {
+        for _ in 0..5 {
+            for e in w.step(&[]) {
+                if let EventPayload::SystemCaptured { new_owner, system, .. } = e.payload {
+                    return Some((new_owner, system));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn siege_plus_colony_captures_with_half_tiers_and_plunder() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = ripe_siege(&mut w, atk, def, pos, 0);
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            s.extractor_tier = 4;
+            s.shipyard_tier = 2;
+            s.habitat_tier = 3;
+            *s.stockpile.entry(Commodity::Ore).or_insert(0.0) += 100.0;
+        }
+        let colony = colony_at(&mut w, atk, pos);
+
+        let mut plunder = None;
+        let cap = {
+            let mut got = None;
+            'outer: for _ in 0..5 {
+                for e in w.step(&[]) {
+                    if let EventPayload::SystemCaptured { new_owner, system, plunder: p, .. } = &e.payload {
+                        plunder = Some(p.clone());
+                        got = Some((*new_owner, *system));
+                        break 'outer;
+                    }
+                }
+            }
+            got
+        };
+        assert_eq!(cap, Some((atk, sys)), "a colony delivered to a ripe siege captures");
+        let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+        assert_eq!(s.owner, Some(atk), "ownership flipped to the captor");
+        assert_eq!(s.extractor_tier, 2, "developments transfer at HALF tiers (4→2)");
+        assert_eq!(s.shipyard_tier, 1, "2→1");
+        assert_eq!(s.habitat_tier, 1, "3→1 (rounded down)");
+        assert!(s.blockade.is_none(), "the captured system is no longer besieged");
+        assert_eq!(plunder.unwrap().get(&Commodity::Ore).copied(), Some(100), "the stockpile is plundered (itemized)");
+        assert!(!w.fleets.contains_key(&colony), "the lone colony ship was consumed (occupation)");
+    }
+
+    #[test]
+    fn capture_needs_defenses_down_a_ripe_clock_and_a_colony() {
+        // (a) DEFENSES UP: a platform that never suppresses → siege clock never
+        //     starts; a delivered colony is held, not consumed.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let pos = Vec2::new(5000.0, 0.0);
+            // A lone blockader vs a tall platform: it can't suppress the defenses.
+            let sys = grant_system_at(&mut w, def, pos, 12);
+            blockader_on_station(&mut w, atk, sys, 1);
+            for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            assert!(s.defense_tier > 0 && s.blockade.as_ref().and_then(|b| b.siege_since).is_none(), "defenses up → no siege clock");
+        }
+        // (b) GARRISON present: siege clock can't run while a defender combatant holds.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let pos = Vec2::new(5000.0, 0.0);
+            let sys = grant_system_at(&mut w, def, pos, 0);
+            blockader_on_station(&mut w, atk, sys, 1);
+            let gid = w.alloc_entity_id();
+            w.fleets.insert(gid, Fleet::single(gid, def, ShipKind::Corvette, pos, FleetOrder::Idle, None));
+            w.step(&[]); // first resolve sees the garrison
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            assert!(s.blockade.is_some() && s.blockade.as_ref().unwrap().siege_since.is_none(), "a garrison blocks the siege clock");
+        }
+        // (c) SIEGE TOO SHORT: undefended + blockaded but the clock just started.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let pos = Vec2::new(5000.0, 0.0);
+            let sys = grant_system_at(&mut w, def, pos, 0);
+            blockader_on_station(&mut w, atk, sys, 1);
+            w.step(&[]); // established; siege_since = now (fresh, not ripe)
+            let colony = colony_at(&mut w, atk, pos);
+            assert_eq!(step_capture(&mut w), None, "a fresh siege can't be captured yet");
+            assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().owner, Some(def), "still the defender's");
+            assert!(w.fleets.contains_key(&colony), "colony ship held, not consumed in vain");
+        }
+        // (d) NO COLONY: a ripe siege with no colonists never captures — sieges
+        //     strangle, only colonists conquer.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let sys = ripe_siege(&mut w, atk, def, Vec2::new(5000.0, 0.0), 0);
+            for _ in 0..10 { w.step(&[]); }
+            assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().owner, Some(def), "no colony ⇒ no capture, ever");
+        }
+    }
+
+    #[test]
+    fn home_system_is_never_captured() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        // Blockade the DEFENDER'S HOME system directly.
+        let home = w.players[&def].home_system.unwrap();
+        let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // Suppress its bootstrap shipyard-tier defenses irrelevant; ensure defense 0.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().defense_tier = 0;
+        blockader_on_station(&mut w, atk, home, 1);
+        w.step(&[]); // blockades — but a home NEVER starts a siege clock
+        // Force-backdate anyway; resolve_blockades must RESET it (home protection).
+        let backdated = w.time - w.siege_duration_secs() - 1.0;
+        if let Some(b) = w.systems.iter_mut().find(|s| s.id == home).unwrap().blockade.as_mut() {
+            b.siege_since = Some(backdated);
+        }
+        let colony = colony_at(&mut w, atk, home_pos);
+        assert_eq!(step_capture(&mut w), None, "a home system can never be captured (no elimination)");
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().owner, Some(def), "the beaten player keeps their home");
+        assert!(w.fleets.contains_key(&colony), "the colony ship is held, not consumed against a home");
+        assert!(w.systems.iter().find(|s| s.id == home).unwrap().blockade.as_ref().unwrap().siege_since.is_none(), "home siege clock stays reset");
+    }
+
+    #[test]
+    fn siege_clock_resets_on_lift() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = grant_system_at(&mut w, def, pos, 0);
+        let blk = blockader_on_station(&mut w, atk, sys, 1);
+        w.step(&[]);
+        let first = w.systems.iter().find(|s| s.id == sys).unwrap().blockade.as_ref().unwrap().siege_since.unwrap();
+        // Lift: send the blockader far away (off station).
+        w.fleets.get_mut(&blk).unwrap().order = FleetOrder::MoveTo { dest: Vec2::new(-9000.0, 0.0) };
+        for _ in 0..(3 * crate::config::TICK_HZ) { w.step(&[]); }
+        assert!(w.systems.iter().find(|s| s.id == sys).unwrap().blockade.is_none(), "moving off station lifts it");
+        // Re-blockade with a fresh fleet → a NEW siege clock, not the old one.
+        w.fleets.get_mut(&blk).unwrap().pos = pos;
+        w.fleets.get_mut(&blk).unwrap().order = FleetOrder::Blockade { system: sys, station: pos };
+        w.step(&[]);
+        let second = w.systems.iter().find(|s| s.id == sys).unwrap().blockade.as_ref().unwrap().siege_since.unwrap();
+        assert!(second > first, "a lift fully resets the clock (new siege starts later)");
+    }
+
+    #[test]
+    fn blockade_and_siege_survive_a_snapshot() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        let sys = ripe_siege(&mut w, atk, def, Vec2::new(5000.0, 0.0), 0);
+        let before = w.systems.iter().find(|s| s.id == sys).unwrap().blockade;
+        assert!(before.is_some() && before.unwrap().siege_since.is_some());
+        // serde round-trip (mid-siege persistence).
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        let after = w2.systems.iter().find(|s| s.id == sys).unwrap().blockade;
+        assert_eq!(format!("{before:?}"), format!("{after:?}"), "blockade + siege clock persist across a snapshot");
     }
 }

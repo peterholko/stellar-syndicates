@@ -217,6 +217,21 @@ pub enum EventPayload {
     /// the last on-station blockader was destroyed, driven off, or withdrew.
     /// Logistics resume. Light-delayed to the owner from the system.
     BlockadeLifted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+
+    /// A besieged system was CAPTURED (§contestable-territory Part 2): a colony
+    /// ship arrived while defenses were suppressed and the siege clock had run,
+    /// so the system FLIPPED from `old_owner` to `new_owner`. Both learn it
+    /// light-delayed from `pos` (the old owner: "you lost X"; the captor: "you
+    /// captured X"). `plunder` is the seized stockpile (the defender's report
+    /// itemizes what was lost). `tiers_kept` is the halved development the captor
+    /// inherits. NEVER emitted for a home system (home protection).
+    SystemCaptured {
+        old_owner: PlayerId,
+        new_owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        plunder: std::collections::BTreeMap<Commodity, u32>,
+    },
 }
 
 /// Economy events. `player` always names the corporation involved; values are

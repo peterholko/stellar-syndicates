@@ -158,6 +158,25 @@ impl Timeline {
                         "Your blockade of {name} is established — its logistics are strangled while you hold station."
                     ));
                 }
+                // A besieged system was CAPTURED (§contestable-territory Part 2).
+                // Both participants learn it light-delayed from the flip site: the
+                // OLD owner ("you lost X"), the CAPTOR ("you captured X"). Third
+                // parties see the ownership change via the light-gated map.
+                EventPayload::SystemCaptured { old_owner, new_owner, system, pos, .. } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(old_owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*old_owner, observe, TimelineSeverity::Bad, format!(
+                            "You LOST {name} — a besieging colony ship captured it. Its stockpile was plundered and its developments damaged; your fleets survive."
+                        ));
+                    }
+                    if let Some(cc) = world.players.get(new_owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*new_owner, observe, TimelineSeverity::Good, format!(
+                            "You CAPTURED {name} — the siege paid off. You inherit its (damaged) developments and plundered stockpile."
+                        ));
+                    }
+                }
                 // A blockade at one of your systems lifted (§contestable-territory).
                 EventPayload::BlockadeLifted { owner, system, pos } => {
                     let name = system_name(world, *system);

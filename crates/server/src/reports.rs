@@ -68,6 +68,30 @@ pub struct RetainedReport {
     pub target_losses: Vec<crate::protocol::CompCount>,
 }
 
+/// §contestable-territory Part 2: a queued CAPTURE report, delivered per
+/// participant when the flip's light reaches them (same machinery as battles).
+struct PendingCapture {
+    id: u64,
+    pos: Vec2,
+    event_time: f64,
+    new_owner: PlayerId,
+    plunder: Vec<crate::protocol::StockSlot>,
+    recipients: Vec<Recipient>,
+}
+
+/// A delivered CAPTURE as one participant learned it — powers the capture
+/// aftermath marker + results panel. Owner-only by construction (keyed by the
+/// two participants). `captor` = you took it; else you lost it.
+#[derive(Clone)]
+pub struct RetainedCapture {
+    pub id: u64,
+    pub pos: Vec2,
+    pub event_time: f64,
+    pub arrival_time: f64,
+    pub captor: bool,
+    pub plunder: Vec<crate::protocol::StockSlot>,
+}
+
 #[derive(Default)]
 pub struct ReportScheduler {
     pending: Vec<PendingReport>,
@@ -75,6 +99,10 @@ pub struct ReportScheduler {
     /// Delivered reports kept per participant (newest last, capped at
     /// [`BATTLE_REPORTS_KEPT`]).
     retained: BTreeMap<PlayerId, Vec<RetainedReport>>,
+    /// §Part 2: queued + delivered CAPTURE reports (same light-delayed, per-
+    /// participant retention as battles).
+    pending_captures: Vec<PendingCapture>,
+    retained_captures: BTreeMap<PlayerId, Vec<RetainedCapture>>,
 }
 
 impl ReportScheduler {
@@ -115,6 +143,23 @@ impl ReportScheduler {
                     recipients: vec![
                         Recipient { player: *attacker, delivered: false },
                         Recipient { player: *defender, delivered: false },
+                    ],
+                });
+            } else if let EventPayload::SystemCaptured { old_owner, new_owner, pos, plunder, .. } = &e.payload {
+                // §Part 2: queue the flip for both participants, light-delayed.
+                self.next_id += 1;
+                self.pending_captures.push(PendingCapture {
+                    id: self.next_id,
+                    pos: *pos,
+                    event_time: e.time,
+                    new_owner: *new_owner,
+                    plunder: plunder
+                        .iter()
+                        .map(|(commodity, units)| crate::protocol::StockSlot { commodity: *commodity, units: *units })
+                        .collect(),
+                    recipients: vec![
+                        Recipient { player: *old_owner, delivered: false },
+                        Recipient { player: *new_owner, delivered: false },
                     ],
                 });
             }
@@ -176,6 +221,36 @@ impl ReportScheduler {
         self.pending.retain(|r| {
             r.recipients.iter().any(|rec| !rec.delivered) && (now - r.event_time) < MAX_REPORT_AGE
         });
+        // §Part 2: deliver + retain CAPTURE reports on the same light gate (no
+        // transient toast — the timeline carries the notice; this feeds the
+        // marker/panel). Strictly per-participant.
+        for cap in &mut self.pending_captures {
+            let arrival = cap.event_time + cap.pos.distance(cc) / c;
+            if arrival > now {
+                continue;
+            }
+            for rec in &mut cap.recipients {
+                if rec.player == player && !rec.delivered {
+                    rec.delivered = true;
+                    let kept = self.retained_captures.entry(player).or_default();
+                    kept.push(RetainedCapture {
+                        id: cap.id,
+                        pos: cap.pos,
+                        event_time: cap.event_time,
+                        arrival_time: arrival,
+                        captor: player == cap.new_owner,
+                        plunder: cap.plunder.clone(),
+                    });
+                    if kept.len() > BATTLE_REPORTS_KEPT {
+                        let excess = kept.len() - BATTLE_REPORTS_KEPT;
+                        kept.drain(..excess);
+                    }
+                }
+            }
+        }
+        self.pending_captures.retain(|cap| {
+            cap.recipients.iter().any(|rec| !rec.delivered) && (now - cap.event_time) < MAX_REPORT_AGE
+        });
         out
     }
 
@@ -185,6 +260,12 @@ impl ReportScheduler {
     /// calls, so a reconnecting client gets its markers back from the next View.
     pub fn retained_for(&self, player: PlayerId) -> &[RetainedReport] {
         self.retained.get(&player).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// §Part 2: the CAPTURE reports `player` has learned of, newest last —
+    /// per-participant (a non-participant has none). Stable across calls.
+    pub fn retained_captures_for(&self, player: PlayerId) -> &[RetainedCapture] {
+        self.retained_captures.get(&player).map(Vec::as_slice).unwrap_or(&[])
     }
 }
 
@@ -218,6 +299,59 @@ mod tests {
                 target_losses: BTreeMap::new(),
             },
         )
+    }
+
+    fn capture_event(time: f64, old_owner: PlayerId, new_owner: PlayerId, pos: Vec2) -> Event {
+        let mut plunder = BTreeMap::new();
+        plunder.insert(sim::Commodity::Ore, 42);
+        Event::new(time, EventPayload::SystemCaptured {
+            old_owner, new_owner, system: EntityId(9), pos, plunder,
+        })
+    }
+
+    /// §Part 2: a CAPTURE is retained per-participant, each stamped with THEIR
+    /// own light-arrival; a non-participant retains nothing (leak check). The
+    /// captor's report is `captor=true`, the old owner's `captor=false`, both
+    /// carrying the plundered stockpile (the defender's report itemizes it).
+    #[test]
+    fn capture_reports_are_per_participant_and_light_stamped() {
+        let c = 300.0;
+        let old_owner = PlayerId(1);
+        let captor = PlayerId(2);
+        let third = PlayerId(3);
+        let pos = Vec2::new(0.0, 0.0);
+        let old_cc = Vec2::new(300.0, 0.0); // 1 s away
+        let cap_cc = Vec2::new(6000.0, 0.0); // 20 s away
+        let third_cc = Vec2::new(600.0, 0.0); // near, but NOT a participant
+
+        let mut sched = ReportScheduler::new();
+        sched.ingest(&[capture_event(100.0, old_owner, captor, pos)]);
+
+        // Old owner (1 s) learns first; the captor (20 s) not yet.
+        sched.due_for(old_owner, old_cc, c, 101.5);
+        sched.due_for(captor, cap_cc, c, 101.5);
+        let lost_id = {
+            let lost = sched.retained_captures_for(old_owner);
+            assert_eq!(lost.len(), 1);
+            assert!(!lost[0].captor, "the old owner's report reads as a LOSS");
+            assert!((lost[0].arrival_time - 101.0).abs() < 1e-9);
+            assert_eq!(lost[0].plunder.first().map(|s| s.units), Some(42), "the loss is itemized");
+            lost[0].id
+        };
+        assert!(sched.retained_captures_for(captor).is_empty(), "captor hasn't learned yet");
+
+        // The captor's light arrives → their own report, same battle id.
+        sched.due_for(captor, cap_cc, c, 121.0);
+        {
+            let took = sched.retained_captures_for(captor);
+            assert_eq!(took.len(), 1);
+            assert!(took[0].captor, "the captor's report reads as a CAPTURE");
+            assert_eq!(took[0].id, lost_id, "both sides share the capture id");
+        }
+
+        // A non-participant never retains it, however close.
+        sched.due_for(third, third_cc, c, 300.0);
+        assert!(sched.retained_captures_for(third).is_empty(), "leak: a non-participant sees no capture");
     }
 
     #[test]

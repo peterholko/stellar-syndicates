@@ -228,6 +228,23 @@ pub struct BattleReportView {
     pub target_losses: Vec<CompCount>,
 }
 
+/// §contestable-territory Part 2: a RETAINED capture report, as one participant
+/// learned it — powers the capture aftermath marker + results panel. Owner-only
+/// by construction (per participant). `captor` = you took the system; else you
+/// lost it. `plunder` is the seized stockpile the captor gained / the old owner
+/// lost (the defender's report itemizes it).
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptureReportView {
+    pub id: u64,
+    pub pos: Vec2,
+    /// Sim-time the system FLIPPED.
+    pub at_time: f64,
+    /// Sim-time THIS player's light arrived (when you learned).
+    pub learned_at: f64,
+    pub captor: bool,
+    pub plunder: Vec<StockSlot>,
+}
+
 /// A PROJECTED engagement estimate (§FLEETS Part 3), computed by running the
 /// SAME shared Lanchester attrition forward on the observer's own view data. It
 /// is honest about staleness: `composition_age` is how old the target sighting
@@ -336,6 +353,10 @@ pub struct GalaxyInfo {
     /// `yield` Fuel out per Volatile — for the owner-only refining readout.
     pub refinery_rate_per_tier: f64,
     pub refinery_yield: f64,
+    /// §contestable-territory Part 2: how long (sim seconds) an unbroken,
+    /// defense-suppressed siege must run before a colony ship can capture — the
+    /// client renders siege progress against it.
+    pub siege_secs: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -368,6 +389,11 @@ pub struct BlockadeStateView {
     pub by: PlayerId,
     pub since: f64,
     pub by_me: bool,
+    /// §Part 2 SIEGE: sim-time the (defense-suppressed) siege clock started, or
+    /// null if the siege can't progress yet (defenses up, a garrison present, or
+    /// a home system). The client shows progress = (now − siege_since) /
+    /// `GalaxyInfo.siege_secs`; capture becomes possible at full progress.
+    pub siege_since: Option<f64>,
 }
 
 /// An owner-only in-progress build at a system (§step1). `key` is what's building;
@@ -629,6 +655,10 @@ pub enum ServerMsg {
         /// (last [`crate::reports::BATTLE_REPORTS_KEPT`]), so markers/results
         /// survive reconnects.
         battle_reports: Vec<BattleReportView>,
+        /// §contestable-territory Part 2: CONCLUDED captures this player was a
+        /// participant in and has LEARNED of (per-participant, light-delayed) —
+        /// the capture aftermath markers + results. Retained (reconnect-safe).
+        capture_reports: Vec<CaptureReportView>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

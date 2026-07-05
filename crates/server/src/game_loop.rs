@@ -182,6 +182,8 @@ impl GameLoop {
                             // Refinery tunables (§buildings step 3b).
                             refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
                             refinery_yield: sim::build::REFINERY_YIELD,
+                            // §contestable-territory Part 2: the siege duration.
+                            siege_secs: self.world.siege_duration_secs(),
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -496,6 +498,20 @@ impl GameLoop {
                     target_losses: r.target_losses.clone(),
                 })
                 .collect();
+            // §contestable-territory Part 2: retained CAPTURE reports (per-participant).
+            let capture_reports: Vec<crate::protocol::CaptureReportView> = self
+                .reports
+                .retained_captures_for(player_id)
+                .iter()
+                .map(|r| crate::protocol::CaptureReportView {
+                    id: r.id,
+                    pos: r.pos,
+                    at_time: r.event_time,
+                    learned_at: r.arrival_time,
+                    captor: r.captor,
+                    plunder: r.plunder.clone(),
+                })
+                .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             let systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
@@ -580,6 +596,7 @@ impl GameLoop {
                         .collect(),
                     battles,
                     battle_reports,
+                    capture_reports,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

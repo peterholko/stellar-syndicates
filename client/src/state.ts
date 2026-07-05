@@ -67,6 +67,8 @@ export interface ViewState {
   /// §battle-aftermath: retained concluded battles this player was IN — present
   /// only after their conclusion light arrived (owner-only, from the View).
   battleReports: import("./protocol").BattleReportView[];
+  /// §contestable-territory Part 2: retained captures this player participated in.
+  captureReports: import("./protocol").CaptureReportView[];
   /// §battle-aftermath: report ids the player has OPENED (viewed → static/dim
   /// marker) and DISMISSED (marker hidden; the report stays in the log).
   /// Client-local, persisted to localStorage across reloads.
@@ -125,6 +127,7 @@ export function initialState(): ViewState {
     pendingOrders: new Map(),
     battles: [],
     battleReports: [],
+    captureReports: [],
     battleViewed: new Set(),
     battleDismissed: new Set(),
     timeline: [],

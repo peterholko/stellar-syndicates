@@ -553,7 +553,7 @@ pub fn filter_systems(
             let blockade = sys.blockade.and_then(|b| {
                 let by_me = b.by == viewer;
                 let owner_sees = own && now >= b.since + sys.pos.distance(cc) / c;
-                (by_me || owner_sees).then_some(BlockadeStateView { by: b.by, since: b.since, by_me })
+                (by_me || owner_sees).then_some(BlockadeStateView { by: b.by, since: b.since, by_me, siege_since: b.siege_since })
             });
             SystemStateView {
                 id: sys.id,

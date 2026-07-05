@@ -190,6 +190,7 @@ export class Renderer {
   private aftermathSprites = new Map<number, Sprite>();
   private battleSprites = new Map<number, Sprite>(); // pooled ongoing-battle icons (keyed by index)
   private aftermathHits: { id: number; sx: number; sy: number }[] = [];
+  private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
@@ -896,6 +897,48 @@ export class Renderer {
     return best;
   }
 
+  /// §contestable-territory Part 2: CAPTURE markers — a flip changed a system's
+  /// hands. Screen-space UI like the aftermath markers (fixed size, never grows),
+  /// under the ghosts. A GOLD flag = you captured; RED = you lost. Unviewed
+  /// pulses; viewed dims; dismissed / older than the TTL are hidden. Shares the
+  /// battleViewed / battleDismissed sets with battles (ids are globally unique).
+  private drawCaptures(state: ViewState): void {
+    const g = this.aftermathGfx; // same layer as the aftermath vector fallback
+    this.captureHits = [];
+    const simNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+    for (const r of state.captureReports) {
+      if (state.battleDismissed.has(r.id)) continue;
+      if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
+      const s = this.worldToScreen(r.pos);
+      const viewed = state.battleViewed.has(r.id);
+      const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
+      const alpha = viewed ? 0.5 : 0.8 + 0.2 * pulse;
+      const col = r.captor ? 0xffcf6b : COL_THREAT; // gold = gained, red = lost
+      // A little flag on a pole (territory changed hands).
+      const px = s.x;
+      const py = s.y;
+      const h = BATTLE_MARKER_PX * 0.5;
+      g.moveTo(px, py + h * 0.6).lineTo(px, py - h).stroke({ width: 1.6, color: col, alpha });
+      g.poly([px, py - h, px + h * 0.9, py - h * 0.6, px, py - h * 0.2]).fill({ color: col, alpha });
+      if (!viewed) {
+        g.circle(px, py - h * 0.4, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: col, alpha: 0.15 + 0.3 * pulse });
+      }
+      this.captureHits.push({ id: r.id, sx: px, sy: py });
+    }
+  }
+
+  /// Hit-test the capture markers (screen-space, fixed radius). Consumed by
+  /// main.ts's map click, checked alongside the aftermath markers.
+  capturePick(sx: number, sy: number): number | null {
+    let best: number | null = null;
+    let bestD = BATTLE_MARKER_HIT_PX;
+    for (const h of this.captureHits) {
+      const d = Math.hypot(h.sx - sx, h.sy - sy);
+      if (d < bestD) { bestD = d; best = h.id; }
+    }
+    return best;
+  }
+
   private interceptLabel(id: string): Text {
     let t = this.interceptLabels.get(id);
     if (!t) {
@@ -1507,6 +1550,7 @@ export class Renderer {
       this.drawIntercepts(state);
       this.drawBattles(state);
       this.drawAftermath(state);
+      this.drawCaptures(state);
       this.drawSignals(state, dt);
     }
 

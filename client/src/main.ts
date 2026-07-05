@@ -869,8 +869,14 @@ function updateSysviewManage(): void {
   // dispatches hold at origin, so the ship button is disabled while blockaded
   // (production still accrues into the stockpile). A prominent banner explains it.
   const blockaded = !!dyn.blockade;
+  const siege = siegeProgress(dyn);
+  const siegeLine = siege
+    ? `<div class="deps-head" style="margin-top:6px">${badge("negative", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `under siege — falls in ${fmtCountdown(siege.left)}`)}</div>` +
+      `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>` +
+      `<div class="mhint dim">Defenses are suppressed and the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system.</div>`
+    : "";
   const blockadeBanner = blockaded
-    ? `<div class="storage-warn" style="margin:6px 0">${badge("negative", "under blockade")} a rival fleet holds station — convoys are held in &amp; out. Production still accrues; break the blockade (relief, or a new Defense Platform tier) to resume shipping.</div>`
+    ? `<div class="storage-warn" style="margin:6px 0">${badge("negative", "under blockade")} a rival fleet holds station — convoys are held in &amp; out. Production still accrues; break the blockade (relief, or a new Defense Platform tier) to resume shipping.</div>${siegeLine}`
     : "";
   const canShip = !blockaded && shippableStock(dyn).length > 0;
   const shipTitle = blockaded ? "held — this system is under blockade" : canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units";
@@ -1042,6 +1048,36 @@ function openBattlePanel(id: number): void {
     `<div class="sp-line">You lost: <b>${esc(lossStr(yourLoss))}</b></div>` +
     `<div class="sp-line">They lost: <b>${esc(lossStr(theirLoss))}</b></div>` +
     `<div class="mhint dim">Positions and outcomes are as of the light that reached your command center — the site may look different by now.</div>` +
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+  $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
+  $("battle-panel").classList.add("is-open");
+}
+
+// §contestable-territory Part 2: the CAPTURE results panel — a system changed
+// hands. Reuses the ember-striped battle-panel element + the shared viewed/
+// dismissed sets (capture ids are globally unique). Shows the flip in the
+// recipient's terms (you captured / you lost), the light delay, and the plunder.
+function openCapturePanel(id: number): void {
+  const r = state.captureReports.find((x) => x.id === id);
+  if (!r) return;
+  buildBattlePanel();
+  state.battleViewed.add(id);
+  saveBattleMarks();
+  const now = liveSimTime();
+  const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
+  const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ") : "an empty stockpile";
+  const verdict = r.captor ? badge("positive", "captured — the system is yours") : badge("negative", "lost — the system was taken");
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">capture · delayed report</div>` +
+    `<h2>${r.captor ? "Captured" : "Lost"} ${esc(nearestSystemName(r.pos))}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const body =
+    `<div class="sp-line">${verdict}</div>` +
+    `<div class="sp-sec">When</div>` +
+    `<div class="sp-line">Fell <b>${ago(r.at_time)}</b> ago · you learned <b>${ago(r.learned_at)}</b> ago <span class="dim">(light delay ${fmtCountdown(Math.max(0, r.learned_at - r.at_time))})</span></div>` +
+    `<div class="sp-sec">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
+    `<div class="sp-line"><b>${plunderStr}</b> <span class="dim">— the besieged stockpile. Developments transferred at half tiers.</span></div>` +
+    `<div class="mhint dim">${r.captor ? "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination." : "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship."}</div>` +
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
@@ -1266,6 +1302,14 @@ function handleMapClick(sx: number, sy: number): void {
       const hit = renderer.aftermathPick(sx, sy);
       if (hit !== null) {
         openBattlePanel(hit);
+        return;
+      }
+    }
+    // §contestable-territory Part 2: a capture marker → the capture results.
+    {
+      const hit = renderer.capturePick(sx, sy);
+      if (hit !== null) {
+        openCapturePanel(hit);
         return;
       }
     }
@@ -1760,9 +1804,14 @@ function updateSystemTab(): void {
   const ownTag = isMyHome ? badge("accent", "home base")
     : mine ? badge("accent", "yours")
       : rival ? badge("negative", "rival") : badge("neutral", "unclaimed");
-  // §contestable-territory Part 1: a blockade badge (participant-only, from the
-  // fog-safe view field) — "UNDER BLOCKADE" for the owner, "BLOCKADING" for the besieger.
-  const blkTag = dyn?.blockade ? ` ${badge("negative", dyn.blockade.by_me ? "blockading" : "under blockade")}` : "";
+  // §contestable-territory: a blockade badge (participant-only, from the fog-safe
+  // view field) — "UNDER BLOCKADE" for the owner, "BLOCKADING" for the besieger —
+  // plus a SIEGE badge with a live capture countdown once defenses are suppressed.
+  const siege = siegeProgress(dyn);
+  let blkTag = dyn?.blockade ? ` ${badge("negative", dyn.blockade.by_me ? "blockading" : "under blockade")}` : "";
+  if (siege) {
+    blkTag += ` ${badge("negative", siege.ripe ? (dyn!.blockade!.by_me ? "READY TO CAPTURE" : "SIEGE — CRITICAL") : `siege ${fmtCountdown(siege.left)}`)}`;
+  }
   const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys))}</div>` +
     `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}${blkTag}</div></div>`;
 
@@ -2280,6 +2329,17 @@ function agoLabel(at: number): string {
   return d < 90 ? `${d.toFixed(0)}s ago` : `${(d / 60).toFixed(0)}m ago`;
 }
 
+// §contestable-territory Part 2: siege progress for a system's blockade view
+// field. Returns null unless the (defense-suppressed) siege clock is running.
+// `pct` fills a bar; `left` is the capture countdown; `ripe` = a colony ship
+// delivered now would capture.
+function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: number; ripe: boolean } | null {
+  if (!dyn?.blockade || dyn.blockade.siege_since == null || !state.galaxy) return null;
+  const total = state.galaxy.siege_secs || 1;
+  const elapsed = Math.max(0, liveSimTime() - dyn.blockade.siege_since);
+  return { pct: Math.min(100, (elapsed / total) * 100), left: Math.max(0, total - elapsed), ripe: elapsed >= total };
+}
+
 type Attn = { severity: TimelineEntry["severity"]; text: string };
 function computeAttention(): Attn[] {
   if (state.playerId === null) return [];
@@ -2440,6 +2500,7 @@ function join(): void {
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
+          state.captureReports = msg.capture_reports;
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
