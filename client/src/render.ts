@@ -516,11 +516,9 @@ export class Renderer {
     this.bg.removeChildren();
     if (!this.galaxy) return;
     const g = new Graphics();
-    const rPx = this.galaxy.radius * this.scale;
-    g.circle(this.cx, this.cy, rPx).stroke({ width: 1, color: 0x1c2740, alpha: 0.9 });
-    for (const f of [0.33, 0.66]) {
-      g.circle(this.cx, this.cy, rPx * f).stroke({ width: 1, color: 0x141d30, alpha: 0.8 });
-    }
+    // (No galaxy radial rings: they implied discrete "zones" that don't exist —
+    // radial variation is a CONTINUOUS frontier gradient, not stepped, so the
+    // rings marked nothing. The hub landmark stays.)
     const hub = this.worldToScreen(this.galaxy.hub);
     g.circle(hub.x, hub.y, 11).fill({ color: COL_HUB, alpha: 0.18 });
     g.circle(hub.x, hub.y, 6).fill({ color: COL_HUB, alpha: 0.4 });
