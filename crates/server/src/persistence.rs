@@ -112,7 +112,7 @@ impl Persistence for PgPersistence {
                 .await
                 .ok()
                 .flatten();
-        let value = row.map(|(v,)| v)?;
+        let value = migrate_world_json(row.map(|(v,)| v)?);
         match serde_json::from_value::<World>(value) {
             Ok(w) => {
                 info!(tick = w.tick, players = w.players.len(), "restored world from snapshot");
@@ -124,6 +124,44 @@ impl Persistence for PgPersistence {
             }
         }
     }
+}
+
+/// Migrate a persisted `World` snapshot forward to the current schema
+/// (§FLEETS). The single→fleet refactor made two wire changes:
+///
+///   1. `world.ships` → `world.fleets` (the map key of the entity table);
+///   2. each entity gained `composition: {kind: count}` and lost the scalar
+///      `kind` field.
+///
+/// EVERY PERSISTED SHIP BECOMES A FLEET OF ONE: an old entity `{kind: "raider",
+/// …}` migrates to `{composition: {"raider": 1}, …}`. serde ignores the leftover
+/// `kind`/unknown fields, and the new `damage` pool defaults to empty — so a
+/// pre-fleet snapshot restores as an identical N=1 world. Idempotent: a snapshot
+/// already in the new shape passes through untouched.
+pub fn migrate_world_json(mut value: serde_json::Value) -> serde_json::Value {
+    let Some(obj) = value.as_object_mut() else {
+        return value;
+    };
+    // (1) Rename the entity table `ships` → `fleets` if the old key is present
+    // and the new one isn't.
+    if let Some(ships) = obj.remove("ships") {
+        obj.entry("fleets").or_insert(ships);
+    }
+    // (2) Give every entity a composition if it only has a scalar `kind`.
+    if let Some(fleets) = obj.get_mut("fleets").and_then(|f| f.as_object_mut()) {
+        for entity in fleets.values_mut() {
+            let Some(fo) = entity.as_object_mut() else { continue };
+            if fo.contains_key("composition") {
+                continue; // already a fleet — leave it be (idempotent)
+            }
+            if let Some(kind) = fo.get("kind").and_then(|k| k.as_str()).map(str::to_owned) {
+                let mut comp = serde_json::Map::new();
+                comp.insert(kind, serde_json::Value::from(1u32));
+                fo.insert("composition".to_string(), serde_json::Value::Object(comp));
+            }
+        }
+    }
+    value
 }
 
 /// In-memory stub: counts what it would have written and logs. Lets the whole
@@ -299,5 +337,43 @@ pub fn to_json<T: Serialize>(value: &T) -> serde_json::Value {
             warn!(error = %e, "failed to serialise value for persistence; storing null");
             serde_json::Value::Null
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sim::{Command, PlayerId, ShipKind, SimConfig, World};
+
+    #[test]
+    fn migrates_old_ship_snapshot_to_fleet_of_one() {
+        // An old-shape entity: scalar `kind`, no `composition`, under `ships`.
+        let old = json!({
+            "tick": 7,
+            "ships": {
+                "42": { "id": "42", "owner": "1", "kind": "raider", "pos": {"x": 0.0, "y": 0.0} }
+            }
+        });
+        let migrated = migrate_world_json(old);
+        let obj = migrated.as_object().unwrap();
+        assert!(!obj.contains_key("ships"), "ships key renamed away");
+        let fleet = &migrated["fleets"]["42"];
+        assert_eq!(fleet["composition"]["raider"], json!(1), "one raider → fleet of one");
+    }
+
+    #[test]
+    fn migration_is_idempotent_and_new_snapshots_still_load() {
+        // A real, current-shape world round-trips through migrate untouched.
+        let mut w = World::new(SimConfig::for_players(999, 4));
+        w.step(&[Command::AddPlayer { id: PlayerId(7), name: "Ada".into() }]);
+        let before = w.fleets.len();
+        assert!(before > 0, "join spawns a starting fleet");
+        let value = serde_json::to_value(&w).unwrap();
+        let restored: World = serde_json::from_value(migrate_world_json(value)).unwrap();
+        assert_eq!(restored.fleets.len(), before, "new snapshot survives migrate + reload");
+        // Every restored fleet has a non-empty composition (no lost ships).
+        assert!(restored.fleets.values().all(|f| f.total_count() >= 1));
+        assert!(restored.fleets.values().any(|f| f.contains(ShipKind::Convoy)));
     }
 }

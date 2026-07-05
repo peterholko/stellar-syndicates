@@ -13,11 +13,13 @@
 //! * `DATABASE_URL` — Postgres DSN; if unset/unreachable, persistence is a
 //!   no-op stub and the server still runs.
 
+mod estimate;
 mod game_loop;
 mod persistence;
 mod protocol;
 mod reports;
 mod session;
+mod timeline;
 mod view;
 mod ws;
 

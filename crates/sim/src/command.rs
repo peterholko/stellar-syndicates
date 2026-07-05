@@ -7,8 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::doctrine::FleetDoctrine;
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
+use crate::standing::StandingOrder;
 
 /// A single authoritative mutation request, applied at a tick boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,17 +83,6 @@ pub enum Command {
         limit_price: f64,
     },
 
-    /// Claim an unclaimed star system for a credit cost (§4). Resolves in true
-    /// space at this tick: the system's ownership flips and accrues production
-    /// from then on. The owner learns it on their own clock; rivals learn who
-    /// owns it only once the claim's light reaches them (the view filter gates
-    /// it like a home-anchor claim — no FTL presence leak). Ignored if the system
-    /// is already owned or the player can't afford it.
-    ClaimSystem {
-        player_id: PlayerId,
-        system_id: EntityId,
-    },
-
     /// Dispatch convoys to carry a claimed system's accumulated production to the
     /// hub to sell (§9). One raidable convoy per stockpiled commodity, flying the
     /// dangerous, fog-blind frontier→hub crossing; each sells on arrival at the
@@ -100,5 +91,105 @@ pub enum Command {
     ShipProduction {
         player_id: PlayerId,
         system_id: EntityId,
+    },
+
+    /// Create or replace a standing logistics order (§15) — a constrained
+    /// automation rule the corp runs server-side, online or off. INSTANT local
+    /// administration (like a limit order): it changes only the player's own
+    /// private policy table and reveals nothing to rivals; the CONVOYS it later
+    /// spawns are sub-light and raidable. `order.id == 0` creates (a fresh id is
+    /// allocated); a matching id replaces (edit), preserving anti-spam state.
+    /// Validated against the constrained option set; nonsense is ignored.
+    SetStandingOrder {
+        player_id: PlayerId,
+        order: StandingOrder,
+    },
+
+    /// Remove a standing order by id (no-op if absent). Does not recall any convoy
+    /// it already dispatched. Instant local administration.
+    ClearStandingOrder {
+        player_id: PlayerId,
+        order_id: u32,
+    },
+
+    /// Set the corporation's fleet doctrine (§16) — the constrained, server-run
+    /// combat & logistics policy ([`FleetDoctrine`]) that governs how autonomous
+    /// pickets engage/retreat/escort and how automated supply re-routes when a
+    /// destination is lost. INSTANT local administration (like a standing order):
+    /// it changes only the corp's own private policy and reveals nothing to rivals;
+    /// the SHIPS it later commands are sub-light, raidable, and light-revealed.
+    /// Always valid (a closed menu of enums), so it is never rejected.
+    SetFleetDoctrine {
+        player_id: PlayerId,
+        doctrine: FleetDoctrine,
+    },
+
+    /// Build a ship at one of the player's OWNED systems (§step1 growth sink).
+    /// Deducts a fixed RECIPE of commodities from that system's stockpile NOW and
+    /// enqueues a build job that completes after the recipe's duration, spawning the
+    /// ship (Idle) at the system. INSTANT local administration (not light-delayed):
+    /// you commit resources at your own system immediately; the COMPLETION reveals to
+    /// rivals only as a normal light-gated ghost. Ignored unless the player owns the
+    /// system and its stockpile covers the recipe (a soft reject — no partial debit).
+    BuildShip {
+        player_id: PlayerId,
+        system_id: EntityId,
+        ship_kind: crate::ship::ShipKind,
+        /// (§FLEETS management v1) The fleet to JOIN when the build completes, if
+        /// it's still docked at this system — else a new fleet-of-one is formed.
+        /// `None` always forms a new fleet (the pre-FLEETS behaviour). serde
+        /// default so old clients omitting it still parse.
+        #[serde(default)]
+        join: Option<EntityId>,
+    },
+
+    /// WITHDRAW an engaged fleet from its battle (§battles-take-time). A coarse,
+    /// LIGHT-DELAYED mid-battle verb: it schedules a break-off-and-flee-home order
+    /// (physical disengagement at formation speed — the speed table decides who
+    /// escapes) that removes the fleet from any engagement on arrival. Wired to
+    /// the order-lifecycle indicator like any order. Soft-reject if not owned.
+    Withdraw {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+    },
+
+    /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
+    /// administration on the player's own fleet — governs its move speed and, via
+    /// its velocity, its detection signature. Soft-reject if not the player's.
+    SetFleetTransit {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        mode: crate::ship::TransitMode,
+    },
+
+    /// Merge one of the player's fleets INTO another (§FLEETS management v1).
+    /// Both must be the player's, Idle, and co-located at one of the player's
+    /// OWNED systems. `from`'s composition (and cargo, if `into` carries none) is
+    /// absorbed into `into`; `from` is removed. Soft-reject on any violation — an
+    /// in-flight fleet can't be merged (no in-flight detachment in v1).
+    MergeFleets {
+        player_id: PlayerId,
+        into: EntityId,
+        from: EntityId,
+    },
+
+    /// Split ships off one of the player's fleets into a NEW fleet (§FLEETS
+    /// management v1). The source must be the player's, Idle, and at one of their
+    /// OWNED systems. `counts` names how many of each kind to detach; the new
+    /// fleet spawns Idle beside the source. Soft-reject if the counts are empty,
+    /// exceed what's aboard, or would empty the source (split SOME, keep SOME).
+    SplitFleet {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        counts: std::collections::BTreeMap<crate::ship::ShipKind, u32>,
+    },
+
+    /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an
+    /// Extractor tier that raises its output. Same deduct-and-enqueue semantics as
+    /// `BuildShip`; on completion the upgrade is applied (only if still owned).
+    DevelopSystem {
+        player_id: PlayerId,
+        system_id: EntityId,
+        upgrade: crate::build::SystemUpgrade,
     },
 }

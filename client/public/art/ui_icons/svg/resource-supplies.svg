@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Supplies"><title>Supplies</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="13" y="17" width="38" height="34" rx="4" fill="#465363" stroke="#07111d" stroke-width="4.4"/>
+<path d="M13 29 H51" stroke="#07111d" stroke-width="3.8"/>
+<path d="M32 17 V51" stroke="#07111d" stroke-width="3.6"/>
+<path d="M21 39 C23 30 31 26 42 28 C40 38 33 43 21 39Z" fill="#7fdc8a" stroke="#07111d" stroke-width="2.8"/>
+<path d="M24 38 C29 34 34 31 40 29" stroke="#f3fbff" stroke-width="1.8" opacity="0.75"/>
+<rect x="19" y="21" width="8" height="3.5" rx="1.2" fill="#4fc3ff" opacity="0.95"/>
+<rect x="39" y="45" width="6" height="3" rx="1.2" fill="#ffd24a" opacity="0.95"/></g></svg>

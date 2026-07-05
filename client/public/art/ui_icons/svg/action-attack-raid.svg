@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Attack / Raid"><title>Attack / Raid</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="43" cy="22" r="12" fill="#101827" stroke="#ff6b5f" stroke-width="3.2"/>
+<line x1="43" y1="9" x2="43" y2="16" stroke="#ff6b5f" stroke-width="2.6"/>
+<line x1="43" y1="28" x2="43" y2="35" stroke="#ff6b5f" stroke-width="2.6"/>
+<line x1="30" y1="22" x2="37" y2="22" stroke="#ff6b5f" stroke-width="2.6"/>
+<line x1="49" y1="22" x2="56" y2="22" stroke="#ff6b5f" stroke-width="2.6"/>
+<polygon points="12,50 33,18 43,52 28,43" fill="#303b4b" stroke="#07111d" stroke-width="4.4"/>
+<path d="M24 41 L33 27 L37 44" stroke="#8a97a8" stroke-width="2.1"/>
+<rect x="27" y="42" width="5" height="3" rx="1.2" fill="#4fc3ff" opacity="0.95"/>
+<rect x="35" y="46" width="4" height="2.5" rx="1.2" fill="#ff9d5c" opacity="0.95"/></g></svg>

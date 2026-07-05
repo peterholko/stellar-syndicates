@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Info"><title>Info</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="32" cy="32" r="23" fill="#101827" stroke="#07111d" stroke-width="5"/>
+<circle cx="32" cy="32" r="23" fill="none" stroke="#7fd4ff" stroke-width="3.2"/>
+<circle cx="32" cy="21" r="3" fill="#7fd4ff"/>
+<line x1="32" y1="31" x2="32" y2="44" stroke="#7fd4ff" stroke-width="5"/>
+<line x1="28" y1="31" x2="32" y2="31" stroke="#7fd4ff" stroke-width="5"/></g></svg>

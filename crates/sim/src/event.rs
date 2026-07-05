@@ -15,6 +15,30 @@ use crate::ids::{EntityId, PlayerId};
 use crate::market::Side;
 use crate::ship::ShipKind;
 
+/// The FLAVOR of a light-delayed order, for the owner-only lifecycle indicator
+/// (IN TRANSIT → AWAITING ECHO → CONFIRMED). Purely a label for the panel/digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderKind {
+    Move,
+    Raid,
+    Recall,
+    /// A mid-battle WITHDRAW (§battles-take-time) — disengage an engaged fleet.
+    Withdraw,
+}
+
+impl OrderKind {
+    /// A short human label for the digest/panel ("confirmed <order>").
+    pub fn label(self) -> &'static str {
+        match self {
+            OrderKind::Move => "move",
+            OrderKind::Raid => "raid",
+            OrderKind::Recall => "recall",
+            OrderKind::Withdraw => "withdraw",
+        }
+    }
+}
+
 /// A discrete thing that happened in the world at `time` (seconds).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
@@ -38,6 +62,25 @@ pub enum EventPayload {
     /// and took effect.
     OrderApplied { ship_id: EntityId },
 
+    /// OWNER-ONLY (§order-lifecycle): the player's order has been DELIVERED to the
+    /// fleet (its outbound light arrived and the fleet is now executing) — but the
+    /// light showing the new behavior hasn't returned. `echo_at` is exactly when
+    /// that confirming light reaches the command center. Owner-only, fog-safe
+    /// (it's the player's own command data); never delivered to rivals.
+    OrderDelivered {
+        owner: PlayerId,
+        fleet: EntityId,
+        kind: OrderKind,
+        echo_at: f64,
+    },
+    /// OWNER-ONLY (§order-lifecycle): the confirming light has arrived — the
+    /// player can now SEE the fleet complying with the order. Owner-only.
+    OrderConfirmed {
+        owner: PlayerId,
+        fleet: EntityId,
+        kind: OrderKind,
+    },
+
     /// Something happened in the economy (§9).
     Trade(TradeEvent),
 
@@ -54,6 +97,14 @@ pub enum EventPayload {
         target_kind: ShipKind,
         outcome: RaidOutcome,
         pos: crate::math::Vec2,
+        /// Per-kind ships the ATTACKER lost over the engagement (§Part 2
+        /// Lanchester — a composition-vs-composition report). serde default keeps
+        /// old snapshots/events loading; empty for a no-loss brush.
+        #[serde(default)]
+        attacker_losses: std::collections::BTreeMap<ShipKind, u32>,
+        /// Per-kind ships the DEFENDER (target side) lost over the engagement.
+        #[serde(default)]
+        target_losses: std::collections::BTreeMap<ShipKind, u32>,
     },
 
     /// A player claimed a star system at `pos` at this event's `time` (§4). Like
@@ -77,6 +128,80 @@ pub enum EventPayload {
         kind: ShipKind,
         pos: crate::math::Vec2,
     },
+
+    /// Construction began at an owned system: a recipe was deducted and a build job
+    /// enqueued (§step1 growth sink). Owner-only news (the spend is private; the
+    /// finished ship reveals as a normal light-gated ghost).
+    BuildStarted {
+        id: u64,
+        owner: PlayerId,
+        system: EntityId,
+        what: crate::build::BuildKind,
+        complete_tick: u64,
+    },
+    /// A system development completed (an upgrade tier applied). Owner-only.
+    SystemUpgraded {
+        system: EntityId,
+        owner: PlayerId,
+        /// Which development completed (Extractor/Depot/…).
+        upgrade: crate::build::SystemUpgrade,
+        /// The new tier of that development.
+        tier: u32,
+    },
+    /// A build request was SOFT-REJECTED (no debit, no job — async-fair): the
+    /// system can't host it right now. Owner-only news; `reason` says why.
+    BuildRejected {
+        owner: PlayerId,
+        system: EntityId,
+        what: crate::build::BuildKind,
+        reason: BuildRejectReason,
+    },
+    /// A COLONY SHIP arrived at a system that was ALREADY claimed (§ships
+    /// part 3 — you lost the race, or it flipped en route). SOFT: the ship
+    /// holds position, fully intact and redirectable; nothing is destroyed.
+    /// Owner-only news, light-delayed from the hold position.
+    ColonyHeld { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+    /// A SCOUT captured an intel snapshot of a rival system's fortifications
+    /// (§scout part 2). OWNER-ONLY: the knowledge exists on the scout at `pos`
+    /// at the capture moment — the owner learns it when that light reaches
+    /// their command center (the timeline delays it accordingly); the scouted
+    /// rival learns NOTHING. Emitted on fresh approaches / value changes only,
+    /// never per-tick.
+    IntelGathered {
+        owner: PlayerId,
+        system: EntityId,
+        defense_tier: u32,
+        shipyard_tier: u32,
+        /// The scout's position at capture — the report's light source.
+        pos: crate::math::Vec2,
+    },
+    /// A Habitat's supply state flipped (§buildings step 3a). OWNER-ONLY news:
+    /// `fed = false` means this tick's Provisions upkeep couldn't be covered, so
+    /// the output boost is SUSPENDED (nothing destroyed, no tier lost — it
+    /// recovers the tick food is available again); `fed = true` is the recovery.
+    /// Emitted only on TRANSITIONS, never per-tick (no spam).
+    HabitatSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
+    /// A Defense Platform engaged a hostile raider attacking one of the owner's
+    /// convoys inside its protection radius (§buildings step 2c). OWNER-ONLY
+    /// detail (tiers lost, result) — the ATTACKER learns only the standard
+    /// battle outcome via the accompanying `RaidResolved` (a platform reveals
+    /// itself exclusively through engagement results). `pos` is the contact
+    /// point, for light-delaying the owner's news like any battle.
+    PlatformEngaged {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        /// The attacking raider was destroyed by the platform.
+        raider_destroyed: bool,
+        /// The raider was driven off (broke off home; platform intact that duel).
+        driven_off: bool,
+        /// Platform tiers lost in the engagement (damage; slots free up).
+        tiers_lost: u32,
+    },
+    /// A dispatch was LIMITED because no owned system could cover its fuel cost
+    /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
+    /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").
+    FuelShortfall { owner: PlayerId, needed: f64, kind: crate::fuel::ShortfallKind },
 }
 
 /// Economy events. `player` always names the corporation involved; values are
@@ -96,6 +221,35 @@ pub enum TradeEvent {
     LimitPlaced { player: PlayerId, side: Side, commodity: Commodity, units: u32, limit_price: f64 },
     /// A limit order (partially) cleared in the batch at the uniform price.
     LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A STANDING ORDER fired (§15): the rule auto-dispatched a convoy carrying
+    /// `units` of `commodity` from `source`. The "policy ran while you were away"
+    /// notification — feeds the check-in timeline.
+    AutoDispatched { player: PlayerId, commodity: Commodity, units: u32, source: EntityId, rule_id: u32 },
+    /// An automated supply convoy reached `system` but the corp no longer owns it
+    /// (lost / taken mid-transit). What happened to the cargo is governed by the
+    /// corp's [`crate::doctrine::DestinationInvalidPolicy`] and reported as
+    /// `action`. The "your frontier supply went sideways" notification — an
+    /// attention item for the check-in timeline (§16, Layer 2).
+    SupplyDiverted { player: PlayerId, commodity: Commodity, units: u32, system: EntityId, action: DivertAction },
+    /// A delivery arrived at `system` but its DEPOT was (partly) FULL (§buildings
+    /// step 2): `units` of the cargo could not be stored, so the SAME convoy
+    /// carries the excess onward to the hub to sell (sub-light, raidable — goods
+    /// are never silently destroyed). Any storable part was delivered first (its
+    /// own `Delivered` event).
+    StorageOverflow { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
+}
+
+/// What became of an automated supply convoy whose destination was no longer
+/// owned on arrival (mirrors [`crate::doctrine::DestinationInvalidPolicy`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DivertAction {
+    /// The cargo was lost.
+    Lost,
+    /// The convoy re-routed home (and will deposit there, raidable in transit).
+    ReturnedHome,
+    /// The convoy re-routed to the hub to sell (raidable in transit).
+    SoldAtHub,
 }
 
 impl TradeEvent {
@@ -107,7 +261,10 @@ impl TradeEvent {
             | TradeEvent::SellDispatched { player, .. }
             | TradeEvent::Sold { player, .. }
             | TradeEvent::LimitPlaced { player, .. }
-            | TradeEvent::LimitFilled { player, .. } => *player,
+            | TradeEvent::LimitFilled { player, .. }
+            | TradeEvent::AutoDispatched { player, .. }
+            | TradeEvent::SupplyDiverted { player, .. }
+            | TradeEvent::StorageOverflow { player, .. } => *player,
         }
     }
 }
@@ -139,6 +296,18 @@ impl RaidOutcome {
             RaidOutcome::BothSurvive | RaidOutcome::Escaped => (false, false),
         }
     }
+}
+
+/// Why a build was soft-rejected (§buildings step 1). Owner-only detail for the
+/// timeline notice; the request costs nothing (no debit, no job — async-fair).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum BuildRejectReason {
+    /// Every development slot at the system is used (built + in-progress).
+    NoSlot,
+    /// The system's Shipyard tier is below what this ship kind needs
+    /// (§buildings step 3: Convoy ≥ 1, Raider ≥ 2).
+    NeedsShipyard { required: u32 },
 }
 
 impl Event {

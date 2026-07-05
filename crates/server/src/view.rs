@@ -24,12 +24,19 @@
 //! that one and nothing fresher — provably no leak.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use sim::{Cargo, Commodity, EntityId, HomeSlot, PlayerId, ShipKind, ShipOrder, StarSystem, Vec2, World};
+use sim::{
+    Cargo, Commodity, CountClass, EntityId, FleetOrder, HomeSlot, PlayerId, ShipKind, StarSystem,
+    Vec2, World,
+};
 
-use crate::protocol::{AnchorView, CargoView, GhostView, StockSlot, SystemStateView};
+use crate::protocol::{
+    AnchorView, BuildStateView, CargoView, CompCount, GhostView, IntelView, StockSlot,
+    SystemStateView,
+};
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -39,10 +46,24 @@ struct Sample {
     vel: Vec2,
 }
 
-/// Position history + current metadata for one ship.
+/// Position history + current metadata for one FLEET. Fleet-derived scalars
+/// (flagship, broadcast, sensor bubble, cap speed, size bucket) are snapshotted
+/// at record time so the view filter never needs the live sim `Fleet`.
 struct Track {
     owner: PlayerId,
-    kind: ShipKind,
+    /// Exact composition (kinds → counts) at the last record — revealed only in
+    /// coverage / to the owner.
+    composition: BTreeMap<ShipKind, u32>,
+    /// The fleet's flagship kind (what it's drawn as).
+    flagship: ShipKind,
+    /// Whether the fleet broadcasts (any member broadcasts).
+    broadcasts: bool,
+    /// The best sensor bubble the fleet projects (max member `sensor_mult`).
+    sensor_mult: f64,
+    /// Formation cruise cap (min member `max_speed`) — drives uncertainty.
+    max_speed: f64,
+    /// The estimated-size bucket a fog observer sees.
+    count_class: CountClass,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
@@ -88,10 +109,15 @@ impl PositionHistory {
     /// retarded-time boundary is resolved at full temporal resolution.
     pub fn record(&mut self, world: &World) {
         let now = world.time;
-        for (id, ship) in &world.ships {
+        for (id, ship) in &world.fleets {
             let track = self.tracks.entry(*id).or_insert_with(|| Track {
                 owner: ship.owner,
-                kind: ship.kind,
+                composition: BTreeMap::new(),
+                flagship: ship.flagship_kind(),
+                broadcasts: ship.broadcasts(),
+                sensor_mult: ship.sensor_mult(),
+                max_speed: ship.max_speed(),
+                count_class: ship.count_class(),
                 samples: VecDeque::new(),
                 last_seen: now,
                 cargo: None,
@@ -99,7 +125,12 @@ impl PositionHistory {
                 destroyed: None,
             });
             track.owner = ship.owner;
-            track.kind = ship.kind;
+            track.composition = ship.composition.clone();
+            track.flagship = ship.flagship_kind();
+            track.broadcasts = ship.broadcasts();
+            track.sensor_mult = ship.sensor_mult();
+            track.max_speed = ship.max_speed();
+            track.count_class = ship.count_class();
             track.last_seen = now;
             track.cargo = ship.cargo;
             track.route = route_of(&ship.order);
@@ -155,13 +186,44 @@ impl PositionHistory {
     /// when its delayed ghost falls inside a drawn coverage circle. This never
     /// reveals the true position of a dark ship (you still only ever see where
     /// it *was*), and it cannot disagree with the client's rendering.
+    /// (Array-less convenience — production always goes through
+    /// [`Self::view_for_with_arrays`]; the many fairness tests use this form.)
+    #[cfg(test)]
     pub fn view_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<GhostView> {
+        self.view_for_with_arrays(viewer, cc, c, now, &[], &BTreeSet::new())
+    }
+
+    /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
+    /// step 2b): standing `(position, radius)` sources from the viewer's own
+    /// array systems (`World::array_sensor_sources` — the shared coverage source
+    /// of truth). They join the coverage union exactly like ship bubbles, so
+    /// dark-raider detection and cargo reveal inherit them consistently. Systems
+    /// are STATIC, so a fixed source position is as leak-free as the delayed
+    /// ship ghosts; this only ever ADDS legitimate vision for the viewer — a
+    /// rival's arrays are never passed in, and nothing about the array itself is
+    /// sent (its tier stays owner-only in `filter_systems`).
+    pub fn view_for_with_arrays(
+        &self,
+        viewer: PlayerId,
+        cc: Vec2,
+        c: f64,
+        now: f64,
+        arrays: &[(Vec2, f64)],
+        // Fleets FORCE-REVEALED by weapons fire (§battles-take-time): battle
+        // participants whose battle-light has reached the viewer are shown at the
+        // site even if dark and out of coverage — fighting means being seen.
+        battle_reveal: &BTreeSet<EntityId>,
+    ) -> Vec<GhostView> {
         // Pass 1: retarded ghost for every observable ship, and gather the
         // viewer's sensor coverage (command center + their own ships' ghosts).
         struct Pre<'a> {
             id: EntityId,
             owner: PlayerId,
-            kind: ShipKind,
+            flagship: ShipKind,
+            broadcasts: bool,
+            max_speed: f64,
+            count_class: CountClass,
+            composition: &'a BTreeMap<ShipKind, u32>,
             sample: Sample,
             cargo: Option<Cargo>,
             route: &'a Option<Vec<Vec2>>,
@@ -174,7 +236,11 @@ impl PositionHistory {
             destroyed_detected: bool,
         }
         let mut pre = Vec::new();
-        let mut coverage = vec![cc]; // the command center is itself an asset
+        // Coverage as (center, radius) sources: the command center + own ship
+        // ghosts at the global range, plus any standing array bubbles (each with
+        // its OWN radius — a developed array outsees a ship).
+        let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
+        coverage.extend_from_slice(arrays);
         for (id, track) in &self.tracks {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
@@ -188,18 +254,25 @@ impl PositionHistory {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
-                coverage.push(sample.pos);
+                // Each own fleet projects its best bubble — a scout aboard gives
+                // an oversized one (`sensor_mult`: mobile vision).
+                coverage.push((sample.pos, self.sensor_range * track.sensor_mult));
             }
-            // For a destroyed raider, decide visibility in the ghost's OWN retarded
-            // frame (the world as the arriving light shows it), not the `now` frame
-            // whose coverage already reflects the post-kill break-off.
+            // For a destroyed DARK fleet (raiders/scouts only), decide visibility
+            // in the ghost's OWN retarded frame (the world as the arriving light
+            // shows it), not the `now` frame whose coverage already reflects the
+            // post-kill break-off.
             let destroyed_detected = track.destroyed.is_some()
-                && track.kind == ShipKind::Raider
-                && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time);
+                && !track.broadcasts
+                && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays);
             pre.push(Pre {
                 id: *id,
                 owner: track.owner,
-                kind: track.kind,
+                flagship: track.flagship,
+                broadcasts: track.broadcasts,
+                max_speed: track.max_speed,
+                count_class: track.count_class,
+                composition: &track.composition,
                 sample,
                 cargo: track.cargo,
                 route: &track.route,
@@ -210,21 +283,41 @@ impl PositionHistory {
         // Pass 2: apply the two-tier visibility rules using the coverage.
         let mut ghosts = Vec::new();
         for p in pre {
-            // A destroyed raider stays detected for as long as its retarded-frame
-            // latch holds (until the Pass-1 destruction-light gate removes it); a
-            // live raider/convoy uses the ordinary `now`-frame coverage.
-            let detected =
-                p.destroyed_detected || within_sensor(&coverage, p.sample.pos, self.sensor_range);
+            let own = p.owner == viewer;
+            // SPEED-SIGNATURE DETECTION (§Part 4): a dark fleet's presence is
+            // decided by `distance ≤ capability × signature`, where the signature
+            // is computed from the RETARDED sample's velocity (its old flare) and
+            // composition — the SAME shared function the sim's pickets use. A big
+            // pack at flank speed is seen far past the plain bubble; one creeping
+            // at stealth must be nearly inside it. Broadcasters keep plain-coverage
+            // gating (signature scope is dark fleets only).
+            let signature = if p.broadcasts {
+                1.0
+            } else {
+                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
+            };
+            let in_coverage = within_coverage(&coverage, p.sample.pos);
+            // Weapons fire is LOUD: a battle participant whose battle-light has
+            // reached the viewer is revealed at the site even if dark and out of
+            // coverage — this overrides the quiet-when-slow detection rule.
+            let at_battle = battle_reveal.contains(&p.id);
+            let dark_detected = own
+                || at_battle
+                || p.destroyed_detected
+                || sim::detection::detected(signature, &coverage, p.sample.pos);
 
-            // A dark raider is present ONLY inside sensor coverage. (A player's
-            // own raider sits at the centre of its own sensor circle, so it is
-            // always present.) Omitted entirely otherwise — never sent-and-hidden.
-            if p.kind == ShipKind::Raider && !detected {
+            // A DARK fleet (raiders/scouts only) is present ONLY when detected;
+            // omitted entirely otherwise — never sent-and-hidden. A seen dark fleet
+            // always shows its full composition (consistent — no half-seen fleet).
+            if !p.broadcasts && !dark_detected {
                 continue;
             }
+            // What the viewer may READ off it: a seen dark fleet reveals all; a
+            // broadcaster reveals cargo/composition only inside plain coverage.
+            let reveal = if p.broadcasts { own || in_coverage } else { true };
+            let detected = reveal;
 
             let age = now - p.sample.time;
-            let own = p.owner == viewer;
             // ONE law governs ALL information — it travels at lightspeed with NO
             // exceptions, including the player's OWN ships (§6). There is no FTL
             // tether to your fleet: certainty is a function of PROXIMITY to the
@@ -233,11 +326,12 @@ impl PositionHistory {
             // poorly as an enemy at the same distance; one close to the command
             // center is fresh and near-certain because its light barely lags.
             // `own` remains only a "this is mine" marker, never a certainty grant.
-            let uncertainty = age * p.kind.max_speed();
-            let is_convoy = p.kind == ShipKind::Convoy;
-            // Convoys broadcast their route; cargo only within sensor coverage.
+            let uncertainty = age * p.max_speed;
+            let is_convoy = p.flagship == ShipKind::Convoy;
+            // Convoy fleets broadcast their route; cargo only within sensor
+            // coverage (Tier 2), exactly as before.
             let route = if is_convoy { p.route.clone() } else { None };
-            let cargo = if is_convoy && detected {
+            let cargo = if detected {
                 p.cargo.map(|cg| CargoView {
                     commodity: cg.commodity,
                     units: cg.units,
@@ -245,11 +339,24 @@ impl PositionHistory {
             } else {
                 None
             };
+            // The INTEL LADDER (§13.1): the size bucket is ALWAYS available on a
+            // visible fleet; the exact composition ONLY to the owner or inside
+            // sensor coverage — never leaking the true count outside it.
+            let composition = if own || detected {
+                Some(
+                    p.composition
+                        .iter()
+                        .map(|(k, n)| CompCount { kind: *k, count: *n })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
 
             ghosts.push(GhostView {
                 id: p.id,
                 owner: p.owner,
-                kind: p.kind,
+                kind: p.flagship,
                 pos: p.sample.pos,
                 vel: p.sample.vel,
                 age,
@@ -257,6 +364,9 @@ impl PositionHistory {
                 own,
                 route,
                 cargo,
+                count_class: p.count_class,
+                composition,
+                signature: if p.broadcasts { None } else { Some(signature) },
             });
         }
         // Deterministic ordering by id.
@@ -283,9 +393,22 @@ impl PositionHistory {
     /// seen yet. It only ever answers "yes" for a genuine past detection, so it can
     /// keep a dead raider visible until its destruction light arrives without ever
     /// revealing a raider the viewer never tracked (§6).
-    fn detected_at_retarded_time(&self, viewer: PlayerId, cc: Vec2, ghost_pos: Vec2, t_r: f64) -> bool {
+    fn detected_at_retarded_time(
+        &self,
+        viewer: PlayerId,
+        cc: Vec2,
+        ghost_pos: Vec2,
+        t_r: f64,
+        arrays: &[(Vec2, f64)],
+    ) -> bool {
         // The command center is a fixed sensor asset.
         if ghost_pos.distance(cc) <= self.sensor_range {
+            return true;
+        }
+        // Standing sensor arrays are fixed assets too (near-permanent
+        // infrastructure — treated as present in any retarded frame; a
+        // deliberate simplification vs. tracking per-array build times).
+        if arrays.iter().any(|(p, r)| ghost_pos.distance(*p) <= *r) {
             return true;
         }
         for track in self.tracks.values() {
@@ -299,7 +422,7 @@ impl PositionHistory {
                 continue;
             }
             if let Some(s) = sample_at(&track.samples, t_r)
-                && s.pos.distance(ghost_pos) <= self.sensor_range
+                && s.pos.distance(ghost_pos) <= self.sensor_range * track.sensor_mult
             {
                 return true;
             }
@@ -353,12 +476,17 @@ pub fn filter_anchors(
 /// * **stockpile** — a system's accumulated production is private: shown only to
 ///   the owner (who can anyway predict it from the known deposit rates), never to
 ///   rivals. So no information about a rival's holdings ever leaks.
+#[allow(clippy::too_many_arguments)]
 pub fn filter_systems(
     systems: &[StarSystem],
     viewer: PlayerId,
     cc: Vec2,
     c: f64,
     now: f64,
+    build_queue: &[sim::BuildJob],
+    tick: u64,
+    dt: f64,
+    intel: &BTreeMap<EntityId, sim::IntelSnapshot>,
 ) -> Vec<SystemStateView> {
     systems
         .iter()
@@ -386,13 +514,103 @@ pub fn filter_systems(
                     })
                     .collect()
             });
+            // Owner-only: ALL in-progress builds here, ordered by completion
+            // (§build-progress). `build` stays the soonest for single-job
+            // consumers; a rival gets None + an empty list — never a leak.
+            let builds: Vec<BuildStateView> = if own {
+                let mut jobs: Vec<_> = build_queue
+                    .iter()
+                    .filter(|j| j.system == sys.id && j.owner == viewer)
+                    .collect();
+                jobs.sort_by_key(|j| j.complete_tick);
+                jobs.into_iter()
+                    .map(|j| BuildStateView {
+                        key: build_key(j.what).to_string(),
+                        complete_time: now + (j.complete_tick.saturating_sub(tick)) as f64 * dt,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let build = builds.first().cloned();
+            // Development slots (§buildings step 1): used = built tiers + this
+            // viewer's in-progress upgrade jobs here, so the readout matches what
+            // apply_build will actually accept next. Owner-only, like the tiers.
+            let slots_used = sys.dev_slots_built()
+                + build_queue
+                    .iter()
+                    .filter(|j| {
+                        j.system == sys.id
+                            && j.owner == viewer
+                            && matches!(j.what, sim::BuildKind::Upgrade { .. })
+                    })
+                    .count() as u32;
             SystemStateView {
                 id: sys.id,
                 owner,
                 stockpile,
+                build,
+                builds,
+                // Owner-only, like the stockpile: a system's development tier is
+                // private intel. Gating it also avoids leaking an upgrade to a rival
+                // FASTER THAN LIGHT (the field would otherwise update the instant it
+                // lands, unlike the light-gated `owner`). Rivals see tier 0.
+                extractor_tier: if own { sys.extractor_tier } else { 0 },
+                depot_tier: if own { sys.depot_tier } else { 0 },
+                shipyard_tier: if own { sys.shipyard_tier } else { 0 },
+                sensor_tier: if own { sys.sensor_tier } else { 0 },
+                // A rival NEVER sees a platform in the View — it reveals itself
+                // only through engagement outcomes (delayed battle reports).
+                defense_tier: if own { sys.defense_tier } else { 0 },
+                habitat_tier: if own { sys.habitat_tier } else { 0 },
+                // A rival must never learn whether your colonies are starving.
+                habitat_fed: own && sys.habitat_fed,
+                refinery_tier: if own { sys.refinery_tier } else { 0 },
+                slots_used: if own { slots_used } else { 0 },
+                slots_total: if own { sys.dev_slots() } else { 0 },
+                // Storage (§buildings step 2) — owner-only like everything above.
+                // `used` is floored to whole units to match the stockpile readout.
+                storage_cap: if own { sys.storage_cap() as u32 } else { 0 },
+                storage_used: if own { sys.storage_used().floor() as u32 } else { 0 },
+                // The viewer's OWN scout intel about this rival system (§scout
+                // part 2), delivered only once the capture's light — from where
+                // the scout stood — has reached the viewer's command center. It
+                // is the viewer's own gathered knowledge: no rival data flows
+                // here beyond what the scout physically saw, and the scouted
+                // side never learns anything.
+                intel: if own {
+                    None // your own systems need no spying
+                } else {
+                    intel.get(&sys.id).and_then(|snap| {
+                        let arrival = snap.observed_at + snap.pos.distance(cc) / c;
+                        (arrival <= now).then_some(IntelView {
+                            defense_tier: snap.defense_tier,
+                            shipyard_tier: snap.shipyard_tier,
+                            observed_at: snap.observed_at,
+                        })
+                    })
+                },
             }
         })
         .collect()
+}
+
+/// Stable key string for a buildable thing (matches the client's build commands).
+pub fn build_key(what: sim::BuildKind) -> &'static str {
+    match what {
+        sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "shipyard",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "sensor_array",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "defense_platform",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "habitat",
+        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Refinery } => "refinery",
+    }
 }
 
 /// History of the hub's standing prices, so each player can be shown the prices
@@ -441,15 +659,18 @@ impl PriceHistory {
 }
 
 /// Is `p` within `range` of any sensor center?
-fn within_sensor(centers: &[Vec2], p: Vec2, range: f64) -> bool {
-    centers.iter().any(|center| p.distance(*center) <= range)
+/// Is `p` inside any coverage source `(center, radius)`? Sources carry their own
+/// radii so ship bubbles (global range) and sensor-array bubbles (per-tier range)
+/// share one union — the single coverage predicate.
+fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
+    sources.iter().any(|(center, radius)| p.distance(*center) <= *radius)
 }
 
 /// The broadcast route (waypoints) implied by a ship's current order, if any.
-fn route_of(order: &ShipOrder) -> Option<Vec<Vec2>> {
+fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
     match order {
-        ShipOrder::Patrol { waypoints, .. } => Some(waypoints.clone()),
-        ShipOrder::MoveTo { dest } => Some(vec![*dest]),
+        FleetOrder::Patrol { waypoints, .. } => Some(waypoints.clone()),
+        FleetOrder::MoveTo { dest } => Some(vec![*dest]),
         _ => None,
     }
 }
@@ -493,9 +714,16 @@ mod tests {
             commodity: sim::Commodity::Fuel,
             units: 100,
         });
+        let mut composition = BTreeMap::new();
+        composition.insert(kind, 1u32);
         Track {
             owner,
-            kind,
+            composition,
+            flagship: kind,
+            broadcasts: kind.broadcasts(),
+            sensor_mult: kind.sensor_mult(),
+            max_speed: kind.max_speed(),
+            count_class: CountClass::from_count(1),
             samples: samples.into(),
             last_seen: last,
             cargo,
@@ -505,11 +733,15 @@ mod tests {
     }
 
     fn at(id: u64, x: f64, y: f64, owner: PlayerId, kind: ShipKind) -> (EntityId, Track) {
-        // A stationary ship sitting at (x,y) for 0..100 s, sampled at 10 Hz.
+        // A ship sitting at (x,y) for 0..100 s, sampled at 10 Hz, but carrying a
+        // FULL-SPEED velocity so a dark one reads at the §Part 4 detection ANCHOR
+        // (signature 1.0 = the plain bubble) — these coverage tests assert the
+        // pre-signature detection distances, which the anchor preserves.
+        let vel = Vec2::new(kind.max_speed(), 0.0);
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -627,10 +859,10 @@ mod tests {
         let rival = PlayerId(8);
         let cc = Vec2::new(0.0, 0.0);
         let slots = vec![
-            HomeSlot { pos: Vec2::new(0.0, 0.0), owner: Some(me), claimed_at: Some(0.0) },
+            HomeSlot { pos: Vec2::new(0.0, 0.0), owner: Some(me), claimed_at: Some(0.0), system: None },
             // Rival's anchor, 6000 units away → 20 s of light.
-            HomeSlot { pos: Vec2::new(6000.0, 0.0), owner: Some(rival), claimed_at: Some(0.0) },
-            HomeSlot { pos: Vec2::new(0.0, 3000.0), owner: None, claimed_at: None },
+            HomeSlot { pos: Vec2::new(6000.0, 0.0), owner: Some(rival), claimed_at: Some(0.0), system: None },
+            HomeSlot { pos: Vec2::new(0.0, 3000.0), owner: None, claimed_at: None, system: None },
         ];
 
         // At t=10s, the rival's claim light (20 s away) has NOT arrived.
@@ -666,16 +898,56 @@ mod tests {
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
+            extractor_tier: 0,
+            depot_tier: 0,
+            shipyard_tier: 0,
+            sensor_tier: 0,
+            defense_tier: 0, defense_pool: 0.0,
+            habitat_tier: 0,
+            habitat_fed: false,
+            refinery_tier: 0,
         };
-        let systems = vec![
+        let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
             // Rival's claim 6000 su away → 20 s of light.
             mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::Ore, 99.0)]),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
+        systems[0].extractor_tier = 2; // mine — developed
+        systems[0].shipyard_tier = 1; // mine — a shipyard (visible to me only)
+        systems[0].sensor_tier = 1; // mine — an array (visible to me only)
+        systems[0].defense_tier = 1; // mine — a platform (visible to me only)
+        systems[1].extractor_tier = 3; // rival — must stay hidden
+        systems[1].shipyard_tier = 2; // rival — their military industry must stay hidden
+        systems[1].sensor_tier = 2; // rival — their intel infrastructure must stay hidden
+        systems[1].defense_tier = 3; // rival — their fortification must stay hidden
+        systems[0].habitat_tier = 1; // mine — a colony (visible to me only)
+        systems[0].habitat_fed = true;
+        systems[1].habitat_tier = 2; // rival — their colonies must stay hidden
+        systems[1].habitat_fed = true; // …and whether they're starving, doubly so
+        systems[0].refinery_tier = 1; // mine — a refinery (visible to me only)
+        systems[1].refinery_tier = 2; // rival — their fuel industry must stay hidden
+
+        // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
+        let builds = vec![
+            sim::BuildJob { id: 1, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None },
+            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None },
+            // A second concurrent job of mine, finishing FIRST — the queue list
+            // must come back completion-ordered (§build-progress).
+            sim::BuildJob { id: 3, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None },
+        ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0);
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new());
+        assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
+        assert!(v10[1].build.is_none(), "a rival's build state must never leak");
+        // The full queue list (§build-progress) follows the same fog rule and
+        // comes back completion-ordered; `build` stays the soonest job.
+        assert_eq!(v10[0].builds.len(), 2, "owner sees their whole build QUEUE");
+        assert_eq!(v10[0].builds[0].key, "scout", "queue is completion-ordered");
+        assert_eq!(v10[0].builds[1].key, "convoy");
+        assert_eq!(v10[0].build.as_ref().unwrap().key, "scout", "`build` = the soonest job");
+        assert!(v10[1].builds.is_empty(), "a rival's build queue must never leak");
         assert_eq!(v10[0].owner, Some(me), "own claim is visible instantly");
         assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
         assert_eq!(v10[2].owner, None);
@@ -686,12 +958,107 @@ mod tests {
         assert_eq!(mine[0].units, 12, "stockpile reported in whole units");
         assert!(v10[1].stockpile.is_none(), "a rival's stockpile must never be shown");
         assert!(v10[2].stockpile.is_none());
+        // Development tier is owner-only too — the owner sees their own…
+        assert_eq!(v10[0].extractor_tier, 2, "owner sees their own development tier");
+        assert_eq!(v10[1].extractor_tier, 0, "a rival's tier must never leak (not even faster-than-light)");
+        // Development SLOTS follow the same owner-only rule (§buildings step 1):
+        // used counts built tiers (2) — the queued job at MINE is a SHIP, which
+        // holds no slot — and rivals see 0/0, never the budget or usage.
+        assert_eq!(v10[0].slots_used, 7, "owner sees slots used (all built tiers; ships hold none)");
+        assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
+        assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
+        assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
+        // Storage cap + fill (§buildings step 2) — owner-only on the same rule.
+        assert_eq!(v10[0].storage_cap, systems[0].storage_cap() as u32, "owner sees their cap");
+        assert_eq!(v10[0].storage_used, 12, "owner sees fill in whole units");
+        assert_eq!(v10[0].depot_tier, 0);
+        assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].depot_tier), (0, 0, 0), "a rival's storage never leaks");
+        // Shipyard tier (§buildings step 3) — owner-only on the same rule.
+        assert_eq!(v10[0].shipyard_tier, systems[0].shipyard_tier, "owner sees their shipyard tier");
+        assert_eq!(v10[1].shipyard_tier, 0, "a rival's shipyard tier never leaks");
+        // Sensor Array tier (§buildings step 2b) — owner-only on the same rule:
+        // a rival must never learn where you can see.
+        assert_eq!(v10[0].sensor_tier, systems[0].sensor_tier, "owner sees their sensor tier");
+        assert_eq!(v10[1].sensor_tier, 0, "a rival's sensor tier never leaks");
+        // Defense Platform tier (§buildings step 2c) — owner-only: a rival
+        // weighing a raid learns fortification ONLY the hard way (via the
+        // engagement outcome), never from the View.
+        assert_eq!(v10[0].defense_tier, systems[0].defense_tier, "owner sees their platform tier");
+        assert_eq!(v10[1].defense_tier, 0, "a rival's platform never leaks — deterrence is discovered by engagement");
+        // Habitat tier + FED state (§buildings step 3a) — owner-only: a rival
+        // must never learn you have colonies, let alone whether they're starving.
+        assert_eq!((v10[0].habitat_tier, v10[0].habitat_fed), (1, true), "owner sees their habitat + supply state");
+        assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/starvation never leaks");
+        // Refinery tier (§buildings step 3b) — owner-only on the same rule.
+        assert_eq!(v10[0].refinery_tier, systems[0].refinery_tier, "owner sees their refinery tier");
+        assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, c, 25.0);
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new());
         assert_eq!(v25[1].owner, Some(rival));
-        // …but still NEVER their stockpile.
+        // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
+        assert_eq!(v25[1].extractor_tier, 0, "ownership visible, development tier still private");
+        assert_eq!((v25[1].slots_used, v25[1].slots_total), (0, 0), "ownership visible, slots still private");
+    }
+
+    /// SCOUT INTEL delivery obeys light (§scout part 2): the snapshot is
+    /// knowledge on the scout at the capture moment — the View withholds it
+    /// until that light reaches the viewer's command center, then shows the
+    /// stored (aging) values. And it is the VIEWER'S OWN intel: a viewer with
+    /// no snapshot sees nothing, the viewer's own systems never carry intel,
+    /// and the scouted rival's view is untouched (leak checks).
+    #[test]
+    fn scout_intel_is_light_delayed_and_owner_only() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let me = PlayerId(7);
+        let rival = PlayerId(8);
+        let cc = Vec2::new(0.0, 0.0);
+        // Rival system 6000 su out; my scout captured intel there at t=0
+        // (capture pos = the system's neighborhood → 20 s of light to me).
+        let systems = vec![StarSystem {
+            id: EntityId(1),
+            pos: Vec2::new(6000.0, 0.0),
+            name: "S".into(),
+            deposits: vec![],
+            claim_cost: 1000.0,
+            owner: Some(rival),
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            extractor_tier: 0,
+            depot_tier: 0,
+            shipyard_tier: 0,
+            sensor_tier: 0,
+            defense_tier: 0, defense_pool: 0.0,
+            habitat_tier: 0,
+            habitat_fed: false,
+            refinery_tier: 0,
+        }];
+        let mut intel = BTreeMap::new();
+        intel.insert(
+            EntityId(1),
+            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
+        );
+        let builds: Vec<sim::BuildJob> = vec![];
+
+        // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel);
+        assert!(v10[0].intel.is_none(), "intel must not appear before its light arrives");
+
+        // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel);
+        let iv = v25[0].intel.expect("intel delivered once its light arrives");
+        assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
+        assert!((iv.observed_at - 0.0).abs() < 1e-9, "a snapshot keeps its capture time — it ages");
+
+        // Leak checks: a viewer WITHOUT snapshots sees nothing…
+        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new());
+        assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
+        // …and the SCOUTED RIVAL's own view is untouched: their own system never
+        // carries intel (own => None), even if a stale map were passed in.
+        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel);
+        assert!(v_rival[0].intel.is_none(), "the scouted side learns nothing — not even that it was scouted");
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.
@@ -776,6 +1143,206 @@ mod tests {
         assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
     }
 
+    // ---- §Part 4: speed-signature detection ----
+
+    /// A dark raider track at `pos` with a constant velocity of `speed` (its
+    /// signature depends on this retarded velocity). One raider by default.
+    fn dark_track(owner: PlayerId, pos: Vec2, speed: f64, comp: &[(ShipKind, u32)]) -> (EntityId, Track) {
+        let mut track = fleet_track(owner, pos, comp);
+        let vel = Vec2::new(speed, 0.0);
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 100.0 {
+            samples.push(Sample { time: t, pos, vel });
+            t += 0.1;
+        }
+        track.samples = samples.into();
+        (EntityId(1), track)
+    }
+
+    /// The ANCHOR + throttle: a lone raider at FULL speed is detected out to the
+    /// plain bubble edge (signature 1.0 — pre-signature behavior); the SAME raider
+    /// creeping at STEALTH must get far closer (signature 0.4) — at 700 su it's
+    /// seen at flank speed but hidden at stealth.
+    #[test]
+    fn dark_fleet_detected_at_full_speed_but_hidden_at_stealth() {
+        let full = ShipKind::Raider.max_speed();
+        let pos = Vec2::new(700.0, 0.0); // inside 1000, outside 0.4×1000 = 400
+        let hist_full = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 1)])], 1000.0);
+        let hist_creep = history_of(vec![dark_track(RIVAL, pos, full * sim::detection::STEALTH_FRACTION, &[(ShipKind::Raider, 1)])], 1000.0);
+        assert_eq!(hist_full.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).len(), 1, "at flank speed the raider is flagged");
+        assert!(hist_creep.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "creeping at stealth it reaches the sensor edge unseen");
+    }
+
+    /// RETARDED-TIME signature (the correctness rule): a fleet that SPRINTED then
+    /// coasted is detected by its OLD flare — the signature is read from the
+    /// retarded sample's velocity, not the live state.
+    #[test]
+    fn retarded_signature_catches_the_old_flare_of_a_sprint_then_coast() {
+        // Far command center: 900 su away → ~3 s light delay at c=300. The raider
+        // sprinted at full speed until t=3, then coasted at stealth. At now=6 the
+        // observable sample is the ~t=3 one — still flaring at full speed.
+        let cc = Vec2::new(900.0, 0.0);
+        let pos = Vec2::new(0.0, 0.0);
+        let full = ShipKind::Raider.max_speed();
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 8.0 {
+            let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
+            samples.push(Sample { time: t, pos, vel });
+            t += 0.1;
+        }
+        let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
+        track.samples = samples.into();
+        let mut tracks = HashMap::new();
+        tracks.insert(EntityId(1), track);
+        // Bubble 950: full-speed sig 1.0 reaches 950 > 900; coast sig would not.
+        let hist = PositionHistory { tracks, horizon: 1e9, sensor_range: 950.0 };
+        let seen = hist.view_for(VIEWER, cc, 300.0, 6.0);
+        assert_eq!(seen.len(), 1, "the old full-speed flare is what arrives — detected on schedule");
+    }
+
+    /// §battles-take-time: WEAPONS FIRE IS LOUD — a dark battle participant that
+    /// is normally omitted (out of coverage) is REVEALED at the site once it's in
+    /// the battle-reveal set. Leak-safe: without the reveal it stays hidden, so
+    /// the reveal is exactly the (light-gated) weapons-fire override.
+    #[test]
+    fn weapons_fire_reveals_a_dark_participant_at_the_site() {
+        let pos = Vec2::new(6000.0, 0.0); // far outside the 1000 su bubble
+        let full = ShipKind::Raider.max_speed();
+        let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 2)])], 1000.0);
+        // Out of coverage → omitted entirely (the fog default).
+        assert!(hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
+        // As a battle participant, weapons fire reveals it at the site, in full.
+        let reveal: BTreeSet<EntityId> = [EntityId(1)].into_iter().collect();
+        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &reveal);
+        assert_eq!(seen.len(), 1, "weapons fire reveals the dark participant at the battle site");
+        assert!(seen[0].composition.is_some(), "and its full composition is seen there");
+    }
+
+    /// VIEW / SIM PARITY: the View's dark-fleet gating and the sim's shared
+    /// `detection::detected` agree for the same signature + coverage + position.
+    #[test]
+    fn view_matches_the_shared_detection_function() {
+        let full = ShipKind::Raider.max_speed();
+        let comp: std::collections::BTreeMap<ShipKind, u32> = [(ShipKind::Raider, 3)].into_iter().collect();
+        for dist in [300.0, 700.0, 1200.0, 2500.0] {
+            let pos = Vec2::new(dist, 0.0);
+            let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], 1000.0);
+            let view_sees = !hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty();
+            // The sim's shared function, same coverage (just the CC bubble here).
+            let sig = sim::detection::signature(&comp, full, ShipKind::Raider.max_speed());
+            let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
+            assert_eq!(view_sees, sim_sees, "View and sim agree at dist {dist}");
+        }
+    }
+
+    /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
+    /// scalars `record()` snapshots from a real `sim::Fleet`.
+    fn fleet_track(owner: PlayerId, pos: Vec2, comp: &[(ShipKind, u32)]) -> Track {
+        let mut samples = Vec::new();
+        let mut t = 0.0;
+        while t <= 100.0 {
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            t += 0.1;
+        }
+        let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
+        f.composition.clear();
+        let mut composition = BTreeMap::new();
+        for (k, n) in comp {
+            f.composition.insert(*k, *n);
+            composition.insert(*k, *n);
+        }
+        Track {
+            owner,
+            composition,
+            flagship: f.flagship_kind(),
+            broadcasts: f.broadcasts(),
+            sensor_mult: f.sensor_mult(),
+            max_speed: f.max_speed(),
+            count_class: f.count_class(),
+            samples: samples.into(),
+            last_seen: 100.0,
+            cargo: None,
+            route: None,
+            destroyed: None,
+        }
+    }
+
+    /// LEAK CHECK (broadcasting fleet, outside coverage): the size BUCKET is
+    /// present, but the exact composition is NEVER revealed — a far observer of a
+    /// broadcasting hammer knows roughly how big it is, not what's in it.
+    #[test]
+    fn broadcasting_fleet_shows_bucket_but_hides_composition_outside_coverage() {
+        // 3 convoys + 2 corvettes + 1 raider = 6 ships (broadcasts: has convoys).
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert_eq!(view.len(), 1, "the broadcasting fleet is visible galaxy-wide");
+        let g = &view[0];
+        assert_eq!(g.count_class, CountClass::from_count(6), "size bucket always present");
+        assert_eq!(g.count_class, CountClass::FourToSeven, "6 ships → the 4–7 bucket");
+        assert!(g.composition.is_none(), "composition must NOT leak outside sensor coverage");
+        assert_eq!(g.kind, ShipKind::Convoy, "drawn as its flagship");
+    }
+
+    /// LEAK CHECK (the other direction — inside coverage): the exact composition
+    /// is revealed within sensor range, and it matches the true makeup.
+    #[test]
+    fn composition_revealed_inside_sensor_coverage() {
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        // Command center 200 su from the fleet → inside the 1000 su sensor range.
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let g = &view[0];
+        let revealed = g.composition.as_ref().expect("composition revealed inside coverage");
+        let got: BTreeMap<ShipKind, u32> = revealed.iter().map(|c| (c.kind, c.count)).collect();
+        assert_eq!(got[&ShipKind::Convoy], 3);
+        assert_eq!(got[&ShipKind::Corvette], 2);
+        assert_eq!(got[&ShipKind::Raider], 1);
+    }
+
+    /// Own fleets are always exact — the owner sees their full composition even
+    /// far outside any sensor bubble (the light-delay still applies to position).
+    #[test]
+    fn own_fleet_always_shows_exact_composition() {
+        let comp = [(ShipKind::Convoy, 2), (ShipKind::Colony, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(VIEWER, Vec2::new(8000.0, 0.0), &comp))], 500.0);
+        // Viewer's own fleet, far from the command center (out of the 500 su bubble).
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let g = &view[0];
+        assert!(g.own);
+        assert!(g.composition.is_some(), "own fleet composition is always exact");
+    }
+
+    /// A DARK fleet (raiders/scouts only) is omitted entirely outside coverage;
+    /// when it IS seen (inside coverage) its composition shows in full — there is
+    /// no half-seen dark fleet, so the reveal is consistent.
+    #[test]
+    fn dark_fleet_hidden_outside_but_full_composition_when_seen() {
+        let comp = [(ShipKind::Raider, 4), (ShipKind::Scout, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        // Outside coverage: omitted entirely.
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert!(far.is_empty(), "a dark fleet out of coverage must not appear at all");
+        // Inside coverage: seen, with full composition.
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(near.len(), 1);
+        assert!(near[0].composition.is_some(), "a seen dark fleet shows its full composition");
+        assert_eq!(near[0].count_class, CountClass::from_count(5));
+    }
+
+    /// LEAK CHECK (size bucket, big fleet): the class must be WIDE enough to
+    /// contain the true count — never a tell that pins the exact number.
+    #[test]
+    fn count_bucket_contains_true_size_without_revealing_it() {
+        let comp = [(ShipKind::Convoy, 20)]; // 20 broadcasting convoys, far away
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(6000.0, 0.0), &comp))], 800.0);
+        let g = &hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0)[0];
+        assert_eq!(g.count_class, CountClass::SixteenToThirty, "20 → the 16–30 bucket");
+        assert!(g.composition.is_none(), "the exact 20 is never revealed outside coverage");
+    }
+
     /// A dark rival raider outside the viewer's sensor coverage must be OMITTED
     /// entirely from the view (not sent-and-hidden) — the fairness guarantee.
     #[test]
@@ -793,6 +1360,82 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
         assert_eq!(view.len(), 1, "raider within sensor range is detected");
         assert!(!view[0].own);
+    }
+
+    /// A SENSOR ARRAY (§buildings step 2b) extends the owner's coverage: a dark
+    /// raider that ship/CC coverage misses is detected once an owned array bubble
+    /// covers it — and rival convoy cargo is revealed at array range. The same
+    /// scene WITHOUT the array (or for a viewer without one) stays dark: the
+    /// array only ever ADDS vision for its owner, it leaks nothing.
+    #[test]
+    fn sensor_array_extends_owner_coverage() {
+        let cc = Vec2::new(0.0, 0.0);
+        // Raider + convoy 5000 su out — far beyond the 1000 su ship/CC bubbles.
+        let hist = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 5100.0, 0.0, RIVAL, ShipKind::Convoy),
+            ],
+            1000.0,
+        );
+        // No array: the raider is omitted, the convoy's cargo hidden.
+        let blind = hist.view_for(VIEWER, cc, 300.0, 60.0);
+        assert_eq!(blind.len(), 1, "only the broadcast convoy, no raider");
+        assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
+        // An owned array system near them (bubble 1200 su) covers both.
+        let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
+        let seen = hist.view_for_with_arrays(VIEWER, cc, 300.0, 60.0, &arrays, &BTreeSet::new());
+        assert_eq!(seen.len(), 2, "the array detects the dark raider");
+        let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
+        assert!(convoy.cargo.is_some(), "cargo revealed at array range");
+        assert!(seen.iter().any(|g| g.kind == ShipKind::Raider), "raider detected via the array");
+    }
+
+    /// A SCOUT (§scout) projects an OVERSIZED bubble (sensor_mult × range): a
+    /// dark rival raider that an ordinary ship at the same spot would miss is
+    /// detected by a scout there — mobile vision, the scout's whole point.
+    /// (Also proves rival convoy cargo reveals at scout range.)
+    #[test]
+    fn scout_bubble_out_sees_an_ordinary_ship() {
+        let cc = Vec2::new(0.0, 0.0);
+        // Contacts 5000 su out; own ship at 3600 → 1400 su from them: beyond the
+        // 1000 su ship bubble, inside the scout's 1.5× = 1500 su bubble.
+        let with_raider = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 5000.0, 0.0, RIVAL, ShipKind::Convoy),
+                at(3, 3600.0, 0.0, VIEWER, ShipKind::Raider),
+            ],
+            1000.0,
+        );
+        let v = with_raider.view_for(VIEWER, cc, 300.0, 60.0);
+        assert!(!v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "an ordinary ship at 1400 su misses the dark raider");
+
+        let with_scout = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 5000.0, 0.0, RIVAL, ShipKind::Convoy),
+                at(3, 3600.0, 0.0, VIEWER, ShipKind::Scout),
+            ],
+            1000.0,
+        );
+        let v = with_scout.view_for(VIEWER, cc, 300.0, 60.0);
+        assert!(v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "the scout's oversized bubble detects it");
+        let convoy = v.iter().find(|g| g.kind == ShipKind::Convoy && !g.own).unwrap();
+        assert!(convoy.cargo.is_some(), "…and reveals convoy cargo at scout range");
+    }
+
+    /// A rival SCOUT runs DARK exactly like a raider: omitted entirely outside
+    /// the viewer's coverage, a detected contact inside it. A spy that broadcast
+    /// would be useless — and a never-detected scout leaves no trace.
+    #[test]
+    fn rival_scout_is_dark_outside_coverage() {
+        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Scout)], 1000.0);
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert!(far.is_empty(), "a dark scout out of coverage must not appear at all");
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(near.len(), 1, "inside coverage it's a detected contact like any dark ship");
+        assert_eq!(near[0].kind, ShipKind::Scout);
     }
 
     /// A player's OWN raider sits at the centre of its own sensor circle, so it

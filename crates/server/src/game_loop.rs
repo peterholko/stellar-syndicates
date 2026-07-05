@@ -21,11 +21,12 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{
-    ClientMsg, DepositView, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg,
-    SystemInfo, WalletView,
+    BuildOptionView, ClientMsg, DepositView, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView,
+    ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
+use crate::timeline::Timeline;
 use crate::view::{self, PositionHistory, PriceHistory};
 
 /// Push a per-player message every N sim ticks. At 30 Hz, N=3 → ~10 Hz network
@@ -48,6 +49,11 @@ struct GameLoop {
     /// Delayed delivery of discrete reports (raid outcomes) — each player learns
     /// them on their own clock (§8).
     reports: ReportScheduler,
+    /// Per-player retained check-in timeline (§16, Layer 3) — what became
+    /// observable, buffered across disconnects, for the "welcome back" digest.
+    timeline: Timeline,
+    /// Last timeline length pushed to each player, so we only re-send when it grows.
+    timeline_sent: HashMap<PlayerId, usize>,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
     persistence: PersistenceHandle,
@@ -72,6 +78,8 @@ impl GameLoop {
             history,
             prices,
             reports: ReportScheduler::new(),
+            timeline: Timeline::new(),
+            timeline_sent: HashMap::new(),
             pending: Vec::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
@@ -90,7 +98,7 @@ impl GameLoop {
         };
         let owns = self
             .world
-            .ships
+            .fleets
             .get(&ship_id)
             .map(|s| s.owner == player_id)
             .unwrap_or(false);
@@ -148,6 +156,7 @@ impl GameLoop {
                     ServerMsg::Welcome {
                         player_id,
                         name: name.clone(),
+                        protocol_version: crate::protocol::PROTOCOL_VERSION,
                         tick_hz: TICK_HZ,
                         tick: self.world.tick,
                         sim_time: self.world.time,
@@ -157,6 +166,22 @@ impl GameLoop {
                             c: self.world.config.c,
                             sensor_range: self.world.config.sensor_range,
                             raider_speed: sim::ShipKind::Raider.max_speed(),
+                            // Array-bubble tunables so the client renders its own
+                            // arrays' coverage (§buildings step 2b).
+                            // Scout bubble multiplier, for the client's coverage draw.
+                            scout_sensor_mult: sim::ship::SCOUT_SENSOR_MULT,
+                            sensor_array_base: sim::build::SENSOR_ARRAY_BASE,
+                            sensor_array_per_tier: sim::build::SENSOR_ARRAY_PER_TIER,
+                            // Platform protection radius, for the owner's own
+                            // defended-system ring (§buildings step 2c).
+                            defense_platform_radius: sim::build::DEFENSE_PLATFORM_RADIUS,
+                            // Habitat tunables, for the owner-only boost/upkeep
+                            // readout (§buildings step 3a).
+                            habitat_output_mult: sim::build::HABITAT_OUTPUT_MULT,
+                            habitat_upkeep_per_tier: sim::build::HABITAT_UPKEEP_PER_TIER,
+                            // Refinery tunables (§buildings step 3b).
+                            refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
+                            refinery_yield: sim::build::REFINERY_YIELD,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -179,9 +204,19 @@ impl GameLoop {
                                     claim_cost: s.claim_cost,
                                 })
                                 .collect(),
+                            // What can be built + each recipe's cost/time (§step1).
+                            build_options: build_options(),
                         },
                     },
                 );
+                // Welcome-back: the check-in digest of what became observable while
+                // away (§16, Layer 3). `away_since` is their last-online time, so the
+                // client can mark entries newer than it as "while you were away".
+                let (entries, away_since) = self.timeline.digest(player_id);
+                self.timeline_sent.insert(player_id, entries.len());
+                self.sessions
+                    .send_to_conn(conn_id, ServerMsg::Timeline { entries, away_since });
+
                 // Ensure the corporation exists in the sim (idempotent).
                 self.pending.push(Command::AddPlayer {
                     id: player_id,
@@ -255,14 +290,72 @@ impl GameLoop {
                         });
                     }
                 }
-                ClientMsg::ClaimSystem { system_id } => {
-                    if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::ClaimSystem { player_id, system_id });
-                    }
-                }
                 ClientMsg::ShipProduction { system_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::ShipProduction { player_id, system_id });
+                    }
+                }
+                ClientMsg::SetStandingOrder { order } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetStandingOrder { player_id, order });
+                    }
+                }
+                ClientMsg::ClearStandingOrder { order_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ClearStandingOrder { player_id, order_id });
+                    }
+                }
+                ClientMsg::SetFleetDoctrine { doctrine } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
+                    }
+                }
+                ClientMsg::BuildShip { system_id, ship_kind, join } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join });
+                    }
+                }
+                ClientMsg::DevelopSystem { system_id, upgrade } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
+                    }
+                }
+                ClientMsg::Withdraw { fleet_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::Withdraw { player_id, fleet_id });
+                    }
+                }
+                ClientMsg::SetFleetTransit { fleet_id, mode } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetTransit { player_id, fleet_id, mode });
+                    }
+                }
+                ClientMsg::MergeFleets { into, from } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MergeFleets { player_id, into, from });
+                    }
+                }
+                ClientMsg::SplitFleet { fleet_id, counts } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SplitFleet { player_id, fleet_id, counts });
+                    }
+                }
+                ClientMsg::EstimateEngagement { attacker, target } => {
+                    // A read-only QUERY (§FLEETS Part 3): compute the projection
+                    // from this player's OWN view and reply immediately. Touches
+                    // no authoritative state.
+                    if let Some(player_id) = self.sessions.player_of(conn_id)
+                        && let Some(corp) = self.world.players.get(&player_id)
+                    {
+                        let cc = corp.command_center;
+                        let c = self.world.config.c;
+                        let now = self.world.time;
+                        let arrays = self.world.array_sensor_sources(player_id);
+                        if let Some(est) = crate::estimate::estimate_engagement(
+                            &self.world, &self.history, player_id, cc, c, now, &arrays, attacker, target,
+                        ) {
+                            self.sessions.send_to_conn(conn_id, ServerMsg::EngagementEstimate(est));
+                        }
                     }
                 }
                 // Join is handled at the WebSocket layer before the loop ever
@@ -286,6 +379,11 @@ impl GameLoop {
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
         self.reports.ingest(&events);
+        // Record events into the per-player check-in timeline (§16, Layer 3) at
+        // their observable time, then promote any whose light has now arrived —
+        // for ALL players, online or off (offline buffering is the whole point).
+        self.timeline.ingest(&events, &self.world);
+        self.timeline.promote(self.world.time);
         for ev in &events {
             match &ev.payload {
                 // Route economy news to the owning player immediately (their own
@@ -345,14 +443,57 @@ impl GameLoop {
         // (AddPlayer not processed) simply gets nothing this tick.
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
+        let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
         for player_id in self.sessions.online_players() {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
             };
             let cc = corp.command_center;
-            let ghosts = self.history.view_for(player_id, cc, c, now);
+            // The viewer's standing SENSOR-ARRAY bubbles (§buildings step 2b) join
+            // their coverage — same shared source of truth as the sim's pickets.
+            let arrays = self.world.array_sensor_sources(player_id);
+            // BATTLES (§battles-take-time), STRICTLY light-gated: a battle (and its
+            // participants, revealed by weapons fire) appears only once the light
+            // of its start has reached THIS player's command center.
+            let mut battles: Vec<crate::protocol::BattleView> = Vec::new();
+            let mut battle_reveal: std::collections::BTreeSet<sim::EntityId> = std::collections::BTreeSet::new();
+            for b in self.world.active_battles() {
+                let delay = b.pos.distance(cc) / c;
+                if now >= b.started_at + delay {
+                    battles.push(crate::protocol::BattleView {
+                        pos: b.pos,
+                        age: delay,
+                        own: player_id == b.a_owner || player_id == b.d_owner,
+                    });
+                    battle_reveal.extend(b.participants);
+                }
+            }
+            let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            // §battle-aftermath: this player's RETAINED concluded-battle reports
+            // (delivered = their light provably arrived). Strictly per-
+            // participant — the scheduler holds them keyed by recipient.
+            let battle_reports: Vec<crate::protocol::BattleReportView> = self
+                .reports
+                .retained_for(player_id)
+                .iter()
+                .map(|r| crate::protocol::BattleReportView {
+                    id: r.id,
+                    pos: r.pos,
+                    at_time: r.event_time,
+                    learned_at: r.arrival_time,
+                    you: r.you,
+                    attacker_kind: r.attacker_kind,
+                    target_kind: r.target_kind,
+                    outcome: r.outcome,
+                    attacker_losses: r.attacker_losses.clone(),
+                    target_losses: r.target_losses.clone(),
+                })
+                .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
-            let systems = view::filter_systems(&self.world.systems, player_id, cc, c, now);
+            let systems = view::filter_systems(
+                &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
+                &corp.intel,
+            );
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
@@ -390,6 +531,15 @@ impl GameLoop {
                         limit_price: o.limit_price,
                     })
                     .collect(),
+                // The fleet's fuel reserve: sum Fuel across this player's systems
+                // (owner-only — read off systems we own, so it never leaks).
+                fuel_total: self
+                    .world
+                    .systems
+                    .iter()
+                    .filter(|s| s.owner == Some(player_id))
+                    .map(|s| s.stockpile.get(&sim::Commodity::Fuel).copied().unwrap_or(0.0))
+                    .sum(),
             };
 
             views.insert(
@@ -403,6 +553,26 @@ impl GameLoop {
                     ghosts,
                     market,
                     wallet,
+                    // The player's own standing orders (fresh — private policy, not
+                    // light-gated), so the client can list/edit them.
+                    standing_orders: corp.standing_orders.clone(),
+                    // The player's own fleet doctrine (fresh private policy).
+                    doctrine: corp.doctrine,
+                    // The player's own in-flight order lifecycles (§order-lifecycle)
+                    // — owner-only private command data, like the wallet.
+                    pending_orders: self
+                        .world
+                        .pending_commands(player_id)
+                        .into_iter()
+                        .map(|p| crate::protocol::PendingOrderView {
+                            fleet_id: p.fleet,
+                            delivered_at: p.delivered_at,
+                            echo_at: p.echo_at,
+                            kind: p.kind,
+                        })
+                        .collect(),
+                    battles,
+                    battle_reports,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);
@@ -411,6 +581,17 @@ impl GameLoop {
                     player_id,
                     due.into_iter().map(|r| ServerMsg::Report { report: r }).collect(),
                 );
+            }
+
+            // Mark the player online (advances their "away" boundary), and if their
+            // check-in timeline gained entries since we last pushed (e.g. an
+            // auto-dispatch or a battle whose light just arrived), re-send the digest.
+            self.timeline.mark_seen(player_id, now);
+            let jlen = self.timeline.journal_len(player_id);
+            if self.timeline_sent.get(&player_id).copied().unwrap_or(0) != jlen {
+                self.timeline_sent.insert(player_id, jlen);
+                let (entries, away_since) = self.timeline.digest(player_id);
+                timelines.insert(player_id, ServerMsg::Timeline { entries, away_since });
             }
         }
 
@@ -426,8 +607,42 @@ impl GameLoop {
                     let _ = info.outbound.try_send(r.clone());
                 }
             }
+            if let Some(tl) = timelines.get(&info.player_id) {
+                let _ = info.outbound.try_send(tl.clone());
+            }
         }
     }
+}
+
+/// The buildable options + their recipes (§step1), built from the sim's const
+/// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
+fn build_options() -> Vec<BuildOptionView> {
+    use sim::{BuildKind, ShipKind, SystemUpgrade};
+    [
+        ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
+        ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
+        ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
+        ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
+        ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
+        ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
+        ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
+        ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
+        ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
+        ("defense_platform", "Defense Platform", BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform }),
+        ("habitat", "Habitat", BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat }),
+        ("refinery", "Fuel Refinery", BuildKind::Upgrade { upgrade: SystemUpgrade::Refinery }),
+    ]
+    .into_iter()
+    .map(|(key, label, what)| {
+        let r = sim::build::recipe_for(what);
+        BuildOptionView {
+            key: key.to_string(),
+            label: label.to_string(),
+            costs: r.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
+            build_secs: r.build_ticks as f64 / TICK_HZ as f64,
+        }
+    })
+    .collect()
 }
 
 /// Run the authoritative loop until all [`GameHandle`]s are dropped.

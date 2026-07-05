@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Credits"><title>Credits</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="31" cy="34" r="19" fill="#27313f" stroke="#07111d" stroke-width="4.4"/>
+<circle cx="31" cy="34" r="12" fill="#101827" stroke="#566274" stroke-width="2.4"/>
+<polygon points="31,22 41,34 31,46 21,34" fill="#ffd24a" stroke="#07111d" stroke-width="2.4"/>
+<polygon points="31,27 36,34 31,41 26,34" fill="#ffae5c" opacity="0.9"/>
+<path d="M44 22 C50 25 53 29 53 34 C53 39 50 43 44 46" stroke="#ffd24a" stroke-width="3.4" opacity="0.85"/>
+<line x1="18" y1="18" x2="23" y2="18" stroke="#4fc3ff" stroke-width="2.4"/></g></svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Alliance"><title>Alliance</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="22" x2="42" y2="22" stroke="#07111d" stroke-width="7"/>
+<line x1="22" y1="22" x2="32" y2="45" stroke="#07111d" stroke-width="7"/>
+<line x1="42" y1="22" x2="32" y2="45" stroke="#07111d" stroke-width="7"/>
+<line x1="22" y1="22" x2="42" y2="22" stroke="#3fe0c8" stroke-width="3"/>
+<line x1="22" y1="22" x2="32" y2="45" stroke="#3fe0c8" stroke-width="3"/>
+<line x1="42" y1="22" x2="32" y2="45" stroke="#3fe0c8" stroke-width="3"/>
+<circle cx="22" cy="22" r="8" fill="#26313f" stroke="#07111d" stroke-width="4.4"/>
+<circle cx="42" cy="22" r="8" fill="#26313f" stroke="#07111d" stroke-width="4.4"/>
+<circle cx="32" cy="45" r="8" fill="#26313f" stroke="#07111d" stroke-width="4.4"/>
+<circle cx="22" cy="22" r="3" fill="#7fd4ff"/>
+<circle cx="42" cy="22" r="3" fill="#7fdc8a"/>
+<circle cx="32" cy="45" r="3" fill="#c99bff"/></g></svg>

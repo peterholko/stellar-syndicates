@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Move / Travel"><title>Move / Travel</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 47 C22 35 30 28 45 18" stroke="#07111d" stroke-width="8"/>
+<path d="M14 47 C22 35 30 28 45 18" stroke="#4fc3ff" stroke-width="4"/>
+<polygon points="44,14 56,13 51,24" fill="#4fc3ff" stroke="#07111d" stroke-width="2.2"/>
+<circle cx="14" cy="47" r="3.5" fill="#ffd24a" stroke="#07111d" stroke-width="2"/>
+<circle cx="25" cy="36" r="2.2" fill="#7fd4ff"/>
+<circle cx="35" cy="27" r="1.8" fill="#7fd4ff" opacity="0.75"/></g></svg>

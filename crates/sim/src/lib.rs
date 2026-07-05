@@ -11,10 +11,15 @@
 //! the per-player lightspeed view filter's delivery scheduling, rendering —
 //! lives in the `server` crate and the client, never here.
 
+pub mod build;
 pub mod cargo;
+pub mod combat;
 pub mod command;
 pub mod config;
+pub mod detection;
+pub mod doctrine;
 pub mod event;
+pub mod fuel;
 pub mod galaxy;
 pub mod ids;
 pub mod market;
@@ -22,18 +27,31 @@ pub mod math;
 pub mod movement;
 pub mod rng;
 pub mod ship;
+pub mod standing;
 pub mod world;
 
+pub use build::{BuildJob, BuildKind, SystemUpgrade};
 pub use cargo::{Cargo, Commodity};
+pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Losses};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
-pub use event::{Event, EventPayload, RaidOutcome, TradeEvent};
+pub use doctrine::{
+    DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine, RetreatThreshold,
+};
+pub use event::{
+    BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
+};
 pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
-pub use movement::{flip_and_burn, MoveStep};
+pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
 pub use rng::Rng;
-pub use ship::{DefenseEngagement, Ship, ShipKind, ShipOrder, TradeMission};
-pub use world::{Corporation, World};
+pub use detection::{detected as detected_by, signature as fleet_signature};
+pub use ship::{
+    CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission, TransitMode,
+    ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
+};
+pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
+pub use world::{BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView, World};
 

@@ -1,0 +1,457 @@
+{
+  "name": "Stellar Syndicates Art Assets",
+  "source": "peterholko/stellar-syndicates",
+  "background": "transparent",
+  "style": {
+    "notes": [
+      "dark graphite structure",
+      "cyan and teal sensor/ownership emissions",
+      "warm red threat accents",
+      "gold market/intel accents",
+      "bold silhouettes for small UI rendering"
+    ]
+  },
+  "categories": {
+    "celestial_sprites": {
+      "title": "Celestial Sprites",
+      "assets": [
+        {
+          "slug": "sun",
+          "title": "Sun",
+          "png": "celestial_sprites/sun.png"
+        },
+        {
+          "slug": "habitable-planet",
+          "title": "Habitable Planet",
+          "png": "celestial_sprites/habitable_planet.png"
+        },
+        {
+          "slug": "mining-station",
+          "title": "Mining Station",
+          "png": "celestial_sprites/mining_station.png"
+        },
+        {
+          "slug": "asteroid-a",
+          "title": "Asteroid A",
+          "png": "celestial_sprites/asteroid_a.png"
+        },
+        {
+          "slug": "asteroid-b",
+          "title": "Asteroid B",
+          "png": "celestial_sprites/asteroid_b.png"
+        },
+        {
+          "slug": "asteroid-c",
+          "title": "Asteroid C",
+          "png": "celestial_sprites/asteroid_c.png"
+        },
+        {
+          "slug": "asteroid-d",
+          "title": "Asteroid D",
+          "png": "celestial_sprites/asteroid_d.png"
+        },
+        {
+          "slug": "planet-terrestrial",
+          "title": "Terrestrial Planet",
+          "png": "celestial_sprites/planets/terrestrial.png"
+        },
+        {
+          "slug": "planet-desert",
+          "title": "Desert Planet",
+          "png": "celestial_sprites/planets/desert.png"
+        },
+        {
+          "slug": "planet-ocean",
+          "title": "Ocean Planet",
+          "png": "celestial_sprites/planets/ocean.png"
+        },
+        {
+          "slug": "planet-ice",
+          "title": "Ice Planet",
+          "png": "celestial_sprites/planets/ice.png"
+        },
+        {
+          "slug": "planet-gas-giant",
+          "title": "Gas Giant Planet",
+          "png": "celestial_sprites/planets/gas_giant.png"
+        },
+        {
+          "slug": "planet-lava",
+          "title": "Lava Planet",
+          "png": "celestial_sprites/planets/lava.png"
+        },
+        {
+          "slug": "planet-barren",
+          "title": "Barren Planet",
+          "png": "celestial_sprites/planets/barren.png"
+        },
+        {
+          "slug": "planet-moon",
+          "title": "Moon",
+          "png": "celestial_sprites/planets/moon.png"
+        },
+        {
+          "slug": "asteroid-belt-chunk",
+          "title": "Asteroid Belt Chunk",
+          "png": "celestial_sprites/planets/asteroid_belt_chunk.png"
+        }
+      ]
+    },
+    "ship_sprites": {
+      "title": "Ship Sprites",
+      "assets": [
+        {
+          "slug": "colony-ship",
+          "title": "Colony Ship",
+          "png": "ship_sprites/colony_ship.png"
+        },
+        {
+          "slug": "cargo-freighter",
+          "title": "Cargo Freighter",
+          "png": "ship_sprites/cargo_freighter.png"
+        },
+        {
+          "slug": "scout-utility-ship",
+          "title": "Scout / Utility Ship",
+          "png": "ship_sprites/scout_utility_ship.png"
+        },
+        {
+          "slug": "corvette-escort-ship",
+          "title": "Corvette Escort Ship",
+          "png": "ship_sprites/corvette_escort_ship.png"
+        },
+        {
+          "slug": "raider-attack-ship",
+          "title": "Raider Attack Ship",
+          "png": "ship_sprites/raider_attack_ship.png"
+        },
+        {
+          "slug": "fleet-freighter-wing",
+          "title": "Freighter Wing Formation",
+          "png": "ship_sprites/fleet_freighter_wing.png"
+        },
+        {
+          "slug": "fleet-freighter-squadron",
+          "title": "Freighter Squadron Formation",
+          "png": "ship_sprites/fleet_freighter_squadron.png"
+        },
+        {
+          "slug": "fleet-freighter-armada",
+          "title": "Freighter Armada Formation",
+          "png": "ship_sprites/fleet_freighter_armada.png"
+        },
+        {
+          "slug": "fleet-raider-wing",
+          "title": "Raider Wing Formation",
+          "png": "ship_sprites/fleet_raider_wing.png"
+        },
+        {
+          "slug": "fleet-raider-squadron",
+          "title": "Raider Squadron Formation",
+          "png": "ship_sprites/fleet_raider_squadron.png"
+        },
+        {
+          "slug": "fleet-raider-armada",
+          "title": "Raider Armada Formation",
+          "png": "ship_sprites/fleet_raider_armada.png"
+        },
+        {
+          "slug": "fleet-corvette-wing",
+          "title": "Corvette Wing Formation",
+          "png": "ship_sprites/fleet_corvette_wing.png"
+        },
+        {
+          "slug": "fleet-corvette-squadron",
+          "title": "Corvette Squadron Formation",
+          "png": "ship_sprites/fleet_corvette_squadron.png"
+        },
+        {
+          "slug": "fleet-corvette-armada",
+          "title": "Corvette Armada Formation",
+          "png": "ship_sprites/fleet_corvette_armada.png"
+        },
+        {
+          "slug": "fleet-scout-wing",
+          "title": "Scout Wing Formation",
+          "png": "ship_sprites/fleet_scout_wing.png"
+        },
+        {
+          "slug": "fleet-scout-squadron",
+          "title": "Scout Squadron Formation",
+          "png": "ship_sprites/fleet_scout_squadron.png"
+        },
+        {
+          "slug": "fleet-scout-armada",
+          "title": "Scout Armada Formation",
+          "png": "ship_sprites/fleet_scout_armada.png"
+        }
+      ]
+    },
+    "lore_illustrations": {
+      "title": "Lore Illustrations",
+      "assets": [
+        {
+          "slug": "corporate-command-center",
+          "title": "Corporate Command Center",
+          "png": "lore_illustrations/corporate_command_center.png"
+        },
+        {
+          "slug": "frontier-mining-colony",
+          "title": "Frontier Mining Colony",
+          "png": "lore_illustrations/frontier_mining_colony.png"
+        },
+        {
+          "slug": "claimed-system-survey",
+          "title": "Claimed System Survey",
+          "png": "lore_illustrations/claimed_system_survey.png"
+        },
+        {
+          "slug": "wormhole-hub-trade-station",
+          "title": "Wormhole Hub Trade Station",
+          "png": "lore_illustrations/wormhole_hub_trade_station.png"
+        },
+        {
+          "slug": "deep-space-convoy",
+          "title": "Deep Space Convoy",
+          "png": "lore_illustrations/deep_space_convoy.png"
+        },
+        {
+          "slug": "rival-fleet-standoff",
+          "title": "Rival Fleet Standoff",
+          "png": "lore_illustrations/rival_fleet_standoff.png"
+        }
+      ]
+    },
+    "ui_icons": {
+      "title": "UI Icons",
+      "grid": "64x64",
+      "assets": [
+        {
+          "slug": "resource-metals",
+          "category": "Resources",
+          "title": "Metals",
+          "svg": "ui_icons/svg/resource-metals.svg",
+          "png32": "ui_icons/png/32/resource-metals.png",
+          "png64": "ui_icons/png/64/resource-metals.png",
+          "png128": "ui_icons/png/128/resource-metals.png"
+        },
+        {
+          "slug": "resource-fuel",
+          "category": "Resources",
+          "title": "Fuel",
+          "svg": "ui_icons/svg/resource-fuel.svg",
+          "png32": "ui_icons/png/32/resource-fuel.png",
+          "png64": "ui_icons/png/64/resource-fuel.png",
+          "png128": "ui_icons/png/128/resource-fuel.png"
+        },
+        {
+          "slug": "resource-supplies",
+          "category": "Resources",
+          "title": "Supplies",
+          "svg": "ui_icons/svg/resource-supplies.svg",
+          "png32": "ui_icons/png/32/resource-supplies.png",
+          "png64": "ui_icons/png/64/resource-supplies.png",
+          "png128": "ui_icons/png/128/resource-supplies.png"
+        },
+        {
+          "slug": "resource-industrials",
+          "category": "Resources",
+          "title": "Industrials",
+          "svg": "ui_icons/svg/resource-industrials.svg",
+          "png32": "ui_icons/png/32/resource-industrials.png",
+          "png64": "ui_icons/png/64/resource-industrials.png",
+          "png128": "ui_icons/png/128/resource-industrials.png"
+        },
+        {
+          "slug": "resource-credits",
+          "category": "Resources",
+          "title": "Credits",
+          "svg": "ui_icons/svg/resource-credits.svg",
+          "png32": "ui_icons/png/32/resource-credits.png",
+          "png64": "ui_icons/png/64/resource-credits.png",
+          "png128": "ui_icons/png/128/resource-credits.png"
+        },
+        {
+          "slug": "action-move-travel",
+          "category": "Actions",
+          "title": "Move / Travel",
+          "svg": "ui_icons/svg/action-move-travel.svg",
+          "png32": "ui_icons/png/32/action-move-travel.png",
+          "png64": "ui_icons/png/64/action-move-travel.png",
+          "png128": "ui_icons/png/128/action-move-travel.png"
+        },
+        {
+          "slug": "action-attack-raid",
+          "category": "Actions",
+          "title": "Attack / Raid",
+          "svg": "ui_icons/svg/action-attack-raid.svg",
+          "png32": "ui_icons/png/32/action-attack-raid.png",
+          "png64": "ui_icons/png/64/action-attack-raid.png",
+          "png128": "ui_icons/png/128/action-attack-raid.png"
+        },
+        {
+          "slug": "action-claim-system",
+          "category": "Actions",
+          "title": "Claim System",
+          "svg": "ui_icons/svg/action-claim-system.svg",
+          "png32": "ui_icons/png/32/action-claim-system.png",
+          "png64": "ui_icons/png/64/action-claim-system.png",
+          "png128": "ui_icons/png/128/action-claim-system.png"
+        },
+        {
+          "slug": "action-survey-scout",
+          "category": "Actions",
+          "title": "Survey / Scout",
+          "svg": "ui_icons/svg/action-survey-scout.svg",
+          "png32": "ui_icons/png/32/action-survey-scout.png",
+          "png64": "ui_icons/png/64/action-survey-scout.png",
+          "png128": "ui_icons/png/128/action-survey-scout.png"
+        },
+        {
+          "slug": "action-build",
+          "category": "Actions",
+          "title": "Build",
+          "svg": "ui_icons/svg/action-build.svg",
+          "png32": "ui_icons/png/32/action-build.png",
+          "png64": "ui_icons/png/64/action-build.png",
+          "png128": "ui_icons/png/128/action-build.png"
+        },
+        {
+          "slug": "action-load-cargo",
+          "category": "Actions",
+          "title": "Load Cargo",
+          "svg": "ui_icons/svg/action-load-cargo.svg",
+          "png32": "ui_icons/png/32/action-load-cargo.png",
+          "png64": "ui_icons/png/64/action-load-cargo.png",
+          "png128": "ui_icons/png/128/action-load-cargo.png"
+        },
+        {
+          "slug": "action-standing-order",
+          "category": "Actions",
+          "title": "Set Standing Order",
+          "svg": "ui_icons/svg/action-standing-order.svg",
+          "png32": "ui_icons/png/32/action-standing-order.png",
+          "png64": "ui_icons/png/64/action-standing-order.png",
+          "png128": "ui_icons/png/128/action-standing-order.png"
+        },
+        {
+          "slug": "action-recall",
+          "category": "Actions",
+          "title": "Recall",
+          "svg": "ui_icons/svg/action-recall.svg",
+          "png32": "ui_icons/png/32/action-recall.png",
+          "png64": "ui_icons/png/64/action-recall.png",
+          "png128": "ui_icons/png/128/action-recall.png"
+        },
+        {
+          "slug": "concept-command-center-hq",
+          "category": "Concepts",
+          "title": "Command Center / HQ",
+          "svg": "ui_icons/svg/concept-command-center-hq.svg",
+          "png32": "ui_icons/png/32/concept-command-center-hq.png",
+          "png64": "ui_icons/png/64/concept-command-center-hq.png",
+          "png128": "ui_icons/png/128/concept-command-center-hq.png"
+        },
+        {
+          "slug": "concept-sensor-range",
+          "category": "Concepts",
+          "title": "Sensor Range",
+          "svg": "ui_icons/svg/concept-sensor-range.svg",
+          "png32": "ui_icons/png/32/concept-sensor-range.png",
+          "png64": "ui_icons/png/64/concept-sensor-range.png",
+          "png128": "ui_icons/png/128/concept-sensor-range.png"
+        },
+        {
+          "slug": "concept-fleet",
+          "category": "Concepts",
+          "title": "Fleet",
+          "svg": "ui_icons/svg/concept-fleet.svg",
+          "png32": "ui_icons/png/32/concept-fleet.png",
+          "png64": "ui_icons/png/64/concept-fleet.png",
+          "png128": "ui_icons/png/128/concept-fleet.png"
+        },
+        {
+          "slug": "concept-convoy",
+          "category": "Concepts",
+          "title": "Convoy",
+          "svg": "ui_icons/svg/concept-convoy.svg",
+          "png32": "ui_icons/png/32/concept-convoy.png",
+          "png64": "ui_icons/png/64/concept-convoy.png",
+          "png128": "ui_icons/png/128/concept-convoy.png"
+        },
+        {
+          "slug": "concept-uncertainty-fog",
+          "category": "Concepts",
+          "title": "Uncertainty / Fog",
+          "svg": "ui_icons/svg/concept-uncertainty-fog.svg",
+          "png32": "ui_icons/png/32/concept-uncertainty-fog.png",
+          "png64": "ui_icons/png/64/concept-uncertainty-fog.png",
+          "png128": "ui_icons/png/128/concept-uncertainty-fog.png"
+        },
+        {
+          "slug": "concept-lightspeed-signal",
+          "category": "Concepts",
+          "title": "Lightspeed Signal",
+          "svg": "ui_icons/svg/concept-lightspeed-signal.svg",
+          "png32": "ui_icons/png/32/concept-lightspeed-signal.png",
+          "png64": "ui_icons/png/64/concept-lightspeed-signal.png",
+          "png128": "ui_icons/png/128/concept-lightspeed-signal.png"
+        },
+        {
+          "slug": "concept-alliance",
+          "category": "Concepts",
+          "title": "Alliance",
+          "svg": "ui_icons/svg/concept-alliance.svg",
+          "png32": "ui_icons/png/32/concept-alliance.png",
+          "png64": "ui_icons/png/64/concept-alliance.png",
+          "png128": "ui_icons/png/128/concept-alliance.png"
+        },
+        {
+          "slug": "concept-market-exchange",
+          "category": "Concepts",
+          "title": "Market / Exchange",
+          "svg": "ui_icons/svg/concept-market-exchange.svg",
+          "png32": "ui_icons/png/32/concept-market-exchange.png",
+          "png64": "ui_icons/png/64/concept-market-exchange.png",
+          "png128": "ui_icons/png/128/concept-market-exchange.png"
+        },
+        {
+          "slug": "status-warning-threat",
+          "category": "Status",
+          "title": "Warning / Threat",
+          "svg": "ui_icons/svg/status-warning-threat.svg",
+          "png32": "ui_icons/png/32/status-warning-threat.png",
+          "png64": "ui_icons/png/64/status-warning-threat.png",
+          "png128": "ui_icons/png/128/status-warning-threat.png"
+        },
+        {
+          "slug": "status-info",
+          "category": "Status",
+          "title": "Info",
+          "svg": "ui_icons/svg/status-info.svg",
+          "png32": "ui_icons/png/32/status-info.png",
+          "png64": "ui_icons/png/64/status-info.png",
+          "png128": "ui_icons/png/128/status-info.png"
+        },
+        {
+          "slug": "status-success",
+          "category": "Status",
+          "title": "Success",
+          "svg": "ui_icons/svg/status-success.svg",
+          "png32": "ui_icons/png/32/status-success.png",
+          "png64": "ui_icons/png/64/status-success.png",
+          "png128": "ui_icons/png/128/status-success.png"
+        },
+        {
+          "slug": "status-in-transit",
+          "category": "Status",
+          "title": "In Transit",
+          "svg": "ui_icons/svg/status-in-transit.svg",
+          "png32": "ui_icons/png/32/status-in-transit.png",
+          "png64": "ui_icons/png/64/status-in-transit.png",
+          "png128": "ui_icons/png/128/status-in-transit.png"
+        }
+      ]
+    }
+  }
+}

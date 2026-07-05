@@ -21,3 +21,6 @@ client/node_modules/
 
 # Claude Code workflow worktrees / scratch
 .claude/worktrees/
+
+# Local dev server logs
+server*.log

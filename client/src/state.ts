@@ -2,7 +2,8 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, GalaxyInfo, GhostView, MarketView, PlayerId, SystemStateView, Vec2, WalletView } from "./protocol";
+import type { AnchorView, FleetDoctrine, GalaxyInfo, GhostView, MarketView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
@@ -45,7 +46,40 @@ export interface ViewState {
   systems: SystemStateView[];
   ghosts: GhostView[];
   market: MarketView | null;
+  /// Client-accumulated history of the (light-delayed) hub prices the player has
+  /// OBSERVED, per commodity — the data source for the Market sparklines. This is
+  /// fog-safe by construction: it stores only the lagged prices already shown in
+  /// the ticker, never server truth. Sampled at ~1 Hz (see recordPriceHistory),
+  /// capped to a rolling window. Newest sample last.
+  priceHistory: Record<string, number[]>;
+  /// Sim-time of the last price-history sample, to throttle accumulation.
+  lastPriceSampleAt: number;
   wallet: WalletView | null;
+  /// The player's own standing logistics orders (§15), fresh from the View.
+  standingOrders: StandingOrder[];
+  /// The player's own fleet doctrine (§16), fresh from the View.
+  doctrine: FleetDoctrine;
+  /// §order-lifecycle: the player's in-flight order timestamps, keyed by fleet id
+  /// (owner-only). Drives the panel countdowns + map dashed hint / echo badge.
+  pendingOrders: Map<string, PendingOrderView>;
+  /// §battles-take-time: ongoing battles visible to this player (light-gated).
+  battles: import("./protocol").BattleView[];
+  /// §battle-aftermath: retained concluded battles this player was IN — present
+  /// only after their conclusion light arrived (owner-only, from the View).
+  battleReports: import("./protocol").BattleReportView[];
+  /// §battle-aftermath: report ids the player has OPENED (viewed → static/dim
+  /// marker) and DISMISSED (marker hidden; the report stays in the log).
+  /// Client-local, persisted to localStorage across reloads.
+  battleViewed: Set<number>;
+  battleDismissed: Set<number>;
+  /// The check-in timeline (§16, Layer 3): what became observable, newest last.
+  timeline: TimelineEntry[];
+  /// Sim-time the player was last online — the "while you were away" boundary.
+  /// Captured from the first Timeline message of the session.
+  awaySince: number;
+  /// Whether `awaySince` has been latched this session (so live re-sends don't
+  /// move the boundary).
+  awaySet: boolean;
   /// Wall-clock ms when the last View arrived, for smooth extrapolation
   /// between the ~10 Hz server updates and the 60 fps render.
   lastViewWallMs: number;
@@ -83,7 +117,19 @@ export function initialState(): ViewState {
     systems: [],
     ghosts: [],
     market: null,
+    priceHistory: {},
+    lastPriceSampleAt: -1,
     wallet: null,
+    standingOrders: [],
+    doctrine: defaultDoctrine(),
+    pendingOrders: new Map(),
+    battles: [],
+    battleReports: [],
+    battleViewed: new Set(),
+    battleDismissed: new Set(),
+    timeline: [],
+    awaySince: 0,
+    awaySet: false,
     lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,
