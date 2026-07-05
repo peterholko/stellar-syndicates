@@ -133,10 +133,14 @@ const BODY_HIT_CAP_PX = 90;
 // §battle-aftermath tunables. The marker is SCREEN-SPACE UI (like pips/badges):
 // it never grows in the deep-zoom band. TTL hides ancient markers (the report
 // stays in the retained list / results log until the server rotates it out).
-const BATTLE_MARKER_PX = 22; // aftermath icon size on screen
+// Battle marker on-screen sizes (screen px — SET HERE, not by the texture
+// resolution; the sprite is scaled to this size regardless of the source PNG's
+// dimensions). Doubled from the original 22/26 so the icons read clearly on the
+// galaxy map. Tunable.
+const BATTLE_MARKER_PX = 44; // aftermath / capture icon size on screen
 const BATTLE_MARKER_TTL_S = 1800; // hide markers learned > 30 min ago (tunable)
-const BATTLE_MARKER_HIT_PX = 14; // click radius
-const BATTLE_ONGOING_PX = 26; // the in-progress icon size (pulse scales it a bit)
+const BATTLE_MARKER_HIT_PX = 24; // click radius (scaled with the bigger markers)
+const BATTLE_ONGOING_PX = 52; // the in-progress icon size (pulse scales it a bit)
 
 // FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
 // lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
