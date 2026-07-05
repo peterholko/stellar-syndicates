@@ -886,7 +886,10 @@ export class Renderer {
       const sy = s.y - slot * 4;
       const viewed = state.battleViewed.has(r.id);
       const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
-      const alpha = viewed ? 0.45 : 0.8 + 0.2 * pulse;
+      // A VIEWED marker is static (no pulse) and dimmer — history, not a live
+      // alert — but the aftermath art is a low-saturation cool grey-teal, so a
+      // very low alpha reads as "greyed out / broken." Keep it clearly legible.
+      const alpha = viewed ? 0.68 : 0.8 + 0.2 * pulse;
       live.add(r.id);
       if (this.texBattleAftermath) {
         let sp = this.aftermathSprites.get(r.id);
@@ -954,7 +957,7 @@ export class Renderer {
       const s = this.worldToScreen(r.pos);
       const viewed = state.battleViewed.has(r.id);
       const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
-      const alpha = viewed ? 0.5 : 0.8 + 0.2 * pulse;
+      const alpha = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed (see drawAftermath)
       const col = r.captor ? 0xffcf6b : COL_THREAT; // gold = gained, red = lost
       // A little flag on a pole (territory changed hands).
       const px = s.x;
