@@ -58,6 +58,10 @@ export interface SystemStateView {
   /// Owner-only FULL build queue, completion-ordered (§build-progress) — the
   /// sim always allowed concurrent jobs; rivals always get an empty list.
   builds: BuildState[];
+  /// BLOCKADE state (§contestable-territory Part 1), fog-safe: present only for
+  /// the two participants — the besieger (`by_me`) and the owner (light-delayed).
+  /// Third parties get null. `by` = the blockading corp; `since` = onset sim-time.
+  blockade: { by: PlayerId; since: number; by_me: boolean } | null;
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
   /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.
@@ -358,6 +362,8 @@ export type ClientMsg =
   // §FLEETS management v1 — compose fleets at an owned system.
   | { type: "MergeFleets"; into: EntityId; from: EntityId }
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
+  // §contestable-territory Part 1 — order a raider fleet to blockade a rival system.
+  | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
   | { type: "Ping" };
 
 export type RaidOutcome =

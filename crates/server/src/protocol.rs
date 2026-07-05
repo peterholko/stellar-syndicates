@@ -109,6 +109,11 @@ pub enum ClientMsg {
     /// system (§FLEETS management v1). `counts` = how many of each kind to detach.
     SplitFleet { fleet_id: EntityId, counts: BTreeMap<ShipKind, u32> },
 
+    /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the
+    /// player's fleets (must contain a raider) to take station on a rival's
+    /// system and strangle its logistics. Light-delayed like a move order.
+    BlockadeSystem { fleet_id: EntityId, system_id: EntityId },
+
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
 }
@@ -354,6 +359,17 @@ pub struct StockSlot {
     pub units: u32,
 }
 
+/// The BLOCKADE at a system as a participant learns it (§contestable-territory).
+/// Only ever populated for the besieger and the owner (fog-safe — see the
+/// `SystemStateView.blockade` doc). `by` names the blockading corp; `since` is
+/// when the unbroken blockade began; `by_me` marks the viewer as the besieger.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct BlockadeStateView {
+    pub by: PlayerId,
+    pub since: f64,
+    pub by_me: bool,
+}
+
 /// An owner-only in-progress build at a system (§step1). `key` is what's building;
 /// `complete_time` is the sim-time of completion (the client shows ETA = it − now).
 #[derive(Debug, Clone, Serialize)]
@@ -415,6 +431,13 @@ pub struct SystemStateView {
     pub habitat_fed: bool,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
+    /// BLOCKADE state (§contestable-territory Part 1), if this system is under
+    /// blockade. Populated for the two PARTICIPANTS only, each light-honestly:
+    /// the BESIEGER (`by`) sees it via their on-station fleet (no delay); the
+    /// OWNER sees it once the onset light reaches their command center. Third
+    /// parties get `None` here — they observe the fight via `battles`, and the
+    /// eventual capture via the light-delayed ownership change.
+    pub blockade: Option<BlockadeStateView>,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,

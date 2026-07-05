@@ -339,6 +339,14 @@ pub enum FleetOrder {
     /// (proportional steer-and-correct) and is driven by the world (it needs the
     /// target's state).
     Intercept { target: EntityId },
+    /// BLOCKADE a rival system (§contestable-territory Part 1): fly to the
+    /// system and take STATION on it, strangling its logistics. `station` is the
+    /// target system's position (static, captured at issue time) so the
+    /// self-contained advance can steer to it without a world lookup; `system`
+    /// names the target for the world's blockade resolution. On arrival the
+    /// fleet HOLDS on station (keeps this order — it does not go Idle), and the
+    /// world's standing-defense engages it as any hostile contact.
+    Blockade { system: EntityId, station: Vec2 },
 }
 
 /// What a trade convoy does when it reaches its destination (§9). A buy spawns a
@@ -620,6 +628,15 @@ impl Fleet {
                 if step.arrived {
                     self.order = FleetOrder::Idle;
                 }
+            }
+            FleetOrder::Blockade { station, .. } => {
+                // Fly to station, then HOLD there (keep the Blockade order — the
+                // world reads on-station presence as an active blockade; going
+                // Idle would drop it). Once arrived, advance_toward returns the
+                // station point at zero velocity, so it simply holds each tick.
+                let step = advance_toward(self.pos, *station, speed, dt);
+                self.pos = step.pos;
+                self.vel = step.vel;
             }
             FleetOrder::Patrol {
                 waypoints,

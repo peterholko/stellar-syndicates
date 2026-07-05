@@ -263,6 +263,13 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::BlockadeSystem { fleet_id, system_id } => {
+                    // §contestable-territory Part 1: light-delayed like a move.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet_id);
+                        self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
+                    }
+                }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);

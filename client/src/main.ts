@@ -545,6 +545,10 @@ function ownBody(g: GhostView): string {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
   parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
+  // §contestable-territory Part 1: a raider fleet's second verb — blockade.
+  if (g.kind === "raider") {
+    parts.push(`<div class="sp-line dim" style="margin-top:4px">${uiIcon("status-warning-threat", 12)} Click a <b>rival system</b> to <b>blockade</b> it — take station and strangle its logistics (its defenses will fight you first).</div>`);
+  }
   parts.push(transitSection(g));
   parts.push(fleetManagementSection(g));
   return parts.join("");
@@ -837,7 +841,6 @@ function updateSysviewManage(): void {
   buildSysviewManage();
   panel.classList.add("is-open");
   $("svm-title").textContent = sys.name;
-  $("svm-eyebrow").textContent = "system management · yours";
   // SLOTS — the system's defining constraint, promoted to the header.
   const sUsed = dyn.slots_used ?? 0;
   const sTotal = dyn.slots_total ?? 0;
@@ -862,14 +865,23 @@ function updateSysviewManage(): void {
       .map(([n, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}${tag}</span>`)
       .join(`<span class="dev-sep">·</span>`) +
     `</div>`;
-  const canShip = shippableStock(dyn).length > 0;
+  // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
+  // dispatches hold at origin, so the ship button is disabled while blockaded
+  // (production still accrues into the stockpile). A prominent banner explains it.
+  const blockaded = !!dyn.blockade;
+  const blockadeBanner = blockaded
+    ? `<div class="storage-warn" style="margin:6px 0">${badge("negative", "under blockade")} a rival fleet holds station — convoys are held in &amp; out. Production still accrues; break the blockade (relief, or a new Defense Platform tier) to resume shipping.</div>`
+    : "";
+  const canShip = !blockaded && shippableStock(dyn).length > 0;
+  const shipTitle = blockaded ? "held — this system is under blockade" : canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units";
   const actions =
     `<div style="margin-top:10px">` +
-    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units"}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
+    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${shipTitle}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
     `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
     `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button></div>`;
   const guard = `<div class="mhint dim" style="margin-top:8px">Buildings are SYSTEM developments — the markers on the map are where each one anchors, not separate colonies. Click a body to see what would anchor there.</div>`;
-  $("svm-body").innerHTML = storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
+  $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
+  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
 }
 
 let planetPanelBuilt = false;
@@ -1053,6 +1065,36 @@ let clickCycle: { sx: number; sy: number; keys: string; index: number } | null =
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
 function handleMapClick(sx: number, sy: number): void {
+    // §contestable-territory Part 1: BLOCKADE-ON-CLICK. With one of your RAIDER
+    // fleets selected, clicking a rival-owned system orders a blockade there —
+    // the raider's second verb, mirroring "click a rival contact to raid." Runs
+    // BEFORE ordinary selection so the click commits the order rather than just
+    // selecting the system. (A raider is required; the sim re-checks.)
+    {
+      const selF = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
+      if (selF && selF.own && selF.kind === "raider" && net && state.galaxy) {
+        let hitSys: SystemInfo | null = null;
+        let bestD = Infinity;
+        for (const sys of state.galaxy.systems) {
+          const s = renderer.worldToScreen(sys.pos);
+          const d = Math.hypot(s.x - sx, s.y - sy);
+          if (d < Math.max(15, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; hitSys = sys; }
+        }
+        const dyn = hitSys ? state.systems.find((s) => s.id === hitSys!.id) : undefined;
+        const rival = dyn && dyn.owner !== null && dyn.owner !== state.playerId;
+        if (hitSys && rival) {
+          net.send({ type: "BlockadeSystem", fleet_id: selF.id, system_id: hitSys.id });
+          delete state.orders[selF.id];
+          updateShipPanel();
+          readout().innerHTML =
+            `Blockade ordered: your <b>raider fleet</b> → <b>${esc(hitSys.name)}</b>. ` +
+            `It sets off at light speed to take station and strangle the system's logistics; ` +
+            `standing defense will contest it. <span class="dim">Recall (R) to break off.</span>`;
+          return;
+        }
+      }
+    }
+
     // Selection priority + CO-LOCATION CYCLING. A star SYSTEM and your own SHIPS
     // are hit-tested TOGETHER, because things stack at one spot all the time:
     // your starting fleet parks on your home system, a freshly-built ship spawns
@@ -1718,8 +1760,11 @@ function updateSystemTab(): void {
   const ownTag = isMyHome ? badge("accent", "home base")
     : mine ? badge("accent", "yours")
       : rival ? badge("negative", "rival") : badge("neutral", "unclaimed");
+  // §contestable-territory Part 1: a blockade badge (participant-only, from the
+  // fog-safe view field) — "UNDER BLOCKADE" for the owner, "BLOCKADING" for the besieger.
+  const blkTag = dyn?.blockade ? ` ${badge("negative", dyn.blockade.by_me ? "blockading" : "under blockade")}` : "";
   const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys))}</div>` +
-    `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}</div></div>`;
+    `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}${blkTag}</div></div>`;
 
   // The system's STAR — concept art + type name. Flavor only; observable for ANY
   // system (a star is visible from afar) and leaks no economy/holdings (those stay
@@ -1757,6 +1802,7 @@ function updateSystemTab(): void {
   const habTier = dyn?.habitat_tier ?? 0;
   const cues: string[] = [];
   if (mine) {
+    if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
     if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
     // §build-progress: the compact construction line — a glance from the map
@@ -2242,6 +2288,14 @@ function computeAttention(): Attn[] {
   const ownedIds = new Set(owned.map((s) => s.id));
   const active = state.standingOrders.filter((o) => o.status === "active");
   const IDLE = 30;
+  // 0⁻. UNDER BLOCKADE (§contestable-territory Part 1) — the most urgent
+  //     territorial cue: a rival fleet is strangling this system's logistics.
+  //     Owner-only view field, light-delayed, so it never fires spuriously.
+  for (const s of owned) {
+    if (s.blockade) {
+      items.push({ severity: "bad", text: `${systemName(s.id)}: under BLOCKADE — convoys held in &amp; out. Break it with relief, or grind the blockader down with a Defense Platform.` });
+    }
+  }
   // 0. STORAGE FULL (§buildings step 2) — production is idling right now; the
   //    most urgent economy cue there is. Owner-only fields, so this never fires
   //    for systems the player doesn't hold.

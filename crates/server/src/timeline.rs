@@ -142,6 +142,32 @@ impl Timeline {
                         ));
                     }
                 }
+                // A rival BLOCKADE was established at one of your systems
+                // (§contestable-territory). The OWNER learns it light-delayed
+                // (a rival arrived at the system — news travels home at c); the
+                // BESIEGER learns instantly (their fleet is there).
+                EventPayload::BlockadeEstablished { by, owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                            "{name} is under BLOCKADE — a rival fleet holds station; convoys in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
+                        ));
+                    }
+                    self.push(*by, e.time, TimelineSeverity::Good, format!(
+                        "Your blockade of {name} is established — its logistics are strangled while you hold station."
+                    ));
+                }
+                // A blockade at one of your systems lifted (§contestable-territory).
+                EventPayload::BlockadeLifted { owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "The blockade of {name} has LIFTED — logistics resume."
+                        ));
+                    }
+                }
                 // A scout captured intel (§scout part 2) — OWNER-ONLY, delivered
                 // when the capture's light (from the scout's position) reaches
                 // the owner's command center: knowledge travels home at c.

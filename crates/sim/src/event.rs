@@ -25,6 +25,8 @@ pub enum OrderKind {
     Recall,
     /// A mid-battle WITHDRAW (§battles-take-time) — disengage an engaged fleet.
     Withdraw,
+    /// A BLOCKADE order (§contestable-territory) — take station on a rival system.
+    Blockade,
 }
 
 impl OrderKind {
@@ -35,6 +37,7 @@ impl OrderKind {
             OrderKind::Raid => "raid",
             OrderKind::Recall => "recall",
             OrderKind::Withdraw => "withdraw",
+            OrderKind::Blockade => "blockade",
         }
     }
 }
@@ -202,6 +205,18 @@ pub enum EventPayload {
     /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
     /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").
     FuelShortfall { owner: PlayerId, needed: f64, kind: crate::fuel::ShortfallKind },
+
+    /// A rival BLOCKADE was ESTABLISHED at one of `owner`'s systems (§contestable-
+    /// territory Part 1): a hostile fleet took station and interdiction began.
+    /// Light-delayed from the system to the OWNER (they learn a rival arrived
+    /// only when that light reaches their command center); the besieger `by`
+    /// knows via their own on-station fleet. Nothing is destroyed — outbound
+    /// convoys hold at origin, inbound hold at standoff, production still accrues.
+    BlockadeEstablished { by: PlayerId, owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+    /// A blockade at one of `owner`'s systems LIFTED (§contestable-territory) —
+    /// the last on-station blockader was destroyed, driven off, or withdrew.
+    /// Logistics resume. Light-delayed to the owner from the system.
+    BlockadeLifted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
 }
 
 /// Economy events. `player` always names the corporation involved; values are

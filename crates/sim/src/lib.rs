@@ -41,7 +41,7 @@ pub use doctrine::{
 pub use event::{
     BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
 };
-pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
+pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;

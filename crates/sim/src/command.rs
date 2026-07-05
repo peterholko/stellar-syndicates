@@ -192,4 +192,18 @@ pub enum Command {
         system_id: EntityId,
         upgrade: crate::build::SystemUpgrade,
     },
+
+    /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the
+    /// player's fleets to take station on a rival-owned system and strangle its
+    /// logistics. The fleet must CONTAIN ≥1 raider (strike capability — corvettes
+    /// and scouts contribute strength but can't blockade alone). Fuel-charged and
+    /// LIGHT-DELAYED like any move order (the echo lifecycle applies): the fleet
+    /// only begins the run once the order's outbound light reaches it. Soft-reject
+    /// unless the player owns the fleet, it has a raider, and the target is a
+    /// rival's system (a fresh sighting — the target may have changed since).
+    BlockadeSystem {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system_id: EntityId,
+    },
 }

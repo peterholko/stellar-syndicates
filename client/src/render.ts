@@ -632,6 +632,29 @@ export class Renderer {
       t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
       t.alpha = mine ? 0.95 : rival ? 0.88 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
+
+      // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
+      // dashed ring around a besieged system + a "⛔ BLOCKADE" tag. Participant-
+      // only (the view field is fog-gated), so it draws for the owner (their
+      // system besieged) and the besieger (their blockade), never a third party.
+      if (dyn?.blockade) {
+        const half = rendered / 2;
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 500);
+        const rr = Math.max(15, half + 6) + extra;
+        const seg = 22;
+        for (let i = 0; i < seg; i += 2) {
+          const a0 = (i / seg) * Math.PI * 2;
+          const a1 = ((i + 1) / seg) * Math.PI * 2;
+          g.moveTo(s.x + Math.cos(a0) * rr, s.y + Math.sin(a0) * rr)
+            .lineTo(s.x + Math.cos(a1) * rr, s.y + Math.sin(a1) * rr);
+        }
+        g.stroke({ width: 1.6, color: COL_THREAT, alpha: 0.4 + 0.4 * pulse });
+        const bt = new Text({ text: dyn.blockade.by_me ? "⛔ BLOCKADING" : "⛔ BLOCKADE", style: new TextStyle({ fill: COL_THREAT, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
+        bt.anchor.set(0.5, 1);
+        bt.position.set(s.x, s.y - rr - 2);
+        bt.alpha = 0.7 + 0.3 * pulse;
+        this.systemsLayer.addChild(bt);
+      }
     }
   }
 

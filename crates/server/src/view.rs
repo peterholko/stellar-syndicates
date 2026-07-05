@@ -34,8 +34,8 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BuildStateView, CargoView, CompCount, GhostView, IntelView, StockSlot,
-    SystemStateView,
+    AnchorView, BlockadeStateView, BuildStateView, CargoView, CompCount, GhostView, IntelView,
+    StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -545,12 +545,23 @@ pub fn filter_systems(
                             && matches!(j.what, sim::BuildKind::Upgrade { .. })
                     })
                     .count() as u32;
+            // BLOCKADE (§contestable-territory Part 1), fog-safe: surfaced to the
+            // two participants only. The BESIEGER sees it via their on-station
+            // fleet (no delay); the OWNER learns it once the onset light reaches
+            // their command center (`since + dist/c`), matching the timeline
+            // notice. Third parties get None (they see the fight via `battles`).
+            let blockade = sys.blockade.and_then(|b| {
+                let by_me = b.by == viewer;
+                let owner_sees = own && now >= b.since + sys.pos.distance(cc) / c;
+                (by_me || owner_sees).then_some(BlockadeStateView { by: b.by, since: b.since, by_me })
+            });
             SystemStateView {
                 id: sys.id,
                 owner,
                 stockpile,
                 build,
                 builds,
+                blockade,
                 // Owner-only, like the stockpile: a system's development tier is
                 // private intel. Gating it also avoids leaking an upgrade to a rival
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
@@ -906,6 +917,7 @@ mod tests {
             habitat_tier: 0,
             habitat_fed: false,
             refinery_tier: 0,
+            blockade: None,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1002,6 +1014,47 @@ mod tests {
         assert_eq!((v25[1].slots_used, v25[1].slots_total), (0, 0), "ownership visible, slots still private");
     }
 
+    /// BLOCKADE state (§contestable-territory Part 1) is surfaced to the two
+    /// PARTICIPANTS only, each light-honestly: the BESIEGER sees it instantly
+    /// (their fleet is there); the OWNER only once the onset light reaches their
+    /// command center; a THIRD party never sees it (they observe the fight via
+    /// `battles`, not the blockade badge). Leak-checked both directions.
+    #[test]
+    fn blockade_state_is_participant_only_and_light_gated() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let owner = PlayerId(7); // the defender whose system is blockaded
+        let besieger = PlayerId(8);
+        let third = PlayerId(9);
+        let mk = |id, pos, o| StarSystem {
+            id: EntityId(id), pos, name: "S".into(), deposits: vec![], claim_cost: 0.0,
+            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
+            extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
+            defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
+            refinery_tier: 0,
+            blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+        };
+        // The blockaded system sits 6000 su (20 s of light) from every viewer's
+        // command center at the origin — so the owner's onset light lands at t=120.
+        let systems = vec![mk(1, Vec2::new(6000.0, 0.0), Some(owner))];
+        let cc = Vec2::new(0.0, 0.0);
+        let builds = vec![];
+        let q = |viewer, now| {
+            filter_systems(&systems, viewer, cc, c, now, &builds, 0, sim::DT, &BTreeMap::new())[0].blockade
+        };
+
+        // The BESIEGER sees it at once (by_me), regardless of light.
+        let b = q(besieger, 100.5).expect("besieger sees their own blockade immediately");
+        assert!(b.by_me && b.by == besieger);
+        // The OWNER does NOT see it before the onset light arrives…
+        assert!(q(owner, 110.0).is_none(), "owner learns the blockade only by light");
+        // …and DOES once it has (t ≥ since + 20 s), not marked as theirs.
+        let o = q(owner, 121.0).expect("owner sees the blockade after the onset light");
+        assert!(!o.by_me && o.by == besieger);
+        // A THIRD party never sees the blockade badge, even long after.
+        assert!(q(third, 500.0).is_none(), "leak: a non-participant must never see the blockade state");
+    }
+
     /// SCOUT INTEL delivery obeys light (§scout part 2): the snapshot is
     /// knowledge on the scout at the capture moment — the View withholds it
     /// until that light reaches the viewer's command center, then shows the
@@ -1034,6 +1087,7 @@ mod tests {
             habitat_tier: 0,
             habitat_fed: false,
             refinery_tier: 0,
+            blockade: None,
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
