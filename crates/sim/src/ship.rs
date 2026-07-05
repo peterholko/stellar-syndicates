@@ -198,6 +198,18 @@ pub const ALL_SHIP_KINDS: [ShipKind; 5] = [
     ShipKind::Scout,
 ];
 
+/// The fastest flying speed across every ship kind — the single number the
+/// light-game invariant ([`crate::config::SimConfig::light_ratio`]) is measured
+/// against: `c` must comfortably outrun even the quickest hull so information
+/// and orders can, in principle, overtake any raider. Recomputed from the speed
+/// table so a future speed edit can't silently outrun light unnoticed.
+pub fn fastest_ship_speed() -> f64 {
+    ALL_SHIP_KINDS
+        .iter()
+        .map(|k| k.max_speed())
+        .fold(0.0_f64, f64::max)
+}
+
 /// An ESTIMATED-SIZE BUCKET for a fleet seen through the fog (GDD §13.1 intel
 /// ladder). A far observer of a broadcasting hammer knows roughly HOW BIG it is
 /// — never the exact count, and never what's IN it (that needs sensor coverage).

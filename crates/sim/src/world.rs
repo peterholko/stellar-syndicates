@@ -5904,10 +5904,12 @@ mod tests {
         // convoy (contact almost immediately once the commit lands).
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(4000.0, 0.0), Vec2::new(4180.0, 0.0));
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
-        // Recall is issued, but its light (≈13 s away) can't beat the contact.
+        // The commit's light reaches the far raider at ~10 s (dist 4000 / c 400),
+        // and it makes contact ~2 s later. The recall is issued well before that
+        // contact, but its own ~10 s light can't beat the raider to the kill.
         let mut recalled = false;
         let outcome = run_until_raid(&mut w, 120, |w| {
-            if !recalled && w.time > 14.0 {
+            if !recalled && w.time > 4.0 {
                 recalled = true;
                 vec![Command::RecallRaid { player_id: atk, raider_id: raider }]
             } else {
