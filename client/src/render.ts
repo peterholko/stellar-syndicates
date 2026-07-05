@@ -313,9 +313,9 @@ export class Renderer {
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
-    // §battle-aftermath: the battle state icons. Missing files → the drawn
-    // markers keep working; drop `battle_in_progress.png` / `battle_aftermath.png`
-    // into client/public/art/ and they light up with no code change.
+    // §battle-aftermath: the battle-state icons (background-removed, downscaled
+    // to 256 — they render at ~22-26px screen-space and never grow). The drawn
+    // fallback markers still cover a failed/missing load.
     const [battleOngoing, battleAftermath] = await Promise.all([
       load("/art/battle_in_progress.png"),
       load("/art/battle_aftermath.png"),
@@ -834,9 +834,9 @@ export class Renderer {
         sp.scale.set(BATTLE_MARKER_PX / this.texBattleAftermath.width);
         sp.alpha = alpha;
       } else {
-        // Drawn fallback: a broken-blade cross + drifting-debris arc, in a
-        // cooled-ember tone (this is HISTORY, not the red alert of an ongoing
-        // battle). Swapped for battle_aftermath.png the moment it exists.
+        // Drawn fallback (used only if battle_aftermath.png fails to load): a
+        // broken-blade cross + drifting-debris arc, in a cooled-ember tone
+        // (this is HISTORY, not the red alert of an ongoing battle).
         const col = viewed ? 0x8a8f9c : 0xd08a5a;
         const r2 = BATTLE_MARKER_PX * 0.32;
         g.moveTo(sx - r2, sy - r2).lineTo(sx + r2 * 0.4, sy + r2 * 0.4).stroke({ width: 1.8, color: col, alpha });

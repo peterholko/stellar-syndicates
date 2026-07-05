@@ -452,6 +452,21 @@
           "png128": "ui_icons/png/128/status-in-transit.png"
         }
       ]
+    },
+    "battle_markers": {
+      "title": "Battle Markers",
+      "assets": [
+        {
+          "slug": "battle-in-progress",
+          "title": "Battle In Progress",
+          "png": "battle_in_progress.png"
+        },
+        {
+          "slug": "battle-aftermath",
+          "title": "Battle Aftermath",
+          "png": "battle_aftermath.png"
+        }
+      ]
     }
   }
 }
