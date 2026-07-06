@@ -146,7 +146,14 @@
         font-size: 12px;
         transition: opacity 1.2s ease;
         box-shadow: 0 6px 22px rgba(0,0,0,0.45);
+        /* The container is click-through (pointer-events:none) so the map behind
+           the empty gaps stays clickable; the toasts THEMSELVES take clicks so
+           they can be dismissed / opened. */
+        pointer-events: auto; cursor: pointer;
       }
+      #reports-log .report:hover { border-color: #2f4066; }
+      /* Click-dismiss: a quick fade-out before removal. */
+      #reports-log .report.dismissing { opacity: 0; transition: opacity 0.18s ease; pointer-events: none; }
       #reports-log .report.good { border-left: 3px solid #5fd08a; }
       #reports-log .report.bad { border-left: 3px solid #ff6b6b; }
       #reports-log .report.fade { opacity: 0.32; }

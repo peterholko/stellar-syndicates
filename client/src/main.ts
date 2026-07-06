@@ -1008,11 +1008,17 @@ function saveBattleMarks(): void {
   localStorage.setItem(BATTLE_LS_KEY, JSON.stringify({ viewed: keep(state.battleViewed), dismissed: keep(state.battleDismissed) }));
 }
 loadBattleMarks();
-// Battle entries in the reports log open the same results panel as the map
-// marker (delegated once on the persistent log root — §single-click pattern).
+// Clicking a top-center notification DISMISSES it (quick fade → remove). A
+// battle report also opens its full results panel (the map marker + reports
+// history persist — only the transient toast goes away). Delegated once on the
+// persistent log root (§single-click pattern).
 $("reports-log").addEventListener("click", (e) => {
-  const row = (e.target as HTMLElement).closest("[data-report-id]") as HTMLElement | null;
-  if (row) openBattlePanel(Number(row.dataset.reportId));
+  const row = (e.target as HTMLElement).closest(".report") as HTMLElement | null;
+  if (!row) return;
+  if (row.dataset.reportId) openBattlePanel(Number(row.dataset.reportId));
+  if (row.classList.contains("dismissing")) return; // already on its way out
+  row.classList.add("dismissing");
+  setTimeout(() => row.remove(), 200);
 });
 
 let battlePanelBuilt = false;
