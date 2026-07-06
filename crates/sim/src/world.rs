@@ -1025,11 +1025,13 @@ impl World {
         use crate::doctrine::EngagementPosture;
         let base = self.config.sensor_range;
         let c = self.config.c;
+        let hub = self.hub;
         // Read-only snapshot (deterministic order) for target selection + odds.
         #[derive(Clone, Copy)]
         struct Snap {
             id: EntityId,
             owner: PlayerId,
+            kind: ShipKind,
             pos: Vec2,
             vel: Vec2,
             combat: f64,
@@ -1043,6 +1045,7 @@ impl World {
             .map(|(id, s)| Snap {
                 id: *id,
                 owner: s.owner,
+                kind: s.flagship_kind(),
                 pos: s.pos,
                 vel: s.vel,
                 combat: s.combat_weight(),
@@ -1071,15 +1074,21 @@ impl World {
             }
         };
         // Local combatant force ratio over the fleet's OWN bubble (friendly incl.
-        // self; hostile) — the WHETHER gate's input (weighted, non-combatants ignored).
+        // self; hostile) — the WHETHER gate's input (weighted, non-combatants
+        // ignored). Membership uses the SAME retarded `visible` rule as target
+        // selection, so the fleet weighs exactly the combatants its own light shows
+        // (a fast mover detected at its retarded position also counts in the odds).
         let local_force = |ppos: Vec2, owner: PlayerId, bubble: f64| -> (f64, f64) {
             let (mut f, mut h) = (0.0f64, 0.0f64);
-            for s in snap.iter().filter(|s| s.combatant && ppos.distance(s.pos) <= bubble) {
+            for s in snap.iter().filter(|s| s.combatant && visible(ppos, bubble, s)) {
                 if s.owner == owner { f += s.combat; } else { h += s.combat; }
             }
             (f, h)
         };
         let ratio = |f: f64, h: f64| -> f64 { if h <= 0.0 { 1.0 } else { f / (f + h) } };
+        // A convoy safe inside the hub commons (§4) escapes on contact — don't
+        // pointlessly commit against it (and thrash a re-commit every tick).
+        let hub_safe = |s: &Snap| -> bool { s.kind == ShipKind::Convoy && s.pos.distance(hub) <= HUB_SAFE_RADIUS };
 
         let mut commits: Vec<(EntityId, EntityId, Vec<Vec2>)> = Vec::new(); // (fleet, target, saved patrol)
         for (fid, ship) in &self.fleets {
@@ -1096,10 +1105,11 @@ impl World {
             }
             let (owner, ppos) = (ship.owner, ship.pos);
             let bubble = base * ship.sensor_mult();
-            // WHO: nearest rival fleet in the fleet's OWN bubble (deterministic).
+            // WHO: nearest rival fleet in the fleet's OWN bubble (deterministic),
+            // excluding a hub-safe convoy (it would just escape).
             let target = snap
                 .iter()
-                .filter(|s| s.owner != owner && visible(ppos, bubble, s))
+                .filter(|s| s.owner != owner && !hub_safe(s) && visible(ppos, bubble, s))
                 .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id)))
                 .map(|s| s.id);
             let Some(tid) = target else { continue };
@@ -1225,7 +1235,20 @@ impl World {
                 attacker_kind: a_kind, target_kind: t_kind, outcome: RaidOutcome::Escaped, pos: t_pos,
                 attacker_losses: BTreeMap::new(), target_losses: BTreeMap::new(),
             }));
-            self.send_ship_home(aid, a_owner);
+            // Break off. An AUTONOMOUS sortie (a WeaponsFree hunt / picket that
+            // carries a saved patrol) RESUMES its route; a MANUAL raid returns home.
+            // Manual raids carry no `defense`, so this is byte-identical for them.
+            let home = self.players.get(&a_owner).map(|c| c.home);
+            if let Some(ship) = self.fleets.get_mut(&aid) {
+                if let Some(def) = ship.defense.take() {
+                    ship.order = resume_patrol(def.patrol);
+                } else {
+                    ship.order = match home {
+                        Some(h) => FleetOrder::MoveTo { dest: h },
+                        None => FleetOrder::Idle,
+                    };
+                }
+            }
         }
 
         // Contacts: an attacker on Intercept OR Attack within reach of a rival
@@ -1274,6 +1297,12 @@ impl World {
                 }
                 if !e.defenders.contains(&tid) {
                     e.defenders.push(tid);
+                }
+                // An ATTACK order joining an in-progress RAID ESCALATES it to a full
+                // battle (destroy) — the aggressor's explicit intent wins, so the
+                // convoy is fought to the death rather than the raid's cargo-grab.
+                if is_attack {
+                    e.raid = false;
                 }
                 e.touched = true;
                 continue;
@@ -5464,6 +5493,9 @@ mod tests {
         let hunter = squad(&mut w, atk, p, ShipKind::Raider, 1, FleetOrder::Idle);
         w.fleets.get_mut(&hunter).unwrap().posture = EngagementPosture::WeaponsFree;
         let convoy = squad(&mut w, def, p + Vec2::new(2400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::MoveTo { dest: p });
+        // Isolate the scenario: only the hunter + the inbound convoy (drop the
+        // auto-spawned home fleets that would otherwise sit in the hunter's bubble).
+        w.fleets.retain(|id, _| *id == hunter || *id == convoy);
         let bubble = w.config.sensor_range; // raider sensor_mult = 1.0
         let mut true_enter: Option<f64> = None;
         let mut commit: Option<f64> = None;
@@ -5537,6 +5569,35 @@ mod tests {
         let w2: World = serde_json::from_str(&json).unwrap();
         assert_eq!(w2.fleets[&hunter].posture, EngagementPosture::WeaponsFree, "posture persists");
         assert!(matches!(w2.fleets[&hunter].order, FleetOrder::Attack { target } if target == rival), "in-flight Attack persists");
+    }
+
+    /// Part 1 verb (join path): an ATTACK order that joins an in-progress RAID on
+    /// the same convoy ESCALATES it to a full battle — the aggressor's destroy
+    /// intent wins, so a convoy already being raided is fought to the death.
+    #[test]
+    fn an_attack_joining_a_raid_escalates_to_a_full_battle() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        // A tanky convoy (survives the raid window) + two raiders at contact range.
+        let convoy = squad(&mut w, def, cc + Vec2::new(300.0, 0.0), ShipKind::Convoy, 8, FleetOrder::Idle);
+        let r_raid = squad(&mut w, atk, cc + Vec2::new(250.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let r_attack = squad(&mut w, atk, cc + Vec2::new(250.0, 30.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.retain(|id, _| *id == convoy || *id == r_raid || *id == r_attack);
+        // A opens a cargo RAID on the convoy.
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: r_raid, target_id: convoy }]);
+        let raiding = run_until(&mut w, 10, |w| w.engagements.values().any(|e| e.raid && e.attackers.contains(&r_raid)));
+        assert!(raiding, "the raid opens as a raid (steal)");
+        // B ATTACKS the same convoy → joins → escalates the raid to a full battle.
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: r_attack, target_id: convoy }]);
+        let escalated = run_until(&mut w, 10, |w| {
+            w.engagements.values().any(|e| e.attackers.contains(&r_raid) && e.attackers.contains(&r_attack) && !e.raid)
+        });
+        assert!(escalated, "an ATTACK joining a raid forces the whole engagement to a full battle");
     }
 
     #[test]
