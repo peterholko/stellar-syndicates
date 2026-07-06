@@ -298,6 +298,10 @@
         font: inherit; font-size: 11px; cursor: pointer;
       }
       #ship-panel .act:hover { border-color: var(--accent); color: var(--accent); }
+      /* The SELECTED option in a toggle group (transit throttle, engagement
+         posture) is highlighted like a segmented control's active segment. */
+      #ship-panel .act.is-on { background: var(--accent); color: #04121d; border-color: var(--accent); font-weight: 700; }
+      #ship-panel .act.is-on:hover { color: #04121d; }
 
       /* ---- shared kit: stat strip, segmented, badge, bar, sparkline ---- */
       .stat-strip { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 12px; }
