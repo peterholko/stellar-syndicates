@@ -1277,18 +1277,37 @@ impl World {
         for (aid, tid, is_attack) in contacts {
             let a_owner_c = self.fleets.get(&aid).map(|f| f.owner);
             let Some(a_owner_c) = a_owner_c else { continue };
-            // Join an existing battle ONLY when the SIDES align: this attacker is
-            // on the attacking side (same owner) and the target is already this
-            // battle's defender — or both are already in it on the right sides.
-            // (Crucially, a patrol attacking a hostile that is itself attacking a
-            // convoy does NOT merge the two enemies onto one side.)
-            let existing = self
+            // ALREADY FIGHTING each other: if this fleet and its target are both in
+            // the SAME engagement already (on either side), they're in one battle —
+            // don't open a second. This catches RECIPROCAL intercepts (two rival
+            // fleets that each committed to attack the OTHER — e.g. a WeaponsFree
+            // hunter and a picket) which would otherwise spawn two engagements (two
+            // battle icons) at the same spot. Just keep it live (and let an ATTACK
+            // escalate a raid). Distinct from a patrol attacking a hostile that is
+            // itself raiding a convoy — there the two never share an engagement.
+            let together = self
                 .engagements
                 .iter()
                 .find(|(_, e)| {
-                    (e.a_owner == a_owner_c && e.defenders.contains(&tid))
-                        || (e.attackers.contains(&aid) && e.defenders.contains(&tid))
+                    (e.attackers.contains(&aid) || e.defenders.contains(&aid))
+                        && (e.attackers.contains(&tid) || e.defenders.contains(&tid))
                 })
+                .map(|(id, _)| *id);
+            if let Some(eid) = together {
+                let e = self.engagements.get_mut(&eid).unwrap();
+                if is_attack {
+                    e.raid = false;
+                }
+                e.touched = true;
+                continue;
+            }
+            // Otherwise join an existing battle ONLY when the SIDES align: this
+            // attacker is on the attacking side (same owner) and the target is
+            // already this battle's defender — reinforcement of the attack.
+            let existing = self
+                .engagements
+                .iter()
+                .find(|(_, e)| e.a_owner == a_owner_c && e.defenders.contains(&tid))
                 .map(|(id, _)| *id);
             if let Some(eid) = existing {
                 let e = self.engagements.get_mut(&eid).unwrap();
@@ -5569,6 +5588,33 @@ mod tests {
         let w2: World = serde_json::from_str(&json).unwrap();
         assert_eq!(w2.fleets[&hunter].posture, EngagementPosture::WeaponsFree, "posture persists");
         assert!(matches!(w2.fleets[&hunter].order, FleetOrder::Attack { target } if target == rival), "in-flight Attack persists");
+    }
+
+    /// §one-battle-one-icon: two rival fleets that intercept EACH OTHER (reciprocal
+    /// — e.g. a WeaponsFree hunter and a picket both committing to attack the other)
+    /// form ONE engagement, not two overlapping battle icons.
+    #[test]
+    fn reciprocal_intercepts_form_one_battle_not_two() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let a = squad(&mut w, atk, cc + Vec2::new(0.0, 3000.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let b = squad(&mut w, def, cc + Vec2::new(60.0, 3000.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.retain(|id, _| *id == a || *id == b);
+        // Each has committed to attack the OTHER (mutual pursuit, already in reach).
+        w.fleets.get_mut(&a).unwrap().order = FleetOrder::Intercept { target: b };
+        w.fleets.get_mut(&b).unwrap().order = FleetOrder::Intercept { target: a };
+        let engaged = run_until(&mut w, 5, |w| !w.engagements.is_empty());
+        assert!(engaged, "the two raiders make contact");
+        assert_eq!(w.engagements.len(), 1, "reciprocal intercepts = ONE battle (one icon), not two");
+        // Both fleets are in that single engagement, on opposite sides.
+        let e = w.engagements.values().next().unwrap();
+        assert!(e.attackers.contains(&a) || e.defenders.contains(&a));
+        assert!(e.attackers.contains(&b) || e.defenders.contains(&b));
     }
 
     /// Part 1 verb (join path): an ATTACK order that joins an in-progress RAID on
