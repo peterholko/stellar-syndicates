@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
 
@@ -296,6 +296,13 @@ function buildShipPanel(): void {
         net.send({ type: "SetFleetTransit", fleet_id: state.selectedShipId, mode });
         updateShipPanel();
       }
+    } else if (act === "posture" && state.selectedShipId && net) {
+      const posture = (b as HTMLElement).dataset.mode as EngagementPosture | undefined;
+      if (posture) {
+        postureModes.set(state.selectedShipId, posture);
+        net.send({ type: "SetFleetPosture", fleet_id: state.selectedShipId, posture });
+        updateShipPanel();
+      }
     }
   });
 }
@@ -404,6 +411,27 @@ function transitSection(g: GhostView): string {
     ? `<span class="tone-up">running quiet</span> — ~2× trip time, a much smaller sensor signature`
     : `<span class="dim">full speed</span> — fastest, but flank speed lights you up (high signature)`;
   return `<div class="sp-sec">Transit</div><div class="sp-line">${btn("full", "Full", "Formation speed — loud")} ${btn("stealth", "Stealth", "Creep at half speed — quiet")}</div><div class="sp-line dim" style="margin-top:4px">${state}.</div>`;
+}
+
+// §offensive-orders Part 2: the player's chosen engagement POSTURE per own fleet
+// (optimistic — echoes SetFleetPosture; falls back to the View's owner-only value).
+const postureModes = new Map<string, EngagementPosture>();
+const POSTURE_META: { key: EngagementPosture; label: string; hint: string }[] = [
+  { key: "passive", label: "Passive", hint: "Fight only if engaged — take no autonomous offensive action (default)." },
+  { key: "defensive", label: "Defensive", hint: "Defend a guarded asset / station (picket behaviour); no proactive hunting." },
+  { key: "weapons_free", label: "Weapons-free", hint: "Auto-attack any rival that enters this fleet's OWN sensor bubble — on its own local detection, no command-center round trip. A lone convoy is raided, anything armed is destroyed; still gated by your corp doctrine's odds." },
+];
+
+// The POSTURE control — standing per-fleet aggression, for a strike-capable fleet
+// (a raider aboard). Composes with the corp doctrine (which decides the odds).
+function postureSection(g: GhostView): string {
+  if (!g.composition?.some((c) => c.kind === "raider")) return ""; // needs strike capability
+  const cur = postureModes.get(g.id) ?? g.posture ?? "passive";
+  const btn = (m: EngagementPosture, label: string, hint: string) =>
+    `<button class="act${cur === m ? " is-on" : ""}" data-act="posture" data-mode="${m}" title="${esc(hint)}">${esc(label)}</button>`;
+  const desc = POSTURE_META.find((p) => p.key === cur) ?? POSTURE_META[0];
+  return `<div class="sp-sec">Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>` +
+    `<div class="sp-line dim" style="margin-top:4px">${esc(desc.hint)}</div>`;
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
@@ -544,12 +572,14 @@ function ownBody(g: GhostView): string {
   if (g.kind === "raider") {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
-  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
+  const strike = !!g.composition?.some((c) => c.kind === "raider");
+  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}${strike ? ` · <b>shift+click</b> a rival to <b>attack</b> (destroy)` : ""}.</div>`);
   // §contestable-territory Part 1: a raider fleet's second verb — blockade.
   if (g.kind === "raider") {
     parts.push(`<div class="sp-line dim" style="margin-top:4px">${uiIcon("status-warning-threat", 12)} Click a <b>rival system</b> to <b>blockade</b> it — take station and strangle its logistics (its defenses will fight you first).</div>`);
   }
   parts.push(transitSection(g));
+  parts.push(postureSection(g));
   parts.push(fleetManagementSection(g));
   return parts.join("");
 }
@@ -1258,7 +1288,7 @@ let clickCycle: { sx: number; sy: number; keys: string; index: number } | null =
 // inspect a command anchor · raid a rival ghost · move order to empty space). All
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
-function handleMapClick(sx: number, sy: number): void {
+function handleMapClick(sx: number, sy: number, shift = false): void {
     // §aftermath-select: any fresh map click drops the concluded-battle marker
     // ring; the aftermath/capture branches below re-set it if they hit a marker.
     renderer.selectedBattleMarkerId = null;
@@ -1428,12 +1458,27 @@ function handleMapClick(sx: number, sy: number): void {
 
     const sel = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
     const haveOwn = !!sel && sel.own;
-    // Raiding is the raider's verb (mirrors the sim's CommitRaid gate).
+    // Raiding is the RAIDER-FLAGSHIP's verb (mirrors the sim's CommitRaid gate).
     const haveRaider = haveOwn && sel!.kind === "raider";
+    // ATTACK needs only ≥1 raider ABOARD (the sim's contains-raider gate) — a
+    // corvette-flagship fleet with a raider can attack though it can't raid.
+    const haveStrike = haveOwn && !!sel!.composition?.some((c) => c.kind === "raider");
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
-      if (haveRaider && net) {
+      if (shift && haveStrike && net) {
+        // §offensive-orders Part 1: ATTACK to DESTROY (shift+click) — a full battle,
+        // a convoy's cargo is lost with it (RAID steals, ATTACK kills).
+        net.send({ type: "AttackFleet", fleet_id: sel!.id, target_id: tgt.id });
+        net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
+        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        delete state.orders[sel!.id];
+        updateShipPanel();
+        readout().innerHTML =
+          `Attack committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b> to <b>destroy</b> it. ` +
+          `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
+          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>`;
+      } else if (haveRaider && net) {
         // Direct your selected ship to raid the rival's TRUE position.
         net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
         // §FLEETS Part 3: ask for a projected engagement estimate to show at
@@ -1446,11 +1491,12 @@ function handleMapClick(sx: number, sy: number): void {
           `Raid committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b>. ` +
           `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
           `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
-          `<span class="dim">Press R to recall — it may arrive too late.</span>`;
+          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`);
       } else {
         // Nothing of yours selected to attack with → INSPECT the rival (panel).
         selectShip(enemy);
-        readout().innerHTML = `Rival <b>${esc(tgt.kind)}</b> selected — its light-delayed details are in the panel.`;
+        const hint = haveStrike ? ` <span class="dim">Shift+click it to ATTACK with your selected fleet.</span>` : "";
+        readout().innerHTML = `Rival <b>${esc(tgt.kind)}</b> selected — its light-delayed details are in the panel.${hint}`;
       }
       return;
     }
@@ -1550,9 +1596,10 @@ function installInteraction(): void {
     down = false;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
     // A tap (no pan) runs the click action for the ACTIVE scene; a pan suppresses it.
+    // Shift+tap on the galaxy map is the ATTACK modifier (destroy vs raid).
     if (!panning) {
       if (renderer.viewMode.type === "system") handleSystemClick(e.clientX, e.clientY);
-      else handleMapClick(e.clientX, e.clientY);
+      else handleMapClick(e.clientX, e.clientY, e.shiftKey);
     }
     panning = false;
   };

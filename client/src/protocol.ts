@@ -225,6 +225,8 @@ export interface StandingOrder {
 // sim's serde enums exactly; the client reads it from the View and writes it via
 // SetFleetDoctrine. Every field defaults to today's behaviour. ---
 export type EngagementPolicy = "avoid" | "defensive_only" | "engage_weaker" | "engage_any";
+// §offensive-orders Part 2: the per-fleet engagement POSTURE (mirrors the sim enum).
+export type EngagementPosture = "passive" | "defensive" | "weapons_free";
 export type RetreatThreshold = "quarter" | "half" | "three_quarter" | "never";
 export type EscortPolicy = "guard_nearest" | "guard_richest" | "hold_station";
 export type DestinationInvalidPolicy = "drop" | "return_home" | "sell_at_hub";
@@ -318,6 +320,9 @@ export interface GhostView {
   // §Part 4 detection signature (how LOUD a dark fleet is; 1.0 = a lone raider at
   // full speed). Present only for dark fleets — drives the flare treatment.
   signature: number | null;
+  // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
+  // fleets, null for every rival; a private standing policy that never leaks).
+  posture: EngagementPosture | null;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -369,6 +374,9 @@ export type ClientMsg =
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
   // §contestable-territory Part 1 — order a raider fleet to blockade a rival system.
   | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
+  // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
+  | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
+  | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
   | { type: "Ping" };
 
 export type RaidOutcome =
@@ -420,7 +428,7 @@ export interface EngagementEstimate {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "raid" | "recall" | "withdraw";
+export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
