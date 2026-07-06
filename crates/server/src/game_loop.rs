@@ -272,6 +272,19 @@ impl GameLoop {
                         self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
                     }
                 }
+                ClientMsg::AttackFleet { fleet_id, target_id } => {
+                    // §offensive-orders Part 1: light-delayed like a raid.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet_id);
+                        self.pending.push(Command::AttackFleet { player_id, fleet_id, target_id });
+                    }
+                }
+                ClientMsg::SetFleetPosture { fleet_id, posture } => {
+                    // §offensive-orders Part 2: instant per-fleet standing policy.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetPosture { player_id, fleet_id, posture });
+                    }
+                }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);
@@ -483,7 +496,16 @@ impl GameLoop {
                     });
                 }
             }
-            let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            let mut ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            // §offensive-orders Part 2: attach each OWN fleet's engagement posture
+            // (owner-only, fresh — a private standing policy like the corp doctrine;
+            // rivals keep `None`, so it never leaks). The history-view can't see the
+            // authoritative fleet, so fill it from the world here.
+            for g in ghosts.iter_mut() {
+                if g.own {
+                    g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                }
+            }
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-
             // participant — the scheduler holds them keyed by recipient.

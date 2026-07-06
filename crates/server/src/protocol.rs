@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sim::{
-    Commodity, CountClass, EntityId, FleetDoctrine, OrderKind, PlayerId, RaidOutcome, ShipKind,
-    Side, StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
+    Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
+    RaidOutcome, ShipKind, Side, StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
 };
 
 /// The client↔server wire protocol version. BUMPED to 2 by the §FLEETS change:
@@ -113,6 +113,17 @@ pub enum ClientMsg {
     /// player's fleets (must contain a raider) to take station on a rival's
     /// system and strangle its logistics. Light-delayed like a move order.
     BlockadeSystem { fleet_id: EntityId, system_id: EntityId },
+
+    /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
+    /// Orderable on any rival fleet; the attacker must contain a raider. Light-
+    /// delayed like a raid; on contact it's a FULL battle (destroy, cargo lost),
+    /// unlike CommitRaid (steal).
+    AttackFleet { fleet_id: EntityId, target_id: EntityId },
+
+    /// Set a fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2): Passive /
+    /// Defensive / WeaponsFree. Instant local administration on the player's own
+    /// fleet (a standing per-fleet policy, like SetFleetTransit).
+    SetFleetPosture { fleet_id: EntityId, posture: EngagementPosture },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -602,6 +613,10 @@ pub struct GhostView {
     /// LOUD it is (1.0 = a lone raider at full speed). Present only for DARK
     /// fleets; drives the client's flare/plume treatment. `None` for broadcasters.
     pub signature: Option<f64>,
+    /// The fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2) — OWNER-ONLY, so
+    /// `Some(..)` for your own fleets and `None` for every rival (a standing
+    /// per-fleet policy is private, like the corp doctrine; never leaks).
+    pub posture: Option<EngagementPosture>,
 }
 
 /// Messages pushed by the server to a single player's connection.

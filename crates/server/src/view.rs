@@ -367,6 +367,9 @@ impl PositionHistory {
                 count_class: p.count_class,
                 composition,
                 signature: if p.broadcasts { None } else { Some(signature) },
+                // OWNER-ONLY per-fleet posture is filled in by the game loop from the
+                // authoritative fleet (this history-only view can't see it); None here.
+                posture: None,
             });
         }
         // Deterministic ordering by id.

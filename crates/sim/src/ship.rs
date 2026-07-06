@@ -359,6 +359,12 @@ pub enum FleetOrder {
     /// fleet HOLDS on station (keeps this order — it does not go Idle), and the
     /// world's standing-defense engages it as any hostile contact.
     Blockade { system: EntityId, station: Vec2 },
+    /// ATTACK a rival fleet to DESTROY it (§offensive-orders Part 1): the targeted
+    /// destroy verb. Pursues exactly like [`FleetOrder::Intercept`], but on contact
+    /// it opens a FULL-DURATION engagement (`raid = false`) regardless of the
+    /// target's kind — so a convoy is destroyed (its cargo lost with it), not
+    /// raided. RAID (`Intercept` on a convoy) steals; ATTACK destroys.
+    Attack { target: EntityId },
 }
 
 /// What a trade convoy does when it reaches its destination (§9). A buy spawns a
@@ -431,6 +437,11 @@ pub struct Fleet {
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
+    /// ENGAGEMENT POSTURE (§offensive-orders Part 2): standing per-fleet aggression
+    /// — Passive (default), Defensive, or WeaponsFree. serde default = Passive so
+    /// every old snapshot loads with today's behaviour (byte-preserving).
+    #[serde(default)]
+    pub posture: crate::doctrine::EngagementPosture,
 }
 
 impl Fleet {
@@ -460,6 +471,7 @@ impl Fleet {
             notified_held: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
+            posture: crate::doctrine::EngagementPosture::Passive,
         }
     }
 
@@ -672,9 +684,10 @@ impl Fleet {
                     *index = (*index + 1) % waypoints.len();
                 }
             }
-            // Interception is driven by the world (it needs the target's state),
-            // so there is nothing to do in the self-contained per-fleet advance.
-            FleetOrder::Intercept { .. } => {}
+            // Interception AND attack are driven by the world (they need the
+            // target's state), so there is nothing to do in the self-contained
+            // per-fleet advance.
+            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } => {}
         }
     }
 }

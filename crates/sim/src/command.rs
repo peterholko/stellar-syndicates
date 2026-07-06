@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::doctrine::FleetDoctrine;
+use crate::doctrine::{EngagementPosture, FleetDoctrine};
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
 use crate::standing::StandingOrder;
@@ -205,5 +205,31 @@ pub enum Command {
         player_id: PlayerId,
         fleet_id: EntityId,
         system_id: EntityId,
+    },
+
+    /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted DESTROY verb.
+    /// Orderable on ANY rival fleet (not just convoys). The attacking fleet must
+    /// CONTAIN ≥1 raider (strike capability — consistent with `BlockadeSystem`;
+    /// corvette/scout-only fleets soft-reject). Fuel-charged and LIGHT-DELAYED via
+    /// the echo lifecycle, like a raid. Reuses the intercept-commit pursuit, but on
+    /// contact opens a FULL-DURATION battle (not the raid brevity cap): a destroyed
+    /// fleet's cargo is lost with it. RAID (`CommitRaid`) steals; ATTACK destroys.
+    AttackFleet {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        target_id: EntityId,
+    },
+
+    /// Set a fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2): the standing
+    /// per-fleet aggression (Passive / Defensive / WeaponsFree). INSTANT local
+    /// administration on the player's own fleet — a standing policy, like the
+    /// sibling `SetFleetTransit` throttle and the corp `SetFleetDoctrine` (not a
+    /// real-time command). The ACTION it authorizes is taken on the fleet's OWN
+    /// local detection (forward autonomy); the owner learns of any engagement
+    /// light-delayed. Soft-reject if not the player's fleet.
+    SetFleetPosture {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        posture: EngagementPosture,
     },
 }

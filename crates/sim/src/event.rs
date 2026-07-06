@@ -27,6 +27,8 @@ pub enum OrderKind {
     Withdraw,
     /// A BLOCKADE order (§contestable-territory) — take station on a rival system.
     Blockade,
+    /// An ATTACK order (§offensive-orders) — destroy a rival fleet (full battle).
+    Attack,
 }
 
 impl OrderKind {
@@ -38,6 +40,7 @@ impl OrderKind {
             OrderKind::Recall => "recall",
             OrderKind::Withdraw => "withdraw",
             OrderKind::Blockade => "blockade",
+            OrderKind::Attack => "attack",
         }
     }
 }
