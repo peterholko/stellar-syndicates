@@ -198,6 +198,18 @@ pub const ALL_SHIP_KINDS: [ShipKind; 5] = [
     ShipKind::Scout,
 ];
 
+/// The fastest flying speed across every ship kind — the single number the
+/// light-game invariant ([`crate::config::SimConfig::light_ratio`]) is measured
+/// against: `c` must comfortably outrun even the quickest hull so information
+/// and orders can, in principle, overtake any raider. Recomputed from the speed
+/// table so a future speed edit can't silently outrun light unnoticed.
+pub fn fastest_ship_speed() -> f64 {
+    ALL_SHIP_KINDS
+        .iter()
+        .map(|k| k.max_speed())
+        .fold(0.0_f64, f64::max)
+}
+
 /// An ESTIMATED-SIZE BUCKET for a fleet seen through the fog (GDD §13.1 intel
 /// ladder). A far observer of a broadcasting hammer knows roughly HOW BIG it is
 /// — never the exact count, and never what's IN it (that needs sensor coverage).
@@ -339,6 +351,20 @@ pub enum FleetOrder {
     /// (proportional steer-and-correct) and is driven by the world (it needs the
     /// target's state).
     Intercept { target: EntityId },
+    /// BLOCKADE a rival system (§contestable-territory Part 1): fly to the
+    /// system and take STATION on it, strangling its logistics. `station` is the
+    /// target system's position (static, captured at issue time) so the
+    /// self-contained advance can steer to it without a world lookup; `system`
+    /// names the target for the world's blockade resolution. On arrival the
+    /// fleet HOLDS on station (keeps this order — it does not go Idle), and the
+    /// world's standing-defense engages it as any hostile contact.
+    Blockade { system: EntityId, station: Vec2 },
+    /// ATTACK a rival fleet to DESTROY it (§offensive-orders Part 1): the targeted
+    /// destroy verb. Pursues exactly like [`FleetOrder::Intercept`], but on contact
+    /// it opens a FULL-DURATION engagement (`raid = false`) regardless of the
+    /// target's kind — so a convoy is destroyed (its cargo lost with it), not
+    /// raided. RAID (`Intercept` on a convoy) steals; ATTACK destroys.
+    Attack { target: EntityId },
 }
 
 /// What a trade convoy does when it reaches its destination (§9). A buy spawns a
@@ -411,6 +437,11 @@ pub struct Fleet {
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
+    /// ENGAGEMENT POSTURE (§offensive-orders Part 2): standing per-fleet aggression
+    /// — Passive (default), Defensive, or WeaponsFree. serde default = Passive so
+    /// every old snapshot loads with today's behaviour (byte-preserving).
+    #[serde(default)]
+    pub posture: crate::doctrine::EngagementPosture,
 }
 
 impl Fleet {
@@ -440,6 +471,7 @@ impl Fleet {
             notified_held: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
+            posture: crate::doctrine::EngagementPosture::Passive,
         }
     }
 
@@ -621,6 +653,15 @@ impl Fleet {
                     self.order = FleetOrder::Idle;
                 }
             }
+            FleetOrder::Blockade { station, .. } => {
+                // Fly to station, then HOLD there (keep the Blockade order — the
+                // world reads on-station presence as an active blockade; going
+                // Idle would drop it). Once arrived, advance_toward returns the
+                // station point at zero velocity, so it simply holds each tick.
+                let step = advance_toward(self.pos, *station, speed, dt);
+                self.pos = step.pos;
+                self.vel = step.vel;
+            }
             FleetOrder::Patrol {
                 waypoints,
                 index,
@@ -643,9 +684,10 @@ impl Fleet {
                     *index = (*index + 1) % waypoints.len();
                 }
             }
-            // Interception is driven by the world (it needs the target's state),
-            // so there is nothing to do in the self-contained per-fleet advance.
-            FleetOrder::Intercept { .. } => {}
+            // Interception AND attack are driven by the world (they need the
+            // target's state), so there is nothing to do in the self-contained
+            // per-fleet advance.
+            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } => {}
         }
     }
 }

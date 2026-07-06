@@ -58,6 +58,12 @@ export interface SystemStateView {
   /// Owner-only FULL build queue, completion-ordered (§build-progress) — the
   /// sim always allowed concurrent jobs; rivals always get an empty list.
   builds: BuildState[];
+  /// BLOCKADE state (§contestable-territory), fog-safe: present only for the two
+  /// participants — the besieger (`by_me`) and the owner (light-delayed). Third
+  /// parties get null. `by` = the blockading corp; `since` = onset sim-time;
+  /// `siege_since` = when the (defense-suppressed) capture clock started (§Part 2),
+  /// null if the siege can't progress yet. Progress = (now−siege_since)/siege_secs.
+  blockade: { by: PlayerId; since: number; by_me: boolean; siege_since: number | null } | null;
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
   /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.
@@ -131,6 +137,9 @@ export interface GalaxyInfo {
   /// Fuel out per Volatile — for the owner-only refining readout.
   refinery_rate_per_tier: number;
   refinery_yield: number;
+  /// §contestable-territory Part 2: siege duration (sim s) — the client renders
+  /// siege progress = (now − blockade.siege_since) / siege_secs.
+  siege_secs: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -216,6 +225,8 @@ export interface StandingOrder {
 // sim's serde enums exactly; the client reads it from the View and writes it via
 // SetFleetDoctrine. Every field defaults to today's behaviour. ---
 export type EngagementPolicy = "avoid" | "defensive_only" | "engage_weaker" | "engage_any";
+// §offensive-orders Part 2: the per-fleet engagement POSTURE (mirrors the sim enum).
+export type EngagementPosture = "passive" | "defensive" | "weapons_free";
 export type RetreatThreshold = "quarter" | "half" | "three_quarter" | "never";
 export type EscortPolicy = "guard_nearest" | "guard_richest" | "hold_station";
 export type DestinationInvalidPolicy = "drop" | "return_home" | "sell_at_hub";
@@ -309,6 +320,9 @@ export interface GhostView {
   // §Part 4 detection signature (how LOUD a dark fleet is; 1.0 = a lone raider at
   // full speed). Present only for dark fleets — drives the flare treatment.
   signature: number | null;
+  // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
+  // fleets, null for every rival; a private standing policy that never leaks).
+  posture: EngagementPosture | null;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -358,6 +372,11 @@ export type ClientMsg =
   // §FLEETS management v1 — compose fleets at an owned system.
   | { type: "MergeFleets"; into: EntityId; from: EntityId }
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
+  // §contestable-territory Part 1 — order a raider fleet to blockade a rival system.
+  | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
+  // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
+  | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
+  | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
   | { type: "Ping" };
 
 export type RaidOutcome =
@@ -409,13 +428,19 @@ export interface EngagementEstimate {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "raid" | "recall" | "withdraw";
+export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
+// ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
+// revealed at the site (own + site-revealed rivals), used to SUPPRESS their
+// individual markers (the icon carries the state) and to build the battle panel.
 export interface BattleView {
+  id: EntityId; // stable engagement id — keys the icon + selection
   pos: Vec2;
   age: number; // light delay of the sighting (s) — "battle raging, as of N ago"
+  started_at: number; // sim-time the battle began (for observed-elapsed)
   own: boolean; // the viewer is one of the two sides
+  participants: EntityId[]; // fleet ids in the fight (already revealed as ghosts)
 }
 
 // §battle-aftermath: a RETAINED concluded battle this player PARTICIPATED in —
@@ -433,6 +458,18 @@ export interface BattleReportView {
   outcome: RaidOutcome;
   attacker_losses: CompCount[];
   target_losses: CompCount[];
+}
+
+// §contestable-territory Part 2: a retained CAPTURE this player participated in
+// (per-participant, light-delayed) — powers the capture aftermath marker + panel.
+// `captor` = you took the system; else you lost it. `plunder` = seized stockpile.
+export interface CaptureReportView {
+  id: number;
+  pos: Vec2;
+  at_time: number; // sim-time the system flipped
+  learned_at: number; // sim-time YOUR light arrived
+  captor: boolean;
+  plunder: StockSlot[];
 }
 
 // One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
@@ -476,6 +513,8 @@ export type ServerMsg =
       battles: BattleView[];
       /// §battle-aftermath: retained concluded-battle reports (owner-only).
       battle_reports: BattleReportView[];
+      /// §contestable-territory Part 2: retained capture reports (per-participant).
+      capture_reports: CaptureReportView[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

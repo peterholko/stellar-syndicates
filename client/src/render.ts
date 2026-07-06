@@ -133,10 +133,21 @@ const BODY_HIT_CAP_PX = 90;
 // §battle-aftermath tunables. The marker is SCREEN-SPACE UI (like pips/badges):
 // it never grows in the deep-zoom band. TTL hides ancient markers (the report
 // stays in the retained list / results log until the server rotates it out).
-const BATTLE_MARKER_PX = 22; // aftermath icon size on screen
+// Battle marker on-screen sizes (screen px — SET HERE, not by the texture
+// resolution; the sprite is scaled to this size regardless of the source PNG's
+// dimensions). Doubled from the original 22/26 so the icons read clearly on the
+// galaxy map. Tunable.
+const BATTLE_MARKER_PX = 44; // aftermath / capture icon size on screen
 const BATTLE_MARKER_TTL_S = 1800; // hide markers learned > 30 min ago (tunable)
-const BATTLE_MARKER_HIT_PX = 14; // click radius
-const BATTLE_ONGOING_PX = 26; // the in-progress icon size (pulse scales it a bit)
+const BATTLE_MARKER_HIT_PX = 24; // click radius (scaled with the bigger markers)
+const BATTLE_ONGOING_PX = 52; // the in-progress icon size (pulse scales it a bit)
+// §aftermath-fade: a concluded-battle marker fades with time since the viewer's
+// report ARRIVED — full (with the fresh pulse) at first, a smooth decay over
+// AFTERMATH_FADE_SECS down to AFTERMATH_FLOOR_ALPHA, then held at that floor
+// (still selectable) until BATTLE_MARKER_TTL_S removes it. Old battles literally
+// fade into the dark. Both tunable.
+const AFTERMATH_FADE_SECS = 240;
+const AFTERMATH_FLOOR_ALPHA = 0.15;
 
 // FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
 // lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
@@ -188,8 +199,15 @@ export class Renderer {
   private aftermathLayer = new Container();
   private aftermathGfx = new Graphics();
   private aftermathSprites = new Map<number, Sprite>();
-  private battleSprites = new Map<number, Sprite>(); // pooled ongoing-battle icons (keyed by index)
+  private battleSprites = new Map<string, Sprite>(); // pooled ongoing-battle icons, keyed by engagement id
+  private battleHits: { id: string; sx: number; sy: number }[] = []; // §one-battle-one-icon click targets
   private aftermathHits: { id: number; sx: number; sy: number }[] = [];
+  // §aftermath-select: the concluded-battle marker (aftermath OR capture report id)
+  // that currently carries the standard selection ring. Set by main.ts on click,
+  // cleared when any other object is selected. Ring draws at full even at the fade
+  // floor, so an all-but-faded marker is still visibly selectable.
+  selectedBattleMarkerId: number | null = null;
+  private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
@@ -313,9 +331,9 @@ export class Renderer {
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
-    // §battle-aftermath: the battle state icons. Missing files → the drawn
-    // markers keep working; drop `battle_in_progress.png` / `battle_aftermath.png`
-    // into client/public/art/ and they light up with no code change.
+    // §battle-aftermath: the battle-state icons (background-removed, downscaled
+    // to 256 — they render at ~22-26px screen-space and never grow). The drawn
+    // fallback markers still cover a failed/missing load.
     const [battleOngoing, battleAftermath] = await Promise.all([
       load("/art/battle_in_progress.png"),
       load("/art/battle_aftermath.png"),
@@ -510,11 +528,9 @@ export class Renderer {
     this.bg.removeChildren();
     if (!this.galaxy) return;
     const g = new Graphics();
-    const rPx = this.galaxy.radius * this.scale;
-    g.circle(this.cx, this.cy, rPx).stroke({ width: 1, color: 0x1c2740, alpha: 0.9 });
-    for (const f of [0.33, 0.66]) {
-      g.circle(this.cx, this.cy, rPx * f).stroke({ width: 1, color: 0x141d30, alpha: 0.8 });
-    }
+    // (No galaxy radial rings: they implied discrete "zones" that don't exist —
+    // radial variation is a CONTINUOUS frontier gradient, not stepped, so the
+    // rings marked nothing. The hub landmark stays.)
     const hub = this.worldToScreen(this.galaxy.hub);
     g.circle(hub.x, hub.y, 11).fill({ color: COL_HUB, alpha: 0.18 });
     g.circle(hub.x, hub.y, 6).fill({ color: COL_HUB, alpha: 0.4 });
@@ -632,6 +648,29 @@ export class Renderer {
       t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
       t.alpha = mine ? 0.95 : rival ? 0.88 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
+
+      // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
+      // dashed ring around a besieged system + a "⛔ BLOCKADE" tag. Participant-
+      // only (the view field is fog-gated), so it draws for the owner (their
+      // system besieged) and the besieger (their blockade), never a third party.
+      if (dyn?.blockade) {
+        const half = rendered / 2;
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 500);
+        const rr = Math.max(15, half + 6) + extra;
+        const seg = 22;
+        for (let i = 0; i < seg; i += 2) {
+          const a0 = (i / seg) * Math.PI * 2;
+          const a1 = ((i + 1) / seg) * Math.PI * 2;
+          g.moveTo(s.x + Math.cos(a0) * rr, s.y + Math.sin(a0) * rr)
+            .lineTo(s.x + Math.cos(a1) * rr, s.y + Math.sin(a1) * rr);
+        }
+        g.stroke({ width: 1.6, color: COL_THREAT, alpha: 0.4 + 0.4 * pulse });
+        const bt = new Text({ text: dyn.blockade.by_me ? "⛔ BLOCKADING" : "⛔ BLOCKADE", style: new TextStyle({ fill: COL_THREAT, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
+        bt.anchor.set(0.5, 1);
+        bt.position.set(s.x, s.y - rr - 2);
+        bt.alpha = 0.7 + 0.3 * pulse;
+        this.systemsLayer.addChild(bt);
+      }
     }
   }
 
@@ -760,39 +799,76 @@ export class Renderer {
     const g = this.interceptGfx;
     const now = performance.now();
     const pulse = 0.5 + 0.5 * Math.sin(now / 200);
-    let used = 0;
+    this.battleHits = [];
+    const live = new Set<string>();
+    // §one-battle-one-icon: two SEPARATE engagements whose anchors nearly
+    // coincide fan out slightly so they stay two icons (a merged fight is one
+    // engagement id → one icon already).
+    const slotByCell = new Map<string, number>();
     for (const b of state.battles) {
-      const s = this.worldToScreen(b.pos);
+      const base = this.worldToScreen(b.pos);
+      const cell = `${Math.round(b.pos.x / 50)},${Math.round(b.pos.y / 50)}`;
+      const slot = slotByCell.get(cell) ?? 0;
+      slotByCell.set(cell, slot + 1);
+      const sx = base.x + slot * (BATTLE_ONGOING_PX * 0.85);
+      const sy = base.y - slot * 4;
+      live.add(b.id);
       if (this.texBattleOngoing) {
-        let sp = this.battleSprites.get(used);
+        let sp = this.battleSprites.get(b.id);
         if (!sp) {
           sp = new Sprite(this.texBattleOngoing);
           sp.anchor.set(0.5);
           this.aftermathLayer.addChild(sp);
-          this.battleSprites.set(used, sp);
+          this.battleSprites.set(b.id, sp);
         }
         sp.visible = true;
         sp.texture = this.texBattleOngoing;
-        sp.position.set(s.x, s.y);
+        sp.position.set(sx, sy);
         sp.scale.set(((BATTLE_ONGOING_PX + pulse * 5) / this.texBattleOngoing.width));
         sp.alpha = 0.7 + 0.3 * pulse;
-        used++;
         // Keep the alert ring so the icon still SHOUTS like the old burst did.
-        g.circle(s.x, s.y, BATTLE_ONGOING_PX * 0.7 + pulse * 5).stroke({ width: 1.4, color: COL_THREAT, alpha: 0.25 + 0.35 * pulse });
+        g.circle(sx, sy, BATTLE_ONGOING_PX * 0.7 + pulse * 5).stroke({ width: 1.4, color: COL_THREAT, alpha: 0.25 + 0.35 * pulse });
       } else {
         const r = 14 + pulse * 6;
         for (let i = 0; i < 8; i++) {
           const a = (i / 8) * Math.PI * 2 + now / 1400;
-          g.moveTo(s.x + Math.cos(a) * r * 0.5, s.y + Math.sin(a) * r * 0.5).lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+          g.moveTo(sx + Math.cos(a) * r * 0.5, sy + Math.sin(a) * r * 0.5).lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
         }
         g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
-        g.circle(s.x, s.y, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
+        g.circle(sx, sy, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
+      }
+      // OWN-INVOLVEMENT PIP: one cyan diamond on the icon's edge if the viewer
+      // has forces in this fight — "my fight" at a glance (one pip regardless of
+      // how many of their fleets are in). No rival pips beyond the site-reveal.
+      if (b.own) {
+        const pr = 4;
+        const px = sx + BATTLE_ONGOING_PX * 0.42;
+        const py = sy - BATTLE_ONGOING_PX * 0.42;
+        const diamond = (rr: number): number[] => [px, py - rr, px + rr, py, px, py + rr, px - rr, py];
+        g.poly(diamond(pr + 1.3)).fill({ color: 0x05070d, alpha: 0.8 });
+        g.poly(diamond(pr)).fill({ color: COL_OWN, alpha: 0.95 });
+      }
+      this.battleHits.push({ id: b.id, sx, sy });
+    }
+    // Destroy pooled icons for engagements that have ended.
+    for (const [id, sp] of this.battleSprites) {
+      if (!live.has(id)) {
+        sp.destroy();
+        this.battleSprites.delete(id);
       }
     }
-    // Hide pooled ongoing icons beyond this frame's battle count.
-    for (const [i, sp] of this.battleSprites) {
-      if (i >= used) sp.visible = false;
+  }
+
+  /// Hit-test the ongoing-battle icons (screen-space, fixed radius). Returns the
+  /// clicked engagement id, or null. Consumed by main.ts's map click.
+  battlePick(sx: number, sy: number): string | null {
+    let best: string | null = null;
+    let bestD = BATTLE_ONGOING_PX * 0.65;
+    for (const h of this.battleHits) {
+      const d = Math.hypot(h.sx - sx, h.sy - sy);
+      if (d < bestD) { bestD = d; best = h.id; }
     }
+    return best;
   }
 
   /// §battle-aftermath: the concluded-battle markers — one per RETAINED report
@@ -820,8 +896,14 @@ export class Renderer {
       const sy = s.y - slot * 4;
       const viewed = state.battleViewed.has(r.id);
       const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
-      const alpha = viewed ? 0.45 : 0.8 + 0.2 * pulse;
+      // A VIEWED marker is static (no pulse) and dimmer — history, not a live
+      // alert — but the aftermath art is a low-saturation cool grey-teal, so a
+      // very low alpha reads as "greyed out / broken." Keep it clearly legible.
+      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse;
+      // §aftermath-fade: decay the whole marker toward the floor as its report ages.
+      const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at);
       live.add(r.id);
+      if (r.id === this.selectedBattleMarkerId) this.drawMarkerSelectionRing(g, sx, sy);
       if (this.texBattleAftermath) {
         let sp = this.aftermathSprites.get(r.id);
         if (!sp) {
@@ -834,9 +916,9 @@ export class Renderer {
         sp.scale.set(BATTLE_MARKER_PX / this.texBattleAftermath.width);
         sp.alpha = alpha;
       } else {
-        // Drawn fallback: a broken-blade cross + drifting-debris arc, in a
-        // cooled-ember tone (this is HISTORY, not the red alert of an ongoing
-        // battle). Swapped for battle_aftermath.png the moment it exists.
+        // Drawn fallback (used only if battle_aftermath.png fails to load): a
+        // broken-blade cross + drifting-debris arc, in a cooled-ember tone
+        // (this is HISTORY, not the red alert of an ongoing battle).
         const col = viewed ? 0x8a8f9c : 0xd08a5a;
         const r2 = BATTLE_MARKER_PX * 0.32;
         g.moveTo(sx - r2, sy - r2).lineTo(sx + r2 * 0.4, sy + r2 * 0.4).stroke({ width: 1.8, color: col, alpha });
@@ -846,7 +928,8 @@ export class Renderer {
       }
       if (!viewed) {
         // The new-report attention pulse (subtle — an invitation, not an alarm).
-        g.circle(sx, sy, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: 0xd08a5a, alpha: 0.15 + 0.3 * pulse });
+        // Fades with the marker so an old, never-opened report goes quiet too.
+        g.circle(sx, sy, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: 0xd08a5a, alpha: alpha * (0.2 + 0.4 * pulse) });
       }
       this.aftermathHits.push({ id: r.id, sx, sy });
     }
@@ -856,6 +939,23 @@ export class Renderer {
         this.aftermathSprites.delete(id);
       }
     }
+  }
+
+  /// §aftermath-fade: the marker's alpha given how long ago the viewer's report
+  /// arrived. `base` (fresh alpha) at age 0, a smoothstep decay over
+  /// AFTERMATH_FADE_SECS, then held at AFTERMATH_FLOOR_ALPHA until the TTL prunes
+  /// it. Monotonic — a marker only ever gets dimmer as it ages into the dark.
+  private aftermathFadeAlpha(base: number, ageSecs: number): number {
+    const t = Math.min(1, Math.max(0, ageSecs / AFTERMATH_FADE_SECS));
+    const smooth = t * t * (3 - 2 * t); // smoothstep for a soft fade, not a linear ramp
+    return AFTERMATH_FLOOR_ALPHA + (base - AFTERMATH_FLOOR_ALPHA) * (1 - smooth);
+  }
+
+  /// The STANDARD selection ring (matches a selected system: thin, white) around a
+  /// concluded-battle marker. Drawn at full alpha regardless of the marker's fade,
+  /// so a nearly-dark marker still reads as selected and stays reachable.
+  private drawMarkerSelectionRing(g: Graphics, sx: number, sy: number): void {
+    g.circle(sx, sy, BATTLE_MARKER_PX * 0.62).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
   }
 
   /// Hit-test the aftermath markers (screen-space, fixed radius). Returns the
@@ -869,6 +969,50 @@ export class Renderer {
         bestD = d;
         best = h.id;
       }
+    }
+    return best;
+  }
+
+  /// §contestable-territory Part 2: CAPTURE markers — a flip changed a system's
+  /// hands. Screen-space UI like the aftermath markers (fixed size, never grows),
+  /// under the ghosts. A GOLD flag = you captured; RED = you lost. Unviewed
+  /// pulses; viewed dims; dismissed / older than the TTL are hidden. Shares the
+  /// battleViewed / battleDismissed sets with battles (ids are globally unique).
+  private drawCaptures(state: ViewState): void {
+    const g = this.aftermathGfx; // same layer as the aftermath vector fallback
+    this.captureHits = [];
+    const simNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+    for (const r of state.captureReports) {
+      if (state.battleDismissed.has(r.id)) continue;
+      if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
+      const s = this.worldToScreen(r.pos);
+      const viewed = state.battleViewed.has(r.id);
+      const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
+      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed (see drawAftermath)
+      const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at); // §aftermath-fade
+      const col = r.captor ? 0xffcf6b : COL_THREAT; // gold = gained, red = lost
+      // A little flag on a pole (territory changed hands).
+      const px = s.x;
+      const py = s.y;
+      const h = BATTLE_MARKER_PX * 0.5;
+      if (r.id === this.selectedBattleMarkerId) this.drawMarkerSelectionRing(g, px, py - h * 0.4);
+      g.moveTo(px, py + h * 0.6).lineTo(px, py - h).stroke({ width: 1.6, color: col, alpha });
+      g.poly([px, py - h, px + h * 0.9, py - h * 0.6, px, py - h * 0.2]).fill({ color: col, alpha });
+      if (!viewed) {
+        g.circle(px, py - h * 0.4, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: col, alpha: alpha * (0.2 + 0.4 * pulse) });
+      }
+      this.captureHits.push({ id: r.id, sx: px, sy: py });
+    }
+  }
+
+  /// Hit-test the capture markers (screen-space, fixed radius). Consumed by
+  /// main.ts's map click, checked alongside the aftermath markers.
+  capturePick(sx: number, sy: number): number | null {
+    let best: number | null = null;
+    let bestD = BATTLE_MARKER_HIT_PX;
+    for (const h of this.captureHits) {
+      const d = Math.hypot(h.sx - sx, h.sy - sy);
+      if (d < bestD) { bestD = d; best = h.id; }
     }
     return best;
   }
@@ -1465,7 +1609,24 @@ export class Renderer {
 
       for (const sp of this.ghosts.values()) sp.seen = false;
       const screenById = new Map<string, { x: number; y: number }>();
+      // §one-battle-one-icon: a fleet ENGAGED in a visible battle has its whole
+      // map marker SUPPRESSED (sprite, heading hint, uncertainty cone, ownership
+      // pip, count badge, echo badge) — the single battle icon carries the state.
+      // Per the observer's LIGHT: `state.battles` is already light-gated, so a
+      // distant observer whose retarded view still shows pre-battle fleets sees
+      // them converge normally until the battle's light arrives. Its participant
+      // ids are exactly the ghosts revealed at the site, so this never hides a
+      // fleet the icon doesn't represent.
+      const engaged = new Set<string>();
+      for (const b of state.battles) for (const p of b.participants) engaged.add(p);
       for (const ghost of state.ghosts) {
+        if (engaged.has(ghost.id)) {
+          const sp = this.ghosts.get(ghost.id);
+          if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
+          continue; // not in screenById → no order line either
+        }
+        const sp0 = this.ghosts.get(ghost.id);
+        if (sp0) sp0.container.visible = true; // un-suppress a fleet that broke away
         screenById.set(ghost.id, this.drawGhost(ghost, state, dt));
       }
       // A ship is drawn only while the server is sending its ghost. A destroyed
@@ -1484,6 +1645,7 @@ export class Renderer {
       this.drawIntercepts(state);
       this.drawBattles(state);
       this.drawAftermath(state);
+      this.drawCaptures(state);
       this.drawSignals(state, dt);
     }
 

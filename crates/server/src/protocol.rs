@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sim::{
-    Commodity, CountClass, EntityId, FleetDoctrine, OrderKind, PlayerId, RaidOutcome, ShipKind,
-    Side, StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
+    Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
+    RaidOutcome, ShipKind, Side, StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
 };
 
 /// The client↔server wire protocol version. BUMPED to 2 by the §FLEETS change:
@@ -108,6 +108,22 @@ pub enum ClientMsg {
     /// Split ships off one of the player's fleets into a new fleet at an owned
     /// system (§FLEETS management v1). `counts` = how many of each kind to detach.
     SplitFleet { fleet_id: EntityId, counts: BTreeMap<ShipKind, u32> },
+
+    /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the
+    /// player's fleets (must contain a raider) to take station on a rival's
+    /// system and strangle its logistics. Light-delayed like a move order.
+    BlockadeSystem { fleet_id: EntityId, system_id: EntityId },
+
+    /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
+    /// Orderable on any rival fleet; the attacker must contain a raider. Light-
+    /// delayed like a raid; on contact it's a FULL battle (destroy, cargo lost),
+    /// unlike CommitRaid (steal).
+    AttackFleet { fleet_id: EntityId, target_id: EntityId },
+
+    /// Set a fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2): Passive /
+    /// Defensive / WeaponsFree. Instant local administration on the player's own
+    /// fleet (a standing per-fleet policy, like SetFleetTransit).
+    SetFleetPosture { fleet_id: EntityId, posture: EngagementPosture },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -223,6 +239,23 @@ pub struct BattleReportView {
     pub target_losses: Vec<CompCount>,
 }
 
+/// §contestable-territory Part 2: a RETAINED capture report, as one participant
+/// learned it — powers the capture aftermath marker + results panel. Owner-only
+/// by construction (per participant). `captor` = you took the system; else you
+/// lost it. `plunder` is the seized stockpile the captor gained / the old owner
+/// lost (the defender's report itemizes it).
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptureReportView {
+    pub id: u64,
+    pub pos: Vec2,
+    /// Sim-time the system FLIPPED.
+    pub at_time: f64,
+    /// Sim-time THIS player's light arrived (when you learned).
+    pub learned_at: f64,
+    pub captor: bool,
+    pub plunder: Vec<StockSlot>,
+}
+
 /// A PROJECTED engagement estimate (§FLEETS Part 3), computed by running the
 /// SAME shared Lanchester attrition forward on the observer's own view data. It
 /// is honest about staleness: `composition_age` is how old the target sighting
@@ -331,6 +364,10 @@ pub struct GalaxyInfo {
     /// `yield` Fuel out per Volatile — for the owner-only refining readout.
     pub refinery_rate_per_tier: f64,
     pub refinery_yield: f64,
+    /// §contestable-territory Part 2: how long (sim seconds) an unbroken,
+    /// defense-suppressed siege must run before a colony ship can capture — the
+    /// client renders siege progress against it.
+    pub siege_secs: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -352,6 +389,22 @@ pub struct BuildOptionView {
 pub struct StockSlot {
     pub commodity: Commodity,
     pub units: u32,
+}
+
+/// The BLOCKADE at a system as a participant learns it (§contestable-territory).
+/// Only ever populated for the besieger and the owner (fog-safe — see the
+/// `SystemStateView.blockade` doc). `by` names the blockading corp; `since` is
+/// when the unbroken blockade began; `by_me` marks the viewer as the besieger.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct BlockadeStateView {
+    pub by: PlayerId,
+    pub since: f64,
+    pub by_me: bool,
+    /// §Part 2 SIEGE: sim-time the (defense-suppressed) siege clock started, or
+    /// null if the siege can't progress yet (defenses up, a garrison present, or
+    /// a home system). The client shows progress = (now − siege_since) /
+    /// `GalaxyInfo.siege_secs`; capture becomes possible at full progress.
+    pub siege_since: Option<f64>,
 }
 
 /// An owner-only in-progress build at a system (§step1). `key` is what's building;
@@ -415,6 +468,13 @@ pub struct SystemStateView {
     pub habitat_fed: bool,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
+    /// BLOCKADE state (§contestable-territory Part 1), if this system is under
+    /// blockade. Populated for the two PARTICIPANTS only, each light-honestly:
+    /// the BESIEGER (`by`) sees it via their on-station fleet (no delay); the
+    /// OWNER sees it once the onset light reaches their command center. Third
+    /// parties get `None` here — they observe the fight via `battles`, and the
+    /// eventual capture via the light-delayed ownership change.
+    pub blockade: Option<BlockadeStateView>,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,
@@ -461,14 +521,25 @@ pub struct PendingOrderView {
 /// viewer's command center. Weapons fire is loud — all participants (even dark
 /// fleets) are revealed at the site by that same old light. `age` is how stale
 /// the sighting is ("battle raging — as of N ago").
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BattleView {
+    /// The engagement's stable id — ONE battle entity, ONE map icon. Merging
+    /// reinforcements join the same entity, so the id (and the icon) is stable.
+    pub id: EntityId,
     pub pos: Vec2,
     /// Light delay of the battle sighting (seconds) — `distance(pos, cc) / c`.
     pub age: f64,
+    /// Sim-time the battle began (for the panel's observed-elapsed readout).
+    pub started_at: f64,
     /// True if the viewer is one of the two sides (they read their own running
     /// losses by their own light via the delayed reports).
     pub own: bool,
+    /// The battle's participant fleet ids — exactly the set revealed to any
+    /// observer of the battle by the existing weapons-fire site-reveal (their
+    /// ghosts are already sent). The client uses these to SUPPRESS each
+    /// participant's own map marker (the icon carries the state) and to build
+    /// the battle panel. No new information beyond the ghosts already revealed.
+    pub participants: Vec<EntityId>,
 }
 
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
@@ -542,6 +613,10 @@ pub struct GhostView {
     /// LOUD it is (1.0 = a lone raider at full speed). Present only for DARK
     /// fleets; drives the client's flare/plume treatment. `None` for broadcasters.
     pub signature: Option<f64>,
+    /// The fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2) — OWNER-ONLY, so
+    /// `Some(..)` for your own fleets and `None` for every rival (a standing
+    /// per-fleet policy is private, like the corp doctrine; never leaks).
+    pub posture: Option<EngagementPosture>,
 }
 
 /// Messages pushed by the server to a single player's connection.
@@ -606,6 +681,10 @@ pub enum ServerMsg {
         /// (last [`crate::reports::BATTLE_REPORTS_KEPT`]), so markers/results
         /// survive reconnects.
         battle_reports: Vec<BattleReportView>,
+        /// §contestable-territory Part 2: CONCLUDED captures this player was a
+        /// participant in and has LEARNED of (per-participant, light-delayed) —
+        /// the capture aftermath markers + results. Retained (reconnect-safe).
+        capture_reports: Vec<CaptureReportView>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

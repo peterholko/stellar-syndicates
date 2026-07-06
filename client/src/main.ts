@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type Commodity, type CompCount, type Deposit, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
 
@@ -296,6 +296,13 @@ function buildShipPanel(): void {
         net.send({ type: "SetFleetTransit", fleet_id: state.selectedShipId, mode });
         updateShipPanel();
       }
+    } else if (act === "posture" && state.selectedShipId && net) {
+      const posture = (b as HTMLElement).dataset.mode as EngagementPosture | undefined;
+      if (posture) {
+        postureModes.set(state.selectedShipId, posture);
+        net.send({ type: "SetFleetPosture", fleet_id: state.selectedShipId, posture });
+        updateShipPanel();
+      }
     }
   });
 }
@@ -404,6 +411,27 @@ function transitSection(g: GhostView): string {
     ? `<span class="tone-up">running quiet</span> — ~2× trip time, a much smaller sensor signature`
     : `<span class="dim">full speed</span> — fastest, but flank speed lights you up (high signature)`;
   return `<div class="sp-sec">Transit</div><div class="sp-line">${btn("full", "Full", "Formation speed — loud")} ${btn("stealth", "Stealth", "Creep at half speed — quiet")}</div><div class="sp-line dim" style="margin-top:4px">${state}.</div>`;
+}
+
+// §offensive-orders Part 2: the player's chosen engagement POSTURE per own fleet
+// (optimistic — echoes SetFleetPosture; falls back to the View's owner-only value).
+const postureModes = new Map<string, EngagementPosture>();
+const POSTURE_META: { key: EngagementPosture; label: string; hint: string }[] = [
+  { key: "passive", label: "Passive", hint: "Fight only if engaged — take no autonomous offensive action (default)." },
+  { key: "defensive", label: "Defensive", hint: "Defend a guarded asset / station (picket behaviour); no proactive hunting." },
+  { key: "weapons_free", label: "Weapons-free", hint: "Auto-attack any rival that enters this fleet's OWN sensor bubble — on its own local detection, no command-center round trip. A lone convoy is raided, anything armed is destroyed; still gated by your corp doctrine's odds." },
+];
+
+// The POSTURE control — standing per-fleet aggression, for a strike-capable fleet
+// (a raider aboard). Composes with the corp doctrine (which decides the odds).
+function postureSection(g: GhostView): string {
+  if (!g.composition?.some((c) => c.kind === "raider")) return ""; // needs strike capability
+  const cur = postureModes.get(g.id) ?? g.posture ?? "passive";
+  const btn = (m: EngagementPosture, label: string, hint: string) =>
+    `<button class="act${cur === m ? " is-on" : ""}" data-act="posture" data-mode="${m}" title="${esc(hint)}">${esc(label)}</button>`;
+  const desc = POSTURE_META.find((p) => p.key === cur) ?? POSTURE_META[0];
+  return `<div class="sp-sec">Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>` +
+    `<div class="sp-line dim" style="margin-top:4px">${esc(desc.hint)}</div>`;
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
@@ -544,8 +572,14 @@ function ownBody(g: GhostView): string {
   if (g.kind === "raider") {
     parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
   }
-  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}.</div>`);
+  const strike = !!g.composition?.some((c) => c.kind === "raider");
+  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}${strike ? ` · <b>shift+click</b> a rival to <b>attack</b> (destroy)` : ""}.</div>`);
+  // §contestable-territory Part 1: a raider fleet's second verb — blockade.
+  if (g.kind === "raider") {
+    parts.push(`<div class="sp-line dim" style="margin-top:4px">${uiIcon("status-warning-threat", 12)} Click a <b>rival system</b> to <b>blockade</b> it — take station and strangle its logistics (its defenses will fight you first).</div>`);
+  }
   parts.push(transitSection(g));
+  parts.push(postureSection(g));
   parts.push(fleetManagementSection(g));
   return parts.join("");
 }
@@ -837,7 +871,6 @@ function updateSysviewManage(): void {
   buildSysviewManage();
   panel.classList.add("is-open");
   $("svm-title").textContent = sys.name;
-  $("svm-eyebrow").textContent = "system management · yours";
   // SLOTS — the system's defining constraint, promoted to the header.
   const sUsed = dyn.slots_used ?? 0;
   const sTotal = dyn.slots_total ?? 0;
@@ -862,14 +895,29 @@ function updateSysviewManage(): void {
       .map(([n, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}${tag}</span>`)
       .join(`<span class="dev-sep">·</span>`) +
     `</div>`;
-  const canShip = shippableStock(dyn).length > 0;
+  // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
+  // dispatches hold at origin, so the ship button is disabled while blockaded
+  // (production still accrues into the stockpile). A prominent banner explains it.
+  const blockaded = !!dyn.blockade;
+  const siege = siegeProgress(dyn);
+  const siegeLine = siege
+    ? `<div class="deps-head" style="margin-top:6px">${badge("negative", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `under siege — falls in ${fmtCountdown(siege.left)}`)}</div>` +
+      `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>` +
+      `<div class="mhint dim">Defenses are suppressed and the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system.</div>`
+    : "";
+  const blockadeBanner = blockaded
+    ? `<div class="storage-warn" style="margin:6px 0">${badge("negative", "under blockade")} a rival fleet holds station — convoys are held in &amp; out. Production still accrues; break the blockade (relief, or a new Defense Platform tier) to resume shipping.</div>${siegeLine}`
+    : "";
+  const canShip = !blockaded && shippableStock(dyn).length > 0;
+  const shipTitle = blockaded ? "held — this system is under blockade" : canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units";
   const actions =
     `<div style="margin-top:10px">` +
-    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units"}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
+    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${shipTitle}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
     `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
     `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button></div>`;
   const guard = `<div class="mhint dim" style="margin-top:8px">Buildings are SYSTEM developments — the markers on the map are where each one anchors, not separate colonies. Click a body to see what would anchor there.</div>`;
-  $("svm-body").innerHTML = storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
+  $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
+  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
 }
 
 let planetPanelBuilt = false;
@@ -960,11 +1008,17 @@ function saveBattleMarks(): void {
   localStorage.setItem(BATTLE_LS_KEY, JSON.stringify({ viewed: keep(state.battleViewed), dismissed: keep(state.battleDismissed) }));
 }
 loadBattleMarks();
-// Battle entries in the reports log open the same results panel as the map
-// marker (delegated once on the persistent log root — §single-click pattern).
+// Clicking a top-center notification DISMISSES it (quick fade → remove). A
+// battle report also opens its full results panel (the map marker + reports
+// history persist — only the transient toast goes away). Delegated once on the
+// persistent log root (§single-click pattern).
 $("reports-log").addEventListener("click", (e) => {
-  const row = (e.target as HTMLElement).closest("[data-report-id]") as HTMLElement | null;
-  if (row) openBattlePanel(Number(row.dataset.reportId));
+  const row = (e.target as HTMLElement).closest(".report") as HTMLElement | null;
+  if (!row) return;
+  if (row.dataset.reportId) openBattlePanel(Number(row.dataset.reportId));
+  if (row.classList.contains("dismissing")) return; // already on its way out
+  row.classList.add("dismissing");
+  setTimeout(() => row.remove(), 200);
 });
 
 let battlePanelBuilt = false;
@@ -975,15 +1029,30 @@ function buildBattlePanel(): void {
     const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.act === "close") {
+      openOngoingBattleId = null;
+      renderer.selectedBattleMarkerId = null; // §aftermath-select: drop the ring
       $("battle-panel").classList.remove("is-open");
     } else if (el.dataset.act === "dismiss") {
       const id = Number(el.dataset.id);
       state.battleDismissed.add(id);
+      if (renderer.selectedBattleMarkerId === id) renderer.selectedBattleMarkerId = null;
       saveBattleMarks();
       $("battle-panel").classList.remove("is-open");
+    } else if (el.dataset.act === "withdraw" && net) {
+      // §one-battle-one-icon: Withdraw an OWN engaged fleet straight from the
+      // battle panel (its map marker is suppressed — no hidden sprite to hunt).
+      const fleet = el.dataset.fleet;
+      if (fleet) { net.send({ type: "Withdraw", fleet_id: fleet }); if (openOngoingBattleId) updateOngoingBattlePanel(); }
+    } else if (el.dataset.act === "doctrine") {
+      openOngoingBattleId = null;
+      $("battle-panel").classList.remove("is-open");
+      openRail("doctrine");
     }
   });
 }
+// §one-battle-one-icon: the ongoing battle whose panel is open (client-local),
+// so the View handler can keep its elapsed / echo countdowns / losses live.
+let openOngoingBattleId: string | null = null;
 /// The nearest system's name, as a human-readable "where" for a battle site.
 function nearestSystemName(p: Vec2): string {
   let best = "";
@@ -1035,6 +1104,179 @@ function openBattlePanel(id: number): void {
   $("battle-panel").classList.add("is-open");
 }
 
+// §one-battle-one-icon: open (and keep live) the ONGOING battle panel — clicking
+// the single battle icon. Participants are shown AS KNOWN TO THE VIEWER (own
+// fleets: full composition + the three verbs with echo countdowns; rivals:
+// whatever the site-reveal already granted). Own engaged fleets are reachable
+// here even though their map markers are suppressed.
+function openOngoingBattlePanel(id: string): void {
+  buildBattlePanel();
+  openOngoingBattleId = id;
+  updateOngoingBattlePanel();
+  $("battle-panel").classList.add("is-open");
+}
+// §live-battle-panel running-loss tracking. Purely a HIGH-WATER of the viewer's
+// ALREADY-DELIVERED light — never anything the ghosts didn't carry, so it can't
+// leak: own fleets are tracked at EXACT counts (own light); rivals only at the
+// site-revealed SIZE BUCKET (the fog never grants exact rival counts). Keyed by
+// battle id; a distant viewer's staler ghosts naturally yield a laggier tally.
+type BattleForceHW = { own: Map<ShipKind, number>; rivalPeak: Map<EntityId, CountClass> };
+const battleForceHW = new Map<string, BattleForceHW>();
+const COUNT_CLASS_ORD: Record<CountClass, number> = {
+  one: 0, two_to_three: 1, four_to_seven: 2, eight_to_fifteen: 3, sixteen_to_thirty: 4, thirty_one_plus: 5,
+};
+// Sum a set of own ghosts' EXACT compositions into a per-kind tally.
+function sumOwnComposition(ghosts: GhostView[]): Map<ShipKind, number> {
+  const m = new Map<ShipKind, number>();
+  for (const g of ghosts) {
+    const comp = g.composition ?? [{ kind: g.kind, count: 1 }];
+    for (const c of comp) m.set(c.kind, (m.get(c.kind) ?? 0) + c.count);
+  }
+  return m;
+}
+// One-way COMMAND delay (§3): command-center → battle anchor, at light speed.
+// The same math the order echo-lifecycle uses; null before the galaxy/CC arrive.
+function battleCommandDelay(b: BattleView): number | null {
+  if (!state.commandCenter || !state.galaxy) return null;
+  return Math.hypot(b.pos.x - state.commandCenter.x, b.pos.y - state.commandCenter.y) / state.galaxy.c;
+}
+// A one-way delay mapped onto the player's wall-clock, to the second ("~14:32:10").
+function arrivalLocal(delaySecs: number): string {
+  return new Date(Date.now() + delaySecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function updateOngoingBattlePanel(): void {
+  const id = openOngoingBattleId;
+  if (id === null) return;
+  const b = state.battles.find((x) => x.id === id);
+  const panel = $("battle-panel");
+  if (!b) {
+    // The battle's light now shows it CONCLUDED (it left the live set). Close;
+    // the aftermath marker + report carry the outcome. Drop its loss tracking.
+    battleForceHW.delete(id);
+    openOngoingBattleId = null;
+    panel.classList.remove("is-open");
+    return;
+  }
+  const now = liveSimTime();
+  // Observed elapsed: the viewer sees the battle as of (now − age); it began at
+  // started_at. Light-honest — never ahead of their light.
+  const observed = Math.max(0, now - b.age - b.started_at);
+  const parts = new Set(b.participants);
+  const involved = state.ghosts.filter((g) => parts.has(g.id));
+  const ownFleets = involved.filter((g) => g.own);
+  const rivalFleets = involved.filter((g) => !g.own);
+  const compStr = (g: GhostView): string => {
+    const comp = g.composition ?? [];
+    return comp.length ? comp.map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") : shipKindLabel(g.kind);
+  };
+
+  // Advance the high-water tally from THIS view's already-delivered light.
+  const hw: BattleForceHW = battleForceHW.get(id) ?? { own: new Map<ShipKind, number>(), rivalPeak: new Map<EntityId, CountClass>() };
+  const ownNow = sumOwnComposition(ownFleets);
+  for (const [k, n] of ownNow) hw.own.set(k, Math.max(hw.own.get(k) ?? 0, n));
+  for (const g of rivalFleets) {
+    const prev = hw.rivalPeak.get(g.id);
+    if (prev === undefined || COUNT_CLASS_ORD[g.count_class] > COUNT_CLASS_ORD[prev]) hw.rivalPeak.set(g.id, g.count_class);
+  }
+  battleForceHW.set(id, hw);
+  // OWN running losses (exact, own light): committed peak − now, per kind.
+  const ownLost: string[] = [];
+  for (const [k, peak] of hw.own) {
+    const lost = peak - (ownNow.get(k) ?? 0);
+    if (lost > 0) ownLost.push(`${lost} ${shipKindLabel(k)}`);
+  }
+  const ownNowTotal = [...ownNow.values()].reduce((a, n) => a + n, 0);
+  const ownLossLine = ownFleets.length
+    ? `<div class="sp-line">Standing: <b>${ownNowTotal} ship${ownNowTotal === 1 ? "" : "s"}</b> across ${ownFleets.length} fleet${ownFleets.length === 1 ? "" : "s"}` +
+      (ownLost.length ? ` · <span style="color:var(--bad,#e66)">lost ${esc(ownLost.join(", "))}</span> so far` : ` · <span class="dim">no losses yet</span>`) +
+      ` <span class="dim">(exact, by your light)</span></div>`
+    : "";
+
+  // Per own fleet: composition (running losses ride the composition by own light),
+  // its pending-order echo state if any, and a Withdraw verb.
+  const ownRows = ownFleets.map((g) => {
+    const pend = state.pendingOrders.get(g.id);
+    let echo = "";
+    if (pend && pend.echo_at - pend.delivered_at >= 1.5) {
+      const inTransit = now < pend.delivered_at;
+      echo = ` <span class="dim">· ${esc(pend.kind)} ${inTransit ? "▸ in transit" : "▸ awaiting echo"} ${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
+    }
+    return `<div class="sp-line"><b>${esc(compStr(g))}</b>${echo}` +
+      `<button class="act" data-act="withdraw" data-fleet="${g.id}" style="margin-top:4px" title="Break off and flee home — light-delayed; your formation speed decides the escape">↩ Withdraw this fleet</button></div>`;
+  }).join("");
+  // Rival rows: site-revealed flagship + size BUCKET, with a bucket-level "was ~N"
+  // when this fleet has visibly shrunk (fog-safe — never an exact count).
+  const rivalRows = rivalFleets.length
+    ? rivalFleets.map((g) => {
+        const peak = hw.rivalPeak.get(g.id);
+        const shrunk = peak !== undefined && COUNT_CLASS_ORD[peak] > COUNT_CLASS_ORD[g.count_class];
+        return `<div class="sp-line">Rival <b>${esc(shipKindLabel(g.kind))}</b> <span class="dim">— est. ${esc(countClassLabel(g.count_class))} ships (site-revealed)</span>` +
+          (shrunk ? ` <span style="color:var(--bad,#e66)">▾ down from ~${esc(countClassLabel(peak!))}</span>` : "") + `</div>`;
+      }).join("")
+    : `<div class="sp-line dim">No rival composition observable here yet.</div>`;
+
+  // §3 COMMAND DELAY, in the player's face: one-way CC→anchor time + the local
+  // wall-clock an order issued NOW would actually land at the battle.
+  const delay = battleCommandDelay(b);
+  const cmdDelayBanner = delay !== null
+    ? `<div class="sp-line" style="border:1px solid var(--line,#2a3550);border-radius:6px;padding:6px 8px;background:rgba(255,140,60,0.06)">` +
+      `${uiIcon("action-standing-order", 13)} <b>Command delay: ${fmtCountdown(delay)}</b> — an order sent now arrives <b>~${esc(arrivalLocal(delay))}</b> ` +
+      `<span class="dim">(one-way, your CC → this fight)</span>` +
+      // ~20 s one-way ≈ 40 s round-trip to even confirm — approaching a playtest
+      // battle's whole lifetime, so a mid-fight order out here is likely futile.
+      (delay > 20 ? `<div class="dim" style="margin-top:2px">Distant frontier — mid-battle command may land too late to matter.</div>`
+                  : `<div class="dim" style="margin-top:2px">Close to home — orders can still bite.</div>`) +
+      `</div>`
+    : "";
+
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">${badge("negative", "battle raging")} · as of ${fmtCountdown(b.age)} ago</div>` +
+    `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const body =
+    `<div class="sp-line">Raging for <b>${fmtCountdown(observed)}</b> <span class="dim">(as your light shows it — the site may be further along by now)</span></div>` +
+    (b.own
+      ? `<div class="sp-sec">Your forces engaged</div>${ownLossLine}${ownRows || `<div class="sp-line dim">Your fleets here are no longer observable.</div>`}` +
+        `<div class="sp-sec">Enemy</div>${rivalRows}` +
+        `<div class="sp-sec">Command</div>${cmdDelayBanner}` +
+        `<div class="mhint dim">↩ Withdraw a fleet above · ${uiIcon("action-move-travel", 12)} move any fleet to this site to <b>Reinforce</b> (it joins on arrival) · change standing <b>Doctrine</b> to shift engage/retreat behaviour. All are light-delayed.</div>` +
+        `<button class="act" data-act="doctrine">${uiIcon("action-standing-order", 14)} Change fleet doctrine ▸</button>`
+      : `<div class="sp-sec">Participants</div>${rivalRows}` +
+        `<div class="mhint dim">A battle you can see by its weapons-fire light — you have no forces here. Positions are as of the light that reached you.</div>`);
+  panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
+}
+
+// §contestable-territory Part 2: the CAPTURE results panel — a system changed
+// hands. Reuses the ember-striped battle-panel element + the shared viewed/
+// dismissed sets (capture ids are globally unique). Shows the flip in the
+// recipient's terms (you captured / you lost), the light delay, and the plunder.
+function openCapturePanel(id: number): void {
+  const r = state.captureReports.find((x) => x.id === id);
+  if (!r) return;
+  buildBattlePanel();
+  state.battleViewed.add(id);
+  saveBattleMarks();
+  const now = liveSimTime();
+  const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
+  const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ") : "an empty stockpile";
+  const verdict = r.captor ? badge("positive", "captured — the system is yours") : badge("negative", "lost — the system was taken");
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">capture · delayed report</div>` +
+    `<h2>${r.captor ? "Captured" : "Lost"} ${esc(nearestSystemName(r.pos))}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const body =
+    `<div class="sp-line">${verdict}</div>` +
+    `<div class="sp-sec">When</div>` +
+    `<div class="sp-line">Fell <b>${ago(r.at_time)}</b> ago · you learned <b>${ago(r.learned_at)}</b> ago <span class="dim">(light delay ${fmtCountdown(Math.max(0, r.learned_at - r.at_time))})</span></div>` +
+    `<div class="sp-sec">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
+    `<div class="sp-line"><b>${plunderStr}</b> <span class="dim">— the besieged stockpile. Developments transferred at half tiers.</span></div>` +
+    `<div class="mhint dim">${r.captor ? "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination." : "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship."}</div>` +
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+  $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
+  $("battle-panel").classList.add("is-open");
+}
+
 // Click INSIDE the System View: a planet/moon opens its details; empty space
 // clears the selection/panel. No move orders, no raids — those are galaxy-only.
 function handleSystemClick(sx: number, sy: number): void {
@@ -1043,36 +1285,96 @@ function handleSystemClick(sx: number, sy: number): void {
   else closePlanetPanel();
 }
 
+// §co-location cycling: the last selection click's spot + the stack it hit, so a
+// repeat click at the same spot advances through co-located selectables instead
+// of re-picking the same one. Reset implicitly whenever the spot or stack changes.
+let clickCycle: { sx: number; sy: number; keys: string; index: number } | null = null;
+
 // The map CLICK action (select own ship · select a star system incl. home ·
 // inspect a command anchor · raid a rival ghost · move order to empty space). All
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
-function handleMapClick(sx: number, sy: number): void {
-    // Selection priority: a star SYSTEM and an own SHIP are hit-tested together,
-    // because your starting fleet sits right on your home system — letting a parked
-    // ship always swallow the click made the home system unselectable. Nearest wins,
-    // with a small bias toward the SYSTEM so a body with ships on it (the home case)
-    // still opens its System view; ships out in open space are still picked normally.
-    const SYSTEM_BIAS = 5; // px the system may be "farther" and still win the tie
+function handleMapClick(sx: number, sy: number, shift = false): void {
+    // §aftermath-select: any fresh map click drops the concluded-battle marker
+    // ring; the aftermath/capture branches below re-set it if they hit a marker.
+    renderer.selectedBattleMarkerId = null;
+    // §contestable-territory Part 1: BLOCKADE-ON-CLICK. With one of your RAIDER
+    // fleets selected, clicking a rival-owned system orders a blockade there —
+    // the raider's second verb, mirroring "click a rival contact to raid." Runs
+    // BEFORE ordinary selection so the click commits the order rather than just
+    // selecting the system. (A raider is required; the sim re-checks.)
+    {
+      const selF = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
+      if (selF && selF.own && selF.kind === "raider" && net && state.galaxy) {
+        let hitSys: SystemInfo | null = null;
+        let bestD = Infinity;
+        for (const sys of state.galaxy.systems) {
+          const s = renderer.worldToScreen(sys.pos);
+          const d = Math.hypot(s.x - sx, s.y - sy);
+          if (d < Math.max(15, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; hitSys = sys; }
+        }
+        const dyn = hitSys ? state.systems.find((s) => s.id === hitSys!.id) : undefined;
+        const rival = dyn && dyn.owner !== null && dyn.owner !== state.playerId;
+        if (hitSys && rival) {
+          net.send({ type: "BlockadeSystem", fleet_id: selF.id, system_id: hitSys.id });
+          delete state.orders[selF.id];
+          updateShipPanel();
+          readout().innerHTML =
+            `Blockade ordered: your <b>raider fleet</b> → <b>${esc(hitSys.name)}</b>. ` +
+            `It sets off at light speed to take station and strangle the system's logistics; ` +
+            `standing defense will contest it. <span class="dim">Recall (R) to break off.</span>`;
+          return;
+        }
+      }
+    }
 
-    let shipPick: string | null = null;
-    let bestShip = Infinity; // nearest own-ship hit distance (px)
+    // Selection priority + CO-LOCATION CYCLING. A star SYSTEM and your own SHIPS
+    // are hit-tested TOGETHER, because things stack at one spot all the time:
+    // your starting fleet parks on your home system, a freshly-built ship spawns
+    // right on its shipyard, several fleets sit at one berth. A fixed priority
+    // can only ever surface ONE of them — whatever loses is then permanently
+    // unclickable (the parked-ship-vs-home-system tug-of-war). So instead,
+    // REPEATED clicks at the same spot CYCLE through everything hit there. The
+    // system sorts FIRST on a near-tie (SYSTEM_BIAS), so the home body still
+    // opens on the first click — but one more click reaches the ship on top of
+    // it. Ships out in open space still select on the first click as before.
+    const SYSTEM_BIAS = 5; // px the system may be "farther" and still sort ahead on a tie
+    const CLICK_CYCLE_PX = 10; // a click within this of the last cycles the stack
+
+    // Each candidate carries its selection side-effect (`pick`), a short `label`
+    // for the cycle hint, and its base `readout` message — the readout is set
+    // FRESH per pick (never appended), so cycling to the system clears stale
+    // ship text and the hint can't accumulate across clicks.
+    type Candidate = { key: string; sortD: number; label: string; pick: () => void; readout: string };
+    const cands: Candidate[] = [];
+
+    // §one-battle-one-icon: fleets ENGAGED in a battle are represented by the
+    // single battle icon (their own markers are suppressed), so exclude them from
+    // ship/rival hit-testing — otherwise a participant ghost sitting under the
+    // icon would swallow the click meant to OPEN the battle panel. A withdrawn
+    // fleet leaves the participant set, so its marker becomes clickable again.
+    const engagedIds = new Set<string>();
+    for (const bt of state.battles) for (const p of bt.participants) engagedIds.add(p);
+
     for (const g of state.ghosts) {
       if (!g.own) continue;
+      if (engagedIds.has(g.id)) continue;
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the MARKER's current on-screen size (formation sprite
       // included), so it grows with the sprite in the deep-zoom native-size band;
       // floored at 24px so normal-zoom clicking feels exactly as before.
       const rad = Math.max(24, renderer.fleetHitRadius(g));
-      if (d < rad && d < bestShip) {
-        bestShip = d;
-        shipPick = g.id;
+      if (d < rad) {
+        cands.push({
+          key: `ship:${g.id}`, sortD: d, label: shipKindLabel(g.kind),
+          pick: () => selectShip(g.id), // opens the fog-aware ship panel; clears any system selection
+          readout: `<b>${esc(shipKindLabel(g.kind))}</b> selected — details in the panel. ` +
+            `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`,
+        });
       }
     }
 
-    let sysPick: string | null = null;
-    let bestSys = Infinity;
     if (state.galaxy) {
       for (const sys of state.galaxy.systems) {
         const s = renderer.worldToScreen(sys.pos);
@@ -1081,27 +1383,37 @@ function handleMapClick(sx: number, sy: number): void {
         // capped (~90px) so a max-zoom giant never blankets the map — with the
         // old 15px floor so normal-zoom clicking is unchanged.
         const rad = Math.max(15, renderer.systemHitRadius(sys));
-        if (d < rad && d < bestSys) {
-          bestSys = d;
-          sysPick = sys.id;
+        if (d < rad) {
+          cands.push({
+            key: `sys:${sys.id}`, sortD: d - SYSTEM_BIAS, label: sys.name,
+            pick: () => { state.selectedSystemId = sys.id; openRail("system"); }, // → setRailTab renders the detail
+            readout: `<b>${esc(sys.name)}</b> selected — details in the rail.`,
+          });
         }
       }
     }
 
-    // Prefer the system when it's hit and either no ship was hit, or the system is
-    // within SYSTEM_BIAS of being as close (i.e. they're essentially co-located).
-    if (sysPick && (!shipPick || bestSys <= bestShip + SYSTEM_BIAS)) {
-      state.selectedSystemId = sysPick;
-      openRail("system"); // → setRailTab("system") renders the detail
-      return;
-    }
-
-    if (shipPick) {
-      const g = state.ghosts.find((x) => x.id === shipPick)!;
-      selectShip(shipPick); // opens the fog-aware ship panel; clears any system selection
-      readout().innerHTML =
-        `<b>${esc(g.own ? shipKindLabel(g.kind) : "rival " + g.kind)}</b> selected — details in the panel. ` +
-        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
+    if (cands.length) {
+      cands.sort((a, b) => a.sortD - b.sortD);
+      const keys = cands.map((c) => c.key).join(",");
+      // Same spot + same stack as the previous click → advance to the next
+      // candidate; otherwise start at the front (the system, by the bias sort).
+      const prev = clickCycle;
+      const same = prev !== null
+        && Math.hypot(prev.sx - sx, prev.sy - sy) <= CLICK_CYCLE_PX
+        && prev.keys === keys;
+      const index = same ? (prev!.index + 1) % cands.length : 0;
+      clickCycle = { sx, sy, keys, index };
+      const chosen = cands[index];
+      chosen.pick();
+      // Fresh readout = the chosen thing's message, plus a stack hint naming what
+      // one more click reaches (so co-located things never read as unselectable).
+      let msg = chosen.readout;
+      if (cands.length > 1) {
+        const next = cands[(index + 1) % cands.length];
+        msg += ` <span class="dim">· ${cands.length} here — click again for <b>${esc(next.label)}</b>.</span>`;
+      }
+      readout().innerHTML = msg;
       return;
     }
 
@@ -1138,6 +1450,7 @@ function handleMapClick(sx: number, sy: number): void {
     let bestE = Infinity; // nearest rival-ghost hit distance (px)
     for (const g of state.ghosts) {
       if (g.own) continue;
+      if (engagedIds.has(g.id)) continue; // engaged → reachable via the battle icon, not here
       const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the marker's current on-screen size (formation sprite
@@ -1151,12 +1464,27 @@ function handleMapClick(sx: number, sy: number): void {
 
     const sel = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
     const haveOwn = !!sel && sel.own;
-    // Raiding is the raider's verb (mirrors the sim's CommitRaid gate).
+    // Raiding is the RAIDER-FLAGSHIP's verb (mirrors the sim's CommitRaid gate).
     const haveRaider = haveOwn && sel!.kind === "raider";
+    // ATTACK needs only ≥1 raider ABOARD (the sim's contains-raider gate) — a
+    // corvette-flagship fleet with a raider can attack though it can't raid.
+    const haveStrike = haveOwn && !!sel!.composition?.some((c) => c.kind === "raider");
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
-      if (haveRaider && net) {
+      if (shift && haveStrike && net) {
+        // §offensive-orders Part 1: ATTACK to DESTROY (shift+click) — a full battle,
+        // a convoy's cargo is lost with it (RAID steals, ATTACK kills).
+        net.send({ type: "AttackFleet", fleet_id: sel!.id, target_id: tgt.id });
+        net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
+        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        delete state.orders[sel!.id];
+        updateShipPanel();
+        readout().innerHTML =
+          `Attack committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b> to <b>destroy</b> it. ` +
+          `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
+          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>`;
+      } else if (haveRaider && net) {
         // Direct your selected ship to raid the rival's TRUE position.
         net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
         // §FLEETS Part 3: ask for a projected engagement estimate to show at
@@ -1169,11 +1497,12 @@ function handleMapClick(sx: number, sy: number): void {
           `Raid committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b>. ` +
           `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
           `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
-          `<span class="dim">Press R to recall — it may arrive too late.</span>`;
+          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`);
       } else {
         // Nothing of yours selected to attack with → INSPECT the rival (panel).
         selectShip(enemy);
-        readout().innerHTML = `Rival <b>${esc(tgt.kind)}</b> selected — its light-delayed details are in the panel.`;
+        const hint = haveStrike ? ` <span class="dim">Shift+click it to ATTACK with your selected fleet.</span>` : "";
+        readout().innerHTML = `Rival <b>${esc(tgt.kind)}</b> selected — its light-delayed details are in the panel.${hint}`;
       }
       return;
     }
@@ -1189,13 +1518,38 @@ function handleMapClick(sx: number, sy: number): void {
       }
     }
 
+    // §one-battle-one-icon: the ongoing BATTLE icon → the live battle panel
+    // (its participants' own markers are suppressed, so this is how you reach
+    // your engaged fleets to Withdraw). Checked here among the map chrome.
+    {
+      const hit = renderer.battlePick(sx, sy);
+      if (hit !== null) {
+        openOngoingBattlePanel(hit);
+        return;
+      }
+    }
     // §battle-aftermath: a concluded-battle marker (owner-only UI) → its full
     // results. After ships/systems/hub — the marker is small screen-space
     // chrome and must never steal a gameplay click — before the move order.
     {
       const hit = renderer.aftermathPick(sx, sy);
       if (hit !== null) {
+        // §aftermath-select: select it like any map object — standard ring + panel.
+        deselectShip();
+        state.selectedSystemId = null;
+        renderer.selectedBattleMarkerId = hit;
         openBattlePanel(hit);
+        return;
+      }
+    }
+    // §contestable-territory Part 2: a capture marker → the capture results.
+    {
+      const hit = renderer.capturePick(sx, sy);
+      if (hit !== null) {
+        deselectShip();
+        state.selectedSystemId = null;
+        renderer.selectedBattleMarkerId = hit;
+        openCapturePanel(hit);
         return;
       }
     }
@@ -1248,9 +1602,10 @@ function installInteraction(): void {
     down = false;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
     // A tap (no pan) runs the click action for the ACTIVE scene; a pan suppresses it.
+    // Shift+tap on the galaxy map is the ATTACK modifier (destroy vs raid).
     if (!panning) {
       if (renderer.viewMode.type === "system") handleSystemClick(e.clientX, e.clientY);
-      else handleMapClick(e.clientX, e.clientY);
+      else handleMapClick(e.clientX, e.clientY, e.shiftKey);
     }
     panning = false;
   };
@@ -1690,8 +2045,16 @@ function updateSystemTab(): void {
   const ownTag = isMyHome ? badge("accent", "home base")
     : mine ? badge("accent", "yours")
       : rival ? badge("negative", "rival") : badge("neutral", "unclaimed");
+  // §contestable-territory: a blockade badge (participant-only, from the fog-safe
+  // view field) — "UNDER BLOCKADE" for the owner, "BLOCKADING" for the besieger —
+  // plus a SIEGE badge with a live capture countdown once defenses are suppressed.
+  const siege = siegeProgress(dyn);
+  let blkTag = dyn?.blockade ? ` ${badge("negative", dyn.blockade.by_me ? "blockading" : "under blockade")}` : "";
+  if (siege) {
+    blkTag += ` ${badge("negative", siege.ripe ? (dyn!.blockade!.by_me ? "READY TO CAPTURE" : "SIEGE — CRITICAL") : `siege ${fmtCountdown(siege.left)}`)}`;
+  }
   const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys))}</div>` +
-    `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}</div></div>`;
+    `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}${blkTag}</div></div>`;
 
   // The system's STAR — concept art + type name. Flavor only; observable for ANY
   // system (a star is visible from afar) and leaks no economy/holdings (those stay
@@ -1729,6 +2092,7 @@ function updateSystemTab(): void {
   const habTier = dyn?.habitat_tier ?? 0;
   const cues: string[] = [];
   if (mine) {
+    if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
     if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
     // §build-progress: the compact construction line — a glance from the map
@@ -2206,6 +2570,17 @@ function agoLabel(at: number): string {
   return d < 90 ? `${d.toFixed(0)}s ago` : `${(d / 60).toFixed(0)}m ago`;
 }
 
+// §contestable-territory Part 2: siege progress for a system's blockade view
+// field. Returns null unless the (defense-suppressed) siege clock is running.
+// `pct` fills a bar; `left` is the capture countdown; `ripe` = a colony ship
+// delivered now would capture.
+function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: number; ripe: boolean } | null {
+  if (!dyn?.blockade || dyn.blockade.siege_since == null || !state.galaxy) return null;
+  const total = state.galaxy.siege_secs || 1;
+  const elapsed = Math.max(0, liveSimTime() - dyn.blockade.siege_since);
+  return { pct: Math.min(100, (elapsed / total) * 100), left: Math.max(0, total - elapsed), ripe: elapsed >= total };
+}
+
 type Attn = { severity: TimelineEntry["severity"]; text: string };
 function computeAttention(): Attn[] {
   if (state.playerId === null) return [];
@@ -2214,6 +2589,14 @@ function computeAttention(): Attn[] {
   const ownedIds = new Set(owned.map((s) => s.id));
   const active = state.standingOrders.filter((o) => o.status === "active");
   const IDLE = 30;
+  // 0⁻. UNDER BLOCKADE (§contestable-territory Part 1) — the most urgent
+  //     territorial cue: a rival fleet is strangling this system's logistics.
+  //     Owner-only view field, light-delayed, so it never fires spuriously.
+  for (const s of owned) {
+    if (s.blockade) {
+      items.push({ severity: "bad", text: `${systemName(s.id)}: under BLOCKADE — convoys held in &amp; out. Break it with relief, or grind the blockader down with a Defense Platform.` });
+    }
+  }
   // 0. STORAGE FULL (§buildings step 2) — production is idling right now; the
   //    most urgent economy cue there is. Owner-only fields, so this never fires
   //    for systems the player doesn't hold.
@@ -2358,6 +2741,7 @@ function join(): void {
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
+          state.captureReports = msg.capture_reports;
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
@@ -2376,6 +2760,9 @@ function join(): void {
           // §management-home: inside the System View, refresh the management
           // column + the structure markers (a cached no-op unless tiers changed).
           updateSysviewDynamic();
+          // §one-battle-one-icon: keep an open ongoing-battle panel live (elapsed,
+          // echo countdowns, running composition; auto-closes when it concludes).
+          if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
           // The Market is a navbar overlay now — refresh it when open.
           if ($("market").classList.contains("is-open")) updateMarket();
           updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages

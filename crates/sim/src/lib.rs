@@ -36,12 +36,13 @@ pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Los
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{
-    DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine, RetreatThreshold,
+    DestinationInvalidPolicy, EngagementPolicy, EngagementPosture, EscortPolicy, FleetDoctrine,
+    RetreatThreshold,
 };
 pub use event::{
     BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
 };
-pub use galaxy::{claim_cost_for, Deposit, HomeSlot, StarSystem};
+pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;

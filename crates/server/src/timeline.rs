@@ -142,6 +142,51 @@ impl Timeline {
                         ));
                     }
                 }
+                // A rival BLOCKADE was established at one of your systems
+                // (§contestable-territory). The OWNER learns it light-delayed
+                // (a rival arrived at the system — news travels home at c); the
+                // BESIEGER learns instantly (their fleet is there).
+                EventPayload::BlockadeEstablished { by, owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                            "{name} is under BLOCKADE — a rival fleet holds station; convoys in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
+                        ));
+                    }
+                    self.push(*by, e.time, TimelineSeverity::Good, format!(
+                        "Your blockade of {name} is established — its logistics are strangled while you hold station."
+                    ));
+                }
+                // A besieged system was CAPTURED (§contestable-territory Part 2).
+                // Both participants learn it light-delayed from the flip site: the
+                // OLD owner ("you lost X"), the CAPTOR ("you captured X"). Third
+                // parties see the ownership change via the light-gated map.
+                EventPayload::SystemCaptured { old_owner, new_owner, system, pos, .. } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(old_owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*old_owner, observe, TimelineSeverity::Bad, format!(
+                            "You LOST {name} — a besieging colony ship captured it. Its stockpile was plundered and its developments damaged; your fleets survive."
+                        ));
+                    }
+                    if let Some(cc) = world.players.get(new_owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*new_owner, observe, TimelineSeverity::Good, format!(
+                            "You CAPTURED {name} — the siege paid off. You inherit its (damaged) developments and plundered stockpile."
+                        ));
+                    }
+                }
+                // A blockade at one of your systems lifted (§contestable-territory).
+                EventPayload::BlockadeLifted { owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "The blockade of {name} has LIFTED — logistics resume."
+                        ));
+                    }
+                }
                 // A scout captured intel (§scout part 2) — OWNER-ONLY, delivered
                 // when the capture's light (from the scout's position) reaches
                 // the owner's command center: knowledge travels home at c.

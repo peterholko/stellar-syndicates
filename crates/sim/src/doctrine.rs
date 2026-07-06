@@ -41,6 +41,54 @@ pub enum EngagementPolicy {
     EngageAny,
 }
 
+impl EngagementPolicy {
+    /// Whether a [`EngagementPosture::WeaponsFree`] fleet may COMMIT to a target
+    /// it has picked, given the local weighted force ratio (`f` = friendly, `h` =
+    /// hostile combatant weight in the fleet's own bubble). The POSTURE picks WHO;
+    /// this composes the corp policy's WHETHER, so a favourable-only doctrine
+    /// shadows an unfavourable contact instead of suiciding into it:
+    ///   * `Avoid` vetoes ALL autonomous offense (the posture can't override a
+    ///     doctrine that says "never engage autonomously");
+    ///   * `DefensiveOnly` / `EngageWeaker` commit only when FAVOURABLE (`f > h`);
+    ///   * `EngageAny` commits at any odds.
+    ///
+    /// The retreat-threshold gate is applied separately by the caller (unchanged),
+    /// so `EngageAny` + a retreat threshold still declines a losing fight.
+    pub fn weapons_free_commits(self, f: f64, h: f64) -> bool {
+        match self {
+            EngagementPolicy::Avoid => false,
+            EngagementPolicy::DefensiveOnly | EngagementPolicy::EngageWeaker => f > h,
+            EngagementPolicy::EngageAny => true,
+        }
+    }
+}
+
+/// A per-FLEET engagement POSTURE (§offensive-orders): standing aggression a
+/// player delegates to ONE fleet in advance — the on-theme answer to command lag,
+/// since a distant fleet can act on its OWN local detection without a
+/// command-center round trip. It COMPOSES with the corp [`FleetDoctrine`] (it does
+/// not replace it): the posture picks WHO a fleet pursues, while the doctrine's
+/// [`EngagementPolicy`] force-ratio + [`RetreatThreshold`] still decide WHETHER.
+/// Ordered most-passive → most-aggressive. serde default = `Passive`, so every
+/// existing fleet loads unchanged (byte-preserving).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngagementPosture {
+    /// Fight only if engaged; take no autonomous offensive action. Defers to the
+    /// corp doctrine for any defensive picketing. The default — today's behaviour.
+    #[default]
+    Passive,
+    /// Defensive posture — the existing picket behaviour (defend a guarded
+    /// asset/station); no proactive hunting. Equivalent to Passive for the new
+    /// offensive layer; named for intent and future per-fleet defensive control.
+    Defensive,
+    /// WEAPONS-FREE: on detecting any rival fleet within the fleet's OWN sensor
+    /// bubble, auto-commit an intercept — a lone convoy is raided (cargo seized),
+    /// anything armed is attacked (full battle) — gated by the composed doctrine
+    /// above. Requires the fleet to carry a raider (strike capability).
+    WeaponsFree,
+}
+
 /// The friendly force-ratio at or below which a committing / engaged picket
 /// withdraws home instead of fighting. The ratio is friendly ÷ (friendly +
 /// hostile) raiders within the picket's own sensor bubble (it counts itself); it

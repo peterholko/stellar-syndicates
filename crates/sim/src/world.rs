@@ -145,6 +145,8 @@ struct PendingEcho {
 /// visibility by `distance(pos, cc)/c`.
 #[derive(Debug, Clone)]
 pub struct BattleInfo {
+    /// The engagement's stable id — one battle entity, one map icon.
+    pub id: EntityId,
     pub pos: Vec2,
     pub started_at: f64,
     pub a_owner: PlayerId,
@@ -174,6 +176,26 @@ const BATTLE_JOIN_RADIUS: f64 = 200.0;
 /// Distance from the hub within which a convoy is safe from raiders (§4: the hub
 /// is the shared commons).
 const HUB_SAFE_RADIUS: f64 = 300.0;
+
+// --- CONTESTABLE TERRITORY (§blockade / siege → capture) — BALANCE PLACEHOLDERS.
+// Every number here is PLAYTEST-DEFERRED, awaiting multi-session pacing data; the
+// MECHANICS are the deliverable, not the tuning. Grouped so one edit re-paces the
+// whole stakes layer once we have real games.
+/// How close a blockading fleet must sit to a system to count as ON STATION
+/// (arrived + holding). The fleet flies to the system position, so this only
+/// needs to clear the last sliver of travel — well inside `DEFENSE_PLATFORM_RADIUS`
+/// so the standing platform engages it. Tunable.
+const BLOCKADE_STATION_RADIUS: f64 = 140.0;
+/// Where an INBOUND convoy to a blockaded system halts (destination-invalid soft
+/// idiom): far enough out to read as "held off," not destroyed. Tunable.
+const BLOCKADE_STANDOFF_RADIUS: f64 = 900.0;
+/// SIEGE_DURATION (§Part 2): how long an UNBROKEN blockade must hold with defenses
+/// suppressed before a colony ship can capture. Derived as a MULTIPLE of the
+/// config battle timescale so ONE knob (`battle_target_secs`) scales both — at
+/// playtest scale (~45 s battles) a siege is ~6 min; at production scale (~2700 s)
+/// it is hours, long enough that a realistic check-in cadence can mount relief.
+/// Placeholder factor, awaiting pacing data.
+const SIEGE_DURATION_BATTLE_MULT: f64 = 8.0;
 
 // --- Autonomous defensive doctrine (§5.1, Pillar 1) — all tunable. -----------
 // A patrolling raider guards friendly convoys within its sensor bubble and can
@@ -435,6 +457,14 @@ impl World {
     /// client ticks the IN-TRANSIT / AWAITING-ECHO countdowns from the two
     /// timestamps against `sim_time`, and flips its dashed heading to solid at
     /// `echo_at`.
+    /// §contestable-territory Part 2: how long an unbroken, defense-suppressed
+    /// siege must run before a colony ship can capture — derived from the config
+    /// battle timescale so one knob scales both. Surfaced to the client so it can
+    /// render the siege-progress readout / countdown.
+    pub fn siege_duration_secs(&self) -> f64 {
+        SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs
+    }
+
     pub fn pending_commands(&self, owner: PlayerId) -> Vec<PendingCommandView> {
         let mut latest: BTreeMap<EntityId, PendingCommandView> = BTreeMap::new();
         let mut consider = |v: PendingCommandView| match latest.get(&v.fleet) {
@@ -472,6 +502,7 @@ impl World {
         self.engagements
             .values()
             .map(|e| BattleInfo {
+                id: e.id,
                 pos: e.pos,
                 started_at: e.started_at,
                 a_owner: e.a_owner,
@@ -518,6 +549,12 @@ impl World {
         //     runs whether or not the owner is connected. Decided on each patrol's
         //     OWN local sensing, then handed to the existing pursuit + combat.
         self.autonomous_defense();
+        // 2c. §offensive-orders Part 2: the WeaponsFree standing OFFENSE — fleets
+        //     the player pre-delegated aggression to hunt any rival that wanders
+        //     into their OWN sensor bubble, on their own local detection (no
+        //     command-center round trip), composed with the corp doctrine's odds
+        //     gate. Runs whether or not the owner is connected.
+        self.weapons_free_offense();
 
         // 3. Integrate continuous movement (flip-and-burn, patrols, and raider
         //    interception pursuit).
@@ -527,8 +564,15 @@ impl World {
         //    the hub → escape). A raided trade convoy's goods are simply lost.
         self.resolve_raids(&mut events);
 
+        // 4a'. CONTESTABLE TERRITORY (§blockade): detect on-station blockaders,
+        //      open the standing-defense establishment battle, recompute each
+        //      system's blockade + siege state, and emit onset/lift transitions.
+        //      After raids so the establishment battle it opens attrites next tick.
+        self.resolve_blockades(&mut events);
+
         // 4b. COLONY ARRIVALS (§fleets part 3): settlement is physical — resolve
         //     after raids so a colony ship killed at the doorstep never claims.
+        //     Also where a besieging colony ship CAPTURES a strangled system (§Part 2).
         self.resolve_colony_arrivals(&mut events);
 
         // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
@@ -608,7 +652,10 @@ impl World {
                 ship.vel = Vec2::ZERO; // anchored — the battle holds it in place
                 continue;
             }
-            if let FleetOrder::Intercept { target } = ship.order {
+            // Intercept (raid-commit) and Attack (destroy) both PURSUE a target
+            // fleet identically — the only difference is what happens on contact
+            // (raid-by-target-kind vs forced full battle), decided in resolve_raids.
+            if let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order {
                 match snapshot.get(&target) {
                     Some(&(tp, tv)) => {
                         // Lead pursuit toward the ANALYTIC intercept of the
@@ -828,6 +875,14 @@ impl World {
                 }
                 continue;
             }
+            // §offensive-orders Part 2: a WeaponsFree fleet's NEW autonomous commit
+            // is decided by `weapons_free_offense` (broader targeting — any rival in
+            // its OWN bubble, raid-or-attack by target). Its defensive-sortie
+            // continuation (retreat / break-off, above) still runs here. Default
+            // Passive/Defensive fleets fall through unchanged (byte-preserving).
+            if ship.posture == crate::doctrine::EngagementPosture::WeaponsFree {
+                continue;
+            }
             // On patrol: pick a charge per escort policy, then decide engagement.
             if !matches!(ship.order, FleetOrder::Patrol { .. }) {
                 continue;
@@ -941,6 +996,150 @@ impl World {
         }
     }
 
+    /// §offensive-orders Part 2 — the WEAPONS-FREE standing offense, run every tick
+    /// alongside [`Self::autonomous_defense`]. For each fleet whose per-fleet
+    /// [`EngagementPosture::WeaponsFree`] is set (and that carries a raider — strike
+    /// capability), that is AVAILABLE (patrolling / idle / moving, not already
+    /// sortied or engaged), it hunts on its OWN local detection — no command-center
+    /// round trip (the on-theme answer to command lag):
+    ///
+    ///   * TARGET (who): the nearest rival fleet of ANY kind whose light reaches
+    ///     the fleet's OWN sensor bubble (`sensor_range × sensor_mult`; a scout
+    ///     aboard widens it). NOT the corp's array picture — only what THIS fleet
+    ///     can see. Deterministic `(distance, id)` tie-break.
+    ///   * COMMIT (whether): the corp [`FleetDoctrine`] composes in —
+    ///     [`EngagementPolicy::weapons_free_commits`] on the local force ratio
+    ///     (Avoid vetoes; DefensiveOnly/EngageWeaker favourable-only; EngageAny any
+    ///     odds) plus the [`RetreatThreshold`] gate. An unfavourable contact under a
+    ///     favourable-only policy is simply ignored (not suicided into).
+    ///   * VERB: it issues an ordinary [`FleetOrder::Intercept`], so the existing
+    ///     contact logic decides raid-vs-battle by target — a lone convoy is raided
+    ///     (cargo seized), anything armed/defended is a full battle. From a patrol,
+    ///     the route is saved (defensive-sortie machinery) so it resumes after.
+    ///
+    /// Fog-safe: acts only on the fleet's own delivered light; the OWNER learns of
+    /// any engagement through the ordinary light-delayed reports. Deterministic +
+    /// standing (works with the owner offline). Passive/Defensive fleets are inert
+    /// here, so nothing changes for them.
+    fn weapons_free_offense(&mut self) {
+        use crate::doctrine::EngagementPosture;
+        let base = self.config.sensor_range;
+        let c = self.config.c;
+        let hub = self.hub;
+        // Read-only snapshot (deterministic order) for target selection + odds.
+        #[derive(Clone, Copy)]
+        struct Snap {
+            id: EntityId,
+            owner: PlayerId,
+            kind: ShipKind,
+            pos: Vec2,
+            vel: Vec2,
+            combat: f64,
+            combatant: bool,
+            signature: f64,
+            broadcasts: bool,
+        }
+        let snap: Vec<Snap> = self
+            .fleets
+            .iter()
+            .map(|(id, s)| Snap {
+                id: *id,
+                owner: s.owner,
+                kind: s.flagship_kind(),
+                pos: s.pos,
+                vel: s.vel,
+                combat: s.combat_weight(),
+                combatant: s.is_combatant(),
+                signature: s.signature(),
+                broadcasts: s.broadcasts(),
+            })
+            .collect();
+        let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
+            self.players.iter().map(|(id, c)| (*id, c.doctrine)).collect();
+
+        // A rival is a valid WeaponsFree target iff its light reaches THIS fleet's
+        // OWN bubble. The fleet acts on its OWN DELIVERED LIGHT (§retarded-time):
+        // it sees the target where the arriving light left it — retarded by the
+        // light-travel time across the gap (constant-velocity §14.1), so a distant
+        // fast mover is engaged where it WAS, not where it truly is now. Detection
+        // is the fleet's own bubble ONLY (a broadcaster by range; a dark fleet by
+        // the shared speed-signature rule) — never the corp's arrays (that would be
+        // a command-center round trip).
+        let visible = |ppos: Vec2, bubble: f64, s: &Snap| -> bool {
+            let seen_pos = s.pos - s.vel * (ppos.distance(s.pos) / c);
+            if s.broadcasts {
+                ppos.distance(seen_pos) <= bubble
+            } else {
+                crate::detection::detected(s.signature, &[(ppos, bubble)], seen_pos)
+            }
+        };
+        // Local combatant force ratio over the fleet's OWN bubble (friendly incl.
+        // self; hostile) — the WHETHER gate's input (weighted, non-combatants
+        // ignored). Membership uses the SAME retarded `visible` rule as target
+        // selection, so the fleet weighs exactly the combatants its own light shows
+        // (a fast mover detected at its retarded position also counts in the odds).
+        let local_force = |ppos: Vec2, owner: PlayerId, bubble: f64| -> (f64, f64) {
+            let (mut f, mut h) = (0.0f64, 0.0f64);
+            for s in snap.iter().filter(|s| s.combatant && visible(ppos, bubble, s)) {
+                if s.owner == owner { f += s.combat; } else { h += s.combat; }
+            }
+            (f, h)
+        };
+        let ratio = |f: f64, h: f64| -> f64 { if h <= 0.0 { 1.0 } else { f / (f + h) } };
+        // A convoy safe inside the hub commons (§4) escapes on contact — don't
+        // pointlessly commit against it (and thrash a re-commit every tick).
+        let hub_safe = |s: &Snap| -> bool { s.kind == ShipKind::Convoy && s.pos.distance(hub) <= HUB_SAFE_RADIUS };
+
+        let mut commits: Vec<(EntityId, EntityId, Vec<Vec2>)> = Vec::new(); // (fleet, target, saved patrol)
+        for (fid, ship) in &self.fleets {
+            // WeaponsFree + strike capability (a raider aboard) + AVAILABLE (not
+            // already sortied/engaged/intercepting/attacking/blockading).
+            if ship.posture != EngagementPosture::WeaponsFree || !ship.contains(ShipKind::Raider) {
+                continue;
+            }
+            if ship.defense.is_some() {
+                continue; // already on a sortie — its lifecycle is autonomous_defense's
+            }
+            if !matches!(ship.order, FleetOrder::Patrol { .. } | FleetOrder::Idle | FleetOrder::MoveTo { .. }) {
+                continue;
+            }
+            let (owner, ppos) = (ship.owner, ship.pos);
+            let bubble = base * ship.sensor_mult();
+            // WHO: nearest rival fleet in the fleet's OWN bubble (deterministic),
+            // excluding a hub-safe convoy (it would just escape).
+            let target = snap
+                .iter()
+                .filter(|s| s.owner != owner && !hub_safe(s) && visible(ppos, bubble, s))
+                .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id)))
+                .map(|s| s.id);
+            let Some(tid) = target else { continue };
+            // WHETHER: compose the corp doctrine (odds permission + retreat gate).
+            let doc = doctrines.get(&owner).copied().unwrap_or_default();
+            let (f, h) = local_force(ppos, owner, bubble);
+            if !doc.engagement.weapons_free_commits(f, h) {
+                continue;
+            }
+            if let Some(min) = doc.retreat.min_ratio()
+                && ratio(f, h) < min
+            {
+                continue; // an unfavourable contact under a retreat gate → ignored
+            }
+            let patrol = match &ship.order {
+                FleetOrder::Patrol { waypoints, .. } => waypoints.clone(),
+                _ => Vec::new(),
+            };
+            commits.push((*fid, tid, patrol));
+        }
+        // Commit: ordinary Intercept (verb decided by target on contact). Mark the
+        // sortie so autonomous_defense manages its retreat/break-off/resume.
+        for (fid, tid, patrol) in commits {
+            if let Some(ship) = self.fleets.get_mut(&fid) {
+                ship.order = FleetOrder::Intercept { target: tid };
+                ship.defense = Some(DefenseEngagement { target: tid, patrol });
+            }
+        }
+    }
+
     /// The nearest owned system with a Defense Platform covering `pos` (§buildings
     /// step 2c) — folded into the defender's forces as stationary tiers.
     fn covering_platform(&self, owner: PlayerId, pos: Vec2) -> Option<EntityId> {
@@ -1018,7 +1217,7 @@ impl World {
         // Convoy reaching hub safety before contact → the raider breaks off.
         let mut escapes: Vec<(EntityId, EntityId)> = Vec::new();
         for (rid, ship) in &self.fleets {
-            if let FleetOrder::Intercept { target } = ship.order
+            if let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order
                 && let Some(t) = self.fleets.get(&target)
                 && ship.owner != t.owner
                 && ship.pos.distance(t.pos) > CONTACT_RADIUS
@@ -1036,41 +1235,79 @@ impl World {
                 attacker_kind: a_kind, target_kind: t_kind, outcome: RaidOutcome::Escaped, pos: t_pos,
                 attacker_losses: BTreeMap::new(), target_losses: BTreeMap::new(),
             }));
-            self.send_ship_home(aid, a_owner);
+            // Break off. An AUTONOMOUS sortie (a WeaponsFree hunt / picket that
+            // carries a saved patrol) RESUMES its route; a MANUAL raid returns home.
+            // Manual raids carry no `defense`, so this is byte-identical for them.
+            let home = self.players.get(&a_owner).map(|c| c.home);
+            if let Some(ship) = self.fleets.get_mut(&aid) {
+                if let Some(def) = ship.defense.take() {
+                    ship.order = resume_patrol(def.patrol);
+                } else {
+                    ship.order = match home {
+                        Some(h) => FleetOrder::MoveTo { dest: h },
+                        None => FleetOrder::Idle,
+                    };
+                }
+            }
         }
 
-        // Contacts: an attacker on Intercept within reach of a rival target.
-        let contacts: Vec<(EntityId, EntityId)> = self
+        // Contacts: an attacker on Intercept OR Attack within reach of a rival
+        // target. The `is_attack` flag (an Attack order) forces a FULL battle on
+        // contact even against a convoy (destroy, not raid) — see the raid flag.
+        let contacts: Vec<(EntityId, EntityId, bool)> = self
             .fleets
             .iter()
             .filter_map(|(rid, ship)| {
-                if let FleetOrder::Intercept { target } = ship.order
-                    && let Some(t) = self.fleets.get(&target)
+                let (target, is_attack) = match ship.order {
+                    FleetOrder::Intercept { target } => (target, false),
+                    FleetOrder::Attack { target } => (target, true),
+                    _ => return None,
+                };
+                if let Some(t) = self.fleets.get(&target)
                     && ship.owner != t.owner
                     && ship.pos.distance(t.pos) <= CONTACT_RADIUS
                 {
-                    Some((*rid, target))
+                    Some((*rid, target, is_attack))
                 } else {
                     None
                 }
             })
             .collect();
 
-        for (aid, tid) in contacts {
+        for (aid, tid, is_attack) in contacts {
             let a_owner_c = self.fleets.get(&aid).map(|f| f.owner);
             let Some(a_owner_c) = a_owner_c else { continue };
-            // Join an existing battle ONLY when the SIDES align: this attacker is
-            // on the attacking side (same owner) and the target is already this
-            // battle's defender — or both are already in it on the right sides.
-            // (Crucially, a patrol attacking a hostile that is itself attacking a
-            // convoy does NOT merge the two enemies onto one side.)
-            let existing = self
+            // ALREADY FIGHTING each other: if this fleet and its target are both in
+            // the SAME engagement already (on either side), they're in one battle —
+            // don't open a second. This catches RECIPROCAL intercepts (two rival
+            // fleets that each committed to attack the OTHER — e.g. a WeaponsFree
+            // hunter and a picket) which would otherwise spawn two engagements (two
+            // battle icons) at the same spot. Just keep it live (and let an ATTACK
+            // escalate a raid). Distinct from a patrol attacking a hostile that is
+            // itself raiding a convoy — there the two never share an engagement.
+            let together = self
                 .engagements
                 .iter()
                 .find(|(_, e)| {
-                    (e.a_owner == a_owner_c && e.defenders.contains(&tid))
-                        || (e.attackers.contains(&aid) && e.defenders.contains(&tid))
+                    (e.attackers.contains(&aid) || e.defenders.contains(&aid))
+                        && (e.attackers.contains(&tid) || e.defenders.contains(&tid))
                 })
+                .map(|(id, _)| *id);
+            if let Some(eid) = together {
+                let e = self.engagements.get_mut(&eid).unwrap();
+                if is_attack {
+                    e.raid = false;
+                }
+                e.touched = true;
+                continue;
+            }
+            // Otherwise join an existing battle ONLY when the SIDES align: this
+            // attacker is on the attacking side (same owner) and the target is
+            // already this battle's defender — reinforcement of the attack.
+            let existing = self
+                .engagements
+                .iter()
+                .find(|(_, e)| e.a_owner == a_owner_c && e.defenders.contains(&tid))
                 .map(|(id, _)| *id);
             if let Some(eid) = existing {
                 let e = self.engagements.get_mut(&eid).unwrap();
@@ -1079,6 +1316,12 @@ impl World {
                 }
                 if !e.defenders.contains(&tid) {
                     e.defenders.push(tid);
+                }
+                // An ATTACK order joining an in-progress RAID ESCALATES it to a full
+                // battle (destroy) — the aggressor's explicit intent wins, so the
+                // convoy is fought to the death rather than the raid's cargo-grab.
+                if is_attack {
+                    e.raid = false;
                 }
                 e.touched = true;
                 continue;
@@ -1090,7 +1333,10 @@ impl World {
             let civilian = matches!(t_kind, ShipKind::Convoy | ShipKind::Colony);
             let mut defenders = vec![tid];
             let mut platform_system = None;
-            let mut raid = t_kind == ShipKind::Convoy;
+            // A convoy contact is a cargo RAID by default — UNLESS this is an
+            // explicit ATTACK order (destroy, cargo lost) or the convoy is defended
+            // (fighting the escort/platform is a battle). Everything armed is a battle.
+            let mut raid = !is_attack && t_kind == ShipKind::Convoy;
             if civilian {
                 // Pull in EVERY covering friendly corvette fleet (escort/garrison).
                 let screens: Vec<EntityId> = self
@@ -1216,7 +1462,7 @@ impl World {
                 let mut caught: Vec<EntityId> = Vec::new();
                 for fid in atkers.iter().chain(defers.iter()) {
                     let Some(f) = self.fleets.get(fid) else { continue };
-                    let accepts = matches!(f.order, FleetOrder::Intercept { .. })
+                    let accepts = matches!(f.order, FleetOrder::Intercept { .. } | FleetOrder::Attack { .. })
                         || self.players.get(&f.owner).map(|c| c.doctrine.engagement != crate::doctrine::EngagementPolicy::Avoid).unwrap_or(true);
                     if accepts {
                         continue;
@@ -1414,10 +1660,18 @@ impl World {
                 }));
             }
         }
-        // A surviving attacker breaks off for home (it won, or it withdrew).
+        // A surviving attacker breaks off for home (it won, or it withdrew) —
+        // EXCEPT a BLOCKADER, which resumes its station (it just won/held the
+        // establishment fight; §contestable-territory). Its Blockade order rode
+        // through the anchored battle unchanged, so leaving it be re-establishes
+        // the blockade. A withdrawn blockader already carries a MoveTo (the
+        // Withdraw verb overwrote its order), so it flees home normally.
         if a_alive {
             for aid in &e.attackers {
-                if self.fleets.contains_key(aid) {
+                if let Some(f) = self.fleets.get(aid) {
+                    if matches!(f.order, FleetOrder::Blockade { .. }) {
+                        continue; // stays on station
+                    }
                     self.send_ship_home(*aid, e.a_owner);
                 }
             }
@@ -1439,6 +1693,221 @@ impl World {
             && let Some(ship) = self.fleets.get_mut(&id)
         {
             ship.order = FleetOrder::MoveTo { dest: home };
+        }
+    }
+
+    /// Is `system_id` `owner`'s granted HOME system? Home systems can be
+    /// blockaded but NEVER captured (§contestable-territory HOME PROTECTION —
+    /// no elimination; a beaten player always keeps a producing base).
+    fn is_home_system(&self, owner: PlayerId, system_id: EntityId) -> bool {
+        self.players.get(&owner).and_then(|c| c.home_system) == Some(system_id)
+    }
+
+    /// Is this system currently under blockade (§contestable-territory)?
+    fn is_blockaded(&self, system_id: EntityId) -> bool {
+        self.systems
+            .iter()
+            .find(|s| s.id == system_id)
+            .map(|s| s.blockade.is_some())
+            .unwrap_or(false)
+    }
+
+    /// §contestable-territory Part 1 (BLOCKADE): interdiction without capture.
+    ///
+    /// A fleet on a `Blockade` order that has taken STATION on a rival system
+    /// strangles its logistics while ≥1 such fleet is present. This pass, run
+    /// right after `resolve_raids`, does three things:
+    ///   1. OPENS the establishment battle — a newly on-station blockader vs the
+    ///      system's standing defense (platform pool + garrison combatants) is
+    ///      handed to the normal anchored engagement, so it attrites on the
+    ///      config battle timescale and Reinforce / Withdraw all apply. The
+    ///      blockade only holds if that battle doesn't destroy or repel it.
+    ///   2. RECOMPUTES each system's `blockade` field from on-station presence
+    ///      and emits light-delayed onset / lift transitions to the owner.
+    ///   3. Holds INBOUND convoys to a blockaded destination at a standoff ring
+    ///      (they resume when it lifts). Nothing is destroyed — production keeps
+    ///      accruing (a cut supply line strangles Habitats via the UNFED rule).
+    fn resolve_blockades(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+
+        // --- On-station blockaders, grouped by target system (id order). ---
+        let mut on_station: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
+        for (fid, f) in &self.fleets {
+            if let FleetOrder::Blockade { system, .. } = f.order
+                && let Some(sys) = self.systems.iter().find(|s| s.id == system)
+                && sys.owner.is_some()
+                && sys.owner != Some(f.owner)
+                && f.pos.distance(sys.pos) <= BLOCKADE_STATION_RADIUS
+            {
+                on_station.entry(system).or_default().push(*fid);
+            }
+        }
+
+        // --- 1. Establishment battles. One per system per tick (min-id
+        //        attacker); the reinforce path folds in any co-blockaders. Skip
+        //        if a battle is already contesting this system (a blockader
+        //        already engaged, or an existing engagement covers its platform).
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
+        let contested: std::collections::BTreeSet<EntityId> =
+            self.engagements.values().filter_map(|e| e.platform_system).collect();
+        struct Open { aid: EntityId, sys: EntityId, pos: Vec2, d_owner: PlayerId, garrison: Vec<EntityId>, ptiers: u32 }
+        let mut to_open: Vec<Open> = Vec::new();
+        for (sys_id, blockaders) in &on_station {
+            if blockaders.iter().any(|b| engaged.contains(b)) || contested.contains(sys_id) {
+                continue;
+            }
+            let sys = self.systems.iter().find(|s| s.id == *sys_id).unwrap();
+            let (d_owner, pos, ptiers) = (sys.owner.unwrap(), sys.pos, sys.defense_tier);
+            let aid = *blockaders.iter().min().unwrap();
+            let garrison: Vec<EntityId> = self
+                .fleets
+                .iter()
+                .filter(|(gid, g)| {
+                    **gid != aid
+                        && g.owner == d_owner
+                        && g.is_combatant()
+                        && !engaged.contains(gid)
+                        && g.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+                })
+                .map(|(gid, _)| *gid)
+                .collect();
+            if ptiers >= 1 || !garrison.is_empty() {
+                to_open.push(Open { aid, sys: *sys_id, pos, d_owner, garrison, ptiers });
+            }
+        }
+        for o in to_open {
+            let a_owner = self.fleets[&o.aid].owner;
+            let id = self.alloc_engagement_id();
+            let a_comp = self.side_comp(&[o.aid]);
+            let d_comp = self.side_comp(&o.garrison);
+            let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
+            let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(o.ptiers, 0.0).strength();
+            let d_lead = o.garrison.first().copied().unwrap_or(o.aid);
+            self.engagements.insert(id, Engagement {
+                id,
+                pos: o.pos,
+                started_at: now,
+                raid: false, // a blockade fight is a decisive full-duration battle
+                a_owner,
+                d_owner: o.d_owner,
+                attackers: vec![o.aid],
+                defenders: o.garrison,
+                platform_system: if o.ptiers >= 1 { Some(o.sys) } else { None },
+                a_pool: BTreeMap::new(),
+                d_pool: BTreeMap::new(),
+                a_start: a_comp,
+                d_start: d_comp,
+                a_start_strength: a_str,
+                d_start_strength: d_str,
+                platform_start_tiers: o.ptiers,
+                a_lead: o.aid,
+                d_lead,
+                disengaging: BTreeMap::new(),
+                a_fled: false,
+                d_fled: false,
+                touched: true,
+            });
+        }
+
+        // --- 2. Recompute each system's blockade state + transitions. ---
+        let blocked: std::collections::BTreeSet<EntityId> = on_station.keys().copied().collect();
+        // Attribute onset to the smallest-id on-station blockader's owner (a
+        // deterministic, cosmetic pick — the strangling doesn't depend on it).
+        let blocked_by: BTreeMap<EntityId, PlayerId> = on_station
+            .iter()
+            .filter_map(|(sid, fids)| {
+                fids.iter().min().and_then(|f| self.fleets.get(f)).map(|f| (*sid, f.owner))
+            })
+            .collect();
+        // §Part 2 SIEGE CLOCK: precompute, per blocked system, the non-defense
+        // prerequisites for siege progress — NO garrison combatant on station and
+        // NOT the owner's HOME (home protection: a home is never siegeable). The
+        // `defense_tier == 0` half is read from the system in the loop below. All
+        // borrow self.fleets/self.players, so compute here before the mut loop.
+        let siege_prereq: BTreeMap<EntityId, bool> = blocked
+            .iter()
+            .map(|&sid| {
+                let sys = self.systems.iter().find(|s| s.id == sid).unwrap();
+                let owner = sys.owner.unwrap();
+                let no_garrison = !self.fleets.values().any(|g| {
+                    g.owner == owner && g.is_combatant() && g.pos.distance(sys.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+                });
+                let home = self.is_home_system(owner, sid);
+                (sid, no_garrison && !home)
+            })
+            .collect();
+        for sys in &mut self.systems {
+            let is_blocked = blocked.contains(&sys.id);
+            // Siege can PROGRESS only with defenses suppressed AND the prereqs met.
+            let siege_ok = is_blocked && sys.defense_tier == 0 && *siege_prereq.get(&sys.id).unwrap_or(&false);
+            match (sys.blockade.is_some(), is_blocked) {
+                (false, true) => {
+                    let by = blocked_by[&sys.id];
+                    let owner = sys.owner.unwrap();
+                    // An undefended system starts its siege clock the instant it's
+                    // blockaded; a defended one waits for suppression.
+                    sys.blockade = Some(crate::galaxy::Blockade { by, since: now, siege_since: siege_ok.then_some(now) });
+                    events.push(Event::new(now, EventPayload::BlockadeEstablished { by, owner, system: sys.id, pos: sys.pos }));
+                }
+                (true, false) => {
+                    sys.blockade = None;
+                    if let Some(owner) = sys.owner {
+                        events.push(Event::new(now, EventPayload::BlockadeLifted { owner, system: sys.id, pos: sys.pos }));
+                    }
+                }
+                (true, true) => {
+                    // Unbroken — keep `since` / the establisher `by`; advance the
+                    // siege clock. It STARTS when conditions first hold and RESETS
+                    // the moment any breaks (defenses rebuilt, a garrison arrives).
+                    if let Some(b) = sys.blockade.as_mut() {
+                        if siege_ok {
+                            if b.siege_since.is_none() {
+                                b.siege_since = Some(now);
+                            }
+                        } else {
+                            b.siege_since = None;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // --- 3. Inbound convoys hold at a standoff ring while their destination
+        //        system is blockaded; they resume to the true destination when it
+        //        lifts. Precompute the read-only maps, then re-target moving
+        //        convoys. Nothing is destroyed — this is a hold, not a divert.
+        let sys_pos: BTreeMap<EntityId, Vec2> = self.systems.iter().map(|s| (s.id, s.pos)).collect();
+        let home_of: BTreeMap<PlayerId, (Vec2, Option<EntityId>)> =
+            self.players.iter().map(|(p, c)| (*p, (c.home, c.home_system))).collect();
+        for f in self.fleets.values_mut() {
+            let Some(mission) = f.mission else { continue };
+            let (dest_blocked, true_dest) = match mission {
+                TradeMission::SellAtHub => continue, // the hub is neutral — never blockaded
+                TradeMission::DeliverToSystem { system } => match sys_pos.get(&system) {
+                    Some(&p) => (blocked.contains(&system), p),
+                    None => continue,
+                },
+                TradeMission::DeliverHome => match home_of.get(&f.owner) {
+                    Some(&(home, hs)) => (hs.map(|s| blocked.contains(&s)).unwrap_or(false), home),
+                    None => continue,
+                },
+            };
+            if let FleetOrder::MoveTo { dest } = &mut f.order {
+                *dest = if dest_blocked {
+                    // Hold on the standoff ring, on the line from the destination
+                    // out toward the convoy (so it stops SHORT of the blockade).
+                    let out = (f.pos - true_dest).normalized();
+                    let out = if out.length() < 1e-6 { Vec2::new(1.0, 0.0) } else { out };
+                    true_dest + out * BLOCKADE_STANDOFF_RADIUS
+                } else {
+                    true_dest // resume (restores the true destination once lifted)
+                };
+            }
         }
     }
 
@@ -1832,6 +2301,92 @@ impl World {
                     && f.owner == *player_id
                 {
                     f.transit = *mode;
+                }
+            }
+            Command::BlockadeSystem { player_id, fleet_id, system_id } => {
+                // The fleet must exist, be the player's, and CONTAIN a raider —
+                // the strike capability that lets it interdict (corvettes/scouts
+                // ride along and add strength, but can't blockade alone; §crisp
+                // roles). Soft-reject otherwise.
+                let Some(fleet) = self.fleets.get(fleet_id) else { return };
+                if fleet.owner != *player_id || !fleet.contains(ShipKind::Raider) {
+                    return;
+                }
+                // The target must be a system SOMEONE ELSE owns.
+                let Some(sys) = self.systems.iter().find(|s| s.id == *system_id) else { return };
+                if sys.owner.is_none() || sys.owner == Some(*player_id) {
+                    return;
+                }
+                let station = sys.pos;
+                // Fuel the run ∝ distance × fleet mass, like a move; a shortfall
+                // HOLDS it (keeps the current order, notifies) — never lost.
+                let cost = crate::fuel::fuel_cost(fleet.pos.distance(station), fleet.mass());
+                let origin = fleet.pos;
+                if !self.charge_fuel(*player_id, origin, cost) {
+                    events.push(Event::new(self.time, EventPayload::FuelShortfall {
+                        owner: *player_id, needed: cost, kind: crate::fuel::ShortfallKind::Move,
+                    }));
+                    return;
+                }
+                // Light-delayed like any order to a mobile asset (echo lifecycle).
+                self.schedule_for_owner(
+                    *player_id,
+                    *fleet_id,
+                    FleetOrder::Blockade { system: *system_id, station },
+                    crate::event::OrderKind::Blockade,
+                );
+            }
+            Command::AttackFleet { player_id, fleet_id, target_id } => {
+                // The target must exist and belong to someone else.
+                let Some(target) = self.fleets.get(target_id) else {
+                    return;
+                };
+                if target.owner == *player_id {
+                    return; // no attacking your own fleets
+                }
+                let target_pos = target.pos;
+                // The attacker must exist, be the player's, and CONTAIN ≥1 raider
+                // (strike capability — consistent with BlockadeSystem; a corvette/
+                // scout-only fleet can't press a destroy attack). Soft-reject.
+                let Some(attacker) = self.fleets.get(fleet_id) else {
+                    return;
+                };
+                if attacker.owner != *player_id || !attacker.contains(ShipKind::Raider) {
+                    return;
+                }
+                // Fuel the intercept run ∝ distance × fleet mass, like a raid; a
+                // shortfall HOLDS it (keeps the current order, notifies) — never lost.
+                let cost = crate::fuel::fuel_cost(attacker.pos.distance(target_pos), attacker.mass());
+                let origin = attacker.pos;
+                if !self.charge_fuel(*player_id, origin, cost) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::FuelShortfall {
+                            owner: *player_id,
+                            needed: cost,
+                            kind: crate::fuel::ShortfallKind::Raid,
+                        },
+                    ));
+                    return;
+                }
+                self.schedule_for_owner(
+                    *player_id,
+                    *fleet_id,
+                    FleetOrder::Attack { target: *target_id },
+                    crate::event::OrderKind::Attack,
+                );
+            }
+            Command::SetFleetPosture { player_id, fleet_id, posture } => {
+                // Instant local administration on the player's own fleet — a
+                // standing per-fleet policy, like the sibling SetFleetTransit and
+                // the corp SetFleetDoctrine. The ACTION it authorizes (WeaponsFree
+                // auto-commit) is taken on the fleet's own local detection; the
+                // owner learns of any engagement light-delayed. Soft-reject if not
+                // owned.
+                if let Some(f) = self.fleets.get_mut(fleet_id)
+                    && f.owner == *player_id
+                {
+                    f.posture = *posture;
                 }
             }
         }
@@ -2324,8 +2879,26 @@ impl World {
                     }
                 }
                 Some(holder) if holder != owner => {
-                    // Lost the race (or it flipped en route): hold, intact, notice once.
-                    if idle && !self.fleets[&cid].notified_held {
+                    // §Part 2 SIEGE → CAPTURE: a colony ship arriving at a RIVAL
+                    // system CAPTURES it iff the besieger (== this colony's owner)
+                    // has held an unbroken, defense-suppressed siege for
+                    // SIEGE_DURATION — and it is NOT the holder's home (home
+                    // protection: a beaten player always keeps a producing base).
+                    // Otherwise the existing soft-hold: intact, redirectable,
+                    // never consumed in vain. "Sieges strangle; only colonists
+                    // conquer" — no colony ship = no capture, ever.
+                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs;
+                    let captureable = idle
+                        && !self.is_home_system(holder, sys_id)
+                        && self
+                            .systems
+                            .iter()
+                            .find(|s| s.id == sys_id)
+                            .and_then(|s| s.blockade)
+                            .is_some_and(|b| b.by == owner && b.siege_since.is_some_and(|ss| now - ss >= siege_dur));
+                    if captureable {
+                        self.capture_system(sys_id, holder, owner, cid, pos, events);
+                    } else if idle && !self.fleets[&cid].notified_held {
                         self.fleets.get_mut(&cid).unwrap().notified_held = true;
                         events.push(Event::new(now, EventPayload::ColonyHeld { owner, system: sys_id, pos }));
                     }
@@ -2337,11 +2910,71 @@ impl World {
         }
     }
 
+    /// §contestable-territory Part 2: FLIP a besieged system to the captor. All
+    /// deterministic and light-honest (`SystemCaptured` propagates by light like
+    /// a claim). Transfer rules:
+    ///   • ownership → `new_owner`, `claimed_at = now` (light-gates the reveal);
+    ///   • developments at HALF tiers (rounded down) — the occupation inherits a
+    ///     damaged base, freeing slots per the damage rule; defense pool cleared;
+    ///   • the stockpile stays on the system as PLUNDER (it's now the captor's);
+    ///     a snapshot rides the report so the defender's news itemizes the loss;
+    ///   • in-progress builds are DROPPED (the old owner paid; existing rule);
+    ///   • ONE colony ship is consumed (it became the occupation government).
+    /// Never called for a home system — the caller's home-protection gate holds.
+    fn capture_system(&mut self, sys_id: EntityId, old_owner: PlayerId, new_owner: PlayerId, colony: EntityId, pos: Vec2, events: &mut Vec<Event>) {
+        let now = self.time;
+        // Snapshot the seized stockpile (whole units) for the report BEFORE the flip.
+        let plunder: BTreeMap<crate::cargo::Commodity, u32> = self
+            .systems
+            .iter()
+            .find(|s| s.id == sys_id)
+            .map(|s| s.stockpile.iter().filter_map(|(c, a)| {
+                let u = a.floor() as u32;
+                (u >= 1).then_some((*c, u))
+            }).collect())
+            .unwrap_or_default();
+        if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+            sys.owner = Some(new_owner);
+            sys.claimed_at = Some(now);
+            // Half tiers (rounded down) — a captured base is a damaged one.
+            sys.extractor_tier /= 2;
+            sys.depot_tier /= 2;
+            sys.shipyard_tier /= 2;
+            sys.sensor_tier /= 2;
+            sys.defense_tier /= 2; // 0 already (siege prerequisite), stays 0
+            sys.habitat_tier /= 2;
+            sys.refinery_tier /= 2;
+            sys.defense_pool = 0.0;
+            sys.habitat_fed = false; // recomputed next tick
+            sys.blockade = None; // it's the captor's now — no longer besieged
+        }
+        // Drop the OLD owner's in-progress builds here (they no longer own it).
+        self.build_queue.retain(|j| j.system != sys_id);
+        // Consume ONE colony ship (the occupation government), like settlement.
+        if let Some(fl) = self.fleets.get_mut(&colony) {
+            fl.remove_one(ShipKind::Colony);
+            if fl.is_empty() {
+                self.fleets.remove(&colony);
+            } else {
+                fl.order = FleetOrder::Idle;
+                fl.notified_held = false;
+            }
+        }
+        events.push(Event::new(now, EventPayload::SystemCaptured { old_owner, new_owner, system: sys_id, pos, plunder }));
+    }
+
     /// Fleet a claimed system's accumulated production to the hub: one raidable
     /// convoy per stockpiled commodity (whole units), each selling on arrival.
     fn apply_ship_production(&mut self, player_id: PlayerId, system_id: EntityId, events: &mut Vec<Event>) {
         // Collect what to ship (and zero those stockpiles) without holding a
         // borrow across the convoy spawn.
+        // BLOCKADE (§contestable-territory Part 1): an outbound dispatch from a
+        // blockaded system HOLDS at origin — the goods stay in the (still-
+        // accruing) stockpile, nothing is destroyed. The owner already learned of
+        // the blockade (light-delayed onset notice); the client gates the button.
+        if self.is_blockaded(system_id) {
+            return;
+        }
         let mut shipments: Vec<(Cargo, Vec2)> = Vec::new();
         if let Some(sys) = self.systems.iter_mut().find(|s| s.id == system_id) {
             if sys.owner != Some(player_id) {
@@ -2692,6 +3325,12 @@ impl World {
                 else {
                     continue;
                 };
+                // BLOCKADE (§contestable-territory): a strangled source HOLDS its
+                // standing-order dispatches at origin (the rule simply doesn't
+                // fire; goods stay in the accruing stockpile). Resumes on lift.
+                if src.blockade.is_some() {
+                    continue;
+                }
                 let have = src.stockpile.get(&order.commodity).copied().unwrap_or(0.0);
 
                 let units: u32 = match order.trigger {
@@ -4709,6 +5348,304 @@ mod tests {
         id
     }
 
+    // ===================================================================
+    // §offensive-orders — AttackFleet + engagement POSTURE
+    // ===================================================================
+    use crate::doctrine::EngagementPosture;
+
+    /// Run the world for up to `secs`, returning true as soon as `pred` holds.
+    fn run_until<F: FnMut(&mut World) -> bool>(w: &mut World, secs: u32, mut pred: F) -> bool {
+        for _ in 0..(secs * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if pred(w) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Part 1: an ATTACK order intercepts a rival raider wing and opens a
+    /// FULL-DURATION engagement (not the raid brevity cap). Also proves the
+    /// ≥1-raider gate is by CONTAINS (like blockade), not flagship: a
+    /// corvette-flagship fleet with a raider aboard CAN attack (it can't raid).
+    #[test]
+    fn attack_fleet_full_battles_a_rival_wing_via_the_contains_raider_gate() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        // Attacker: a corvette-FLAGSHIP fleet (corvette > raider precedence) that
+        // also carries a raider — so CommitRaid would soft-reject but AttackFleet
+        // must accept (contains a raider).
+        let striker = w.alloc_entity_id();
+        let mut sf = Fleet::single(striker, atk, ShipKind::Corvette, cc + Vec2::new(120.0, 0.0), FleetOrder::Idle, None);
+        sf.composition.clear();
+        sf.composition.insert(ShipKind::Corvette, 2);
+        sf.composition.insert(ShipKind::Raider, 2);
+        assert_ne!(sf.flagship_kind(), ShipKind::Raider, "flagship is the corvette");
+        w.fleets.insert(striker, sf);
+        // Target: a lone rival raider, near the striker so contact is quick.
+        let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        // The light-delayed order lands, the fleet takes the Attack order, pursues,
+        // and opens a raid=false (full) engagement on contact.
+        let opened = run_until(&mut w, 10, |w| {
+            w.engagements.values().any(|e| e.attackers.contains(&striker))
+        });
+        assert!(opened, "attack intercepts and opens an engagement");
+        let raid = w.engagements.values().find(|e| e.attackers.contains(&striker)).map(|e| e.raid);
+        assert_eq!(raid, Some(false), "an ATTACK is a full battle, never a raid brevity cap");
+    }
+
+    /// Part 1: a corvette/scout-only fleet (no raider) SOFT-REJECTS an attack —
+    /// crisp roles, consistent with blockade. The order is never taken.
+    #[test]
+    fn attack_fleet_soft_rejects_a_raiderless_fleet() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let corvettes = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Corvette, 3, FleetOrder::Idle);
+        let target = squad(&mut w, def, cc + Vec2::new(300.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: corvettes, target_id: target }]);
+        // Give any (nonexistent) order time to land — it never does.
+        for _ in 0..(4 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(matches!(w.fleets[&corvettes].order, FleetOrder::Idle), "no raider → no attack, order untouched");
+        assert!(w.engagements.is_empty(), "no engagement from a soft-rejected attack");
+    }
+
+    /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),
+    /// ATTACK destroys the convoy and its cargo is LOST with it.
+    #[test]
+    fn raid_seizes_convoy_cargo_but_attack_destroys_it() {
+        use crate::cargo::{Cargo, Commodity};
+        let setup = |attack: bool| -> (bool, Option<u32>) {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
+            {
+                let c = w.fleets.get_mut(&convoy).unwrap();
+                c.composition.clear();
+                c.composition.insert(ShipKind::Convoy, 1);
+                c.cargo = Some(Cargo { commodity: Commodity::Ore, units: 40 });
+            }
+            let cmd = if attack {
+                Command::AttackFleet { player_id: atk, fleet_id: raider, target_id: convoy }
+            } else {
+                Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }
+            };
+            w.step(&[cmd]);
+            run_until(&mut w, 30, |w| !w.fleets.contains_key(&convoy));
+            let convoy_gone = !w.fleets.contains_key(&convoy);
+            let seized = w.fleets.get(&raider).and_then(|f| f.cargo).map(|c| c.units);
+            (convoy_gone, seized)
+        };
+        let (raid_gone, raid_seized) = setup(false);
+        assert!(raid_gone, "raid destroys the lone convoy");
+        assert_eq!(raid_seized, Some(40), "RAID seizes the cargo onto the raider");
+        let (atk_gone, atk_seized) = setup(true);
+        assert!(atk_gone, "attack destroys the convoy");
+        assert_eq!(atk_seized, None, "ATTACK destroys the cargo with the fleet — nothing seized");
+    }
+
+    /// Part 2: a WeaponsFree fleet auto-commits — on its OWN local detection, no
+    /// player order — to a rival that wanders into its own sensor bubble.
+    #[test]
+    fn weapons_free_auto_commits_on_a_rival_in_its_own_bubble() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // A raider hunter and a lone convoy well inside the raider's 2200 bubble.
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(1000.0, 0.0));
+        w.fleets.get_mut(&raider).unwrap().posture = EngagementPosture::WeaponsFree;
+        // No commands at all — pure standing autonomy on the fleet's own light.
+        let committed = run_until(&mut w, 5, |w| {
+            matches!(w.fleets[&raider].order, FleetOrder::Intercept { target } if target == convoy)
+        });
+        assert!(committed, "WeaponsFree raider hunts the convoy in its own bubble unprompted");
+        // …and on contact it RAIDS it (convoy target → cargo raid, chosen by the
+        // existing contact logic — WeaponsFree issues a plain Intercept).
+        let raided = run_until(&mut w, 30, |w| w.engagements.values().any(|e| e.attackers.contains(&raider)));
+        assert!(raided, "the hunt reaches contact");
+        let raid = w.engagements.values().find(|e| e.attackers.contains(&raider)).map(|e| e.raid);
+        assert_eq!(raid, Some(true), "an undefended convoy is a RAID, not a full attack");
+    }
+
+    /// Part 2 fog: a WeaponsFree fleet does NOT act on a rival OUTSIDE its own
+    /// bubble — it is not a global hunt, it is local detection only.
+    #[test]
+    fn weapons_free_ignores_a_rival_outside_its_own_bubble() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // Convoy FAR beyond the raider's own bubble (2200 su).
+        let (raider, _convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(6000.0, 0.0));
+        w.fleets.get_mut(&raider).unwrap().posture = EngagementPosture::WeaponsFree;
+        for _ in 0..(4 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(matches!(w.fleets[&raider].order, FleetOrder::Idle), "nothing in its own bubble → it stays put (no FTL global hunt)");
+    }
+
+    /// Part 2 retarded-time: the auto-commit fires on the fleet's OWN DELIVERED
+    /// LIGHT — it sees an inbound target where its light SHOWS it (retarded by the
+    /// light-travel time), so it commits strictly LATER than the tick the target's
+    /// TRUE position first crosses the bubble edge.
+    #[test]
+    fn weapons_free_detection_is_retarded_not_instantaneous() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        // Hunter parked in open space; a broadcasting convoy inbound from beyond the
+        // bubble so the retarded position lags the true one along its approach.
+        let p = Vec2::new(0.0, 6000.0);
+        let hunter = squad(&mut w, atk, p, ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&hunter).unwrap().posture = EngagementPosture::WeaponsFree;
+        let convoy = squad(&mut w, def, p + Vec2::new(2400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::MoveTo { dest: p });
+        // Isolate the scenario: only the hunter + the inbound convoy (drop the
+        // auto-spawned home fleets that would otherwise sit in the hunter's bubble).
+        w.fleets.retain(|id, _| *id == hunter || *id == convoy);
+        let bubble = w.config.sensor_range; // raider sensor_mult = 1.0
+        let mut true_enter: Option<f64> = None;
+        let mut commit: Option<f64> = None;
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            let cpos = w.fleets.get(&convoy).map(|f| f.pos);
+            if let Some(cpos) = cpos
+                && true_enter.is_none()
+                && p.distance(cpos) <= bubble
+            {
+                true_enter = Some(w.time); // naive current-truth would fire here
+            }
+            if commit.is_none() && matches!(w.fleets[&hunter].order, FleetOrder::Intercept { .. }) {
+                commit = Some(w.time);
+                break;
+            }
+        }
+        let (te, cm) = (true_enter.expect("target's true position crossed the bubble"), commit.expect("hunter committed"));
+        assert!(cm > te + 1e-6, "retarded detection commits ({cm:.2}s) strictly after the true crossing ({te:.2}s)");
+    }
+
+    /// Part 2 composition: a favourable-only doctrine (EngageWeaker) gates an
+    /// unfavourable WeaponsFree contact — the posture picks WHO, the doctrine's
+    /// force ratio decides WHETHER, so a stronger foe is ignored, not suicided into.
+    #[test]
+    fn favourable_only_doctrine_gates_an_unfavourable_weapons_free_hunt() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        // Favourable-only corp doctrine.
+        w.step(&[Command::SetFleetDoctrine {
+            player_id: atk,
+            doctrine: crate::doctrine::FleetDoctrine { engagement: EngagementPolicy::EngageWeaker, ..Default::default() },
+        }]);
+        let cc = w.players[&atk].command_center;
+        // A lone WeaponsFree raider vs a STRONGER rival wing (3 raiders) in bubble.
+        let hunter = squad(&mut w, atk, cc + Vec2::new(0.0, 3000.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&hunter).unwrap().posture = EngagementPosture::WeaponsFree;
+        let _strong = squad(&mut w, def, cc + Vec2::new(400.0, 3000.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        for _ in 0..(4 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(matches!(w.fleets[&hunter].order, FleetOrder::Idle), "unfavourable odds under a favourable-only policy → shadowed, not committed");
+    }
+
+    /// Part 2: SetFleetPosture is instant owner-only admin (soft-reject on a rival's
+    /// fleet), and both the posture and an in-flight Attack order survive serde.
+    #[test]
+    fn posture_command_and_attack_order_persist() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let hunter = squad(&mut w, atk, cc + Vec2::new(200.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let rival = squad(&mut w, def, cc + Vec2::new(400.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        // Owner-only: setting a rival's fleet posture is a soft no-op.
+        w.step(&[Command::SetFleetPosture { player_id: atk, fleet_id: rival, posture: EngagementPosture::WeaponsFree }]);
+        assert_eq!(w.fleets[&rival].posture, EngagementPosture::Passive, "can't set a rival's posture");
+        // Own fleet: instant.
+        w.step(&[Command::SetFleetPosture { player_id: atk, fleet_id: hunter, posture: EngagementPosture::WeaponsFree }]);
+        assert_eq!(w.fleets[&hunter].posture, EngagementPosture::WeaponsFree);
+        // Put an Attack order in flight, then round-trip the whole world.
+        w.fleets.get_mut(&hunter).unwrap().order = FleetOrder::Attack { target: rival };
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w2.fleets[&hunter].posture, EngagementPosture::WeaponsFree, "posture persists");
+        assert!(matches!(w2.fleets[&hunter].order, FleetOrder::Attack { target } if target == rival), "in-flight Attack persists");
+    }
+
+    /// §one-battle-one-icon: two rival fleets that intercept EACH OTHER (reciprocal
+    /// — e.g. a WeaponsFree hunter and a picket both committing to attack the other)
+    /// form ONE engagement, not two overlapping battle icons.
+    #[test]
+    fn reciprocal_intercepts_form_one_battle_not_two() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let a = squad(&mut w, atk, cc + Vec2::new(0.0, 3000.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let b = squad(&mut w, def, cc + Vec2::new(60.0, 3000.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.retain(|id, _| *id == a || *id == b);
+        // Each has committed to attack the OTHER (mutual pursuit, already in reach).
+        w.fleets.get_mut(&a).unwrap().order = FleetOrder::Intercept { target: b };
+        w.fleets.get_mut(&b).unwrap().order = FleetOrder::Intercept { target: a };
+        let engaged = run_until(&mut w, 5, |w| !w.engagements.is_empty());
+        assert!(engaged, "the two raiders make contact");
+        assert_eq!(w.engagements.len(), 1, "reciprocal intercepts = ONE battle (one icon), not two");
+        // Both fleets are in that single engagement, on opposite sides.
+        let e = w.engagements.values().next().unwrap();
+        assert!(e.attackers.contains(&a) || e.defenders.contains(&a));
+        assert!(e.attackers.contains(&b) || e.defenders.contains(&b));
+    }
+
+    /// Part 1 verb (join path): an ATTACK order that joins an in-progress RAID on
+    /// the same convoy ESCALATES it to a full battle — the aggressor's destroy
+    /// intent wins, so a convoy already being raided is fought to the death.
+    #[test]
+    fn an_attack_joining_a_raid_escalates_to_a_full_battle() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        // A tanky convoy (survives the raid window) + two raiders at contact range.
+        let convoy = squad(&mut w, def, cc + Vec2::new(300.0, 0.0), ShipKind::Convoy, 8, FleetOrder::Idle);
+        let r_raid = squad(&mut w, atk, cc + Vec2::new(250.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let r_attack = squad(&mut w, atk, cc + Vec2::new(250.0, 30.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.retain(|id, _| *id == convoy || *id == r_raid || *id == r_attack);
+        // A opens a cargo RAID on the convoy.
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: r_raid, target_id: convoy }]);
+        let raiding = run_until(&mut w, 10, |w| w.engagements.values().any(|e| e.raid && e.attackers.contains(&r_raid)));
+        assert!(raiding, "the raid opens as a raid (steal)");
+        // B ATTACKS the same convoy → joins → escalates the raid to a full battle.
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: r_attack, target_id: convoy }]);
+        let escalated = run_until(&mut w, 10, |w| {
+            w.engagements.values().any(|e| e.attackers.contains(&r_raid) && e.attackers.contains(&r_attack) && !e.raid)
+        });
+        assert!(escalated, "an ATTACK joining a raid forces the whole engagement to a full battle");
+    }
+
     #[test]
     fn raid_cap_ends_a_raid_that_cannot_finish_in_time() {
         // test_world uses battle_target_secs = 20 → raid cap 0.15×20 = 3 s. A lone
@@ -5174,6 +6111,37 @@ mod tests {
         sys.id
     }
 
+    /// §one-battle-one-icon: `active_battles()` exposes each engagement as ONE
+    /// entity — a stable id, the anchor, and the FULL participant set (both
+    /// sides) — which the client renders as a single icon and uses to suppress
+    /// each participant's own marker. The participant set is exactly what the
+    /// server feeds into the weapons-fire reveal, so carrying the ids leaks
+    /// nothing beyond the ghosts already revealed at the site.
+    #[test]
+    fn active_battles_is_one_entity_per_engagement_with_all_participants() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        // A corvette-escorted convoy so BOTH sides have real fleets (2 defenders).
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(360.0, 0.0));
+        let convoy_pos = w.fleets[&convoy].pos;
+        let escort = w.alloc_entity_id();
+        w.fleets.insert(escort, Fleet::single(escort, def, ShipKind::Corvette, convoy_pos + Vec2::new(20.0, 0.0), FleetOrder::Idle, None));
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        let mut found: Option<BattleInfo> = None;
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            let bs = w.active_battles();
+            if !bs.is_empty() { found = Some(bs[0].clone()); break; }
+        }
+        let b = found.expect("an engagement forms");
+        assert_eq!(w.active_battles().len(), 1, "ONE engagement entity → one icon");
+        assert!(b.participants.contains(&raider), "the attacker is a participant");
+        assert!(b.participants.contains(&convoy) || b.participants.contains(&escort), "the defender side is included");
+        assert!(b.participants.len() >= 2, "all engaged fleets ride the single entity");
+        // The id is the engagement's high-bit id (a real, stable handle).
+        assert_ne!(b.id, EntityId(0));
+    }
+
     /// A raid contact on a convoy INSIDE a defended friendly system's protection
     /// radius must fight THROUGH the platform. With a tall platform the seeded
     /// duels stop the raider (deterministically for this seed); the convoy
@@ -5495,10 +6463,12 @@ mod tests {
         // convoy (contact almost immediately once the commit lands).
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(4000.0, 0.0), Vec2::new(4180.0, 0.0));
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
-        // Recall is issued, but its light (≈13 s away) can't beat the contact.
+        // The commit's light reaches the far raider at ~10 s (dist 4000 / c 400),
+        // and it makes contact ~2 s later. The recall is issued well before that
+        // contact, but its own ~10 s light can't beat the raider to the kill.
         let mut recalled = false;
         let outcome = run_until_raid(&mut w, 120, |w| {
-            if !recalled && w.time > 14.0 {
+            if !recalled && w.time > 4.0 {
                 recalled = true;
                 vec![Command::RecallRaid { player_id: atk, raider_id: raider }]
             } else {
@@ -6851,5 +7821,371 @@ mod tests {
             serde_json::to_string(&w).unwrap()
         };
         assert_eq!(run(), run(), "doctrine-driven sim is reproducible from seed + commands");
+    }
+
+    // --- §CONTESTABLE TERRITORY Part 1: BLOCKADE -----------------------------
+
+    /// Grant `owner` an unclaimed system at `pos` (owned, no platform).
+    fn grant_system_at(w: &mut World, owner: PlayerId, pos: Vec2, tier: u32) -> EntityId {
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.pos = pos;
+        sys.defense_tier = tier;
+        sys.id
+    }
+
+    /// Park a raider fleet of `raiders` ships ON STATION at `sys`, with the
+    /// Blockade order already installed (bypasses the light-delayed command so
+    /// the resolve pass can be exercised directly).
+    fn blockader_on_station(w: &mut World, owner: PlayerId, sys: EntityId, raiders: u32) -> EntityId {
+        let pos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        let id = w.alloc_entity_id();
+        let mut f = Fleet::single(id, owner, ShipKind::Raider, pos, FleetOrder::Blockade { system: sys, station: pos }, None);
+        f.composition.insert(ShipKind::Raider, raiders);
+        w.fleets.insert(id, f);
+        id
+    }
+
+    #[test]
+    fn blockade_of_undefended_system_establishes_and_holds_outbound() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0); // no platform
+        seed_stock(&mut w, sys, &[(Commodity::Ore, 50.0), (crate::fuel::MOVEMENT_FUEL, 500.0)]);
+        let blk = blockader_on_station(&mut w, atk, sys, 1);
+
+        let mut established = None;
+        for _ in 0..5 {
+            for e in w.step(&[]) {
+                if let EventPayload::BlockadeEstablished { by, system, .. } = e.payload {
+                    established = Some((by, system));
+                }
+            }
+        }
+        assert_eq!(established, Some((atk, sys)), "an undefended system blockades at once (no battle)");
+        assert!(w.systems.iter().find(|s| s.id == sys).unwrap().blockade.is_some());
+
+        // OUTBOUND hold: shipping production from a blockaded system dispatches
+        // NO convoy (the goods stay put; production still accrues).
+        let fleets_before = w.fleets.len();
+        w.step(&[Command::ShipProduction { player_id: def, system_id: sys }]);
+        assert_eq!(w.fleets.len(), fleets_before, "no convoy leaves a blockaded system");
+        assert!(w.fleets.contains_key(&blk), "the blockader holds station");
+    }
+
+    #[test]
+    fn blockade_holds_inbound_convoy_at_standoff() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0);
+        let sys_pos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        blockader_on_station(&mut w, atk, sys, 1);
+        // A def supply convoy inbound to its own (soon-blockaded) system.
+        let cid = w.alloc_entity_id();
+        let mut convoy = Fleet::single(cid, def, ShipKind::Convoy, sys_pos + Vec2::new(3000.0, 0.0), FleetOrder::MoveTo { dest: sys_pos }, Some(crate::cargo::Cargo { commodity: Commodity::Provisions, units: 10 }));
+        convoy.mission = Some(TradeMission::DeliverToSystem { system: sys });
+        w.fleets.insert(cid, convoy);
+
+        w.step(&[]); // resolve_blockades establishes + re-targets the inbound convoy
+        let dest = match w.fleets[&cid].order {
+            FleetOrder::MoveTo { dest } => dest,
+            _ => panic!("inbound convoy should still be moving (to standoff)"),
+        };
+        let standoff = dest.distance(sys_pos);
+        assert!((standoff - BLOCKADE_STANDOFF_RADIUS).abs() < 1.0, "held on the standoff ring, not delivered (got {standoff})");
+    }
+
+    #[test]
+    fn blockade_wins_establishment_battle_vs_platform_then_holds() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        // A modest platform (tier 1) vs a strong raider wing — the raiders grind
+        // the platform to 0 and the blockade holds. Playtest-scaled battle timing.
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 1);
+        let blk = blockader_on_station(&mut w, atk, sys, 12);
+
+        let mut blockaded = false;
+        for _ in 0..(200 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            if s.defense_tier == 0 && s.blockade.is_some() && w.fleets.contains_key(&blk) {
+                blockaded = true;
+                break;
+            }
+        }
+        assert!(blockaded, "the blockader grinds the platform down and holds station");
+        // It stays on its Blockade order (not sent home after winning).
+        assert!(matches!(w.fleets[&blk].order, FleetOrder::Blockade { .. }), "winner resumes station");
+    }
+
+    #[test]
+    fn blockade_lifts_when_blockader_destroyed() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        // A lone raider vs a TALL platform (tier 12): the platform destroys it,
+        // so the blockade — which established on arrival — LIFTS.
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 12);
+        let blk = blockader_on_station(&mut w, atk, sys, 1);
+
+        let mut lifted = false;
+        for _ in 0..(200 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::BlockadeLifted { system, .. } = e.payload
+                    && system == sys
+                {
+                    lifted = true;
+                }
+            }
+            if lifted { break; }
+        }
+        assert!(lifted, "destroying the blockader lifts the blockade");
+        assert!(!w.fleets.contains_key(&blk), "the lone blockader was destroyed");
+        assert!(w.systems.iter().find(|s| s.id == sys).unwrap().blockade.is_none());
+    }
+
+    #[test]
+    fn blockade_command_requires_a_raider_and_a_rival_target() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let sys = grant_system_at(&mut w, def, Vec2::new(3000.0, 0.0), 0);
+        // A CONVOY fleet (no raider) can't blockade — soft reject (order unchanged).
+        let convoy = find_ship(&w, atk, ShipKind::Convoy);
+        w.step(&[Command::BlockadeSystem { player_id: atk, fleet_id: convoy, system_id: sys }]);
+        for _ in 0..20 { w.step(&[]); }
+        assert!(!matches!(w.fleets[&convoy].order, FleetOrder::Blockade { .. }), "a convoy can't blockade");
+        // A raider CAN — its order becomes Blockade once the command's light lands.
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        w.fleets.get_mut(&raider).unwrap().pos = w.players[&atk].command_center;
+        w.step(&[Command::BlockadeSystem { player_id: atk, fleet_id: raider, system_id: sys }]);
+        let mut became_blockade = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if matches!(w.fleets.get(&raider).map(|f| &f.order), Some(FleetOrder::Blockade { .. })) {
+                became_blockade = true;
+                break;
+            }
+        }
+        assert!(became_blockade, "a raider fleet accepts the blockade order (after light delay)");
+        // A raider can't blockade an UNOWNED system (soft reject).
+        let unclaimed = w.systems.iter().find(|s| s.is_unclaimed()).unwrap().id;
+        let r2 = blockader_on_station(&mut w, atk, sys, 1); // reuse helper for a fresh raider
+        w.fleets.get_mut(&r2).unwrap().order = FleetOrder::Idle;
+        w.step(&[Command::BlockadeSystem { player_id: atk, fleet_id: r2, system_id: unclaimed }]);
+        for _ in 0..20 { w.step(&[]); }
+        assert!(!matches!(w.fleets[&r2].order, FleetOrder::Blockade { .. }), "can't blockade an unowned system");
+    }
+
+    // --- §CONTESTABLE TERRITORY Part 2: SIEGE → CAPTURE ----------------------
+
+    /// Establish a blockade on an undefended `def` system and BACKDATE its siege
+    /// clock so a colony delivered now would capture (skips running the full
+    /// SIEGE_DURATION in tests). Returns the system id.
+    fn ripe_siege(w: &mut World, atk: PlayerId, def: PlayerId, pos: Vec2, tier: u32) -> EntityId {
+        let sys = grant_system_at(w, def, pos, tier);
+        blockader_on_station(w, atk, sys, if tier > 0 { 12 } else { 1 });
+        // Run until blockaded (and, if defended, until the platform is ground down).
+        for _ in 0..(300 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            if s.blockade.is_some() && s.defense_tier == 0 { break; }
+        }
+        // Backdate the (already-running, undefended) siege clock past the duration.
+        let dur = w.siege_duration_secs();
+        let now = w.time;
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().blockade.as_mut().unwrap().siege_since = Some(now - dur - 1.0);
+        sys
+    }
+
+    fn step_capture(w: &mut World) -> Option<(PlayerId, EntityId)> {
+        for _ in 0..5 {
+            for e in w.step(&[]) {
+                if let EventPayload::SystemCaptured { new_owner, system, .. } = e.payload {
+                    return Some((new_owner, system));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn siege_plus_colony_captures_with_half_tiers_and_plunder() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = ripe_siege(&mut w, atk, def, pos, 0);
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            s.extractor_tier = 4;
+            s.shipyard_tier = 2;
+            s.habitat_tier = 3;
+            *s.stockpile.entry(Commodity::Ore).or_insert(0.0) += 100.0;
+        }
+        let colony = colony_at(&mut w, atk, pos);
+
+        let mut plunder = None;
+        let cap = {
+            let mut got = None;
+            'outer: for _ in 0..5 {
+                for e in w.step(&[]) {
+                    if let EventPayload::SystemCaptured { new_owner, system, plunder: p, .. } = &e.payload {
+                        plunder = Some(p.clone());
+                        got = Some((*new_owner, *system));
+                        break 'outer;
+                    }
+                }
+            }
+            got
+        };
+        assert_eq!(cap, Some((atk, sys)), "a colony delivered to a ripe siege captures");
+        let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+        assert_eq!(s.owner, Some(atk), "ownership flipped to the captor");
+        assert_eq!(s.extractor_tier, 2, "developments transfer at HALF tiers (4→2)");
+        assert_eq!(s.shipyard_tier, 1, "2→1");
+        assert_eq!(s.habitat_tier, 1, "3→1 (rounded down)");
+        assert!(s.blockade.is_none(), "the captured system is no longer besieged");
+        assert_eq!(plunder.unwrap().get(&Commodity::Ore).copied(), Some(100), "the stockpile is plundered (itemized)");
+        assert!(!w.fleets.contains_key(&colony), "the lone colony ship was consumed (occupation)");
+    }
+
+    #[test]
+    fn capture_needs_defenses_down_a_ripe_clock_and_a_colony() {
+        // (a) DEFENSES UP: a platform that never suppresses → siege clock never
+        //     starts; a delivered colony is held, not consumed.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let pos = Vec2::new(5000.0, 0.0);
+            // A lone blockader vs a tall platform: it can't suppress the defenses.
+            let sys = grant_system_at(&mut w, def, pos, 12);
+            blockader_on_station(&mut w, atk, sys, 1);
+            for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            assert!(s.defense_tier > 0 && s.blockade.as_ref().and_then(|b| b.siege_since).is_none(), "defenses up → no siege clock");
+        }
+        // (b) GARRISON present: siege clock can't run while a defender combatant holds.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let pos = Vec2::new(5000.0, 0.0);
+            let sys = grant_system_at(&mut w, def, pos, 0);
+            blockader_on_station(&mut w, atk, sys, 1);
+            let gid = w.alloc_entity_id();
+            w.fleets.insert(gid, Fleet::single(gid, def, ShipKind::Corvette, pos, FleetOrder::Idle, None));
+            w.step(&[]); // first resolve sees the garrison
+            let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+            assert!(s.blockade.is_some() && s.blockade.as_ref().unwrap().siege_since.is_none(), "a garrison blocks the siege clock");
+        }
+        // (c) SIEGE TOO SHORT: undefended + blockaded but the clock just started.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let pos = Vec2::new(5000.0, 0.0);
+            let sys = grant_system_at(&mut w, def, pos, 0);
+            blockader_on_station(&mut w, atk, sys, 1);
+            w.step(&[]); // established; siege_since = now (fresh, not ripe)
+            let colony = colony_at(&mut w, atk, pos);
+            assert_eq!(step_capture(&mut w), None, "a fresh siege can't be captured yet");
+            assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().owner, Some(def), "still the defender's");
+            assert!(w.fleets.contains_key(&colony), "colony ship held, not consumed in vain");
+        }
+        // (d) NO COLONY: a ripe siege with no colonists never captures — sieges
+        //     strangle, only colonists conquer.
+        {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let sys = ripe_siege(&mut w, atk, def, Vec2::new(5000.0, 0.0), 0);
+            for _ in 0..10 { w.step(&[]); }
+            assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().owner, Some(def), "no colony ⇒ no capture, ever");
+        }
+    }
+
+    #[test]
+    fn home_system_is_never_captured() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        // Blockade the DEFENDER'S HOME system directly.
+        let home = w.players[&def].home_system.unwrap();
+        let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // Suppress its bootstrap shipyard-tier defenses irrelevant; ensure defense 0.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().defense_tier = 0;
+        blockader_on_station(&mut w, atk, home, 1);
+        w.step(&[]); // blockades — but a home NEVER starts a siege clock
+        // Force-backdate anyway; resolve_blockades must RESET it (home protection).
+        let backdated = w.time - w.siege_duration_secs() - 1.0;
+        if let Some(b) = w.systems.iter_mut().find(|s| s.id == home).unwrap().blockade.as_mut() {
+            b.siege_since = Some(backdated);
+        }
+        let colony = colony_at(&mut w, atk, home_pos);
+        assert_eq!(step_capture(&mut w), None, "a home system can never be captured (no elimination)");
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().owner, Some(def), "the beaten player keeps their home");
+        assert!(w.fleets.contains_key(&colony), "the colony ship is held, not consumed against a home");
+        assert!(w.systems.iter().find(|s| s.id == home).unwrap().blockade.as_ref().unwrap().siege_since.is_none(), "home siege clock stays reset");
+    }
+
+    #[test]
+    fn siege_clock_resets_on_lift() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = grant_system_at(&mut w, def, pos, 0);
+        let blk = blockader_on_station(&mut w, atk, sys, 1);
+        w.step(&[]);
+        let first = w.systems.iter().find(|s| s.id == sys).unwrap().blockade.as_ref().unwrap().siege_since.unwrap();
+        // Lift: send the blockader far away (off station).
+        w.fleets.get_mut(&blk).unwrap().order = FleetOrder::MoveTo { dest: Vec2::new(-9000.0, 0.0) };
+        for _ in 0..(3 * crate::config::TICK_HZ) { w.step(&[]); }
+        assert!(w.systems.iter().find(|s| s.id == sys).unwrap().blockade.is_none(), "moving off station lifts it");
+        // Re-blockade with a fresh fleet → a NEW siege clock, not the old one.
+        w.fleets.get_mut(&blk).unwrap().pos = pos;
+        w.fleets.get_mut(&blk).unwrap().order = FleetOrder::Blockade { system: sys, station: pos };
+        w.step(&[]);
+        let second = w.systems.iter().find(|s| s.id == sys).unwrap().blockade.as_ref().unwrap().siege_since.unwrap();
+        assert!(second > first, "a lift fully resets the clock (new siege starts later)");
+    }
+
+    #[test]
+    fn blockade_and_siege_survive_a_snapshot() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        let sys = ripe_siege(&mut w, atk, def, Vec2::new(5000.0, 0.0), 0);
+        let before = w.systems.iter().find(|s| s.id == sys).unwrap().blockade;
+        assert!(before.is_some() && before.unwrap().siege_since.is_some());
+        // serde round-trip (mid-siege persistence).
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        let after = w2.systems.iter().find(|s| s.id == sys).unwrap().blockade;
+        assert_eq!(format!("{before:?}"), format!("{after:?}"), "blockade + siege clock persist across a snapshot");
     }
 }

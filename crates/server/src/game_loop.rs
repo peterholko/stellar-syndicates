@@ -182,6 +182,8 @@ impl GameLoop {
                             // Refinery tunables (§buildings step 3b).
                             refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
                             refinery_yield: sim::build::REFINERY_YIELD,
+                            // §contestable-territory Part 2: the siege duration.
+                            siege_secs: self.world.siege_duration_secs(),
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -261,6 +263,26 @@ impl GameLoop {
                             raider_id,
                             target_id,
                         });
+                    }
+                }
+                ClientMsg::BlockadeSystem { fleet_id, system_id } => {
+                    // §contestable-territory Part 1: light-delayed like a move.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet_id);
+                        self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
+                    }
+                }
+                ClientMsg::AttackFleet { fleet_id, target_id } => {
+                    // §offensive-orders Part 1: light-delayed like a raid.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet_id);
+                        self.pending.push(Command::AttackFleet { player_id, fleet_id, target_id });
+                    }
+                }
+                ClientMsg::SetFleetPosture { fleet_id, posture } => {
+                    // §offensive-orders Part 2: instant per-fleet standing policy.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetPosture { player_id, fleet_id, posture });
                     }
                 }
                 ClientMsg::RecallRaid { raider_id } => {
@@ -460,15 +482,30 @@ impl GameLoop {
             for b in self.world.active_battles() {
                 let delay = b.pos.distance(cc) / c;
                 if now >= b.started_at + delay {
+                    battle_reveal.extend(b.participants.iter().copied());
                     battles.push(crate::protocol::BattleView {
+                        id: b.id,
                         pos: b.pos,
                         age: delay,
+                        started_at: b.started_at,
                         own: player_id == b.a_owner || player_id == b.d_owner,
+                        // All participants are revealed to any observer of the
+                        // battle (the weapons-fire site-reveal above), so their
+                        // ids carry no more than the ghosts already sent.
+                        participants: b.participants,
                     });
-                    battle_reveal.extend(b.participants);
                 }
             }
-            let ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            let mut ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            // §offensive-orders Part 2: attach each OWN fleet's engagement posture
+            // (owner-only, fresh — a private standing policy like the corp doctrine;
+            // rivals keep `None`, so it never leaks). The history-view can't see the
+            // authoritative fleet, so fill it from the world here.
+            for g in ghosts.iter_mut() {
+                if g.own {
+                    g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                }
+            }
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-
             // participant — the scheduler holds them keyed by recipient.
@@ -487,6 +524,20 @@ impl GameLoop {
                     outcome: r.outcome,
                     attacker_losses: r.attacker_losses.clone(),
                     target_losses: r.target_losses.clone(),
+                })
+                .collect();
+            // §contestable-territory Part 2: retained CAPTURE reports (per-participant).
+            let capture_reports: Vec<crate::protocol::CaptureReportView> = self
+                .reports
+                .retained_captures_for(player_id)
+                .iter()
+                .map(|r| crate::protocol::CaptureReportView {
+                    id: r.id,
+                    pos: r.pos,
+                    at_time: r.event_time,
+                    learned_at: r.arrival_time,
+                    captor: r.captor,
+                    plunder: r.plunder.clone(),
                 })
                 .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
@@ -573,6 +624,7 @@ impl GameLoop {
                         .collect(),
                     battles,
                     battle_reports,
+                    capture_reports,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

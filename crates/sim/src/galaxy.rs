@@ -116,6 +116,29 @@ pub struct StarSystem {
     /// (`REFINERY_YIELD` Fuel per Volatile); idles dry. Owner-only in the View.
     #[serde(default)]
     pub refinery_tier: u32,
+    /// BLOCKADE state (§contestable-territory Part 1): `Some` while ≥1 hostile
+    /// fleet holds station here. Recomputed every tick by `resolve_blockades`
+    /// from on-station fleet presence — persisted so a mid-blockade snapshot
+    /// keeps the (unbroken) `since` / siege clock. `default` None (no blockade).
+    #[serde(default)]
+    pub blockade: Option<Blockade>,
+}
+
+/// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
+/// from fleet presence; persisted so an unbroken blockade's clocks survive a
+/// snapshot. `siege_since` is populated in Part 2 (siege→capture).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Blockade {
+    /// The blockading corporation (the badge / capture attribution; there may be
+    /// several on-station fleets — this is the earliest-arrived owner).
+    pub by: PlayerId,
+    /// Sim-time the current UNBROKEN blockade began (any full lift resets it).
+    pub since: f64,
+    /// Sim-time the SIEGE conditions (defenses suppressed + no garrison, under an
+    /// unbroken blockade) first held — the capture clock's start. `None` until
+    /// the siege can progress; reset whenever a condition breaks (§Part 2).
+    #[serde(default)]
+    pub siege_since: Option<f64>,
 }
 
 impl StarSystem {
@@ -253,6 +276,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             habitat_tier: 0,
             habitat_fed: false,
             refinery_tier: 0,
+            blockade: None,
         });
     }
     systems
@@ -370,6 +394,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         habitat_tier: 0,
         habitat_fed: false,
         refinery_tier: 0,
+            blockade: None,
     }
 }
 
