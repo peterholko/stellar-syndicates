@@ -192,8 +192,10 @@ const RESOURCE_SLUG: Record<Commodity, string> = {
   alloys: "resource-industrials",
   volatiles: "resource-fuel", // STAND-IN (hue-shifted cold) — wants dedicated art
 };
-const commodityIcon = (c: Commodity, size: IconSize = "md") =>
-  `<img class="icon icon--${size}${c === "volatiles" ? " icon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" alt="" title="${c}" />`;
+// A commodity icon is by definition a resource, so it always uses the dedicated
+// `--icon-resource` token (see icons.ts). The `size` arg is kept for API symmetry.
+const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
+  `<img class="icon icon--resource${c === "volatiles" ? " icon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" alt="" title="${c}" />`;
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {

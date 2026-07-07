@@ -368,14 +368,14 @@
       .sysview__deps { margin: 4px 0 6px; }
       .deps-head { display: flex; align-items: center; gap: var(--icon-gap); color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin-bottom: 5px; min-height: var(--icon-sm); }
       .deps-head .sp-tier { color: var(--accent); }
-      .dep-row { display: grid; grid-template-columns: var(--icon-md) 1fr 56px auto; align-items: center; gap: 8px; padding: 3px 0; min-height: calc(var(--icon-md) + 4px); }
+      .dep-row { display: grid; grid-template-columns: var(--icon-resource) 1fr 56px auto; align-items: center; gap: 8px; padding: 3px 0; min-height: calc(var(--icon-resource) + 4px); }
       .dep-row .dep-ico { color: var(--accent); display: flex; align-items: center; justify-content: center; }
       /* Bundled Stellar-Charters resource/action icons (framed PNG badges). */
       /* ===== §ICON SIZE-TOKEN SYSTEM — ONE source of truth for icon dimensions.
          Tune these three vars → "one notch bigger everywhere" is a 3-line change.
          Layouts DERIVE from the tokens (flex rows + gap + min-height), never from
          a fixed icon pixel count, so bumping a token reflows cleanly. */
-      :root { --icon-sm: 18px; --icon-md: 22px; --icon-lg: 28px; --icon-gap: 6px; }
+      :root { --icon-sm: 18px; --icon-md: 22px; --icon-lg: 28px; --icon-gap: 6px; --icon-resource: calc(var(--icon-md) + 4px); }
       .icon { flex: none; object-fit: contain; border-radius: 3px; vertical-align: middle; }
       img.icon { display: inline-block; }
       /* Emoji/unicode placeholders: a centered glyph box at the token size. */
@@ -383,6 +383,8 @@
       .icon--sm { width: var(--icon-sm); height: var(--icon-sm); font-size: calc(var(--icon-sm) - 2px); }
       .icon--md { width: var(--icon-md); height: var(--icon-md); font-size: calc(var(--icon-md) - 3px); }
       .icon--lg { width: var(--icon-lg); height: var(--icon-lg); font-size: calc(var(--icon-lg) - 4px); }
+      /* Commodity/credit icons — one notch larger everywhere (the game's currency). */
+      .icon--resource { width: var(--icon-resource); height: var(--icon-resource); font-size: calc(var(--icon-resource) - 3px); }
       /* Volatiles has no native icon — reuse Fuel, hue-shifted cold (see README). */
       .icon--cold { filter: hue-rotate(135deg) saturate(1.2); }
       /* Icon-VALUE chips + status badges: flex rows, icon centered BY FLEX. */
@@ -404,15 +406,15 @@
       .sysrail__row.is-active { background: rgba(79,195,255,0.10); border-left-color: var(--accent); }
       .sysrail__row .sysrail__sub { color: var(--dim); font-size: 10px; }
       .sysrail__row .sysrail__chev { margin-left: auto; color: var(--dim); }
-      .sys-prod { display: grid; grid-template-columns: var(--icon-md) 1fr auto auto; align-items: center; gap: 8px; padding: 2px 0; min-height: calc(var(--icon-md) + 4px); }
+      .sys-prod { display: grid; grid-template-columns: var(--icon-resource) 1fr auto auto; align-items: center; gap: 8px; padding: 2px 0; min-height: calc(var(--icon-resource) + 4px); }
       .sys-prod .sp-stock { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
       .sys-prod .sp-rate { color: var(--positive); font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
       .sys-prod .sp-none { color: var(--dim); }
       /* Build / develop options (§step1 growth sink). */
       .build-grid { display: flex; flex-direction: column; gap: 4px; }
       .build-opt { justify-content: space-between; }
-      .build-opt .bo-name { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
-      .build-opt .bo-cost { color: var(--dim); font-size: 11px; display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+      .build-opt .bo-name { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+      .build-opt .bo-cost { color: var(--dim); font-size: 11px; display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; justify-content: flex-end; }
       /* Gate tag on a blocked build option (slots full / requires Shipyard N). */
       .build-opt .bo-gate { margin-left: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--warn); }
       /* Storage fill bar (X / CAP) under the stat strip; warns when full. */

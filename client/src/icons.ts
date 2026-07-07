@@ -129,14 +129,21 @@ const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<":
  *  "One notch bigger everywhere" = editing the three CSS vars. */
 export type IconSize = "sm" | "md" | "lg";
 
+// The commodity/credit icons render one notch LARGER than the size tier they're
+// asked for — they're the game's currency and must read at a glance in every
+// context. They get their own `--icon-resource` token (see index.html), applied
+// here regardless of the caller's size, so it stays consistent everywhere.
+const RESOURCE_KEYS = new Set<IconKey>(["fuel", "ore", "alloys", "provisions", "volatiles", "credits"]);
+
 /** Render one icon at a SIZE TOKEN (never a pixel size). `tip` overrides the
  *  registry default; `cls` adds classes. Art → crisp <img>; placeholder → an
  *  emoji <span>. Both carry `.icon.icon--<size>`, so CSS drives the dimensions
- *  and the surrounding flex row centers them. */
+ *  and the surrounding flex row centers them. Resource keys use `.icon--resource`. */
 export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""): string {
   const def = ICONS[key];
   const t = escAttr(tip ?? def.tip);
-  const c = `icon icon--${size}${cls ? ` ${cls}` : ""}`;
+  const sizeCls = RESOURCE_KEYS.has(key) ? "icon--resource" : `icon--${size}`;
+  const c = `icon ${sizeCls}${cls ? ` ${cls}` : ""}`;
   if (def.art) {
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;
   }
