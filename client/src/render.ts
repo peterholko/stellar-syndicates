@@ -925,6 +925,9 @@ export class Renderer {
     const slotIndex = new Map<string, number>();
     for (const r of state.battleReports) {
       if (state.battleDismissed.has(r.id)) continue;
+      // An ESCAPED raid isn't a battle — no contact, no wreckage — so it leaves no
+      // aftermath marker on the map (the "raid failed" news still lands in the log).
+      if (r.outcome === "escaped") continue;
       if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
       const s = this.worldToScreen(r.pos);
       const key = `${Math.round(r.pos.x / 60)},${Math.round(r.pos.y / 60)}`;

@@ -1214,10 +1214,24 @@ impl World {
             e.touched = false;
         }
 
+        // Fleets already IN a battle are committed to it and anchored — their
+        // standing Intercept/Attack order is DORMANT. Exclude them from the ESCAPE
+        // check so a raider that was jumped mid-pursuit doesn't fire a spurious
+        // "raid failed" when its old convoy target reaches hub safety. (The contact
+        // loop KEEPS engaged fleets — their per-tick contact re-touches their own
+        // engagement to keep it alive; the `together` check there stops them opening
+        // a duplicate battle against a fleet they're already fighting.)
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
+
         // Convoy reaching hub safety before contact → the raider breaks off.
         let mut escapes: Vec<(EntityId, EntityId)> = Vec::new();
         for (rid, ship) in &self.fleets {
-            if let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order
+            if !engaged.contains(rid)
+                && let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order
                 && let Some(t) = self.fleets.get(&target)
                 && ship.owner != t.owner
                 && ship.pos.distance(t.pos) > CONTACT_RADIUS
@@ -5588,6 +5602,42 @@ mod tests {
         let w2: World = serde_json::from_str(&json).unwrap();
         assert_eq!(w2.fleets[&hunter].posture, EngagementPosture::WeaponsFree, "posture persists");
         assert!(matches!(w2.fleets[&hunter].order, FleetOrder::Attack { target } if target == rival), "in-flight Attack persists");
+    }
+
+    /// A raider jumped mid-pursuit (engaged in a DIFFERENT battle) must NOT fire a
+    /// spurious "raid failed" escape when its old convoy target reaches hub safety —
+    /// its Intercept order is dormant while it's anchored in the fight. Regression
+    /// for the phantom battle-aftermath marker at the hub.
+    #[test]
+    fn a_jumped_raider_fires_no_spurious_escape() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let hub = w.hub;
+        // Raider A pursues rival convoy F; F is inbound to the hub (safe on arrival).
+        let a = squad(&mut w, atk, Vec2::new(5000.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let f = squad(&mut w, def, hub + Vec2::new(400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::MoveTo { dest: hub });
+        // Rival raider B jumps A → a B-vs-A battle that anchors A.
+        let b = squad(&mut w, def, Vec2::new(5000.0, 40.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.retain(|id, _| *id == a || *id == f || *id == b);
+        w.fleets.get_mut(&a).unwrap().order = FleetOrder::Intercept { target: f };
+        w.fleets.get_mut(&b).unwrap().order = FleetOrder::Intercept { target: a };
+        // A is engaged within a tick; F reaches hub safety a couple seconds later.
+        let mut spurious = false;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::RaidResolved { attacker_ship, outcome, .. } = e.payload
+                    && attacker_ship == a
+                    && outcome == RaidOutcome::Escaped
+                {
+                    spurious = true;
+                }
+            }
+        }
+        assert!(!spurious, "an engaged raider must not fire a raid-failed escape for its dormant target");
     }
 
     /// §one-battle-one-icon: two rival fleets that intercept EACH OTHER (reciprocal
