@@ -63,15 +63,17 @@ const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
-// Sensor-coverage bubble style — ONE tunable block (OPTION A: dashed + faint).
-// The coverage union stacks many circles (command center + every own ship +
-// the scout's oversized bubble + array systems); drawn solid they clutter the
-// map with hard teal borders. A DASHED boundary at low alpha reads as a soft
-// "coverage hint" instead of a wall. Dashes are constant SCREEN px (via
-// dashedCircle), so the pattern reads consistently at any zoom. Deliberately
-// distinct from the platform/interdictor RANGE rings and the pulsing THREAT /
-// SELECTION rings (which keep their solid/pulsing treatments). Re-tune here.
-const SENSOR_COVERAGE = { dashOn: 8, dashOff: 6, outlineAlpha: 0.28, fillAlpha: 0.05 };
+// Sensor-coverage bubble style — ONE tunable block (OPTION B: soft gradient edge).
+// No hard outline: each bubble is a soft radial VIGNETTE that fades to nothing at
+// its rim, so the coverage union (command center + every own ship + the scout's
+// oversized bubble + owned array systems) blends as a gentle glow instead of
+// stacking crisp circles. Approximated by `layers` concentric filled discs of
+// equal low alpha (`peakAlpha/layers` each): alpha accumulates toward the center
+// (≈ peakAlpha) and falls ~linearly to ≈0 at the rim — a true gradient without a
+// per-frame gradient/texture rebuild (just cheap triangles in the Graphics that's
+// already cleared each frame). Deliberately distinct from the CRISP platform/
+// interdictor range rings and the pulsing THREAT / SELECTION rings. Re-tune here.
+const SENSOR_COVERAGE = { layers: 8, peakAlpha: 0.09 };
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 // Ships render in their NATURAL art — no per-syndicate body tint (a future
@@ -1122,17 +1124,18 @@ export class Renderer {
         }
       }
     }
+    const { layers, peakAlpha } = SENSOR_COVERAGE;
+    const perLayer = peakAlpha / layers;
     for (const c of sources) {
       const s = this.worldToScreen(c);
       const rPx = c.r * this.scale;
-      // Faint interior tint (a whisper of the covered area), then a DASHED outer
-      // boundary — the soft hint, not a hard border. Fill and stroke are separate
-      // committed paths so the dash pattern strokes only the segments, not a ring.
-      if (SENSOR_COVERAGE.fillAlpha > 0) {
-        g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: SENSOR_COVERAGE.fillAlpha });
+      if (rPx < 1) continue;
+      // Soft vignette: nested discs of equal faint alpha, largest → smallest. The
+      // rim is covered by one disc (≈perLayer, no visible edge); the center by all
+      // (≈peakAlpha). Alpha falls ~linearly outward — a gradient, no hard ring.
+      for (let i = 0; i < layers; i++) {
+        g.circle(s.x, s.y, (rPx * (layers - i)) / layers).fill({ color: COL_SENSOR, alpha: perLayer });
       }
-      dashedCircle(g, s.x, s.y, rPx, SENSOR_COVERAGE.dashOn, SENSOR_COVERAGE.dashOff);
-      g.stroke({ width: 1, color: COL_SENSOR, alpha: SENSOR_COVERAGE.outlineAlpha });
     }
 
     // DEFENSE PLATFORM protection rings on OUR OWN defended systems (§buildings
@@ -1834,9 +1837,8 @@ function arrowhead(g: Graphics, x: number, y: number, dx: number, dy: number, si
   g.poly([tipX, tipY, blX, blY, brX, brY]).fill({ color, alpha });
 }
 
-// A dashed circle (screen px) — used for the platform protection ring and the
-// faint sensor-coverage boundaries. Constant screen-px dashes read consistently
-// across zoom; distinct from the solid/pulsing threat & selection rings.
+// A dashed circle (screen px), for the platform protection ring — distinct from
+// the soft sensor-coverage vignette and the solid/pulsing threat & selection rings.
 function dashedCircle(g: Graphics, cx: number, cy: number, r: number, dash: number, gap: number): void {
   if (r < 4) return;
   const step = (dash + gap) / r; // radians per dash+gap
