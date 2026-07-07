@@ -30,6 +30,9 @@ export type IconKey =
   | "commandCenter" | "uncertainty" | "hub" | "success" | "info" | "home" | "mouse" | "shift" | "time";
 
 interface IconDef {
+  /** Downscaled RASTER (PNG) variant name under /art/ui_icons/resource/ —
+   *  highest precedence (the resource icons). Small, retina-crisp. */
+  png?: string;
   /** Bundled SVG slug (art-backed) — takes precedence over `glyph`. */
   art?: string;
   /** Unicode/emoji placeholder when there is no art yet. */
@@ -40,18 +43,19 @@ interface IconDef {
   placeholder: boolean;
 }
 
-// A(slug) = art-backed; P(glyph) = placeholder. Keep glyphs distinct per meaning.
+// R(name) = downscaled PNG; A(slug) = art-backed SVG; P(glyph) = emoji placeholder.
+const R = (png: string, tip: string): IconDef => ({ png, tip, placeholder: false });
 const A = (art: string, tip: string): IconDef => ({ art, tip, placeholder: false });
 const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: true });
 
 export const ICONS: Record<IconKey, IconDef> = {
-  // resources (art exists for the five commodities + credits)
-  fuel: A("resource-fuel", "Fuel"),
-  ore: A("resource-metals", "Ore"),
-  alloys: A("resource-industrials", "Alloys"),
-  provisions: A("resource-supplies", "Provisions"),
-  volatiles: P("❄", "Volatiles"), // stand-in (no dedicated art; commodityIcon hue-shifts fuel)
-  credits: A("resource-credits", "Credits"),
+  // resources — dedicated downscaled PNG art (source-of-truth 1254px; UI loads 64px)
+  fuel: R("fuel", "Fuel"),
+  ore: R("ore", "Ore"),
+  alloys: R("alloys", "Alloys"),
+  provisions: R("provisions", "Provisions"),
+  volatiles: R("volatiles", "Volatiles"),
+  credits: R("credits", "Credits"),
   // economy / structures
   storage: P("📦", "Storage / stockpile capacity"),
   slots: P("▦", "Development slots (used / total)"),
@@ -118,6 +122,7 @@ export const ICONS: Record<IconKey, IconDef> = {
 };
 
 const ART_BASE = "/art/ui_icons/svg/";
+const PNG_BASE = "/art/ui_icons/resource/"; // downscaled 64px resource PNGs
 const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 /** ICON SIZE TOKENS — the ONE source of truth for icon dimensions (mapped to the
@@ -144,6 +149,9 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
   const t = escAttr(tip ?? def.tip);
   const sizeCls = RESOURCE_KEYS.has(key) ? "icon--resource" : `icon--${size}`;
   const c = `icon ${sizeCls}${cls ? ` ${cls}` : ""}`;
+  if (def.png) {
+    return `<img class="${c}" src="${PNG_BASE}${def.png}.png" alt="" title="${t}" />`;
+  }
   if (def.art) {
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;
   }

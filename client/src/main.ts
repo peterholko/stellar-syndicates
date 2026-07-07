@@ -180,22 +180,11 @@ const shipMass = (g: GhostView) =>
 const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
   `<img class="icon icon--${size}${cls ? ` ${cls}` : ""}" src="/art/ui_icons/svg/${slug}.svg" alt="" />`;
 
-// Commodity → resource icon. Exact where the set has one (the SVG accent colors
-// even match the map tints: metals=bronze=ore, industrials=purple=alloys,
-// supplies=green=provisions, fuel=fuel). Volatiles has NO native icon → it reuses
-// Fuel, hue-shifted cold, until it gets dedicated art (see README). Credits stay
-// the text label "Cr" (no icon).
-const RESOURCE_SLUG: Record<Commodity, string> = {
-  fuel: "resource-fuel",
-  ore: "resource-metals",
-  provisions: "resource-supplies",
-  alloys: "resource-industrials",
-  volatiles: "resource-fuel", // STAND-IN (hue-shifted cold) — wants dedicated art
-};
 // A commodity icon is by definition a resource, so it always uses the dedicated
-// `--icon-resource` token (see icons.ts). The `size` arg is kept for API symmetry.
+// `--icon-resource` token + the downscaled PNG art (each commodity now has its own,
+// including Volatiles — no more hue-shifted Fuel stand-in). `size` kept for symmetry.
 const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
-  `<img class="icon icon--resource${c === "volatiles" ? " icon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" alt="" title="${c}" />`;
+  `<img class="icon icon--resource" src="/art/ui_icons/resource/${c}.png" alt="" title="${c}" />`;
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
