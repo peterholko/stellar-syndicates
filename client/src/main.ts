@@ -979,9 +979,8 @@ function openPlanetPanel(d: SystemBodyDetail): void {
       const slotsTotal = dyn.slots_total ?? 0;
       const slotsFull = slotsTotal > 0 && (dyn.slots_used ?? 0) >= slotsTotal;
       const anchored = keys.map((k) => opts.find((o) => o.key === k)?.label ?? k).join(", ");
-      develop = `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px">Would anchor here</div>` +
-        `<div class="build-grid">${opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("")}</div>` +
-        `<div class="mhint dim" style="margin-top:4px">${esc(anchored)} would site its structure at this body — still a SYSTEM development (one system slot, system stockpile).</div>`;
+      develop = `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px" title="${esc(anchored)} would site its structure at this body — still a SYSTEM development (one system slot, the system stockpile).">Would anchor here</div>` +
+        `<div class="build-grid">${opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("")}</div>`;
     }
   }
   $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${develop}${note}</div>`;
@@ -1097,11 +1096,10 @@ function openBattlePanel(id: number): void {
     `<div class="sp-sec">Sides — as you learned them</div>` +
     `<div class="sp-line"><b>You</b> (${esc(youAtk ? "attacker" : "defender")}): ${esc(shipKindLabel(yourKind))}-led force</div>` +
     `<div class="sp-line"><b>Rival</b> (${esc(youAtk ? "defender" : "attacker")}): ${esc(shipKindLabel(theirKind))}-led force</div>` +
-    `<div class="sp-sec">Losses</div>` +
+    `<div class="sp-sec" title="Outcomes are as of the light that reached your command center — the site may look different by now.">Losses</div>` +
     `<div class="sp-line">You lost: <b>${esc(lossStr(yourLoss))}</b></div>` +
     `<div class="sp-line">They lost: <b>${esc(lossStr(theirLoss))}</b></div>` +
-    `<div class="mhint dim">Positions and outcomes are as of the light that reached your command center — the site may look different by now.</div>` +
-    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", 13)} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
 }
@@ -1256,9 +1254,9 @@ function updateOngoingBattlePanel(): void {
       ? `<div class="force-strip">${forceSide("You", "you", ownChips)}${forceSide("Enemy", "foe", rivalChips)}</div>` +
         withdrawRow +
         cmdDelayLine +
-        `<button class="act" data-act="doctrine">${uiIcon("action-standing-order", 14)} Change fleet doctrine ▸</button>`
+        `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", 14)} Doctrine ▸</button>`
       : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
-        `<div class="mhint dim">Seen by its weapons-fire light — you have no forces here.</div>`);
+        `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>`);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
 }
 
@@ -1275,7 +1273,9 @@ function openCapturePanel(id: number): void {
   const now = liveSimTime();
   const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
   const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ") : "an empty stockpile";
-  const verdict = r.captor ? badge("positive", "captured — the system is yours") : badge("negative", "lost — the system was taken");
+  const verdict = r.captor
+    ? badgeChip("captured", "captured — yours", "positive", "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination.")
+    : badgeChip("lost", "lost — taken", "negative", "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship.");
   const head =
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">capture · delayed report</div>` +
     `<h2>${r.captor ? "Captured" : "Lost"} ${esc(nearestSystemName(r.pos))}</h2></div></div>` +
@@ -1284,10 +1284,9 @@ function openCapturePanel(id: number): void {
     `<div class="sp-line">${verdict}</div>` +
     `<div class="sp-sec">When</div>` +
     `<div class="sp-line">Fell <b>${ago(r.at_time)}</b> ago · you learned <b>${ago(r.learned_at)}</b> ago <span class="dim">(light delay ${fmtCountdown(Math.max(0, r.learned_at - r.at_time))})</span></div>` +
-    `<div class="sp-sec">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
-    `<div class="sp-line"><b>${plunderStr}</b> <span class="dim">— the besieged stockpile. Developments transferred at half tiers.</span></div>` +
-    `<div class="mhint dim">${r.captor ? "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination." : "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship."}</div>` +
-    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+    `<div class="sp-sec" title="The besieged stockpile; developments transferred at HALF tiers.">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
+    `<div class="sp-line" title="The besieged stockpile changed hands; developments transferred at half tiers."><b>${plunderStr}</b></div>` +
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", 13)} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
 }
@@ -1782,7 +1781,7 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     : "";
   // Standing upkeep line (the game's first continuous consumption).
   const upkeep = habTier > 0
-    ? `<div class="mhint" style="margin-top:4px">Habitat upkeep: −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} provisions/s from this stockpile${habFed ? "" : ` — <span style="color:var(--warn)">UNFED: output boost suspended (nothing lost; resupply to restore)</span>`}.</div>`
+    ? `<div class="mhint" style="margin-top:4px" title="A fed Habitat draws this Provisions upkeep from the system stockpile each second; unfed, the output boost is suspended until Provisions arrive (nothing is lost).">${icon("habitat", 12)} upkeep −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} ${icon("provisions", 11)}/s${habFed ? "" : ` ${badgeChip("unfed", "unfed", "warn", "Output boost suspended until Provisions arrive — nothing is lost.")}`}</div>`
     : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
@@ -1792,10 +1791,10 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     const yieldK = state.galaxy?.refinery_yield ?? 0.8;
     const vol = stockOf.get("volatiles") ?? 0;
     refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px">Refinery: converting ${rate.toFixed(1)} volatiles/s → +${(rate * yieldK).toFixed(1)} fuel/s.</div>`
-      : `<div class="mhint" style="margin-top:4px">Refinery: <span style="color:var(--warn)">idle — no Volatiles</span>. Haul some in (${yieldK} fuel per volatile).</div>`;
+      ? `<div class="mhint" style="margin-top:4px" title="Fuel refinery: converting ${rate.toFixed(1)} Volatiles/s into ${(rate * yieldK).toFixed(1)} Fuel/s (slightly lossy).">${icon("refinery", 12)} ${rate.toFixed(1)} ${icon("volatiles", 11)}/s → +${(rate * yieldK).toFixed(1)} ${icon("fuel", 11)}/s</div>`
+      : `<div class="mhint" style="margin-top:4px" title="Fuel refinery idle — no Volatiles to convert. Haul some in (${yieldK} Fuel per Volatile).">${icon("refinery", 12)} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
-  return `<div class="deps-head" style="margin-top:8px">Stockpile · production${tierTag}${habTag}</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${icon("storage", 12)} Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
@@ -2038,8 +2037,7 @@ function updateSystemTab(): void {
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   if (!sys) {
     root.innerHTML = rail +
-      `<div class="mhint">Click a star system on the map to inspect its geology, claim it, or ship its output.` +
-      (rail ? " Or pick one of your holdings above." : "") + `</div>`;
+      `<div class="mhint" title="Click a star system on the map to inspect its geology, claim it, or ship its output${rail ? " — or pick one of your holdings above" : ""}.">${icon("mouse", 12)} Select a star system${rail ? ", or a holding above" : ""}.</div>`;
     return;
   }
   const dyn = state.systems.find((s) => s.id === sid);
@@ -2126,18 +2124,17 @@ function updateSystemTab(): void {
 
   let actions: string;
   if (unclaimed && atHomeSite) {
-    actions = `<div class="mhint" style="margin-top:8px">${badge("neutral", "reserved")} A starting home site — a future corporation will begin here owning it, so it can't be claimed.</div>`;
+    actions = `<div class="mhint" style="margin-top:8px">${badgeChip("home", "reserved", "neutral", "A starting home site — a future corporation will begin here owning it, so it can't be claimed.")}</div>`;
   } else if (unclaimed) {
-    // Claiming is PHYSICAL now (§ships part 3): build a Colony Ship at a
-    // shipyard and SEND it here — it claims on arrival (and is raidable en
-    // route). The old instant credit purchase is gone. (The claim GUIDANCE
-    // stays here on the rail — an unclaimed system has no management view.)
-    actions = `<div class="mhint" style="margin-top:8px">${uiIcon("action-claim-system", 14)} <b>To claim:</b> build a <b>Colony Ship</b> at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.</div>`;
+    // Claiming is PHYSICAL (§ships part 3): build + send a Colony Ship; it claims
+    // on arrival (the how lives in the tooltip). No management view for an
+    // unclaimed system, so this guidance stays on the rail.
+    actions = `<div class="mhint" style="margin-top:8px" title="Build a Colony Ship at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.">${icon("claim", 14)} <b>To claim:</b> send a ${icon("colony", 11)} colony ship here.</div>`;
   } else if (mine) {
     // Management lives in the System View now; the rail's job is to take you there.
     actions = "";
   } else {
-    actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
+    actions = `<div class="mhint" style="margin-top:8px">${badgeChip("lost", "held by rival", "negative", "Ownership is light-delayed — what you see may already be stale.")}</div>`;
   }
   // OUR scout intel about a system we don't own (§scout part 2): a timestamped
   // SNAPSHOT of its fortifications — never live, aging until re-scouted. Shown
@@ -2146,25 +2143,21 @@ function updateSystemTab(): void {
   if (!mine && dyn?.intel) {
     const age = Math.max(0, state.simTime - dyn.intel.observed_at);
     const ageTxt = age < 90 ? `${age.toFixed(0)}s ago` : `${(age / 60).toFixed(0)}m ago`;
-    intelBlock = `<div class="deps-head" style="margin-top:8px">${uiIcon("concept-sensor-range", 12)} Scout intel — snapshot</div>` +
-      `<div class="sp-line">Defense ×${dyn.intel.defense_tier} · Shipyard ×${dyn.intel.shipyard_tier} <span class="dim">· scouted ${ageTxt}</span></div>` +
-      `<div class="mhint">A snapshot, not a feed — they may have built since. Re-scout to refresh.</div>`;
+    intelBlock = `<div class="deps-head" style="margin-top:8px" title="A scout SNAPSHOT of this rival system's fortifications — never a live feed; it ages until you re-scout (they may have built since).">${icon("intel", 12)} Scout intel</div>` +
+      `<div class="sp-line">${chip("defense", `×${dyn.intel.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${dyn.intel.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", 11)} ${ageTxt}</span></div>`;
   }
   // Open System View — for YOUR systems this is now THE way in to management
   // (city-screen pattern), so it's the rail's PRIMARY action; for any other
   // system it stays the presentation-only inspect. Also reachable by
   // double-click or deep-zoom on the map.
   actions += mine
-    ? `<button class="act act--primary" data-action="inspect" style="margin-top:8px">${uiIcon("action-build", 14)} Open System View — manage ▸</button>`
-    : `<button class="act" data-action="inspect">◎ Inspect system ▸</button>`;
+    ? `<button class="act act--primary" data-action="inspect" style="margin-top:8px" title="${isMyHome ? "Your command center sits here. " : ""}Run this system from its System View — build/develop, production, and shipping. Convoys cross fogged space to the hub, raidable in transit.">${icon("build", 14)} Open System View ▸</button>`
+    : `<button class="act" data-action="inspect" title="Inspect this system (public geography — its holdings stay fogged unless you own it).">◎ Inspect ▸</button>`;
 
-  const hint = isMyHome
-    ? `<div class="mhint">Your command center sits here — your vantage on the galaxy. Build, develop and ship from the <b>System View</b>; automate supply from Logistics.</div>`
-    : mine
-      ? `<div class="mhint">Run this system from its <b>System View</b> — build/develop, production, shipping. Convoys cross fogged space to the hub, raidable in transit.</div>`
-      : unclaimed && !atHomeSite
-        ? `<div class="mhint">Settlement starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
-        : "";
+  // Only the unclaimed case keeps a short one-liner; the rest live in tooltips.
+  const hint = !mine && unclaimed && !atHomeSite
+    ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", 11)} colony ship here.</div>`
+    : "";
 
   root.innerHTML = rail + header + starFeature + strip + storageBar + attention + deps + intelBlock + actions + hint;
 }
@@ -2344,14 +2337,14 @@ function renderComposer(): void {
   const limitOn = ($("mk-limit-on") as HTMLInputElement).checked;
   const submit = $("mk-submit");
   if (limitOn) {
-    $("mk-preview").innerHTML = `<b>Limit ${composer.side} ${qty} ${c}</b> rests on the book and clears in the periodic <span class="accent">uniform-price batch</span> — reacting fastest confers no edge. Partial fills carry to the next batch.`;
+    $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${c}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `Settles <b>now</b> at ${px}/u (~<span class="accent">${cost} Cr</span>). The goods then cross fogged space to your home anchor — that delivery convoy is <b>raidable</b> in transit.`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", 12)} <b>raidable</b> delivery</span>`;
     submit.textContent = `Buy ${qty} ${c}`;
   } else {
-    $("mk-preview").innerHTML = `Convoy <b>dispatched now</b>; it clears at the price <b>on arrival</b> (not today's ${px}) and is <b>raidable</b> until it reaches the hub — double uncertainty: price + delivery.`;
+    $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", 12)} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
     submit.textContent = `Sell ${qty} ${c}`;
   }
 }
