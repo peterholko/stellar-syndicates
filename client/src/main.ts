@@ -6,7 +6,7 @@ import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
-import { badgeChip, chip, icon, type IconKey } from "./icons";
+import { badgeChip, chip, icon, type IconKey, type IconSize } from "./icons";
 
 const state: ViewState = initialState();
 
@@ -177,8 +177,8 @@ const shipMass = (g: GhostView) =>
 // SUPERSEDES the earlier Stellar-Charters borrow. No loading="lazy" — these panels
 // re-render ~10 Hz, recreating the <img>; lazy would replace them before the
 // observer fires. Eager hits the browser cache instantly.
-const uiIcon = (slug: string, size = 16, cls = "") =>
-  `<img class="cicon ${cls}" src="/art/ui_icons/svg/${slug}.svg" width="${size}" height="${size}" alt="" />`;
+const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
+  `<img class="icon icon--${size}${cls ? ` ${cls}` : ""}" src="/art/ui_icons/svg/${slug}.svg" alt="" />`;
 
 // Commodity → resource icon. Exact where the set has one (the SVG accent colors
 // even match the map tints: metals=bronze=ore, industrials=purple=alloys,
@@ -192,8 +192,8 @@ const RESOURCE_SLUG: Record<Commodity, string> = {
   alloys: "resource-industrials",
   volatiles: "resource-fuel", // STAND-IN (hue-shifted cold) — wants dedicated art
 };
-const commodityIcon = (c: Commodity, size = 18) =>
-  `<img class="cicon${c === "volatiles" ? " cicon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" width="${size}" height="${size}" alt="" title="${c}" />`;
+const commodityIcon = (c: Commodity, size: IconSize = "md") =>
+  `<img class="icon icon--${size}${c === "volatiles" ? " icon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" alt="" title="${c}" />`;
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
@@ -202,7 +202,7 @@ const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
   warn: "status-warning-threat",
   info: "status-info",
 };
-const statusIcon = (sev: TimelineEntry["severity"], size = 13) => uiIcon(STATUS_SLUG[sev], size);
+const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => uiIcon(STATUS_SLUG[sev], size);
 
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
@@ -409,7 +409,7 @@ function transitSection(g: GhostView): string {
   const btn = (m: "full" | "stealth", label: string, hint: string) =>
     `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${esc(hint)}">${label}</button>`;
   // Short labels; the trade-off lives in the button tooltips (§UX-diet).
-  return `<div class="sp-sec">${icon(mode === "stealth" ? "stealth" : "flank", 12)} Transit</div>` +
+  return `<div class="sp-sec">${icon(mode === "stealth" ? "stealth" : "flank", "sm")} Transit</div>` +
     `<div class="sp-line">${btn("full", "Full", "Full speed — fastest, but flank speed lights you up (high sensor signature).")} ${btn("stealth", "Stealth", "Stealth — creep at ~half speed (about 2× trip time) for a much smaller signature.")}</div>`;
 }
 
@@ -430,7 +430,7 @@ function postureSection(g: GhostView): string {
   const btn = (m: EngagementPosture, label: string, hint: string) =>
     `<button class="act${cur === m ? " is-on" : ""}" data-act="posture" data-mode="${m}" title="${esc(hint)}">${esc(label)}</button>`;
   // Short labels; each posture's full description is its button tooltip (§UX-diet).
-  return `<div class="sp-sec">${icon("posture", 12)} Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>`;
+  return `<div class="sp-sec">${icon("posture", "sm")} Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>`;
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
@@ -448,7 +448,7 @@ function compositionSection(g: GhostView): string {
     const total = g.composition.reduce((a, c) => a + c.count, 0);
     return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>`;
   }
-  return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", 13, "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
+  return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
 
 // Another of your OWN fleets co-located with `g` (within the claim radius) — the
@@ -488,7 +488,7 @@ function fleetManagementSection(g: GhostView): string {
     parts.push(`<div class="sp-line">${splitBtns}</div>`);
   }
   if (merge) {
-    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one — works only at one of your owned systems (idle).">${icon("fleet", 13)} Merge co-located fleet</button>`);
+    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one — works only at one of your owned systems (idle).">${icon("fleet", "sm")} Merge co-located fleet</button>`);
   }
   return parts.join("");
 }
@@ -506,7 +506,7 @@ function headingCell(g: GhostView): string {
 // Inferred activity for an OWN ship — there is NO server order field, so this reads
 // purely from the client's own overlays (raids/orders/command signals/route/vel).
 function ownActivity(g: GhostView): string {
-  const a = (key: IconKey, label: string, tip: string) => `${icon(key, 13, tip)} <b>${label}</b>`;
+  const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
   if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "order in transit", "Your command is still crossing space to this fleet.");
   if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
   if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
@@ -525,7 +525,7 @@ function ownBody(g: GhostView): string {
 
   if (g.kind === "convoy") {
     const cargo = g.cargo
-      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)}</div>`
+      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)}</div>`
       : `<span class="dim">empty hold</span>`;
     parts.push(`<div class="sp-sec">Cargo</div>${cargo}`);
     if (g.route && g.route.length) {
@@ -546,36 +546,36 @@ function ownBody(g: GhostView): string {
     burn = `order ~${fmt(cost)} · ${rate.toFixed(1)}/1k su`;
   }
   parts.push(
-    `<div class="sp-sec">${icon("fuel", 12)} Fuel</div>` +
+    `<div class="sp-sec">${icon("fuel", "sm")} Fuel</div>` +
     `<div class="sp-line">${chip("fuel", fmt(reserve), "Fleet fuel reserve — one pool shared across ALL your systems; every ship draws on it to move (not a tank on this one ship).")} <span class="dim" title="This ship's fuel burn at its current mass (and the cost of its current order, if any).">${burn}</span></div>`,
   );
 
   // Role summaries: a one-liner on screen, the full doctrine in the tooltip.
   if (g.kind === "colony") {
-    parts.push(`<div class="sp-sec">${icon("colony", 12)} Settlement</div><div class="sp-line" title="Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.">Send to an <b>unclaimed system</b> → it becomes yours (ship consumed). Slow &amp; visible — escort it.</div>`);
+    parts.push(`<div class="sp-sec">${icon("colony", "sm")} Settlement</div><div class="sp-line" title="Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.">Send to an <b>unclaimed system</b> → it becomes yours (ship consumed). Slow &amp; visible — escort it.</div>`);
   }
   if (g.kind === "corvette") {
-    parts.push(`<div class="sp-sec">${icon("corvette", 12)} Escort · Garrison</div><div class="sp-line" title="A dedicated defender: any raid contact on one of your convoys within its protect radius must fight THROUGH this corvette first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.">Defends convoys (escort) &amp; systems (garrison). Can't raid.</div>`);
+    parts.push(`<div class="sp-sec">${icon("corvette", "sm")} Escort · Garrison</div><div class="sp-line" title="A dedicated defender: any raid contact on one of your convoys within its protect radius must fight THROUGH this corvette first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.">Defends convoys (escort) &amp; systems (garrison). Can't raid.</div>`);
   }
   if (g.kind === "scout") {
     const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
-    parts.push(`<div class="sp-sec">${icon("sensor", 12)} Sensors</div><div class="sp-line" title="Projects a ×${mult} sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses. No cargo, no weapons: if anything engages it, it dies — cheap on purpose.">${chip("sensorRange", `×${mult}`, "Mobile sensor bubble — sweep rival space for dark contacts, cargo &amp; defense intel.")} — dies if engaged (no weapons).</div>`);
+    parts.push(`<div class="sp-sec">${icon("sensor", "sm")} Sensors</div><div class="sp-line" title="Projects a ×${mult} sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses. No cargo, no weapons: if anything engages it, it dies — cheap on purpose.">${chip("sensorRange", `×${mult}`, "Mobile sensor bubble — sweep rival space for dark contacts, cargo &amp; defense intel.")} — dies if engaged (no weapons).</div>`);
   }
-  parts.push(`<div class="sp-sec">${icon("build", 12, "Actions")} Actions</div>`);
+  parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div>`);
   // §battles-take-time: WITHDRAW when this fleet is in/near a visible battle.
   const inBattle = state.battles.some((b) => Math.hypot(b.pos.x - g.pos.x, b.pos.y - g.pos.y) <= 220);
   if (inBattle && (g.kind === "raider" || g.kind === "corvette")) {
-    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you).">${icon("withdraw", 13)} Withdraw</button>`);
+    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you).">${icon("withdraw", "sm")} Withdraw</button>`);
   }
   if (g.kind === "raider") {
-    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed; it may arrive too late.">${icon("recall", 14)} Recall</button>`);
+    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed; it may arrive too late.">${icon("recall", "sm")} Recall</button>`);
   }
   const strike = !!g.composition?.some((c) => c.kind === "raider");
   // Compact glyph legend replacing the how-to-click prose — words live in tooltips.
-  const legend: string[] = [`${icon("mouse", 12, "Click empty space on the map to MOVE this fleet.")} move`];
-  if (g.kind === "raider") legend.push(`${icon("raid", 12, "Click a rival contact on the map to RAID it — seize its cargo (brevity-capped skirmish).")} raid`);
-  if (strike) legend.push(`${icon("shift", 12, "Shift+click a rival to ATTACK — a full battle that destroys it (a convoy's cargo is lost with it).")} ${icon("attack", 11)} attack`);
-  if (g.kind === "raider") legend.push(`${icon("blockade", 12, "Click a rival SYSTEM to blockade it — take station and strangle its logistics; its defenses fight you first.")} blockade`);
+  const legend: string[] = [`${icon("mouse", "sm", "Click empty space on the map to MOVE this fleet.")} move`];
+  if (g.kind === "raider") legend.push(`${icon("raid", "sm", "Click a rival contact on the map to RAID it — seize its cargo (brevity-capped skirmish).")} raid`);
+  if (strike) legend.push(`${icon("shift", "sm", "Shift+click a rival to ATTACK — a full battle that destroys it (a convoy's cargo is lost with it).")} ${icon("attack", "sm")} attack`);
+  if (g.kind === "raider") legend.push(`${icon("blockade", "sm", "Click a rival SYSTEM to blockade it — take station and strangle its logistics; its defenses fight you first.")} blockade`);
   parts.push(`<div class="sp-line dim sp-legend">${legend.join(" · ")}</div>`);
   parts.push(transitSection(g));
   parts.push(postureSection(g));
@@ -595,14 +595,14 @@ function rivalBody(g: GhostView): string {
       parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="A convoy broadcasts its route under the Convention — light-delayed, like everything you see.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)}) <span class="dim">(broadcast)</span></div>`);
     }
     // Cargo ONLY when in sensor range (cargo present). NEVER shown otherwise.
-    parts.push(`<div class="sp-sec">${icon("cargo", 12)} Cargo</div>` + (g.cargo
+    parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Cargo</div>` + (g.cargo
       ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(g.cargo.commodity)}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
-      : `<div class="sp-line dim">${icon("unknown", 13, "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
+      : `<div class="sp-line dim">${icon("unknown", "sm", "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
   } else {
     const tip = g.kind === "scout"
       ? "A scout runs silent — someone is LOOKING at your space. No cargo, no weapons. You see it only because it is within your sensor range right now."
       : "A raider runs silent — no route or cargo is observable. You see it only because it is within your sensor range right now.";
-    parts.push(`<div class="sp-sec">${icon("stealth", 12)} Dark contact</div><div class="sp-line dim" title="${esc(tip)}">${g.kind === "scout" ? "scout" : "raider"} — in sensor range</div>`);
+    parts.push(`<div class="sp-sec">${icon("stealth", "sm")} Dark contact</div><div class="sp-line dim" title="${esc(tip)}">${g.kind === "scout" ? "scout" : "raider"} — in sensor range</div>`);
     // §Part 4: how LOUD it is (signature) — a big pack at flank speed flares far out.
     if (g.signature != null) {
       const loud = g.signature >= 1.6 ? "running LOUD — flank speed and/or a big pack (flares far out)"
@@ -611,7 +611,7 @@ function rivalBody(g: GhostView): string {
       parts.push(`<div class="sp-line">${chip("delay", `${g.signature.toFixed(2)}×`, `Detection signature — how LOUD this contact is: ${loud}.`)}</div>`);
     }
   }
-  parts.push(`<div class="sp-sec">${icon("build", 12, "Actions")} Actions</div><div class="sp-line dim sp-legend">${icon("raid", 12, "Click this contact on the map to commit a RAID with your selected raider.")} raid · ${icon("shift", 12, "Shift+click to ATTACK — a full battle that destroys it (needs a raider in your selected fleet).")} ${icon("attack", 11)} attack</div>`);
+  parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div><div class="sp-line dim sp-legend">${icon("raid", "sm", "Click this contact on the map to commit a RAID with your selected raider.")} raid · ${icon("shift", "sm", "Shift+click to ATTACK — a full battle that destroys it (needs a raider in your selected fleet).")} ${icon("attack", "sm")} attack</div>`);
   return parts.join("");
 }
 
@@ -636,7 +636,7 @@ function updateShipPanel(): void {
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", 15)} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -697,7 +697,7 @@ function openHubPanel(): void {
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
     `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
-    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", 14)} Open Market</button>` +
+    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", "sm")} Open Market</button>` +
     `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
@@ -875,7 +875,7 @@ function updateSysviewManage(): void {
   const used = dyn.storage_used ?? 0;
   const storageFull = cap > 0 && used >= cap;
   const storageBar = cap > 0
-    ? `<div class="deps-head">${icon("storage", 12, "Stockpile")} Stockpile ${fmt(used)} / ${fmt(cap)}</div>` +
+    ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile ${fmt(used)} / ${fmt(cap)}</div>` +
       `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
       (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
@@ -895,7 +895,7 @@ function updateSysviewManage(): void {
     ["Fuel refinery", "refinery", dyn.refinery_tier ?? 0, ""],
   ];
   const devs = `<div class="devs-row" title="System developments — the map markers show where each one anchors (not separate colonies). Click a body to see what would anchor there.">` +
-    DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, 13, `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
+    DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, "sm", `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
     `</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
   // dispatches hold at origin, so the ship button is disabled while blockaded
@@ -914,9 +914,9 @@ function updateSysviewManage(): void {
   const shipTitle = blockaded ? "Held — this system is under blockade." : canShip ? "Ship one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)." : "Nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units.";
   const actions =
     `<div style="margin-top:10px">` +
-    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", 14)} Ship → hub</button>` +
-    `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", 14)} Auto-supply</button>` +
-    `<button class="act" data-action="market" title="Open the hub Exchange.">${icon("market", 14)} Market</button></div>`;
+    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", "sm")} Ship → hub</button>` +
+    `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button>` +
+    `<button class="act" data-action="market" title="Open the hub Exchange.">${icon("market", "sm")} Market</button></div>`;
   const guard = "";
   $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
   $("svm-body").innerHTML = blockadeBanner + storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
@@ -1099,7 +1099,7 @@ function openBattlePanel(id: number): void {
     `<div class="sp-sec" title="Outcomes are as of the light that reached your command center — the site may look different by now.">Losses</div>` +
     `<div class="sp-line">You lost: <b>${esc(lossStr(yourLoss))}</b></div>` +
     `<div class="sp-line">They lost: <b>${esc(lossStr(theirLoss))}</b></div>` +
-    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", 13)} Dismiss marker</button>`;
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
 }
@@ -1161,7 +1161,7 @@ function shipChip(kind: ShipKind, count: number, opts: { lost?: number; est?: st
     ? `<span class="fs-fallen">−${opts.lost}</span>`
     : opts.shrunk ? `<span class="fs-fallen">▾</span>` : "";
   return `<span class="fs-chip${wiped ? " lost" : ""}" title="${esc(shipKindLabel(kind))}">` +
-    `${uiIcon(SHIP_ICON[kind], 15)}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
+    `${uiIcon(SHIP_ICON[kind], "md")}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
 }
 // A labelled side of the force strip. `chips` empty → a dim placeholder.
 function forceSide(label: string, cls: string, chips: string): string {
@@ -1231,7 +1231,7 @@ function updateOngoingBattlePanel(): void {
           echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
-          `↩ ${uiIcon(SHIP_ICON[g.kind], 13)}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
+          `↩ ${uiIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
       }).join("") + `</div>`
     : "";
 
@@ -1239,7 +1239,7 @@ function updateOngoingBattlePanel(): void {
   // wall-clock an order issued now would land at — plus a terse reach verdict.
   const delay = battleCommandDelay(b);
   const cmdDelayLine = delay !== null
-    ? `<div class="sp-line dim">${uiIcon("action-standing-order", 12)} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
+    ? `<div class="sp-line dim">${uiIcon("action-standing-order", "sm")} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
       (delay > 20 ? ` · <span style="color:#e88">too far to steer</span>` : ` · <span style="color:var(--accent)">still in reach</span>`) + `</div>`
     : "";
 
@@ -1254,7 +1254,7 @@ function updateOngoingBattlePanel(): void {
       ? `<div class="force-strip">${forceSide("You", "you", ownChips)}${forceSide("Enemy", "foe", rivalChips)}</div>` +
         withdrawRow +
         cmdDelayLine +
-        `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", 14)} Doctrine ▸</button>`
+        `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", "sm")} Doctrine ▸</button>`
       : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
         `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>`);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
@@ -1286,7 +1286,7 @@ function openCapturePanel(id: number): void {
     `<div class="sp-line">Fell <b>${ago(r.at_time)}</b> ago · you learned <b>${ago(r.learned_at)}</b> ago <span class="dim">(light delay ${fmtCountdown(Math.max(0, r.learned_at - r.at_time))})</span></div>` +
     `<div class="sp-sec" title="The besieged stockpile; developments transferred at HALF tiers.">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
     `<div class="sp-line" title="The besieged stockpile changed hands; developments transferred at half tiers."><b>${plunderStr}</b></div>` +
-    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", 13)} Dismiss marker</button>`;
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
 }
@@ -1745,7 +1745,7 @@ function depositRow(d: Deposit): string {
     ? `<span class="tone-up">renewable</span>`
     : d.reserves < 50 ? `<span class="is-warn">${fmt(d.reserves)} left</span>`
       : `${fmt(d.reserves)} left`;
-  return `<div class="dep-row"><span class="dep-ico">${commodityIcon(d.resource, 18)}</span>` +
+  return `<div class="dep-row"><span class="dep-ico">${commodityIcon(d.resource, "md")}</span>` +
     `<span class="dep-name">${d.resource}</span>${bar(pct)}` +
     `<span class="dep-r">~${d.richness.toFixed(2)}/s · ${reserves}</span></div>`;
 }
@@ -1781,7 +1781,7 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     : "";
   // Standing upkeep line (the game's first continuous consumption).
   const upkeep = habTier > 0
-    ? `<div class="mhint" style="margin-top:4px" title="A fed Habitat draws this Provisions upkeep from the system stockpile each second; unfed, the output boost is suspended until Provisions arrive (nothing is lost).">${icon("habitat", 12)} upkeep −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} ${icon("provisions", 11)}/s${habFed ? "" : ` ${badgeChip("unfed", "unfed", "warn", "Output boost suspended until Provisions arrive — nothing is lost.")}`}</div>`
+    ? `<div class="mhint" style="margin-top:4px" title="A fed Habitat draws this Provisions upkeep from the system stockpile each second; unfed, the output boost is suspended until Provisions arrive (nothing is lost).">${icon("habitat", "sm")} upkeep −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "unfed", "warn", "Output boost suspended until Provisions arrive — nothing is lost.")}`}</div>`
     : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
@@ -1791,14 +1791,14 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     const yieldK = state.galaxy?.refinery_yield ?? 0.8;
     const vol = stockOf.get("volatiles") ?? 0;
     refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px" title="Fuel refinery: converting ${rate.toFixed(1)} Volatiles/s into ${(rate * yieldK).toFixed(1)} Fuel/s (slightly lossy).">${icon("refinery", 12)} ${rate.toFixed(1)} ${icon("volatiles", 11)}/s → +${(rate * yieldK).toFixed(1)} ${icon("fuel", 11)}/s</div>`
-      : `<div class="mhint" style="margin-top:4px" title="Fuel refinery idle — no Volatiles to convert. Haul some in (${yieldK} Fuel per Volatile).">${icon("refinery", 12)} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
+      ? `<div class="mhint" style="margin-top:4px" title="Fuel refinery: converting ${rate.toFixed(1)} Volatiles/s into ${(rate * yieldK).toFixed(1)} Fuel/s (slightly lossy).">${icon("refinery", "sm")} ${rate.toFixed(1)} ${icon("volatiles", "sm")}/s → +${(rate * yieldK).toFixed(1)} ${icon("fuel", "sm")}/s</div>`
+      : `<div class="mhint" style="margin-top:4px" title="Fuel refinery idle — no Volatiles to convert. Haul some in (${yieldK} Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
-  return `<div class="deps-head" style="margin-top:8px">${icon("storage", 12)} Stockpile · production${tierTag}${habTag}</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${icon("storage", "sm")} Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
-      return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, 16)}</span>` +
+      return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("") + upkeep + refinery;
 }
@@ -1881,14 +1881,14 @@ function buildQueueRows(sid: string, dyn: SystemStateView | undefined): string {
     const ahead = aheadCount[j.key] ?? 0;
     aheadCount[j.key] = ahead + 1;
     const name = isDev ? `${buildLabel(j.key)} ×${(tierOf[j.key] ?? 0) + 1 + ahead}` : buildLabel(j.key);
-    return `<div class="bq-row"><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", 14)}</span>` +
+    return `<div class="bq-row"><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
       `<div class="bq-main"><div class="bq-head"><b>${esc(name)}</b>` +
       `<span class="bq-eta">${fmtCountdown(left)} · done ${doneAtLocal(j.complete_time)}</span></div>` +
       `${bar(pct)}</div></div>`;
   }).join("");
   const doneRows = flashes.map((f) =>
     `<div class="bq-row bq-done"><span class="bq-ic tone-up">✓</span><div class="bq-main"><b>${esc(f.label)}</b> <span class="dim">complete</span></div></div>`).join("");
-  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Under construction</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", "sm")} Under construction</div>` +
     `<div class="bq-list">${rows}${doneRows}</div>`;
 }
 
@@ -1908,11 +1908,11 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
     : yardShort ? `Ships build only at a Shipyard system — this needs Shipyard tier ${needYard}.`
       : afford ? "Costs draw from this system's stockpile."
         : "Not enough resources stockpiled here.";
-  const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, 13)}${c.units}`).join(" ");
-  const gate = isDev && slotsFull ? `<span class="bo-gate" title="No free development slot.">${icon("slots", 11)}full</span>`
-    : yardShort ? `<span class="bo-gate" title="Requires Shipyard tier ${needYard}.">${icon("shipyard", 11)}${needYard}</span>` : "";
+  const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, "sm")}${c.units}`).join(" ");
+  const gate = isDev && slotsFull ? `<span class="bo-gate" title="No free development slot.">${icon("slots", "sm")}full</span>`
+    : yardShort ? `<span class="bo-gate" title="Requires Shipyard tier ${needYard}.">${icon("shipyard", "sm")}${needYard}</span>` : "";
   return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${esc(title)}">` +
-    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", 10)}${o.build_secs}s</span></button>`;
+    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
 }
 
 function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
@@ -1925,9 +1925,9 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const slotsTotal = dyn?.slots_total ?? 0;
   const slotsFull = slotsTotal > 0 && slotsUsed >= slotsTotal;
   const slotsTag = slotsTotal > 0
-    ? ` <span class="sp-tier" title="Development slots used / total. Each development (Extractor/Depot/Shipyard tier…) uses one slot; ships don't.">· ${icon("slots", 11)} ${slotsUsed}/${slotsTotal}</span>`
+    ? ` <span class="sp-tier" title="Development slots used / total. Each development (Extractor/Depot/Shipyard tier…) uses one slot; ships don't.">· ${icon("slots", "sm")} ${slotsUsed}/${slotsTotal}</span>`
     : "";
-  const head = `<div class="deps-head" style="margin-top:8px">${icon("build", 12)} Build · develop${slotsTag}</div>`;
+  const head = `<div class="deps-head" style="margin-top:8px">${icon("build", "sm")} Build · develop${slotsTag}</div>`;
   // §build-progress: the construction QUEUE renders above a menu that STAYS
   // open — concurrent jobs were always legal in the sim (costs debit up front;
   // pending upgrades already count against slots); the old "one job at a time"
@@ -2037,7 +2037,7 @@ function updateSystemTab(): void {
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   if (!sys) {
     root.innerHTML = rail +
-      `<div class="mhint" title="Click a star system on the map to inspect its geology, claim it, or ship its output${rail ? " — or pick one of your holdings above" : ""}.">${icon("mouse", 12)} Select a star system${rail ? ", or a holding above" : ""}.</div>`;
+      `<div class="mhint" title="Click a star system on the map to inspect its geology, claim it, or ship its output${rail ? " — or pick one of your holdings above" : ""}.">${icon("mouse", "sm")} Select a star system${rail ? ", or a holding above" : ""}.</div>`;
     return;
   }
   const dyn = state.systems.find((s) => s.id === sid);
@@ -2112,9 +2112,9 @@ function updateSystemTab(): void {
     // says work is running (and when the next job lands) without opening the view.
     const jobs = dyn?.builds ?? [];
     if (jobs.length === 1) {
-      cues.push(`${uiIcon("action-build", 12)} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${uiIcon("action-build", "sm")} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     } else if (jobs.length > 1) {
-      cues.push(`${uiIcon("action-build", 12)} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${uiIcon("action-build", "sm")} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     }
   }
   const attention = cues.length ? `<div class="mhint" style="margin-top:6px">${cues.join(" · ")}</div>` : "";
@@ -2129,7 +2129,7 @@ function updateSystemTab(): void {
     // Claiming is PHYSICAL (§ships part 3): build + send a Colony Ship; it claims
     // on arrival (the how lives in the tooltip). No management view for an
     // unclaimed system, so this guidance stays on the rail.
-    actions = `<div class="mhint" style="margin-top:8px" title="Build a Colony Ship at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.">${icon("claim", 14)} <b>To claim:</b> send a ${icon("colony", 11)} colony ship here.</div>`;
+    actions = `<div class="mhint" style="margin-top:8px" title="Build a Colony Ship at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.">${icon("claim", "sm")} <b>To claim:</b> send a ${icon("colony", "sm")} colony ship here.</div>`;
   } else if (mine) {
     // Management lives in the System View now; the rail's job is to take you there.
     actions = "";
@@ -2143,20 +2143,20 @@ function updateSystemTab(): void {
   if (!mine && dyn?.intel) {
     const age = Math.max(0, state.simTime - dyn.intel.observed_at);
     const ageTxt = age < 90 ? `${age.toFixed(0)}s ago` : `${(age / 60).toFixed(0)}m ago`;
-    intelBlock = `<div class="deps-head" style="margin-top:8px" title="A scout SNAPSHOT of this rival system's fortifications — never a live feed; it ages until you re-scout (they may have built since).">${icon("intel", 12)} Scout intel</div>` +
-      `<div class="sp-line">${chip("defense", `×${dyn.intel.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${dyn.intel.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", 11)} ${ageTxt}</span></div>`;
+    intelBlock = `<div class="deps-head" style="margin-top:8px" title="A scout SNAPSHOT of this rival system's fortifications — never a live feed; it ages until you re-scout (they may have built since).">${icon("intel", "sm")} Scout intel</div>` +
+      `<div class="sp-line">${chip("defense", `×${dyn.intel.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${dyn.intel.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span></div>`;
   }
   // Open System View — for YOUR systems this is now THE way in to management
   // (city-screen pattern), so it's the rail's PRIMARY action; for any other
   // system it stays the presentation-only inspect. Also reachable by
   // double-click or deep-zoom on the map.
   actions += mine
-    ? `<button class="act act--primary" data-action="inspect" style="margin-top:8px" title="${isMyHome ? "Your command center sits here. " : ""}Run this system from its System View — build/develop, production, and shipping. Convoys cross fogged space to the hub, raidable in transit.">${icon("build", 14)} Open System View ▸</button>`
+    ? `<button class="act act--primary" data-action="inspect" style="margin-top:8px" title="${isMyHome ? "Your command center sits here. " : ""}Run this system from its System View — build/develop, production, and shipping. Convoys cross fogged space to the hub, raidable in transit.">${icon("build", "sm")} Open System View ▸</button>`
     : `<button class="act" data-action="inspect" title="Inspect this system (public geography — its holdings stay fogged unless you own it).">◎ Inspect ▸</button>`;
 
   // Only the unclaimed case keeps a short one-liner; the rest live in tooltips.
   const hint = !mine && unclaimed && !atHomeSite
-    ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", 11)} colony ship here.</div>`
+    ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.</div>`
     : "";
 
   root.innerHTML = rail + header + starFeature + strip + storageBar + attention + deps + intelBlock + actions + hint;
@@ -2315,7 +2315,7 @@ function renderMarketBoard(): void {
     const active = composer.commodity === c ? "is-active" : "";
     const priceTxt = p === undefined ? `<span class="is-stale">—</span>` : `${stale ? "~" : ""}${p.toFixed(2)}`;
     return `<button class="board__row ${active}" data-resource="${c}" title="observed from your own price history — not a market forecast">` +
-      `<span class="dep-ico">${commodityIcon(c, 18)}</span>` +
+      `<span class="dep-ico">${commodityIcon(c, "md")}</span>` +
       `<span class="b-name">${c}</span>` +
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
@@ -2341,10 +2341,10 @@ function renderComposer(): void {
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", 12)} <b>raidable</b> delivery</span>`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} <b>raidable</b> delivery</span>`;
     submit.textContent = `Buy ${qty} ${c}`;
   } else {
-    $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", 12)} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
+    $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
     submit.textContent = `Sell ${qty} ${c}`;
   }
 }
@@ -2500,7 +2500,7 @@ function updateStandingPanel(): void {
       const flight = o.in_flight ? `<span class="run">● convoy en route</span>` : `<span class="dim">idle</span>`;
       const paused = o.status === "paused" ? " · paused" : "";
       return `<div class="so"><span class="x" data-clear="${o.id}" title="remove">✕</span>` +
-        `<b>#${o.id}</b> ${commodityIcon(o.commodity, 14)} ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
+        `<b>#${o.id}</b> ${commodityIcon(o.commodity, "sm")} ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
         `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
     })
     .join("");

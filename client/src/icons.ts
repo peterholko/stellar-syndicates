@@ -120,20 +120,33 @@ export const ICONS: Record<IconKey, IconDef> = {
 const ART_BASE = "/art/ui_icons/svg/";
 const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-/** Render one icon. `tip` overrides the registry default; `size` in px; `cls`
- *  adds classes. Art → crisp <img>; placeholder → an emoji <span> (same box). */
-export function icon(key: IconKey, size = 14, tip?: string, cls = ""): string {
+/** ICON SIZE TOKENS — the ONE source of truth for icon dimensions (mapped to the
+ *  `--icon-sm/md/lg` CSS variables in index.html). No panel ever hardcodes a pixel
+ *  size; it picks a token by role:
+ *    · `sm` — inline with text (legends, prose, small badges)
+ *    · `md` — stat/value chips, list rows, buttons (the default for values)
+ *    · `lg` — panel/section headers, emphasis
+ *  "One notch bigger everywhere" = editing the three CSS vars. */
+export type IconSize = "sm" | "md" | "lg";
+
+/** Render one icon at a SIZE TOKEN (never a pixel size). `tip` overrides the
+ *  registry default; `cls` adds classes. Art → crisp <img>; placeholder → an
+ *  emoji <span>. Both carry `.icon.icon--<size>`, so CSS drives the dimensions
+ *  and the surrounding flex row centers them. */
+export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""): string {
   const def = ICONS[key];
   const t = escAttr(tip ?? def.tip);
+  const c = `icon icon--${size}${cls ? ` ${cls}` : ""}`;
   if (def.art) {
-    return `<img class="cicon ${cls}" src="${ART_BASE}${def.art}.svg" width="${size}" height="${size}" alt="" title="${t}" />`;
+    return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;
   }
-  return `<span class="gicon ${cls}" style="font-size:${size}px" title="${t}" role="img" aria-label="${t}">${def.glyph}</span>`;
+  return `<span class="${c}" title="${t}" role="img" aria-label="${t}">${def.glyph}</span>`;
 }
 
 /** An icon-VALUE chip: `⛽ 120`. The whole chip carries the tooltip, so the
- *  number stays bare and the words live on hover. `value` may contain markup. */
-export function chip(key: IconKey, value: string, tip?: string, size = 14): string {
+ *  number stays bare and the words live on hover. `value` may contain markup.
+ *  Value chips default to the `md` token. */
+export function chip(key: IconKey, value: string, tip?: string, size: IconSize = "md"): string {
   const t = escAttr(tip ?? ICONS[key].tip);
   return `<span class="ichip" title="${t}">${icon(key, size, tip)}<b>${value}</b></span>`;
 }
@@ -142,7 +155,7 @@ export function chip(key: IconKey, value: string, tip?: string, size = 14): stri
  *  (negative / positive / neutral / warn). Tooltip carries the full explanation. */
 export function badgeChip(key: IconKey, label: string, tone = "neutral", tip?: string): string {
   const t = escAttr(tip ?? ICONS[key].tip);
-  return `<span class="badge badge--${tone} ichip" title="${t}">${icon(key, 12, tip)}${escAttr(label)}</span>`;
+  return `<span class="badge badge--${tone} ichip" title="${t}">${icon(key, "sm", tip)}${escAttr(label)}</span>`;
 }
 
 /** Whether `key` is still an art PLACEHOLDER (for the generation batch / audits). */
