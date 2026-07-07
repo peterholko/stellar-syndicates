@@ -416,7 +416,7 @@
       .bq-row.bq-done { color: var(--ink); }
       .bq-row.bq-done .tone-up { font-weight: 700; }
 
-      .storage-row { margin: -6px 0 10px; }
+      .storage-row { margin: 0 0 10px; }
       .storage-row .bar { margin-bottom: 4px; }
       .storage-row .storage-warn { font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 6px; line-height: 1.4; }
       /* Developments-at-a-glance strip (Extractor ×N · Depot ×N · Shipyard ×N). */
@@ -543,6 +543,25 @@
         font: inherit; font-size: 12px; padding: 7px 9px;
       }
       #battle-panel .act:hover { background: var(--btn-bg-hover); border-color: var(--accent); }
+      /* ---- live battle FORCE STRIP: per-class ship chips whose counts fall as
+             ships die — the panel's at-a-glance progress indicator. ---- */
+      #battle-panel .force-strip { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 2px; }
+      #battle-panel .fs-row { display: flex; align-items: center; gap: 8px; }
+      #battle-panel .fs-side { flex: 0 0 40px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--dim); }
+      #battle-panel .fs-side.you { color: var(--accent); }
+      #battle-panel .fs-side.foe { color: #e88; }
+      #battle-panel .fs-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+      #battle-panel .fs-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border: 1px solid var(--field-bd); border-radius: 6px; background: var(--btn-bg); line-height: 1.3; }
+      #battle-panel .fs-chip .fs-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+      #battle-panel .fs-chip.lost { opacity: 0.38; }
+      #battle-panel .fs-chip.lost .fs-n { text-decoration: line-through; }
+      #battle-panel .fs-fallen { color: #e66; font-size: 10px; font-weight: 700; margin-left: 1px; }
+      #battle-panel .fs-empty { color: var(--dim); font-size: 11px; }
+      /* compact per-fleet withdraw buttons (own engaged fleets) */
+      #battle-panel .wd-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+      #battle-panel .wd-btn { cursor: pointer; display: inline-flex; align-items: center; gap: 5px; background: var(--btn-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; font: inherit; font-size: 11px; padding: 5px 8px; }
+      #battle-panel .wd-btn:hover { border-color: var(--accent); background: var(--btn-bg-hover); }
+      #battle-panel .wd-btn .fs-echo { color: var(--dim); font-size: 10px; }
       /* battle rows in the reports log are clickable → the results panel */
       #reports-log .report[data-report-id] { cursor: pointer; }
       #reports-log .report[data-report-id]:hover { filter: brightness(1.2); }

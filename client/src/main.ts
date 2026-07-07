@@ -1145,6 +1145,30 @@ function arrivalLocal(delaySecs: number): string {
   return new Date(Date.now() + delaySecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+// Per-class ship glyph for the live force strip (reuses the shared UI icon set).
+const SHIP_ICON: Record<ShipKind, string> = {
+  convoy: "concept-convoy", raider: "action-attack-raid", corvette: "concept-fleet",
+  colony: "action-claim-system", scout: "action-survey-scout",
+};
+// One force-strip chip: a ship-class icon + the count still standing. `lost` (own,
+// exact) draws a red "−k"; a fully-wiped class dims + strikes its count. `est`
+// replaces the number with a fog bucket (rivals), and `shrunk` marks a bucket that
+// visibly fell. The count IS the progress signal — it falls as the battle grinds.
+function shipChip(kind: ShipKind, count: number, opts: { lost?: number; est?: string; shrunk?: boolean } = {}): string {
+  const wiped = opts.est === undefined && count <= 0;
+  const num = opts.est ?? String(count);
+  const tail = opts.lost && opts.lost > 0
+    ? `<span class="fs-fallen">−${opts.lost}</span>`
+    : opts.shrunk ? `<span class="fs-fallen">▾</span>` : "";
+  return `<span class="fs-chip${wiped ? " lost" : ""}" title="${esc(shipKindLabel(kind))}">` +
+    `${uiIcon(SHIP_ICON[kind], 15)}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
+}
+// A labelled side of the force strip. `chips` empty → a dim placeholder.
+function forceSide(label: string, cls: string, chips: string): string {
+  return `<div class="fs-row"><span class="fs-side ${cls}">${esc(label)}</span>` +
+    `<span class="fs-chips">${chips || `<span class="fs-empty">—</span>`}</span></div>`;
+}
+
 function updateOngoingBattlePanel(): void {
   const id = openOngoingBattleId;
   if (id === null) return;
@@ -1180,70 +1204,59 @@ function updateOngoingBattlePanel(): void {
     if (prev === undefined || COUNT_CLASS_ORD[g.count_class] > COUNT_CLASS_ORD[prev]) hw.rivalPeak.set(g.id, g.count_class);
   }
   battleForceHW.set(id, hw);
-  // OWN running losses (exact, own light): committed peak − now, per kind.
-  const ownLost: string[] = [];
-  for (const [k, peak] of hw.own) {
-    const lost = peak - (ownNow.get(k) ?? 0);
-    if (lost > 0) ownLost.push(`${lost} ${shipKindLabel(k)}`);
-  }
-  const ownNowTotal = [...ownNow.values()].reduce((a, n) => a + n, 0);
-  const ownLossLine = ownFleets.length
-    ? `<div class="sp-line">Standing: <b>${ownNowTotal} ship${ownNowTotal === 1 ? "" : "s"}</b> across ${ownFleets.length} fleet${ownFleets.length === 1 ? "" : "s"}` +
-      (ownLost.length ? ` · <span style="color:var(--bad,#e66)">lost ${esc(ownLost.join(", "))}</span> so far` : ` · <span class="dim">no losses yet</span>`) +
-      ` <span class="dim">(exact, by your light)</span></div>`
+
+  // OWN force strip: one chip per ship CLASS still standing (exact, own light),
+  // each carrying its running losses (peak − now) as a red "−k". Kinds sorted for
+  // a stable order. A wiped class stays visible (dim, struck) so the toll shows.
+  const ownChips = [...hw.own.keys()].sort().map((k) => {
+    const cur = ownNow.get(k) ?? 0;
+    return shipChip(k, cur, { lost: (hw.own.get(k) ?? 0) - cur });
+  }).join("");
+  // RIVAL force strip: one chip per site-revealed fleet — flagship glyph + fog
+  // SIZE BUCKET (never an exact count), with a ▾ when the bucket has shrunk.
+  const rivalChips = rivalFleets.map((g) => {
+    const peak = hw.rivalPeak.get(g.id);
+    const shrunk = peak !== undefined && COUNT_CLASS_ORD[peak] > COUNT_CLASS_ORD[g.count_class];
+    return shipChip(g.kind, 0, { est: `~${countClassLabel(g.count_class)}`, shrunk });
+  }).join("");
+
+  // Compact per-fleet Withdraw (own engaged fleets) — the map markers are
+  // suppressed, so these are the only handle. A tiny echo tag if an order is pending.
+  const withdrawRow = ownFleets.length
+    ? `<div class="wd-row">` + ownFleets.map((g) => {
+        const pend = state.pendingOrders.get(g.id);
+        let echo = "";
+        if (pend && pend.echo_at - pend.delivered_at >= 1.5) {
+          const inTransit = now < pend.delivered_at;
+          echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
+        }
+        return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
+          `↩ ${uiIcon(SHIP_ICON[g.kind], 13)}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
+      }).join("") + `</div>`
     : "";
 
-  // Per own fleet: composition (running losses ride the composition by own light),
-  // its pending-order echo state if any, and a Withdraw verb.
-  const ownRows = ownFleets.map((g) => {
-    const pend = state.pendingOrders.get(g.id);
-    let echo = "";
-    if (pend && pend.echo_at - pend.delivered_at >= 1.5) {
-      const inTransit = now < pend.delivered_at;
-      echo = ` <span class="dim">· ${esc(pend.kind)} ${inTransit ? "▸ in transit" : "▸ awaiting echo"} ${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
-    }
-    return `<div class="sp-line"><b>${esc(compStr(g))}</b>${echo}` +
-      `<button class="act" data-act="withdraw" data-fleet="${g.id}" style="margin-top:4px" title="Break off and flee home — light-delayed; your formation speed decides the escape">↩ Withdraw this fleet</button></div>`;
-  }).join("");
-  // Rival rows: site-revealed flagship + size BUCKET, with a bucket-level "was ~N"
-  // when this fleet has visibly shrunk (fog-safe — never an exact count).
-  const rivalRows = rivalFleets.length
-    ? rivalFleets.map((g) => {
-        const peak = hw.rivalPeak.get(g.id);
-        const shrunk = peak !== undefined && COUNT_CLASS_ORD[peak] > COUNT_CLASS_ORD[g.count_class];
-        return `<div class="sp-line">Rival <b>${esc(shipKindLabel(g.kind))}</b> <span class="dim">— est. ${esc(countClassLabel(g.count_class))} ships (site-revealed)</span>` +
-          (shrunk ? ` <span style="color:var(--bad,#e66)">▾ down from ~${esc(countClassLabel(peak!))}</span>` : "") + `</div>`;
-      }).join("")
-    : `<div class="sp-line dim">No rival composition observable here yet.</div>`;
-
-  // §3 COMMAND DELAY, in the player's face: one-way CC→anchor time + the local
-  // wall-clock an order issued NOW would actually land at the battle.
+  // §3 COMMAND DELAY, condensed to one line: one-way CC→anchor time + the local
+  // wall-clock an order issued now would land at — plus a terse reach verdict.
   const delay = battleCommandDelay(b);
-  const cmdDelayBanner = delay !== null
-    ? `<div class="sp-line" style="border:1px solid var(--line,#2a3550);border-radius:6px;padding:6px 8px;background:rgba(255,140,60,0.06)">` +
-      `${uiIcon("action-standing-order", 13)} <b>Command delay: ${fmtCountdown(delay)}</b> — an order sent now arrives <b>~${esc(arrivalLocal(delay))}</b> ` +
-      `<span class="dim">(one-way, your CC → this fight)</span>` +
-      // ~20 s one-way ≈ 40 s round-trip to even confirm — approaching a playtest
-      // battle's whole lifetime, so a mid-fight order out here is likely futile.
-      (delay > 20 ? `<div class="dim" style="margin-top:2px">Distant frontier — mid-battle command may land too late to matter.</div>`
-                  : `<div class="dim" style="margin-top:2px">Close to home — orders can still bite.</div>`) +
-      `</div>`
+  const cmdDelayLine = delay !== null
+    ? `<div class="sp-line dim">${uiIcon("action-standing-order", 12)} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
+      (delay > 20 ? ` · <span style="color:#e88">too far to steer</span>` : ` · <span style="color:var(--accent)">still in reach</span>`) + `</div>`
     : "";
 
   const head =
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">${badge("negative", "battle raging")} · as of ${fmtCountdown(b.age)} ago</div>` +
     `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
+  const ragingLine = `<div class="sp-line dim">Raging <b style="color:var(--ink)">${fmtCountdown(observed)}</b> · forces remaining by your light</div>`;
   const body =
-    `<div class="sp-line">Raging for <b>${fmtCountdown(observed)}</b> <span class="dim">(as your light shows it — the site may be further along by now)</span></div>` +
+    ragingLine +
     (b.own
-      ? `<div class="sp-sec">Your forces engaged</div>${ownLossLine}${ownRows || `<div class="sp-line dim">Your fleets here are no longer observable.</div>`}` +
-        `<div class="sp-sec">Enemy</div>${rivalRows}` +
-        `<div class="sp-sec">Command</div>${cmdDelayBanner}` +
-        `<div class="mhint dim">↩ Withdraw a fleet above · ${uiIcon("action-move-travel", 12)} move any fleet to this site to <b>Reinforce</b> (it joins on arrival) · change standing <b>Doctrine</b> to shift engage/retreat behaviour. All are light-delayed.</div>` +
+      ? `<div class="force-strip">${forceSide("You", "you", ownChips)}${forceSide("Enemy", "foe", rivalChips)}</div>` +
+        withdrawRow +
+        cmdDelayLine +
         `<button class="act" data-act="doctrine">${uiIcon("action-standing-order", 14)} Change fleet doctrine ▸</button>`
-      : `<div class="sp-sec">Participants</div>${rivalRows}` +
-        `<div class="mhint dim">A battle you can see by its weapons-fire light — you have no forces here. Positions are as of the light that reached you.</div>`);
+      : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
+        `<div class="mhint dim">Seen by its weapons-fire light — you have no forces here.</div>`);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
 }
 

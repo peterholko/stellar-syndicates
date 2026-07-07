@@ -37,6 +37,45 @@ const BROADCAST_EVERY: u64 = 3;
 /// much progress a restart can lose (the snapshot is the restart basis, §14).
 pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
 
+/// A battle whose engagement has CONCLUDED in true space but whose conclusion
+/// light hasn't yet reached every viewer (§battles-take-time). The sim removes
+/// the engagement the instant it ends, so `active_battles()` drops it at the
+/// TRUE end-time; but the aftermath report only lands `distance/c` later, when
+/// the conclusion's light arrives. Without bridging that gap the "battle in
+/// progress" icon vanishes FTL and, for the `distance/c` seconds until the
+/// aftermath, the participant fleet ghosts (which the icon had been suppressing)
+/// briefly re-appear at the site. We retain the concluded battle here so each
+/// viewer keeps seeing the in-progress icon — and its participants suppressed —
+/// until `ended_at + distance/c`, the exact instant the aftermath lands: a clean
+/// in-progress → aftermath handoff with no re-appearing fleets.
+struct ConcludedBattle {
+    id: sim::EntityId,
+    pos: sim::Vec2,
+    started_at: f64,
+    /// Sim-time the battle ended = the `RaidResolved` event time, so the icon's
+    /// disappearance rides the SAME light wavefront as the aftermath report.
+    ended_at: f64,
+    a_owner: PlayerId,
+    d_owner: PlayerId,
+    participants: Vec<sim::EntityId>,
+}
+
+impl ConcludedBattle {
+    /// Should a command center at `cc` still see this battle's IN-PROGRESS icon at
+    /// wall-time `now`? True on the half-open window `[started_at + delay,
+    /// ended_at + delay)` where `delay = |pos − cc| / c`:
+    ///
+    /// * the lower bound is the same light-gate the live icon used (never show a
+    ///   battle whose start-light hasn't arrived), and
+    /// * the upper bound is the conclusion's light-arrival — the exact instant the
+    ///   aftermath report lands (`event_time + delay`), so the in-progress icon
+    ///   flips to aftermath on one wavefront with neither gap nor overlap.
+    fn shows_in_progress(&self, cc: sim::Vec2, c: f64, now: f64) -> bool {
+        let delay = self.pos.distance(cc) / c;
+        now >= self.started_at + delay && now < self.ended_at + delay
+    }
+}
+
 struct GameLoop {
     world: World,
     sessions: Sessions,
@@ -54,6 +93,10 @@ struct GameLoop {
     timeline: Timeline,
     /// Last timeline length pushed to each player, so we only re-send when it grows.
     timeline_sent: HashMap<PlayerId, usize>,
+    /// Battles that have concluded but whose conclusion light is still in flight
+    /// to some viewer — kept so the in-progress icon lingers until the aftermath
+    /// lands (see [`ConcludedBattle`]). Ephemeral awareness state, like `reports`.
+    concluded_battles: Vec<ConcludedBattle>,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
     persistence: PersistenceHandle,
@@ -80,6 +123,7 @@ impl GameLoop {
             reports: ReportScheduler::new(),
             timeline: Timeline::new(),
             timeline_sent: HashMap::new(),
+            concluded_battles: Vec::new(),
             pending: Vec::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
@@ -392,7 +436,49 @@ impl GameLoop {
     /// Advance one tick: apply pending commands, integrate, persist, broadcast.
     fn tick(&mut self) {
         let commands = std::mem::take(&mut self.pending);
+        // Snapshot the battles active BEFORE this step, keyed by id — any that are
+        // gone AFTER the step concluded this tick, and we retain them so their
+        // in-progress icon lingers until each viewer's conclusion light arrives
+        // (§battles-take-time; see [`ConcludedBattle`]).
+        let before: HashMap<sim::EntityId, sim::BattleInfo> = self
+            .world
+            .active_battles()
+            .into_iter()
+            .map(|b| (b.id, b))
+            .collect();
         let events = self.world.step(&commands);
+        // Every battle ends inside `resolve_raids`, which runs BEFORE the clock
+        // advances in `step`; so a battle that concluded this tick ended at
+        // `world.time - DT` — exactly the `RaidResolved` event time the aftermath
+        // report is stamped with. Riding that same instant makes the icon's
+        // disappearance and the aftermath's arrival one light wavefront.
+        if !before.is_empty() {
+            let ended_at = self.world.time - DT;
+            let still_active: std::collections::BTreeSet<sim::EntityId> =
+                self.world.active_battles().iter().map(|b| b.id).collect();
+            for (id, b) in before {
+                if !still_active.contains(&id) {
+                    self.concluded_battles.push(ConcludedBattle {
+                        id,
+                        pos: b.pos,
+                        started_at: b.started_at,
+                        ended_at,
+                        a_owner: b.a_owner,
+                        d_owner: b.d_owner,
+                        participants: b.participants,
+                    });
+                }
+            }
+        }
+        // Drop concluded battles whose conclusion light has reached even the
+        // farthest possible viewer (galaxy diameter / c) — their icon has flipped
+        // to aftermath everywhere, so nothing more references them.
+        if !self.concluded_battles.is_empty() {
+            let max_delay = (2.0 * self.world.config.galaxy_radius) / self.world.config.c;
+            let now = self.world.time;
+            self.concluded_battles
+                .retain(|cb| now - cb.ended_at <= max_delay + 1.0);
+        }
 
         // Record true positions into the view filter's history every tick so
         // the retarded-time boundary resolves at full temporal resolution.
@@ -493,6 +579,27 @@ impl GameLoop {
                         // battle (the weapons-fire site-reveal above), so their
                         // ids carry no more than the ghosts already sent.
                         participants: b.participants,
+                    });
+                }
+            }
+            // CONCLUDED battles whose conclusion light hasn't arrived yet: keep
+            // showing the in-progress icon (and suppressing the participant ghosts
+            // via `battle_reveal`) until `ended_at + delay` — the exact instant the
+            // aftermath report lands. This bridges the FTL gap that used to let the
+            // participant fleet icons re-appear between "battle ends" and "aftermath
+            // arrives" (§battles-take-time). The `started_at + delay` lower bound
+            // means a viewer whose START light never arrived (battle began and ended
+            // faster than its light could reach them) still never sees a phantom icon.
+            for cb in &self.concluded_battles {
+                if cb.shows_in_progress(cc, c, now) {
+                    battle_reveal.extend(cb.participants.iter().copied());
+                    battles.push(crate::protocol::BattleView {
+                        id: cb.id,
+                        pos: cb.pos,
+                        age: cb.pos.distance(cc) / c,
+                        started_at: cb.started_at,
+                        own: player_id == cb.a_owner || player_id == cb.d_owner,
+                        participants: cb.participants.clone(),
                     });
                 }
             }
@@ -730,4 +837,86 @@ pub async fn run(
     }
 
     info!("authoritative game loop stopped");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim::Vec2;
+
+    fn concluded(started_at: f64, ended_at: f64, pos: Vec2) -> ConcludedBattle {
+        ConcludedBattle {
+            id: sim::EntityId(1),
+            pos,
+            started_at,
+            ended_at,
+            a_owner: PlayerId(1),
+            d_owner: PlayerId(2),
+            participants: vec![sim::EntityId(10), sim::EntityId(11)],
+        }
+    }
+
+    /// The in-progress icon of a concluded battle lingers until the CONCLUSION's
+    /// light arrives — `ended_at + |pos − cc| / c` — which is exactly when the
+    /// per-participant aftermath report lands (`ReportScheduler::due_for` gates on
+    /// `event_time + dist/c`, and `event_time == ended_at`). So the icon flips to
+    /// aftermath on ONE wavefront: no FTL early-vanish, no gap where the suppressed
+    /// participant fleets re-appear. (The bug: the icon used to vanish at true
+    /// `ended_at`, `delay` seconds before the aftermath, exposing the stale fleets.)
+    #[test]
+    fn concluded_icon_lingers_until_conclusion_light_matches_aftermath() {
+        let c = 300.0;
+        let cc = Vec2::new(0.0, 0.0);
+        // Battle 6000 su away → 20 s of light each way. It ran t=100..140.
+        let pos = Vec2::new(6000.0, 0.0);
+        let (started_at, ended_at) = (100.0, 140.0);
+        let cb = concluded(started_at, ended_at, pos);
+        let delay = pos.distance(cc) / c; // 20 s
+        let aftermath_arrival = ended_at + delay; // when due_for delivers it
+
+        // Just after the conclusion's light for the START has been seen but the
+        // conclusion's light has NOT yet arrived: the in-progress icon still shows
+        // (this is the window where the fleets used to wrongly re-appear).
+        assert!(cb.shows_in_progress(cc, c, ended_at + 5.0), "icon must persist through the light-in-flight gap");
+        assert!(cb.shows_in_progress(cc, c, aftermath_arrival - 0.001), "still in progress an instant before the aftermath");
+
+        // At the aftermath's arrival the icon is gone (strict upper bound) — the
+        // aftermath (delivered on `arrival <= now`) takes over on the same instant.
+        assert!(!cb.shows_in_progress(cc, c, aftermath_arrival), "icon flips off exactly as the aftermath lands");
+        assert!(!cb.shows_in_progress(cc, c, aftermath_arrival + 5.0), "and stays off after");
+    }
+
+    /// The linger is per-viewer and light-honest: a FAR command center keeps the
+    /// in-progress icon longer than a NEAR one, because its conclusion light takes
+    /// longer to arrive — never a global FTL flip.
+    #[test]
+    fn linger_is_per_viewer_light_delayed() {
+        let c = 300.0;
+        let pos = Vec2::new(0.0, 0.0);
+        let cb = concluded(0.0, 40.0, pos);
+        let near = Vec2::new(300.0, 0.0); // 1 s of light
+        let far = Vec2::new(9000.0, 0.0); // 30 s of light
+
+        // 41 s after start (1 s after true end): near viewer's conclusion light has
+        // arrived (icon gone); the far viewer's has not (icon still shown).
+        assert!(!cb.shows_in_progress(near, c, 41.0), "near viewer already saw the conclusion");
+        assert!(cb.shows_in_progress(far, c, 41.0), "far viewer's conclusion light is still in flight");
+    }
+
+    /// A viewer whose START light never arrived before the battle ended (it began
+    /// and ended faster than its light could reach them) must NEVER see a phantom
+    /// in-progress icon — the lower bound guards against conjuring one late.
+    #[test]
+    fn no_phantom_icon_when_start_light_never_arrived() {
+        let c = 300.0;
+        let cc = Vec2::new(0.0, 0.0);
+        // 6000 su away (20 s of light) but the battle lasted only 1 s (t=0..1).
+        let cb = concluded(0.0, 1.0, Vec2::new(6000.0, 0.0));
+        // The visible window is [started_at + delay, ended_at + delay) = [20, 21):
+        // one honest second, shifted whole by the 20 s light delay. Before 20 the
+        // start-light hasn't landed (no phantom); from 21 the conclusion-light has.
+        assert!(!cb.shows_in_progress(cc, c, 19.999), "no icon before the start light arrives");
+        assert!(cb.shows_in_progress(cc, c, 20.5), "the honest 1 s sighting");
+        assert!(!cb.shows_in_progress(cc, c, 21.0), "gone once the conclusion light arrives");
+    }
 }
