@@ -1,0 +1,151 @@
+// SEMANTIC ICON REGISTRY (§UX text diet). One meaning → one key → one glyph,
+// used EVERYWHERE, so an icon reads the same in every panel and swapping in
+// generated art later is a one-file change.
+//
+// Each entry is either ART-BACKED (`art` = a bundled SVG slug under
+// /art/ui_icons/svg/, rendered crisp) or a PLACEHOLDER (`glyph` = a unicode/emoji
+// stand-in until dedicated art is generated — `placeholder: true`, surfaced in
+// the icon-generation batch). Every entry carries a default `tip` (hover text),
+// because in the icon-first UI the words live in tooltips, not on screen.
+//
+// Render through `icon()` / `chip()` / `badgeChip()` — never hand-roll an <img>.
+
+export type IconKey =
+  // resources
+  | "fuel" | "ore" | "alloys" | "provisions" | "volatiles" | "credits"
+  // economy / structures
+  | "storage" | "slots" | "shipyard" | "sensor" | "defense" | "habitat" | "refinery" | "interdictor"
+  | "extractor" | "depot" | "build" | "queue"
+  // fleets / ship kinds
+  | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony"
+  // verbs / orders
+  | "move" | "attack" | "raid" | "withdraw" | "reinforce" | "recall" | "blockade" | "siege"
+  | "doctrine" | "posture" | "claim" | "cargo" | "market"
+  // transit / signature
+  | "stealth" | "flank" | "sensorRange"
+  // order lifecycle (light-delayed round trip)
+  | "delay" | "echo" | "delivered" | "confirmed" | "inTransit"
+  // status / intel
+  | "unfed" | "fed" | "warning" | "unknown" | "intel" | "battle" | "aftermath" | "captured" | "lost"
+  | "commandCenter" | "uncertainty" | "hub" | "success" | "info" | "home" | "mouse" | "shift" | "time";
+
+interface IconDef {
+  /** Bundled SVG slug (art-backed) — takes precedence over `glyph`. */
+  art?: string;
+  /** Unicode/emoji placeholder when there is no art yet. */
+  glyph?: string;
+  /** Default hover text — the words the icon replaced. */
+  tip: string;
+  /** True while the glyph is a stand-in awaiting generated art. */
+  placeholder: boolean;
+}
+
+// A(slug) = art-backed; P(glyph) = placeholder. Keep glyphs distinct per meaning.
+const A = (art: string, tip: string): IconDef => ({ art, tip, placeholder: false });
+const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: true });
+
+export const ICONS: Record<IconKey, IconDef> = {
+  // resources (art exists for the five commodities + credits)
+  fuel: A("resource-fuel", "Fuel"),
+  ore: A("resource-metals", "Ore"),
+  alloys: A("resource-industrials", "Alloys"),
+  provisions: A("resource-supplies", "Provisions"),
+  volatiles: P("❄", "Volatiles"), // stand-in (no dedicated art; commodityIcon hue-shifts fuel)
+  credits: A("resource-credits", "Credits"),
+  // economy / structures
+  storage: P("📦", "Storage / stockpile capacity"),
+  slots: P("▦", "Development slots (used / total)"),
+  shipyard: P("🛠", "Shipyard tier"),
+  sensor: A("concept-sensor-range", "Sensor array"),
+  defense: P("🛡", "Defense platform tier"),
+  habitat: P("🏠", "Habitat tier (output boost)"),
+  refinery: P("⚗", "Fuel refinery (Volatiles → Fuel)"),
+  interdictor: P("⛓", "Interdictor"),
+  extractor: P("⛏", "Extractor tier (output ×1.5)"),
+  depot: P("🏬", "Depot tier (storage cap)"),
+  build: A("action-build", "Build"),
+  queue: P("🔨", "Under construction"),
+  // fleets / ship kinds
+  fleet: A("concept-fleet", "Fleet"),
+  scout: P("🛰", "Scout"),
+  raider: P("🗡", "Raider"),
+  corvette: P("🛡", "Corvette"),
+  convoy: A("concept-convoy", "Convoy"),
+  colony: P("🏗", "Colony ship"),
+  // verbs / orders
+  move: A("action-move-travel", "Move"),
+  attack: P("⚔", "Attack (destroy)"),
+  raid: A("action-attack-raid", "Raid (seize cargo)"),
+  withdraw: P("↩", "Withdraw from battle"),
+  reinforce: P("➕", "Reinforce"),
+  recall: A("action-recall", "Recall"),
+  blockade: P("⛔", "Blockade"),
+  siege: P("⏳", "Siege"),
+  doctrine: A("action-standing-order", "Fleet doctrine"),
+  posture: P("🎯", "Engagement posture"),
+  claim: A("action-claim-system", "Claim"),
+  cargo: A("action-load-cargo", "Cargo"),
+  market: A("concept-market-exchange", "Hub market"),
+  // transit / signature
+  stealth: P("🌑", "Stealth transit (quiet, ~2× trip)"),
+  flank: P("💨", "Full speed (loud — high signature)"),
+  sensorRange: A("concept-sensor-range", "Sensor range"),
+  // order lifecycle
+  delay: A("concept-lightspeed-signal", "Command / light delay"),
+  echo: P("◔", "Awaiting echo (executing, unconfirmed)"),
+  delivered: P("◈", "In transit (order en route)"),
+  confirmed: P("✓", "Confirmed"),
+  inTransit: A("status-in-transit", "In transit"),
+  // status / intel
+  unfed: P("🍽", "Unfed — upkeep not met (boost suspended)"),
+  fed: P("🍽", "Fed — upkeep met"),
+  warning: A("status-warning-threat", "Warning"),
+  unknown: P("❓", "Unknown — out of sensor range"),
+  intel: P("🔭", "Scout intel (snapshot)"),
+  battle: P("💥", "Battle in progress"),
+  aftermath: P("☄", "Concluded battle"),
+  captured: P("🚩", "System captured"),
+  lost: P("🏴", "System lost"),
+  commandCenter: A("concept-command-center-hq", "Command center"),
+  uncertainty: A("concept-uncertainty-fog", "Position uncertainty"),
+  hub: P("✷", "Wormhole hub"),
+  success: A("status-success", "Success"),
+  info: A("status-info", "Info"),
+  home: P("★", "Home system"),
+  mouse: P("🖱", "Click"),
+  shift: P("⇧🖱", "Shift+click"),
+  time: P("🕘", "Time"),
+};
+
+const ART_BASE = "/art/ui_icons/svg/";
+const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+
+/** Render one icon. `tip` overrides the registry default; `size` in px; `cls`
+ *  adds classes. Art → crisp <img>; placeholder → an emoji <span> (same box). */
+export function icon(key: IconKey, size = 14, tip?: string, cls = ""): string {
+  const def = ICONS[key];
+  const t = escAttr(tip ?? def.tip);
+  if (def.art) {
+    return `<img class="cicon ${cls}" src="${ART_BASE}${def.art}.svg" width="${size}" height="${size}" alt="" title="${t}" />`;
+  }
+  return `<span class="gicon ${cls}" style="font-size:${size}px" title="${t}" role="img" aria-label="${t}">${def.glyph}</span>`;
+}
+
+/** An icon-VALUE chip: `⛽ 120`. The whole chip carries the tooltip, so the
+ *  number stays bare and the words live on hover. `value` may contain markup. */
+export function chip(key: IconKey, value: string, tip?: string, size = 14): string {
+  const t = escAttr(tip ?? ICONS[key].tip);
+  return `<span class="ichip" title="${t}">${icon(key, size, tip)}<b>${value}</b></span>`;
+}
+
+/** A status BADGE chip with an icon: `⛔ blockaded`. `tone` = the badge palette
+ *  (negative / positive / neutral / warn). Tooltip carries the full explanation. */
+export function badgeChip(key: IconKey, label: string, tone = "neutral", tip?: string): string {
+  const t = escAttr(tip ?? ICONS[key].tip);
+  return `<span class="badge badge--${tone} ichip" title="${t}">${icon(key, 12, tip)}${escAttr(label)}</span>`;
+}
+
+/** Whether `key` is still an art PLACEHOLDER (for the generation batch / audits). */
+export function isPlaceholder(key: IconKey): boolean {
+  return ICONS[key].placeholder;
+}

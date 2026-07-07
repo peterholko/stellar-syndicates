@@ -374,6 +374,12 @@
       .cicon { display: block; border-radius: 3px; object-fit: contain; flex: none; }
       /* Volatiles has no native icon — reuse Fuel, hue-shifted cold (see README). */
       .cicon--cold { filter: hue-rotate(135deg) saturate(1.2); }
+      /* §UX-diet icon registry: emoji PLACEHOLDER glyphs + icon-value chips. */
+      .gicon { display: inline-block; line-height: 1; vertical-align: -2px; flex: none; font-family: "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif; }
+      .ichip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+      .ichip .cicon { display: inline-block; }
+      .ichip + .ichip { margin-left: 12px; }
+      .badge.ichip { gap: 3px; }
       .dep-ico .cicon { width: 18px; height: 18px; }
       /* Inline icons (rule list, claim button) sit on the text baseline-ish. */
       #standing-list .so .cicon, .act .cicon { display: inline-block; vertical-align: -3px; }
