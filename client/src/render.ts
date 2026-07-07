@@ -171,6 +171,25 @@ const FLEET_LEAD_CALIB: Record<FleetFamily, Record<FleetTier, number>> = {
   scout: { wing: 0.81, squadron: 1.07, armada: 0.96 },
 };
 
+// §fleet-lod: at far zoom-out the detailed hull/formation art muddies down to a
+// few dozen pixels, so below this zoom ratio r (= scale / fitScale) the
+// freighter / raider / corvette fleets swap to bold LOW-DETAIL ICONS that read
+// cleanly when tiny (the count badge still carries fleet size). Scout and colony
+// have no icon yet and keep their detailed art at every zoom. Tunable — raise to
+// keep icons through more of the zoom range, lower for an earlier hand-off to the
+// detailed art + formations.
+const LOD_ICON_ZOOM_MAX = 2.5;
+// The icon families (a subset of FleetFamily — scout is excluded, no icon yet).
+type LodFamily = "freighter" | "raider" | "corvette";
+// Per-family calibration so the icon's SUBJECT renders at ~the detailed single
+// sprite's on-screen size across the swap (no size pop). 1.0 = canvas-width
+// parity with the single sprite; nudge if a family visibly jumps at the hand-off.
+const LOD_ICON_CALIB: Record<LodFamily, number> = {
+  freighter: 1.0,
+  raider: 1.0,
+  corvette: 1.0,
+};
+
 // The WORMHOLE HUB map sprite (§hub-art): the game's most important location
 // reads as a LANDMARK — clearly the largest body on the map at normal zoom
 // (stars top out at 46px), growing to HUB_MAX_PX at max zoom (§size-hierarchy).
@@ -230,6 +249,11 @@ export class Renderer {
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
+  // §fleet-lod: bold low-detail fleet icons shown at far zoom-out (freighter =
+  // convoy, raider, corvette). Null → the detailed art is used at every zoom.
+  private texIconFreighter: Texture | null = null;
+  private texIconRaider: Texture | null = null;
+  private texIconCorvette: Texture | null = null;
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
@@ -340,6 +364,20 @@ export class Renderer {
     ]);
     this.texBattleOngoing = battleOngoing;
     this.texBattleAftermath = battleAftermath;
+    // §fleet-lod: the far-zoom low-detail icons. They render at ~a few dozen px
+    // from a large source, so enable mipmaps for shimmer-free minification (same
+    // as the hub landmark). A missing file just leaves the detailed art in place.
+    const [iconFreighter, iconRaider, iconCorvette] = await Promise.all([
+      load("/art/ship_sprites/icon_freighter.png"),
+      load("/art/ship_sprites/icon_raider.png"),
+      load("/art/ship_sprites/icon_corvette.png"),
+    ]);
+    for (const t of [iconFreighter, iconRaider, iconCorvette]) {
+      if (t) t.source.autoGenerateMipmaps = true;
+    }
+    this.texIconFreighter = iconFreighter;
+    this.texIconRaider = iconRaider;
+    this.texIconCorvette = iconCorvette;
     // Fleet formation sprites (family × tier); each independent, missing ones
     // fall back to the single-ship sprite so a bad file never breaks fleets.
     const families: FleetFamily[] = ["freighter", "raider", "corvette", "scout"];
@@ -1232,7 +1270,30 @@ export class Renderer {
   /// computed against the SINGLE sprite's canvas, so the formation's LEAD ship
   /// renders at exactly the single sprite's size at every zoom — growing a
   /// fleet adds escorts around the flagship, it never inflates the flagship.
+  /// §fleet-lod: the low-detail icon + calibration for a flagship kind, or null
+  /// when the family has no icon (scout/colony) or it hasn't loaded yet. Only
+  /// freighter (convoy), raider, and corvette carry icons.
+  private lodIconMarker(kind: ShipKind): { tex: Texture; mult: number } | null {
+    let tex: Texture | null = null;
+    let fam: LodFamily | null = null;
+    switch (kind) {
+      case "convoy": tex = this.texIconFreighter; fam = "freighter"; break;
+      case "raider": tex = this.texIconRaider; fam = "raider"; break;
+      case "corvette": tex = this.texIconCorvette; fam = "corvette"; break;
+      default: return null; // scout / colony — no icon
+    }
+    return tex ? { tex, mult: LOD_ICON_CALIB[fam] } : null;
+  }
+
   private fleetMarker(ghost: GhostView): { tex: Texture; mult: number } | null {
+    // §fleet-lod: far zoomed out, a single bold low-detail icon replaces the
+    // detailed hull/formation (no fine detail is legible at that size anyway; the
+    // count badge still conveys fleet size). Runs before the formation pick so it
+    // covers single ships AND multi-ship fleets of these families.
+    if (this.scale / this.fitScale() < LOD_ICON_ZOOM_MAX) {
+      const icon = this.lodIconMarker(ghost.kind);
+      if (icon) return icon;
+    }
     const fam = Renderer.fleetFamily(ghost.kind);
     const tier = fam ? Renderer.fleetTier(ghost) : null;
     if (fam && tier) {
