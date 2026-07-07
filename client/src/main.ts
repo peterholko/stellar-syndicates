@@ -6,6 +6,7 @@ import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
+import { badgeChip, chip, icon, type IconKey } from "./icons";
 
 const state: ViewState = initialState();
 
@@ -381,7 +382,7 @@ function orderLifecycleLine(g: GhostView): string {
   if (!p) {
     const exp = confirmedFlashUntil.get(g.id);
     if (exp && performance.now() < exp) {
-      return `<div class="sp-sec">Order</div><div class="sp-line"><span class="tone-up">✓ confirmed</span> — you can see the fleet complying.</div>`;
+      return `<div class="sp-sec">Order</div><div class="sp-line">${badgeChip("confirmed", "confirmed", "positive", "Confirmed — the echo light has returned; you can see the fleet complying.")}</div>`;
     }
     return "";
   }
@@ -389,9 +390,9 @@ function orderLifecycleLine(g: GhostView): string {
   if (p.echo_at - p.delivered_at < LIFECYCLE_MIN_S) return "";
   const now = liveSimTime();
   const line = now < p.delivered_at
-    ? `<span class="dim">◈</span> <b>IN TRANSIT</b> — arrives in ${fmtCountdown(p.delivered_at - now)}`
-    : `<span style="color:var(--accent)">◔</span> <b>DELIVERED — awaiting echo</b> ~${fmtCountdown(p.echo_at - now)}`;
-  return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div><div class="sp-line dim" style="margin-top:2px">The fleet has your ${esc(p.kind)} order; the light showing it hasn't returned yet.</div>`;
+    ? chip("delivered", fmtCountdown(p.delivered_at - now), `IN TRANSIT — your ${p.kind} order is crossing space; it reaches the fleet in ${fmtCountdown(p.delivered_at - now)}.`)
+    : chip("echo", fmtCountdown(p.echo_at - now), `DELIVERED — awaiting echo: the fleet has your ${p.kind} order, but the light showing it comply hasn't returned yet.`);
+  return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div>`;
 }
 
 // §Part 4: the player's chosen transit throttle per own fleet (optimistic —
@@ -406,11 +407,10 @@ function transitSection(g: GhostView): string {
   if (g.kind !== "raider" && g.kind !== "scout") return "";
   const mode = transitModes.get(g.id) ?? "full";
   const btn = (m: "full" | "stealth", label: string, hint: string) =>
-    `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${hint}">${label}</button>`;
-  const state = mode === "stealth"
-    ? `<span class="tone-up">running quiet</span> — ~2× trip time, a much smaller sensor signature`
-    : `<span class="dim">full speed</span> — fastest, but flank speed lights you up (high signature)`;
-  return `<div class="sp-sec">Transit</div><div class="sp-line">${btn("full", "Full", "Formation speed — loud")} ${btn("stealth", "Stealth", "Creep at half speed — quiet")}</div><div class="sp-line dim" style="margin-top:4px">${state}.</div>`;
+    `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${esc(hint)}">${label}</button>`;
+  // Short labels; the trade-off lives in the button tooltips (§UX-diet).
+  return `<div class="sp-sec">${icon(mode === "stealth" ? "stealth" : "flank", 12)} Transit</div>` +
+    `<div class="sp-line">${btn("full", "Full", "Full speed — fastest, but flank speed lights you up (high sensor signature).")} ${btn("stealth", "Stealth", "Stealth — creep at ~half speed (about 2× trip time) for a much smaller signature.")}</div>`;
 }
 
 // §offensive-orders Part 2: the player's chosen engagement POSTURE per own fleet
@@ -429,9 +429,8 @@ function postureSection(g: GhostView): string {
   const cur = postureModes.get(g.id) ?? g.posture ?? "passive";
   const btn = (m: EngagementPosture, label: string, hint: string) =>
     `<button class="act${cur === m ? " is-on" : ""}" data-act="posture" data-mode="${m}" title="${esc(hint)}">${esc(label)}</button>`;
-  const desc = POSTURE_META.find((p) => p.key === cur) ?? POSTURE_META[0];
-  return `<div class="sp-sec">Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>` +
-    `<div class="sp-line dim" style="margin-top:4px">${esc(desc.hint)}</div>`;
+  // Short labels; each posture's full description is its button tooltip (§UX-diet).
+  return `<div class="sp-sec">${icon("posture", 12)} Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>`;
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
@@ -449,7 +448,7 @@ function compositionSection(g: GhostView): string {
     const total = g.composition.reduce((a, c) => a + c.count, 0);
     return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>`;
   }
-  return `<div class="sp-sec">Composition</div><div class="sp-line dim">est. <b>${countClassLabel(g.count_class)}</b> ships — composition unknown (out of sensor range)</div>`;
+  return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", 13, "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
 
 // Another of your OWN fleets co-located with `g` (within the claim radius) — the
@@ -489,9 +488,8 @@ function fleetManagementSection(g: GhostView): string {
     parts.push(`<div class="sp-line">${splitBtns}</div>`);
   }
   if (merge) {
-    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one (at an owned system)">${uiIcon("concept-fleet", 13)} Merge co-located fleet</button>`);
+    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one — works only at one of your owned systems (idle).">${icon("fleet", 13)} Merge co-located fleet</button>`);
   }
-  parts.push(`<div class="sp-line dim" style="margin-top:4px">Composing fleets works only at one of your owned systems.</div>`);
   return parts.join("");
 }
 
@@ -508,12 +506,13 @@ function headingCell(g: GhostView): string {
 // Inferred activity for an OWN ship — there is NO server order field, so this reads
 // purely from the client's own overlays (raids/orders/command signals/route/vel).
 function ownActivity(g: GhostView): string {
-  if (state.commandSignals.some((s) => s.shipId === g.id)) return "Order in transit — your command is still crossing space to it.";
-  if (state.raids[g.id]) return "Raiding — pursuing a rival contact (recall to break off).";
-  if (state.orders[g.id]) return "En route — proceeding on your last move order.";
-  if (g.route && g.route.length) return "Hauling — en route along its trade route.";
-  if (Math.hypot(g.vel.x, g.vel.y) < 0.5) return "Holding station — idle.";
-  return "Under way.";
+  const a = (key: IconKey, label: string, tip: string) => `${icon(key, 13, tip)} <b>${label}</b>`;
+  if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "order in transit", "Your command is still crossing space to this fleet.");
+  if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
+  if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
+  if (g.route && g.route.length) return a("convoy", "hauling", "En route along its trade route.");
+  if (Math.hypot(g.vel.x, g.vel.y) < 0.5) return `<span class="dim">holding station</span>`;
+  return a("move", "under way", "Under way.");
 }
 
 // OWN ship: full knowledge — activity, cargo + route (you always know your own),
@@ -531,7 +530,7 @@ function ownBody(g: GhostView): string {
     parts.push(`<div class="sp-sec">Cargo</div>${cargo}`);
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
-      parts.push(`<div class="sp-sec">Route</div><div class="sp-line">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → final waypoint near (${d.x.toFixed(0)}, ${d.y.toFixed(0)}).</div>`);
+      parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="The waypoints this convoy will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
     }
   }
 
@@ -540,44 +539,44 @@ function ownBody(g: GhostView): string {
   // on this one ship. (See the per-ship deepening note in the README.)
   const reserve = state.wallet ? state.wallet.fuel_total : 0;
   const rate = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g);
-  let sub = `<span class="dim">~${rate.toFixed(1)} fuel / 1,000 su at this ship's mass</span>`;
   const dest = state.orders[g.id];
+  let burn = `~${rate.toFixed(1)}/1k su`;
   if (dest) {
     const cost = FUEL_PER_MASS_DISTANCE * Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) * shipMass(g);
-    sub = `<span class="dim">~${fmt(cost)} fuel for its current order · ${rate.toFixed(1)}/1,000 su</span>`;
+    burn = `order ~${fmt(cost)} · ${rate.toFixed(1)}/1k su`;
   }
   parts.push(
-    `<div class="sp-sec">Fuel</div>` +
-    `<div class="sp-fuel">${commodityIcon("fuel", 16)}<div><div>Fleet reserve: <span class="sp-fuel-v">${fmt(reserve)}</span></div>${sub}</div></div>` +
-    `<div class="sp-line dim" style="margin-top:6px">Shared reserve across all your systems — what every ship draws on to move, not a tank on this one ship.</div>`,
+    `<div class="sp-sec">${icon("fuel", 12)} Fuel</div>` +
+    `<div class="sp-line">${chip("fuel", fmt(reserve), "Fleet fuel reserve — one pool shared across ALL your systems; every ship draws on it to move (not a tank on this one ship).")} <span class="dim" title="This ship's fuel burn at its current mass (and the cost of its current order, if any).">${burn}</span></div>`,
   );
 
+  // Role summaries: a one-liner on screen, the full doctrine in the tooltip.
   if (g.kind === "colony") {
-    parts.push(`<div class="sp-sec">Role — Settlement</div><div class="sp-line">Colonists + infrastructure. Send it to an <b>unclaimed system</b>: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable: <b>escort it</b>. If someone claims the target first, it holds there intact — redirect it.</div>`);
+    parts.push(`<div class="sp-sec">${icon("colony", 12)} Settlement</div><div class="sp-line" title="Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.">Send to an <b>unclaimed system</b> → it becomes yours (ship consumed). Slow &amp; visible — escort it.</div>`);
   }
   if (g.kind === "corvette") {
-    parts.push(`<div class="sp-sec">Role — Escort · Garrison</div><div class="sp-line">A dedicated <b>defender</b>: any raid contact on one of your convoys within its protect radius must fight THROUGH this ship first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.</div>`);
+    parts.push(`<div class="sp-sec">${icon("corvette", 12)} Escort · Garrison</div><div class="sp-line" title="A dedicated defender: any raid contact on one of your convoys within its protect radius must fight THROUGH this corvette first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.">Defends convoys (escort) &amp; systems (garrison). Can't raid.</div>`);
   }
   if (g.kind === "scout") {
     const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
-    parts.push(`<div class="sp-sec">Sensors</div><div class="sp-line">Projects a <b>×${mult}</b> sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses.</div>` +
-      `<div class="sp-line dim" style="margin-top:4px">No cargo, no weapons: if anything engages it, it dies. Cheap on purpose.</div>`);
+    parts.push(`<div class="sp-sec">${icon("sensor", 12)} Sensors</div><div class="sp-line" title="Projects a ×${mult} sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses. No cargo, no weapons: if anything engages it, it dies — cheap on purpose.">${chip("sensorRange", `×${mult}`, "Mobile sensor bubble — sweep rival space for dark contacts, cargo &amp; defense intel.")} — dies if engaged (no weapons).</div>`);
   }
-  parts.push(`<div class="sp-sec">Actions</div>`);
+  parts.push(`<div class="sp-sec">${icon("build", 12, "Actions")} Actions</div>`);
   // §battles-take-time: WITHDRAW when this fleet is in/near a visible battle.
   const inBattle = state.battles.some((b) => Math.hypot(b.pos.x - g.pos.x, b.pos.y - g.pos.y) <= 220);
   if (inBattle && (g.kind === "raider" || g.kind === "corvette")) {
-    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you)">↩ Withdraw from battle</button>`);
+    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you).">${icon("withdraw", 13)} Withdraw</button>`);
   }
   if (g.kind === "raider") {
-    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
+    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed; it may arrive too late.">${icon("recall", 14)} Recall</button>`);
   }
   const strike = !!g.composition?.some((c) => c.kind === "raider");
-  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}${strike ? ` · <b>shift+click</b> a rival to <b>attack</b> (destroy)` : ""}.</div>`);
-  // §contestable-territory Part 1: a raider fleet's second verb — blockade.
-  if (g.kind === "raider") {
-    parts.push(`<div class="sp-line dim" style="margin-top:4px">${uiIcon("status-warning-threat", 12)} Click a <b>rival system</b> to <b>blockade</b> it — take station and strangle its logistics (its defenses will fight you first).</div>`);
-  }
+  // Compact glyph legend replacing the how-to-click prose — words live in tooltips.
+  const legend: string[] = [`${icon("mouse", 12, "Click empty space on the map to MOVE this fleet.")} move`];
+  if (g.kind === "raider") legend.push(`${icon("raid", 12, "Click a rival contact on the map to RAID it — seize its cargo (brevity-capped skirmish).")} raid`);
+  if (strike) legend.push(`${icon("shift", 12, "Shift+click a rival to ATTACK — a full battle that destroys it (a convoy's cargo is lost with it).")} ${icon("attack", 11)} attack`);
+  if (g.kind === "raider") legend.push(`${icon("blockade", 12, "Click a rival SYSTEM to blockade it — take station and strangle its logistics; its defenses fight you first.")} blockade`);
+  parts.push(`<div class="sp-line dim sp-legend">${legend.join(" · ")}</div>`);
   parts.push(transitSection(g));
   parts.push(postureSection(g));
   parts.push(fleetManagementSection(g));
@@ -593,27 +592,26 @@ function rivalBody(g: GhostView): string {
   if (g.kind === "convoy") {
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
-      parts.push(`<div class="sp-sec">Route (broadcast)</div><div class="sp-line">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → heading near (${d.x.toFixed(0)}, ${d.y.toFixed(0)}). <span class="dim">Light-delayed.</span></div>`);
+      parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="A convoy broadcasts its route under the Convention — light-delayed, like everything you see.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)}) <span class="dim">(broadcast)</span></div>`);
     }
     // Cargo ONLY when in sensor range (cargo present). NEVER shown otherwise.
-    parts.push(`<div class="sp-sec">Cargo</div>` + (g.cargo
-      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)} <span class="dim">— in sensor range</span></div>`
-      : `<span class="dim">unknown — out of sensor range</span>`));
+    parts.push(`<div class="sp-sec">${icon("cargo", 12)} Cargo</div>` + (g.cargo
+      ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(g.cargo.commodity)}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
+      : `<div class="sp-line dim">${icon("unknown", 13, "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
   } else {
-    const what = g.kind === "scout" ? "scout" : "raider";
-    const hint = g.kind === "scout"
-      ? "A scout runs silent — someone is LOOKING at your space. It carries no cargo and no weapons."
-      : "A raider runs silent — no route or cargo is observable.";
-    parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">${hint} You see this ${what} only because it is within your sensor range right now.</div>`);
+    const tip = g.kind === "scout"
+      ? "A scout runs silent — someone is LOOKING at your space. No cargo, no weapons. You see it only because it is within your sensor range right now."
+      : "A raider runs silent — no route or cargo is observable. You see it only because it is within your sensor range right now.";
+    parts.push(`<div class="sp-sec">${icon("stealth", 12)} Dark contact</div><div class="sp-line dim" title="${esc(tip)}">${g.kind === "scout" ? "scout" : "raider"} — in sensor range</div>`);
     // §Part 4: how LOUD it is (signature) — a big pack at flank speed flares far out.
     if (g.signature != null) {
       const loud = g.signature >= 1.6 ? "running LOUD — flank speed and/or a big pack (flares far out)"
         : g.signature <= 0.6 ? "running quiet — creeping or small (you caught it close)"
         : "a moderate signature";
-      parts.push(`<div class="sp-line dim">Signature: <b>${g.signature.toFixed(2)}×</b> — ${loud}.</div>`);
+      parts.push(`<div class="sp-line">${chip("delay", `${g.signature.toFixed(2)}×`, `Detection signature — how LOUD this contact is: ${loud}.`)}</div>`);
     }
   }
-  parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">${uiIcon("action-attack-raid", 12)} Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
+  parts.push(`<div class="sp-sec">${icon("build", 12, "Actions")} Actions</div><div class="sp-line dim sp-legend">${icon("raid", 12, "Click this contact on the map to commit a RAID with your selected raider.")} raid · ${icon("shift", 12, "Shift+click to ATTACK — a full battle that destroys it (needs a raider in your selected fleet).")} ${icon("attack", 11)} attack</div>`);
   return parts.join("");
 }
 
@@ -628,7 +626,7 @@ function updateShipPanel(): void {
     root.innerHTML =
       `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">contact</div><h2>Contact lost</h2></div></div>` +
       `<button class="sp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
-      `<div class="sp-body"><div class="sp-note">This ship has passed beyond your sensors and the last light to reach you. Nothing more is observable.</div></div>`;
+      `<div class="sp-body"><div class="sp-note" title="It has passed beyond your sensors and the last light to reach you — nothing more is observable.">Passed beyond your sensors.</div></div>`;
     return;
   }
   const own = g.own;
@@ -650,20 +648,14 @@ function updateShipPanel(): void {
   // and never grant your own ships false certainty (a distant own ship is as uncertain
   // as a rival). A ship at your command center has ~0 lag → "confirmed".
   const certain = g.uncertainty < 1;
+  // The uncertainty explanation rides the Position stat as a tooltip (§UX-diet).
+  const uncTip = own ? "Delayed sighting — true position uncertain; see the uncertainty cone on the map." : "Last sighting — it could be anywhere within the cone on the map.";
   const posCell = certain
-    ? stat("Position", `<span class="tone-up">confirmed</span>`)
-    : stat("Position", `±${fmt(g.uncertainty)} su`);
+    ? `<div class="stat" title="At your command center (or nearly): ~zero light-lag, so the position is effectively certain."><dt>Position</dt><dd><span class="tone-up">confirmed</span></dd></div>`
+    : `<div class="stat" title="${esc(uncTip)}"><dt>Position</dt><dd>±${fmt(g.uncertainty)} su</dd></div>`;
   const strip = statStrip([ageCell, headingCell(g), posCell]);
 
-  // Terse note — the stat strip already carries age / heading / ±uncertainty, so
-  // this only adds a glance of context (no numbers restated, no physics lecture).
-  const note = certain
-    ? "" // the "confirmed" Position stat already says it
-    : own
-      ? `<div class="sp-note">Delayed sighting — true position uncertain (see cone).</div>`
-      : `<div class="sp-note">Last sighting — could be anywhere in the cone.</div>`;
-
-  root.innerHTML = head + `<div class="sp-body">${strip}${note}${own ? ownBody(g) : rivalBody(g)}</div>`;
+  root.innerHTML = head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`;
 }
 
 // --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
@@ -883,39 +875,49 @@ function updateSysviewManage(): void {
   const used = dyn.storage_used ?? 0;
   const storageFull = cap > 0 && used >= cap;
   const storageBar = cap > 0
-    ? `<div class="deps-head">Stockpile — ${fmt(used)} / ${fmt(cap)}</div>` +
+    ? `<div class="deps-head">${icon("storage", 12, "Stockpile")} Stockpile ${fmt(used)} / ${fmt(cap)}</div>` +
       `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
-      (storageFull ? `<span class="storage-warn">${badge("warn", "storage full")} production idling — ship goods out or build a Depot</span>` : "") +
+      (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
     : "";
-  // Developments at a glance (what the markers on the scene show ×N for).
-  const habTag = (dyn.habitat_tier ?? 0) > 0 ? (dyn.habitat_fed ? ` ${badge("positive", "fed")}` : ` ${badge("warn", "unfed")}`) : "";
-  const devs = `<div class="devs-row">` +
-    ([["Extractor", dyn.extractor_tier ?? 0, ""], ["Depot", dyn.depot_tier ?? 0, ""], ["Shipyard", dyn.shipyard_tier ?? 0, ""], ["Sensor", dyn.sensor_tier ?? 0, ""], ["Defense", dyn.defense_tier ?? 0, ""], ["Habitat", dyn.habitat_tier ?? 0, habTag], ["Refinery", dyn.refinery_tier ?? 0, ""]] as [string, number, string][])
-      .map(([n, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}${tag}</span>`)
-      .join(`<span class="dev-sep">·</span>`) +
+  // Developments at a glance — building ICONS ×tier (names live in tooltips).
+  const habTag = (dyn.habitat_tier ?? 0) > 0
+    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "Habitat upkeep met — the output boost is active.")}`
+                       : ` ${badgeChip("unfed", "unfed", "warn", "Habitat upkeep NOT met — the boost is suspended until Provisions arrive. Nothing is destroyed; it recovers automatically.")}`)
+    : "";
+  const DEV_ROW: [string, IconKey, number, string][] = [
+    ["Extractor", "extractor", dyn.extractor_tier ?? 0, ""],
+    ["Depot", "depot", dyn.depot_tier ?? 0, ""],
+    ["Shipyard", "shipyard", dyn.shipyard_tier ?? 0, ""],
+    ["Sensor array", "sensor", dyn.sensor_tier ?? 0, ""],
+    ["Defense platform", "defense", dyn.defense_tier ?? 0, ""],
+    ["Habitat", "habitat", dyn.habitat_tier ?? 0, habTag],
+    ["Fuel refinery", "refinery", dyn.refinery_tier ?? 0, ""],
+  ];
+  const devs = `<div class="devs-row" title="System developments — the map markers show where each one anchors (not separate colonies). Click a body to see what would anchor there.">` +
+    DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, 13, `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
     `</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
   // dispatches hold at origin, so the ship button is disabled while blockaded
   // (production still accrues into the stockpile). A prominent banner explains it.
   const blockaded = !!dyn.blockade;
   const siege = siegeProgress(dyn);
+  const siegeTip = "Defenses suppressed, the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system. (Your home can be blockaded but never falls.)";
   const siegeLine = siege
-    ? `<div class="deps-head" style="margin-top:6px">${badge("negative", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `under siege — falls in ${fmtCountdown(siege.left)}`)}</div>` +
-      `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>` +
-      `<div class="mhint dim">Defenses are suppressed and the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system.</div>`
+    ? `<div class="deps-head" style="margin-top:6px">${badgeChip("siege", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `siege — falls in ${fmtCountdown(siege.left)}`, "negative", siegeTip)}</div>` +
+      `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>`
     : "";
   const blockadeBanner = blockaded
-    ? `<div class="storage-warn" style="margin:6px 0">${badge("negative", "under blockade")} a rival fleet holds station — convoys are held in &amp; out. Production still accrues; break the blockade (relief, or a new Defense Platform tier) to resume shipping.</div>${siegeLine}`
+    ? `<div style="margin:6px 0">${badgeChip("blockade", "under blockade", "negative", "A rival fleet holds station — convoys are held in & out (production still accrues). Break the blockade (relief, or a new Defense Platform tier) to resume shipping.")}</div>${siegeLine}`
     : "";
   const canShip = !blockaded && shippableStock(dyn).length > 0;
-  const shipTitle = blockaded ? "held — this system is under blockade" : canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units";
+  const shipTitle = blockaded ? "Held — this system is under blockade." : canShip ? "Ship one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)." : "Nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units.";
   const actions =
     `<div style="margin-top:10px">` +
-    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${shipTitle}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
-    `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
-    `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button></div>`;
-  const guard = `<div class="mhint dim" style="margin-top:8px">Buildings are SYSTEM developments — the markers on the map are where each one anchors, not separate colonies. Click a body to see what would anchor there.</div>`;
+    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", 14)} Ship → hub</button>` +
+    `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", 14)} Auto-supply</button>` +
+    `<button class="act" data-action="market" title="Open the hub Exchange.">${icon("market", 14)} Market</button></div>`;
+  const guard = "";
   $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
   $("svm-body").innerHTML = blockadeBanner + storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
 }
@@ -1903,15 +1905,15 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
   const yardShort = needYard > 0 && yard < needYard;
   const blocked = (isDev && slotsFull) || yardShort;
   const enabled = afford && !blocked;
-  const title = isDev && slotsFull ? "no free development slot — systems must specialize"
-    : yardShort ? `ships build only at a Shipyard system (this needs tier ${needYard})`
-      : afford ? "costs draw from this system's stockpile"
-        : "not enough resources stockpiled here";
+  const title = isDev && slotsFull ? "No free development slot — systems must specialize."
+    : yardShort ? `Ships build only at a Shipyard system — this needs Shipyard tier ${needYard}.`
+      : afford ? "Costs draw from this system's stockpile."
+        : "Not enough resources stockpiled here.";
   const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, 13)}${c.units}`).join(" ");
-  const gate = isDev && slotsFull ? `<span class="bo-gate">slots full</span>`
-    : yardShort ? `<span class="bo-gate">requires Shipyard ${needYard}</span>` : "";
-  return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${title}">` +
-    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
+  const gate = isDev && slotsFull ? `<span class="bo-gate" title="No free development slot.">${icon("slots", 11)}full</span>`
+    : yardShort ? `<span class="bo-gate" title="Requires Shipyard tier ${needYard}.">${icon("shipyard", 11)}${needYard}</span>` : "";
+  return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${esc(title)}">` +
+    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", 10)}${o.build_secs}s</span></button>`;
 }
 
 function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
@@ -1924,9 +1926,9 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const slotsTotal = dyn?.slots_total ?? 0;
   const slotsFull = slotsTotal > 0 && slotsUsed >= slotsTotal;
   const slotsTag = slotsTotal > 0
-    ? ` <span class="sp-tier" title="each development (Extractor/Depot/Shipyard tier) uses one slot — ships don't">· slots ${slotsUsed}/${slotsTotal}</span>`
+    ? ` <span class="sp-tier" title="Development slots used / total. Each development (Extractor/Depot/Shipyard tier…) uses one slot; ships don't.">· ${icon("slots", 11)} ${slotsUsed}/${slotsTotal}</span>`
     : "";
-  const head = `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Build · develop${slotsTag}</div>`;
+  const head = `<div class="deps-head" style="margin-top:8px">${icon("build", 12)} Build · develop${slotsTag}</div>`;
   // §build-progress: the construction QUEUE renders above a menu that STAYS
   // open — concurrent jobs were always legal in the sim (costs debit up front;
   // pending upgrades already count against slots); the old "one job at a time"
@@ -1934,7 +1936,7 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const queue = buildQueueRows(sid, dyn);
   const rows = opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
   const full = slotsFull
-    ? `<div class="mhint">${badge("warn", "slots full")} every development slot here is used — develop another system (specialize!).</div>`
+    ? `<div class="mhint">${badgeChip("slots", "slots full", "warn", "Every development slot here is used — develop another system (specialize!).")}</div>`
     : "";
   return queue + head + `<div class="build-grid">${rows}</div>` + full;
 }
