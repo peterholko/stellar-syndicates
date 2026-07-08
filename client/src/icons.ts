@@ -27,7 +27,9 @@ export type IconKey =
   | "delay" | "echo" | "delivered" | "confirmed" | "inTransit"
   // status / intel
   | "unfed" | "fed" | "warning" | "unknown" | "intel" | "battle" | "aftermath" | "captured" | "lost"
-  | "commandCenter" | "uncertainty" | "hub" | "success" | "info" | "home" | "mouse" | "shift" | "time";
+  | "commandCenter" | "uncertainty" | "hub" | "success" | "info" | "home" | "mouse" | "shift" | "time"
+  // syndicates (§syndicates)
+  | "syndicate" | "ally" | "garrison";
 
 interface IconDef {
   /** Downscaled RASTER (PNG) variant name under /art/ui_icons/resource/ —
@@ -119,6 +121,10 @@ export const ICONS: Record<IconKey, IconDef> = {
   mouse: P("🖱", "Click"),
   shift: P("⇧🖱", "Shift+click"),
   time: P("🕘", "Time"),
+  // syndicates
+  syndicate: P("🤝", "Syndicate (alliance)"),
+  ally: P("🟢", "Syndicate ally"),
+  garrison: P("🛰", "Ally garrison"),
 };
 
 const ART_BASE = "/art/ui_icons/svg/";

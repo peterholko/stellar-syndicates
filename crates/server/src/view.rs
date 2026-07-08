@@ -370,6 +370,9 @@ impl PositionHistory {
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
                 posture: None,
+                // §syndicates: ally tint is injected by the game loop from
+                // authoritative light-delayed membership (this view can't see it).
+                ally: false,
             });
         }
         // Deterministic ordering by id.
@@ -604,6 +607,9 @@ pub fn filter_systems(
                         })
                     })
                 },
+                // §syndicates: injected by the game loop from light-delayed
+                // membership (composed against this light-gated `owner`).
+                ally: false,
             }
         })
         .collect()

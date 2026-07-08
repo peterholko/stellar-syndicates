@@ -95,6 +95,9 @@ export interface SystemStateView {
   /// delivered only once its light reached our command center. A SNAPSHOT: it
   /// ages and never auto-updates; re-scout to refresh.
   intel: IntelView | null;
+  /// §syndicates Part 1: the (light-gated known) owner is a SYNDICATE ally as WE
+  /// know it — drives the friendly ally tint. No owner-only data comes with it.
+  ally?: boolean;
 }
 
 /// A stored scout-intel snapshot of a rival system's fortifications.
@@ -323,6 +326,9 @@ export interface GhostView {
   // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
   // fleets, null for every rival; a private standing policy that never leaks).
   posture: EngagementPosture | null;
+  // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
+  // (light-delayed membership) — drives the friendly ally tint/pip.
+  ally?: boolean;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -377,7 +383,32 @@ export type ClientMsg =
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
+  // §syndicates Part 1 — alliance admin (instant owner-only).
+  | { type: "CreateSyndicate"; name: string }
+  | { type: "InviteToSyndicate"; name: string }
+  | { type: "AcceptSyndicateInvite"; syndicate_id: SyndicateId }
+  | { type: "LeaveSyndicate" }
+  | { type: "DissolveSyndicate" }
   | { type: "Ping" };
+
+// §syndicates Part 1: an alliance id (opaque decimal string on the wire).
+export type SyndicateId = string;
+
+// The viewer's OWN syndicate roster (never a rival's private roster).
+export interface SyndicateView {
+  id: SyndicateId;
+  name: string;
+  founder: PlayerId;
+  is_founder: boolean;
+  members: { id: PlayerId; name: string }[];
+  invited: string[];
+}
+
+// A pending invitation the viewer may accept.
+export interface SyndicateInviteView {
+  id: SyndicateId;
+  name: string;
+}
 
 export type RaidOutcome =
   | "target_destroyed"
@@ -515,6 +546,10 @@ export type ServerMsg =
       battle_reports: BattleReportView[];
       /// §contestable-territory Part 2: retained capture reports (per-participant).
       capture_reports: CaptureReportView[];
+      /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
+      syndicate?: SyndicateView | null;
+      /// §syndicates Part 1: pending invitations the viewer may accept.
+      syndicate_invites?: SyndicateInviteView[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

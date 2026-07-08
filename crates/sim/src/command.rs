@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::doctrine::{EngagementPosture, FleetDoctrine};
-use crate::ids::{EntityId, PlayerId};
+use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::math::Vec2;
 use crate::standing::StandingOrder;
 
@@ -232,4 +232,31 @@ pub enum Command {
         fleet_id: EntityId,
         posture: EngagementPosture,
     },
+
+    // ---- SYNDICATES (§syndicates Part 1) -------------------------------------
+    // Alliance administration. All INSTANT owner-only admin (like the policy
+    // commands): they change ground-truth membership immediately, revealing
+    // nothing to rivals except light-delayed via the View. Soft-reject on any
+    // violation (already affiliated, not the founder, no invite, cap exceeded).
+    /// FOUND a syndicate with the caller as founder + sole member. Ignored if the
+    /// caller is already in one.
+    CreateSyndicate { player_id: PlayerId, name: String },
+
+    /// INVITE a corp into the caller's syndicate (founder-only). Records a pending
+    /// invite the invitee accepts separately. Ignored unless the caller is the
+    /// founder and the invitee is unaffiliated.
+    InviteToSyndicate { player_id: PlayerId, invitee: PlayerId },
+
+    /// ACCEPT a pending invitation to the named syndicate. Ignored unless the
+    /// caller is unaffiliated, actually holds the invite, and the roster has room
+    /// under the SIZE CAP.
+    AcceptSyndicateInvite { player_id: PlayerId, syndicate_id: SyndicateId },
+
+    /// LEAVE the caller's syndicate. If the founder leaves, the seat passes to the
+    /// next member; an emptied syndicate dissolves. Ignored if unaffiliated.
+    LeaveSyndicate { player_id: PlayerId },
+
+    /// DISSOLVE the caller's syndicate (founder-only): every member becomes
+    /// unaffiliated. Ignored unless the caller is the founder.
+    DissolveSyndicate { player_id: PlayerId },
 }

@@ -329,6 +329,37 @@ impl GameLoop {
                         self.pending.push(Command::SetFleetPosture { player_id, fleet_id, posture });
                     }
                 }
+                // §syndicates Part 1: instant owner-only alliance admin.
+                ClientMsg::CreateSyndicate { name } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::CreateSyndicate { player_id, name });
+                    }
+                }
+                ClientMsg::InviteToSyndicate { name } => {
+                    // Invite BY NAME: the invitee's stable id IS the hash of their
+                    // corp name (the same function `Join` uses), so the server can
+                    // resolve it without exposing a corp directory. A non-joined
+                    // name resolves to an id the sim soft-rejects.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        let invitee = crate::protocol::player_id_from_name(&name);
+                        self.pending.push(Command::InviteToSyndicate { player_id, invitee });
+                    }
+                }
+                ClientMsg::AcceptSyndicateInvite { syndicate_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AcceptSyndicateInvite { player_id, syndicate_id });
+                    }
+                }
+                ClientMsg::LeaveSyndicate => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::LeaveSyndicate { player_id });
+                    }
+                }
+                ClientMsg::DissolveSyndicate => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DissolveSyndicate { player_id });
+                    }
+                }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);
@@ -612,6 +643,10 @@ impl GameLoop {
                 if g.own {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
                 }
+                // §syndicates Part 1: friendly ALLY tint — the owner (already on
+                // the ghost) is a syndicate member as THIS viewer knows it
+                // (light-delayed membership; `known_ally` returns false for own).
+                g.ally = self.world.known_ally(player_id, g.owner, now);
             }
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-
@@ -648,10 +683,47 @@ impl GameLoop {
                 })
                 .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
-            let systems = view::filter_systems(
+            let mut systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
                 &corp.intel,
             );
+            // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
+            // known) owner is a syndicate member as THIS viewer knows it. Composes
+            // both light-gates; grants no owner-only data (Part 1 is tint only).
+            for sv in systems.iter_mut() {
+                sv.ally = sv.owner.is_some_and(|o| self.world.known_ally(player_id, o, now));
+            }
+            // §syndicates Part 1: the viewer's OWN roster + pending invites (fresh
+            // private state, never a rival's private roster).
+            let syndicate = corp
+                .syndicate
+                .and_then(|sid| self.world.syndicates.get(&sid))
+                .map(|s| Box::new(crate::protocol::SyndicateView {
+                    id: s.id,
+                    name: s.name.clone(),
+                    founder: s.founder,
+                    is_founder: s.founder == player_id,
+                    members: s
+                        .members
+                        .iter()
+                        .map(|m| crate::protocol::SyndicateMember {
+                            id: *m,
+                            name: self.world.players.get(m).map(|c| c.name.clone()).unwrap_or_default(),
+                        })
+                        .collect(),
+                    invited: s
+                        .invites
+                        .iter()
+                        .filter_map(|i| self.world.players.get(i).map(|c| c.name.clone()))
+                        .collect(),
+                }));
+            let syndicate_invites: Vec<crate::protocol::SyndicateInviteView> = self
+                .world
+                .syndicates
+                .values()
+                .filter(|s| s.invites.contains(&player_id))
+                .map(|s| crate::protocol::SyndicateInviteView { id: s.id, name: s.name.clone() })
+                .collect();
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
@@ -732,6 +804,8 @@ impl GameLoop {
                     battles,
                     battle_reports,
                     capture_reports,
+                    syndicate,
+                    syndicate_invites,
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

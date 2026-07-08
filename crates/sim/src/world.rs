@@ -19,12 +19,13 @@ use crate::doctrine::{
 };
 use crate::event::{DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
-use crate::ids::{EntityId, PlayerId};
+use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
 use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
+use crate::syndicate::{syndicate_cap, Syndicate};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -74,6 +75,20 @@ pub struct Corporation {
     /// their command center, and to NOBODY else.
     #[serde(default)]
     pub intel: BTreeMap<EntityId, IntelSnapshot>,
+    /// SYNDICATE membership (§syndicates). `None` = unaffiliated. The roster lives
+    /// in [`World::syndicates`]; this denormalized id gives O(1) `are_allied`
+    /// (ground-truth non-engagement — an alliance is a mutual pact both parties
+    /// consented to, in effect immediately).
+    #[serde(default)]
+    pub syndicate: Option<SyndicateId>,
+    /// The PRIOR membership + when the CURRENT one took effect — so a distant
+    /// viewer learns of a join/leave only after the light from THIS corp's command
+    /// center arrives (membership propagates like ownership; a 2-state history
+    /// covers the light-delay window). See `World::known_ally`.
+    #[serde(default)]
+    pub syndicate_prev: Option<SyndicateId>,
+    #[serde(default)]
+    pub syndicate_since: f64,
 }
 
 /// One scouted observation of a rival system's fortifications (§scout part 2):
@@ -302,6 +317,15 @@ pub struct World {
     pub engagements: BTreeMap<EntityId, Engagement>,
     #[serde(default)]
     next_engagement_id: u64,
+    /// SYNDICATES (§syndicates) — alliance rosters keyed by id. Membership is also
+    /// denormalized on each [`Corporation`] for O(1) `are_allied`. `BTreeMap` keeps
+    /// iteration deterministic; `#[serde(default)]` so pre-feature snapshots load.
+    #[serde(default)]
+    pub syndicates: BTreeMap<SyndicateId, Syndicate>,
+    /// Monotonic allocator for syndicate ids (0 ⇒ first id is 1). Its OWN counter,
+    /// separate from entities, so ids never collide across the two id spaces.
+    #[serde(default)]
+    next_syndicate_id: u64,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -384,6 +408,13 @@ fn diff_comp(
     out
 }
 
+/// Trim + length-cap a player-supplied syndicate name (deterministic, no I/O).
+/// Empty after trimming falls back to a neutral default.
+fn sanitize_name(raw: &str) -> String {
+    let t: String = raw.trim().chars().take(32).collect();
+    if t.is_empty() { "Syndicate".to_string() } else { t }
+}
+
 impl World {
     /// Create a galaxy for the given configuration: hub at the centre, seeded
     /// star systems, and a ring of empty home anchors.
@@ -448,6 +479,8 @@ impl World {
             rng,
             engagements: BTreeMap::new(),
             next_engagement_id: 0,
+            syndicates: BTreeMap::new(),
+            next_syndicate_id: 0,
         }
     }
 
@@ -525,6 +558,171 @@ impl World {
         let id = EntityId(self.next_entity_id);
         self.next_entity_id += 1;
         id
+    }
+
+    /// Allocate a fresh, deterministic syndicate id (own counter, separate id
+    /// space from entities so the two never collide).
+    fn alloc_syndicate_id(&mut self) -> SyndicateId {
+        self.next_syndicate_id += 1;
+        SyndicateId(self.next_syndicate_id)
+    }
+
+    // ---- SYNDICATES (§syndicates) --------------------------------------------
+
+    /// GROUND-TRUTH alliance: two DISTINCT corps in the same syndicate. This is
+    /// what all mechanical non-engagement reads (pickets, platforms, WeaponsFree,
+    /// blockades, and the deliberate-order soft-rejects) — an alliance is a mutual
+    /// pact both parties consented to, so it is in effect immediately (unlike the
+    /// KNOWLEDGE of it, which a third party receives light-delayed via `known_ally`).
+    pub fn are_allied(&self, a: PlayerId, b: PlayerId) -> bool {
+        a != b
+            && self.players.get(&a).and_then(|c| c.syndicate).is_some()
+            && self.players.get(&a).and_then(|c| c.syndicate)
+                == self.players.get(&b).and_then(|c| c.syndicate)
+    }
+
+    /// The OTHER members of `p`'s syndicate (empty if unaffiliated). Precomputed
+    /// once and captured by the per-tick engagement closures, which can't borrow
+    /// `&self` inside their filters.
+    pub fn allies_of(&self, p: PlayerId) -> std::collections::BTreeSet<PlayerId> {
+        match self.players.get(&p).and_then(|c| c.syndicate) {
+            Some(sid) => self
+                .syndicates
+                .get(&sid)
+                .map(|s| s.members.iter().copied().filter(|&m| m != p).collect())
+                .unwrap_or_default(),
+            None => std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// Whether the `viewer` KNOWS (light-delayed) that `owner` is their ally — the
+    /// gate the View uses to tint ally systems/fleets. The viewer knows their OWN
+    /// membership instantly; `owner`'s membership is known only once the light from
+    /// `owner`'s command center has reached the viewer's (`syndicate_since +
+    /// dist/c`), and until then the viewer's picture is `owner`'s PRIOR membership
+    /// — so a fresh join isn't seen early and a fresh betrayal isn't seen early.
+    pub fn known_ally(&self, viewer: PlayerId, owner: PlayerId, now: f64) -> bool {
+        if viewer == owner {
+            return false;
+        }
+        let (Some(v), Some(o)) = (self.players.get(&viewer), self.players.get(&owner)) else {
+            return false;
+        };
+        let dist = o.command_center.distance(v.command_center);
+        let known = if now >= o.syndicate_since + dist / self.config.c {
+            o.syndicate
+        } else {
+            o.syndicate_prev
+        };
+        v.syndicate.is_some() && v.syndicate == known
+    }
+
+    /// Change a corp's membership, recording the 2-state light-delay bookkeeping
+    /// (prev + since) so distant viewers learn of the change only when its light
+    /// arrives. No-op if the state is unchanged.
+    fn set_membership(&mut self, p: PlayerId, new: Option<SyndicateId>) {
+        let now = self.time;
+        if let Some(corp) = self.players.get_mut(&p)
+            && corp.syndicate != new
+        {
+            corp.syndicate_prev = corp.syndicate;
+            corp.syndicate = new;
+            corp.syndicate_since = now;
+        }
+    }
+
+    /// FOUND a syndicate (§syndicates Part 1). The founder must exist and be
+    /// unaffiliated. Soft-reject otherwise (no state change).
+    fn apply_create_syndicate(&mut self, founder: PlayerId, name: String) {
+        let unaffiliated = self.players.get(&founder).is_some_and(|c| c.syndicate.is_none());
+        if !unaffiliated {
+            return;
+        }
+        let id = self.alloc_syndicate_id();
+        let mut members = std::collections::BTreeSet::new();
+        members.insert(founder);
+        let name = sanitize_name(&name);
+        self.syndicates.insert(
+            id,
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time },
+        );
+        self.set_membership(founder, Some(id));
+    }
+
+    /// INVITE a corp into the founder's syndicate (founder-only). The invitee must
+    /// exist and be unaffiliated. Records a pending invite (accepted separately).
+    fn apply_invite_syndicate(&mut self, founder: PlayerId, invitee: PlayerId) {
+        if founder == invitee {
+            return;
+        }
+        let Some(sid) = self.players.get(&founder).and_then(|c| c.syndicate) else {
+            return;
+        };
+        let invitee_free = self.players.get(&invitee).is_some_and(|c| c.syndicate.is_none());
+        if !invitee_free {
+            return;
+        }
+        if let Some(s) = self.syndicates.get_mut(&sid)
+            && s.founder == founder
+        {
+            s.invites.insert(invitee);
+        }
+    }
+
+    /// ACCEPT a pending invite (§syndicates Part 1). The invitee must be
+    /// unaffiliated, actually hold an invite to `sid`, and the syndicate must have
+    /// room under the SIZE CAP. Consumes the invite and joins the roster.
+    fn apply_accept_syndicate(&mut self, invitee: PlayerId, sid: SyndicateId) {
+        let free = self.players.get(&invitee).is_some_and(|c| c.syndicate.is_none());
+        if !free {
+            return;
+        }
+        let cap = syndicate_cap(self.players.len());
+        let Some(s) = self.syndicates.get_mut(&sid) else {
+            return;
+        };
+        if !s.invites.contains(&invitee) || s.members.len() >= cap {
+            return;
+        }
+        s.invites.remove(&invitee);
+        s.members.insert(invitee);
+        self.set_membership(invitee, Some(sid));
+    }
+
+    /// LEAVE the caller's syndicate (§syndicates Part 1). If the founder leaves and
+    /// members remain, the seat passes to the lowest-id member; an emptied
+    /// syndicate is removed.
+    fn apply_leave_syndicate(&mut self, p: PlayerId) {
+        let Some(sid) = self.players.get(&p).and_then(|c| c.syndicate) else {
+            return;
+        };
+        if let Some(s) = self.syndicates.get_mut(&sid) {
+            s.members.remove(&p);
+            s.invites.remove(&p);
+            if s.members.is_empty() {
+                self.syndicates.remove(&sid);
+            } else if s.founder == p {
+                // Founder-managed v1: hand the seat to the next (lowest-id) member.
+                s.founder = *s.members.iter().next().unwrap();
+            }
+        }
+        self.set_membership(p, None);
+    }
+
+    /// DISSOLVE the caller's syndicate (founder-only). Clears every member's
+    /// affiliation and removes the roster.
+    fn apply_dissolve_syndicate(&mut self, founder: PlayerId) {
+        let Some(sid) = self.players.get(&founder).and_then(|c| c.syndicate) else {
+            return;
+        };
+        let members: Vec<PlayerId> = match self.syndicates.get(&sid) {
+            Some(s) if s.founder == founder => s.members.iter().copied().collect(),
+            _ => return,
+        };
+        for m in members {
+            self.set_membership(m, None);
+        }
+        self.syndicates.remove(&sid);
     }
 
     /// Advance the world by exactly one fixed timestep, applying the given
@@ -761,6 +959,14 @@ impl World {
         // CHOICE stays picket-local (guarding is physical proximity, not intel).
         let arrays: BTreeMap<PlayerId, Vec<(Vec2, f64)>> =
             self.players.keys().map(|&p| (p, self.array_sensor_sources(p))).collect();
+        // SYNDICATES (§syndicates): per-owner ally set, so autonomous pickets treat
+        // syndicate members as FRIENDLY — never hunted, counted on the friendly side
+        // of the force ratio. Precomputed here (the closures below can't borrow &self).
+        let allies: BTreeMap<PlayerId, std::collections::BTreeSet<PlayerId>> =
+            self.players.keys().map(|&p| (p, self.allies_of(p))).collect();
+        let is_ally = |owner: PlayerId, other: PlayerId| -> bool {
+            allies.get(&owner).is_some_and(|a| a.contains(&other))
+        };
         // SPEED-SIGNATURE DETECTION (§Part 4): a picket senses a target if any of
         // its coverage sources (its own bubble + the owner's arrays) reaches the
         // target's SIGNATURE — the SAME shared `detection::detected` the View uses
@@ -782,7 +988,7 @@ impl World {
         let force = |ppos: Vec2, owner: PlayerId| -> (f64, f64) {
             let (mut f, mut h) = (0.0f64, 0.0f64);
             for s in snap.iter().filter(|s| s.combatant && sensed(owner, ppos, s.pos, s.signature)) {
-                if s.owner == owner {
+                if s.owner == owner || is_ally(owner, s.owner) {
                     f += s.combat;
                 } else {
                     h += s.combat;
@@ -809,6 +1015,7 @@ impl World {
             snap.iter()
                 .filter(|s| {
                     s.owner != owner
+                        && !is_ally(owner, s.owner)
                         && matches!(s.kind, ShipKind::Raider | ShipKind::Scout)
                         && sensed(owner, ppos, s.pos, s.signature)
                 })
@@ -822,7 +1029,10 @@ impl World {
         let nearest_threat_on = |ppos: Vec2, owner: PlayerId, guard: Vec2| -> Option<EntityId> {
             let mut best: Option<(EntityId, f64)> = None;
             for h in snap.iter().filter(|s| {
-                s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos, s.signature)
+                s.owner != owner
+                    && !is_ally(owner, s.owner)
+                    && s.kind == ShipKind::Raider
+                    && sensed(owner, ppos, s.pos, s.signature)
             }) {
                 if h.vel.length() < THREAT_MIN_SPEED {
                     continue; // not actually inbound
@@ -1056,6 +1266,13 @@ impl World {
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
             self.players.iter().map(|(id, c)| (*id, c.doctrine)).collect();
+        // §syndicates: per-owner ally set — a WeaponsFree fleet never hunts a
+        // syndicate member and counts allied combat weight on the friendly side.
+        let allies: BTreeMap<PlayerId, std::collections::BTreeSet<PlayerId>> =
+            self.players.keys().map(|&p| (p, self.allies_of(p))).collect();
+        let is_ally = |owner: PlayerId, other: PlayerId| -> bool {
+            allies.get(&owner).is_some_and(|a| a.contains(&other))
+        };
 
         // A rival is a valid WeaponsFree target iff its light reaches THIS fleet's
         // OWN bubble. The fleet acts on its OWN DELIVERED LIGHT (§retarded-time):
@@ -1081,7 +1298,7 @@ impl World {
         let local_force = |ppos: Vec2, owner: PlayerId, bubble: f64| -> (f64, f64) {
             let (mut f, mut h) = (0.0f64, 0.0f64);
             for s in snap.iter().filter(|s| s.combatant && visible(ppos, bubble, s)) {
-                if s.owner == owner { f += s.combat; } else { h += s.combat; }
+                if s.owner == owner || is_ally(owner, s.owner) { f += s.combat; } else { h += s.combat; }
             }
             (f, h)
         };
@@ -1109,7 +1326,7 @@ impl World {
             // excluding a hub-safe convoy (it would just escape).
             let target = snap
                 .iter()
-                .filter(|s| s.owner != owner && !hub_safe(s) && visible(ppos, bubble, s))
+                .filter(|s| s.owner != owner && !is_ally(owner, s.owner) && !hub_safe(s) && visible(ppos, bubble, s))
                 .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id)))
                 .map(|s| s.id);
             let Some(tid) = target else { continue };
@@ -1234,6 +1451,7 @@ impl World {
                 && let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order
                 && let Some(t) = self.fleets.get(&target)
                 && ship.owner != t.owner
+                && !self.are_allied(ship.owner, t.owner)
                 && ship.pos.distance(t.pos) > CONTACT_RADIUS
                 && t.flagship_kind() == ShipKind::Convoy
                 && t.pos.distance(hub) <= HUB_SAFE_RADIUS
@@ -1279,6 +1497,7 @@ impl World {
                 };
                 if let Some(t) = self.fleets.get(&target)
                     && ship.owner != t.owner
+                    && !self.are_allied(ship.owner, t.owner)
                     && ship.pos.distance(t.pos) <= CONTACT_RADIUS
                 {
                     Some((*rid, target, is_attack))
@@ -1751,6 +1970,7 @@ impl World {
                 && let Some(sys) = self.systems.iter().find(|s| s.id == system)
                 && sys.owner.is_some()
                 && sys.owner != Some(f.owner)
+                && !sys.owner.is_some_and(|o| self.are_allied(f.owner, o))
                 && f.pos.distance(sys.pos) <= BLOCKADE_STATION_RADIUS
             {
                 on_station.entry(system).or_default().push(*fid);
@@ -2046,6 +2266,9 @@ impl World {
                         next_standing_id: 0,
                         doctrine: FleetDoctrine::default(),
                         intel: BTreeMap::new(),
+                        syndicate: None,
+                        syndicate_prev: None,
+                        syndicate_since: 0.0,
                     },
                 );
                 events.push(Event::new(
@@ -2058,6 +2281,24 @@ impl World {
                 self.spawn_starting_fleet(*id, home, events);
                 // Seed an accurate initial valuation (before the first close).
                 self.recompute_valuations();
+            }
+            // SYNDICATES (§syndicates Part 1): instant owner-only admin, like the
+            // sibling policy commands — they mutate ground-truth membership now; the
+            // KNOWLEDGE of the change reaches others light-delayed (see `known_ally`).
+            Command::CreateSyndicate { player_id, name } => {
+                self.apply_create_syndicate(*player_id, name.clone());
+            }
+            Command::InviteToSyndicate { player_id, invitee } => {
+                self.apply_invite_syndicate(*player_id, *invitee);
+            }
+            Command::AcceptSyndicateInvite { player_id, syndicate_id } => {
+                self.apply_accept_syndicate(*player_id, *syndicate_id);
+            }
+            Command::LeaveSyndicate { player_id } => {
+                self.apply_leave_syndicate(*player_id);
+            }
+            Command::DissolveSyndicate { player_id } => {
+                self.apply_dissolve_syndicate(*player_id);
             }
             Command::MoveShip {
                 player_id,
@@ -2099,6 +2340,11 @@ impl World {
                 };
                 if target.owner == *player_id {
                     return; // no raiding your own fleets
+                }
+                // §syndicates: no raiding an ALLY. Deliberate offense against a
+                // syndicate member soft-rejects while allied (leaving re-enables it).
+                if self.are_allied(*player_id, target.owner) {
+                    return;
                 }
                 let target_pos = target.pos;
                 // The raider must exist and be the player's.
@@ -2331,6 +2577,10 @@ impl World {
                 if sys.owner.is_none() || sys.owner == Some(*player_id) {
                     return;
                 }
+                // §syndicates: no blockading an ALLY's system while allied.
+                if sys.owner.is_some_and(|o| self.are_allied(*player_id, o)) {
+                    return;
+                }
                 let station = sys.pos;
                 // Fuel the run ∝ distance × fleet mass, like a move; a shortfall
                 // HOLDS it (keeps the current order, notifies) — never lost.
@@ -2357,6 +2607,10 @@ impl World {
                 };
                 if target.owner == *player_id {
                     return; // no attacking your own fleets
+                }
+                // §syndicates: no attacking an ALLY while allied.
+                if self.are_allied(*player_id, target.owner) {
+                    return;
                 }
                 let target_pos = target.pos;
                 // The attacker must exist, be the player's, and CONTAIN ≥1 raider
@@ -8237,5 +8491,228 @@ mod tests {
         let w2: World = serde_json::from_str(&json).unwrap();
         let after = w2.systems.iter().find(|s| s.id == sys).unwrap().blockade;
         assert_eq!(format!("{before:?}"), format!("{after:?}"), "blockade + siege clock persist across a snapshot");
+    }
+
+    // ===================================================================
+    // §SYNDICATES Part 1 — membership + non-engagement
+    // ===================================================================
+    use crate::ids::SyndicateId;
+
+    /// Found a syndicate with `a` and bring `b` in via invite → accept. Returns
+    /// the syndicate id.
+    fn ally(w: &mut World, a: PlayerId, b: PlayerId) -> SyndicateId {
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "Pact".into() }]);
+        let sid = w.players[&a].syndicate.expect("founded a syndicate");
+        w.step(&[Command::InviteToSyndicate { player_id: a, invitee: b }]);
+        w.step(&[Command::AcceptSyndicateInvite { player_id: b, syndicate_id: sid }]);
+        sid
+    }
+
+    #[test]
+    fn syndicate_create_invite_accept_forms_an_alliance() {
+        let mut w = test_world();
+        let (a, b, c) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer { id: c, name: "C".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        assert!(w.are_allied(a, b) && w.are_allied(b, a), "both directions allied (ground truth)");
+        assert_eq!(w.players[&a].syndicate, Some(sid));
+        assert_eq!(w.players[&b].syndicate, Some(sid));
+        let s = &w.syndicates[&sid];
+        assert!(s.members.contains(&a) && s.members.contains(&b) && s.members.len() == 2);
+        assert_eq!(s.founder, a);
+        // A non-member is not an ally in either direction.
+        assert!(!w.are_allied(a, c) && !w.are_allied(c, a), "outsider is never an ally");
+        assert!(!w.are_allied(a, a), "self is not an ally");
+    }
+
+    #[test]
+    fn syndicate_cap_scales_with_active_corps() {
+        use crate::syndicate::syndicate_cap;
+        assert_eq!(syndicate_cap(1), 2, "min floor");
+        assert_eq!(syndicate_cap(5), 2);
+        assert_eq!(syndicate_cap(6), 2);
+        assert_eq!(syndicate_cap(9), 3);
+        assert_eq!(syndicate_cap(12), 4);
+    }
+
+    #[test]
+    fn syndicate_size_cap_rejects_overfill() {
+        let mut w = test_world();
+        let (a, b, c, d) = (PlayerId(1), PlayerId(2), PlayerId(3), PlayerId(4));
+        for (id, n) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
+            w.step(&[Command::AddPlayer { id, name: n.into() }]);
+        }
+        // 4 active corps → cap = max(2, floor(4/3)) = 2. A 2-member syndicate is full.
+        let sid = ally(&mut w, a, b);
+        assert_eq!(w.syndicates[&sid].members.len(), 2);
+        w.step(&[Command::InviteToSyndicate { player_id: a, invitee: c }]);
+        w.step(&[Command::AcceptSyndicateInvite { player_id: c, syndicate_id: sid }]);
+        assert!(w.players[&c].syndicate.is_none(), "the cap rejects the 3rd member");
+        assert_eq!(w.syndicates[&sid].members.len(), 2, "roster stays at the cap");
+    }
+
+    #[test]
+    fn syndicate_weapons_free_spares_an_ally() {
+        // Mirror `weapons_free_auto_commits_on_a_rival_in_its_own_bubble`, but the
+        // "target" is an ALLY — the WeaponsFree raider must NOT hunt it.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, _convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(1000.0, 0.0));
+        // Ally FIRST (the raider is still Passive, so it won't commit meanwhile),
+        // THEN arm it WeaponsFree — now the ally in its bubble must be spared.
+        ally(&mut w, atk, def);
+        assert!(w.are_allied(atk, def));
+        w.fleets.get_mut(&raider).unwrap().posture = EngagementPosture::WeaponsFree;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(
+                matches!(w.fleets[&raider].order, FleetOrder::Idle),
+                "a WeaponsFree raider never hunts a syndicate ally in its bubble",
+            );
+        }
+    }
+
+    #[test]
+    fn syndicate_picket_spares_an_ally_raider() {
+        // An EngageAny picket that WOULD hunt any sensed raider leaves an ally alone.
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1500.0, 0.0));
+        {
+            let h = w.fleets.get_mut(&hostile).unwrap();
+            h.pos = convoy_pos + Vec2::new(500.0, 0.0);
+            h.vel = Vec2::ZERO;
+            h.order = FleetOrder::Idle;
+        }
+        // Ally FIRST (default DefensiveOnly ignores the parked drifter meanwhile),
+        // THEN switch to EngageAny — the ally raider must still be spared.
+        ally(&mut w, d, a);
+        assert!(w.are_allied(d, a));
+        w.players.get_mut(&d).unwrap().doctrine.engagement = EngagementPolicy::EngageAny;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.fleets[&patrol].defense.is_none(), "an EngageAny picket never hunts an ALLY raider");
+            assert!(!engaged_on(&w, patrol, hostile), "no engagement opens against an ally");
+        }
+    }
+
+    #[test]
+    fn syndicate_soft_rejects_attack_raid_blockade_on_an_ally() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        ally(&mut w, a, b);
+        let cc = w.players[&a].command_center;
+        let b_home = w.players[&b].home_system.expect("b has a home system");
+        // Three separate a-owned raider fleets + b targets.
+        let rr = squad(&mut w, a, cc + Vec2::new(40.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let ar = squad(&mut w, a, cc + Vec2::new(60.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let br = squad(&mut w, a, cc + Vec2::new(80.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let bc = squad(&mut w, b, cc + Vec2::new(400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.step(&[
+            Command::CommitRaid { player_id: a, raider_id: rr, target_id: bc },
+            Command::AttackFleet { player_id: a, fleet_id: ar, target_id: bc },
+            Command::BlockadeSystem { player_id: a, fleet_id: br, system_id: b_home },
+        ]);
+        // All soft-rejected: fleets keep Idle, nothing scheduled.
+        for id in [rr, ar, br] {
+            assert!(matches!(w.fleets[&id].order, FleetOrder::Idle), "no order applied vs an ally");
+        }
+        assert!(
+            w.pending_commands(a).iter().all(|p| ![rr, ar, br].contains(&p.fleet)),
+            "no offensive order was scheduled against an ally",
+        );
+    }
+
+    #[test]
+    fn syndicate_membership_knowledge_is_light_delayed() {
+        // are_allied is ground-truth (immediate); the KNOWLEDGE of a join (the ally
+        // tint) reaches the founder only after the new member's light arrives.
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        ally(&mut w, a, b);
+        let since = w.players[&b].syndicate_since;
+        let delay = w.players[&a].command_center.distance(w.players[&b].command_center) / w.config.c;
+        assert!(delay > DT, "homes are far enough apart for a measurable light delay");
+        assert!(w.are_allied(a, b), "alliance is in effect immediately (ground truth)");
+        assert!(!w.known_ally(a, b, w.time), "founder does NOT yet KNOW the join (light in flight)");
+        // Up to just before the light arrives, still unknown (the fog guarantee).
+        while w.time < since + delay - DT {
+            w.step(&[]);
+            assert!(!w.known_ally(a, b, w.time), "membership light hasn't arrived yet");
+        }
+        // Once the light arrives, the ally is known (→ tinted).
+        let known = run_until(&mut w, 5, |w| w.known_ally(a, b, w.time));
+        assert!(known, "the ally becomes known once its membership light arrives");
+    }
+
+    #[test]
+    fn syndicate_leave_promotes_founder_then_dissolves_when_empty() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        // Founder leaves → seat passes to b; a is unaffiliated; no longer allied.
+        w.step(&[Command::LeaveSyndicate { player_id: a }]);
+        assert!(w.players[&a].syndicate.is_none());
+        assert_eq!(w.syndicates[&sid].founder, b, "seat passes to the remaining member");
+        assert!(!w.are_allied(a, b));
+        // Last member leaves → the syndicate is removed.
+        w.step(&[Command::LeaveSyndicate { player_id: b }]);
+        assert!(w.players[&b].syndicate.is_none());
+        assert!(!w.syndicates.contains_key(&sid), "an emptied syndicate dissolves");
+    }
+
+    #[test]
+    fn syndicate_dissolve_clears_every_member() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        // A non-founder cannot dissolve.
+        w.step(&[Command::DissolveSyndicate { player_id: b }]);
+        assert!(w.syndicates.contains_key(&sid), "only the founder may dissolve");
+        // The founder dissolves → every member unaffiliated, roster gone.
+        w.step(&[Command::DissolveSyndicate { player_id: a }]);
+        assert!(w.players[&a].syndicate.is_none() && w.players[&b].syndicate.is_none());
+        assert!(!w.syndicates.contains_key(&sid));
+        assert!(!w.are_allied(a, b));
+    }
+
+    #[test]
+    fn syndicate_serde_round_trips() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert!(w2.syndicates.contains_key(&sid), "syndicate persists");
+        assert_eq!(w2.players[&a].syndicate, Some(sid));
+        assert_eq!(w2.players[&b].syndicate, Some(sid));
+        assert!(w2.are_allied(a, b), "alliance survives a snapshot");
+        assert_eq!(w2.syndicates[&sid].members.len(), 2);
     }
 }

@@ -69,6 +69,10 @@ export interface ViewState {
   battleReports: import("./protocol").BattleReportView[];
   /// §contestable-territory Part 2: retained captures this player participated in.
   captureReports: import("./protocol").CaptureReportView[];
+  /// §syndicates Part 1: the viewer's OWN syndicate roster (null if unaffiliated).
+  syndicate: import("./protocol").SyndicateView | null;
+  /// §syndicates Part 1: pending invitations the viewer may accept.
+  syndicateInvites: import("./protocol").SyndicateInviteView[];
   /// §battle-aftermath: report ids the player has OPENED (viewed → static/dim
   /// marker) and DISMISSED (marker hidden; the report stays in the log).
   /// Client-local, persisted to localStorage across reloads.
@@ -128,6 +132,8 @@ export function initialState(): ViewState {
     battles: [],
     battleReports: [],
     captureReports: [],
+    syndicate: null,
+    syndicateInvites: [],
     battleViewed: new Set(),
     battleDismissed: new Set(),
     timeline: [],

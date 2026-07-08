@@ -57,6 +57,10 @@ const COMMODITY_COLOR: Record<Commodity, number> = {
 };
 const COL_OWN = 0x4fc3ff;
 const COL_OTHER = 0xff7a6b;
+// §syndicates: a SYNDICATE ally — a friendly GREEN, distinct from own cyan and
+// rival red (and from the teal sensor bubbles). Applied per the viewer's
+// light-delayed membership knowledge (the `ally` view flag).
+const COL_ALLY = 0x74e08c;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
@@ -610,7 +614,10 @@ export class Renderer {
       const dyn = dynById.get(sys.id);
       const owner = dyn?.owner ?? null;
       const mine = owner !== null && owner === state.playerId;
-      const rival = owner !== null && !mine;
+      // §syndicates: an ALLY-owned system (per the viewer's light-delayed
+      // knowledge) tints friendly-green; a plain rival stays red.
+      const ally = owner !== null && !mine && !!dyn?.ally;
+      const rival = owner !== null && !mine && !ally;
       const selected = state.selectedSystemId === sys.id;
 
       // Value-rate → glow size; dominant resource → tint (the gradient made visible).
@@ -648,6 +655,11 @@ export class Renderer {
         // Friendly territory: cyan halo + bold ring.
         g.circle(s.x, s.y, 10 + extra).fill({ color: COL_OWN, alpha: 0.10 });
         g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_OWN, alpha: 0.95 });
+      } else if (ally) {
+        // §syndicates: ally territory — a green halo + bold ring, the friendly
+        // treatment in a distinct hue (no rival danger-breath).
+        g.circle(s.x, s.y, 10 + extra).fill({ color: COL_ALLY, alpha: 0.10 });
+        g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_ALLY, alpha: 0.9 });
       } else if (rival) {
         // Rival / contested territory: a slow-breathing red danger halo + a bold
         // DOUBLE ring — unmistakable as hostile-held, and clearly distinct from the
@@ -685,7 +697,7 @@ export class Renderer {
         // still lead via their full brightness + ring.
         bsp.alpha = owner !== null ? 1 : 0.9;
       } else {
-        const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
+        const dotCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_SYSTEM;
         g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
       }
       this.systemsLayer.addChild(g);
@@ -696,11 +708,11 @@ export class Renderer {
         const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
         txt = `${sys.name}  ◆${top.units} ${top.commodity}`;
       }
-      const col = mine ? COL_OWN : rival ? COL_OTHER : 0x55657f;
+      const col = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : 0x55657f;
       const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
       t.anchor.set(0, 0.5);
       t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
-      t.alpha = mine ? 0.95 : rival ? 0.88 : selected ? 0.8 : 0.5;
+      t.alpha = mine ? 0.95 : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
 
       // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
@@ -1178,7 +1190,7 @@ export class Renderer {
     g.clear();
     for (const gh of state.ghosts) {
       if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
-      const color = gh.own ? COL_OWN : COL_OTHER;
+      const color = gh.own ? COL_OWN : gh.ally ? COL_ALLY : COL_OTHER;
       const pts = gh.route.map((w) => this.worldToScreen(w));
       g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
@@ -1584,7 +1596,8 @@ export class Renderer {
     // rival syndicate by owner id, with your ships fixed cyan.)
     const pip = sp.pip;
     pip.clear();
-    const pipCol = own ? COL_OWN : COL_OTHER;
+    // §syndicates: own = cyan, ALLY (light-delayed known member) = green, rival = red.
+    const pipCol = own ? COL_OWN : ghost.ally ? COL_ALLY : COL_OTHER;
     const half = this.fleetHitRadius(ghost); // half the MARKER's current on-screen size (formation included)
     const pipR = Math.max(3.2, Math.min(8, half * 0.14));
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
@@ -1663,7 +1676,7 @@ export class Renderer {
       const h = 12;
       const bx = halfB * 0.66;
       const by = halfB * 0.55;
-      const edge = own ? COL_OWN : COL_OTHER;
+      const edge = own ? COL_OWN : ghost.ally ? COL_ALLY : COL_OTHER;
       const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
       sp.badge
         .roundRect(bx - w / 2, by - h / 2, w, h, 5)

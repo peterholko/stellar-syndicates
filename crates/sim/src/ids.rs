@@ -89,6 +89,44 @@ impl<'de> Deserialize<'de> for EntityId {
     }
 }
 
+/// Identifies a [`crate::syndicate::Syndicate`] (an alliance). Allocated
+/// deterministically by the [`crate::world::World`] from its own counter (kept
+/// separate from the entity counter). Like the other ids it (de)serialises as a
+/// **decimal string** so the JS client never loses precision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SyndicateId(pub u64);
+
+impl std::fmt::Display for SyndicateId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "S{}", self.0)
+    }
+}
+
+impl Serialize for SyndicateId {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for SyndicateId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl de::Visitor<'_> for V {
+            type Value = SyndicateId;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a u64 as a decimal string or number")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<SyndicateId, E> {
+                v.parse::<u64>().map(SyndicateId).map_err(de::Error::custom)
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<SyndicateId, E> {
+                Ok(SyndicateId(v))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -240,10 +240,33 @@ function buildRail(): void {
     const b = (e.target as HTMLElement).closest("button");
     if (b?.dataset.tab) setRailTab(b.dataset.tab as RailTab);
   });
-  // Top-navbar destinations (hub-wide, system-independent): Market + check-in Log.
+  // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate + Log.
   $("nav-market").addEventListener("click", toggleMarket);
+  $("nav-syndicate").addEventListener("click", toggleSyndicate);
   $("nav-log").addEventListener("click", toggleCheckin);
   $("market-close").addEventListener("click", closeMarket);
+  // §syndicates: delegated actions inside the alliance panel.
+  $("syndicate-panel").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button");
+    if (!b) return;
+    const act = b.dataset.sy;
+    if (act === "close") { closeSyndicate(); return; }
+    if (!net) return;
+    if (act === "create") {
+      const name = ($("sy-create-name") as HTMLInputElement | null)?.value.trim() || "Syndicate";
+      net.send({ type: "CreateSyndicate", name });
+    } else if (act === "invite") {
+      const name = ($("sy-invite-name") as HTMLInputElement | null)?.value.trim();
+      if (name) { net.send({ type: "InviteToSyndicate", name }); ($("sy-invite-name") as HTMLInputElement).value = ""; }
+    } else if (act === "accept") {
+      const sid = b.dataset.sid;
+      if (sid) net.send({ type: "AcceptSyndicateInvite", syndicate_id: sid });
+    } else if (act === "leave") {
+      net.send({ type: "LeaveSyndicate" });
+    } else if (act === "dissolve") {
+      net.send({ type: "DissolveSyndicate" });
+    }
+  });
 }
 
 // --- Ship details panel — a FOG-AWARE master→detail card for the SELECTED ship.
@@ -662,6 +685,71 @@ function closeMarket(): void {
 function toggleMarket(): void {
   if ($("market").classList.contains("is-open")) closeMarket();
   else openMarket();
+}
+
+// --- §syndicates: the alliance panel (top-navbar destination) ------------------
+// Create / invite (by corp name) / accept / leave / dissolve. Strictly owner-only
+// content — the View only carries YOUR roster + YOUR pending invites, never a
+// rival's. Non-engagement itself is mechanical (server-side); this panel is how
+// you form the pact. Re-rendered only when the roster/invites CHANGE (a signature
+// guard), so a half-typed name is never wiped by a 10 Hz View.
+let lastSyndicateSig = "";
+function openSyndicate(): void {
+  $("syndicate-panel").classList.add("is-open");
+  $("nav-syndicate").classList.add("is-active");
+  lastSyndicateSig = ""; // force a fresh render on open
+  updateSyndicatePanel();
+}
+function closeSyndicate(): void {
+  $("syndicate-panel").classList.remove("is-open");
+  $("nav-syndicate").classList.remove("is-active");
+}
+function toggleSyndicate(): void {
+  if ($("syndicate-panel").classList.contains("is-open")) closeSyndicate();
+  else openSyndicate();
+}
+function updateSyndicatePanel(): void {
+  const el = $("syndicate-panel");
+  if (!el.classList.contains("is-open")) return;
+  const s = state.syndicate;
+  const invites = state.syndicateInvites;
+  const sig = JSON.stringify([s, invites, state.playerId]);
+  if (sig === lastSyndicateSig && el.innerHTML) return; // no roster change → keep DOM (+ any typing)
+  lastSyndicateSig = sig;
+  let body = "";
+  if (s) {
+    const roster = s.members
+      .map((m) => {
+        const tag =
+          m.id === state.playerId ? `<span class="you">you</span>`
+          : m.id === s.founder ? `<span class="fdr">founder</span>` : "";
+        return `<div class="sy-row">🟢 <span>${esc(m.name)}</span>${tag}</div>`;
+      })
+      .join("");
+    body += `<div><div class="sy-sub">Syndicate</div><div class="sy-name">🤝 ${esc(s.name)}</div></div>`;
+    body += `<div><div class="sy-sub">Members (${s.members.length})</div>${roster}</div>`;
+    if (s.is_founder) {
+      const invited = s.invited.length ? `<div class="sy-note">Invited: ${s.invited.map(esc).join(", ")}</div>` : "";
+      body += `<div><div class="sy-sub">Invite a corp (by name)</div><div class="sy-inv"><input id="sy-invite-name" type="text" placeholder="corp name" maxlength="32" />` +
+        `<button class="act" data-sy="invite">Invite</button></div>${invited}</div>`;
+    }
+    const dissolve = s.is_founder ? `<button class="act act--danger" data-sy="dissolve">Dissolve</button>` : "";
+    body += `<div class="sy-inv"><button class="act act--danger" data-sy="leave">Leave</button>${dissolve}</div>`;
+    body += `<div class="sy-note">Members never auto-engage each other, and can't raid / attack / blockade one another. Ally ships & systems tint <b style="color:#9df0b3">green</b> as their membership light reaches you.</div>`;
+  } else {
+    body += `<div class="sy-note">A syndicate is a mutual non-engagement pact: members can't raid, attack, or blockade each other, and their pickets leave allies alone.</div>`;
+    body += `<div><div class="sy-sub">Found a syndicate</div><div class="sy-inv"><input id="sy-create-name" type="text" placeholder="syndicate name" maxlength="32" />` +
+      `<button class="act act--primary" data-sy="create">Create</button></div></div>`;
+    if (invites.length) {
+      const list = invites
+        .map((i) => `<div class="sy-row">🤝 <span>${esc(i.name)}</span><button class="act" data-sy="accept" data-sid="${esc(i.id)}" style="margin-left:auto">Accept</button></div>`)
+        .join("");
+      body += `<div><div class="sy-sub">Invitations</div>${list}</div>`;
+    } else {
+      body += `<div class="sy-note">No pending invitations.</div>`;
+    }
+  }
+  el.innerHTML = `<div class="pp-head"><b>SYNDICATE</b><button class="pp-close" data-sy="close" title="Close">✕</button></div><div class="pp-body">${body}</div>`;
 }
 
 // --- Wormhole Hub detail panel (§hub-art) --------------------------------------
@@ -1684,6 +1772,8 @@ function installInteraction(): void {
       toggleRail("doctrine");
     } else if (e.key === "l" || e.key === "L") {
       toggleCheckin();
+    } else if (e.key === "y" || e.key === "Y") {
+      toggleSyndicate(); // §syndicates: alliance panel
     } else if (e.key === "Escape") {
       // In the System View, Escape steps out one level: planet panel → system → galaxy.
       if ($("planet-panel").classList.contains("is-open")) {
@@ -1692,6 +1782,7 @@ function installInteraction(): void {
         exitSystem();
       } else {
         closeMarket();
+        closeSyndicate();
         closeRail();
         closeHubPanel();
         deselectShip();
@@ -2741,6 +2832,8 @@ function join(): void {
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
           state.captureReports = msg.capture_reports;
+          state.syndicate = msg.syndicate ?? null;
+          state.syndicateInvites = msg.syndicate_invites ?? [];
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
@@ -2756,6 +2849,9 @@ function join(): void {
           // The selected-ship panel keeps the information AGE ticking (and handles a
           // contact passing out of view) while it's open.
           if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
+          // §syndicates: refresh the alliance roster/invites if the panel is open
+          // (guarded by a signature so a half-typed name survives).
+          if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
           // §management-home: inside the System View, refresh the management
           // column + the structure markers (a cached no-op unless tiers changed).
           updateSysviewDynamic();

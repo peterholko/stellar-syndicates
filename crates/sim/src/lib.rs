@@ -28,6 +28,7 @@ pub mod movement;
 pub mod rng;
 pub mod ship;
 pub mod standing;
+pub mod syndicate;
 pub mod world;
 
 pub use build::{BuildJob, BuildKind, SystemUpgrade};
@@ -43,7 +44,7 @@ pub use event::{
     BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
 };
 pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
-pub use ids::{EntityId, PlayerId};
+pub use ids::{EntityId, PlayerId, SyndicateId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
 pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
@@ -54,5 +55,6 @@ pub use ship::{
     ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
+pub use syndicate::{syndicate_cap, Syndicate, SYNDICATE_MAX_FRAC, SYNDICATE_MIN_CAP};
 pub use world::{BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView, World};
 
