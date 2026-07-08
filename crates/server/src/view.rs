@@ -370,9 +370,12 @@ impl PositionHistory {
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
                 posture: None,
-                // §syndicates: ally tint is injected by the game loop from
-                // authoritative light-delayed membership (this view can't see it).
+                // §syndicates: ally tint (Part 1) + garrison status (Part 3) are
+                // injected by the game loop from authoritative state (this
+                // history-only view can't see them).
                 ally: false,
+                garrison_host: None,
+                garrison_fed: false,
             });
         }
         // Deterministic ordering by id.
@@ -648,9 +651,11 @@ pub fn filter_systems(
                         best
                     })
                 },
-                // §syndicates: injected by the game loop from light-delayed
-                // membership (composed against this light-gated `owner`).
+                // §syndicates: ally tint (Part 1) + hosted-garrison indicator
+                // (Part 3) are injected by the game loop from authoritative state.
                 ally: false,
+                ally_garrison_ships: 0,
+                ally_garrison_fed: false,
             }
         })
         .collect()

@@ -529,6 +529,14 @@ pub struct SystemStateView {
     /// NOT grant any owner-only data (stockpile/tiers stay private in Part 1).
     #[serde(default)]
     pub ally: bool,
+    /// §syndicates Part 3: OWNER-ONLY — an ally GARRISON hosted at THIS system (the
+    /// coalition shield you're feeding). Total ally garrison ships stationed here,
+    /// and whether their Provisions upkeep is currently covered. `0` = none; rivals
+    /// always see 0 (a private detail of your own system).
+    #[serde(default)]
+    pub ally_garrison_ships: u32,
+    #[serde(default)]
+    pub ally_garrison_fed: bool,
 }
 
 /// The viewer's SYNDICATE (§syndicates Part 1) — their own roster, delivered in
@@ -688,6 +696,14 @@ pub struct GhostView {
     /// fresh join/leave isn't seen early. Drives the friendly ally tint/pip.
     #[serde(default)]
     pub ally: bool,
+    /// §syndicates Part 3: OWNER-ONLY. When this is one of YOUR fleets stationed as
+    /// an ally GARRISON, the host system it defends; `None` otherwise (and always
+    /// for rivals — a private status). `garrison_fed` = the host is covering its
+    /// Provisions upkeep (else its defense contribution is suspended).
+    #[serde(default)]
+    pub garrison_host: Option<EntityId>,
+    #[serde(default)]
+    pub garrison_fed: bool,
 }
 
 /// Messages pushed by the server to a single player's connection.

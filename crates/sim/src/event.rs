@@ -187,6 +187,13 @@ pub enum EventPayload {
     /// recovers the tick food is available again); `fed = true` is the recovery.
     /// Emitted only on TRANSITIONS, never per-tick (no spam).
     HabitatSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
+    /// §syndicates Part 3: an ALLY GARRISON's supply state changed at a host system.
+    /// `owner` = the garrison's SENDER (whose fleet it is — they learn their shield
+    /// went hungry/recovered); `host` = the system feeding it; `fed = false` means
+    /// the host couldn't cover this tick's Provisions upkeep so the garrison's
+    /// defense contribution is SUSPENDED (never destroyed — it recovers when fed).
+    /// Emitted only on TRANSITIONS, per (sender, host) pair.
+    GarrisonSupplyChanged { owner: PlayerId, host: EntityId, fed: bool },
     /// A Defense Platform engaged a hostile raider attacking one of the owner's
     /// convoys inside its protection radius (§buildings step 2c). OWNER-ONLY
     /// detail (tiers lost, result) — the ATTACKER learns only the standard

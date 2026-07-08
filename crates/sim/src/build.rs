@@ -181,6 +181,14 @@ pub const HABITAT_OUTPUT_MULT: f64 = 1.25;
 /// natural first Habitats are self-sustaining, never a starving home. Tunable.
 pub const HABITAT_UPKEEP_PER_TIER: f64 = 0.15;
 
+/// §syndicates Part 3: Provisions consumed per second PER SHIP of an ALLY GARRISON
+/// stationed at a host system, drawn from the HOST's own stockpile each tick.
+/// Hosting a coalition shield means FEEDING it — a cut supply line UNFEEDS the
+/// garrison (its defense contribution suspends until fed; nothing is destroyed).
+/// Sized in the Habitat-upkeep ballpark so a modest garrison is affordable but a
+/// large one strains a small host. Playtest placeholder. Tunable.
+pub const GARRISON_UPKEEP_PER_SHIP: f64 = 0.05;
+
 // --- DEFENSE PLATFORM (§buildings step 2c) ------------------------------------
 
 /// The protection radius a Defense Platform projects around its system (~60% of

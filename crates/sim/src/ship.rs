@@ -442,6 +442,18 @@ pub struct Fleet {
     /// every old snapshot loads with today's behaviour (byte-preserving).
     #[serde(default)]
     pub posture: crate::doctrine::EngagementPosture,
+    /// §syndicates Part 3: when this fleet is an ALLY GARRISON (stationed at an
+    /// ally's system), whether the HOST is currently feeding it its Provisions
+    /// upkeep. Recomputed every tick (like `habitat_fed`); UNFED = its defense
+    /// contribution suspends (never destroyed). Meaningless (always `true`) for a
+    /// fleet that isn't a garrison. serde default `true` so old snaps load fed.
+    #[serde(default = "default_true")]
+    pub garrison_fed: bool,
+}
+
+/// serde default for `Fleet::garrison_fed` (old snapshots load fed).
+fn default_true() -> bool {
+    true
 }
 
 impl Fleet {
@@ -472,6 +484,7 @@ impl Fleet {
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
             posture: crate::doctrine::EngagementPosture::Passive,
+            garrison_fed: true,
         }
     }
 

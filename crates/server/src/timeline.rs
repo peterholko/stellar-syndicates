@@ -211,6 +211,25 @@ impl Timeline {
                     };
                     self.push(*owner, e.time, sev, text);
                 }
+                // §syndicates Part 3: an ally GARRISON's supply flipped at a HOST
+                // system — OWNER-ONLY (the sender, whose fleet it is), light-delayed
+                // from the distant host to their command center (NOT own-economy —
+                // the garrison is far away). Transitions only, so no spam.
+                EventPayload::GarrisonSupplyChanged { owner, host, fed } => {
+                    if let (Some(cc), Some(hpos)) = (
+                        world.players.get(owner).map(|c| c.command_center),
+                        world.systems.iter().find(|s| s.id == *host).map(|s| s.pos),
+                    ) {
+                        let name = system_name(world, *host);
+                        let observe = e.time + hpos.distance(cc) / c;
+                        let (sev, text) = if *fed {
+                            (TimelineSeverity::Good, format!("Your garrison at ally {name} is fed again — back on defense."))
+                        } else {
+                            (TimelineSeverity::Warn, format!("Your garrison at ally {name} is UNFED — its defense is suspended until the host has Provisions (nothing is lost)."))
+                        };
+                        self.push(*owner, observe, sev, text);
+                    }
+                }
                 // A Defense Platform fought (§buildings step 2c) — OWNER-ONLY
                 // detail (tiers lost / result), light-delayed from the battle
                 // like any combat news. The attacker's side of the story arrives

@@ -617,6 +617,46 @@ impl World {
         v.syndicate.is_some() && v.syndicate == known
     }
 
+    /// §syndicates Part 3: if `fleet` is a stationed ally GARRISON (a combatant,
+    /// Idle, within a platform radius of a syndicate ALLY's system), the host
+    /// system id; `None` otherwise. Used to surface the sender's garrison status.
+    pub fn garrison_host_of(&self, fleet: EntityId) -> Option<EntityId> {
+        let f = self.fleets.get(&fleet)?;
+        if !f.is_combatant() || !matches!(f.order, FleetOrder::Idle) {
+            return None;
+        }
+        self.systems
+            .iter()
+            .find(|s| {
+                s.owner.is_some_and(|o| self.are_allied(f.owner, o))
+                    && f.pos.distance(s.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+            })
+            .map(|s| s.id)
+    }
+
+    /// §syndicates Part 3: the ally GARRISON hosted at `system` — `(total ships,
+    /// all-fed)` — or `None` if there's no ally garrison there. For the HOST's
+    /// owner-only "coalition shield you're feeding" readout.
+    pub fn hosted_garrison(&self, system: EntityId) -> Option<(u32, bool)> {
+        let sys = self.systems.iter().find(|s| s.id == system)?;
+        let host_owner = sys.owner?;
+        let (mut ships, mut all_fed, mut any) = (0u32, true, false);
+        for f in self.fleets.values() {
+            if f.is_combatant()
+                && matches!(f.order, FleetOrder::Idle)
+                && self.are_allied(f.owner, host_owner)
+                && f.pos.distance(sys.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+            {
+                ships += f.total_count();
+                any = true;
+                if !f.garrison_fed {
+                    all_fed = false;
+                }
+            }
+        }
+        any.then_some((ships, all_fed))
+    }
+
     /// Change a corp's membership, recording the 2-state light-delay bookkeeping
     /// (prev + since) so distant viewers learn of the change only when its light
     /// arrives. No-op if the state is unchanged.
@@ -757,6 +797,12 @@ impl World {
         // 3. Integrate continuous movement (flip-and-burn, patrols, and raider
         //    interception pursuit).
         self.integrate_movement();
+
+        // 3b. §syndicates Part 3: feed ally GARRISONS from their HOST systems and
+        //     set each garrison's fed/unfed flag for THIS tick's defense. Before the
+        //     combat passes (which read the flag to include only FED garrisons), and
+        //     after movement (so stationing is this tick's truth).
+        self.resolve_garrison_upkeep(&mut events);
 
         // 4. Resolve raids in true space (contact → convoy lost; convoy reaches
         //    the hub → escape). A raided trade convoy's goods are simply lost.
@@ -1646,7 +1692,15 @@ impl World {
                         // (its MoveTo completes → Idle). A patrol / picket
                         // defending nearby DOES join.
                         && !matches!(f.order, FleetOrder::MoveTo { .. })
-                        && (f.owner == a_owner || f.owner == d_owner)
+                        // The two combatants' own fleets, OR a syndicate ALLY of the
+                        // DEFENDER as a stationed, FED, non-Avoid GARRISON (§syndicates
+                        // Part 3) — it joins the DEFENDER side.
+                        && (f.owner == a_owner
+                            || f.owner == d_owner
+                            || (matches!(f.order, FleetOrder::Idle)
+                                && f.garrison_fed
+                                && self.are_allied(f.owner, d_owner)
+                                && self.players.get(&f.owner).is_some_and(|c| c.doctrine.engagement != EngagementPolicy::Avoid)))
                         && f.pos.distance(pos) <= BATTLE_JOIN_RADIUS
                 })
                 .map(|(fid, f)| (*fid, f.owner == a_owner))
@@ -1945,6 +1999,72 @@ impl World {
             .unwrap_or(false)
     }
 
+    /// §syndicates Part 3: feed ALLY GARRISONS. A COMBATANT fleet stationed (Idle)
+    /// within `DEFENSE_PLATFORM_RADIUS` of a syndicate ALLY's system is a garrison:
+    /// the HOST draws `GARRISON_UPKEEP_PER_SHIP × ships × dt` Provisions from its
+    /// OWN stockpile to feed it. All-or-nothing per host (a cut supply line unfeeds
+    /// the whole garrison there): if the host can't cover the total, every garrison
+    /// fleet there goes UNFED — its defense contribution SUSPENDS (never destroyed;
+    /// recovers when fed). Deterministic + async-fair (runs online or off). The flag
+    /// is recomputed every tick BEFORE the combat passes read it.
+    fn resolve_garrison_upkeep(&mut self, events: &mut Vec<Event>) {
+        let radius = crate::build::DEFENSE_PLATFORM_RADIUS;
+        let prov = crate::cargo::Commodity::Provisions;
+        // 1. Group garrison fleets by host system (deterministic; first host by
+        //    system order — one host per fleet).
+        let mut by_host: BTreeMap<EntityId, Vec<(EntityId, PlayerId, u32)>> = BTreeMap::new();
+        for (fid, f) in &self.fleets {
+            if !f.is_combatant() || !matches!(f.order, FleetOrder::Idle) {
+                continue;
+            }
+            for sys in &self.systems {
+                let Some(so) = sys.owner else { continue };
+                if self.are_allied(f.owner, so) && f.pos.distance(sys.pos) <= radius {
+                    by_host.entry(sys.id).or_default().push((*fid, f.owner, f.total_count()));
+                    break;
+                }
+            }
+        }
+        // 2. Per host: draw the total upkeep if the stockpile covers it, else the
+        //    whole garrison there goes unfed.
+        let mut new_fed: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut host_of: BTreeMap<EntityId, EntityId> = BTreeMap::new();
+        for (sid, garrisons) in &by_host {
+            let total_ships: u32 = garrisons.iter().map(|(_, _, n)| *n).sum();
+            let upkeep = crate::build::GARRISON_UPKEEP_PER_SHIP * total_ships as f64 * DT;
+            let fed = {
+                let sys = self.systems.iter_mut().find(|s| s.id == *sid).expect("host exists");
+                let have = sys.stockpile.get(&prov).copied().unwrap_or(0.0);
+                let fed = have + 1e-12 >= upkeep;
+                if fed {
+                    *sys.stockpile.entry(prov).or_insert(0.0) -= upkeep;
+                }
+                fed
+            };
+            for (gid, _, _) in garrisons {
+                new_fed.insert(*gid, fed);
+                host_of.insert(*gid, *sid);
+            }
+        }
+        // 3. Collect fed/unfed TRANSITIONS (owner learns), then write the flags;
+        //    fleets that aren't garrisons this tick reset to fed = true.
+        let now = self.time;
+        let mut transitions: Vec<(PlayerId, EntityId, bool)> = Vec::new();
+        for (gid, &fed) in &new_fed {
+            if let Some(f) = self.fleets.get(gid)
+                && f.garrison_fed != fed
+            {
+                transitions.push((f.owner, host_of[gid], fed));
+            }
+        }
+        for f in self.fleets.values_mut() {
+            f.garrison_fed = new_fed.get(&f.id).copied().unwrap_or(true);
+        }
+        for (owner, host, fed) in transitions {
+            events.push(Event::new(now, EventPayload::GarrisonSupplyChanged { owner, host, fed }));
+        }
+    }
+
     /// §contestable-territory Part 1 (BLOCKADE): interdiction without capture.
     ///
     /// A fleet on a `Blockade` order that has taken STATION on a rival system
@@ -2002,10 +2122,18 @@ impl World {
                 .iter()
                 .filter(|(gid, g)| {
                     **gid != aid
-                        && g.owner == d_owner
                         && g.is_combatant()
                         && !engaged.contains(gid)
                         && g.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+                        // The host's OWN fleets always defend; a syndicate ALLY's
+                        // fleet joins as a GARRISON only if it's stationed (Idle),
+                        // currently FED, and its OWNER's doctrine isn't Avoid
+                        // (§syndicates Part 3 — "per its owner's doctrine").
+                        && (g.owner == d_owner
+                            || (matches!(g.order, FleetOrder::Idle)
+                                && g.garrison_fed
+                                && self.are_allied(g.owner, d_owner)
+                                && self.players.get(&g.owner).is_some_and(|c| c.doctrine.engagement != EngagementPolicy::Avoid)))
                 })
                 .map(|(gid, _)| *gid)
                 .collect();
@@ -3809,9 +3937,11 @@ impl World {
                     ));
                 }
                 TradeMission::DeliverToSystem { system } => {
-                    // Deposit into the destination system's stockpile — but ONLY if
-                    // the convoy's owner still owns it on arrival (a system can be
-                    // lost mid-transit; we don't gift cargo to a rival who took it).
+                    // Deposit into the destination system's stockpile — but ONLY if,
+                    // on arrival, the destination is still the convoy owner's OR a
+                    // syndicate ALLY's (§syndicates Part 3 AID — a member may supply
+                    // an ally's stockpile; blockades still interdict the run upstream).
+                    // We don't gift cargo to a rival who took the system mid-transit.
                     // STORAGE CAP (§buildings step 2): deliver up to the depot's
                     // remaining headroom (whole units); any EXCESS stays aboard and
                     // the SAME convoy carries it onward to the hub to sell — still
@@ -3819,10 +3949,11 @@ impl World {
                     // (This overflow rule is deliberate: of the "sell it / leave it"
                     // options, an automatic sale is the one that can't deadlock a
                     // full depot or strand cargo.)
+                    let allies = self.allies_of(ship.owner);
                     let delivered = self
                         .systems
                         .iter_mut()
-                        .find(|s| s.id == system && s.owner == Some(ship.owner))
+                        .find(|s| s.id == system && s.owner.is_some_and(|o| o == ship.owner || allies.contains(&o)))
                         .map(|sys| {
                             let stored = (cargo.units as f64).min(sys.storage_headroom()).floor() as u32;
                             if stored > 0 {
@@ -8714,5 +8845,189 @@ mod tests {
         assert_eq!(w2.players[&b].syndicate, Some(sid));
         assert!(w2.are_allied(a, b), "alliance survives a snapshot");
         assert_eq!(w2.syndicates[&sid].members.len(), 2);
+    }
+
+    // ===================================================================
+    // §SYNDICATES Part 3 — garrison + aid
+    // ===================================================================
+
+    /// Position of a system by id (test helper).
+    fn sys_pos(w: &World, id: EntityId) -> Vec2 {
+        w.systems.iter().find(|s| s.id == id).unwrap().pos
+    }
+    /// Set a system's Provisions stockpile and clear its deposits (so production
+    /// can't refill it mid-test — deterministic upkeep behaviour).
+    fn set_provisions_no_production(w: &mut World, id: EntityId, units: f64) {
+        let s = w.systems.iter_mut().find(|s| s.id == id).unwrap();
+        s.deposits.clear();
+        s.stockpile.clear();
+        if units > 0.0 {
+            s.stockpile.insert(Commodity::Provisions, units);
+        }
+    }
+
+    #[test]
+    fn ally_garrison_draws_host_provisions_and_unfeeds_on_shortfall() {
+        let mut w = test_world();
+        let (host, sender) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: host, name: "Host".into() },
+            Command::AddPlayer { id: sender, name: "Send".into() },
+        ]);
+        ally(&mut w, host, sender);
+        let hsys = w.players[&host].home_system.unwrap();
+        set_provisions_no_production(&mut w, hsys, 100.0);
+        let hpos = sys_pos(&w, hsys);
+        // A sender combatant fleet STATIONED at the host system = an ally garrison.
+        let garr = squad(&mut w, sender, hpos, ShipKind::Corvette, 2, FleetOrder::Idle);
+        let before = w.systems.iter().find(|s| s.id == hsys).unwrap().stockpile[&Commodity::Provisions];
+        w.step(&[]);
+        let after = w.systems.iter().find(|s| s.id == hsys).unwrap().stockpile[&Commodity::Provisions];
+        assert!(after < before, "the HOST feeds the garrison from its own Provisions ({before} → {after})");
+        assert!(w.fleets[&garr].garrison_fed, "a fed garrison stays fed");
+        // Drain the host → the garrison UNFEEDS (suspended, never destroyed).
+        set_provisions_no_production(&mut w, hsys, 0.0);
+        w.step(&[]);
+        assert!(!w.fleets[&garr].garrison_fed, "no Provisions → the garrison goes UNFED");
+        assert!(w.fleets.contains_key(&garr), "unfed suspends, never destroys");
+    }
+
+    #[test]
+    fn fed_ally_garrison_joins_the_host_defense() {
+        let mut w = test_world();
+        let (atk, def, friend) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+        ]);
+        ally(&mut w, def, friend);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0); // no platform
+        set_provisions_no_production(&mut w, sys, 100.0);
+        let pos = sys_pos(&w, sys);
+        let garr = squad(&mut w, friend, pos, ShipKind::Corvette, 2, FleetOrder::Idle);
+        blockader_on_station(&mut w, atk, sys, 2);
+        let joined = run_until(&mut w, 5, |w| w.engagements.values().any(|e| e.defenders.contains(&garr)));
+        assert!(joined, "a FED ally garrison joins the host's establishment defense");
+    }
+
+    #[test]
+    fn unfed_ally_garrison_suspends_its_defense() {
+        let mut w = test_world();
+        let (atk, def, friend) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+        ]);
+        ally(&mut w, def, friend);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0);
+        set_provisions_no_production(&mut w, sys, 0.0); // host can't feed
+        let pos = sys_pos(&w, sys);
+        let garr = squad(&mut w, friend, pos, ShipKind::Corvette, 2, FleetOrder::Idle);
+        blockader_on_station(&mut w, atk, sys, 2);
+        for _ in 0..(3 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(!w.fleets[&garr].garrison_fed, "no host Provisions → unfed");
+        assert!(
+            !w.engagements.values().any(|e| e.defenders.contains(&garr)),
+            "an UNFED garrison sits the fight out (contribution suspended)",
+        );
+        assert!(w.fleets.contains_key(&garr), "never destroyed");
+    }
+
+    #[test]
+    fn ally_garrison_is_sender_controlled_not_host() {
+        let mut w = test_world();
+        let (host, sender) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: host, name: "Host".into() },
+            Command::AddPlayer { id: sender, name: "Send".into() },
+        ]);
+        ally(&mut w, host, sender);
+        let hsys = w.players[&host].home_system.unwrap();
+        let hpos = sys_pos(&w, hsys);
+        let garr = squad(&mut w, sender, hpos, ShipKind::Corvette, 1, FleetOrder::Idle);
+        // The HOST cannot command an ally's garrison (not their fleet) → soft-reject.
+        w.step(&[Command::MoveShip { player_id: host, ship_id: garr, dest: Vec2::new(9000.0, 0.0) }]);
+        assert!(matches!(w.fleets[&garr].order, FleetOrder::Idle), "the host cannot move an ally's garrison");
+        assert!(w.pending_commands(host).iter().all(|p| p.fleet != garr), "no host order was scheduled");
+        // The SENDER commands + recalls it (their fleet; light-delayed).
+        let home = w.players[&sender].home;
+        w.step(&[Command::MoveShip { player_id: sender, ship_id: garr, dest: home }]);
+        assert!(w.pending_commands(sender).iter().any(|p| p.fleet == garr), "the SENDER commands + recalls it");
+    }
+
+    #[test]
+    fn ally_aid_delivers_to_the_ally_stockpile() {
+        let mut w = test_world();
+        let (giver, friend) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: giver, name: "Give".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+        ]);
+        ally(&mut w, giver, friend);
+        let asys = w.players[&friend].home_system.unwrap();
+        set_provisions_no_production(&mut w, asys, 0.0); // measure the delivery cleanly
+        let apos = sys_pos(&w, asys);
+        // A GIVER convoy arriving at the ALLY's system with a deliver mission.
+        let cid = w.alloc_entity_id();
+        let mut convoy = Fleet::single(cid, giver, ShipKind::Convoy, apos, FleetOrder::Idle, Some(crate::cargo::Cargo { commodity: Commodity::Provisions, units: 20 }));
+        convoy.mission = Some(TradeMission::DeliverToSystem { system: asys });
+        w.fleets.insert(cid, convoy);
+        w.step(&[]); // resolve_trade_arrivals deposits into the ALLY's stockpile
+        let got = w.systems.iter().find(|s| s.id == asys).unwrap().stockpile.get(&Commodity::Provisions).copied().unwrap_or(0.0);
+        assert!(got >= 20.0, "aid credits the ALLY's stockpile (got {got})");
+        assert!(!w.fleets.contains_key(&cid), "the aid convoy delivered and was consumed");
+    }
+
+    #[test]
+    fn blockade_still_interdicts_ally_aid() {
+        let mut w = test_world();
+        let (atk, def, giver) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+            Command::AddPlayer { id: giver, name: "Give".into() },
+        ]);
+        ally(&mut w, def, giver);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0);
+        let pos = sys_pos(&w, sys);
+        blockader_on_station(&mut w, atk, sys, 1);
+        // A GIVER aid convoy inbound to the ally's (soon-blockaded) system.
+        let cid = w.alloc_entity_id();
+        let mut convoy = Fleet::single(cid, giver, ShipKind::Convoy, pos + Vec2::new(3000.0, 0.0), FleetOrder::MoveTo { dest: pos }, Some(crate::cargo::Cargo { commodity: Commodity::Provisions, units: 10 }));
+        convoy.mission = Some(TradeMission::DeliverToSystem { system: sys });
+        w.fleets.insert(cid, convoy);
+        w.step(&[]); // resolve_blockades establishes + re-targets the aid convoy
+        let dest = match w.fleets[&cid].order {
+            FleetOrder::MoveTo { dest } => dest,
+            _ => panic!("held aid convoy should still be moving (to standoff)"),
+        };
+        assert!(
+            (dest.distance(pos) - BLOCKADE_STANDOFF_RADIUS).abs() < 1.0,
+            "ally aid is interdicted at the standoff ring — relief is military-first",
+        );
+    }
+
+    #[test]
+    fn garrison_fed_flag_persists_serde() {
+        let mut w = test_world();
+        let (host, sender) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: host, name: "Host".into() },
+            Command::AddPlayer { id: sender, name: "Send".into() },
+        ]);
+        ally(&mut w, host, sender);
+        let hsys = w.players[&host].home_system.unwrap();
+        set_provisions_no_production(&mut w, hsys, 0.0);
+        let hpos = sys_pos(&w, hsys);
+        let garr = squad(&mut w, sender, hpos, ShipKind::Corvette, 1, FleetOrder::Idle);
+        w.step(&[]); // → unfed (no Provisions)
+        assert!(!w.fleets[&garr].garrison_fed);
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert!(!w2.fleets[&garr].garrison_fed, "garrison fed/unfed survives a snapshot");
     }
 }

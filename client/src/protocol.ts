@@ -98,6 +98,11 @@ export interface SystemStateView {
   /// §syndicates Part 1: the (light-gated known) owner is a SYNDICATE ally as WE
   /// know it — drives the friendly ally tint. No owner-only data comes with it.
   ally?: boolean;
+  /// §syndicates Part 3: OWNER-ONLY — an ally garrison hosted at THIS system (the
+  /// coalition shield you're feeding): total ally garrison ships + whether their
+  /// Provisions upkeep is covered. `0` = none; rivals always see 0.
+  ally_garrison_ships?: number;
+  ally_garrison_fed?: boolean;
 }
 
 /// A stored scout-intel snapshot of a rival system's fortifications.
@@ -337,6 +342,11 @@ export interface GhostView {
   // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
   // (light-delayed membership) — drives the friendly ally tint/pip.
   ally?: boolean;
+  // §syndicates Part 3: OWNER-ONLY. When this is YOUR fleet stationed as an ally
+  // garrison, the host system id it defends (else null); `garrison_fed` = the host
+  // is covering its Provisions upkeep (else its defense is suspended).
+  garrison_host?: EntityId | null;
+  garrison_fed?: boolean;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);

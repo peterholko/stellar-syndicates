@@ -642,6 +642,12 @@ impl GameLoop {
             for g in ghosts.iter_mut() {
                 if g.own {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                    // §syndicates Part 3: OWNER-ONLY garrison status — if this fleet
+                    // is stationed as an ally garrison, its host + fed state.
+                    if let Some(host) = self.world.garrison_host_of(g.id) {
+                        g.garrison_host = Some(host);
+                        g.garrison_fed = self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
+                    }
                 }
                 // §syndicates Part 1: friendly ALLY tint — the owner (already on
                 // the ghost) is a syndicate member as THIS viewer knows it
@@ -706,6 +712,14 @@ impl GameLoop {
             // both light-gates; grants no owner-only data (Part 1 is tint only).
             for sv in systems.iter_mut() {
                 sv.ally = sv.owner.is_some_and(|o| self.world.known_ally(player_id, o, now));
+                // §syndicates Part 3: OWNER-ONLY hosted-garrison indicator (the
+                // coalition shield you're feeding). Only for your OWN systems.
+                if sv.owner == Some(player_id)
+                    && let Some((ships, fed)) = self.world.hosted_garrison(sv.id)
+                {
+                    sv.ally_garrison_ships = ships;
+                    sv.ally_garrison_fed = fed;
+                }
             }
             // §syndicates Part 1: the viewer's OWN roster + pending invites (fresh
             // private state, never a rival's private roster).

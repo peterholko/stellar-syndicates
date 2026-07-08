@@ -593,8 +593,23 @@ function ownBody(g: GhostView): string {
   parts.push(`<div class="sp-line dim sp-legend">${legend.join(" · ")}</div>`);
   parts.push(transitSection(g));
   parts.push(postureSection(g));
+  parts.push(garrisonSection(g));
   parts.push(fleetManagementSection(g));
   return parts.join("");
+}
+
+// §syndicates Part 3: if this OWN fleet is stationed as an ally GARRISON, show its
+// host + supply state (fed = the host is covering its Provisions upkeep; UNFED =
+// its defense is suspended until fed — nothing destroyed).
+function garrisonSection(g: GhostView): string {
+  if (!g.own || !g.garrison_host) return "";
+  const hostName = systemName(g.garrison_host);
+  const fed = g.garrison_fed !== false;
+  const tip = fed
+    ? `Stationed at ally ${hostName}, joining its defense per your doctrine. The host is feeding this garrison its Provisions upkeep.`
+    : `Stationed at ally ${hostName}, but the host is OUT of Provisions — this garrison's defense is SUSPENDED until fed (nothing is destroyed).`;
+  return `<div class="sp-sec">${icon("garrison", "sm")} Garrison</div><div class="sp-line">` +
+    `${badgeChip("garrison", `${hostName} · ${fed ? "fed" : "UNFED"}`, fed ? "positive" : "negative", tip)}</div>`;
 }
 
 // RIVAL ship: ONLY what's observable. A convoy broadcasts its route (light-delayed)
@@ -997,8 +1012,18 @@ function updateSysviewManage(): void {
     `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button>` +
     `<button class="act" data-action="market" title="Open the hub Exchange.">${icon("market", "sm")} Market</button></div>`;
   const guard = "";
+  // §syndicates Part 3: the ally GARRISON you're hosting here — the coalition
+  // shield you feed (its Provisions upkeep draws from THIS system).
+  const gShips = dyn.ally_garrison_ships ?? 0;
+  const garrisonHost = gShips > 0
+    ? `<div class="deps-head" style="margin-top:6px">${icon("garrison", "sm")} Ally garrison: <b>${gShips}</b> ship${gShips > 1 ? "s" : ""} ` +
+      (dyn.ally_garrison_fed
+        ? badgeChip("garrison", "fed", "positive", "You're hosting an allied coalition shield here — its Provisions upkeep is covered from this system, and it joins your defense.")
+        : badgeChip("garrison", "UNFED", "warn", "The allied garrison here is UNFED — this system is out of Provisions to cover its upkeep, so its defense is suspended. Ship Provisions here to restore it.")) +
+      `</div>`
+    : "";
   $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
-  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
+  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + garrisonHost + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
 }
 
 let planetPanelBuilt = false;
@@ -2511,6 +2536,14 @@ function ownedSystems(): { id: string; name: string }[] {
     .filter((s) => s.owner === state.playerId)
     .map((s) => ({ id: s.id, name: systemName(s.id) }));
 }
+// §syndicates Part 3: SYNDICATE-ally systems (per the viewer's known membership)
+// are valid AID destinations for standing orders / convoys — deliveries credit the
+// ally's stockpile (blockades still interdict the run).
+function allySystems(): { id: string; name: string }[] {
+  return state.systems
+    .filter((s) => s.ally)
+    .map((s) => ({ id: s.id, name: systemName(s.id) }));
+}
 function endpointLabel(e: StandingEndpoint): string {
   return e.kind === "hub" ? "hub" : e.kind === "home" ? "home" : systemName(e.id);
 }
@@ -2570,18 +2603,23 @@ function updateStandingPanel(): void {
   // Rebuild source/dest selects only when the owned-systems set changes (so a
   // mid-edit selection isn't clobbered every tick).
   const owned = ownedSystems();
-  const ownedKey = owned.map((s) => s.id).join(",");
+  const allies = allySystems();
+  // Key includes the ally set so the dest list rebuilds when an alliance forms/ends.
+  const ownedKey = owned.map((s) => s.id).join(",") + "|" + allies.map((s) => s.id).join(",");
   const srcSel = $("so-source") as HTMLSelectElement;
   if (srcSel.dataset.key !== ownedKey) {
     srcSel.dataset.key = ownedKey;
     const destSel = $("so-dest") as HTMLSelectElement;
     const prevSrc = srcSel.value, prevDest = destSel.value;
+    // Source is always your OWN system; destinations add hub/home + your depots +
+    // ally systems (§syndicates Part 3 AID).
     srcSel.innerHTML = owned.length
       ? owned.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")
       : `<option value="">(claim a system first)</option>`;
     if (owned.some((s) => s.id === prevSrc)) srcSel.value = prevSrc;
     destSel.innerHTML = `<option value="hub">hub (sell)</option><option value="home">home (store)</option>` +
-      owned.map((s) => `<option value="${s.id}">${s.name} (depot)</option>`).join("");
+      owned.map((s) => `<option value="${s.id}">${s.name} (depot)</option>`).join("") +
+      allies.map((s) => `<option value="${s.id}">${s.name} (ally aid)</option>`).join("");
     if (prevDest) destSel.value = prevDest;
   }
   const comSel = $("so-commodity") as HTMLSelectElement;
