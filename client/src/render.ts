@@ -61,6 +61,9 @@ const COL_OTHER = 0xff7a6b;
 // rival red (and from the teal sensor bubbles). Applied per the viewer's
 // light-delayed membership knowledge (the `ally` view flag).
 const COL_ALLY = 0x74e08c;
+// §pirates: the neutral PIRATE faction — a menacing AMBER-ORANGE, distinct from
+// own cyan / ally green / rival salmon. "Nobody's friend."
+const COL_PIRATE = 0xe08a2c;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
@@ -737,6 +740,26 @@ export class Renderer {
         bt.alpha = 0.7 + 0.3 * pulse;
         this.systemsLayer.addChild(bt);
       }
+      // §pirates: a SCOUTED enclave base — an amber dashed ring + "☠ ENCLAVE T‹n›"
+      // tag. Owner-only knowledge (your own scout snapshot); the base is DARK to
+      // anyone who hasn't scouted it (the intel field is fog-gated in the View).
+      if (dyn?.intel && (dyn.intel.enclave_tier ?? 0) > 0) {
+        const half = rendered / 2;
+        const rr = Math.max(14, half + 5) + extra;
+        const seg = 20;
+        for (let i = 0; i < seg; i += 2) {
+          const a0 = (i / seg) * Math.PI * 2;
+          const a1 = ((i + 1) / seg) * Math.PI * 2;
+          g.moveTo(s.x + Math.cos(a0) * rr, s.y + Math.sin(a0) * rr)
+            .lineTo(s.x + Math.cos(a1) * rr, s.y + Math.sin(a1) * rr);
+        }
+        g.stroke({ width: 1.4, color: COL_PIRATE, alpha: 0.7 });
+        const pt = new Text({ text: `☠ ENCLAVE T${dyn.intel.enclave_tier}`, style: new TextStyle({ fill: COL_PIRATE, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
+        pt.anchor.set(0.5, 1);
+        pt.position.set(s.x, s.y - rr - 2);
+        pt.alpha = 0.9;
+        this.systemsLayer.addChild(pt);
+      }
     }
   }
 
@@ -1190,7 +1213,7 @@ export class Renderer {
     g.clear();
     for (const gh of state.ghosts) {
       if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
-      const color = gh.own ? COL_OWN : gh.ally ? COL_ALLY : COL_OTHER;
+      const color = gh.own ? COL_OWN : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
       const pts = gh.route.map((w) => this.worldToScreen(w));
       g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
@@ -1597,7 +1620,7 @@ export class Renderer {
     const pip = sp.pip;
     pip.clear();
     // §syndicates: own = cyan, ALLY (light-delayed known member) = green, rival = red.
-    const pipCol = own ? COL_OWN : ghost.ally ? COL_ALLY : COL_OTHER;
+    const pipCol = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
     const half = this.fleetHitRadius(ghost); // half the MARKER's current on-screen size (formation included)
     const pipR = Math.max(3.2, Math.min(8, half * 0.14));
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
@@ -1676,7 +1699,7 @@ export class Renderer {
       const h = 12;
       const bx = halfB * 0.66;
       const by = halfB * 0.55;
-      const edge = own ? COL_OWN : ghost.ally ? COL_ALLY : COL_OTHER;
+      const edge = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
       const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
       sp.badge
         .roundRect(bx - w / 2, by - h / 2, w, h, 5)

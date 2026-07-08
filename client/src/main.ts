@@ -2266,8 +2266,18 @@ function updateSystemTab(): void {
       headTip = relayTip;
       prov = ` <span class="dim" title="${esc(relayTip)}">${icon("ally", "sm")} via ${esc(allyName)}</span>`;
     }
-    intelBlock = `<div class="deps-head" style="margin-top:8px" title="${esc(headTip)}">${icon("intel", "sm")} ${head}</div>` +
-      `<div class="sp-line">${chip("defense", `×${iv.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${iv.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span>${prov}</div>`;
+    // §pirates: a scouted ENCLAVE reads as a pirate base (its `defense_tier` is the
+    // base defense an assault must grind down), distinct from a rival fortress.
+    const et = iv.enclave_tier ?? 0;
+    if (et > 0) {
+      head = "Pirate enclave";
+      headTip = "A scouted PIRATE BASE — it raids trade nearby and grows if ignored. Station a raider fleet on it to destroy the base (it drops its plunder). A snapshot; re-scout to refresh.";
+      intelBlock = `<div class="deps-head" style="margin-top:8px" title="${esc(headTip)}">${icon("raider", "sm")} ${head}</div>` +
+        `<div class="sp-line">${chip("raider", `tier ×${et}`, "Enclave escalation tier — bigger, bolder packs.")} ${chip("defense", `×${iv.defense_tier}`, "Base defense (what an assault must grind down).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span></div>`;
+    } else {
+      intelBlock = `<div class="deps-head" style="margin-top:8px" title="${esc(headTip)}">${icon("intel", "sm")} ${head}</div>` +
+        `<div class="sp-line">${chip("defense", `×${iv.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${iv.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span>${prov}</div>`;
+    }
   }
   // Open System View — for YOUR systems this is now THE way in to management
   // (city-screen pattern), so it's the rail's PRIMARY action; for any other
@@ -2313,6 +2323,13 @@ function addReport(r: import("./protocol").RaidReport): void {
       if (yourShipDied && theirShipDied) { icon = "✺"; cls = "bad"; text = `Your ${mine} and a rival ${theirs} destroyed each other.`; }
       else if (yourShipDied) { icon = "‼"; cls = "bad"; text = `Your ${mine} was destroyed by a rival ${theirs}.`; }
       else { icon = "✓"; cls = "good"; text = `Your ${mine} destroyed a rival ${theirs}.`; }
+  }
+  // §pirates: name the neutral faction distinctly — "a pirate ..." instead of
+  // "a rival ..." when the aggressor is the pirate faction (the first raid report
+  // is how a player DISCOVERS pirates exist).
+  const pid = state.galaxy?.pirate_id;
+  if (pid && (r.attacker === pid || r.defender === pid)) {
+    text = text.split("rival").join("pirate");
   }
   // Per-kind losses (§FLEETS Part 2) — a composition-vs-composition tally.
   const fmtLosses = (l: import("./protocol").CompCount[]): string =>
@@ -2735,7 +2752,7 @@ function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: n
 // weights: threats > strangulation > idle capacity > information (tunable here).
 const INBOX_W = {
   siege: 100, battle: 92, hostile: 85, captureLost: 82, blockade: 80,
-  garrisonUnfed: 70, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
+  garrisonUnfed: 70, enclave: 58, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
   brokenOrder: 46, dryRefinery: 42, myGarrisonUnfed: 40, emptyQueue: 34,
   captureWon: 28, battleReport: 26, noAutomation: 20,
 };
@@ -2834,14 +2851,28 @@ function computeInbox(): InboxItem[] {
     const speed = Math.hypot(g.vel.x, g.vel.y);
     const closing = speed > 1 && (g.vel.x * (near.pos.x - g.pos.x) + g.vel.y * (near.pos.y - g.pos.y)) > 0;
     const size = g.composition ? `${g.composition.reduce((n, c) => n + c.count, 0)}-ship` : `~${countClassLabel(g.count_class)}`;
-    hostiles.push({ key: `hostile:${g.id}:${near.id}`, weight: INBOX_W.hostile, tone: "warn", icon: "warning",
-      headline: `Hostile ${size} raider near ${systemName(near.id)}`,
+    // §pirates: name a neutral-faction pack distinctly (and weight it higher).
+    const foe = g.pirate ? "PIRATE" : "Hostile";
+    hostiles.push({ key: `hostile:${g.id}:${near.id}`, weight: INBOX_W.hostile + (g.pirate ? 3 : 0), tone: "warn", icon: "warning",
+      headline: `${foe} ${size} raider near ${systemName(near.id)}`,
       stakes: closing ? `Closing on ${systemName(near.id)} — ~${fmtCountdown(near.d / speed)} out at its shown speed (a delayed sighting).` : `${Math.round(near.d)} su out, holding — watch it (delayed sighting).`,
       age: g.age,
       confidence: g.composition ? undefined : "size estimate only — the contact is outside your sensor coverage",
       actions: [{ label: "Focus", run: () => inboxFocusSystem(near!.id), primary: true }, dismissAct(`hostile:${g.id}:${near.id}`)] });
   }
   hostiles.sort((a, b) => (b.age ?? 0) - (a.age ?? 0)).slice(0, MAX_HOSTILE_ITEMS).forEach(push);
+
+  // --- SCOUTED PIRATE ENCLAVE (§pirates): an objective you found — clear it. ---
+  for (const s of state.systems) {
+    const et = s.intel?.enclave_tier ?? 0;
+    if (et <= 0) continue;
+    const key = `enclave:${s.id}`;
+    push({ key, weight: INBOX_W.enclave, tone: "warn", icon: "raider",
+      headline: `Pirate enclave at ${systemName(s.id)} — tier ${et}`,
+      stakes: "It raids careless trade nearby and grows if ignored. Station a raider fleet on it to destroy the base (yields its plunder).",
+      age: s.intel?.observed_at,
+      actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
+  }
 
   // --- CAPTURE reports (territory flip; per-participant, recent only) ---
   for (const r of state.captureReports) {

@@ -385,6 +385,9 @@ pub struct GalaxyInfo {
     /// defense-suppressed siege must run before a colony ship can capture — the
     /// client renders siege progress against it.
     pub siege_secs: f64,
+    /// §pirates: the reserved neutral PIRATE faction id (a `PlayerId`), so the
+    /// client can label pirate contacts/raids/reports without a name lookup.
+    pub pirate_id: PlayerId,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -456,6 +459,11 @@ pub struct IntelView {
     pub relayed_at: Option<f64>,
     #[serde(default)]
     pub received_at: Option<f64>,
+    /// §pirates: the scouted PIRATE ENCLAVE tier at this system (0 = not an
+    /// enclave). When > 0 the site is a pirate base; `defense_tier` above is its
+    /// platform-equivalent base defense (what an assault must grind down).
+    #[serde(default)]
+    pub enclave_tier: u32,
 }
 
 /// The DYNAMIC, per-tick, light-gated state of a star system (companion to the
@@ -704,6 +712,10 @@ pub struct GhostView {
     pub garrison_host: Option<EntityId>,
     #[serde(default)]
     pub garrison_fed: bool,
+    /// §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
+    /// drives the distinct hostile-neutral tint. Hostile to everyone.
+    #[serde(default)]
+    pub pirate: bool,
 }
 
 /// Messages pushed by the server to a single player's connection.

@@ -119,6 +119,9 @@ export interface IntelView {
   relayed_by?: PlayerId | null;
   relayed_at?: number | null;
   received_at?: number | null;
+  /// §pirates: the scouted PIRATE ENCLAVE tier at this system (0 = not an enclave).
+  /// When > 0 the site is a pirate base; `defense_tier` is its base defense.
+  enclave_tier?: number;
 }
 
 // A buildable thing + its recipe (§step1), sent once in the galaxy.
@@ -156,6 +159,9 @@ export interface GalaxyInfo {
   /// §contestable-territory Part 2: siege duration (sim s) — the client renders
   /// siege progress = (now − blockade.siege_since) / siege_secs.
   siege_secs: number;
+  /// §pirates: the neutral PIRATE faction id — the client labels a fleet/report
+  /// as pirate when its owner === this id (no name lookup needed).
+  pirate_id?: PlayerId;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -347,6 +353,9 @@ export interface GhostView {
   // is covering its Provisions upkeep (else its defense is suspended).
   garrison_host?: EntityId | null;
   garrison_fed?: boolean;
+  // §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
+  // drives the distinct hostile-neutral tint. Hostile to everyone.
+  pirate?: boolean;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);

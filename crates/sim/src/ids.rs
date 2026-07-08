@@ -17,6 +17,21 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PlayerId(pub u64);
 
+impl PlayerId {
+    /// The neutral PIRATE faction (§pirates) — a reserved SENTINEL that owns
+    /// pirate raider packs but is NOT a real [`crate::world::Corporation`] in
+    /// `World.players`. Hostile to all (never in any syndicate; `are_allied`
+    /// returns false for it), driven solely by `World::pirate_ai`. Its value is a
+    /// distinctive high tag far from any name hash; the server's
+    /// `player_id_from_name` guards against ever colliding with it.
+    pub const PIRATE: PlayerId = PlayerId(0x5049_5241_5445_0000); // "PIRATE\0\0"
+
+    /// Whether this id is the neutral PIRATE faction.
+    pub fn is_pirate(self) -> bool {
+        self.0 == Self::PIRATE.0
+    }
+}
+
 impl std::fmt::Display for PlayerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "P{:016x}", self.0)

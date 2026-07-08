@@ -230,6 +230,17 @@ impl Timeline {
                         self.push(*owner, observe, sev, text);
                     }
                 }
+                // §pirates: a player DESTROYED a pirate enclave — OWNER-ONLY (the
+                // victor), light-delayed from the base to their command center.
+                EventPayload::PirateEnclaveCleared { owner, system, pos, plunder } => {
+                    if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
+                        let name = system_name(world, *system);
+                        let observe = e.time + pos.distance(cc) / c;
+                        let loot: u32 = plunder.values().sum();
+                        let tail = if loot > 0 { format!(" — {loot} units of plunder seized") } else { String::new() };
+                        self.push(*owner, observe, TimelineSeverity::Good, format!("Pirate enclave at {name} CLEARED{tail}. It will lie dormant, then respawn weaker."));
+                    }
+                }
                 // A Defense Platform fought (§buildings step 2c) — OWNER-ONLY
                 // detail (tiers lost / result), light-delayed from the battle
                 // like any combat news. The attacker's side of the story arrives

@@ -228,6 +228,7 @@ impl GameLoop {
                             refinery_yield: sim::build::REFINERY_YIELD,
                             // §contestable-territory Part 2: the siege duration.
                             siege_secs: self.world.siege_duration_secs(),
+                            pirate_id: sim::PlayerId::PIRATE,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self

@@ -26,6 +26,7 @@ use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 use crate::syndicate::{syndicate_cap, Syndicate};
+use crate::pirate::{self, Enclave};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -99,6 +100,11 @@ pub struct Corporation {
 pub struct IntelSnapshot {
     pub defense_tier: u32,
     pub shipyard_tier: u32,
+    /// §pirates: the scouted PIRATE ENCLAVE tier at this system (0 = not an enclave
+    /// / none observed). A scout near an enclave reveals its base tier like
+    /// fortifications; serde default keeps pre-pirate snapshots loading.
+    #[serde(default)]
+    pub enclave_tier: u32,
     /// Sim-time of the observation (the "as of T" the readout ages from).
     pub observed_at: f64,
     /// Where the scout was at capture — the point the report's light travels from.
@@ -326,6 +332,12 @@ pub struct World {
     /// separate from entities, so ids never collide across the two id spaces.
     #[serde(default)]
     next_syndicate_id: u64,
+    /// PIRATE ENCLAVES (§pirates) — the neutral hostile faction's hidden bases,
+    /// keyed by their host (unclaimed) system id. Seeded deterministically at
+    /// generation; driven each tick by `pirate_ai`. `#[serde(default)]` so
+    /// pre-feature snapshots load with no pirates.
+    #[serde(default)]
+    pub enclaves: BTreeMap<EntityId, Enclave>,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -459,7 +471,7 @@ impl World {
         }
         systems.extend(home_systems);
 
-        World {
+        let mut world = World {
             config,
             tick: 0,
             time: 0.0,
@@ -481,6 +493,64 @@ impl World {
             next_engagement_id: 0,
             syndicates: BTreeMap::new(),
             next_syndicate_id: 0,
+            enclaves: BTreeMap::new(),
+        };
+        // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
+        // RNG stream is untouched — determinism), on their OWN seeded stream.
+        world.seed_enclaves();
+        world
+    }
+
+    /// §pirates: seed `PIRATE_ENCLAVE_COUNT` hidden bases at unclaimed MID-RING
+    /// systems, never within `PIRATE_HOME_EXCLUSION` of a home slot. Deterministic:
+    /// an isolated RNG stream (seed ^ magic) picks them, so the pick is reproducible
+    /// and never perturbs the frontier/home/event streams. The base's
+    /// platform-equivalent defense is stored on the host system's `defense_tier`
+    /// (the assault reuses the Defense-Platform combat); this only marks the site.
+    fn seed_enclaves(&mut self) {
+        let radius = self.config.galaxy_radius;
+        let (lo, hi) = (
+            radius * (0.12 + 0.84 * pirate::PIRATE_RING_LO),
+            radius * (0.12 + 0.84 * pirate::PIRATE_RING_HI),
+        );
+        let home_pos: Vec<Vec2> = self.home_slots.iter().map(|h| h.pos).collect();
+        // Candidate mid-ring, unclaimed, home-clear systems (id order = deterministic).
+        let mut cands: Vec<EntityId> = self
+            .systems
+            .iter()
+            .filter(|s| {
+                s.owner.is_none()
+                    && (lo..=hi).contains(&s.pos.length())
+                    && home_pos.iter().all(|h| s.pos.distance(*h) >= pirate::PIRATE_HOME_EXCLUSION)
+            })
+            .map(|s| s.id)
+            .collect();
+        cands.sort();
+        // Fisher–Yates on the isolated stream, then take the first N.
+        let mut rng = crate::rng::Rng::new(self.config.seed ^ 0x5049_5241_5445_5F53); // "PIRATE_S"
+        for i in (1..cands.len()).rev() {
+            let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+            cands.swap(i, j);
+        }
+        for &sid in cands.iter().take(pirate::PIRATE_ENCLAVE_COUNT) {
+            // Base defense on the host system (owner stays None — dark until scouted).
+            if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
+                sys.defense_tier = pirate::base_defense_tiers(1);
+                sys.defense_pool = 0.0;
+            }
+            self.enclaves.insert(
+                sid,
+                Enclave {
+                    system: sid,
+                    tier: 1,
+                    plunder: BTreeMap::new(),
+                    // Stagger the schedules so packs don't all launch at t=0.
+                    next_launch_at: 20.0 + rng.range(0.0, pirate::PIRATE_LAUNCH_PERIOD),
+                    next_grow_at: pirate::PIRATE_GROW_PERIOD + rng.range(0.0, pirate::PIRATE_GROW_PERIOD),
+                    dormant_until: 0.0,
+                    pack: None,
+                },
+            );
         }
     }
 
@@ -813,6 +883,12 @@ impl World {
         //      system's blockade + siege state, and emit onset/lift transitions.
         //      After raids so the establishment battle it opens attrites next tick.
         self.resolve_blockades(&mut events);
+
+        // 4a''. §pirates: the neutral faction's brain — open assaults, detect base
+        //       suppression, escalate, and launch/return raider packs. After the
+        //       combat passes so a won assault's defense-tier writeback lands this
+        //       tick; pack orders it sets are pursued next tick (async lag).
+        self.pirate_ai(&mut events);
 
         // 4b. COLONY ARRIVALS (§fleets part 3): settlement is physical — resolve
         //     after raids so a colony ship killed at the doorstep never claims.
@@ -1999,6 +2075,239 @@ impl World {
             .unwrap_or(false)
     }
 
+    /// §pirates: spawn a fresh raider PACK (owned by the PIRATE sentinel) at a base.
+    fn spawn_pirate_pack(&mut self, tier: u32, base_pos: Vec2) -> EntityId {
+        let id = self.alloc_entity_id();
+        let mut f = Fleet::single(id, PlayerId::PIRATE, ShipKind::Raider, base_pos, FleetOrder::Idle, None);
+        f.composition.clear();
+        f.composition.insert(ShipKind::Raider, pirate::pack_size(tier));
+        self.fleets.insert(id, f);
+        id
+    }
+
+    /// §pirates: aim a pack at the nearest BROADCASTING convoy within the enclave's
+    /// hunting radius (platform-covered convoys were already excluded from the
+    /// candidate list). Tops the pack up to its tier size. Returns whether a target
+    /// was found (a launch happened).
+    fn launch_pirate_pack(&mut self, pid: EntityId, tier: u32, base_pos: Vec2, convoys: &[(EntityId, Vec2)]) -> bool {
+        let r = pirate::hunt_radius(tier);
+        let target = convoys
+            .iter()
+            .filter(|(_, p)| base_pos.distance(*p) <= r)
+            .min_by(|a, b| base_pos.distance(a.1).total_cmp(&base_pos.distance(b.1)).then(a.0.cmp(&b.0)))
+            .map(|(id, _)| *id);
+        let Some(tid) = target else { return false };
+        if let Some(f) = self.fleets.get_mut(&pid) {
+            let (want, have) = (pirate::pack_size(tier), f.count(ShipKind::Raider));
+            if want > have {
+                f.add(ShipKind::Raider, want - have);
+            }
+            f.order = FleetOrder::Intercept { target: tid };
+        }
+        true
+    }
+
+    /// §pirates: open an ASSAULT engagement — a player war-fleet vs the base's
+    /// platform-equivalent defense (`base_tiers`) + any home pack. Mirrors the
+    /// blockade establishment battle exactly (reuses the Engagement + Lanchester).
+    fn open_pirate_assault(&mut self, aid: EntityId, sid: EntityId, base_pos: Vec2, defenders: Vec<EntityId>, base_tiers: u32, now: f64) {
+        let a_owner = self.fleets[&aid].owner;
+        let id = self.alloc_engagement_id();
+        let a_comp = self.side_comp(&[aid]);
+        let d_comp = self.side_comp(&defenders);
+        let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
+        let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(base_tiers, 0.0).strength();
+        let d_lead = defenders.first().copied().unwrap_or(aid);
+        self.engagements.insert(id, Engagement {
+            id,
+            pos: base_pos,
+            started_at: now,
+            raid: false,
+            a_owner,
+            d_owner: PlayerId::PIRATE,
+            attackers: vec![aid],
+            defenders,
+            platform_system: Some(sid),
+            a_pool: BTreeMap::new(),
+            d_pool: BTreeMap::new(),
+            a_start: a_comp,
+            d_start: d_comp,
+            a_start_strength: a_str,
+            d_start_strength: d_str,
+            platform_start_tiers: base_tiers,
+            a_lead: aid,
+            d_lead,
+            disengaging: BTreeMap::new(),
+            a_fled: false,
+            d_fled: false,
+            touched: true,
+        });
+    }
+
+    /// §pirates: the neutral faction's per-tick brain. For each ACTIVE enclave:
+    /// detect SUPPRESSION (base defense ground to 0 → award plunder to the victor,
+    /// go dormant, respawn weaker), open an ASSAULT if a player war-fleet is
+    /// stationed at it, ESCALATE on the slow clock, and run its PACK (launch at a
+    /// broadcasting convoy in radius, break off from platform-covered targets, bring
+    /// loot home). Deterministic + fully offline. Runs after the combat passes so a
+    /// won assault's defense-tier writeback is visible this tick.
+    fn pirate_ai(&mut self, events: &mut Vec<Event>) {
+        if self.enclaves.is_empty() {
+            return;
+        }
+        let now = self.time;
+        let hub = self.hub;
+        // Owned defense platforms — pirates AVOID these (enclaves are excluded: their
+        // defense_tier sits on an UNOWNED system).
+        let platforms: Vec<(Vec2, f64)> = self
+            .systems
+            .iter()
+            .filter(|s| s.owner.is_some() && s.defense_tier >= 1)
+            .map(|s| (s.pos, crate::build::DEFENSE_PLATFORM_RADIUS))
+            .collect();
+        let covered = |p: Vec2| platforms.iter().any(|(c, r)| p.distance(*c) <= *r);
+        // Broadcasting convoys outside platform cover (dark scouts don't broadcast →
+        // never targeted, satisfying "never target scouts").
+        let convoys: Vec<(EntityId, Vec2)> = self
+            .fleets
+            .iter()
+            .filter(|(_, f)| !f.owner.is_pirate() && f.flagship_kind() == ShipKind::Convoy && f.broadcasts() && !covered(f.pos))
+            .map(|(id, f)| (*id, f.pos))
+            .collect();
+        let epos: BTreeMap<EntityId, Vec2> =
+            self.enclaves.keys().filter_map(|sid| self.systems.iter().find(|s| s.id == *sid).map(|s| (*sid, s.pos))).collect();
+        let contested: std::collections::BTreeSet<EntityId> =
+            self.engagements.values().filter_map(|e| e.platform_system).collect();
+        let engaged: std::collections::BTreeSet<EntityId> =
+            self.engagements.values().flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied()).collect();
+
+        let ids: Vec<EntityId> = self.enclaves.keys().copied().collect();
+        for sid in ids {
+            let Some(&base_pos) = epos.get(&sid) else { continue };
+            let (tier, active) = { let e = &self.enclaves[&sid]; (e.tier, e.active(now)) };
+            let base_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.defense_tier).unwrap_or(0);
+
+            // --- SUPPRESSION: the base defense hit 0 (assault won). ---
+            if active && base_tiers == 0 {
+                let victor = self
+                    .fleets
+                    .iter()
+                    .filter(|(_, f)| !f.owner.is_pirate() && f.is_combatant() && f.pos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS)
+                    .min_by_key(|(id, _)| **id)
+                    .map(|(_, f)| f.owner);
+                let plunder = std::mem::take(&mut self.enclaves.get_mut(&sid).unwrap().plunder);
+                if let Some(v) = victor {
+                    if let Some(corp) = self.players.get_mut(&v) {
+                        for (c, n) in &plunder {
+                            *corp.inventory.entry(*c).or_insert(0) += *n;
+                        }
+                    }
+                    events.push(Event::new(now, EventPayload::PirateEnclaveCleared { owner: v, system: sid, pos: base_pos, plunder }));
+                }
+                if let Some(pid) = self.enclaves[&sid].pack {
+                    self.fleets.remove(&pid);
+                }
+                let e = self.enclaves.get_mut(&sid).unwrap();
+                e.pack = None;
+                e.tier = 1;
+                e.dormant_until = now + pirate::PIRATE_DORMANCY;
+                e.next_launch_at = e.dormant_until + 20.0;
+                e.next_grow_at = e.dormant_until + pirate::PIRATE_GROW_PERIOD;
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    sys.defense_tier = pirate::base_defense_tiers(1);
+                    sys.defense_pool = 0.0;
+                }
+                continue;
+            }
+            if !active {
+                continue; // dormant — no activity
+            }
+
+            // --- OPEN AN ASSAULT: a player war-fleet stationed at the base. ---
+            if !contested.contains(&sid) {
+                let assaulter = self
+                    .fleets
+                    .iter()
+                    .filter(|(fid, f)| {
+                        !f.owner.is_pirate()
+                            && f.contains(ShipKind::Raider)
+                            && matches!(f.order, FleetOrder::Idle)
+                            && !engaged.contains(fid)
+                            && f.pos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS
+                    })
+                    .min_by_key(|(id, _)| **id)
+                    .map(|(id, _)| *id);
+                if let Some(aid) = assaulter {
+                    let defenders: Vec<EntityId> = self.enclaves[&sid]
+                        .pack
+                        .filter(|pid| self.fleets.get(pid).is_some_and(|f| f.pos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS))
+                        .into_iter()
+                        .collect();
+                    self.open_pirate_assault(aid, sid, base_pos, defenders, base_tiers, now);
+                    continue; // one action per enclave per tick
+                }
+            }
+
+            // --- ESCALATION: grow if ignored. ---
+            if now >= self.enclaves[&sid].next_grow_at && tier < pirate::PIRATE_MAX_TIER {
+                let nt = tier + 1;
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    sys.defense_tier = pirate::base_defense_tiers(nt);
+                }
+                let e = self.enclaves.get_mut(&sid).unwrap();
+                e.tier = nt;
+                e.next_grow_at = now + pirate::PIRATE_GROW_PERIOD;
+            }
+            let tier = self.enclaves[&sid].tier;
+
+            // --- PACK LIFECYCLE. ---
+            let pack = self.enclaves[&sid].pack;
+            match pack {
+                Some(pid) if !self.fleets.contains_key(&pid) => {
+                    self.enclaves.get_mut(&sid).unwrap().pack = None; // destroyed
+                }
+                Some(pid) => {
+                    let (is_idle, is_moveto, itarget, has_cargo, ppos) = {
+                        let f = &self.fleets[&pid];
+                        let it = if let FleetOrder::Intercept { target } = f.order { Some(target) } else { None };
+                        (matches!(f.order, FleetOrder::Idle), matches!(f.order, FleetOrder::MoveTo { .. }), it, f.cargo.is_some(), f.pos)
+                    };
+                    let home = ppos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS;
+                    if has_cargo {
+                        if home && is_idle {
+                            if let Some(c) = self.fleets.get_mut(&pid).and_then(|f| f.cargo.take()) {
+                                *self.enclaves.get_mut(&sid).unwrap().plunder.entry(c.commodity).or_insert(0) += c.units;
+                            }
+                        } else if !is_moveto && let Some(f) = self.fleets.get_mut(&pid) {
+                            f.order = FleetOrder::MoveTo { dest: base_pos };
+                        }
+                    } else {
+                        let pursuing_ok = itarget
+                            .and_then(|t| self.fleets.get(&t))
+                            .is_some_and(|t| !covered(t.pos) && t.pos.distance(hub) > HUB_SAFE_RADIUS);
+                        if pursuing_ok {
+                            // resolve_raids drives the pursuit + raid.
+                        } else if home && is_idle && now >= self.enclaves[&sid].next_launch_at {
+                            if self.launch_pirate_pack(pid, tier, base_pos, &convoys) {
+                                self.enclaves.get_mut(&sid).unwrap().next_launch_at = now + pirate::PIRATE_LAUNCH_PERIOD;
+                            }
+                        } else if !home && !is_moveto && let Some(f) = self.fleets.get_mut(&pid) {
+                            f.order = FleetOrder::MoveTo { dest: base_pos };
+                        }
+                    }
+                }
+                None if now >= self.enclaves[&sid].next_launch_at => {
+                    let pid = self.spawn_pirate_pack(tier, base_pos);
+                    self.enclaves.get_mut(&sid).unwrap().pack = Some(pid);
+                    if self.launch_pirate_pack(pid, tier, base_pos, &convoys) {
+                        self.enclaves.get_mut(&sid).unwrap().next_launch_at = now + pirate::PIRATE_LAUNCH_PERIOD;
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
     /// §syndicates Part 3: feed ALLY GARRISONS. A COMBATANT fleet stationed (Idle)
     /// within `DEFENSE_PLATFORM_RADIUS` of a syndicate ALLY's system is a garrison:
     /// the HOST draws `GARRISON_UPKEEP_PER_SHIP × ships × dt` Provisions from its
@@ -2816,23 +3125,33 @@ impl World {
     fn gather_intel(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
         // Collect first (immutable pass over fleets × systems), then apply.
-        let mut captures: Vec<(PlayerId, EntityId, u32, u32, Vec2)> = Vec::new();
+        let mut captures: Vec<(PlayerId, EntityId, u32, u32, u32, Vec2)> = Vec::new();
         for ship in self.fleets.values() {
             // Any fleet CONTAINING a scout gathers intel (its eyes ride along).
-            if !ship.contains(ShipKind::Scout) {
+            if !ship.contains(ShipKind::Scout) || ship.owner.is_pirate() {
                 continue;
             }
             for sys in &self.systems {
-                let Some(sys_owner) = sys.owner else { continue };
-                if sys_owner == ship.owner || self.are_allied(ship.owner, sys_owner) {
-                    continue; // your own — and a syndicate ally's — systems need no spying
+                if ship.pos.distance(sys.pos) > crate::ship::SCOUT_INTEL_RANGE {
+                    continue;
                 }
-                if ship.pos.distance(sys.pos) <= crate::ship::SCOUT_INTEL_RANGE {
-                    captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, ship.pos));
+                match sys.owner {
+                    // §pirates: a base at an UNOWNED system reveals its enclave tier
+                    // (like fortifications). Its `defense_tier` is the base defense.
+                    None => {
+                        if let Some(e) = self.enclaves.get(&sys.id) {
+                            captures.push((ship.owner, sys.id, sys.defense_tier, 0, e.tier, ship.pos));
+                        }
+                    }
+                    // A RIVAL's fortifications (never your own or a syndicate ally's).
+                    Some(o) if o != ship.owner && !self.are_allied(ship.owner, o) => {
+                        captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, 0, ship.pos));
+                    }
+                    _ => {}
                 }
             }
         }
-        for (owner, system, defense_tier, shipyard_tier, pos) in captures {
+        for (owner, system, defense_tier, shipyard_tier, enclave_tier, pos) in captures {
             let Some(corp) = self.players.get_mut(&owner) else { continue };
             let prev = corp.intel.get(&system);
             // Notify on a fresh approach (no snapshot, or the last one has gone
@@ -2842,12 +3161,13 @@ impl World {
                 Some(p) => {
                     p.defense_tier != defense_tier
                         || p.shipyard_tier != shipyard_tier
+                        || p.enclave_tier != enclave_tier
                         || now - p.observed_at > crate::ship::SCOUT_INTEL_RENOTIFY_S
                 }
             };
             corp.intel.insert(
                 system,
-                crate::world::IntelSnapshot { defense_tier, shipyard_tier, observed_at: now, pos },
+                crate::world::IntelSnapshot { defense_tier, shipyard_tier, enclave_tier, observed_at: now, pos },
             );
             if notify {
                 events.push(Event::new(
@@ -4857,7 +5177,7 @@ mod tests {
         // Scout intel rides the snapshot too (§scout part 2).
         w.players.get_mut(&id).unwrap().intel.insert(
             EntityId(999),
-            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
+            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
         );
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
@@ -7579,6 +7899,7 @@ mod tests {
     #[test]
     fn shipping_production_spawns_a_raidable_convoy_that_sells() {
         let mut w = test_world();
+        w.enclaves.clear(); // isolate the trade loop from ambient piracy
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
@@ -7667,6 +7988,7 @@ mod tests {
     #[test]
     fn standing_order_auto_ships_to_hub_while_offline() {
         let mut w = test_world();
+        w.enclaves.clear(); // isolate the standing-order loop from ambient piracy
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
@@ -9029,5 +9351,159 @@ mod tests {
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
         assert!(!w2.fleets[&garr].garrison_fed, "garrison fed/unfed survives a snapshot");
+    }
+
+    // ===================================================================
+    // §PIRATES — neutral enclave faction
+    // ===================================================================
+
+    /// An enclave id + its base position.
+    fn an_enclave(w: &World) -> (EntityId, Vec2) {
+        let sid = *w.enclaves.keys().next().expect("enclaves seeded");
+        (sid, w.systems.iter().find(|s| s.id == sid).unwrap().pos)
+    }
+
+    #[test]
+    fn enclaves_are_seeded_mid_ring_clear_of_homes() {
+        let w = test_world();
+        assert_eq!(w.enclaves.len(), crate::pirate::PIRATE_ENCLAVE_COUNT, "the tunable count is seeded");
+        let radius = w.config.galaxy_radius;
+        for (sid, e) in &w.enclaves {
+            let sys = w.systems.iter().find(|s| s.id == *sid).unwrap();
+            assert!(sys.owner.is_none(), "an enclave sits at an UNCLAIMED system (dark until scouted)");
+            assert_eq!(sys.defense_tier, crate::pirate::base_defense_tiers(1), "base defense on the host system");
+            assert_eq!(e.tier, 1, "seeds at tier 1");
+            let r = sys.pos.length();
+            assert!(r >= radius * 0.30 && r <= radius * 0.80, "mid-ring placement");
+            for h in &w.home_slots {
+                assert!(sys.pos.distance(h.pos) >= crate::pirate::PIRATE_HOME_EXCLUSION, "clear of every home");
+            }
+        }
+    }
+
+    #[test]
+    fn pirate_pack_launches_and_raids_an_unescorted_broadcasting_convoy() {
+        let mut w = test_world();
+        let victim = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: victim, name: "V".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0; // launch at once
+        // A lone broadcasting convoy with cargo, inside the tier-1 hunt radius (2600).
+        let convoy = squad(&mut w, victim, epos + Vec2::new(1400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+        let mut pirate_raid = false;
+        for _ in 0..(90 * crate::config::TICK_HZ) {
+            let ev = w.step(&[]);
+            if ev.iter().any(|e| matches!(&e.payload, EventPayload::RaidResolved { attacker, .. } if attacker.is_pirate())) {
+                pirate_raid = true;
+                break;
+            }
+        }
+        assert!(pirate_raid, "an enclave launches a pack that RAIDS the unescorted broadcasting convoy");
+        assert!(w.fleets.values().any(|f| f.owner.is_pirate()), "a pirate pack exists");
+    }
+
+    #[test]
+    fn pirates_avoid_a_platform_covered_convoy_and_ignore_scouts() {
+        let mut w = test_world();
+        let victim = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: victim, name: "V".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0;
+        // The victim owns a DEFENSE PLATFORM system right at the convoy — it's covered.
+        let guard = grant_system_at(&mut w, victim, epos + Vec2::new(1200.0, 0.0), 2); // 2 platform tiers
+        let gpos = sys_pos(&w, guard);
+        let convoy = squad(&mut w, victim, gpos, ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+        // A lone SCOUT even closer to the base — must never be targeted (it's dark).
+        let _scout = squad(&mut w, victim, epos + Vec2::new(300.0, 0.0), ShipKind::Scout, 1, FleetOrder::Idle);
+        for _ in 0..(20 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        // No pirate ever intercepts the covered convoy or the scout.
+        assert!(
+            !w.fleets.values().any(|f| f.owner.is_pirate() && matches!(f.order, FleetOrder::Intercept { .. })),
+            "a pack never commits to a platform-covered convoy or a scout",
+        );
+    }
+
+    #[test]
+    fn enclave_is_scoutable() {
+        let mut w = test_world();
+        let scouter = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: scouter, name: "S".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        // A scout parked at the enclave.
+        let _s = squad(&mut w, scouter, epos, ShipKind::Scout, 1, FleetOrder::Idle);
+        w.step(&[]);
+        let snap = w.players[&scouter].intel.get(&sid).expect("scout captured the enclave");
+        assert_eq!(snap.enclave_tier, 1, "the base tier is in the snapshot (like fortifications)");
+    }
+
+    #[test]
+    fn enclave_escalates_when_ignored() {
+        let mut w = test_world();
+        let (sid, _epos) = an_enclave(&w);
+        // Force the grow clock. No players/convoys → nothing to raid, it just grows.
+        w.enclaves.get_mut(&sid).unwrap().next_grow_at = 0.0;
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // isolate escalation
+        w.step(&[]);
+        assert_eq!(w.enclaves[&sid].tier, 2, "an unsuppressed enclave grows a tier");
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().defense_tier, crate::pirate::base_defense_tiers(2), "the base defense grows with it");
+    }
+
+    #[test]
+    fn enclave_assault_yields_plunder_and_dormancy() {
+        let mut w = test_world();
+        let hunter = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: hunter, name: "H".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        // Seed loot in the base, and STATION a strong war-fleet on it.
+        w.enclaves.get_mut(&sid).unwrap().plunder.insert(Commodity::Alloys, 40);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // no packs
+        let fleet = squad(&mut w, hunter, epos, ShipKind::Raider, 12, FleetOrder::Idle);
+        let _ = fleet;
+        let before = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
+        let mut cleared = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            let ev = w.step(&[]);
+            if ev.iter().any(|e| matches!(&e.payload, EventPayload::PirateEnclaveCleared { system, .. } if *system == sid)) {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "a strong war-fleet stationed at the base grinds it down and CLEARS it");
+        let after = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
+        assert!(after >= before + 40, "the victor seizes the plunder ({before} → {after})");
+        assert!(!w.enclaves[&sid].active(w.time), "the cleared base goes DORMANT");
+        assert_eq!(w.enclaves[&sid].tier, 1, "it will respawn WEAKER (tier 1)");
+    }
+
+    #[test]
+    fn piracy_is_deterministic_same_seed_same_runs() {
+        // Two independent runs with the same seed produce byte-identical worlds.
+        let run = || {
+            let mut w = test_world();
+            w.step(&[Command::AddPlayer { id: PlayerId(1), name: "V".into() }]);
+            let (sid, epos) = an_enclave(&w);
+            let convoy = squad(&mut w, PlayerId(1), epos + Vec2::new(1200.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+            w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+            for _ in 0..(60 * crate::config::TICK_HZ) {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w).unwrap()
+        };
+        assert_eq!(run(), run(), "same seed → identical piracy (schedules, targets, outcomes)");
+    }
+
+    #[test]
+    fn enclaves_persist_serde() {
+        let w = test_world();
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w.enclaves.len(), w2.enclaves.len(), "enclaves survive a snapshot");
+        for (sid, e) in &w.enclaves {
+            assert_eq!(w2.enclaves[sid].tier, e.tier);
+        }
     }
 }

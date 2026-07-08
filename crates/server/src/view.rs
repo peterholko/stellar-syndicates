@@ -376,6 +376,9 @@ impl PositionHistory {
                 ally: false,
                 garrison_host: None,
                 garrison_fed: false,
+                // §pirates: the neutral faction flag — this history-only view keys
+                // off the recorded owner, filled by the game loop.
+                pirate: p.owner.is_pirate(),
             });
         }
         // Deterministic ordering by id.
@@ -624,6 +627,7 @@ pub fn filter_systems(
                             relayed_by: None,
                             relayed_at: None,
                             received_at: None,
+                            enclave_tier: snap.enclave_tier,
                         })
                     });
                     // §syndicates Part 2: else the freshest ARRIVED ally-relayed
@@ -645,6 +649,7 @@ pub fn filter_systems(
                                     relayed_by: Some(a.id),
                                     relayed_at: Some(t2),
                                     received_at: Some(t3),
+                                    enclave_tier: snap.enclave_tier,
                                 });
                             }
                         }
@@ -1147,7 +1152,7 @@ mod tests {
         let mut intel = BTreeMap::new();
         intel.insert(
             EntityId(1),
-            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
+            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
         );
         let builds: Vec<sim::BuildJob> = vec![];
 
@@ -1208,7 +1213,7 @@ mod tests {
         let builds: Vec<sim::BuildJob> = vec![];
         // The ALLY scouted the rival system (capture pos ~ the system): observed_at 0.
         let mut ally_map = BTreeMap::new();
-        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
         // Chain: T2 = 6000/300 = 20 (ally learns), T3 = 20 + 12000/300 = 60 (I learn).
         let v55 = filter_systems(&systems, me, cc, c, 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies);
@@ -1235,13 +1240,13 @@ mod tests {
         let systems = rival_one_system(rival);
         let builds: Vec<sim::BuildJob> = vec![];
         let mut ally_map = BTreeMap::new();
-        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         // Non-member: no allies passed → nothing relayed, even long after the chain.
         let v_non = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
         assert!(v_non[0].intel.is_none(), "a non-member receives no relayed intel");
         // Own direct snapshot present AND ally relay present → OWN wins (no provenance).
         let mut own_map = BTreeMap::new();
-        own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
         let v = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &own_map, &allies);
         let iv = v[0].intel.expect("own intel delivered");

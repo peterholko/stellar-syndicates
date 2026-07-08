@@ -187,6 +187,16 @@ pub enum EventPayload {
     /// recovers the tick food is available again); `fed = true` is the recovery.
     /// Emitted only on TRANSITIONS, never per-tick (no spam).
     HabitatSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
+    /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
+    /// 0). `owner` = the victor (they seize the plunder into their inventory);
+    /// light-delayed from the base to their command center. The base goes dormant
+    /// and respawns weaker. Owner-only (the victor's news).
+    PirateEnclaveCleared {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
+    },
     /// §syndicates Part 3: an ALLY GARRISON's supply state changed at a host system.
     /// `owner` = the garrison's SENDER (whose fleet it is — they learn their shield
     /// went hungry/recovered); `host` = the system feeding it; `fed = false` means
