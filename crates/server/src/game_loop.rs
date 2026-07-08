@@ -860,6 +860,9 @@ impl GameLoop {
                     capture_reports,
                     syndicate,
                     syndicate_invites,
+                    // §rankings: the published leaderboard — public, identical for
+                    // every player, a verbatim copy of the sim's last ledger close.
+                    rankings: self.world.rankings.clone(),
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

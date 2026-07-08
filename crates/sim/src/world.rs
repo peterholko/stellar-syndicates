@@ -90,6 +90,11 @@ pub struct Corporation {
     pub syndicate_prev: Option<SyndicateId>,
     #[serde(default)]
     pub syndicate_since: f64,
+    /// §rankings: this corp's CUMULATIVE campaign counters (the leaderboard
+    /// inputs). Incremented at the events that already fire; persisted with the
+    /// corp. `#[serde(default)]` so pre-feature snapshots load with zeroed stats.
+    #[serde(default)]
+    pub stats: crate::rankings::RankingStats,
 }
 
 /// One scouted observation of a rival system's fortifications (§scout part 2):
@@ -345,6 +350,12 @@ pub struct World {
     /// live). `#[serde(default)]` so pre-feature snapshots load with no nodes.
     #[serde(default)]
     pub nodes: BTreeMap<EntityId, crate::node::Node>,
+    /// §rankings: the last PUBLISHED leaderboard — a snapshot copy taken on the
+    /// ledger tick ([`VALUATION_TICKS`]). Between snapshots this holds steady, so
+    /// live counter changes never leak mid-interval. Read by the server verbatim
+    /// into the public View. `#[serde(default)]` so old snapshots load empty.
+    #[serde(default)]
+    pub rankings: Vec<crate::rankings::RankingRow>,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -502,6 +513,7 @@ impl World {
             next_syndicate_id: 0,
             enclaves: BTreeMap::new(),
             nodes: BTreeMap::new(),
+            rankings: Vec::new(),
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
@@ -970,6 +982,15 @@ impl World {
         }
         if self.tick.is_multiple_of(VALUATION_TICKS) {
             self.recompute_valuations();
+        }
+
+        // §rankings: tally THIS tick's events into the cumulative counters (cheap —
+        // O(events)), then, on the SAME ledger cadence as the valuation close,
+        // PUBLISH the leaderboard snapshot (a copy, so it holds steady between
+        // closes — no mid-interval live leak).
+        self.accumulate_rankings(&events);
+        if self.tick.is_multiple_of(VALUATION_TICKS) {
+            self.snapshot_rankings();
         }
 
         events
@@ -1601,6 +1622,16 @@ impl World {
             .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
             .collect();
 
+        // §rankings: LATCH the "fought" flag on every current engagement
+        // participant — battles take many ticks, so a convoy that survives one is
+        // still a participant here across those ticks; the flag lets us credit
+        // "cargo protected" when it later delivers. Latches (never cleared).
+        for id in &engaged {
+            if let Some(f) = self.fleets.get_mut(id) {
+                f.fought = true;
+            }
+        }
+
         // Convoy reaching hub safety before contact → the raider breaks off.
         let mut escapes: Vec<(EntityId, EntityId)> = Vec::new();
         for (rid, ship) in &self.fleets {
@@ -1949,11 +1980,21 @@ impl World {
                 let dead_cargo: Option<Cargo> = defenders
                     .iter()
                     .find_map(|id| self.fleets.get(id).filter(|f| f.count(ShipKind::Convoy) > 0 && lb.per_kind.get(&ShipKind::Convoy).copied().unwrap_or(0) >= f.count(ShipKind::Convoy)).and_then(|f| f.cargo));
-                if let Some(cargo) = dead_cargo
-                    && let Some(a) = attackers.first().and_then(|id| self.fleets.get_mut(id))
-                    && a.cargo.is_none()
-                {
-                    a.cargo = Some(cargo);
+                if let Some(cargo) = dead_cargo {
+                    // Load the loot onto the (first empty-handed) attacker and note
+                    // WHO seized it — the borrow of the fleet ends with the closure.
+                    let seizer = attackers
+                        .first()
+                        .and_then(|id| self.fleets.get_mut(id))
+                        .filter(|a| a.cargo.is_none())
+                        .map(|a| {
+                            a.cargo = Some(cargo);
+                            a.owner
+                        });
+                    // §rankings CARGO CAPTURED: credit the raider the seized units.
+                    if let Some(owner) = seizer {
+                        self.bump_stats(owner, |s| s.cargo_captured += cargo.units as u64);
+                    }
                 }
             }
 
@@ -2891,6 +2932,7 @@ impl World {
                         syndicate: None,
                         syndicate_prev: None,
                         syndicate_since: 0.0,
+                        stats: crate::rankings::RankingStats::default(),
                     },
                 );
                 events.push(Event::new(
@@ -4140,7 +4182,125 @@ impl World {
                 + inv
                 + transit.get(id).copied().unwrap_or(0.0)
                 + reserved.get(id).copied().unwrap_or(0.0);
+            // §rankings RECOVERY: a major loss (a captured system) since the last
+            // close stamps this fresh, post-loss valuation as the trough to climb
+            // back from. Measured at the close so it reflects the settled loss.
+            if corp.stats.loss_pending {
+                corp.stats.loss_floor = Some(corp.valuation);
+                corp.stats.loss_pending = false;
+            }
         }
+    }
+
+    /// §rankings: bump a corporation's cumulative counters. A no-op for a player
+    /// not in `players` — so the PIRATE sentinel (never a corp) is skipped for free.
+    fn bump_stats(&mut self, player: PlayerId, f: impl FnOnce(&mut crate::rankings::RankingStats)) {
+        if let Some(corp) = self.players.get_mut(&player) {
+            f(&mut corp.stats);
+        }
+    }
+
+    /// §rankings: tally THIS tick's events into the cumulative per-corp counters —
+    /// the single "increment at events" pass (no per-tick cost beyond the events
+    /// that actually fired). Deterministic (events are produced deterministically).
+    /// Reads only from the event stream the sim already emits; the two counters that
+    /// need live fleet/cargo context (raid seizure, cargo-protected) are incremented
+    /// at their own sites. Pirates are skipped automatically ([`Self::bump_stats`]).
+    fn accumulate_rankings(&mut self, events: &[Event]) {
+        for e in events {
+            match &e.payload {
+                EventPayload::Trade(te) => match *te {
+                    // TRADE THROUGHPUT — every convoy delivery (home / owned / ally).
+                    TradeEvent::Delivered { player, units, .. } => {
+                        self.bump_stats(player, |s| s.trade_units += units as u64);
+                    }
+                    // A hub SALE is both throughput AND market revenue.
+                    TradeEvent::Sold { player, units, unit_price, .. } => {
+                        self.bump_stats(player, |s| {
+                            s.trade_units += units as u64;
+                            s.market_revenue += units as f64 * unit_price;
+                        });
+                    }
+                    // MARKET PROFIT cost side (immediate buy).
+                    TradeEvent::Bought { player, units, unit_price, .. } => {
+                        self.bump_stats(player, |s| s.market_spend += units as f64 * unit_price);
+                    }
+                    // A cleared LIMIT order — sell = revenue, buy = spend.
+                    TradeEvent::LimitFilled { player, side, units, unit_price, .. } => {
+                        let amt = units as f64 * unit_price;
+                        match side {
+                            Side::Sell => self.bump_stats(player, |s| s.market_revenue += amt),
+                            Side::Buy => self.bump_stats(player, |s| s.market_spend += amt),
+                        }
+                    }
+                    _ => {}
+                },
+                // BATTLE EFFICIENCY — credit BOTH sides their destroyed/lost hull and
+                // an engagement (skipping a no-contact ESCAPE, which isn't a fight).
+                EventPayload::RaidResolved { attacker, defender, outcome, attacker_losses, target_losses, .. }
+                    if *outcome != RaidOutcome::Escaped =>
+                {
+                    let a_hull = crate::rankings::hull_sum(attacker_losses);
+                    let d_hull = crate::rankings::hull_sum(target_losses);
+                    let (attacker, defender) = (*attacker, *defender);
+                    self.bump_stats(attacker, |s| {
+                        s.hull_destroyed += d_hull;
+                        s.hull_lost += a_hull;
+                        s.engagements += 1;
+                    });
+                    self.bump_stats(defender, |s| {
+                        s.hull_destroyed += a_hull;
+                        s.hull_lost += d_hull;
+                        s.engagements += 1;
+                    });
+                }
+                // SYSTEMS DEVELOPED — one completed upgrade tier.
+                EventPayload::SystemUpgraded { owner, .. } => {
+                    self.bump_stats(*owner, |s| s.tiers_built += 1);
+                }
+                // INTEL GATHERED — one scout snapshot captured.
+                EventPayload::IntelGathered { owner, .. } => {
+                    self.bump_stats(*owner, |s| s.intel_snapshots += 1);
+                }
+                // CARGO CAPTURED (plunder) + RECOVERY (the old owner's major loss).
+                EventPayload::SystemCaptured { new_owner, old_owner, plunder, .. } => {
+                    let loot: u64 = plunder.values().map(|&u| u as u64).sum();
+                    self.bump_stats(*new_owner, |s| s.cargo_captured += loot);
+                    self.bump_stats(*old_owner, |s| s.loss_pending = true);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// §rankings: PUBLISH the leaderboard — a snapshot copy taken on the ledger tick
+    /// (the §9 valuation close), so it holds steady between closes and a mid-interval
+    /// counter change never leaks. Builds one row per corporation (pirates excluded)
+    /// from its cumulative stats + last-close valuation, then stamps the category
+    /// TITLES. Deterministic (ordering + tiebreaks are fixed).
+    fn snapshot_rankings(&mut self) {
+        let rows: Vec<crate::rankings::RankingRow> = self
+            .players
+            .values()
+            .filter(|c| !c.id.is_pirate())
+            .map(|c| crate::rankings::RankingRow {
+                player_id: c.id,
+                name: c.name.clone(),
+                valuation: c.valuation,
+                trade_throughput: c.stats.trade_units,
+                market_profit: c.stats.market_profit(),
+                cargo_captured: c.stats.cargo_captured,
+                cargo_protected: c.stats.cargo_protected,
+                battle_efficiency: c.stats.battle_efficiency(),
+                battle_engagements: c.stats.engagements,
+                battle_ranked: c.stats.efficiency_ranked(),
+                systems_developed: c.stats.tiers_built,
+                intel_gathered: c.stats.intel_snapshots,
+                recovery: c.stats.recovery(c.valuation),
+                titles: Vec::new(),
+            })
+            .collect();
+        self.rankings = crate::rankings::assemble(rows);
     }
 
     /// Anti-spam gate 1 upkeep: a standing order holds the id of its one in-flight
@@ -4422,10 +4582,16 @@ impl World {
             let (Some(cargo), Some(mission)) = (ship.cargo, ship.mission) else {
                 continue;
             };
+            // §rankings CARGO PROTECTED: a convoy that fought an engagement en route
+            // and STILL reached its destination earns its delivered units (below).
+            let fought = ship.fought;
             match mission {
                 TradeMission::DeliverHome => {
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
                         *corp.inventory.entry(cargo.commodity).or_insert(0) += cargo.units;
+                        if fought {
+                            corp.stats.cargo_protected += cargo.units as u64;
+                        }
                     }
                     events.push(Event::new(
                         now,
@@ -4440,6 +4606,9 @@ impl World {
                     let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
                         corp.credits += cargo.units as f64 * unit_price;
+                        if fought {
+                            corp.stats.cargo_protected += cargo.units as u64;
+                        }
                     }
                     events.push(Event::new(
                         now,
@@ -4486,6 +4655,11 @@ impl World {
                                     units: stored,
                                 }),
                             ));
+                            if fought
+                                && let Some(corp) = self.players.get_mut(&ship.owner)
+                            {
+                                corp.stats.cargo_protected += stored as u64;
+                            }
                         }
                         let excess = cargo.units - stored;
                         if excess > 0 {
@@ -9952,5 +10126,204 @@ mod tests {
         val.as_object_mut().unwrap().remove("nodes");
         let w3: World = serde_json::from_value(val).unwrap();
         assert!(w3.nodes.is_empty(), "an old snapshot loads with no nodes");
+    }
+
+    // ── §rankings: multi-category leaderboards on the ledger clock ──────────────
+
+    /// Each event-driven counter increments EXACTLY once per event, with the right
+    /// amount and beneficiary — the "increment at events" contract.
+    #[test]
+    fn rankings_counters_increment_on_their_events() {
+        use crate::cargo::Commodity;
+        let mut w = test_world();
+        let (p1, p2) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: p1, name: "A".into() },
+            Command::AddPlayer { id: p2, name: "B".into() },
+        ]);
+        let ev = |p: EventPayload| Event::new(0.0, p);
+
+        // Trade throughput + market profit.
+        w.accumulate_rankings(&[
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::Ore, units: 10 })),
+            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::Ore, units: 4, unit_price: 5.0 })),
+            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::Ore, units: 2, unit_price: 3.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::Ore, units: 3, unit_price: 2.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::Ore, units: 1, unit_price: 4.0 })),
+            ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::SystemUpgrade::Depot, tier: 1 }),
+            ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
+        ]);
+        {
+            let s = &w.players[&p1].stats;
+            assert_eq!(s.trade_units, 14, "delivered 10 + sold 4");
+            assert_eq!(s.market_revenue, 4.0 * 5.0 + 3.0 * 2.0);
+            assert_eq!(s.market_spend, 2.0 * 3.0 + 1.0 * 4.0);
+            assert_eq!(s.market_profit(), 26.0 - 10.0);
+            assert_eq!(s.tiers_built, 1);
+            assert_eq!(s.intel_snapshots, 1);
+        }
+
+        // Battle efficiency: both sides credited their destroyed/lost hull + one
+        // engagement each (p1 loses 1 raider = 20 hull; p2 loses 2 convoys = 20).
+        let mut a_loss = BTreeMap::new();
+        a_loss.insert(ShipKind::Raider, 1);
+        let mut d_loss = BTreeMap::new();
+        d_loss.insert(ShipKind::Convoy, 2);
+        w.accumulate_rankings(&[ev(EventPayload::RaidResolved {
+            attacker: p1, defender: p2, attacker_ship: EntityId(1), target_ship: EntityId(2),
+            attacker_kind: ShipKind::Raider, target_kind: ShipKind::Convoy, outcome: RaidOutcome::TargetDestroyed,
+            pos: Vec2::ZERO, attacker_losses: a_loss, target_losses: d_loss,
+        })]);
+        assert_eq!(w.players[&p1].stats.engagements, 1);
+        assert_eq!(w.players[&p1].stats.hull_lost, ShipKind::Raider.hull());
+        assert_eq!(w.players[&p1].stats.hull_destroyed, 2.0 * ShipKind::Convoy.hull());
+        assert_eq!(w.players[&p2].stats.engagements, 1);
+        assert_eq!(w.players[&p2].stats.hull_destroyed, ShipKind::Raider.hull());
+
+        // An ESCAPE (no contact) is not a fight — no engagement, no hull.
+        w.accumulate_rankings(&[ev(EventPayload::RaidResolved {
+            attacker: p1, defender: p2, attacker_ship: EntityId(1), target_ship: EntityId(2),
+            attacker_kind: ShipKind::Raider, target_kind: ShipKind::Convoy, outcome: RaidOutcome::Escaped,
+            pos: Vec2::ZERO, attacker_losses: BTreeMap::new(), target_losses: BTreeMap::new(),
+        })]);
+        assert_eq!(w.players[&p1].stats.engagements, 1, "an escape adds no engagement");
+
+        // Capture plunder → cargo captured for the captor; a major loss pends for
+        // the old owner (recovery floor stamps at the next valuation close).
+        let mut plunder = BTreeMap::new();
+        plunder.insert(Commodity::Ore, 5);
+        plunder.insert(Commodity::Fuel, 3);
+        w.accumulate_rankings(&[ev(EventPayload::SystemCaptured { old_owner: p2, new_owner: p1, system: EntityId(1), pos: Vec2::ZERO, plunder })]);
+        assert_eq!(w.players[&p1].stats.cargo_captured, 8);
+        assert!(w.players[&p2].stats.loss_pending);
+    }
+
+    /// A RAID that seizes a convoy's cargo credits the raider CARGO CAPTURED and
+    /// marks it as having fought.
+    #[test]
+    fn raid_seizure_credits_cargo_captured_and_marks_fought() {
+        use crate::cargo::{Cargo, Commodity};
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
+        {
+            let c = w.fleets.get_mut(&convoy).unwrap();
+            c.composition.clear();
+            c.composition.insert(ShipKind::Convoy, 1);
+            c.cargo = Some(Cargo { commodity: Commodity::Ore, units: 40 });
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&convoy));
+        assert_eq!(w.players[&atk].stats.cargo_captured, 40, "the raider banks the seized units");
+        assert!(w.fleets.get(&raider).map(|f| f.fought).unwrap_or(false), "the raider is marked fought");
+    }
+
+    /// CARGO PROTECTED is credited only for a convoy that FOUGHT and still
+    /// delivered; an un-fought delivery adds throughput but not protected units.
+    #[test]
+    fn protected_cargo_credited_only_when_the_convoy_fought() {
+        use crate::cargo::{Cargo, Commodity};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let make = |w: &mut World, fought: bool| {
+            let fid = w.alloc_entity_id();
+            let mut f = Fleet::single(fid, id, ShipKind::Convoy, Vec2::new(50.0, 0.0), FleetOrder::Idle, Some(Cargo { commodity: Commodity::Ore, units: 25 }));
+            f.mission = Some(TradeMission::DeliverHome);
+            f.fought = fought;
+            w.fleets.insert(fid, f);
+        };
+        make(&mut w, true);
+        w.step(&[]);
+        assert_eq!(w.players[&id].stats.trade_units, 25);
+        assert_eq!(w.players[&id].stats.cargo_protected, 25, "a survivor of a fight earns protected units");
+        make(&mut w, false);
+        w.step(&[]);
+        assert_eq!(w.players[&id].stats.trade_units, 50, "throughput accrues either way");
+        assert_eq!(w.players[&id].stats.cargo_protected, 25, "an un-fought delivery adds NO protected units");
+    }
+
+    /// The leaderboard PUBLISHES only on the ledger tick (the valuation close) —
+    /// nothing before it, a row per corp at the boundary.
+    #[test]
+    fn rankings_publish_on_the_ledger_interval() {
+        let mut w = test_world();
+        w.step(&[
+            Command::AddPlayer { id: PlayerId(1), name: "A".into() },
+            Command::AddPlayer { id: PlayerId(2), name: "B".into() },
+        ]);
+        assert!(w.rankings.is_empty(), "nothing published before the first close");
+        while w.tick < VALUATION_TICKS - 1 {
+            w.step(&[]);
+        }
+        assert!(w.rankings.is_empty(), "still nothing published before the boundary");
+        w.step(&[]);
+        assert_eq!(w.tick, VALUATION_TICKS);
+        assert_eq!(w.rankings.len(), 2, "a row per corp published at the ledger close");
+    }
+
+    /// A mid-interval counter change does NOT leak into the published table — it is
+    /// a SNAPSHOT copy that holds steady until the next close, then republishes.
+    #[test]
+    fn rankings_snapshot_does_not_leak_mid_interval() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        while w.tick < VALUATION_TICKS {
+            w.step(&[]);
+        }
+        assert_eq!(w.rankings.len(), 1);
+        let published = w.rankings[0].trade_throughput;
+        // Bump the LIVE counter mid-interval.
+        w.players.get_mut(&id).unwrap().stats.trade_units += 999;
+        w.step(&[]); // one tick past the close — not a new boundary
+        assert_eq!(w.rankings[0].trade_throughput, published, "the published table holds steady between closes");
+        // Advance to the next close → it republishes with the new value.
+        while !w.tick.is_multiple_of(VALUATION_TICKS) {
+            w.step(&[]);
+        }
+        assert!(w.rankings[0].trade_throughput >= 999, "the next close republishes the updated counter");
+    }
+
+    /// The published table is deterministic — same seed + inputs → identical bytes.
+    #[test]
+    fn rankings_are_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            w.step(&[
+                Command::AddPlayer { id: PlayerId(1), name: "A".into() },
+                Command::AddPlayer { id: PlayerId(2), name: "B".into() },
+            ]);
+            while w.tick < VALUATION_TICKS {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w.rankings).unwrap()
+        };
+        assert_eq!(run(), run());
+    }
+
+    /// Cumulative stats + the published table ride a snapshot; a pre-feature
+    /// snapshot (no `rankings`) still loads (serde default).
+    #[test]
+    fn rankings_and_stats_survive_a_snapshot() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.players.get_mut(&id).unwrap().stats.trade_units = 42;
+        while w.tick < VALUATION_TICKS {
+            w.step(&[]);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w2.players[&id].stats.trade_units, 42, "cumulative stats round-trip");
+        assert_eq!(
+            serde_json::to_string(&w.rankings).unwrap(),
+            serde_json::to_string(&w2.rankings).unwrap(),
+            "the published table round-trips"
+        );
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        val.as_object_mut().unwrap().remove("rankings");
+        let w3: World = serde_json::from_value(val).unwrap();
+        assert!(w3.rankings.is_empty(), "a pre-feature snapshot loads with no published table");
     }
 }

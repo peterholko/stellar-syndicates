@@ -449,6 +449,12 @@ pub struct Fleet {
     /// fleet that isn't a garrison. serde default `true` so old snaps load fed.
     #[serde(default = "default_true")]
     pub garrison_fed: bool,
+    /// §rankings: has this fleet EVER been a participant in an engagement? Latches
+    /// true when the fleet joins any battle, so a convoy that fought and STILL
+    /// delivered can be credited "cargo protected" on arrival. serde default false
+    /// keeps old snapshots loading (never-fought).
+    #[serde(default)]
+    pub fought: bool,
 }
 
 /// serde default for `Fleet::garrison_fed` (old snapshots load fed).
@@ -485,6 +491,7 @@ impl Fleet {
             transit: TransitMode::Full,
             posture: crate::doctrine::EngagementPosture::Passive,
             garrison_fed: true,
+            fought: false,
         }
     }
 

@@ -200,14 +200,14 @@ const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => ui
 // time; ✕ / Esc closes it → the map stays uncluttered. ----------------------
 // The right rail hosts only the SELECTION/holdings-context tabs. The Market is a
 // hub-wide institution → it lives in the TOP NAVBAR as its own overlay, not here.
-type RailTab = "system" | "logistics" | "doctrine";
+type RailTab = "system" | "logistics" | "doctrine" | "rankings";
 let railTab: RailTab = "system";
 let railBuilt = false;
 
 function setRailTab(tab: RailTab): void {
   railTab = tab;
-  const bodyId: Record<RailTab, string> = { system: "tab-system", logistics: "standing", doctrine: "doctrine" };
-  for (const t of ["system", "logistics", "doctrine"] as RailTab[]) {
+  const bodyId: Record<RailTab, string> = { system: "tab-system", logistics: "standing", doctrine: "doctrine", rankings: "tab-rankings" };
+  for (const t of ["system", "logistics", "doctrine", "rankings"] as RailTab[]) {
     $(bodyId[t]).classList.toggle("is-active", t === tab);
   }
   document.querySelectorAll<HTMLElement>("#rail-tabs button").forEach((b) => {
@@ -218,6 +218,7 @@ function setRailTab(tab: RailTab): void {
   if (tab === "system") updateSystemTab();
   else if (tab === "logistics") updateStandingPanel();
   else if (tab === "doctrine") updateDoctrinePanel();
+  else if (tab === "rankings") updateRankingsPanel();
 }
 function openRail(tab: RailTab): void {
   deselectShip(); // the rail and the ship panel share the right-dock slot
@@ -239,6 +240,15 @@ function buildRail(): void {
   $("rail-tabs").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button");
     if (b?.dataset.tab) setRailTab(b.dataset.tab as RailTab);
+  });
+  // §rankings: pick the sort category (chips live inside the re-rendered body, so
+  // delegate off the STABLE tab container).
+  $("tab-rankings").addEventListener("click", (e) => {
+    const c = (e.target as HTMLElement).closest<HTMLElement>("[data-rankcat]");
+    if (c?.dataset.rankcat) {
+      rankingsSortCat = c.dataset.rankcat;
+      updateRankingsPanel();
+    }
   });
   // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate + Log.
   $("nav-market").addEventListener("click", toggleMarket);
@@ -765,6 +775,73 @@ function updateSyndicatePanel(): void {
     }
   }
   el.innerHTML = `<div class="pp-head"><b>SYNDICATE</b><button class="pp-close" data-sy="close" title="Close">✕</button></div><div class="pp-body">${body}</div>`;
+}
+
+// --- §rankings: the published leaderboard (rail tab) ---------------------------
+// A public ledger snapshot (same for everyone), sortable by category. One category
+// at a time keeps it legible in the narrow rail; the chips ARE the "sortable
+// categories". Your row is highlighted; category leaders wear a title chip.
+type RankCat = {
+  slug: string;
+  label: string;
+  short: string;
+  fmt: (r: import("./protocol").RankingRow) => string;
+  sortVal: (r: import("./protocol").RankingRow) => number;
+  tip: string;
+};
+const RANK_CATS: RankCat[] = [
+  { slug: "valuation", label: "Valuation", short: "Val", fmt: (r) => fmt(r.valuation) + " Cr", sortVal: (r) => r.valuation, tip: "Net worth — credits + holdings at market (the classic ladder)." },
+  { slug: "trade_throughput", label: "Trade Throughput", short: "Trade", fmt: (r) => fmt(r.trade_throughput), sortVal: (r) => r.trade_throughput, tip: "Cargo units your convoys delivered (home, ally, or sold at the hub)." },
+  { slug: "market_profit", label: "Net Market Profit", short: "Profit", fmt: (r) => fmt(r.market_profit) + " Cr", sortVal: (r) => r.market_profit, tip: "Lifetime exchange P&L — sell proceeds minus buy spend." },
+  { slug: "cargo_captured", label: "Cargo Captured", short: "Seized", fmt: (r) => fmt(r.cargo_captured), sortVal: (r) => r.cargo_captured, tip: "Units seized by raiding convoys + plunder taken on captures." },
+  { slug: "cargo_protected", label: "Cargo Protected", short: "Guard", fmt: (r) => fmt(r.cargo_protected), sortVal: (r) => r.cargo_protected, tip: "Units delivered by convoys that survived a battle en route." },
+  { slug: "battle_efficiency", label: "Battle Efficiency", short: "Kill/Loss", fmt: (r) => (r.battle_ranked ? "×" + r.battle_efficiency.toFixed(2) : "prov."), sortVal: (r) => (r.battle_ranked ? r.battle_efficiency : -Infinity), tip: "Enemy hull destroyed ÷ own hull lost. 'prov.' = too few battles to rank." },
+  { slug: "systems_developed", label: "Systems Developed", short: "Built", fmt: (r) => fmt(r.systems_developed), sortVal: (r) => r.systems_developed, tip: "Total system-upgrade tiers built." },
+  { slug: "intel_gathered", label: "Intel Gathered", short: "Intel", fmt: (r) => fmt(r.intel_gathered), sortVal: (r) => r.intel_gathered, tip: "Scout snapshots captured." },
+  { slug: "recovery", label: "Recovery", short: "Comeback", fmt: (r) => fmt(r.recovery) + " Cr", sortVal: (r) => r.recovery, tip: "Valuation regained since your last major loss (a captured system)." },
+];
+let rankingsSortCat = "valuation";
+let lastRankingsSig = "";
+
+function updateRankingsPanel(): void {
+  if (!$("tab-rankings").classList.contains("is-active")) return;
+  if (renderDeferred("tab-rankings", updateRankingsPanel)) return; // §single-click guard
+  const rows = state.rankings;
+  const sig = JSON.stringify([rows, state.playerId, rankingsSortCat]);
+  if (sig === lastRankingsSig && $("rankings-body").innerHTML) return;
+  lastRankingsSig = sig;
+
+  const el = $("rankings-body");
+  if (!rows.length) {
+    el.innerHTML = `<div class="dim">No ledger published yet — the first close lands within a minute of the campaign start.</div>`;
+    return;
+  }
+  const cat = RANK_CATS.find((c) => c.slug === rankingsSortCat) ?? RANK_CATS[0];
+  // Category selector chips (the "sortable categories").
+  const chips = RANK_CATS.map((c) => {
+    const on = c.slug === cat.slug;
+    return `<button class="rk-chip${on ? " is-on" : ""}" data-rankcat="${c.slug}" title="${esc(c.tip)}">${esc(c.short)}</button>`;
+  }).join("");
+  // Rank by the chosen category, desc; provisional efficiency sinks to the bottom.
+  const sorted = [...rows].sort((a, b) => cat.sortVal(b) - cat.sortVal(a));
+  const body = sorted
+    .map((r, i) => {
+      const me = r.player_id === state.playerId;
+      const titles = r.titles.map((t) => badge("accent", t)).join(" ");
+      const engTip = cat.slug === "battle_efficiency" ? ` title="${r.battle_engagements} engagement(s)"` : "";
+      return (
+        `<div class="rk-row${me ? " is-me" : ""}">` +
+        `<span class="rk-rank">${i + 1}</span>` +
+        `<span class="rk-name">${esc(r.name)}${me ? ' <span class="you">you</span>' : ""}${titles ? " " + titles : ""}</span>` +
+        `<span class="rk-val"${engTip}>${cat.fmt(r)}</span>` +
+        `</div>`
+      );
+    })
+    .join("");
+  el.innerHTML =
+    `<div class="rk-chips">${chips}</div>` +
+    `<div class="rk-catname dim">Ranked by <b>${esc(cat.label)}</b></div>` +
+    `<div class="rk-table">${body}</div>`;
 }
 
 // --- Wormhole Hub detail panel (§hub-art) --------------------------------------
@@ -1795,6 +1872,8 @@ function installInteraction(): void {
       toggleRail("logistics");
     } else if (e.key === "f" || e.key === "F") {
       toggleRail("doctrine");
+    } else if (e.key === "g" || e.key === "G") {
+      toggleRail("rankings"); // §rankings: the published leaderboard
     } else if (e.key === "l" || e.key === "L") {
       toggleCheckin();
     } else if (e.key === "y" || e.key === "Y") {
@@ -3220,6 +3299,7 @@ function join(): void {
           state.captureReports = msg.capture_reports;
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
+          state.rankings = msg.rankings ?? [];
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
@@ -3231,6 +3311,7 @@ function join(): void {
             if (railTab === "system") updateSystemTab();
             else if (railTab === "logistics") updateStandingPanel();
             else if (railTab === "doctrine") updateDoctrinePanel();
+            else if (railTab === "rankings") updateRankingsPanel();
           }
           // The selected-ship panel keeps the information AGE ticking (and handles a
           // contact passing out of view) while it's open.

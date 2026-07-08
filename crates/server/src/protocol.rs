@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sim::{
     Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
-    RaidOutcome, ShipKind, Side, StandingOrder, SyndicateId, SystemUpgrade, TradeEvent, TransitMode,
-    Vec2,
+    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, SyndicateId, SystemUpgrade, TradeEvent,
+    TransitMode, Vec2,
 };
 
 /// The client↔server wire protocol version. BUMPED to 3 by the §SYNDICATES
@@ -828,6 +828,11 @@ pub enum ServerMsg {
         /// §syndicates Part 1: pending invitations the viewer may accept.
         #[serde(default)]
         syndicate_invites: Vec<SyndicateInviteView>,
+        /// §rankings: the PUBLISHED leaderboard — the same snapshot for every player
+        /// (public by design), taken on the ledger close. A verbatim copy of the
+        /// sim's `world.rankings`; between closes it holds steady (no live leak).
+        #[serde(default)]
+        rankings: Vec<RankingRow>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

@@ -460,6 +460,29 @@ export interface SyndicateInviteView {
   name: string;
 }
 
+/// §rankings: one corporation's row in the PUBLISHED leaderboard — a public
+/// snapshot taken on the ledger close (the same table for every player). All values
+/// are cumulative campaign totals. `player_id` matches your own id for the "your
+/// row" highlight; `titles` are the category-leader chips this corp currently wears.
+export interface RankingRow {
+  player_id: PlayerId;
+  name: string;
+  valuation: number;
+  trade_throughput: number;
+  market_profit: number;
+  cargo_captured: number;
+  cargo_protected: number;
+  battle_efficiency: number;
+  battle_engagements: number;
+  /// Whether `battle_efficiency` met the min-engagements floor (else provisional —
+  /// shown but not ranked / title-eligible).
+  battle_ranked: boolean;
+  systems_developed: number;
+  intel_gathered: number;
+  recovery: number;
+  titles: string[];
+}
+
 export type RaidOutcome =
   | "target_destroyed"
   | "attacker_destroyed"
@@ -600,6 +623,9 @@ export type ServerMsg =
       syndicate?: SyndicateView | null;
       /// §syndicates Part 1: pending invitations the viewer may accept.
       syndicate_invites?: SyndicateInviteView[];
+      /// §rankings: the PUBLISHED leaderboard — public, same for every player,
+      /// snapshotted on the ledger close (holds steady between closes).
+      rankings?: RankingRow[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }
