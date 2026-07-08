@@ -2696,8 +2696,8 @@ impl World {
             }
             for sys in &self.systems {
                 let Some(sys_owner) = sys.owner else { continue };
-                if sys_owner == ship.owner {
-                    continue; // your own systems need no spying
+                if sys_owner == ship.owner || self.are_allied(ship.owner, sys_owner) {
+                    continue; // your own — and a syndicate ally's — systems need no spying
                 }
                 if ship.pos.distance(sys.pos) <= crate::ship::SCOUT_INTEL_RANGE {
                     captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, ship.pos));

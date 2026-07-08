@@ -104,8 +104,16 @@ export interface SystemStateView {
 export interface IntelView {
   defense_tier: number;
   shipyard_tier: number;
-  /// Sim-time of the observation ("as of T") — the client ages it.
+  /// Sim-time of the ORIGINAL observation ("as of T₁") — the client ages it,
+  /// even when the intel was relayed by an ally (§syndicates Part 2).
   observed_at: number;
+  /// §syndicates Part 2 relay provenance — present only for ALLY-sourced intel
+  /// (null for your own direct scout). `relayed_by` = the reporting ally's id
+  /// (resolve to a name via the syndicate roster); `relayed_at` = T₂ (reached
+  /// the ally's command center); `received_at` = T₃ (reached yours).
+  relayed_by?: PlayerId | null;
+  relayed_at?: number | null;
+  received_at?: number | null;
 }
 
 // A buildable thing + its recipe (§step1), sent once in the galaxy.

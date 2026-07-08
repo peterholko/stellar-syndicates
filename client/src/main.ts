@@ -2223,10 +2223,26 @@ function updateSystemTab(): void {
   // only to us (the View carries only our own snapshots, light-delayed).
   let intelBlock = "";
   if (!mine && dyn?.intel) {
-    const age = Math.max(0, state.simTime - dyn.intel.observed_at);
+    const iv = dyn.intel;
+    const age = Math.max(0, state.simTime - iv.observed_at);
     const ageTxt = age < 90 ? `${age.toFixed(0)}s ago` : `${(age / 60).toFixed(0)}m ago`;
-    intelBlock = `<div class="deps-head" style="margin-top:8px" title="A scout SNAPSHOT of this rival system's fortifications — never a live feed; it ages until you re-scout (they may have built since).">${icon("intel", "sm")} Scout intel</div>` +
-      `<div class="sp-line">${chip("defense", `×${dyn.intel.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${dyn.intel.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span></div>`;
+    // §syndicates Part 2: RELAYED intel is ally-sourced — name the reporter and
+    // show the honest chain (observed T₁ → relayed T₂ → received T₃). It ages from
+    // the ORIGINAL observation and never upgrades to live truth.
+    let prov = "";
+    let head = "Scout intel";
+    let headTip = "A scout SNAPSHOT of this rival system's fortifications — never a live feed; it ages until you re-scout (they may have built since).";
+    if (iv.relayed_by) {
+      const allyName = state.syndicate?.members.find((m) => m.id === iv.relayed_by)?.name ?? "an ally";
+      const relayTip =
+        `Relayed by ${allyName}. Observed T=${iv.observed_at.toFixed(0)}s (their scout) → reached them ${(iv.relayed_at ?? 0).toFixed(0)}s → reached you ${(iv.received_at ?? 0).toFixed(0)}s. ` +
+        `Ages from the original observation; honestly staler than their own picture, and never a live feed.`;
+      head = "Ally intel";
+      headTip = relayTip;
+      prov = ` <span class="dim" title="${esc(relayTip)}">${icon("ally", "sm")} via ${esc(allyName)}</span>`;
+    }
+    intelBlock = `<div class="deps-head" style="margin-top:8px" title="${esc(headTip)}">${icon("intel", "sm")} ${head}</div>` +
+      `<div class="sp-line">${chip("defense", `×${iv.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${iv.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span>${prov}</div>`;
   }
   // Open System View — for YOUR systems this is now THE way in to management
   // (city-screen pattern), so it's the rail's PRIMARY action; for any other

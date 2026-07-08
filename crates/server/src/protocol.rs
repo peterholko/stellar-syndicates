@@ -440,8 +440,22 @@ pub struct BuildStateView {
 pub struct IntelView {
     pub defense_tier: u32,
     pub shipyard_tier: u32,
-    /// Sim-time of the observation ("as of T").
+    /// Sim-time of the observation — T₁, the "as of T" the readout ages from
+    /// (the ORIGINAL observation, even when relayed by an ally; §syndicates Part 2).
     pub observed_at: f64,
+    /// §syndicates Part 2 relay PROVENANCE — present only for ALLY-sourced intel
+    /// (`None` for your own direct scout). Who observed it, and the two chain
+    /// legs: `relayed_at` = T₂ (the observation's light reached the ally's command
+    /// center — the earliest they could relay), `received_at` = T₃ (the relayed
+    /// report's light reached YOUR command center). The picture is honestly staler
+    /// than the ally's by the inter-command-center distance, and NEVER upgrades to
+    /// live truth — aging is always from T₁.
+    #[serde(default)]
+    pub relayed_by: Option<PlayerId>,
+    #[serde(default)]
+    pub relayed_at: Option<f64>,
+    #[serde(default)]
+    pub received_at: Option<f64>,
 }
 
 /// The DYNAMIC, per-tick, light-gated state of a star system (companion to the

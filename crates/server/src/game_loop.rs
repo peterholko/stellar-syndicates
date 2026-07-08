@@ -683,9 +683,23 @@ impl GameLoop {
                 })
                 .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
+            // §syndicates Part 2: each syndicate ally's relayable scout intel (their
+            // command center is the relay source). The View chain-light-delays each
+            // ally's snapshots to this viewer, provenance preserved.
+            let ally_intel: Vec<view::AllyIntel> = self
+                .world
+                .allies_of(player_id)
+                .iter()
+                .filter_map(|a| {
+                    self.world
+                        .players
+                        .get(a)
+                        .map(|ac| view::AllyIntel { id: *a, cc: ac.command_center, intel: &ac.intel })
+                })
+                .collect();
             let mut systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
-                &corp.intel,
+                &corp.intel, &ally_intel,
             );
             // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
             // known) owner is a syndicate member as THIS viewer knows it. Composes
