@@ -68,11 +68,27 @@ pub struct SimConfig {
     /// keeps old snapshots loading.
     #[serde(default = "default_battle_target_secs")]
     pub battle_target_secs: f64,
+
+    /// Sim-time (seconds) at which every EXOTIC system AWAKENS into a capturable
+    /// NODE (§node) — the midgame catalyst. Chosen mid-campaign: long enough that
+    /// homes are established and a few frontier claims have landed, short enough
+    /// that the awakening reshapes the back half. Telegraphed from t=0 and again in
+    /// the run-up window; the awakening itself is a single deterministic sim event
+    /// announced galaxy-wide, light-delayed. serde default keeps old snapshots
+    /// loading. PRESETS mirror `battle_target_secs`: playtest ≈ 180 s, production
+    /// scaled up alongside the battle timescale.
+    #[serde(default = "default_node_awakening_time")]
+    pub node_awakening_time: f64,
 }
 
 /// The default battle timescale (the PLAYTEST preset) — see `battle_target_secs`.
 fn default_battle_target_secs() -> f64 {
     45.0
+}
+
+/// The default node-awakening time (PLAYTEST preset) — see `node_awakening_time`.
+fn default_node_awakening_time() -> f64 {
+    180.0
 }
 
 impl SimConfig {
@@ -104,6 +120,8 @@ impl SimConfig {
             // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
             // ~2700 s / 45 min — battles at the scale of light-delays + relief).
             battle_target_secs: default_battle_target_secs(),
+            // Exotic nodes awaken mid-campaign (§node) — telegraphed from t=0.
+            node_awakening_time: default_node_awakening_time(),
         };
         // Structural guardrail: a future speed-table edit (or a mistuned c)
         // that let a ship approach light would silently break the whole

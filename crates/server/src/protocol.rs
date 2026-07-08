@@ -388,6 +388,14 @@ pub struct GalaxyInfo {
     /// §pirates: the reserved neutral PIRATE faction id (a `PlayerId`), so the
     /// client can label pirate contacts/raids/reports without a name lookup.
     pub pirate_id: PlayerId,
+    /// §node: sim-time (seconds) at which every EXOTIC system AWAKENS into a
+    /// capturable node — the client telegraphs the countdown from t=0.
+    #[serde(default)]
+    pub node_awakening_time: f64,
+    /// §node: a node's region radius (sim units) — the client draws the holder's
+    /// region ring and the "in-region" cue with it.
+    #[serde(default)]
+    pub node_region_radius: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -545,6 +553,33 @@ pub struct SystemStateView {
     pub ally_garrison_ships: u32,
     #[serde(default)]
     pub ally_garrison_fed: bool,
+    /// §node: this system's EXOTIC NODE, if any. Present (light-gated with the
+    /// system) whenever the system carries a node — the bonus slug + awakened flag
+    /// are PUBLIC (an awakened node is a galaxy-wide landmark, and the exotic star
+    /// is already visible to everyone). `None` for ordinary systems.
+    #[serde(default)]
+    pub node: Option<NodeStateView>,
+}
+
+/// §node: the per-system view of an EXOTIC NODE. The bonus + awakened state are
+/// public (everyone sees the landmark); `fed` and `region_radius` are OWNER-ONLY
+/// (your own logistics + the region ring only you command), so a rival sees them as
+/// `false`/`0.0`.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeStateView {
+    /// Stable bonus slug — `relay_anchor` | `veil` | `deep_scan` (for the label).
+    pub bonus: String,
+    /// Human bonus title (e.g. "Relay Anchor").
+    pub title: String,
+    /// Has the node awakened (past the awakening time)? Before it, the system is a
+    /// telegraphed dormant landmark; after, a live capturable prize.
+    pub awakened: bool,
+    /// OWNER-ONLY: is the node's upkeep currently met? An unfed node's bonus is
+    /// SUSPENDED. Rivals always see false.
+    pub fed: bool,
+    /// OWNER-ONLY: the node's region radius (sim units) for the holder's map ring;
+    /// rivals see 0.0.
+    pub region_radius: f64,
 }
 
 /// The viewer's SYNDICATE (§syndicates Part 1) — their own roster, delivered in

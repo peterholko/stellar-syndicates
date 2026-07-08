@@ -338,6 +338,13 @@ pub struct World {
     /// pre-feature snapshots load with no pirates.
     #[serde(default)]
     pub enclaves: BTreeMap<EntityId, Enclave>,
+    /// EXOTIC NODES (§node) — the midgame catalyst, keyed by their host system id.
+    /// Seeded DORMANT at generation for every exotic system (parity with the
+    /// client's visual exotics), they AWAKEN at `config.node_awakening_time` into
+    /// capturable tactical prizes. The holder is the host system's `owner` (read
+    /// live). `#[serde(default)]` so pre-feature snapshots load with no nodes.
+    #[serde(default)]
+    pub nodes: BTreeMap<EntityId, crate::node::Node>,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -494,11 +501,30 @@ impl World {
             syndicates: BTreeMap::new(),
             next_syndicate_id: 0,
             enclaves: BTreeMap::new(),
+            nodes: BTreeMap::new(),
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
         world.seed_enclaves();
+        // §node: seed DORMANT nodes at every exotic system (pure function of id,
+        // no RNG — determinism intact, parity with the client's visual exotics).
+        world.seed_nodes();
         world
+    }
+
+    /// §node: seed a DORMANT [`crate::node::Node`] at every EXOTIC system. Pure
+    /// function of the system id (`node_bonus_for`, the sim twin of the client's
+    /// star assignment) — no RNG draws, so no stream is perturbed and the node set
+    /// is byte-identical to the client's exotic icons. Nodes stay dormant until
+    /// `node_awakening_time`; seeding merely records which systems will awaken and
+    /// what each grants (so the map can telegraph them from t=0).
+    fn seed_nodes(&mut self) {
+        let ids: Vec<EntityId> = self.systems.iter().map(|s| s.id).collect();
+        for id in ids {
+            if let Some(bonus) = crate::node::node_bonus_for(id) {
+                self.nodes.insert(id, crate::node::Node::dormant(bonus));
+            }
+        }
     }
 
     /// §pirates: seed `PIRATE_ENCLAVE_COUNT` hidden bases at unclaimed MID-RING
@@ -907,6 +933,11 @@ impl World {
         //     — happens whether or not the owner is logged in.
         self.accrue_production(&mut events);
 
+        // 5b°. EXOTIC NODES (§node): awaken exotic systems at the configured time and
+        //      draw each held node's upkeep from THIS tick's fresh stockpiles — after
+        //      accrual, exactly like the standing-order reconciliation below.
+        self.node_ai(&mut events);
+
         // 5b'. Resolve construction jobs whose completion tick has arrived (§step1
         //      growth sink): spawn built fleets / apply system upgrades. Server-driven
         //      — a build started before logging off still completes on the clock.
@@ -1067,7 +1098,9 @@ impl World {
                 cargo: s.cargo.map(|c| c.units).unwrap_or(0),
                 combat: s.combat_weight(),
                 combatant: s.is_combatant(),
-                signature: s.signature(),
+                // §node Veil: a fed magnetar node quiets its holder's dark fleets
+                // in-region — the SAME signature both pickets and the View read.
+                signature: s.signature() * self.veil_factor(s.owner, s.pos),
             })
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
@@ -1382,7 +1415,9 @@ impl World {
                 vel: s.vel,
                 combat: s.combat_weight(),
                 combatant: s.is_combatant(),
-                signature: s.signature(),
+                // §node Veil: a fed magnetar node quiets its holder's dark fleets
+                // in-region — the SAME signature both pickets and the View read.
+                signature: s.signature() * self.veil_factor(s.owner, s.pos),
                 broadcasts: s.broadcasts(),
             })
             .collect();
@@ -2306,6 +2341,156 @@ impl World {
                 None => {}
             }
         }
+    }
+
+    /// §node: drive the EXOTIC NODES each tick — AWAKENING then UPKEEP.
+    ///
+    /// 1. AWAKENING (async-fair): once `time ≥ node_awakening_time`, every dormant
+    ///    node latches awake ONCE and emits a galaxy-wide `NodeAwakened` (the
+    ///    timeline light-delays it per observer). Deterministic — fires at the same
+    ///    sim time whether anyone is online.
+    /// 2. UPKEEP (Habitat idiom): an awakened, OWNED node draws its
+    ///    [`crate::node::NODE_UPKEEP_PER_SEC`] mix, all-or-nothing, from its OWN
+    ///    system's stockpile. Cover it → `fed`, bonus LIVE; short → UNFED, bonus
+    ///    SUSPENDED (nothing destroyed, recovers when fed). Owner-only transition
+    ///    notices. An UNOWNED awakened node has no upkeep (its leverage is dormant
+    ///    until someone holds it) and reads as fed.
+    fn node_ai(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let awaken_at = self.config.node_awakening_time;
+        let ids: Vec<EntityId> = self.nodes.keys().copied().collect();
+
+        // 1. AWAKENING.
+        for sid in &ids {
+            if self.nodes[sid].awakened || now < awaken_at {
+                continue;
+            }
+            let pos = self.systems.iter().find(|s| s.id == *sid).map(|s| s.pos).unwrap_or(Vec2::ZERO);
+            let node = self.nodes.get_mut(sid).unwrap();
+            node.awakened = true;
+            node.fed = true; // presumed fed at awakening; the first shortfall notifies
+            let bonus = node.bonus;
+            events.push(Event::new(now, EventPayload::NodeAwakened { system: *sid, pos, bonus }));
+        }
+
+        // 2. UPKEEP.
+        for sid in &ids {
+            if !self.nodes[sid].awakened {
+                continue;
+            }
+            let owner = self.systems.iter().find(|s| s.id == *sid).and_then(|s| s.owner);
+            let Some(owner) = owner else {
+                self.nodes.get_mut(sid).unwrap().fed = true; // unheld → no upkeep
+                continue;
+            };
+            let sys = self.systems.iter_mut().find(|s| s.id == *sid).unwrap();
+            let can_pay = crate::node::NODE_UPKEEP_PER_SEC
+                .iter()
+                .all(|(c, rate)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-12 >= rate * DT);
+            if can_pay {
+                for (c, rate) in crate::node::NODE_UPKEEP_PER_SEC {
+                    *sys.stockpile.entry(*c).or_insert(0.0) -= rate * DT;
+                }
+            }
+            let node = self.nodes.get_mut(sid).unwrap();
+            if can_pay != node.fed {
+                events.push(Event::new(now, EventPayload::NodeSupplyChanged { owner, system: *sid, fed: can_pay }));
+            }
+            node.fed = can_pay;
+        }
+    }
+
+    /// §node: the bonus-granting nodes a corp currently BENEFITS from — awakened,
+    /// fed, and held by `owner` — capped at [`crate::node::NODES_PER_CORP`]
+    /// (deterministic: lowest system id first, since `nodes` is a `BTreeMap`).
+    /// Excess held nodes still cost upkeep and deny rivals but grant nothing extra.
+    /// Each entry is `(bonus, region-center)`. The pirate sentinel / an unheld node
+    /// never appears (it owns no systems), so this is Option-safe for every caller.
+    fn active_nodes_for(&self, owner: PlayerId) -> Vec<(crate::node::NodeBonus, Vec2)> {
+        let mut held: Vec<(crate::node::NodeBonus, Vec2)> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.active())
+            .filter_map(|(sid, n)| {
+                let sys = self.systems.iter().find(|s| s.id == *sid)?;
+                (sys.owner == Some(owner)).then_some((n.bonus, sys.pos))
+            })
+            .collect();
+        held.truncate(crate::node::NODES_PER_CORP);
+        held
+    }
+
+    /// §node Relay Anchor: the command-delay MULTIPLIER for `owner`'s orders to a
+    /// target at `target_pos`. 0.5 if the owner holds an active black-hole node
+    /// whose region covers the target; 1.0 otherwise. The SINGLE plug into
+    /// `schedule_for_owner` — command tempo, not economy.
+    fn relay_factor(&self, owner: PlayerId, target_pos: Vec2) -> f64 {
+        let covered = self.active_nodes_for(owner).into_iter().any(|(b, p)| {
+            b == crate::node::NodeBonus::RelayAnchor && p.distance(target_pos) <= crate::node::NODE_REGION_RADIUS
+        });
+        if covered {
+            crate::node::RELAY_DELAY_MULT
+        } else {
+            1.0
+        }
+    }
+
+    /// §node Veil: the signature MULTIPLIER for a DARK fleet owned by `owner` at
+    /// `pos` — 0.5 inside an active magnetar node's region, else 1.0. Plugs the two
+    /// detection sites (sim pickets + server View) so concealment is one honest
+    /// scope: reducing signature here narrows detection everywhere it's read.
+    pub fn veil_factor(&self, owner: PlayerId, pos: Vec2) -> f64 {
+        let covered = self.active_nodes_for(owner).into_iter().any(|(b, p)| {
+            b == crate::node::NodeBonus::Veil && p.distance(pos) <= crate::node::NODE_REGION_RADIUS
+        });
+        if covered {
+            crate::node::VEIL_SIGNATURE_MULT
+        } else {
+            1.0
+        }
+    }
+
+    /// §node Deep Scan: does `viewer` hold an active pulsar/binary node whose region
+    /// covers `pos`? If so, the viewer resolves EXACT composition on any fleet
+    /// ALREADY visible there (bucket→exact) — gated in the server View, so it's an
+    /// earlier reveal of already-permitted data, never a new leak.
+    pub fn deep_scan_covers(&self, viewer: PlayerId, pos: Vec2) -> bool {
+        self.active_nodes_for(viewer).into_iter().any(|(b, p)| {
+            b == crate::node::NodeBonus::DeepScan && p.distance(pos) <= crate::node::NODE_REGION_RADIUS
+        })
+    }
+
+    /// §node: `(holder, region-center)` for every ACTIVE Veil node across ALL corps
+    /// — the server hands these to the dark-fleet view so a fleet in its OWNER's
+    /// magnetar region runs quieter. Respects the per-corp cap (via
+    /// `active_nodes_for` per holder), so a capped-out extra node grants nothing.
+    pub fn active_veil_regions(&self) -> Vec<(PlayerId, Vec2)> {
+        let mut holders: std::collections::BTreeSet<PlayerId> = std::collections::BTreeSet::new();
+        for (sid, n) in &self.nodes {
+            if n.active()
+                && let Some(owner) = self.systems.iter().find(|s| s.id == *sid).and_then(|s| s.owner)
+            {
+                holders.insert(owner);
+            }
+        }
+        let mut out = Vec::new();
+        for owner in holders {
+            for (b, p) in self.active_nodes_for(owner) {
+                if b == crate::node::NodeBonus::Veil {
+                    out.push((owner, p));
+                }
+            }
+        }
+        out
+    }
+
+    /// §node: region-centers of the ACTIVE Deep-Scan nodes `viewer` holds (capped),
+    /// for the view's bucket→exact composition reveal in-region.
+    pub fn deep_scan_regions(&self, viewer: PlayerId) -> Vec<Vec2> {
+        self.active_nodes_for(viewer)
+            .into_iter()
+            .filter_map(|(b, p)| (b == crate::node::NodeBonus::DeepScan).then_some(p))
+            .collect()
     }
 
     /// §syndicates Part 3: feed ALLY GARRISONS. A COMBATANT fleet stationed (Idle)
@@ -3586,6 +3771,11 @@ impl World {
                         now,
                         EventPayload::SystemClaimed { system: sys_id, owner, pos },
                     ));
+                    // §node EXPOSURE: claiming an awakened node makes you its holder
+                    // — announced galaxy-wide, light-delayed (no hiding a node's master).
+                    if let Some(node) = self.nodes.get(&sys_id).filter(|n| n.awakened) {
+                        events.push(Event::new(now, EventPayload::NodeCaptured { owner, system: sys_id, pos, bonus: node.bonus }));
+                    }
                 }
                 None => {
                     // Reserved home site: hold like a lost race (soft, notice once).
@@ -3677,6 +3867,11 @@ impl World {
             }
         }
         events.push(Event::new(now, EventPayload::SystemCaptured { old_owner, new_owner, system: sys_id, pos, plunder }));
+        // §node EXPOSURE: capturing an awakened node flips its master — announced
+        // galaxy-wide, light-delayed, so every corp learns who now commands it.
+        if let Some(node) = self.nodes.get(&sys_id).filter(|n| n.awakened) {
+            events.push(Event::new(now, EventPayload::NodeCaptured { owner: new_owner, system: sys_id, pos, bonus: node.bonus }));
+        }
     }
 
     /// Fleet a claimed system's accumulated production to the hub: one raidable
@@ -4382,16 +4577,26 @@ impl World {
         };
         let cc = corp.command_center;
         let c = self.config.c;
+        let ship_pos = ship.pos;
+        let ship_vel = ship.vel;
+        // §node Relay Anchor: if the issuer holds an active black-hole node whose
+        // region covers the fleet, its command loop through that neighbourhood runs
+        // at half the light-time. Evaluated at the fleet's CURRENT position (the
+        // command's outbound leg) — the SINGLE plug for the tempo bonus, so it can
+        // never desync from what the map shows. `relay_factor` is 1.0 with no node.
+        let relay = self.relay_factor(player_id, ship_pos);
         // Outbound light delay from the fleet's current position (deterministic,
         // known at issue). `delivered_at` is when the fleet gets the order.
-        let delay = ship.pos.distance(cc) / c;
+        let delay = ship_pos.distance(cc) / c * relay;
         let delivered_at = self.time + delay;
         // The DELIVERY POINT: where the fleet will be when the order lands, by
         // constant-velocity extrapolation of its current motion (§14.1). The echo
         // — the first light of the new behavior — leaves there at delivery and
         // reaches the command center `distance/c` later. Exactly computable now.
-        let delivery_point = ship.pos + ship.vel * delay;
-        let echo_at = delivered_at + delivery_point.distance(cc) / c;
+        // The return leg is relayed too when the delivery point stays in region.
+        let delivery_point = ship_pos + ship_vel * delay;
+        let echo_relay = self.relay_factor(player_id, delivery_point);
+        let echo_at = delivered_at + delivery_point.distance(cc) / c * echo_relay;
         self.pending_orders.push(PendingOrder {
             apply_time: delivered_at,
             ship_id,
@@ -4588,6 +4793,9 @@ mod tests {
     use super::*;
     use crate::doctrine::RetreatThreshold;
     use crate::ids::PlayerId;
+    use crate::node::{
+        Node, NodeBonus, NODES_PER_CORP, NODE_REGION_RADIUS, RELAY_DELAY_MULT, VEIL_SIGNATURE_MULT,
+    };
 
     fn test_world() -> World {
         // A SHORT battle timescale so combat tests resolve in a few seconds (the
@@ -9505,5 +9713,244 @@ mod tests {
         for (sid, e) in &w.enclaves {
             assert_eq!(w2.enclaves[sid].tier, e.tier);
         }
+    }
+
+    // ── §node: EXOTIC NODE AWAKENING ────────────────────────────────────────────
+
+    /// Force an UNCLAIMED system into an AWAKENED node of `bonus`, held by `owner`
+    /// at `pos`, fed with a fat upkeep buffer. Returns its system id.
+    fn owned_node(w: &mut World, owner: PlayerId, bonus: NodeBonus, pos: Vec2) -> EntityId {
+        let sid = {
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.owner = Some(owner);
+            sys.claimed_at = Some(0.0);
+            sys.pos = pos;
+            sys.id
+        };
+        w.nodes.insert(sid, Node { bonus, awakened: true, fed: true });
+        seed_stock(w, sid, &[(Commodity::Provisions, 1000.0), (Commodity::Fuel, 1000.0)]);
+        sid
+    }
+
+    /// PARITY LOCK: the sim's `node_bonus_for` MUST agree with the client's visual
+    /// exotic assignment (`client/src/stars.ts`), or a black-hole icon would grant
+    /// no node. This re-implements the client's `hashId` + `starTypeFor` from its
+    /// hard-coded constants (FNV-1a, 0.16 rarity, `>>17`, EXOTIC pool order) as an
+    /// INDEPENDENT reference and asserts the sim maps every id the same way — so a
+    /// drift in either constant fails here.
+    #[test]
+    fn node_bonus_matches_client_star_assignment() {
+        // Reference = client stars.ts, hand-translated (do NOT call node_bonus_for).
+        fn client_bonus(id: EntityId) -> Option<NodeBonus> {
+            let mut h: u32 = 2166136261;
+            for b in id.0.to_string().bytes() {
+                h ^= b as u32;
+                h = h.wrapping_mul(16777619);
+            }
+            let roll = (h % 100_000) as f64 / 100_000.0;
+            if roll >= 0.16 {
+                return None;
+            }
+            // EXOTIC pool order in stars.ts: neutron, binary, black_hole, magnetar.
+            Some(match (h >> 17) % 4 {
+                0 | 1 => NodeBonus::DeepScan,
+                2 => NodeBonus::RelayAnchor,
+                _ => NodeBonus::Veil,
+            })
+        }
+        let mut exotic = 0usize;
+        let (mut relay, mut veil, mut scan) = (0, 0, 0);
+        for raw in 1u64..=8000 {
+            let id = EntityId(raw);
+            assert_eq!(crate::node::node_bonus_for(id), client_bonus(id), "id {raw} diverges from the client");
+            match crate::node::node_bonus_for(id) {
+                Some(NodeBonus::RelayAnchor) => { exotic += 1; relay += 1; }
+                Some(NodeBonus::Veil) => { exotic += 1; veil += 1; }
+                Some(NodeBonus::DeepScan) => { exotic += 1; scan += 1; }
+                None => {}
+            }
+        }
+        // ~16% exotic, and all three bonuses actually occur (the mapping is live).
+        let frac = exotic as f64 / 8000.0;
+        assert!((frac - 0.16).abs() < 0.03, "exotic fraction ≈ 0.16 (got {frac:.3})");
+        assert!(relay > 0 && veil > 0 && scan > 0, "every bonus kind occurs (relay={relay} veil={veil} scan={scan})");
+    }
+
+    /// Nodes are seeded DORMANT at exotic systems — pure function of id (no RNG),
+    /// so the set is identical every run and matches the client's exotic icons.
+    #[test]
+    fn nodes_seeded_dormant_at_exotic_systems() {
+        let w = test_world();
+        assert!(!w.nodes.is_empty(), "a 4-player galaxy has exotic nodes");
+        for (sid, n) in &w.nodes {
+            assert!(!n.awakened, "dormant until the awakening time");
+            assert_eq!(crate::node::node_bonus_for(*sid), Some(n.bonus), "bonus fixed by the id");
+            assert!(w.systems.iter().any(|s| s.id == *sid), "a node sits on a real system");
+        }
+        // Determinism: a fresh galaxy of the same seed seeds the same node set.
+        let w2 = test_world();
+        assert_eq!(w.nodes.keys().copied().collect::<Vec<_>>(), w2.nodes.keys().copied().collect::<Vec<_>>());
+    }
+
+    /// AWAKENING (async-fair): at `node_awakening_time` every node latches awake
+    /// ONCE, each announced galaxy-wide with its position (so the timeline can
+    /// light-delay it per observer). No player need be online.
+    #[test]
+    fn nodes_awaken_once_at_configured_time_and_announce() {
+        let mut w = test_world();
+        w.config.node_awakening_time = 0.5;
+        assert!(w.nodes.values().all(|n| !n.awakened), "all dormant before T");
+        let mut fired = 0usize;
+        while w.time < 0.6 {
+            for e in w.step(&[]) {
+                if let EventPayload::NodeAwakened { system, pos, .. } = e.payload {
+                    fired += 1;
+                    let sys_pos = w.systems.iter().find(|s| s.id == system).unwrap().pos;
+                    assert_eq!(pos, sys_pos, "announced at the node's position (for the light-delay)");
+                }
+            }
+        }
+        assert!(w.nodes.values().all(|n| n.awakened), "all awake past T");
+        assert_eq!(fired, w.nodes.len(), "exactly one announcement per node, once");
+        // Stepping further fires nothing more (the latch holds).
+        let more = w.step(&[]);
+        assert!(!more.iter().any(|e| matches!(e.payload, EventPayload::NodeAwakened { .. })), "no re-announce");
+    }
+
+    /// Each bonus applies INSIDE its node's region and NOWHERE else, and only for
+    /// the HOLDER — the three tactical scopes are single-sourced by region math. A
+    /// DISTINCT holder per bonus keeps each corp under the per-corp cap.
+    #[test]
+    fn bonuses_apply_in_region_only_and_only_for_the_holder() {
+        let mut w = test_world();
+        let rival = PlayerId(9);
+        let inside = |p: Vec2| p + Vec2::new(NODE_REGION_RADIUS - 1.0, 0.0);
+        let outside = |p: Vec2| p + Vec2::new(NODE_REGION_RADIUS + 100.0, 0.0);
+
+        // Relay Anchor — command delay halved in region.
+        let (ra, pr) = (PlayerId(7), Vec2::new(1200.0, 0.0));
+        owned_node(&mut w, ra, NodeBonus::RelayAnchor, pr);
+        assert_eq!(w.relay_factor(ra, inside(pr)), RELAY_DELAY_MULT);
+        assert_eq!(w.relay_factor(ra, outside(pr)), 1.0, "no tempo beyond the region");
+        assert_eq!(w.relay_factor(rival, pr), 1.0, "a rival gets nothing from your node");
+
+        // Veil — signature reduced in region.
+        let (ve, pv) = (PlayerId(8), Vec2::new(-1500.0, 600.0));
+        owned_node(&mut w, ve, NodeBonus::Veil, pv);
+        assert_eq!(w.veil_factor(ve, inside(pv)), VEIL_SIGNATURE_MULT);
+        assert_eq!(w.veil_factor(ve, outside(pv)), 1.0);
+        assert_eq!(w.veil_factor(rival, pv), 1.0);
+
+        // Deep Scan — composition reveal in region.
+        let (ds, pd) = (PlayerId(10), Vec2::new(300.0, -2000.0));
+        owned_node(&mut w, ds, NodeBonus::DeepScan, pd);
+        assert!(w.deep_scan_covers(ds, inside(pd)));
+        assert!(!w.deep_scan_covers(ds, outside(pd)));
+        assert!(!w.deep_scan_covers(rival, pd));
+    }
+
+    /// UPKEEP: a held node draws its mix each tick; starve it and the bonus
+    /// SUSPENDS (owner-notified, nothing destroyed); resupply and it recovers.
+    #[test]
+    fn node_upkeep_draws_suspends_and_recovers() {
+        let mut w = test_world();
+        let own = PlayerId(7);
+        let p = Vec2::new(0.0, 1400.0);
+        let sid = owned_node(&mut w, own, NodeBonus::RelayAnchor, p);
+        // Strip stock + geology so upkeep can't be met (nor self-fed by deposits).
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+            s.stockpile.clear();
+            s.deposits.clear();
+        }
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::NodeSupplyChanged { system, fed: false, .. } if system == sid)),
+            "the holder is told the node went unfed"
+        );
+        assert!(!w.nodes[&sid].fed);
+        assert_eq!(w.relay_factor(own, p), 1.0, "an unfed node's bonus is SUSPENDED");
+
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 100.0), (Commodity::Fuel, 100.0)]);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::NodeSupplyChanged { system, fed: true, .. } if system == sid)),
+            "recovery notice when resupplied"
+        );
+        assert!(w.nodes[&sid].fed);
+        assert_eq!(w.relay_factor(own, p), RELAY_DELAY_MULT, "bonus restored when fed");
+    }
+
+    /// PER-CORP CAP: a corp benefits from at most `NODES_PER_CORP` nodes at once
+    /// (deterministic — lowest system id first); extra held nodes deny rivals and
+    /// cost upkeep but grant no further bonus.
+    #[test]
+    fn per_corp_cap_limits_active_bonuses() {
+        let mut w = test_world();
+        let own = PlayerId(7);
+        // One MORE than the cap, each in a disjoint region.
+        let mut nodes: Vec<(EntityId, Vec2)> = Vec::new();
+        for i in 0..(NODES_PER_CORP + 1) {
+            let pos = Vec2::new(i as f64 * 8000.0, 0.0);
+            nodes.push((owned_node(&mut w, own, NodeBonus::RelayAnchor, pos), pos));
+        }
+        assert_eq!(w.active_nodes_for(own).len(), NODES_PER_CORP, "capped at NODES_PER_CORP");
+        nodes.sort_by_key(|(id, _)| *id);
+        for (i, (_, pos)) in nodes.iter().enumerate() {
+            let expect = if i < NODES_PER_CORP { RELAY_DELAY_MULT } else { 1.0 };
+            assert_eq!(w.relay_factor(own, *pos), expect, "node #{i} active-status follows the cap");
+        }
+    }
+
+    /// EXPOSURE via the EXISTING claim flow: settling an awakened, unowned node
+    /// makes you its holder and announces it galaxy-wide (`NodeCaptured`). Before
+    /// capture the node grants the corp nothing; after, its bonus is available.
+    #[test]
+    fn claiming_an_awakened_node_flips_and_announces_the_holder() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // An unclaimed exotic node, force-awakened + stocked for its upkeep.
+        let sid = *w
+            .nodes
+            .keys()
+            .find(|sid| w.systems.iter().find(|s| s.id == **sid).unwrap().owner.is_none())
+            .expect("an unclaimed exotic node exists");
+        w.nodes.get_mut(&sid).unwrap().awakened = true;
+        let pos = w.systems.iter().find(|s| s.id == sid).unwrap().pos;
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 100.0), (Commodity::Fuel, 100.0)]);
+        assert!(w.active_nodes_for(id).is_empty(), "an unheld node grants nothing");
+
+        colony_at(&mut w, id, pos);
+        let ev = w.step(&[]);
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().owner, Some(id), "colony settles the node");
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::NodeCaptured { owner, system, .. } if owner == id && system == sid)),
+            "the new holder is announced galaxy-wide"
+        );
+        assert_eq!(w.active_nodes_for(id).len(), 1, "the holder now benefits from its node");
+    }
+
+    /// Node state (bonus + awakened + fed) round-trips through a snapshot, and a
+    /// PRE-feature snapshot (no `nodes` field) still loads (serde default).
+    #[test]
+    fn nodes_survive_a_snapshot() {
+        let mut w = test_world();
+        w.config.node_awakening_time = 0.05;
+        for _ in 0..3 {
+            w.step(&[]);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w.nodes.len(), w2.nodes.len(), "node set survives");
+        for (sid, n) in &w.nodes {
+            let m = &w2.nodes[sid];
+            assert_eq!((n.bonus, n.awakened, n.fed), (m.bonus, m.awakened, m.fed), "node state round-trips");
+        }
+        // A pre-feature snapshot with no `nodes` key still deserialises.
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        val.as_object_mut().unwrap().remove("nodes");
+        let w3: World = serde_json::from_value(val).unwrap();
+        assert!(w3.nodes.is_empty(), "an old snapshot loads with no nodes");
     }
 }

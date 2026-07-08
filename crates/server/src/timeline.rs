@@ -241,6 +241,50 @@ impl Timeline {
                         self.push(*owner, observe, TimelineSeverity::Good, format!("Pirate enclave at {name} CLEARED{tail}. It will lie dormant, then respawn weaker."));
                     }
                 }
+                // §node: an EXOTIC system AWAKENED — announced GALAXY-WIDE,
+                // light-delayed from the node to each observer's command center (the
+                // awakening TIME is public, but news of the event still travels at
+                // c). Same delivery as a rival claim.
+                EventPayload::NodeAwakened { system, pos, bonus } => {
+                    let name = system_name(world, *system);
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        self.push(
+                            p,
+                            observe,
+                            TimelineSeverity::Info,
+                            format!("EXOTIC NODE AWAKENED at {name} — a {} node is now capturable.", bonus.title()),
+                        );
+                    }
+                }
+                // §node EXPOSURE: a node's HOLDER changed — announced GALAXY-WIDE,
+                // light-delayed, so every corp learns who now commands it. The holder
+                // hears "you now command…"; everyone else hears who took it.
+                EventPayload::NodeCaptured { owner, system, pos, bonus } => {
+                    let name = system_name(world, *system);
+                    let holder = world.players.get(owner).map(|c| c.name.clone()).unwrap_or_else(|| "A rival".into());
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *owner {
+                            (TimelineSeverity::Good, format!("You now command the {} node at {name}.", bonus.title()))
+                        } else {
+                            (TimelineSeverity::Warn, format!("{holder} now commands the {} node at {name}.", bonus.title()))
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
+                // §node: a held node's upkeep flipped — OWNER-ONLY, on the owner's own
+                // clock (own-economy precedent, like HabitatSupplyChanged). Transitions
+                // only, so it never spams.
+                EventPayload::NodeSupplyChanged { owner, system, fed } => {
+                    let name = system_name(world, *system);
+                    let (sev, text) = if *fed {
+                        (TimelineSeverity::Good, format!("Node at {name} is fed again — its bonus is live."))
+                    } else {
+                        (TimelineSeverity::Warn, format!("Node at {name} is UNFED — its bonus is SUSPENDED. Ship its upkeep there (nothing is lost)."))
+                    };
+                    self.push(*owner, e.time, sev, text);
+                }
                 // A Defense Platform fought (§buildings step 2c) — OWNER-ONLY
                 // detail (tiers lost / result), light-delayed from the battle
                 // like any combat news. The attacker's side of the story arrives

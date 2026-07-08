@@ -197,6 +197,26 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
         plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
     },
+    /// §node: an EXOTIC system AWAKENED into a capturable node at the configured
+    /// awakening time. Announced GALAXY-WIDE, light-delayed from the node's position
+    /// to each observer's command center (same gate as a rival claim). `bonus` names
+    /// the tactical edge it grants; `pos` is for the light-delay + the map badge.
+    NodeAwakened { system: EntityId, pos: crate::math::Vec2, bonus: crate::node::NodeBonus },
+    /// §node: a node's HOLDER changed (colony-claimed if it was unowned, or
+    /// sieged→captured if held). EXPOSURE — announced GALAXY-WIDE, light-delayed:
+    /// every corp learns who now commands the node (there is no hiding a node's
+    /// master). `owner` = the new holder; `pos` for the light-delay + badge tint.
+    NodeCaptured {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        bonus: crate::node::NodeBonus,
+    },
+    /// §node: an AWAKENED node's upkeep state changed. `fed = false` ⇒ this tick's
+    /// upkeep mix couldn't be covered from the node's local stockpile, so its bonus
+    /// SUSPENDS (nothing destroyed — recovers when fed); `fed = true` is recovery.
+    /// OWNER-ONLY (your own logistics), emitted on TRANSITIONS only.
+    NodeSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
     /// §syndicates Part 3: an ALLY GARRISON's supply state changed at a host system.
     /// `owner` = the garrison's SENDER (whose fleet it is — they learn their shield
     /// went hungry/recovered); `host` = the system feeding it; `fed = false` means

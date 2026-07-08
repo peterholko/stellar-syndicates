@@ -103,6 +103,24 @@ export interface SystemStateView {
   /// Provisions upkeep is covered. `0` = none; rivals always see 0.
   ally_garrison_ships?: number;
   ally_garrison_fed?: boolean;
+  /// §node: this system's EXOTIC NODE, if any. bonus + awakened are PUBLIC (an
+  /// awakened node is a galaxy-wide landmark); fed + region_radius are OWNER-ONLY.
+  node?: NodeStateView;
+}
+
+/// §node: the per-system view of an EXOTIC NODE — the midgame catalyst.
+export interface NodeStateView {
+  /// Stable bonus slug: "relay_anchor" | "veil" | "deep_scan".
+  bonus: string;
+  /// Human bonus title, e.g. "Relay Anchor".
+  title: string;
+  /// Has the node awakened (past the awakening time)? A dormant node is a
+  /// telegraphed landmark; an awakened one is a live, capturable prize.
+  awakened: boolean;
+  /// OWNER-ONLY: is the node's upkeep met? An unfed node's bonus is SUSPENDED.
+  fed: boolean;
+  /// OWNER-ONLY: the node's region radius (sim units) for the holder's map ring.
+  region_radius: number;
 }
 
 /// A stored scout-intel snapshot of a rival system's fortifications.
@@ -162,6 +180,11 @@ export interface GalaxyInfo {
   /// §pirates: the neutral PIRATE faction id — the client labels a fleet/report
   /// as pirate when its owner === this id (no name lookup needed).
   pirate_id?: PlayerId;
+  /// §node: sim-time at which every EXOTIC system AWAKENS into a capturable node —
+  /// the client telegraphs the countdown from t=0.
+  node_awakening_time?: number;
+  /// §node: a node's region radius (sim units) — for the holder's region ring.
+  node_region_radius?: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }

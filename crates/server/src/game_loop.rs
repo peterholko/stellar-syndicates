@@ -229,6 +229,10 @@ impl GameLoop {
                             // §contestable-territory Part 2: the siege duration.
                             siege_secs: self.world.siege_duration_secs(),
                             pirate_id: sim::PlayerId::PIRATE,
+                            // §node: the awakening countdown + region radius so the
+                            // client can telegraph and draw the holder's region ring.
+                            node_awakening_time: self.world.config.node_awakening_time,
+                            node_region_radius: sim::NODE_REGION_RADIUS,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -635,7 +639,14 @@ impl GameLoop {
                     });
                 }
             }
-            let mut ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            // §node: this viewer's regional dark-fleet effects (Veil quiets its
+            // holders' dark fleets; Deep Scan resolves exact composition in-region).
+            let veil_regions = self.world.active_veil_regions();
+            let deep_scan_regions = self.world.deep_scan_regions(player_id);
+            let mut ghosts = self.history.view_for_with_arrays(
+                player_id, cc, c, now, &arrays, &battle_reveal,
+                view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
+            );
             // §offensive-orders Part 2: attach each OWN fleet's engagement posture
             // (owner-only, fresh — a private standing policy like the corp doctrine;
             // rivals keep `None`, so it never leaks). The history-view can't see the
@@ -720,6 +731,20 @@ impl GameLoop {
                 {
                     sv.ally_garrison_ships = ships;
                     sv.ally_garrison_fed = fed;
+                }
+                // §node: attach the system's EXOTIC NODE, if any. Bonus + awakened
+                // are PUBLIC (an awakened node is a galaxy-wide landmark; its awaken
+                // time is public config, so the flag leaks nothing); `fed` and the
+                // region ring are OWNER-ONLY.
+                if let Some(n) = self.world.nodes.get(&sv.id) {
+                    let own = sv.owner == Some(player_id);
+                    sv.node = Some(crate::protocol::NodeStateView {
+                        bonus: n.bonus.slug().to_string(),
+                        title: n.bonus.title().to_string(),
+                        awakened: n.awakened,
+                        fed: own && n.fed,
+                        region_radius: if own { sim::NODE_REGION_RADIUS } else { 0.0 },
+                    });
                 }
             }
             // §syndicates Part 1: the viewer's OWN roster + pending invites (fresh

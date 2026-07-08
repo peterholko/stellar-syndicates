@@ -64,6 +64,9 @@ const COL_ALLY = 0x74e08c;
 // §pirates: the neutral PIRATE faction — a menacing AMBER-ORANGE, distinct from
 // own cyan / ally green / rival salmon. "Nobody's friend."
 const COL_PIRATE = 0xe08a2c;
+// §node: EXOTIC NODES — a VIOLET exotic accent, distinct from every faction hue.
+// The glyph marks a node; ownership stays on the system ring/tint.
+const COL_NODE = 0xb98cff;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
@@ -759,6 +762,48 @@ export class Renderer {
         pt.position.set(s.x, s.y - rr - 2);
         pt.alpha = 0.9;
         this.systemsLayer.addChild(pt);
+      }
+      // §node: an EXOTIC NODE badge. DORMANT before the awakening time → a dim "◈"
+      // telegraph so players see WHERE nodes will awaken from t=0. AWAKENED → a
+      // violet ring + the bonus title, tinted toward the holder (mine/ally/rival)
+      // so the map reads who commands it. The HOLDER also gets a faint REGION RING
+      // (radius sent owner-only) — solid when the bonus is live, dashed when the
+      // node is UNFED (bonus suspended).
+      const nd = dyn?.node;
+      if (nd) {
+        const half = rendered / 2;
+        const holderCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_NODE;
+        if (!nd.awakened) {
+          const gl = new Text({ text: "◈", style: new TextStyle({ fill: COL_NODE, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "700" }) });
+          gl.anchor.set(0.5, 1);
+          gl.position.set(s.x, s.y - Math.max(12, half + 4) - extra);
+          gl.alpha = 0.45;
+          this.systemsLayer.addChild(gl);
+        } else {
+          const rr = Math.max(16, half + 7) + extra;
+          g.circle(s.x, s.y, rr).stroke({ width: 1.5, color: COL_NODE, alpha: 0.8 });
+          const nt = new Text({ text: `◈ ${nd.title.toUpperCase()}`, style: new TextStyle({ fill: holderCol, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
+          nt.anchor.set(0.5, 1);
+          nt.position.set(s.x, s.y - rr - 2);
+          nt.alpha = 0.95;
+          this.systemsLayer.addChild(nt);
+          // HOLDER-ONLY region ring (region_radius > 0 only for the owner).
+          if (nd.region_radius > 0) {
+            const reg = nd.region_radius * this.scale;
+            if (nd.fed) {
+              g.circle(s.x, s.y, reg).stroke({ width: 1, color: COL_NODE, alpha: 0.16 });
+            } else {
+              const seg = 48;
+              for (let i = 0; i < seg; i += 2) {
+                const a0 = (i / seg) * Math.PI * 2;
+                const a1 = ((i + 1) / seg) * Math.PI * 2;
+                g.moveTo(s.x + Math.cos(a0) * reg, s.y + Math.sin(a0) * reg)
+                  .lineTo(s.x + Math.cos(a1) * reg, s.y + Math.sin(a1) * reg);
+              }
+              g.stroke({ width: 1, color: COL_NODE, alpha: 0.12 });
+            }
+          }
+        }
       }
     }
   }

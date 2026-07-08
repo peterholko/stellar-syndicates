@@ -2022,6 +2022,21 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
     `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
 }
 
+// §node: one-line description of what a node's bonus does (by slug). Used in the
+// system panel + inbox so the tactical payoff is always legible.
+function nodeBonusDesc(slug: string): string {
+  switch (slug) {
+    case "relay_anchor":
+      return "Halves your command delay to targets in its region — orders and their echoes land twice as fast nearby.";
+    case "veil":
+      return "Your dark fleets in its region run quieter — detected only at half the usual range.";
+    case "deep_scan":
+      return "Your sensors resolve EXACT composition on anything already visible in its region (bucket → exact).";
+    default:
+      return "A tactical edge to whoever holds it.";
+  }
+}
+
 function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const opts = state.galaxy?.build_options ?? [];
   if (!opts.length) return "";
@@ -2186,6 +2201,39 @@ function updateSystemTab(): void {
     `<div class="star-cap"><span class="star-type">${esc(st.title)}</span>` +
     `${st.exotic ? badge("accent", "exotic") : badge("neutral", "star")}</div></div>`;
 
+  // §node: EXOTIC NODE — the midgame catalyst. Dormant systems telegraph a
+  // countdown from t=0; awakened ones show the bonus, the holder (as our light
+  // knows it), and — for the holder — the fed state + region. bonus/awakened are
+  // public; fed/region are owner-only (a rival sees only the landmark + holder).
+  let nodeBlock = "";
+  if (dyn?.node) {
+    const n = dyn.node;
+    const desc = nodeBonusDesc(n.bonus);
+    if (!n.awakened) {
+      const awakenAt = state.galaxy?.node_awakening_time ?? 0;
+      const left = Math.max(0, awakenAt - liveSimTime());
+      nodeBlock =
+        `<div class="deps-head" style="margin-top:8px" title="An exotic system. At the awakening time it becomes a capturable NODE granting a tactical bonus — claim it if unowned, or blockade→siege→capture if held.">◈ Exotic node — ${esc(n.title)}</div>` +
+        `<div class="sp-line">${badge("accent", `awakens in ${fmtCountdown(left)}`)} <span class="dim">${esc(desc)}</span></div>`;
+    } else {
+      const holderTag = mine
+        ? badge("accent", "you hold it")
+        : rival
+          ? badge("negative", "held by a rival")
+          : badge("neutral", "unclaimed — capturable");
+      let fedLine = "";
+      if (mine) {
+        fedLine = n.fed
+          ? ` ${badgeChip("fed", "bonus live", "positive", "Upkeep met — the node's bonus is active.")}`
+          : ` ${badgeChip("unfed", "UNFED — suspended", "negative", "The node's upkeep isn't covered — its bonus is suspended until you ship supplies here (nothing is lost).")}`;
+      }
+      nodeBlock =
+        `<div class="deps-head" style="margin-top:8px" title="${esc(desc)}">◈ ${esc(n.title)} node</div>` +
+        `<div class="sp-line">${holderTag}${fedLine}</div>` +
+        `<div class="sp-line dim">${esc(desc)}</div>`;
+    }
+  }
+
   // Storage (§buildings step 2): the owner sees fill vs cap — the "ship it or
   // production idles" pressure made visible. Owner-only fields; rivals see —.
   const cap = dyn?.storage_cap ?? 0;
@@ -2215,6 +2263,7 @@ function updateSystemTab(): void {
     if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
     if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
+    if (dyn?.node?.awakened && !dyn.node.fed) cues.push(`${badge("warn", "node unfed")} bonus suspended — ship its upkeep`);
     // §build-progress: the compact construction line — a glance from the map
     // says work is running (and when the next job lands) without opening the view.
     const jobs = dyn?.builds ?? [];
@@ -2292,7 +2341,7 @@ function updateSystemTab(): void {
     ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.</div>`
     : "";
 
-  root.innerHTML = rail + header + starFeature + strip + storageBar + attention + deps + intelBlock + actions + hint;
+  root.innerHTML = rail + header + starFeature + nodeBlock + strip + storageBar + attention + deps + intelBlock + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------
@@ -2752,8 +2801,8 @@ function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: n
 // weights: threats > strangulation > idle capacity > information (tunable here).
 const INBOX_W = {
   siege: 100, battle: 92, hostile: 85, captureLost: 82, blockade: 80,
-  garrisonUnfed: 70, enclave: 58, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
-  brokenOrder: 46, dryRefinery: 42, myGarrisonUnfed: 40, emptyQueue: 34,
+  garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
+  brokenOrder: 46, nodeAwakening: 44, dryRefinery: 42, nodeOpportunity: 41, myGarrisonUnfed: 40, emptyQueue: 34,
   captureWon: 28, battleReport: 26, noAutomation: 20,
 };
 const HOSTILE_CONCERN_MULT = 1.6; // a raider within this × sensor_range of an asset
@@ -2922,6 +2971,14 @@ function computeInbox(): InboxItem[] {
         stakes: "Output boost suspended. Ship Provisions here or set a standing order (nothing is lost).",
         actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
     }
+    // §node: a held node whose upkeep lapsed — its TACTICAL BONUS is suspended.
+    if (s.node?.awakened && !s.node.fed) {
+      const key = `node:${s.id}`;
+      push({ key, weight: INBOX_W.nodeUnfed, tone: "warn", icon: "unfed",
+        headline: `${systemName(s.id)} — ${s.node.title} node UNFED`,
+        stakes: `Its bonus is SUSPENDED. ${nodeBonusDesc(s.node.bonus)} Ship its upkeep here or automate it (nothing is lost).`,
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
+    }
     const vol = (s.stockpile ?? []).find((k) => k.commodity === "volatiles")?.units ?? 0;
     if (s.refinery_tier >= 1 && vol === 0) {
       const key = `refinery:${s.id}`;
@@ -2945,6 +3002,31 @@ function computeInbox(): InboxItem[] {
       push({ key, weight: INBOX_W.emptyQueue, tone: "info", icon: "build",
         headline: `${systemName(s.id)} — nothing built yet`,
         stakes: `${s.slots_total} development slot(s) free and idle — develop it (Extractor, Depot, Sensor…).`,
+        actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
+    }
+  }
+
+  // --- §node: EXOTIC NODES — awakening telegraph + capturable opportunities ---
+  {
+    const nodeSystems = state.systems.filter((s) => s.node);
+    const awakenAt = galaxy.node_awakening_time ?? 0;
+    const secsLeft = awakenAt - now;
+    // TELEGRAPH: while any node is still dormant, one low-priority countdown card
+    // (the "nodes awaken at T" notice, from campaign start through the run-up).
+    if (nodeSystems.length && nodeSystems.some((s) => !s.node!.awakened) && secsLeft > 0) {
+      const key = "nodes:awakening";
+      push({ key, weight: INBOX_W.nodeAwakening, tone: "info", icon: "intel",
+        headline: `Exotic nodes awaken in ${fmtCountdown(secsLeft)}`,
+        stakes: `${nodeSystems.length} exotic system(s) become capturable tactical prizes. Stage colony ships + fleets now — first arrival claims an unowned node.`,
+        actions: [dismissAct(key)] });
+    }
+    // OPPORTUNITY: an AWAKENED, UNCLAIMED node — claim it before a rival does.
+    for (const s of nodeSystems) {
+      if (!s.node!.awakened || s.owner) continue; // held (mine/rival) → not an open claim
+      const key = `nodeopen:${s.id}`;
+      push({ key, weight: INBOX_W.nodeOpportunity, tone: "info", icon: "claim",
+        headline: `${systemName(s.id)} — ${s.node!.title} node UNCLAIMED`,
+        stakes: `A capturable tactical prize. ${nodeBonusDesc(s.node!.bonus)} Send a colony ship — first arrival claims it.`,
         actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
   }
