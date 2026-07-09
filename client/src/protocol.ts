@@ -12,21 +12,28 @@ export interface Vec2 {
 
 export type ShipKind = "convoy" | "raider" | "corvette" | "colony" | "scout";
 
-// A resource deposit on a system (static geology, public). Richer/more valuable
-// toward the frontier — the distance/value gradient (§4).
+// A resource deposit on a system. §explore: NO LONGER public — the exact geology
+// is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
+// `SystemStateView.deposits`; the public spectral read is the `band` below.
 export interface Deposit {
   resource: Commodity;
   richness: number; // units/sec at full extraction
   reserves: number | null; // null = renewable
 }
 
-// Static system geography + geology, sent once at join. Dynamic ownership/
-// stockpile arrives light-gated per tick in `SystemStateView`.
+/// §explore R1: the public richness band — the free spectral read (galaxy-wide
+/// terciles; static, same for everyone).
+export type RichnessBand = "poor" | "fair" | "rich";
+
+// Static PUBLIC system geography, sent once at join. The exact geology is
+// per-corp knowledge in `SystemStateView.deposits`; dynamic ownership/stockpile
+// arrives light-gated per tick there too.
 export interface SystemInfo {
   id: EntityId;
   pos: Vec2;
   name: string;
-  deposits: Deposit[];
+  /// §explore: the public richness band (Poor / Fair / Rich).
+  band: RichnessBand;
   /// DEPRECATED (§ships part 3): claiming is physical (colony ships) — no
   /// longer charged or displayed; kept for wire compatibility.
   claim_cost: number;
@@ -106,6 +113,10 @@ export interface SystemStateView {
   /// §node: this system's EXOTIC NODE, if any. bonus + awakened are PUBLIC (an
   /// awakened node is a galaxy-wide landmark); fed + region_radius are OWNER-ONLY.
   node?: NodeStateView;
+  /// §explore R2: the EXACT deposit table — present iff WE have surveyed this
+  /// system or own it (survey knowledge is permanent). Absent = unsurveyed:
+  /// only the public band is known.
+  deposits?: Deposit[] | null;
 }
 
 /// §node: the per-system view of an EXOTIC NODE — the midgame catalyst.

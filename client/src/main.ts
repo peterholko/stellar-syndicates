@@ -914,12 +914,18 @@ function systemUnderCursor(sx: number, sy: number, radius = 22): SystemInfo | nu
   return best;
 }
 
+/// §explore R2: OUR known geology for a system — the exact deposit table iff we
+/// surveyed it or own it (from the light-gated view), else null (band only).
+function knownDeposits(sysId: string): Deposit[] | null {
+  return state.systems.find((s) => s.id === sysId)?.deposits ?? null;
+}
+
 function showBreadcrumb(name: string): void {
   $("bc-system").textContent = name;
   $("breadcrumb").classList.add("is-open");
 }
 function enterSystem(sys: SystemInfo): void {
-  renderer.enterSystemView(sys);
+  renderer.enterSystemView(sys, knownDeposits(sys.id) ?? []);
   state.selectedSystemId = sys.id; // keep the galaxy selection in sync (rail shows it)
   showBreadcrumb(sys.name);
   closePlanetPanel();
@@ -1100,7 +1106,7 @@ function updateSysviewManage(): void {
       `</div>`
     : "";
   $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
-  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + garrisonHost + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
+  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + garrisonHost + productionReadout(dyn) + buildPanel(sid, dyn) + actions + guard;
 }
 
 let planetPanelBuilt = false;
@@ -1154,7 +1160,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
   if (sys && dyn && dyn.owner !== null && dyn.owner === state.playerId) {
-    const keys = renderer.systemAnchorsAtBody(sys, d.id);
+    const keys = renderer.systemAnchorsAtBody(sys, dyn.deposits ?? [], d.id);
     const opts = (state.galaxy?.build_options ?? []).filter((o) => (keys as string[]).includes(o.key));
     if (opts.length) {
       const slotsTotal = dyn.slots_total ?? 0;
@@ -1915,13 +1921,16 @@ function installInteraction(): void {
 // fields the View already provides; a rival's system shows only that it's held.
 // One delegated listener (set once) survives the per-render innerHTML rewrites.
 
-// Eyebrow flavor, derived purely client-side from public geology + position.
-function systemFlavor(sys: SystemInfo): string {
-  if (!sys.deposits.length) return "barren system";
-  const dom = sys.deposits.reduce((a, b) =>
-    a.richness * COMMODITY_VALUE[a.resource] >= b.richness * COMMODITY_VALUE[b.resource] ? a : b);
+// Eyebrow flavor, derived client-side from position + OUR known geology
+// (§explore: the exact composition is survey knowledge — unsurveyed systems
+// show only the public band).
+function systemFlavor(sys: SystemInfo, deps: Deposit[] | null): string {
   const frac = state.galaxy ? Math.hypot(sys.pos.x, sys.pos.y) / state.galaxy.radius : 0;
   const tier = frac > 0.6 ? "frontier" : frac > 0.33 ? "mid-rim" : "core";
+  if (deps === null) return `unsurveyed ${tier}`;
+  if (!deps.length) return "barren system";
+  const dom = deps.reduce((a, b) =>
+    a.richness * COMMODITY_VALUE[a.resource] >= b.richness * COMMODITY_VALUE[b.resource] ? a : b);
   return `${dom.resource}-rich ${tier}`;
 }
 
@@ -1944,7 +1953,7 @@ function depositRow(d: Deposit): string {
 // Geology section above shows unmodified).
 const EXTRACTOR_RICHNESS_MULT = 1.5;
 
-function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): string {
+function productionReadout(dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const tier = dyn?.extractor_tier ?? 0;
   let mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
@@ -1955,7 +1964,9 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
   const habFed = !!dyn?.habitat_fed;
   if (habTier > 0 && habFed) mult *= Math.pow(habMult, habTier);
   const rateOf = new Map<Commodity, number>();
-  for (const d of sys.deposits) rateOf.set(d.resource, (rateOf.get(d.resource) ?? 0) + d.richness * mult);
+  // §explore: the readout is owner-only, and an owner always knows their own
+  // geology (dyn.deposits present) — read from the light-gated view.
+  for (const d of dyn?.deposits ?? []) rateOf.set(d.resource, (rateOf.get(d.resource) ?? 0) + d.richness * mult);
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
@@ -2247,7 +2258,9 @@ function updateSystemTab(): void {
   const rival = owner !== null && !mine;
   const unclaimed = owner === null;
   const stockTotal = (dyn?.stockpile ?? []).reduce((n, k) => n + k.units, 0);
-  const yieldRate = sys.deposits.reduce((n, d) => n + d.richness, 0);
+  // §explore: exact geology is survey knowledge — null = unsurveyed (band only).
+  const deps = dyn?.deposits ?? null;
+  const yieldRate = (deps ?? []).reduce((n, d) => n + d.richness, 0);
 
   // A system co-located with a home anchor is a starting HOME site; the one at
   // your command center is YOUR home (granted, not claimable). Detected by
@@ -2267,7 +2280,7 @@ function updateSystemTab(): void {
   if (siege) {
     blkTag += ` ${badge("negative", siege.ripe ? (dyn!.blockade!.by_me ? "READY TO CAPTURE" : "SIEGE — CRITICAL") : `siege ${fmtCountdown(siege.left)}`)}`;
   }
-  const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys))}</div>` +
+  const header = `<div class="panel-title"><div><div class="eyebrow">${esc(isMyHome ? "your command seat" : systemFlavor(sys, deps))}</div>` +
     `<h2>${esc(sys.name)}</h2></div><div class="panel-title__right">${ownTag}${blkTag}</div></div>`;
 
   // The system's STAR — concept art + type name. Flavor only; observable for ANY
@@ -2319,8 +2332,11 @@ function updateSystemTab(): void {
   const used = dyn?.storage_used ?? 0;
   const storageFull = mine && cap > 0 && used >= cap;
   const strip = statStrip([
-    stat("Deposits", String(sys.deposits.length)),
-    stat("Yield/s", yieldRate.toFixed(1)),
+    // §explore: exact deposit count/yield are survey knowledge — unsurveyed
+    // shows the public band instead.
+    stat("Band", sys.band.toUpperCase(), sys.band === "rich" ? "is-accent" : ""),
+    stat("Deposits", deps ? String(deps.length) : "?"),
+    stat("Yield/s", deps ? yieldRate.toFixed(1) : "?"),
     stat("Stock", mine && cap > 0 ? `${fmt(used)} / ${fmt(cap)}` : mine ? fmt(stockTotal) : "—", storageFull ? "is-warn" : ""),
     // Development slots (owner-only; §buildings step 1) — the specialization budget.
     stat("Slots", mine ? `${dyn?.slots_used ?? 0}/${dyn?.slots_total ?? 0}` : "—",
@@ -2354,8 +2370,14 @@ function updateSystemTab(): void {
   }
   const attention = cues.length ? `<div class="mhint" style="margin-top:6px">${cues.join(" · ")}</div>` : "";
 
-  const deps = `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
-    sys.deposits.map(depositRow).join("") + `</div>`;
+  // §explore R2: surveyed-or-owner → the full geology table; unsurveyed → the
+  // band + "composition unsurveyed" (survey it — or claim blind and find out).
+  const geology = deps
+    ? `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
+      deps.map(depositRow).join("") + `</div>`
+    : `<div class="sysview__deps"><div class="deps-head">Geology</div>` +
+      `<div class="mhint" title="The spectral read gives only the richness band. Send a scout to SURVEY the exact composition — or claim blind and find out the hard way.">` +
+      `${badge(sys.band === "rich" ? "accent" : "neutral", `${sys.band.toUpperCase()} band`)} composition unsurveyed</div></div>`;
 
   let actions: string;
   if (unclaimed && atHomeSite) {
@@ -2420,7 +2442,7 @@ function updateSystemTab(): void {
     ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.</div>`
     : "";
 
-  root.innerHTML = rail + header + starFeature + nodeBlock + strip + storageBar + attention + deps + intelBlock + actions + hint;
+  root.innerHTML = rail + header + starFeature + nodeBlock + strip + storageBar + attention + geology + intelBlock + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------

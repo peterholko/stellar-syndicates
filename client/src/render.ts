@@ -9,7 +9,7 @@
 // The command center is your vantage — the origin of everything you can see.
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
-import type { Commodity, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
+import type { Deposit, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetExactCount } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
@@ -39,22 +39,12 @@ interface Transition {
 const COL_HUB = 0x7fd4ff;
 const COL_SYSTEM = 0x4a5d7a;
 
-// Mirror of the sim's base prices: ranks how valuable a deposit is, for sizing
-// the frontier-richer glow and picking a system's dominant-resource tint.
-const COMMODITY_VALUE: Record<Commodity, number> = {
-  provisions: 6,
-  ore: 8,
-  fuel: 10,
-  volatiles: 18,
-  alloys: 26,
-};
-const COMMODITY_COLOR: Record<Commodity, number> = {
-  provisions: 0x7fdc8a,
-  ore: 0xb0894f,
-  fuel: 0xff9d5c,
-  volatiles: 0x6bd0ff,
-  alloys: 0xc99bff,
-};
+// §explore: the MAP reads only the PUBLIC richness band (the free spectral
+// read, same for everyone) — 3 star sizes + 3 glow radii. Exact deposits are
+// per-corp knowledge and live in the PANEL, never on the shared map (the old
+// deposit-value sizing + dominant-resource tint were geology leaks).
+const BAND_SIZE: Record<string, number> = { poor: 22, fair: 32, rich: 44 };
+const BAND_GLOW: Record<string, number> = { poor: 5, fair: 10, rich: 16 };
 const COL_OWN = 0x4fc3ff;
 const COL_OTHER = 0xff7a6b;
 // §syndicates: a SYNDICATE ally — a friendly GREEN, distinct from own cyan and
@@ -494,14 +484,15 @@ export class Renderer {
   /// Camera to restore when leaving the System View (the player's pre-enter view).
   private savedGalaxyCam: { cx: number; cy: number; scale: number } | null = null;
 
-  /// ENTER the schematic System View for a system: build its (deterministic,
-  /// public) visual schematic, save the current galaxy camera, and start the
-  /// crossfade + camera-push toward the star. No sim/protocol change — the scene
-  /// renders only public geography + the light-gated ownership already in `state`.
-  enterSystemView(sys: SystemInfo): void {
+  /// ENTER the schematic System View for a system: build its (deterministic)
+  /// visual schematic from the VIEWER'S known geology (§explore — the caller
+  /// passes `deposits` from the light-gated view; empty = unsurveyed, the scene
+  /// degrades to filler bodies with no resource pips), save the current galaxy
+  /// camera, and start the crossfade + camera-push toward the star.
+  enterSystemView(sys: SystemInfo, deposits: Deposit[]): void {
     if (this.mode.type === "system" && this.mode.systemId === sys.id) return;
     const st = starTypeFor(sys.id);
-    this.systemScene.setSystem(buildVisualSystem(sys), this.starTex.get(st.slug) ?? null);
+    this.systemScene.setSystem(buildVisualSystem(sys, deposits), this.starTex.get(st.slug) ?? null);
     this.systemScene.layout(this.viewW, this.viewH);
     this.savedGalaxyCam = { cx: this.cx, cy: this.cy, scale: this.scale };
     const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
@@ -544,8 +535,9 @@ export class Renderer {
 
   /// The contextual-build helper: which developments would ANCHOR at this visual
   /// body in the CURRENT System View (presentation sugar for the panel).
-  systemAnchorsAtBody(sys: SystemInfo, bodyId: string): DevKey[] {
-    return anchorsAtBody(buildVisualSystem(sys), bodyId);
+  /// §explore: takes the viewer's known deposits (owner-only surface in practice).
+  systemAnchorsAtBody(sys: SystemInfo, deposits: Deposit[], bodyId: string): DevKey[] {
+    return anchorsAtBody(buildVisualSystem(sys, deposits), bodyId);
   }
 
   setGalaxy(galaxy: GalaxyInfo): void {
@@ -626,19 +618,10 @@ export class Renderer {
       const rival = owner !== null && !mine && !ally;
       const selected = state.selectedSystemId === sys.id;
 
-      // Value-rate → glow size; dominant resource → tint (the gradient made visible).
-      let valueRate = 0;
-      let topVal = -1;
-      let topColor = COL_SYSTEM;
-      for (const d of sys.deposits) {
-        const v = d.richness * (COMMODITY_VALUE[d.resource] ?? 1);
-        valueRate += v;
-        if (v > topVal) {
-          topVal = v;
-          topColor = COMMODITY_COLOR[d.resource] ?? COL_SYSTEM;
-        }
-      }
-      const glow = Math.min(3 + valueRate * 0.45, 18);
+      // §explore: BAND → glow size (the public gradient made visible — 3 steps).
+      // Neutral tint: the dominant-resource color was exact-geology knowledge.
+      const glow = BAND_GLOW[sys.band] ?? BAND_GLOW.poor;
+      const topColor = COL_SYSTEM;
 
       // §size-hierarchy: the star's rendered VISIBLE diameter — its normal-zoom
       // deposit-value size through the whole normal range, then the shared
@@ -819,9 +802,9 @@ export class Renderer {
   /// white dwarf at max zoom AND avoids blowing small-disk types up 9× into
   /// mush. Computed in canvas units, returned as the visible-disk equivalent.
   private starDiameters(sys: SystemInfo): { base: number; rendered: number } {
-    let valueRate = 0;
-    for (const d of sys.deposits) valueRate += d.richness * (COMMODITY_VALUE[d.resource] ?? 1);
-    const base = Math.min(20 + valueRate * 0.9, 46); // target VISIBLE diameter, normal zoom
+    // §explore: the public BAND drives the size — 3 steps within the old 20–46px
+    // range (public info, identical for every viewer; no geology leak).
+    const base = BAND_SIZE[sys.band] ?? BAND_SIZE.poor; // target VISIBLE diameter, normal zoom
     const ratio = starVisualRatio(starTypeFor(sys.id)); // visible fraction of the canvas
     return { base, rendered: this.deepZoomPx(base / ratio, STAR_MAX_PX) * ratio };
   }

@@ -17,8 +17,8 @@ const URL = process.env.SERVER_WS || "ws://127.0.0.1:8080/ws";
 const fail = (m) => { console.error("FAIL:", m); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const VALUE = { provisions: 6, ore: 8, fuel: 10, volatiles: 18, alloys: 26 };
-const valueRate = (sys) => sys.deposits.reduce((s, d) => s + d.richness * VALUE[d.resource], 0);
+// §explore: exact deposits are fogged now — the PUBLIC read is the richness band.
+const BAND_RANK = { poor: 0, fair: 1, rich: 2 };
 
 function client(name) {
   const ws = new WebSocket(URL);
@@ -49,15 +49,18 @@ const main = async () => {
   const galaxy = a.got.welcome.galaxy;
   const c = galaxy.c;
 
-  // (1) Frontier-richer: outer third out-produces the inner third (on the wire).
+  // (1) Frontier-richer via the PUBLIC BAND (§explore — exact deposits are
+  // fogged; the Welcome carries only the band): every system has a valid band,
+  // and the outer third's mean band rank beats the inner third's.
   const byDist = [...galaxy.systems].sort((x, y) => Math.hypot(x.pos.x, x.pos.y) - Math.hypot(y.pos.x, y.pos.y));
   const third = Math.floor(byDist.length / 3);
-  const mean = (arr) => arr.reduce((s, x) => s + valueRate(x), 0) / arr.length;
+  const mean = (arr) => arr.reduce((s, x) => s + BAND_RANK[x.band], 0) / arr.length;
   const inner = mean(byDist.slice(0, third));
   const outer = mean(byDist.slice(byDist.length - third));
-  if (!galaxy.systems.every((s) => s.deposits.length > 0)) fail("some systems have no deposits");
-  if (!(outer > inner * 1.5)) fail(`frontier not richer: inner ${inner.toFixed(1)} vs outer ${outer.toFixed(1)}`);
-  console.log(`  (1) frontier richer than core: inner value-rate ${inner.toFixed(1)} vs outer ${outer.toFixed(1)} ✓`);
+  if (!galaxy.systems.every((s) => s.band in BAND_RANK)) fail("some systems have no valid band");
+  if (galaxy.systems.some((s) => s.deposits !== undefined)) fail("deposits LEAKED into the public Welcome galaxy");
+  if (!(outer > inner)) fail(`frontier not richer: inner band-rank ${inner.toFixed(2)} vs outer ${outer.toFixed(2)}`);
+  console.log(`  (1) frontier richer than core (public band): inner rank ${inner.toFixed(2)} vs outer ${outer.toFixed(2)} ✓`);
 
   // Pick the affordable system FARTHEST from B's command center, to make the
   // light-gating of B's reveal clearly measurable.

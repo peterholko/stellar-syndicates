@@ -325,9 +325,10 @@ pub struct TimelineEntry {
     pub text: String,
 }
 
-/// One resource deposit on a system, as the client sees it (static geology,
-/// public knowledge — prospecting/fog of deposits is deferred). Lets the client
-/// render the frontier-richer gradient and the system's would-be production.
+/// One resource deposit on a system, as the client sees it. §explore: NO LONGER
+/// public — the exact geology is CORP KNOWLEDGE (surveyed-or-owner), shipped
+/// per-player in [`SystemStateView::deposits`]; the public spectral read is the
+/// richness `band` on [`SystemInfo`].
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct DepositView {
     pub resource: Commodity,
@@ -337,15 +338,18 @@ pub struct DepositView {
     pub reserves: Option<f64>,
 }
 
-/// A star system as static geography + geology: position, name, deposits, and
-/// the credit cost to claim it. Sent once at join. Dynamic state (who owns it,
-/// how much it has stockpiled) is light-gated and lives in [`SystemStateView`].
+/// A star system as static PUBLIC geography: position, name, and the richness
+/// BAND (§explore R1 — the free spectral read; Poor/Fair/Rich by galaxy-wide
+/// terciles, same for everyone, never changes). Sent once at join. The exact
+/// geology is per-corp knowledge in [`SystemStateView::deposits`]; dynamic state
+/// (owner, stockpile) is light-gated there too.
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
     pub id: EntityId,
     pub pos: Vec2,
     pub name: String,
-    pub deposits: Vec<DepositView>,
+    /// §explore: the public richness band slug — "poor" | "fair" | "rich".
+    pub band: &'static str,
     pub claim_cost: f64,
 }
 
@@ -559,6 +563,12 @@ pub struct SystemStateView {
     /// is already visible to everyone). `None` for ordinary systems.
     #[serde(default)]
     pub node: Option<NodeStateView>,
+    /// §explore R2: the EXACT deposit table — present iff the viewer has SURVEYED
+    /// this system or OWNS it (survey knowledge is permanent; holding a system is
+    /// knowing it). `None` = unsurveyed: the viewer gets only the public band.
+    /// Never leaks a rival's survey state (each corp is gated on its OWN set).
+    #[serde(default)]
+    pub deposits: Option<Vec<DepositView>>,
 }
 
 /// §node: the per-system view of an EXOTIC NODE. The bonus + awakened state are
