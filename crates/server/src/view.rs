@@ -82,6 +82,25 @@ struct Track {
     destroyed: Option<(f64, Vec2)>,
 }
 
+/// §node regional effects for the DARK-fleet view — computed by the game loop
+/// from `world.nodes` for THIS viewer and handed in as plain data, so the
+/// world-agnostic [`PositionHistory`] never needs a `World` handle (fog stays a
+/// pure function of what's passed in).
+///
+/// * `veil` — `(owner, region-center)` for every ACTIVE magnetar (Veil) node. A
+///   DARK fleet whose OWNER holds one, and which sits inside that region, has its
+///   signature multiplied by [`sim::node::VEIL_SIGNATURE_MULT`] — quieter, so it's
+///   detected only nearer. Broadcasters are unaffected (they announce themselves).
+/// * `deep_scan` — region-centers of the ACTIVE pulsar/binary (Deep Scan) nodes the
+///   VIEWER holds. Any fleet ALREADY visible inside one reveals its EXACT
+///   composition (bucket→exact) — an earlier reveal of already-permitted data,
+///   never a new detection.
+#[derive(Clone, Copy, Default)]
+pub struct NodeEffects<'a> {
+    pub veil: &'a [(PlayerId, Vec2)],
+    pub deep_scan: &'a [Vec2],
+}
+
 /// The view filter's state: every moving object's recent true-position history.
 pub struct PositionHistory {
     tracks: HashMap<EntityId, Track>,
@@ -190,7 +209,7 @@ impl PositionHistory {
     /// [`Self::view_for_with_arrays`]; the many fairness tests use this form.)
     #[cfg(test)]
     pub fn view_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<GhostView> {
-        self.view_for_with_arrays(viewer, cc, c, now, &[], &BTreeSet::new())
+        self.view_for_with_arrays(viewer, cc, c, now, &[], &BTreeSet::new(), NodeEffects::default())
     }
 
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
@@ -202,6 +221,9 @@ impl PositionHistory {
     /// ship ghosts; this only ever ADDS legitimate vision for the viewer — a
     /// rival's arrays are never passed in, and nothing about the array itself is
     /// sent (its tier stays owner-only in `filter_systems`).
+    // A view filter legitimately takes many light-cone inputs; bundling them into a
+    // struct would only move the noise. (8 args.)
+    #[allow(clippy::too_many_arguments)]
     pub fn view_for_with_arrays(
         &self,
         viewer: PlayerId,
@@ -213,6 +235,8 @@ impl PositionHistory {
         // participants whose battle-light has reached the viewer are shown at the
         // site even if dark and out of coverage — fighting means being seen.
         battle_reveal: &BTreeSet<EntityId>,
+        // §node: this viewer's regional dark-fleet effects (Veil + Deep Scan).
+        nodes: NodeEffects<'_>,
     ) -> Vec<GhostView> {
         // Pass 1: retarded ghost for every observable ship, and gather the
         // viewer's sensor coverage (command center + their own ships' ghosts).
@@ -294,7 +318,19 @@ impl PositionHistory {
             let signature = if p.broadcasts {
                 1.0
             } else {
-                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
+                // §node Veil: a dark fleet in its OWNER's active magnetar region is
+                // quieter — the SAME `signature` the sim pickets scale, kept in one
+                // place so concealment never desyncs between the two detection paths.
+                let veil = if nodes
+                    .veil
+                    .iter()
+                    .any(|(o, c)| *o == p.owner && c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS)
+                {
+                    sim::node::VEIL_SIGNATURE_MULT
+                } else {
+                    1.0
+                };
+                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed) * veil
             };
             let in_coverage = within_coverage(&coverage, p.sample.pos);
             // Weapons fire is LOUD: a battle participant whose battle-light has
@@ -339,10 +375,18 @@ impl PositionHistory {
             } else {
                 None
             };
+            // §node Deep Scan: the VIEWER's active pulsar/binary node resolves the
+            // exact composition of any fleet ALREADY visible in its region — a
+            // bucket→exact upgrade on a fleet that PASSED detection (never a new
+            // reveal; an undetected dark fleet was already `continue`d above).
+            let deep = nodes
+                .deep_scan
+                .iter()
+                .any(|c| c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS);
             // The INTEL LADDER (§13.1): the size bucket is ALWAYS available on a
             // visible fleet; the exact composition ONLY to the owner or inside
-            // sensor coverage — never leaking the true count outside it.
-            let composition = if own || detected {
+            // sensor coverage (or a Deep-Scan region) — never leaking outside it.
+            let composition = if own || detected || deep {
                 Some(
                     p.composition
                         .iter()
@@ -370,6 +414,15 @@ impl PositionHistory {
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
                 posture: None,
+                // §syndicates: ally tint (Part 1) + garrison status (Part 3) are
+                // injected by the game loop from authoritative state (this
+                // history-only view can't see them).
+                ally: false,
+                garrison_host: None,
+                garrison_fed: false,
+                // §pirates: the neutral faction flag — this history-only view keys
+                // off the recorded owner, filled by the game loop.
+                pirate: p.owner.is_pirate(),
             });
         }
         // Deterministic ordering by id.
@@ -468,6 +521,15 @@ pub fn filter_anchors(
         .collect()
 }
 
+/// §syndicates Part 2: a syndicate ally's relayable scout intel. Carries the
+/// ally's id, their command center (the relay source), and their snapshot map;
+/// the View chain-light-delays each snapshot to the viewer.
+pub struct AllyIntel<'a> {
+    pub id: PlayerId,
+    pub cc: Vec2,
+    pub intel: &'a BTreeMap<EntityId, sim::IntelSnapshot>,
+}
+
 /// Filter the dynamic, per-tick state of star systems for a player (§4, §6). A
 /// system's geography/geology (pos, name, deposits, claim cost) is public and
 /// sent once at join; here we light-gate the DYNAMIC state:
@@ -479,6 +541,8 @@ pub fn filter_anchors(
 /// * **stockpile** — a system's accumulated production is private: shown only to
 ///   the owner (who can anyway predict it from the known deposit rates), never to
 ///   rivals. So no information about a rival's holdings ever leaks.
+// A per-player view filter legitimately takes many light-cone inputs; bundling
+// them into a struct would only move the noise. (10 args.)
 #[allow(clippy::too_many_arguments)]
 pub fn filter_systems(
     systems: &[StarSystem],
@@ -490,6 +554,7 @@ pub fn filter_systems(
     tick: u64,
     dt: f64,
     intel: &BTreeMap<EntityId, sim::IntelSnapshot>,
+    allies: &[AllyIntel<'_>],
 ) -> Vec<SystemStateView> {
     systems
         .iter()
@@ -595,15 +660,54 @@ pub fn filter_systems(
                 intel: if own {
                     None // your own systems need no spying
                 } else {
-                    intel.get(&sys.id).and_then(|snap| {
+                    // Your OWN scout snapshot (direct, no provenance) — delivered
+                    // once its light reached your command center — is authoritative.
+                    let own_iv = intel.get(&sys.id).and_then(|snap| {
                         let arrival = snap.observed_at + snap.pos.distance(cc) / c;
                         (arrival <= now).then_some(IntelView {
                             defense_tier: snap.defense_tier,
                             shipyard_tier: snap.shipyard_tier,
                             observed_at: snap.observed_at,
+                            relayed_by: None,
+                            relayed_at: None,
+                            received_at: None,
+                            enclave_tier: snap.enclave_tier,
                         })
+                    });
+                    // §syndicates Part 2: else the freshest ARRIVED ally-relayed
+                    // snapshot — chain-delayed observed→ally_cc→my_cc, provenance
+                    // preserved, aging from the ORIGINAL observation.
+                    own_iv.or_else(|| {
+                        let mut best: Option<IntelView> = None;
+                        let mut best_obs = f64::NEG_INFINITY;
+                        for a in allies {
+                            let Some(snap) = a.intel.get(&sys.id) else { continue };
+                            let t2 = snap.observed_at + snap.pos.distance(a.cc) / c;
+                            let t3 = t2 + a.cc.distance(cc) / c;
+                            if now >= t3 && snap.observed_at > best_obs {
+                                best_obs = snap.observed_at;
+                                best = Some(IntelView {
+                                    defense_tier: snap.defense_tier,
+                                    shipyard_tier: snap.shipyard_tier,
+                                    observed_at: snap.observed_at,
+                                    relayed_by: Some(a.id),
+                                    relayed_at: Some(t2),
+                                    received_at: Some(t3),
+                                    enclave_tier: snap.enclave_tier,
+                                });
+                            }
+                        }
+                        best
                     })
                 },
+                // §syndicates: ally tint (Part 1) + hosted-garrison indicator
+                // (Part 3) are injected by the game loop from authoritative state.
+                ally: false,
+                ally_garrison_ships: 0,
+                ally_garrison_fed: false,
+                // §node: injected by the game loop from `world.nodes` (it holds the
+                // authoritative node state, and the fed/region gate needs `own`).
+                node: None,
             }
         })
         .collect()
@@ -953,7 +1057,7 @@ mod tests {
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new());
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
         assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
         assert!(v10[1].build.is_none(), "a rival's build state must never leak");
         // The full queue list (§build-progress) follows the same fog rule and
@@ -1009,7 +1113,7 @@ mod tests {
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new());
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
         assert_eq!(v25[1].owner, Some(rival));
         // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
@@ -1043,7 +1147,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let builds = vec![];
         let q = |viewer, now| {
-            filter_systems(&systems, viewer, cc, c, now, &builds, 0, sim::DT, &BTreeMap::new())[0].blockade
+            filter_systems(&systems, viewer, cc, c, now, &builds, 0, sim::DT, &BTreeMap::new(), &[])[0].blockade
         };
 
         // The BESIEGER sees it at once (by_me), regardless of light.
@@ -1095,27 +1199,106 @@ mod tests {
         let mut intel = BTreeMap::new();
         intel.insert(
             EntityId(1),
-            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
+            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
         );
         let builds: Vec<sim::BuildJob> = vec![];
 
         // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel);
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel, &[]);
         assert!(v10[0].intel.is_none(), "intel must not appear before its light arrives");
 
         // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel);
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel, &[]);
         let iv = v25[0].intel.expect("intel delivered once its light arrives");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
         assert!((iv.observed_at - 0.0).abs() < 1e-9, "a snapshot keeps its capture time — it ages");
 
         // Leak checks: a viewer WITHOUT snapshots sees nothing…
-        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new());
+        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
         assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
         // …and the SCOUTED RIVAL's own view is untouched: their own system never
         // carries intel (own => None), even if a stale map were passed in.
-        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel);
+        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel, &[]);
         assert!(v_rival[0].intel.is_none(), "the scouted side learns nothing — not even that it was scouted");
+    }
+
+    /// One rival-owned system at (6000,0) — the target of a scout snapshot.
+    fn rival_one_system(rival: PlayerId) -> Vec<StarSystem> {
+        vec![StarSystem {
+            id: EntityId(1),
+            pos: Vec2::new(6000.0, 0.0),
+            name: "S".into(),
+            deposits: vec![],
+            claim_cost: 1000.0,
+            owner: Some(rival),
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            extractor_tier: 0,
+            depot_tier: 0,
+            shipyard_tier: 0,
+            sensor_tier: 0,
+            defense_tier: 0,
+            defense_pool: 0.0,
+            habitat_tier: 0,
+            habitat_fed: false,
+            refinery_tier: 0,
+            blockade: None,
+        }]
+    }
+
+    /// §syndicates Part 2: a syndicate ally RELAYS its scout snapshot to me — but
+    /// only after the full chain observed→ally_cc→my_cc, with provenance preserved
+    /// and aging from the ORIGINAL observation. Honestly staler than the ally's own.
+    #[test]
+    fn relayed_ally_intel_obeys_the_chain_and_carries_provenance() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let (me, rival, ally) = (PlayerId(7), PlayerId(8), PlayerId(9));
+        let cc = Vec2::new(0.0, 0.0);
+        let ally_cc = Vec2::new(12000.0, 0.0);
+        let systems = rival_one_system(rival);
+        let builds: Vec<sim::BuildJob> = vec![];
+        // The ALLY scouted the rival system (capture pos ~ the system): observed_at 0.
+        let mut ally_map = BTreeMap::new();
+        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
+        // Chain: T2 = 6000/300 = 20 (ally learns), T3 = 20 + 12000/300 = 60 (I learn).
+        let v55 = filter_systems(&systems, me, cc, c, 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies);
+        assert!(v55[0].intel.is_none(), "a relayed snapshot waits for the FULL chain (observed→ally→me)");
+        let v65 = filter_systems(&systems, me, cc, c, 65.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies);
+        let iv = v65[0].intel.expect("relayed once the chain completes");
+        assert_eq!((iv.defense_tier, iv.shipyard_tier), (3, 2));
+        assert_eq!(iv.relayed_by, Some(ally), "provenance names the reporting ally");
+        assert!((iv.observed_at - 0.0).abs() < 1e-9, "ages from the ORIGINAL observation, not the relay");
+        assert!((iv.relayed_at.unwrap() - 20.0).abs() < 1e-6, "T2 = the ally's own light delay");
+        assert!((iv.received_at.unwrap() - 60.0).abs() < 1e-6, "T3 = T2 + inter-command-center delay");
+        assert!(iv.received_at.unwrap() > 6000.0 / c, "relayed is staler than a direct sighting would be");
+    }
+
+    /// The relay is ALLY-gated (a non-member gets nothing), and your OWN direct
+    /// scouting outranks a relay (no provenance on your own intel).
+    #[test]
+    fn relay_is_ally_gated_and_own_intel_wins() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let (me, rival, ally) = (PlayerId(7), PlayerId(8), PlayerId(9));
+        let cc = Vec2::new(0.0, 0.0);
+        let ally_cc = Vec2::new(12000.0, 0.0);
+        let systems = rival_one_system(rival);
+        let builds: Vec<sim::BuildJob> = vec![];
+        let mut ally_map = BTreeMap::new();
+        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        // Non-member: no allies passed → nothing relayed, even long after the chain.
+        let v_non = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
+        assert!(v_non[0].intel.is_none(), "a non-member receives no relayed intel");
+        // Own direct snapshot present AND ally relay present → OWN wins (no provenance).
+        let mut own_map = BTreeMap::new();
+        own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
+        let v = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &own_map, &allies);
+        let iv = v[0].intel.expect("own intel delivered");
+        assert_eq!(iv.relayed_by, None, "your own direct scouting is authoritative — no relay provenance");
+        assert_eq!((iv.defense_tier, iv.shipyard_tier), (1, 1), "own snapshot values, not the ally's");
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.
@@ -1272,7 +1455,7 @@ mod tests {
         assert!(hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
         // As a battle participant, weapons fire reveals it at the site, in full.
         let reveal: BTreeSet<EntityId> = [EntityId(1)].into_iter().collect();
-        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &reveal);
+        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &reveal, NodeEffects::default());
         assert_eq!(seen.len(), 1, "weapons fire reveals the dark participant at the battle site");
         assert!(seen[0].composition.is_some(), "and its full composition is seen there");
     }
@@ -1292,6 +1475,68 @@ mod tests {
             let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
             assert_eq!(view_sees, sim_sees, "View and sim agree at dist {dist}");
         }
+    }
+
+    /// §node Deep Scan LEAK CHECK: the viewer's Deep-Scan region upgrades an
+    /// ALREADY-VISIBLE fleet's bucket to EXACT composition, but NEVER conjures a
+    /// fleet that detection didn't already permit — an undetected dark raider in the
+    /// region stays hidden.
+    #[test]
+    fn deep_scan_upgrades_bucket_to_exact_but_reveals_no_new_fleet() {
+        let pos = Vec2::new(5000.0, 0.0); // far outside the 1000 su bubble
+        // A rival BROADCASTER (has convoys) is visible galaxy-wide but shows only
+        // the size bucket outside coverage.
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Raider, 1)];
+        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, pos, &comp))], 1000.0);
+        let base = hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0);
+        assert_eq!(base.len(), 1);
+        assert!(base[0].composition.is_none(), "outside coverage: bucket only, no exact composition");
+        // A Deep-Scan region over the fleet → exact composition, still ONE fleet.
+        let deep = [pos];
+        let scanned = hist.view_for_with_arrays(
+            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            NodeEffects { veil: &[], deep_scan: &deep },
+        );
+        assert_eq!(scanned.len(), 1, "deep scan reveals no NEW fleet");
+        assert!(scanned[0].composition.is_some(), "it upgrades the visible fleet's bucket to exact");
+        // A DARK, undetected raider in the same region stays hidden under deep scan.
+        let dark = history_of(vec![dark_track(RIVAL, pos, ShipKind::Raider.max_speed(), &[(ShipKind::Raider, 2)])], 1000.0);
+        let dscanned = dark.view_for_with_arrays(
+            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            NodeEffects { veil: &[], deep_scan: &deep },
+        );
+        assert!(dscanned.is_empty(), "deep scan never conjures an undetected dark fleet");
+    }
+
+    /// §node Veil LEAK CHECK: a dark fleet in its OWNER's Veil region is detected at
+    /// a SHORTER range (its signature is halved) — a fleet the viewer would just see
+    /// is pushed back under the fog. Same shared detection rule, one region scope.
+    #[test]
+    fn veil_shrinks_a_dark_fleets_detection_range() {
+        let full = ShipKind::Raider.max_speed();
+        let comp: BTreeMap<ShipKind, u32> = [(ShipKind::Raider, 3)].into_iter().collect();
+        let sig = sim::detection::signature(&comp, full, full);
+        let sensor = 3000.0;
+        // Just inside the full-sig radius (seen), but outside the halved one (hidden).
+        let d = 0.75 * sensor * sig;
+        let pos = Vec2::new(d, 0.0);
+        let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], sensor);
+        assert!(!hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "without a Veil, the fleet is detected");
+        // A Veil region (its owner's) over the fleet halves its signature → hidden.
+        let veil = [(RIVAL, pos)];
+        let seen = hist.view_for_with_arrays(
+            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            NodeEffects { veil: &veil, deep_scan: &[] },
+        );
+        assert!(seen.is_empty(), "the Veil shrinks the fleet's detection radius below its range");
+        // A rival's Veil never quiets someone else's fleet: a mismatched-owner region
+        // does nothing (the fleet is RIVAL's, the region is credited to VIEWER).
+        let wrong = [(VIEWER, pos)];
+        let still = hist.view_for_with_arrays(
+            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            NodeEffects { veil: &wrong, deep_scan: &[] },
+        );
+        assert!(!still.is_empty(), "a Veil only quiets its OWN holder's fleets");
     }
 
     /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
@@ -1441,7 +1686,7 @@ mod tests {
         assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
         // An owned array system near them (bubble 1200 su) covers both.
         let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
-        let seen = hist.view_for_with_arrays(VIEWER, cc, 300.0, 60.0, &arrays, &BTreeSet::new());
+        let seen = hist.view_for_with_arrays(VIEWER, cc, 300.0, 60.0, &arrays, &BTreeSet::new(), NodeEffects::default());
         assert_eq!(seen.len(), 2, "the array detects the dark raider");
         let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
         assert!(convoy.cargo.is_some(), "cargo revealed at array range");

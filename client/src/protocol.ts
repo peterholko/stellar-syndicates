@@ -95,14 +95,51 @@ export interface SystemStateView {
   /// delivered only once its light reached our command center. A SNAPSHOT: it
   /// ages and never auto-updates; re-scout to refresh.
   intel: IntelView | null;
+  /// §syndicates Part 1: the (light-gated known) owner is a SYNDICATE ally as WE
+  /// know it — drives the friendly ally tint. No owner-only data comes with it.
+  ally?: boolean;
+  /// §syndicates Part 3: OWNER-ONLY — an ally garrison hosted at THIS system (the
+  /// coalition shield you're feeding): total ally garrison ships + whether their
+  /// Provisions upkeep is covered. `0` = none; rivals always see 0.
+  ally_garrison_ships?: number;
+  ally_garrison_fed?: boolean;
+  /// §node: this system's EXOTIC NODE, if any. bonus + awakened are PUBLIC (an
+  /// awakened node is a galaxy-wide landmark); fed + region_radius are OWNER-ONLY.
+  node?: NodeStateView;
+}
+
+/// §node: the per-system view of an EXOTIC NODE — the midgame catalyst.
+export interface NodeStateView {
+  /// Stable bonus slug: "relay_anchor" | "veil" | "deep_scan".
+  bonus: string;
+  /// Human bonus title, e.g. "Relay Anchor".
+  title: string;
+  /// Has the node awakened (past the awakening time)? A dormant node is a
+  /// telegraphed landmark; an awakened one is a live, capturable prize.
+  awakened: boolean;
+  /// OWNER-ONLY: is the node's upkeep met? An unfed node's bonus is SUSPENDED.
+  fed: boolean;
+  /// OWNER-ONLY: the node's region radius (sim units) for the holder's map ring.
+  region_radius: number;
 }
 
 /// A stored scout-intel snapshot of a rival system's fortifications.
 export interface IntelView {
   defense_tier: number;
   shipyard_tier: number;
-  /// Sim-time of the observation ("as of T") — the client ages it.
+  /// Sim-time of the ORIGINAL observation ("as of T₁") — the client ages it,
+  /// even when the intel was relayed by an ally (§syndicates Part 2).
   observed_at: number;
+  /// §syndicates Part 2 relay provenance — present only for ALLY-sourced intel
+  /// (null for your own direct scout). `relayed_by` = the reporting ally's id
+  /// (resolve to a name via the syndicate roster); `relayed_at` = T₂ (reached
+  /// the ally's command center); `received_at` = T₃ (reached yours).
+  relayed_by?: PlayerId | null;
+  relayed_at?: number | null;
+  received_at?: number | null;
+  /// §pirates: the scouted PIRATE ENCLAVE tier at this system (0 = not an enclave).
+  /// When > 0 the site is a pirate base; `defense_tier` is its base defense.
+  enclave_tier?: number;
 }
 
 // A buildable thing + its recipe (§step1), sent once in the galaxy.
@@ -140,6 +177,14 @@ export interface GalaxyInfo {
   /// §contestable-territory Part 2: siege duration (sim s) — the client renders
   /// siege progress = (now − blockade.siege_since) / siege_secs.
   siege_secs: number;
+  /// §pirates: the neutral PIRATE faction id — the client labels a fleet/report
+  /// as pirate when its owner === this id (no name lookup needed).
+  pirate_id?: PlayerId;
+  /// §node: sim-time at which every EXOTIC system AWAKENS into a capturable node —
+  /// the client telegraphs the countdown from t=0.
+  node_awakening_time?: number;
+  /// §node: a node's region radius (sim units) — for the holder's region ring.
+  node_region_radius?: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
@@ -323,6 +368,17 @@ export interface GhostView {
   // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
   // fleets, null for every rival; a private standing policy that never leaks).
   posture: EngagementPosture | null;
+  // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
+  // (light-delayed membership) — drives the friendly ally tint/pip.
+  ally?: boolean;
+  // §syndicates Part 3: OWNER-ONLY. When this is YOUR fleet stationed as an ally
+  // garrison, the host system id it defends (else null); `garrison_fed` = the host
+  // is covering its Provisions upkeep (else its defense is suspended).
+  garrison_host?: EntityId | null;
+  garrison_fed?: boolean;
+  // §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
+  // drives the distinct hostile-neutral tint. Hostile to everyone.
+  pirate?: boolean;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -377,7 +433,55 @@ export type ClientMsg =
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
+  // §syndicates Part 1 — alliance admin (instant owner-only).
+  | { type: "CreateSyndicate"; name: string }
+  | { type: "InviteToSyndicate"; name: string }
+  | { type: "AcceptSyndicateInvite"; syndicate_id: SyndicateId }
+  | { type: "LeaveSyndicate" }
+  | { type: "DissolveSyndicate" }
   | { type: "Ping" };
+
+// §syndicates Part 1: an alliance id (opaque decimal string on the wire).
+export type SyndicateId = string;
+
+// The viewer's OWN syndicate roster (never a rival's private roster).
+export interface SyndicateView {
+  id: SyndicateId;
+  name: string;
+  founder: PlayerId;
+  is_founder: boolean;
+  members: { id: PlayerId; name: string }[];
+  invited: string[];
+}
+
+// A pending invitation the viewer may accept.
+export interface SyndicateInviteView {
+  id: SyndicateId;
+  name: string;
+}
+
+/// §rankings: one corporation's row in the PUBLISHED leaderboard — a public
+/// snapshot taken on the ledger close (the same table for every player). All values
+/// are cumulative campaign totals. `player_id` matches your own id for the "your
+/// row" highlight; `titles` are the category-leader chips this corp currently wears.
+export interface RankingRow {
+  player_id: PlayerId;
+  name: string;
+  valuation: number;
+  trade_throughput: number;
+  market_profit: number;
+  cargo_captured: number;
+  cargo_protected: number;
+  battle_efficiency: number;
+  battle_engagements: number;
+  /// Whether `battle_efficiency` met the min-engagements floor (else provisional —
+  /// shown but not ranked / title-eligible).
+  battle_ranked: boolean;
+  systems_developed: number;
+  intel_gathered: number;
+  recovery: number;
+  titles: string[];
+}
 
 export type RaidOutcome =
   | "target_destroyed"
@@ -515,6 +619,13 @@ export type ServerMsg =
       battle_reports: BattleReportView[];
       /// §contestable-territory Part 2: retained capture reports (per-participant).
       capture_reports: CaptureReportView[];
+      /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
+      syndicate?: SyndicateView | null;
+      /// §syndicates Part 1: pending invitations the viewer may accept.
+      syndicate_invites?: SyndicateInviteView[];
+      /// §rankings: the PUBLISHED leaderboard — public, same for every player,
+      /// snapshotted on the ledger close (holds steady between closes).
+      rankings?: RankingRow[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

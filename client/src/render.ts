@@ -57,12 +57,38 @@ const COMMODITY_COLOR: Record<Commodity, number> = {
 };
 const COL_OWN = 0x4fc3ff;
 const COL_OTHER = 0xff7a6b;
+// §syndicates: a SYNDICATE ally — a friendly GREEN, distinct from own cyan and
+// rival red (and from the teal sensor bubbles). Applied per the viewer's
+// light-delayed membership knowledge (the `ally` view flag).
+const COL_ALLY = 0x74e08c;
+// §pirates: the neutral PIRATE faction — a menacing AMBER-ORANGE, distinct from
+// own cyan / ally green / rival salmon. "Nobody's friend."
+const COL_PIRATE = 0xe08a2c;
+// §node: EXOTIC NODES — a VIOLET exotic accent, distinct from every faction hue.
+// The glyph marks a node; ownership stays on the system ring/tint.
+const COL_NODE = 0xb98cff;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
+// Sensor-coverage bubble style — ONE tunable block, TWO states (OPTION C).
+// DEFAULT: a quiet ambient hint — a faint DASHED boundary (constant screen-px
+// dashes read consistently at any zoom) over little/no fill, so the coverage
+// union (command center + every own ship + the scout's oversized bubble + owned
+// array systems) doesn't shout. EMPHASIZED: when the player SELECTS the SOURCE of
+// a bubble (its fleet / array system / the home system for the command center),
+// THAT bubble alone brightens to a clearer solid-ish ring + stronger fill — so
+// you can inspect "what does THIS sensor cover" on demand. (Hover-emphasis is a
+// follow-up — there's no map hover layer yet, so emphasis is SELECTION-only.)
+// Deliberately distinct from the CRISP platform/interdictor range rings and the
+// pulsing THREAT / SELECTION rings (untouched). Re-tune both states here.
+const SENSOR_COVERAGE = {
+  dashOn: 8, dashOff: 6, // default dash pattern (screen px)
+  outlineAlpha: 0.2, fillAlpha: 0.03, // default: faint dashed hint, whisper of fill
+  emphOutlineAlpha: 0.5, emphFillAlpha: 0.09, emphWidth: 1.4, // selected source: clearer solid-ish ring + stronger fill
+};
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 // Ships render in their NATURAL art — no per-syndicate body tint (a future
@@ -171,6 +197,25 @@ const FLEET_LEAD_CALIB: Record<FleetFamily, Record<FleetTier, number>> = {
   scout: { wing: 0.81, squadron: 1.07, armada: 0.96 },
 };
 
+// §fleet-lod: at far zoom-out the detailed hull/formation art muddies down to a
+// few dozen pixels, so below this zoom ratio r (= scale / fitScale) the
+// freighter / raider / corvette fleets swap to bold LOW-DETAIL ICONS that read
+// cleanly when tiny (the count badge still carries fleet size). Scout and colony
+// have no icon yet and keep their detailed art at every zoom. Tunable — raise to
+// keep icons through more of the zoom range, lower for an earlier hand-off to the
+// detailed art + formations.
+const LOD_ICON_ZOOM_MAX = 2.5;
+// The icon families (a subset of FleetFamily — scout is excluded, no icon yet).
+type LodFamily = "freighter" | "raider" | "corvette";
+// Per-family calibration so the icon's SUBJECT renders at ~the detailed single
+// sprite's on-screen size across the swap (no size pop). 1.0 = canvas-width
+// parity with the single sprite; nudge if a family visibly jumps at the hand-off.
+const LOD_ICON_CALIB: Record<LodFamily, number> = {
+  freighter: 1.0,
+  raider: 1.0,
+  corvette: 1.0,
+};
+
 // The WORMHOLE HUB map sprite (§hub-art): the game's most important location
 // reads as a LANDMARK — clearly the largest body on the map at normal zoom
 // (stars top out at 46px), growing to HUB_MAX_PX at max zoom (§size-hierarchy).
@@ -230,6 +275,11 @@ export class Renderer {
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
+  // §fleet-lod: bold low-detail fleet icons shown at far zoom-out (freighter =
+  // convoy, raider, corvette). Null → the detailed art is used at every zoom.
+  private texIconFreighter: Texture | null = null;
+  private texIconRaider: Texture | null = null;
+  private texIconCorvette: Texture | null = null;
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
@@ -340,6 +390,20 @@ export class Renderer {
     ]);
     this.texBattleOngoing = battleOngoing;
     this.texBattleAftermath = battleAftermath;
+    // §fleet-lod: the far-zoom low-detail icons. They render at ~a few dozen px
+    // from a large source, so enable mipmaps for shimmer-free minification (same
+    // as the hub landmark). A missing file just leaves the detailed art in place.
+    const [iconFreighter, iconRaider, iconCorvette] = await Promise.all([
+      load("/art/ship_sprites/icon_freighter.png"),
+      load("/art/ship_sprites/icon_raider.png"),
+      load("/art/ship_sprites/icon_corvette.png"),
+    ]);
+    for (const t of [iconFreighter, iconRaider, iconCorvette]) {
+      if (t) t.source.autoGenerateMipmaps = true;
+    }
+    this.texIconFreighter = iconFreighter;
+    this.texIconRaider = iconRaider;
+    this.texIconCorvette = iconCorvette;
     // Fleet formation sprites (family × tier); each independent, missing ones
     // fall back to the single-ship sprite so a bad file never breaks fleets.
     const families: FleetFamily[] = ["freighter", "raider", "corvette", "scout"];
@@ -556,7 +620,10 @@ export class Renderer {
       const dyn = dynById.get(sys.id);
       const owner = dyn?.owner ?? null;
       const mine = owner !== null && owner === state.playerId;
-      const rival = owner !== null && !mine;
+      // §syndicates: an ALLY-owned system (per the viewer's light-delayed
+      // knowledge) tints friendly-green; a plain rival stays red.
+      const ally = owner !== null && !mine && !!dyn?.ally;
+      const rival = owner !== null && !mine && !ally;
       const selected = state.selectedSystemId === sys.id;
 
       // Value-rate → glow size; dominant resource → tint (the gradient made visible).
@@ -594,6 +661,11 @@ export class Renderer {
         // Friendly territory: cyan halo + bold ring.
         g.circle(s.x, s.y, 10 + extra).fill({ color: COL_OWN, alpha: 0.10 });
         g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_OWN, alpha: 0.95 });
+      } else if (ally) {
+        // §syndicates: ally territory — a green halo + bold ring, the friendly
+        // treatment in a distinct hue (no rival danger-breath).
+        g.circle(s.x, s.y, 10 + extra).fill({ color: COL_ALLY, alpha: 0.10 });
+        g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_ALLY, alpha: 0.9 });
       } else if (rival) {
         // Rival / contested territory: a slow-breathing red danger halo + a bold
         // DOUBLE ring — unmistakable as hostile-held, and clearly distinct from the
@@ -631,7 +703,7 @@ export class Renderer {
         // still lead via their full brightness + ring.
         bsp.alpha = owner !== null ? 1 : 0.9;
       } else {
-        const dotCol = mine ? COL_OWN : rival ? COL_OTHER : COL_SYSTEM;
+        const dotCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_SYSTEM;
         g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
       }
       this.systemsLayer.addChild(g);
@@ -642,11 +714,11 @@ export class Renderer {
         const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
         txt = `${sys.name}  ◆${top.units} ${top.commodity}`;
       }
-      const col = mine ? COL_OWN : rival ? COL_OTHER : 0x55657f;
+      const col = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : 0x55657f;
       const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
       t.anchor.set(0, 0.5);
       t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
-      t.alpha = mine ? 0.95 : rival ? 0.88 : selected ? 0.8 : 0.5;
+      t.alpha = mine ? 0.95 : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
       this.systemsLayer.addChild(t);
 
       // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
@@ -670,6 +742,68 @@ export class Renderer {
         bt.position.set(s.x, s.y - rr - 2);
         bt.alpha = 0.7 + 0.3 * pulse;
         this.systemsLayer.addChild(bt);
+      }
+      // §pirates: a SCOUTED enclave base — an amber dashed ring + "☠ ENCLAVE T‹n›"
+      // tag. Owner-only knowledge (your own scout snapshot); the base is DARK to
+      // anyone who hasn't scouted it (the intel field is fog-gated in the View).
+      if (dyn?.intel && (dyn.intel.enclave_tier ?? 0) > 0) {
+        const half = rendered / 2;
+        const rr = Math.max(14, half + 5) + extra;
+        const seg = 20;
+        for (let i = 0; i < seg; i += 2) {
+          const a0 = (i / seg) * Math.PI * 2;
+          const a1 = ((i + 1) / seg) * Math.PI * 2;
+          g.moveTo(s.x + Math.cos(a0) * rr, s.y + Math.sin(a0) * rr)
+            .lineTo(s.x + Math.cos(a1) * rr, s.y + Math.sin(a1) * rr);
+        }
+        g.stroke({ width: 1.4, color: COL_PIRATE, alpha: 0.7 });
+        const pt = new Text({ text: `☠ ENCLAVE T${dyn.intel.enclave_tier}`, style: new TextStyle({ fill: COL_PIRATE, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
+        pt.anchor.set(0.5, 1);
+        pt.position.set(s.x, s.y - rr - 2);
+        pt.alpha = 0.9;
+        this.systemsLayer.addChild(pt);
+      }
+      // §node: an EXOTIC NODE badge. DORMANT before the awakening time → a dim "◈"
+      // telegraph so players see WHERE nodes will awaken from t=0. AWAKENED → a
+      // violet ring + the bonus title, tinted toward the holder (mine/ally/rival)
+      // so the map reads who commands it. The HOLDER also gets a faint REGION RING
+      // (radius sent owner-only) — solid when the bonus is live, dashed when the
+      // node is UNFED (bonus suspended).
+      const nd = dyn?.node;
+      if (nd) {
+        const half = rendered / 2;
+        const holderCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_NODE;
+        if (!nd.awakened) {
+          const gl = new Text({ text: "◈", style: new TextStyle({ fill: COL_NODE, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "700" }) });
+          gl.anchor.set(0.5, 1);
+          gl.position.set(s.x, s.y - Math.max(12, half + 4) - extra);
+          gl.alpha = 0.45;
+          this.systemsLayer.addChild(gl);
+        } else {
+          const rr = Math.max(16, half + 7) + extra;
+          g.circle(s.x, s.y, rr).stroke({ width: 1.5, color: COL_NODE, alpha: 0.8 });
+          const nt = new Text({ text: `◈ ${nd.title.toUpperCase()}`, style: new TextStyle({ fill: holderCol, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
+          nt.anchor.set(0.5, 1);
+          nt.position.set(s.x, s.y - rr - 2);
+          nt.alpha = 0.95;
+          this.systemsLayer.addChild(nt);
+          // HOLDER-ONLY region ring (region_radius > 0 only for the owner).
+          if (nd.region_radius > 0) {
+            const reg = nd.region_radius * this.scale;
+            if (nd.fed) {
+              g.circle(s.x, s.y, reg).stroke({ width: 1, color: COL_NODE, alpha: 0.16 });
+            } else {
+              const seg = 48;
+              for (let i = 0; i < seg; i += 2) {
+                const a0 = (i / seg) * Math.PI * 2;
+                const a1 = ((i + 1) / seg) * Math.PI * 2;
+                g.moveTo(s.x + Math.cos(a0) * reg, s.y + Math.sin(a0) * reg)
+                  .lineTo(s.x + Math.cos(a1) * reg, s.y + Math.sin(a1) * reg);
+              }
+              g.stroke({ width: 1, color: COL_NODE, alpha: 0.12 });
+            }
+          }
+        }
       }
     }
   }
@@ -887,6 +1021,9 @@ export class Renderer {
     const slotIndex = new Map<string, number>();
     for (const r of state.battleReports) {
       if (state.battleDismissed.has(r.id)) continue;
+      // An ESCAPED raid isn't a battle — no contact, no wreckage — so it leaves no
+      // aftermath marker on the map (the "raid failed" news still lands in the log).
+      if (r.outcome === "escaped") continue;
       if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
       const s = this.worldToScreen(r.pos);
       const key = `${Math.round(r.pos.x / 60)},${Math.round(r.pos.y / 60)}`;
@@ -1055,12 +1192,19 @@ export class Renderer {
     g.clear();
     if (!state.galaxy || !state.commandCenter) return;
     const baseR = state.galaxy.sensor_range;
-    const sources: { x: number; y: number; r: number }[] = [{ ...state.commandCenter, r: baseR }];
+    // A source is EMPHASIZED when the player has selected the object that projects
+    // it: a fleet (selectedShipId), an array system (selectedSystemId), or — for
+    // the command center — the HOME system (the owned system co-located with the
+    // command center). `sel` is precomputed per source and drives the two states.
+    const cc = state.commandCenter;
+    const selSys = state.selectedSystemId ? state.galaxy.systems.find((s) => s.id === state.selectedSystemId) : undefined;
+    const ccSel = !!selSys && Math.abs(selSys.pos.x - cc.x) < 1 && Math.abs(selSys.pos.y - cc.y) < 1;
+    const sources: { x: number; y: number; r: number; sel: boolean }[] = [{ ...cc, r: baseR, sel: ccSel }];
     for (const gh of state.ghosts) {
       // Each own ship projects its KIND's bubble — a scout an oversized one
       // (scout_sensor_mult; mobile vision, mirroring the server's coverage).
       const r = gh.kind === "scout" ? baseR * (state.galaxy.scout_sensor_mult ?? 1.5) : baseR;
-      if (gh.own) sources.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt, r });
+      if (gh.own) sources.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt, r, sel: gh.id === state.selectedShipId });
     }
     // Standing array bubbles at OUR systems (sensor_tier is owner-only in the View).
     for (const dyn of state.systems) {
@@ -1068,14 +1212,26 @@ export class Renderer {
         const sys = state.galaxy.systems.find((s) => s.id === dyn.id);
         if (sys) {
           const r = state.galaxy.sensor_array_base + state.galaxy.sensor_array_per_tier * (dyn.sensor_tier - 1);
-          sources.push({ x: sys.pos.x, y: sys.pos.y, r });
+          sources.push({ x: sys.pos.x, y: sys.pos.y, r, sel: dyn.id === state.selectedSystemId });
         }
       }
     }
+    const st = SENSOR_COVERAGE;
     for (const c of sources) {
       const s = this.worldToScreen(c);
       const rPx = c.r * this.scale;
-      g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: 0.045 }).stroke({ width: 1, color: COL_SENSOR, alpha: 0.14 });
+      if (rPx < 1) continue;
+      if (c.sel) {
+        // EMPHASIZED (source selected): a clearer solid-ish ring + stronger fill —
+        // fill+stroke the SAME circle path in one chain (crisp, on-demand inspect).
+        g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: st.emphFillAlpha }).stroke({ width: st.emphWidth, color: COL_SENSOR, alpha: st.emphOutlineAlpha });
+      } else {
+        // DEFAULT: a whisper of fill (separate committed path) under a faint DASHED
+        // boundary — a quiet ambient hint, not a hard border.
+        if (st.fillAlpha > 0) g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: st.fillAlpha });
+        dashedCircle(g, s.x, s.y, rPx, st.dashOn, st.dashOff);
+        g.stroke({ width: 1, color: COL_SENSOR, alpha: st.outlineAlpha });
+      }
     }
 
     // DEFENSE PLATFORM protection rings on OUR OWN defended systems (§buildings
@@ -1102,7 +1258,7 @@ export class Renderer {
     g.clear();
     for (const gh of state.ghosts) {
       if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
-      const color = gh.own ? COL_OWN : COL_OTHER;
+      const color = gh.own ? COL_OWN : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
       const pts = gh.route.map((w) => this.worldToScreen(w));
       g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
@@ -1232,7 +1388,30 @@ export class Renderer {
   /// computed against the SINGLE sprite's canvas, so the formation's LEAD ship
   /// renders at exactly the single sprite's size at every zoom — growing a
   /// fleet adds escorts around the flagship, it never inflates the flagship.
+  /// §fleet-lod: the low-detail icon + calibration for a flagship kind, or null
+  /// when the family has no icon (scout/colony) or it hasn't loaded yet. Only
+  /// freighter (convoy), raider, and corvette carry icons.
+  private lodIconMarker(kind: ShipKind): { tex: Texture; mult: number } | null {
+    let tex: Texture | null = null;
+    let fam: LodFamily | null = null;
+    switch (kind) {
+      case "convoy": tex = this.texIconFreighter; fam = "freighter"; break;
+      case "raider": tex = this.texIconRaider; fam = "raider"; break;
+      case "corvette": tex = this.texIconCorvette; fam = "corvette"; break;
+      default: return null; // scout / colony — no icon
+    }
+    return tex ? { tex, mult: LOD_ICON_CALIB[fam] } : null;
+  }
+
   private fleetMarker(ghost: GhostView): { tex: Texture; mult: number } | null {
+    // §fleet-lod: far zoomed out, a single bold low-detail icon replaces the
+    // detailed hull/formation (no fine detail is legible at that size anyway; the
+    // count badge still conveys fleet size). Runs before the formation pick so it
+    // covers single ships AND multi-ship fleets of these families.
+    if (this.scale / this.fitScale() < LOD_ICON_ZOOM_MAX) {
+      const icon = this.lodIconMarker(ghost.kind);
+      if (icon) return icon;
+    }
     const fam = Renderer.fleetFamily(ghost.kind);
     const tier = fam ? Renderer.fleetTier(ghost) : null;
     if (fam && tier) {
@@ -1485,7 +1664,8 @@ export class Renderer {
     // rival syndicate by owner id, with your ships fixed cyan.)
     const pip = sp.pip;
     pip.clear();
-    const pipCol = own ? COL_OWN : COL_OTHER;
+    // §syndicates: own = cyan, ALLY (light-delayed known member) = green, rival = red.
+    const pipCol = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
     const half = this.fleetHitRadius(ghost); // half the MARKER's current on-screen size (formation included)
     const pipR = Math.max(3.2, Math.min(8, half * 0.14));
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
@@ -1564,7 +1744,7 @@ export class Renderer {
       const h = 12;
       const bx = halfB * 0.66;
       const by = halfB * 0.55;
-      const edge = own ? COL_OWN : COL_OTHER;
+      const edge = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
       const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
       sp.badge
         .roundRect(bx - w / 2, by - h / 2, w, h, 5)
@@ -1754,8 +1934,9 @@ function arrowhead(g: Graphics, x: number, y: number, dx: number, dy: number, si
   g.poly([tipX, tipY, blX, blY, brX, brY]).fill({ color, alpha });
 }
 
-// A dashed circle (screen px), for the platform protection ring — distinct from
-// the solid sensor-bubble strokes.
+// A dashed circle (screen px), for the platform protection ring and the DEFAULT
+// (unselected) sensor-coverage boundary. Constant screen-px dashes read
+// consistently across zoom; distinct from the solid/pulsing threat & selection rings.
 function dashedCircle(g: Graphics, cx: number, cy: number, r: number, dash: number, gap: number): void {
   if (r < 4) return;
   const step = (dash + gap) / r; // radians per dash+gap

@@ -19,12 +19,14 @@ use crate::doctrine::{
 };
 use crate::event::{DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
-use crate::ids::{EntityId, PlayerId};
+use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
 use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
+use crate::syndicate::{syndicate_cap, Syndicate};
+use crate::pirate::{self, Enclave};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -74,6 +76,25 @@ pub struct Corporation {
     /// their command center, and to NOBODY else.
     #[serde(default)]
     pub intel: BTreeMap<EntityId, IntelSnapshot>,
+    /// SYNDICATE membership (§syndicates). `None` = unaffiliated. The roster lives
+    /// in [`World::syndicates`]; this denormalized id gives O(1) `are_allied`
+    /// (ground-truth non-engagement — an alliance is a mutual pact both parties
+    /// consented to, in effect immediately).
+    #[serde(default)]
+    pub syndicate: Option<SyndicateId>,
+    /// The PRIOR membership + when the CURRENT one took effect — so a distant
+    /// viewer learns of a join/leave only after the light from THIS corp's command
+    /// center arrives (membership propagates like ownership; a 2-state history
+    /// covers the light-delay window). See `World::known_ally`.
+    #[serde(default)]
+    pub syndicate_prev: Option<SyndicateId>,
+    #[serde(default)]
+    pub syndicate_since: f64,
+    /// §rankings: this corp's CUMULATIVE campaign counters (the leaderboard
+    /// inputs). Incremented at the events that already fire; persisted with the
+    /// corp. `#[serde(default)]` so pre-feature snapshots load with zeroed stats.
+    #[serde(default)]
+    pub stats: crate::rankings::RankingStats,
 }
 
 /// One scouted observation of a rival system's fortifications (§scout part 2):
@@ -84,6 +105,11 @@ pub struct Corporation {
 pub struct IntelSnapshot {
     pub defense_tier: u32,
     pub shipyard_tier: u32,
+    /// §pirates: the scouted PIRATE ENCLAVE tier at this system (0 = not an enclave
+    /// / none observed). A scout near an enclave reveals its base tier like
+    /// fortifications; serde default keeps pre-pirate snapshots loading.
+    #[serde(default)]
+    pub enclave_tier: u32,
     /// Sim-time of the observation (the "as of T" the readout ages from).
     pub observed_at: f64,
     /// Where the scout was at capture — the point the report's light travels from.
@@ -302,6 +328,34 @@ pub struct World {
     pub engagements: BTreeMap<EntityId, Engagement>,
     #[serde(default)]
     next_engagement_id: u64,
+    /// SYNDICATES (§syndicates) — alliance rosters keyed by id. Membership is also
+    /// denormalized on each [`Corporation`] for O(1) `are_allied`. `BTreeMap` keeps
+    /// iteration deterministic; `#[serde(default)]` so pre-feature snapshots load.
+    #[serde(default)]
+    pub syndicates: BTreeMap<SyndicateId, Syndicate>,
+    /// Monotonic allocator for syndicate ids (0 ⇒ first id is 1). Its OWN counter,
+    /// separate from entities, so ids never collide across the two id spaces.
+    #[serde(default)]
+    next_syndicate_id: u64,
+    /// PIRATE ENCLAVES (§pirates) — the neutral hostile faction's hidden bases,
+    /// keyed by their host (unclaimed) system id. Seeded deterministically at
+    /// generation; driven each tick by `pirate_ai`. `#[serde(default)]` so
+    /// pre-feature snapshots load with no pirates.
+    #[serde(default)]
+    pub enclaves: BTreeMap<EntityId, Enclave>,
+    /// EXOTIC NODES (§node) — the midgame catalyst, keyed by their host system id.
+    /// Seeded DORMANT at generation for every exotic system (parity with the
+    /// client's visual exotics), they AWAKEN at `config.node_awakening_time` into
+    /// capturable tactical prizes. The holder is the host system's `owner` (read
+    /// live). `#[serde(default)]` so pre-feature snapshots load with no nodes.
+    #[serde(default)]
+    pub nodes: BTreeMap<EntityId, crate::node::Node>,
+    /// §rankings: the last PUBLISHED leaderboard — a snapshot copy taken on the
+    /// ledger tick ([`VALUATION_TICKS`]). Between snapshots this holds steady, so
+    /// live counter changes never leak mid-interval. Read by the server verbatim
+    /// into the public View. `#[serde(default)]` so old snapshots load empty.
+    #[serde(default)]
+    pub rankings: Vec<crate::rankings::RankingRow>,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -384,6 +438,13 @@ fn diff_comp(
     out
 }
 
+/// Trim + length-cap a player-supplied syndicate name (deterministic, no I/O).
+/// Empty after trimming falls back to a neutral default.
+fn sanitize_name(raw: &str) -> String {
+    let t: String = raw.trim().chars().take(32).collect();
+    if t.is_empty() { "Syndicate".to_string() } else { t }
+}
+
 impl World {
     /// Create a galaxy for the given configuration: hub at the centre, seeded
     /// star systems, and a ring of empty home anchors.
@@ -428,7 +489,7 @@ impl World {
         }
         systems.extend(home_systems);
 
-        World {
+        let mut world = World {
             config,
             tick: 0,
             time: 0.0,
@@ -448,6 +509,86 @@ impl World {
             rng,
             engagements: BTreeMap::new(),
             next_engagement_id: 0,
+            syndicates: BTreeMap::new(),
+            next_syndicate_id: 0,
+            enclaves: BTreeMap::new(),
+            nodes: BTreeMap::new(),
+            rankings: Vec::new(),
+        };
+        // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
+        // RNG stream is untouched — determinism), on their OWN seeded stream.
+        world.seed_enclaves();
+        // §node: seed DORMANT nodes at every exotic system (pure function of id,
+        // no RNG — determinism intact, parity with the client's visual exotics).
+        world.seed_nodes();
+        world
+    }
+
+    /// §node: seed a DORMANT [`crate::node::Node`] at every EXOTIC system. Pure
+    /// function of the system id (`node_bonus_for`, the sim twin of the client's
+    /// star assignment) — no RNG draws, so no stream is perturbed and the node set
+    /// is byte-identical to the client's exotic icons. Nodes stay dormant until
+    /// `node_awakening_time`; seeding merely records which systems will awaken and
+    /// what each grants (so the map can telegraph them from t=0).
+    fn seed_nodes(&mut self) {
+        let ids: Vec<EntityId> = self.systems.iter().map(|s| s.id).collect();
+        for id in ids {
+            if let Some(bonus) = crate::node::node_bonus_for(id) {
+                self.nodes.insert(id, crate::node::Node::dormant(bonus));
+            }
+        }
+    }
+
+    /// §pirates: seed `PIRATE_ENCLAVE_COUNT` hidden bases at unclaimed MID-RING
+    /// systems, never within `PIRATE_HOME_EXCLUSION` of a home slot. Deterministic:
+    /// an isolated RNG stream (seed ^ magic) picks them, so the pick is reproducible
+    /// and never perturbs the frontier/home/event streams. The base's
+    /// platform-equivalent defense is stored on the host system's `defense_tier`
+    /// (the assault reuses the Defense-Platform combat); this only marks the site.
+    fn seed_enclaves(&mut self) {
+        let radius = self.config.galaxy_radius;
+        let (lo, hi) = (
+            radius * (0.12 + 0.84 * pirate::PIRATE_RING_LO),
+            radius * (0.12 + 0.84 * pirate::PIRATE_RING_HI),
+        );
+        let home_pos: Vec<Vec2> = self.home_slots.iter().map(|h| h.pos).collect();
+        // Candidate mid-ring, unclaimed, home-clear systems (id order = deterministic).
+        let mut cands: Vec<EntityId> = self
+            .systems
+            .iter()
+            .filter(|s| {
+                s.owner.is_none()
+                    && (lo..=hi).contains(&s.pos.length())
+                    && home_pos.iter().all(|h| s.pos.distance(*h) >= pirate::PIRATE_HOME_EXCLUSION)
+            })
+            .map(|s| s.id)
+            .collect();
+        cands.sort();
+        // Fisher–Yates on the isolated stream, then take the first N.
+        let mut rng = crate::rng::Rng::new(self.config.seed ^ 0x5049_5241_5445_5F53); // "PIRATE_S"
+        for i in (1..cands.len()).rev() {
+            let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+            cands.swap(i, j);
+        }
+        for &sid in cands.iter().take(pirate::PIRATE_ENCLAVE_COUNT) {
+            // Base defense on the host system (owner stays None — dark until scouted).
+            if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
+                sys.defense_tier = pirate::base_defense_tiers(1);
+                sys.defense_pool = 0.0;
+            }
+            self.enclaves.insert(
+                sid,
+                Enclave {
+                    system: sid,
+                    tier: 1,
+                    plunder: BTreeMap::new(),
+                    // Stagger the schedules so packs don't all launch at t=0.
+                    next_launch_at: 20.0 + rng.range(0.0, pirate::PIRATE_LAUNCH_PERIOD),
+                    next_grow_at: pirate::PIRATE_GROW_PERIOD + rng.range(0.0, pirate::PIRATE_GROW_PERIOD),
+                    dormant_until: 0.0,
+                    pack: None,
+                },
+            );
         }
     }
 
@@ -527,6 +668,211 @@ impl World {
         id
     }
 
+    /// Allocate a fresh, deterministic syndicate id (own counter, separate id
+    /// space from entities so the two never collide).
+    fn alloc_syndicate_id(&mut self) -> SyndicateId {
+        self.next_syndicate_id += 1;
+        SyndicateId(self.next_syndicate_id)
+    }
+
+    // ---- SYNDICATES (§syndicates) --------------------------------------------
+
+    /// GROUND-TRUTH alliance: two DISTINCT corps in the same syndicate. This is
+    /// what all mechanical non-engagement reads (pickets, platforms, WeaponsFree,
+    /// blockades, and the deliberate-order soft-rejects) — an alliance is a mutual
+    /// pact both parties consented to, so it is in effect immediately (unlike the
+    /// KNOWLEDGE of it, which a third party receives light-delayed via `known_ally`).
+    pub fn are_allied(&self, a: PlayerId, b: PlayerId) -> bool {
+        a != b
+            && self.players.get(&a).and_then(|c| c.syndicate).is_some()
+            && self.players.get(&a).and_then(|c| c.syndicate)
+                == self.players.get(&b).and_then(|c| c.syndicate)
+    }
+
+    /// The OTHER members of `p`'s syndicate (empty if unaffiliated). Precomputed
+    /// once and captured by the per-tick engagement closures, which can't borrow
+    /// `&self` inside their filters.
+    pub fn allies_of(&self, p: PlayerId) -> std::collections::BTreeSet<PlayerId> {
+        match self.players.get(&p).and_then(|c| c.syndicate) {
+            Some(sid) => self
+                .syndicates
+                .get(&sid)
+                .map(|s| s.members.iter().copied().filter(|&m| m != p).collect())
+                .unwrap_or_default(),
+            None => std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// Whether the `viewer` KNOWS (light-delayed) that `owner` is their ally — the
+    /// gate the View uses to tint ally systems/fleets. The viewer knows their OWN
+    /// membership instantly; `owner`'s membership is known only once the light from
+    /// `owner`'s command center has reached the viewer's (`syndicate_since +
+    /// dist/c`), and until then the viewer's picture is `owner`'s PRIOR membership
+    /// — so a fresh join isn't seen early and a fresh betrayal isn't seen early.
+    pub fn known_ally(&self, viewer: PlayerId, owner: PlayerId, now: f64) -> bool {
+        if viewer == owner {
+            return false;
+        }
+        let (Some(v), Some(o)) = (self.players.get(&viewer), self.players.get(&owner)) else {
+            return false;
+        };
+        let dist = o.command_center.distance(v.command_center);
+        let known = if now >= o.syndicate_since + dist / self.config.c {
+            o.syndicate
+        } else {
+            o.syndicate_prev
+        };
+        v.syndicate.is_some() && v.syndicate == known
+    }
+
+    /// §syndicates Part 3: if `fleet` is a stationed ally GARRISON (a combatant,
+    /// Idle, within a platform radius of a syndicate ALLY's system), the host
+    /// system id; `None` otherwise. Used to surface the sender's garrison status.
+    pub fn garrison_host_of(&self, fleet: EntityId) -> Option<EntityId> {
+        let f = self.fleets.get(&fleet)?;
+        if !f.is_combatant() || !matches!(f.order, FleetOrder::Idle) {
+            return None;
+        }
+        self.systems
+            .iter()
+            .find(|s| {
+                s.owner.is_some_and(|o| self.are_allied(f.owner, o))
+                    && f.pos.distance(s.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+            })
+            .map(|s| s.id)
+    }
+
+    /// §syndicates Part 3: the ally GARRISON hosted at `system` — `(total ships,
+    /// all-fed)` — or `None` if there's no ally garrison there. For the HOST's
+    /// owner-only "coalition shield you're feeding" readout.
+    pub fn hosted_garrison(&self, system: EntityId) -> Option<(u32, bool)> {
+        let sys = self.systems.iter().find(|s| s.id == system)?;
+        let host_owner = sys.owner?;
+        let (mut ships, mut all_fed, mut any) = (0u32, true, false);
+        for f in self.fleets.values() {
+            if f.is_combatant()
+                && matches!(f.order, FleetOrder::Idle)
+                && self.are_allied(f.owner, host_owner)
+                && f.pos.distance(sys.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+            {
+                ships += f.total_count();
+                any = true;
+                if !f.garrison_fed {
+                    all_fed = false;
+                }
+            }
+        }
+        any.then_some((ships, all_fed))
+    }
+
+    /// Change a corp's membership, recording the 2-state light-delay bookkeeping
+    /// (prev + since) so distant viewers learn of the change only when its light
+    /// arrives. No-op if the state is unchanged.
+    fn set_membership(&mut self, p: PlayerId, new: Option<SyndicateId>) {
+        let now = self.time;
+        if let Some(corp) = self.players.get_mut(&p)
+            && corp.syndicate != new
+        {
+            corp.syndicate_prev = corp.syndicate;
+            corp.syndicate = new;
+            corp.syndicate_since = now;
+        }
+    }
+
+    /// FOUND a syndicate (§syndicates Part 1). The founder must exist and be
+    /// unaffiliated. Soft-reject otherwise (no state change).
+    fn apply_create_syndicate(&mut self, founder: PlayerId, name: String) {
+        let unaffiliated = self.players.get(&founder).is_some_and(|c| c.syndicate.is_none());
+        if !unaffiliated {
+            return;
+        }
+        let id = self.alloc_syndicate_id();
+        let mut members = std::collections::BTreeSet::new();
+        members.insert(founder);
+        let name = sanitize_name(&name);
+        self.syndicates.insert(
+            id,
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time },
+        );
+        self.set_membership(founder, Some(id));
+    }
+
+    /// INVITE a corp into the founder's syndicate (founder-only). The invitee must
+    /// exist and be unaffiliated. Records a pending invite (accepted separately).
+    fn apply_invite_syndicate(&mut self, founder: PlayerId, invitee: PlayerId) {
+        if founder == invitee {
+            return;
+        }
+        let Some(sid) = self.players.get(&founder).and_then(|c| c.syndicate) else {
+            return;
+        };
+        let invitee_free = self.players.get(&invitee).is_some_and(|c| c.syndicate.is_none());
+        if !invitee_free {
+            return;
+        }
+        if let Some(s) = self.syndicates.get_mut(&sid)
+            && s.founder == founder
+        {
+            s.invites.insert(invitee);
+        }
+    }
+
+    /// ACCEPT a pending invite (§syndicates Part 1). The invitee must be
+    /// unaffiliated, actually hold an invite to `sid`, and the syndicate must have
+    /// room under the SIZE CAP. Consumes the invite and joins the roster.
+    fn apply_accept_syndicate(&mut self, invitee: PlayerId, sid: SyndicateId) {
+        let free = self.players.get(&invitee).is_some_and(|c| c.syndicate.is_none());
+        if !free {
+            return;
+        }
+        let cap = syndicate_cap(self.players.len());
+        let Some(s) = self.syndicates.get_mut(&sid) else {
+            return;
+        };
+        if !s.invites.contains(&invitee) || s.members.len() >= cap {
+            return;
+        }
+        s.invites.remove(&invitee);
+        s.members.insert(invitee);
+        self.set_membership(invitee, Some(sid));
+    }
+
+    /// LEAVE the caller's syndicate (§syndicates Part 1). If the founder leaves and
+    /// members remain, the seat passes to the lowest-id member; an emptied
+    /// syndicate is removed.
+    fn apply_leave_syndicate(&mut self, p: PlayerId) {
+        let Some(sid) = self.players.get(&p).and_then(|c| c.syndicate) else {
+            return;
+        };
+        if let Some(s) = self.syndicates.get_mut(&sid) {
+            s.members.remove(&p);
+            s.invites.remove(&p);
+            if s.members.is_empty() {
+                self.syndicates.remove(&sid);
+            } else if s.founder == p {
+                // Founder-managed v1: hand the seat to the next (lowest-id) member.
+                s.founder = *s.members.iter().next().unwrap();
+            }
+        }
+        self.set_membership(p, None);
+    }
+
+    /// DISSOLVE the caller's syndicate (founder-only). Clears every member's
+    /// affiliation and removes the roster.
+    fn apply_dissolve_syndicate(&mut self, founder: PlayerId) {
+        let Some(sid) = self.players.get(&founder).and_then(|c| c.syndicate) else {
+            return;
+        };
+        let members: Vec<PlayerId> = match self.syndicates.get(&sid) {
+            Some(s) if s.founder == founder => s.members.iter().copied().collect(),
+            _ => return,
+        };
+        for m in members {
+            self.set_membership(m, None);
+        }
+        self.syndicates.remove(&sid);
+    }
+
     /// Advance the world by exactly one fixed timestep, applying the given
     /// commands at this tick boundary. Returns the events produced this tick.
     ///
@@ -560,6 +906,12 @@ impl World {
         //    interception pursuit).
         self.integrate_movement();
 
+        // 3b. §syndicates Part 3: feed ally GARRISONS from their HOST systems and
+        //     set each garrison's fed/unfed flag for THIS tick's defense. Before the
+        //     combat passes (which read the flag to include only FED garrisons), and
+        //     after movement (so stationing is this tick's truth).
+        self.resolve_garrison_upkeep(&mut events);
+
         // 4. Resolve raids in true space (contact → convoy lost; convoy reaches
         //    the hub → escape). A raided trade convoy's goods are simply lost.
         self.resolve_raids(&mut events);
@@ -569,6 +921,12 @@ impl World {
         //      system's blockade + siege state, and emit onset/lift transitions.
         //      After raids so the establishment battle it opens attrites next tick.
         self.resolve_blockades(&mut events);
+
+        // 4a''. §pirates: the neutral faction's brain — open assaults, detect base
+        //       suppression, escalate, and launch/return raider packs. After the
+        //       combat passes so a won assault's defense-tier writeback lands this
+        //       tick; pack orders it sets are pursued next tick (async lag).
+        self.pirate_ai(&mut events);
 
         // 4b. COLONY ARRIVALS (§fleets part 3): settlement is physical — resolve
         //     after raids so a colony ship killed at the doorstep never claims.
@@ -586,6 +944,11 @@ impl World {
         // 5b. Accrue production at every claimed system (§5.1 continuous progress)
         //     — happens whether or not the owner is logged in.
         self.accrue_production(&mut events);
+
+        // 5b°. EXOTIC NODES (§node): awaken exotic systems at the configured time and
+        //      draw each held node's upkeep from THIS tick's fresh stockpiles — after
+        //      accrual, exactly like the standing-order reconciliation below.
+        self.node_ai(&mut events);
 
         // 5b'. Resolve construction jobs whose completion tick has arrived (§step1
         //      growth sink): spawn built fleets / apply system upgrades. Server-driven
@@ -619,6 +982,15 @@ impl World {
         }
         if self.tick.is_multiple_of(VALUATION_TICKS) {
             self.recompute_valuations();
+        }
+
+        // §rankings: tally THIS tick's events into the cumulative counters (cheap —
+        // O(events)), then, on the SAME ledger cadence as the valuation close,
+        // PUBLISH the leaderboard snapshot (a copy, so it holds steady between
+        // closes — no mid-interval live leak).
+        self.accumulate_rankings(&events);
+        if self.tick.is_multiple_of(VALUATION_TICKS) {
+            self.snapshot_rankings();
         }
 
         events
@@ -747,7 +1119,9 @@ impl World {
                 cargo: s.cargo.map(|c| c.units).unwrap_or(0),
                 combat: s.combat_weight(),
                 combatant: s.is_combatant(),
-                signature: s.signature(),
+                // §node Veil: a fed magnetar node quiets its holder's dark fleets
+                // in-region — the SAME signature both pickets and the View read.
+                signature: s.signature() * self.veil_factor(s.owner, s.pos),
             })
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
@@ -761,6 +1135,14 @@ impl World {
         // CHOICE stays picket-local (guarding is physical proximity, not intel).
         let arrays: BTreeMap<PlayerId, Vec<(Vec2, f64)>> =
             self.players.keys().map(|&p| (p, self.array_sensor_sources(p))).collect();
+        // SYNDICATES (§syndicates): per-owner ally set, so autonomous pickets treat
+        // syndicate members as FRIENDLY — never hunted, counted on the friendly side
+        // of the force ratio. Precomputed here (the closures below can't borrow &self).
+        let allies: BTreeMap<PlayerId, std::collections::BTreeSet<PlayerId>> =
+            self.players.keys().map(|&p| (p, self.allies_of(p))).collect();
+        let is_ally = |owner: PlayerId, other: PlayerId| -> bool {
+            allies.get(&owner).is_some_and(|a| a.contains(&other))
+        };
         // SPEED-SIGNATURE DETECTION (§Part 4): a picket senses a target if any of
         // its coverage sources (its own bubble + the owner's arrays) reaches the
         // target's SIGNATURE — the SAME shared `detection::detected` the View uses
@@ -782,7 +1164,7 @@ impl World {
         let force = |ppos: Vec2, owner: PlayerId| -> (f64, f64) {
             let (mut f, mut h) = (0.0f64, 0.0f64);
             for s in snap.iter().filter(|s| s.combatant && sensed(owner, ppos, s.pos, s.signature)) {
-                if s.owner == owner {
+                if s.owner == owner || is_ally(owner, s.owner) {
                     f += s.combat;
                 } else {
                     h += s.combat;
@@ -809,6 +1191,7 @@ impl World {
             snap.iter()
                 .filter(|s| {
                     s.owner != owner
+                        && !is_ally(owner, s.owner)
                         && matches!(s.kind, ShipKind::Raider | ShipKind::Scout)
                         && sensed(owner, ppos, s.pos, s.signature)
                 })
@@ -822,7 +1205,10 @@ impl World {
         let nearest_threat_on = |ppos: Vec2, owner: PlayerId, guard: Vec2| -> Option<EntityId> {
             let mut best: Option<(EntityId, f64)> = None;
             for h in snap.iter().filter(|s| {
-                s.owner != owner && s.kind == ShipKind::Raider && sensed(owner, ppos, s.pos, s.signature)
+                s.owner != owner
+                    && !is_ally(owner, s.owner)
+                    && s.kind == ShipKind::Raider
+                    && sensed(owner, ppos, s.pos, s.signature)
             }) {
                 if h.vel.length() < THREAT_MIN_SPEED {
                     continue; // not actually inbound
@@ -1050,12 +1436,21 @@ impl World {
                 vel: s.vel,
                 combat: s.combat_weight(),
                 combatant: s.is_combatant(),
-                signature: s.signature(),
+                // §node Veil: a fed magnetar node quiets its holder's dark fleets
+                // in-region — the SAME signature both pickets and the View read.
+                signature: s.signature() * self.veil_factor(s.owner, s.pos),
                 broadcasts: s.broadcasts(),
             })
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
             self.players.iter().map(|(id, c)| (*id, c.doctrine)).collect();
+        // §syndicates: per-owner ally set — a WeaponsFree fleet never hunts a
+        // syndicate member and counts allied combat weight on the friendly side.
+        let allies: BTreeMap<PlayerId, std::collections::BTreeSet<PlayerId>> =
+            self.players.keys().map(|&p| (p, self.allies_of(p))).collect();
+        let is_ally = |owner: PlayerId, other: PlayerId| -> bool {
+            allies.get(&owner).is_some_and(|a| a.contains(&other))
+        };
 
         // A rival is a valid WeaponsFree target iff its light reaches THIS fleet's
         // OWN bubble. The fleet acts on its OWN DELIVERED LIGHT (§retarded-time):
@@ -1081,7 +1476,7 @@ impl World {
         let local_force = |ppos: Vec2, owner: PlayerId, bubble: f64| -> (f64, f64) {
             let (mut f, mut h) = (0.0f64, 0.0f64);
             for s in snap.iter().filter(|s| s.combatant && visible(ppos, bubble, s)) {
-                if s.owner == owner { f += s.combat; } else { h += s.combat; }
+                if s.owner == owner || is_ally(owner, s.owner) { f += s.combat; } else { h += s.combat; }
             }
             (f, h)
         };
@@ -1109,7 +1504,7 @@ impl World {
             // excluding a hub-safe convoy (it would just escape).
             let target = snap
                 .iter()
-                .filter(|s| s.owner != owner && !hub_safe(s) && visible(ppos, bubble, s))
+                .filter(|s| s.owner != owner && !is_ally(owner, s.owner) && !hub_safe(s) && visible(ppos, bubble, s))
                 .min_by(|a, b| ppos.distance(a.pos).total_cmp(&ppos.distance(b.pos)).then(a.id.cmp(&b.id)))
                 .map(|s| s.id);
             let Some(tid) = target else { continue };
@@ -1214,12 +1609,37 @@ impl World {
             e.touched = false;
         }
 
+        // Fleets already IN a battle are committed to it and anchored — their
+        // standing Intercept/Attack order is DORMANT. Exclude them from the ESCAPE
+        // check so a raider that was jumped mid-pursuit doesn't fire a spurious
+        // "raid failed" when its old convoy target reaches hub safety. (The contact
+        // loop KEEPS engaged fleets — their per-tick contact re-touches their own
+        // engagement to keep it alive; the `together` check there stops them opening
+        // a duplicate battle against a fleet they're already fighting.)
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
+
+        // §rankings: LATCH the "fought" flag on every current engagement
+        // participant — battles take many ticks, so a convoy that survives one is
+        // still a participant here across those ticks; the flag lets us credit
+        // "cargo protected" when it later delivers. Latches (never cleared).
+        for id in &engaged {
+            if let Some(f) = self.fleets.get_mut(id) {
+                f.fought = true;
+            }
+        }
+
         // Convoy reaching hub safety before contact → the raider breaks off.
         let mut escapes: Vec<(EntityId, EntityId)> = Vec::new();
         for (rid, ship) in &self.fleets {
-            if let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order
+            if !engaged.contains(rid)
+                && let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order
                 && let Some(t) = self.fleets.get(&target)
                 && ship.owner != t.owner
+                && !self.are_allied(ship.owner, t.owner)
                 && ship.pos.distance(t.pos) > CONTACT_RADIUS
                 && t.flagship_kind() == ShipKind::Convoy
                 && t.pos.distance(hub) <= HUB_SAFE_RADIUS
@@ -1265,6 +1685,7 @@ impl World {
                 };
                 if let Some(t) = self.fleets.get(&target)
                     && ship.owner != t.owner
+                    && !self.are_allied(ship.owner, t.owner)
                     && ship.pos.distance(t.pos) <= CONTACT_RADIUS
                 {
                     Some((*rid, target, is_attack))
@@ -1413,7 +1834,15 @@ impl World {
                         // (its MoveTo completes → Idle). A patrol / picket
                         // defending nearby DOES join.
                         && !matches!(f.order, FleetOrder::MoveTo { .. })
-                        && (f.owner == a_owner || f.owner == d_owner)
+                        // The two combatants' own fleets, OR a syndicate ALLY of the
+                        // DEFENDER as a stationed, FED, non-Avoid GARRISON (§syndicates
+                        // Part 3) — it joins the DEFENDER side.
+                        && (f.owner == a_owner
+                            || f.owner == d_owner
+                            || (matches!(f.order, FleetOrder::Idle)
+                                && f.garrison_fed
+                                && self.are_allied(f.owner, d_owner)
+                                && self.players.get(&f.owner).is_some_and(|c| c.doctrine.engagement != EngagementPolicy::Avoid)))
                         && f.pos.distance(pos) <= BATTLE_JOIN_RADIUS
                 })
                 .map(|(fid, f)| (*fid, f.owner == a_owner))
@@ -1551,11 +1980,21 @@ impl World {
                 let dead_cargo: Option<Cargo> = defenders
                     .iter()
                     .find_map(|id| self.fleets.get(id).filter(|f| f.count(ShipKind::Convoy) > 0 && lb.per_kind.get(&ShipKind::Convoy).copied().unwrap_or(0) >= f.count(ShipKind::Convoy)).and_then(|f| f.cargo));
-                if let Some(cargo) = dead_cargo
-                    && let Some(a) = attackers.first().and_then(|id| self.fleets.get_mut(id))
-                    && a.cargo.is_none()
-                {
-                    a.cargo = Some(cargo);
+                if let Some(cargo) = dead_cargo {
+                    // Load the loot onto the (first empty-handed) attacker and note
+                    // WHO seized it — the borrow of the fleet ends with the closure.
+                    let seizer = attackers
+                        .first()
+                        .and_then(|id| self.fleets.get_mut(id))
+                        .filter(|a| a.cargo.is_none())
+                        .map(|a| {
+                            a.cargo = Some(cargo);
+                            a.owner
+                        });
+                    // §rankings CARGO CAPTURED: credit the raider the seized units.
+                    if let Some(owner) = seizer {
+                        self.bump_stats(owner, |s| s.cargo_captured += cargo.units as u64);
+                    }
                 }
             }
 
@@ -1712,6 +2151,455 @@ impl World {
             .unwrap_or(false)
     }
 
+    /// §pirates: spawn a fresh raider PACK (owned by the PIRATE sentinel) at a base.
+    fn spawn_pirate_pack(&mut self, tier: u32, base_pos: Vec2) -> EntityId {
+        let id = self.alloc_entity_id();
+        let mut f = Fleet::single(id, PlayerId::PIRATE, ShipKind::Raider, base_pos, FleetOrder::Idle, None);
+        f.composition.clear();
+        f.composition.insert(ShipKind::Raider, pirate::pack_size(tier));
+        self.fleets.insert(id, f);
+        id
+    }
+
+    /// §pirates: aim a pack at the nearest BROADCASTING convoy within the enclave's
+    /// hunting radius (platform-covered convoys were already excluded from the
+    /// candidate list). Tops the pack up to its tier size. Returns whether a target
+    /// was found (a launch happened).
+    fn launch_pirate_pack(&mut self, pid: EntityId, tier: u32, base_pos: Vec2, convoys: &[(EntityId, Vec2)]) -> bool {
+        let r = pirate::hunt_radius(tier);
+        let target = convoys
+            .iter()
+            .filter(|(_, p)| base_pos.distance(*p) <= r)
+            .min_by(|a, b| base_pos.distance(a.1).total_cmp(&base_pos.distance(b.1)).then(a.0.cmp(&b.0)))
+            .map(|(id, _)| *id);
+        let Some(tid) = target else { return false };
+        if let Some(f) = self.fleets.get_mut(&pid) {
+            let (want, have) = (pirate::pack_size(tier), f.count(ShipKind::Raider));
+            if want > have {
+                f.add(ShipKind::Raider, want - have);
+            }
+            f.order = FleetOrder::Intercept { target: tid };
+        }
+        true
+    }
+
+    /// §pirates: open an ASSAULT engagement — a player war-fleet vs the base's
+    /// platform-equivalent defense (`base_tiers`) + any home pack. Mirrors the
+    /// blockade establishment battle exactly (reuses the Engagement + Lanchester).
+    fn open_pirate_assault(&mut self, aid: EntityId, sid: EntityId, base_pos: Vec2, defenders: Vec<EntityId>, base_tiers: u32, now: f64) {
+        let a_owner = self.fleets[&aid].owner;
+        let id = self.alloc_engagement_id();
+        let a_comp = self.side_comp(&[aid]);
+        let d_comp = self.side_comp(&defenders);
+        let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
+        let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(base_tiers, 0.0).strength();
+        let d_lead = defenders.first().copied().unwrap_or(aid);
+        self.engagements.insert(id, Engagement {
+            id,
+            pos: base_pos,
+            started_at: now,
+            raid: false,
+            a_owner,
+            d_owner: PlayerId::PIRATE,
+            attackers: vec![aid],
+            defenders,
+            platform_system: Some(sid),
+            a_pool: BTreeMap::new(),
+            d_pool: BTreeMap::new(),
+            a_start: a_comp,
+            d_start: d_comp,
+            a_start_strength: a_str,
+            d_start_strength: d_str,
+            platform_start_tiers: base_tiers,
+            a_lead: aid,
+            d_lead,
+            disengaging: BTreeMap::new(),
+            a_fled: false,
+            d_fled: false,
+            touched: true,
+        });
+    }
+
+    /// §pirates: the neutral faction's per-tick brain. For each ACTIVE enclave:
+    /// detect SUPPRESSION (base defense ground to 0 → award plunder to the victor,
+    /// go dormant, respawn weaker), open an ASSAULT if a player war-fleet is
+    /// stationed at it, ESCALATE on the slow clock, and run its PACK (launch at a
+    /// broadcasting convoy in radius, break off from platform-covered targets, bring
+    /// loot home). Deterministic + fully offline. Runs after the combat passes so a
+    /// won assault's defense-tier writeback is visible this tick.
+    fn pirate_ai(&mut self, events: &mut Vec<Event>) {
+        if self.enclaves.is_empty() {
+            return;
+        }
+        let now = self.time;
+        let hub = self.hub;
+        // Owned defense platforms — pirates AVOID these (enclaves are excluded: their
+        // defense_tier sits on an UNOWNED system).
+        let platforms: Vec<(Vec2, f64)> = self
+            .systems
+            .iter()
+            .filter(|s| s.owner.is_some() && s.defense_tier >= 1)
+            .map(|s| (s.pos, crate::build::DEFENSE_PLATFORM_RADIUS))
+            .collect();
+        let covered = |p: Vec2| platforms.iter().any(|(c, r)| p.distance(*c) <= *r);
+        // Broadcasting convoys outside platform cover (dark scouts don't broadcast →
+        // never targeted, satisfying "never target scouts").
+        let convoys: Vec<(EntityId, Vec2)> = self
+            .fleets
+            .iter()
+            .filter(|(_, f)| !f.owner.is_pirate() && f.flagship_kind() == ShipKind::Convoy && f.broadcasts() && !covered(f.pos))
+            .map(|(id, f)| (*id, f.pos))
+            .collect();
+        let epos: BTreeMap<EntityId, Vec2> =
+            self.enclaves.keys().filter_map(|sid| self.systems.iter().find(|s| s.id == *sid).map(|s| (*sid, s.pos))).collect();
+        let contested: std::collections::BTreeSet<EntityId> =
+            self.engagements.values().filter_map(|e| e.platform_system).collect();
+        let engaged: std::collections::BTreeSet<EntityId> =
+            self.engagements.values().flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied()).collect();
+
+        let ids: Vec<EntityId> = self.enclaves.keys().copied().collect();
+        for sid in ids {
+            let Some(&base_pos) = epos.get(&sid) else { continue };
+            let (tier, active) = { let e = &self.enclaves[&sid]; (e.tier, e.active(now)) };
+            let base_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.defense_tier).unwrap_or(0);
+
+            // --- SUPPRESSION: the base defense hit 0 (assault won). ---
+            if active && base_tiers == 0 {
+                let victor = self
+                    .fleets
+                    .iter()
+                    .filter(|(_, f)| !f.owner.is_pirate() && f.is_combatant() && f.pos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS)
+                    .min_by_key(|(id, _)| **id)
+                    .map(|(_, f)| f.owner);
+                let plunder = std::mem::take(&mut self.enclaves.get_mut(&sid).unwrap().plunder);
+                if let Some(v) = victor {
+                    if let Some(corp) = self.players.get_mut(&v) {
+                        for (c, n) in &plunder {
+                            *corp.inventory.entry(*c).or_insert(0) += *n;
+                        }
+                    }
+                    events.push(Event::new(now, EventPayload::PirateEnclaveCleared { owner: v, system: sid, pos: base_pos, plunder }));
+                }
+                if let Some(pid) = self.enclaves[&sid].pack {
+                    self.fleets.remove(&pid);
+                }
+                let e = self.enclaves.get_mut(&sid).unwrap();
+                e.pack = None;
+                e.tier = 1;
+                e.dormant_until = now + pirate::PIRATE_DORMANCY;
+                e.next_launch_at = e.dormant_until + 20.0;
+                e.next_grow_at = e.dormant_until + pirate::PIRATE_GROW_PERIOD;
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    sys.defense_tier = pirate::base_defense_tiers(1);
+                    sys.defense_pool = 0.0;
+                }
+                continue;
+            }
+            if !active {
+                continue; // dormant — no activity
+            }
+
+            // --- OPEN AN ASSAULT: a player war-fleet stationed at the base. ---
+            if !contested.contains(&sid) {
+                let assaulter = self
+                    .fleets
+                    .iter()
+                    .filter(|(fid, f)| {
+                        !f.owner.is_pirate()
+                            && f.contains(ShipKind::Raider)
+                            && matches!(f.order, FleetOrder::Idle)
+                            && !engaged.contains(fid)
+                            && f.pos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS
+                    })
+                    .min_by_key(|(id, _)| **id)
+                    .map(|(id, _)| *id);
+                if let Some(aid) = assaulter {
+                    let defenders: Vec<EntityId> = self.enclaves[&sid]
+                        .pack
+                        .filter(|pid| self.fleets.get(pid).is_some_and(|f| f.pos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS))
+                        .into_iter()
+                        .collect();
+                    self.open_pirate_assault(aid, sid, base_pos, defenders, base_tiers, now);
+                    continue; // one action per enclave per tick
+                }
+            }
+
+            // --- ESCALATION: grow if ignored. ---
+            if now >= self.enclaves[&sid].next_grow_at && tier < pirate::PIRATE_MAX_TIER {
+                let nt = tier + 1;
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    sys.defense_tier = pirate::base_defense_tiers(nt);
+                }
+                let e = self.enclaves.get_mut(&sid).unwrap();
+                e.tier = nt;
+                e.next_grow_at = now + pirate::PIRATE_GROW_PERIOD;
+            }
+            let tier = self.enclaves[&sid].tier;
+
+            // --- PACK LIFECYCLE. ---
+            let pack = self.enclaves[&sid].pack;
+            match pack {
+                Some(pid) if !self.fleets.contains_key(&pid) => {
+                    self.enclaves.get_mut(&sid).unwrap().pack = None; // destroyed
+                }
+                Some(pid) => {
+                    let (is_idle, is_moveto, itarget, has_cargo, ppos) = {
+                        let f = &self.fleets[&pid];
+                        let it = if let FleetOrder::Intercept { target } = f.order { Some(target) } else { None };
+                        (matches!(f.order, FleetOrder::Idle), matches!(f.order, FleetOrder::MoveTo { .. }), it, f.cargo.is_some(), f.pos)
+                    };
+                    let home = ppos.distance(base_pos) <= pirate::PIRATE_ASSAULT_RADIUS;
+                    if has_cargo {
+                        if home && is_idle {
+                            if let Some(c) = self.fleets.get_mut(&pid).and_then(|f| f.cargo.take()) {
+                                *self.enclaves.get_mut(&sid).unwrap().plunder.entry(c.commodity).or_insert(0) += c.units;
+                            }
+                        } else if !is_moveto && let Some(f) = self.fleets.get_mut(&pid) {
+                            f.order = FleetOrder::MoveTo { dest: base_pos };
+                        }
+                    } else {
+                        let pursuing_ok = itarget
+                            .and_then(|t| self.fleets.get(&t))
+                            .is_some_and(|t| !covered(t.pos) && t.pos.distance(hub) > HUB_SAFE_RADIUS);
+                        if pursuing_ok {
+                            // resolve_raids drives the pursuit + raid.
+                        } else if home && is_idle && now >= self.enclaves[&sid].next_launch_at {
+                            if self.launch_pirate_pack(pid, tier, base_pos, &convoys) {
+                                self.enclaves.get_mut(&sid).unwrap().next_launch_at = now + pirate::PIRATE_LAUNCH_PERIOD;
+                            }
+                        } else if !home && !is_moveto && let Some(f) = self.fleets.get_mut(&pid) {
+                            f.order = FleetOrder::MoveTo { dest: base_pos };
+                        }
+                    }
+                }
+                None if now >= self.enclaves[&sid].next_launch_at => {
+                    let pid = self.spawn_pirate_pack(tier, base_pos);
+                    self.enclaves.get_mut(&sid).unwrap().pack = Some(pid);
+                    if self.launch_pirate_pack(pid, tier, base_pos, &convoys) {
+                        self.enclaves.get_mut(&sid).unwrap().next_launch_at = now + pirate::PIRATE_LAUNCH_PERIOD;
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// §node: drive the EXOTIC NODES each tick — AWAKENING then UPKEEP.
+    ///
+    /// 1. AWAKENING (async-fair): once `time ≥ node_awakening_time`, every dormant
+    ///    node latches awake ONCE and emits a galaxy-wide `NodeAwakened` (the
+    ///    timeline light-delays it per observer). Deterministic — fires at the same
+    ///    sim time whether anyone is online.
+    /// 2. UPKEEP (Habitat idiom): an awakened, OWNED node draws its
+    ///    [`crate::node::NODE_UPKEEP_PER_SEC`] mix, all-or-nothing, from its OWN
+    ///    system's stockpile. Cover it → `fed`, bonus LIVE; short → UNFED, bonus
+    ///    SUSPENDED (nothing destroyed, recovers when fed). Owner-only transition
+    ///    notices. An UNOWNED awakened node has no upkeep (its leverage is dormant
+    ///    until someone holds it) and reads as fed.
+    fn node_ai(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let awaken_at = self.config.node_awakening_time;
+        let ids: Vec<EntityId> = self.nodes.keys().copied().collect();
+
+        // 1. AWAKENING.
+        for sid in &ids {
+            if self.nodes[sid].awakened || now < awaken_at {
+                continue;
+            }
+            let pos = self.systems.iter().find(|s| s.id == *sid).map(|s| s.pos).unwrap_or(Vec2::ZERO);
+            let node = self.nodes.get_mut(sid).unwrap();
+            node.awakened = true;
+            node.fed = true; // presumed fed at awakening; the first shortfall notifies
+            let bonus = node.bonus;
+            events.push(Event::new(now, EventPayload::NodeAwakened { system: *sid, pos, bonus }));
+        }
+
+        // 2. UPKEEP.
+        for sid in &ids {
+            if !self.nodes[sid].awakened {
+                continue;
+            }
+            let owner = self.systems.iter().find(|s| s.id == *sid).and_then(|s| s.owner);
+            let Some(owner) = owner else {
+                self.nodes.get_mut(sid).unwrap().fed = true; // unheld → no upkeep
+                continue;
+            };
+            let sys = self.systems.iter_mut().find(|s| s.id == *sid).unwrap();
+            let can_pay = crate::node::NODE_UPKEEP_PER_SEC
+                .iter()
+                .all(|(c, rate)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-12 >= rate * DT);
+            if can_pay {
+                for (c, rate) in crate::node::NODE_UPKEEP_PER_SEC {
+                    *sys.stockpile.entry(*c).or_insert(0.0) -= rate * DT;
+                }
+            }
+            let node = self.nodes.get_mut(sid).unwrap();
+            if can_pay != node.fed {
+                events.push(Event::new(now, EventPayload::NodeSupplyChanged { owner, system: *sid, fed: can_pay }));
+            }
+            node.fed = can_pay;
+        }
+    }
+
+    /// §node: the bonus-granting nodes a corp currently BENEFITS from — awakened,
+    /// fed, and held by `owner` — capped at [`crate::node::NODES_PER_CORP`]
+    /// (deterministic: lowest system id first, since `nodes` is a `BTreeMap`).
+    /// Excess held nodes still cost upkeep and deny rivals but grant nothing extra.
+    /// Each entry is `(bonus, region-center)`. The pirate sentinel / an unheld node
+    /// never appears (it owns no systems), so this is Option-safe for every caller.
+    fn active_nodes_for(&self, owner: PlayerId) -> Vec<(crate::node::NodeBonus, Vec2)> {
+        let mut held: Vec<(crate::node::NodeBonus, Vec2)> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.active())
+            .filter_map(|(sid, n)| {
+                let sys = self.systems.iter().find(|s| s.id == *sid)?;
+                (sys.owner == Some(owner)).then_some((n.bonus, sys.pos))
+            })
+            .collect();
+        held.truncate(crate::node::NODES_PER_CORP);
+        held
+    }
+
+    /// §node Relay Anchor: the command-delay MULTIPLIER for `owner`'s orders to a
+    /// target at `target_pos`. 0.5 if the owner holds an active black-hole node
+    /// whose region covers the target; 1.0 otherwise. The SINGLE plug into
+    /// `schedule_for_owner` — command tempo, not economy.
+    fn relay_factor(&self, owner: PlayerId, target_pos: Vec2) -> f64 {
+        let covered = self.active_nodes_for(owner).into_iter().any(|(b, p)| {
+            b == crate::node::NodeBonus::RelayAnchor && p.distance(target_pos) <= crate::node::NODE_REGION_RADIUS
+        });
+        if covered {
+            crate::node::RELAY_DELAY_MULT
+        } else {
+            1.0
+        }
+    }
+
+    /// §node Veil: the signature MULTIPLIER for a DARK fleet owned by `owner` at
+    /// `pos` — 0.5 inside an active magnetar node's region, else 1.0. Plugs the two
+    /// detection sites (sim pickets + server View) so concealment is one honest
+    /// scope: reducing signature here narrows detection everywhere it's read.
+    pub fn veil_factor(&self, owner: PlayerId, pos: Vec2) -> f64 {
+        let covered = self.active_nodes_for(owner).into_iter().any(|(b, p)| {
+            b == crate::node::NodeBonus::Veil && p.distance(pos) <= crate::node::NODE_REGION_RADIUS
+        });
+        if covered {
+            crate::node::VEIL_SIGNATURE_MULT
+        } else {
+            1.0
+        }
+    }
+
+    /// §node Deep Scan: does `viewer` hold an active pulsar/binary node whose region
+    /// covers `pos`? If so, the viewer resolves EXACT composition on any fleet
+    /// ALREADY visible there (bucket→exact) — gated in the server View, so it's an
+    /// earlier reveal of already-permitted data, never a new leak.
+    pub fn deep_scan_covers(&self, viewer: PlayerId, pos: Vec2) -> bool {
+        self.active_nodes_for(viewer).into_iter().any(|(b, p)| {
+            b == crate::node::NodeBonus::DeepScan && p.distance(pos) <= crate::node::NODE_REGION_RADIUS
+        })
+    }
+
+    /// §node: `(holder, region-center)` for every ACTIVE Veil node across ALL corps
+    /// — the server hands these to the dark-fleet view so a fleet in its OWNER's
+    /// magnetar region runs quieter. Respects the per-corp cap (via
+    /// `active_nodes_for` per holder), so a capped-out extra node grants nothing.
+    pub fn active_veil_regions(&self) -> Vec<(PlayerId, Vec2)> {
+        let mut holders: std::collections::BTreeSet<PlayerId> = std::collections::BTreeSet::new();
+        for (sid, n) in &self.nodes {
+            if n.active()
+                && let Some(owner) = self.systems.iter().find(|s| s.id == *sid).and_then(|s| s.owner)
+            {
+                holders.insert(owner);
+            }
+        }
+        let mut out = Vec::new();
+        for owner in holders {
+            for (b, p) in self.active_nodes_for(owner) {
+                if b == crate::node::NodeBonus::Veil {
+                    out.push((owner, p));
+                }
+            }
+        }
+        out
+    }
+
+    /// §node: region-centers of the ACTIVE Deep-Scan nodes `viewer` holds (capped),
+    /// for the view's bucket→exact composition reveal in-region.
+    pub fn deep_scan_regions(&self, viewer: PlayerId) -> Vec<Vec2> {
+        self.active_nodes_for(viewer)
+            .into_iter()
+            .filter_map(|(b, p)| (b == crate::node::NodeBonus::DeepScan).then_some(p))
+            .collect()
+    }
+
+    /// §syndicates Part 3: feed ALLY GARRISONS. A COMBATANT fleet stationed (Idle)
+    /// within `DEFENSE_PLATFORM_RADIUS` of a syndicate ALLY's system is a garrison:
+    /// the HOST draws `GARRISON_UPKEEP_PER_SHIP × ships × dt` Provisions from its
+    /// OWN stockpile to feed it. All-or-nothing per host (a cut supply line unfeeds
+    /// the whole garrison there): if the host can't cover the total, every garrison
+    /// fleet there goes UNFED — its defense contribution SUSPENDS (never destroyed;
+    /// recovers when fed). Deterministic + async-fair (runs online or off). The flag
+    /// is recomputed every tick BEFORE the combat passes read it.
+    fn resolve_garrison_upkeep(&mut self, events: &mut Vec<Event>) {
+        let radius = crate::build::DEFENSE_PLATFORM_RADIUS;
+        let prov = crate::cargo::Commodity::Provisions;
+        // 1. Group garrison fleets by host system (deterministic; first host by
+        //    system order — one host per fleet).
+        let mut by_host: BTreeMap<EntityId, Vec<(EntityId, PlayerId, u32)>> = BTreeMap::new();
+        for (fid, f) in &self.fleets {
+            if !f.is_combatant() || !matches!(f.order, FleetOrder::Idle) {
+                continue;
+            }
+            for sys in &self.systems {
+                let Some(so) = sys.owner else { continue };
+                if self.are_allied(f.owner, so) && f.pos.distance(sys.pos) <= radius {
+                    by_host.entry(sys.id).or_default().push((*fid, f.owner, f.total_count()));
+                    break;
+                }
+            }
+        }
+        // 2. Per host: draw the total upkeep if the stockpile covers it, else the
+        //    whole garrison there goes unfed.
+        let mut new_fed: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut host_of: BTreeMap<EntityId, EntityId> = BTreeMap::new();
+        for (sid, garrisons) in &by_host {
+            let total_ships: u32 = garrisons.iter().map(|(_, _, n)| *n).sum();
+            let upkeep = crate::build::GARRISON_UPKEEP_PER_SHIP * total_ships as f64 * DT;
+            let fed = {
+                let sys = self.systems.iter_mut().find(|s| s.id == *sid).expect("host exists");
+                let have = sys.stockpile.get(&prov).copied().unwrap_or(0.0);
+                let fed = have + 1e-12 >= upkeep;
+                if fed {
+                    *sys.stockpile.entry(prov).or_insert(0.0) -= upkeep;
+                }
+                fed
+            };
+            for (gid, _, _) in garrisons {
+                new_fed.insert(*gid, fed);
+                host_of.insert(*gid, *sid);
+            }
+        }
+        // 3. Collect fed/unfed TRANSITIONS (owner learns), then write the flags;
+        //    fleets that aren't garrisons this tick reset to fed = true.
+        let now = self.time;
+        let mut transitions: Vec<(PlayerId, EntityId, bool)> = Vec::new();
+        for (gid, &fed) in &new_fed {
+            if let Some(f) = self.fleets.get(gid)
+                && f.garrison_fed != fed
+            {
+                transitions.push((f.owner, host_of[gid], fed));
+            }
+        }
+        for f in self.fleets.values_mut() {
+            f.garrison_fed = new_fed.get(&f.id).copied().unwrap_or(true);
+        }
+        for (owner, host, fed) in transitions {
+            events.push(Event::new(now, EventPayload::GarrisonSupplyChanged { owner, host, fed }));
+        }
+    }
+
     /// §contestable-territory Part 1 (BLOCKADE): interdiction without capture.
     ///
     /// A fleet on a `Blockade` order that has taken STATION on a rival system
@@ -1737,6 +2625,7 @@ impl World {
                 && let Some(sys) = self.systems.iter().find(|s| s.id == system)
                 && sys.owner.is_some()
                 && sys.owner != Some(f.owner)
+                && !sys.owner.is_some_and(|o| self.are_allied(f.owner, o))
                 && f.pos.distance(sys.pos) <= BLOCKADE_STATION_RADIUS
             {
                 on_station.entry(system).or_default().push(*fid);
@@ -1768,10 +2657,18 @@ impl World {
                 .iter()
                 .filter(|(gid, g)| {
                     **gid != aid
-                        && g.owner == d_owner
                         && g.is_combatant()
                         && !engaged.contains(gid)
                         && g.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS
+                        // The host's OWN fleets always defend; a syndicate ALLY's
+                        // fleet joins as a GARRISON only if it's stationed (Idle),
+                        // currently FED, and its OWNER's doctrine isn't Avoid
+                        // (§syndicates Part 3 — "per its owner's doctrine").
+                        && (g.owner == d_owner
+                            || (matches!(g.order, FleetOrder::Idle)
+                                && g.garrison_fed
+                                && self.are_allied(g.owner, d_owner)
+                                && self.players.get(&g.owner).is_some_and(|c| c.doctrine.engagement != EngagementPolicy::Avoid)))
                 })
                 .map(|(gid, _)| *gid)
                 .collect();
@@ -2032,6 +2929,10 @@ impl World {
                         next_standing_id: 0,
                         doctrine: FleetDoctrine::default(),
                         intel: BTreeMap::new(),
+                        syndicate: None,
+                        syndicate_prev: None,
+                        syndicate_since: 0.0,
+                        stats: crate::rankings::RankingStats::default(),
                     },
                 );
                 events.push(Event::new(
@@ -2044,6 +2945,24 @@ impl World {
                 self.spawn_starting_fleet(*id, home, events);
                 // Seed an accurate initial valuation (before the first close).
                 self.recompute_valuations();
+            }
+            // SYNDICATES (§syndicates Part 1): instant owner-only admin, like the
+            // sibling policy commands — they mutate ground-truth membership now; the
+            // KNOWLEDGE of the change reaches others light-delayed (see `known_ally`).
+            Command::CreateSyndicate { player_id, name } => {
+                self.apply_create_syndicate(*player_id, name.clone());
+            }
+            Command::InviteToSyndicate { player_id, invitee } => {
+                self.apply_invite_syndicate(*player_id, *invitee);
+            }
+            Command::AcceptSyndicateInvite { player_id, syndicate_id } => {
+                self.apply_accept_syndicate(*player_id, *syndicate_id);
+            }
+            Command::LeaveSyndicate { player_id } => {
+                self.apply_leave_syndicate(*player_id);
+            }
+            Command::DissolveSyndicate { player_id } => {
+                self.apply_dissolve_syndicate(*player_id);
             }
             Command::MoveShip {
                 player_id,
@@ -2085,6 +3004,11 @@ impl World {
                 };
                 if target.owner == *player_id {
                     return; // no raiding your own fleets
+                }
+                // §syndicates: no raiding an ALLY. Deliberate offense against a
+                // syndicate member soft-rejects while allied (leaving re-enables it).
+                if self.are_allied(*player_id, target.owner) {
+                    return;
                 }
                 let target_pos = target.pos;
                 // The raider must exist and be the player's.
@@ -2317,6 +3241,10 @@ impl World {
                 if sys.owner.is_none() || sys.owner == Some(*player_id) {
                     return;
                 }
+                // §syndicates: no blockading an ALLY's system while allied.
+                if sys.owner.is_some_and(|o| self.are_allied(*player_id, o)) {
+                    return;
+                }
                 let station = sys.pos;
                 // Fuel the run ∝ distance × fleet mass, like a move; a shortfall
                 // HOLDS it (keeps the current order, notifies) — never lost.
@@ -2343,6 +3271,10 @@ impl World {
                 };
                 if target.owner == *player_id {
                     return; // no attacking your own fleets
+                }
+                // §syndicates: no attacking an ALLY while allied.
+                if self.are_allied(*player_id, target.owner) {
+                    return;
                 }
                 let target_pos = target.pos;
                 // The attacker must exist, be the player's, and CONTAIN ≥1 raider
@@ -2420,23 +3352,33 @@ impl World {
     fn gather_intel(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
         // Collect first (immutable pass over fleets × systems), then apply.
-        let mut captures: Vec<(PlayerId, EntityId, u32, u32, Vec2)> = Vec::new();
+        let mut captures: Vec<(PlayerId, EntityId, u32, u32, u32, Vec2)> = Vec::new();
         for ship in self.fleets.values() {
             // Any fleet CONTAINING a scout gathers intel (its eyes ride along).
-            if !ship.contains(ShipKind::Scout) {
+            if !ship.contains(ShipKind::Scout) || ship.owner.is_pirate() {
                 continue;
             }
             for sys in &self.systems {
-                let Some(sys_owner) = sys.owner else { continue };
-                if sys_owner == ship.owner {
-                    continue; // your own systems need no spying
+                if ship.pos.distance(sys.pos) > crate::ship::SCOUT_INTEL_RANGE {
+                    continue;
                 }
-                if ship.pos.distance(sys.pos) <= crate::ship::SCOUT_INTEL_RANGE {
-                    captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, ship.pos));
+                match sys.owner {
+                    // §pirates: a base at an UNOWNED system reveals its enclave tier
+                    // (like fortifications). Its `defense_tier` is the base defense.
+                    None => {
+                        if let Some(e) = self.enclaves.get(&sys.id) {
+                            captures.push((ship.owner, sys.id, sys.defense_tier, 0, e.tier, ship.pos));
+                        }
+                    }
+                    // A RIVAL's fortifications (never your own or a syndicate ally's).
+                    Some(o) if o != ship.owner && !self.are_allied(ship.owner, o) => {
+                        captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, 0, ship.pos));
+                    }
+                    _ => {}
                 }
             }
         }
-        for (owner, system, defense_tier, shipyard_tier, pos) in captures {
+        for (owner, system, defense_tier, shipyard_tier, enclave_tier, pos) in captures {
             let Some(corp) = self.players.get_mut(&owner) else { continue };
             let prev = corp.intel.get(&system);
             // Notify on a fresh approach (no snapshot, or the last one has gone
@@ -2446,12 +3388,13 @@ impl World {
                 Some(p) => {
                     p.defense_tier != defense_tier
                         || p.shipyard_tier != shipyard_tier
+                        || p.enclave_tier != enclave_tier
                         || now - p.observed_at > crate::ship::SCOUT_INTEL_RENOTIFY_S
                 }
             };
             corp.intel.insert(
                 system,
-                crate::world::IntelSnapshot { defense_tier, shipyard_tier, observed_at: now, pos },
+                crate::world::IntelSnapshot { defense_tier, shipyard_tier, enclave_tier, observed_at: now, pos },
             );
             if notify {
                 events.push(Event::new(
@@ -2870,6 +3813,11 @@ impl World {
                         now,
                         EventPayload::SystemClaimed { system: sys_id, owner, pos },
                     ));
+                    // §node EXPOSURE: claiming an awakened node makes you its holder
+                    // — announced galaxy-wide, light-delayed (no hiding a node's master).
+                    if let Some(node) = self.nodes.get(&sys_id).filter(|n| n.awakened) {
+                        events.push(Event::new(now, EventPayload::NodeCaptured { owner, system: sys_id, pos, bonus: node.bonus }));
+                    }
                 }
                 None => {
                     // Reserved home site: hold like a lost race (soft, notice once).
@@ -2961,6 +3909,11 @@ impl World {
             }
         }
         events.push(Event::new(now, EventPayload::SystemCaptured { old_owner, new_owner, system: sys_id, pos, plunder }));
+        // §node EXPOSURE: capturing an awakened node flips its master — announced
+        // galaxy-wide, light-delayed, so every corp learns who now commands it.
+        if let Some(node) = self.nodes.get(&sys_id).filter(|n| n.awakened) {
+            events.push(Event::new(now, EventPayload::NodeCaptured { owner: new_owner, system: sys_id, pos, bonus: node.bonus }));
+        }
     }
 
     /// Fleet a claimed system's accumulated production to the hub: one raidable
@@ -3229,7 +4182,125 @@ impl World {
                 + inv
                 + transit.get(id).copied().unwrap_or(0.0)
                 + reserved.get(id).copied().unwrap_or(0.0);
+            // §rankings RECOVERY: a major loss (a captured system) since the last
+            // close stamps this fresh, post-loss valuation as the trough to climb
+            // back from. Measured at the close so it reflects the settled loss.
+            if corp.stats.loss_pending {
+                corp.stats.loss_floor = Some(corp.valuation);
+                corp.stats.loss_pending = false;
+            }
         }
+    }
+
+    /// §rankings: bump a corporation's cumulative counters. A no-op for a player
+    /// not in `players` — so the PIRATE sentinel (never a corp) is skipped for free.
+    fn bump_stats(&mut self, player: PlayerId, f: impl FnOnce(&mut crate::rankings::RankingStats)) {
+        if let Some(corp) = self.players.get_mut(&player) {
+            f(&mut corp.stats);
+        }
+    }
+
+    /// §rankings: tally THIS tick's events into the cumulative per-corp counters —
+    /// the single "increment at events" pass (no per-tick cost beyond the events
+    /// that actually fired). Deterministic (events are produced deterministically).
+    /// Reads only from the event stream the sim already emits; the two counters that
+    /// need live fleet/cargo context (raid seizure, cargo-protected) are incremented
+    /// at their own sites. Pirates are skipped automatically ([`Self::bump_stats`]).
+    fn accumulate_rankings(&mut self, events: &[Event]) {
+        for e in events {
+            match &e.payload {
+                EventPayload::Trade(te) => match *te {
+                    // TRADE THROUGHPUT — every convoy delivery (home / owned / ally).
+                    TradeEvent::Delivered { player, units, .. } => {
+                        self.bump_stats(player, |s| s.trade_units += units as u64);
+                    }
+                    // A hub SALE is both throughput AND market revenue.
+                    TradeEvent::Sold { player, units, unit_price, .. } => {
+                        self.bump_stats(player, |s| {
+                            s.trade_units += units as u64;
+                            s.market_revenue += units as f64 * unit_price;
+                        });
+                    }
+                    // MARKET PROFIT cost side (immediate buy).
+                    TradeEvent::Bought { player, units, unit_price, .. } => {
+                        self.bump_stats(player, |s| s.market_spend += units as f64 * unit_price);
+                    }
+                    // A cleared LIMIT order — sell = revenue, buy = spend.
+                    TradeEvent::LimitFilled { player, side, units, unit_price, .. } => {
+                        let amt = units as f64 * unit_price;
+                        match side {
+                            Side::Sell => self.bump_stats(player, |s| s.market_revenue += amt),
+                            Side::Buy => self.bump_stats(player, |s| s.market_spend += amt),
+                        }
+                    }
+                    _ => {}
+                },
+                // BATTLE EFFICIENCY — credit BOTH sides their destroyed/lost hull and
+                // an engagement (skipping a no-contact ESCAPE, which isn't a fight).
+                EventPayload::RaidResolved { attacker, defender, outcome, attacker_losses, target_losses, .. }
+                    if *outcome != RaidOutcome::Escaped =>
+                {
+                    let a_hull = crate::rankings::hull_sum(attacker_losses);
+                    let d_hull = crate::rankings::hull_sum(target_losses);
+                    let (attacker, defender) = (*attacker, *defender);
+                    self.bump_stats(attacker, |s| {
+                        s.hull_destroyed += d_hull;
+                        s.hull_lost += a_hull;
+                        s.engagements += 1;
+                    });
+                    self.bump_stats(defender, |s| {
+                        s.hull_destroyed += a_hull;
+                        s.hull_lost += d_hull;
+                        s.engagements += 1;
+                    });
+                }
+                // SYSTEMS DEVELOPED — one completed upgrade tier.
+                EventPayload::SystemUpgraded { owner, .. } => {
+                    self.bump_stats(*owner, |s| s.tiers_built += 1);
+                }
+                // INTEL GATHERED — one scout snapshot captured.
+                EventPayload::IntelGathered { owner, .. } => {
+                    self.bump_stats(*owner, |s| s.intel_snapshots += 1);
+                }
+                // CARGO CAPTURED (plunder) + RECOVERY (the old owner's major loss).
+                EventPayload::SystemCaptured { new_owner, old_owner, plunder, .. } => {
+                    let loot: u64 = plunder.values().map(|&u| u as u64).sum();
+                    self.bump_stats(*new_owner, |s| s.cargo_captured += loot);
+                    self.bump_stats(*old_owner, |s| s.loss_pending = true);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// §rankings: PUBLISH the leaderboard — a snapshot copy taken on the ledger tick
+    /// (the §9 valuation close), so it holds steady between closes and a mid-interval
+    /// counter change never leaks. Builds one row per corporation (pirates excluded)
+    /// from its cumulative stats + last-close valuation, then stamps the category
+    /// TITLES. Deterministic (ordering + tiebreaks are fixed).
+    fn snapshot_rankings(&mut self) {
+        let rows: Vec<crate::rankings::RankingRow> = self
+            .players
+            .values()
+            .filter(|c| !c.id.is_pirate())
+            .map(|c| crate::rankings::RankingRow {
+                player_id: c.id,
+                name: c.name.clone(),
+                valuation: c.valuation,
+                trade_throughput: c.stats.trade_units,
+                market_profit: c.stats.market_profit(),
+                cargo_captured: c.stats.cargo_captured,
+                cargo_protected: c.stats.cargo_protected,
+                battle_efficiency: c.stats.battle_efficiency(),
+                battle_engagements: c.stats.engagements,
+                battle_ranked: c.stats.efficiency_ranked(),
+                systems_developed: c.stats.tiers_built,
+                intel_gathered: c.stats.intel_snapshots,
+                recovery: c.stats.recovery(c.valuation),
+                titles: Vec::new(),
+            })
+            .collect();
+        self.rankings = crate::rankings::assemble(rows);
     }
 
     /// Anti-spam gate 1 upkeep: a standing order holds the id of its one in-flight
@@ -3511,10 +4582,16 @@ impl World {
             let (Some(cargo), Some(mission)) = (ship.cargo, ship.mission) else {
                 continue;
             };
+            // §rankings CARGO PROTECTED: a convoy that fought an engagement en route
+            // and STILL reached its destination earns its delivered units (below).
+            let fought = ship.fought;
             match mission {
                 TradeMission::DeliverHome => {
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
                         *corp.inventory.entry(cargo.commodity).or_insert(0) += cargo.units;
+                        if fought {
+                            corp.stats.cargo_protected += cargo.units as u64;
+                        }
                     }
                     events.push(Event::new(
                         now,
@@ -3529,6 +4606,9 @@ impl World {
                     let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
                         corp.credits += cargo.units as f64 * unit_price;
+                        if fought {
+                            corp.stats.cargo_protected += cargo.units as u64;
+                        }
                     }
                     events.push(Event::new(
                         now,
@@ -3541,9 +4621,11 @@ impl World {
                     ));
                 }
                 TradeMission::DeliverToSystem { system } => {
-                    // Deposit into the destination system's stockpile — but ONLY if
-                    // the convoy's owner still owns it on arrival (a system can be
-                    // lost mid-transit; we don't gift cargo to a rival who took it).
+                    // Deposit into the destination system's stockpile — but ONLY if,
+                    // on arrival, the destination is still the convoy owner's OR a
+                    // syndicate ALLY's (§syndicates Part 3 AID — a member may supply
+                    // an ally's stockpile; blockades still interdict the run upstream).
+                    // We don't gift cargo to a rival who took the system mid-transit.
                     // STORAGE CAP (§buildings step 2): deliver up to the depot's
                     // remaining headroom (whole units); any EXCESS stays aboard and
                     // the SAME convoy carries it onward to the hub to sell — still
@@ -3551,10 +4633,11 @@ impl World {
                     // (This overflow rule is deliberate: of the "sell it / leave it"
                     // options, an automatic sale is the one that can't deadlock a
                     // full depot or strand cargo.)
+                    let allies = self.allies_of(ship.owner);
                     let delivered = self
                         .systems
                         .iter_mut()
-                        .find(|s| s.id == system && s.owner == Some(ship.owner))
+                        .find(|s| s.id == system && s.owner.is_some_and(|o| o == ship.owner || allies.contains(&o)))
                         .map(|sys| {
                             let stored = (cargo.units as f64).min(sys.storage_headroom()).floor() as u32;
                             if stored > 0 {
@@ -3572,6 +4655,11 @@ impl World {
                                     units: stored,
                                 }),
                             ));
+                            if fought
+                                && let Some(corp) = self.players.get_mut(&ship.owner)
+                            {
+                                corp.stats.cargo_protected += stored as u64;
+                            }
                         }
                         let excess = cargo.units - stored;
                         if excess > 0 {
@@ -3663,16 +4751,26 @@ impl World {
         };
         let cc = corp.command_center;
         let c = self.config.c;
+        let ship_pos = ship.pos;
+        let ship_vel = ship.vel;
+        // §node Relay Anchor: if the issuer holds an active black-hole node whose
+        // region covers the fleet, its command loop through that neighbourhood runs
+        // at half the light-time. Evaluated at the fleet's CURRENT position (the
+        // command's outbound leg) — the SINGLE plug for the tempo bonus, so it can
+        // never desync from what the map shows. `relay_factor` is 1.0 with no node.
+        let relay = self.relay_factor(player_id, ship_pos);
         // Outbound light delay from the fleet's current position (deterministic,
         // known at issue). `delivered_at` is when the fleet gets the order.
-        let delay = ship.pos.distance(cc) / c;
+        let delay = ship_pos.distance(cc) / c * relay;
         let delivered_at = self.time + delay;
         // The DELIVERY POINT: where the fleet will be when the order lands, by
         // constant-velocity extrapolation of its current motion (§14.1). The echo
         // — the first light of the new behavior — leaves there at delivery and
         // reaches the command center `distance/c` later. Exactly computable now.
-        let delivery_point = ship.pos + ship.vel * delay;
-        let echo_at = delivered_at + delivery_point.distance(cc) / c;
+        // The return leg is relayed too when the delivery point stays in region.
+        let delivery_point = ship_pos + ship_vel * delay;
+        let echo_relay = self.relay_factor(player_id, delivery_point);
+        let echo_at = delivered_at + delivery_point.distance(cc) / c * echo_relay;
         self.pending_orders.push(PendingOrder {
             apply_time: delivered_at,
             ship_id,
@@ -3869,6 +4967,9 @@ mod tests {
     use super::*;
     use crate::doctrine::RetreatThreshold;
     use crate::ids::PlayerId;
+    use crate::node::{
+        Node, NodeBonus, NODES_PER_CORP, NODE_REGION_RADIUS, RELAY_DELAY_MULT, VEIL_SIGNATURE_MULT,
+    };
 
     fn test_world() -> World {
         // A SHORT battle timescale so combat tests resolve in a few seconds (the
@@ -4458,7 +5559,7 @@ mod tests {
         // Scout intel rides the snapshot too (§scout part 2).
         w.players.get_mut(&id).unwrap().intel.insert(
             EntityId(999),
-            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
+            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
         );
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
@@ -5588,6 +6689,42 @@ mod tests {
         let w2: World = serde_json::from_str(&json).unwrap();
         assert_eq!(w2.fleets[&hunter].posture, EngagementPosture::WeaponsFree, "posture persists");
         assert!(matches!(w2.fleets[&hunter].order, FleetOrder::Attack { target } if target == rival), "in-flight Attack persists");
+    }
+
+    /// A raider jumped mid-pursuit (engaged in a DIFFERENT battle) must NOT fire a
+    /// spurious "raid failed" escape when its old convoy target reaches hub safety —
+    /// its Intercept order is dormant while it's anchored in the fight. Regression
+    /// for the phantom battle-aftermath marker at the hub.
+    #[test]
+    fn a_jumped_raider_fires_no_spurious_escape() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let hub = w.hub;
+        // Raider A pursues rival convoy F; F is inbound to the hub (safe on arrival).
+        let a = squad(&mut w, atk, Vec2::new(5000.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let f = squad(&mut w, def, hub + Vec2::new(400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::MoveTo { dest: hub });
+        // Rival raider B jumps A → a B-vs-A battle that anchors A.
+        let b = squad(&mut w, def, Vec2::new(5000.0, 40.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.fleets.retain(|id, _| *id == a || *id == f || *id == b);
+        w.fleets.get_mut(&a).unwrap().order = FleetOrder::Intercept { target: f };
+        w.fleets.get_mut(&b).unwrap().order = FleetOrder::Intercept { target: a };
+        // A is engaged within a tick; F reaches hub safety a couple seconds later.
+        let mut spurious = false;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::RaidResolved { attacker_ship, outcome, .. } = e.payload
+                    && attacker_ship == a
+                    && outcome == RaidOutcome::Escaped
+                {
+                    spurious = true;
+                }
+            }
+        }
+        assert!(!spurious, "an engaged raider must not fire a raid-failed escape for its dormant target");
     }
 
     /// §one-battle-one-icon: two rival fleets that intercept EACH OTHER (reciprocal
@@ -7144,6 +8281,7 @@ mod tests {
     #[test]
     fn shipping_production_spawns_a_raidable_convoy_that_sells() {
         let mut w = test_world();
+        w.enclaves.clear(); // isolate the trade loop from ambient piracy
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
@@ -7232,6 +8370,7 @@ mod tests {
     #[test]
     fn standing_order_auto_ships_to_hub_while_offline() {
         let mut w = test_world();
+        w.enclaves.clear(); // isolate the standing-order loop from ambient piracy
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sysid = richest_system(&w);
@@ -8187,5 +9326,1004 @@ mod tests {
         let w2: World = serde_json::from_str(&json).unwrap();
         let after = w2.systems.iter().find(|s| s.id == sys).unwrap().blockade;
         assert_eq!(format!("{before:?}"), format!("{after:?}"), "blockade + siege clock persist across a snapshot");
+    }
+
+    // ===================================================================
+    // §SYNDICATES Part 1 — membership + non-engagement
+    // ===================================================================
+    use crate::ids::SyndicateId;
+
+    /// Found a syndicate with `a` and bring `b` in via invite → accept. Returns
+    /// the syndicate id.
+    fn ally(w: &mut World, a: PlayerId, b: PlayerId) -> SyndicateId {
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "Pact".into() }]);
+        let sid = w.players[&a].syndicate.expect("founded a syndicate");
+        w.step(&[Command::InviteToSyndicate { player_id: a, invitee: b }]);
+        w.step(&[Command::AcceptSyndicateInvite { player_id: b, syndicate_id: sid }]);
+        sid
+    }
+
+    #[test]
+    fn syndicate_create_invite_accept_forms_an_alliance() {
+        let mut w = test_world();
+        let (a, b, c) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer { id: c, name: "C".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        assert!(w.are_allied(a, b) && w.are_allied(b, a), "both directions allied (ground truth)");
+        assert_eq!(w.players[&a].syndicate, Some(sid));
+        assert_eq!(w.players[&b].syndicate, Some(sid));
+        let s = &w.syndicates[&sid];
+        assert!(s.members.contains(&a) && s.members.contains(&b) && s.members.len() == 2);
+        assert_eq!(s.founder, a);
+        // A non-member is not an ally in either direction.
+        assert!(!w.are_allied(a, c) && !w.are_allied(c, a), "outsider is never an ally");
+        assert!(!w.are_allied(a, a), "self is not an ally");
+    }
+
+    #[test]
+    fn syndicate_cap_scales_with_active_corps() {
+        use crate::syndicate::syndicate_cap;
+        assert_eq!(syndicate_cap(1), 2, "min floor");
+        assert_eq!(syndicate_cap(5), 2);
+        assert_eq!(syndicate_cap(6), 2);
+        assert_eq!(syndicate_cap(9), 3);
+        assert_eq!(syndicate_cap(12), 4);
+    }
+
+    #[test]
+    fn syndicate_size_cap_rejects_overfill() {
+        let mut w = test_world();
+        let (a, b, c, d) = (PlayerId(1), PlayerId(2), PlayerId(3), PlayerId(4));
+        for (id, n) in [(a, "A"), (b, "B"), (c, "C"), (d, "D")] {
+            w.step(&[Command::AddPlayer { id, name: n.into() }]);
+        }
+        // 4 active corps → cap = max(2, floor(4/3)) = 2. A 2-member syndicate is full.
+        let sid = ally(&mut w, a, b);
+        assert_eq!(w.syndicates[&sid].members.len(), 2);
+        w.step(&[Command::InviteToSyndicate { player_id: a, invitee: c }]);
+        w.step(&[Command::AcceptSyndicateInvite { player_id: c, syndicate_id: sid }]);
+        assert!(w.players[&c].syndicate.is_none(), "the cap rejects the 3rd member");
+        assert_eq!(w.syndicates[&sid].members.len(), 2, "roster stays at the cap");
+    }
+
+    #[test]
+    fn syndicate_weapons_free_spares_an_ally() {
+        // Mirror `weapons_free_auto_commits_on_a_rival_in_its_own_bubble`, but the
+        // "target" is an ALLY — the WeaponsFree raider must NOT hunt it.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, _convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(1000.0, 0.0));
+        // Ally FIRST (the raider is still Passive, so it won't commit meanwhile),
+        // THEN arm it WeaponsFree — now the ally in its bubble must be spared.
+        ally(&mut w, atk, def);
+        assert!(w.are_allied(atk, def));
+        w.fleets.get_mut(&raider).unwrap().posture = EngagementPosture::WeaponsFree;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(
+                matches!(w.fleets[&raider].order, FleetOrder::Idle),
+                "a WeaponsFree raider never hunts a syndicate ally in its bubble",
+            );
+        }
+    }
+
+    #[test]
+    fn syndicate_picket_spares_an_ally_raider() {
+        // An EngageAny picket that WOULD hunt any sensed raider leaves an ally alone.
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        let convoy_pos = Vec2::new(3000.0, 0.0);
+        let (patrol, _c, hostile) =
+            defense_setup(&mut w, d, a, convoy_pos, convoy_pos, Vec2::new(1500.0, 0.0));
+        {
+            let h = w.fleets.get_mut(&hostile).unwrap();
+            h.pos = convoy_pos + Vec2::new(500.0, 0.0);
+            h.vel = Vec2::ZERO;
+            h.order = FleetOrder::Idle;
+        }
+        // Ally FIRST (default DefensiveOnly ignores the parked drifter meanwhile),
+        // THEN switch to EngageAny — the ally raider must still be spared.
+        ally(&mut w, d, a);
+        assert!(w.are_allied(d, a));
+        w.players.get_mut(&d).unwrap().doctrine.engagement = EngagementPolicy::EngageAny;
+        for _ in 0..(6 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.fleets[&patrol].defense.is_none(), "an EngageAny picket never hunts an ALLY raider");
+            assert!(!engaged_on(&w, patrol, hostile), "no engagement opens against an ally");
+        }
+    }
+
+    #[test]
+    fn syndicate_soft_rejects_attack_raid_blockade_on_an_ally() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        ally(&mut w, a, b);
+        let cc = w.players[&a].command_center;
+        let b_home = w.players[&b].home_system.expect("b has a home system");
+        // Three separate a-owned raider fleets + b targets.
+        let rr = squad(&mut w, a, cc + Vec2::new(40.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let ar = squad(&mut w, a, cc + Vec2::new(60.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let br = squad(&mut w, a, cc + Vec2::new(80.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        let bc = squad(&mut w, b, cc + Vec2::new(400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.step(&[
+            Command::CommitRaid { player_id: a, raider_id: rr, target_id: bc },
+            Command::AttackFleet { player_id: a, fleet_id: ar, target_id: bc },
+            Command::BlockadeSystem { player_id: a, fleet_id: br, system_id: b_home },
+        ]);
+        // All soft-rejected: fleets keep Idle, nothing scheduled.
+        for id in [rr, ar, br] {
+            assert!(matches!(w.fleets[&id].order, FleetOrder::Idle), "no order applied vs an ally");
+        }
+        assert!(
+            w.pending_commands(a).iter().all(|p| ![rr, ar, br].contains(&p.fleet)),
+            "no offensive order was scheduled against an ally",
+        );
+    }
+
+    #[test]
+    fn syndicate_membership_knowledge_is_light_delayed() {
+        // are_allied is ground-truth (immediate); the KNOWLEDGE of a join (the ally
+        // tint) reaches the founder only after the new member's light arrives.
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        ally(&mut w, a, b);
+        let since = w.players[&b].syndicate_since;
+        let delay = w.players[&a].command_center.distance(w.players[&b].command_center) / w.config.c;
+        assert!(delay > DT, "homes are far enough apart for a measurable light delay");
+        assert!(w.are_allied(a, b), "alliance is in effect immediately (ground truth)");
+        assert!(!w.known_ally(a, b, w.time), "founder does NOT yet KNOW the join (light in flight)");
+        // Up to just before the light arrives, still unknown (the fog guarantee).
+        while w.time < since + delay - DT {
+            w.step(&[]);
+            assert!(!w.known_ally(a, b, w.time), "membership light hasn't arrived yet");
+        }
+        // Once the light arrives, the ally is known (→ tinted).
+        let known = run_until(&mut w, 5, |w| w.known_ally(a, b, w.time));
+        assert!(known, "the ally becomes known once its membership light arrives");
+    }
+
+    #[test]
+    fn syndicate_leave_promotes_founder_then_dissolves_when_empty() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        // Founder leaves → seat passes to b; a is unaffiliated; no longer allied.
+        w.step(&[Command::LeaveSyndicate { player_id: a }]);
+        assert!(w.players[&a].syndicate.is_none());
+        assert_eq!(w.syndicates[&sid].founder, b, "seat passes to the remaining member");
+        assert!(!w.are_allied(a, b));
+        // Last member leaves → the syndicate is removed.
+        w.step(&[Command::LeaveSyndicate { player_id: b }]);
+        assert!(w.players[&b].syndicate.is_none());
+        assert!(!w.syndicates.contains_key(&sid), "an emptied syndicate dissolves");
+    }
+
+    #[test]
+    fn syndicate_dissolve_clears_every_member() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        // A non-founder cannot dissolve.
+        w.step(&[Command::DissolveSyndicate { player_id: b }]);
+        assert!(w.syndicates.contains_key(&sid), "only the founder may dissolve");
+        // The founder dissolves → every member unaffiliated, roster gone.
+        w.step(&[Command::DissolveSyndicate { player_id: a }]);
+        assert!(w.players[&a].syndicate.is_none() && w.players[&b].syndicate.is_none());
+        assert!(!w.syndicates.contains_key(&sid));
+        assert!(!w.are_allied(a, b));
+    }
+
+    #[test]
+    fn syndicate_serde_round_trips() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let sid = ally(&mut w, a, b);
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert!(w2.syndicates.contains_key(&sid), "syndicate persists");
+        assert_eq!(w2.players[&a].syndicate, Some(sid));
+        assert_eq!(w2.players[&b].syndicate, Some(sid));
+        assert!(w2.are_allied(a, b), "alliance survives a snapshot");
+        assert_eq!(w2.syndicates[&sid].members.len(), 2);
+    }
+
+    // ===================================================================
+    // §SYNDICATES Part 3 — garrison + aid
+    // ===================================================================
+
+    /// Position of a system by id (test helper).
+    fn sys_pos(w: &World, id: EntityId) -> Vec2 {
+        w.systems.iter().find(|s| s.id == id).unwrap().pos
+    }
+    /// Set a system's Provisions stockpile and clear its deposits (so production
+    /// can't refill it mid-test — deterministic upkeep behaviour).
+    fn set_provisions_no_production(w: &mut World, id: EntityId, units: f64) {
+        let s = w.systems.iter_mut().find(|s| s.id == id).unwrap();
+        s.deposits.clear();
+        s.stockpile.clear();
+        if units > 0.0 {
+            s.stockpile.insert(Commodity::Provisions, units);
+        }
+    }
+
+    #[test]
+    fn ally_garrison_draws_host_provisions_and_unfeeds_on_shortfall() {
+        let mut w = test_world();
+        let (host, sender) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: host, name: "Host".into() },
+            Command::AddPlayer { id: sender, name: "Send".into() },
+        ]);
+        ally(&mut w, host, sender);
+        let hsys = w.players[&host].home_system.unwrap();
+        set_provisions_no_production(&mut w, hsys, 100.0);
+        let hpos = sys_pos(&w, hsys);
+        // A sender combatant fleet STATIONED at the host system = an ally garrison.
+        let garr = squad(&mut w, sender, hpos, ShipKind::Corvette, 2, FleetOrder::Idle);
+        let before = w.systems.iter().find(|s| s.id == hsys).unwrap().stockpile[&Commodity::Provisions];
+        w.step(&[]);
+        let after = w.systems.iter().find(|s| s.id == hsys).unwrap().stockpile[&Commodity::Provisions];
+        assert!(after < before, "the HOST feeds the garrison from its own Provisions ({before} → {after})");
+        assert!(w.fleets[&garr].garrison_fed, "a fed garrison stays fed");
+        // Drain the host → the garrison UNFEEDS (suspended, never destroyed).
+        set_provisions_no_production(&mut w, hsys, 0.0);
+        w.step(&[]);
+        assert!(!w.fleets[&garr].garrison_fed, "no Provisions → the garrison goes UNFED");
+        assert!(w.fleets.contains_key(&garr), "unfed suspends, never destroys");
+    }
+
+    #[test]
+    fn fed_ally_garrison_joins_the_host_defense() {
+        let mut w = test_world();
+        let (atk, def, friend) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+        ]);
+        ally(&mut w, def, friend);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0); // no platform
+        set_provisions_no_production(&mut w, sys, 100.0);
+        let pos = sys_pos(&w, sys);
+        let garr = squad(&mut w, friend, pos, ShipKind::Corvette, 2, FleetOrder::Idle);
+        blockader_on_station(&mut w, atk, sys, 2);
+        let joined = run_until(&mut w, 5, |w| w.engagements.values().any(|e| e.defenders.contains(&garr)));
+        assert!(joined, "a FED ally garrison joins the host's establishment defense");
+    }
+
+    #[test]
+    fn unfed_ally_garrison_suspends_its_defense() {
+        let mut w = test_world();
+        let (atk, def, friend) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+        ]);
+        ally(&mut w, def, friend);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0);
+        set_provisions_no_production(&mut w, sys, 0.0); // host can't feed
+        let pos = sys_pos(&w, sys);
+        let garr = squad(&mut w, friend, pos, ShipKind::Corvette, 2, FleetOrder::Idle);
+        blockader_on_station(&mut w, atk, sys, 2);
+        for _ in 0..(3 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(!w.fleets[&garr].garrison_fed, "no host Provisions → unfed");
+        assert!(
+            !w.engagements.values().any(|e| e.defenders.contains(&garr)),
+            "an UNFED garrison sits the fight out (contribution suspended)",
+        );
+        assert!(w.fleets.contains_key(&garr), "never destroyed");
+    }
+
+    #[test]
+    fn ally_garrison_is_sender_controlled_not_host() {
+        let mut w = test_world();
+        let (host, sender) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: host, name: "Host".into() },
+            Command::AddPlayer { id: sender, name: "Send".into() },
+        ]);
+        ally(&mut w, host, sender);
+        let hsys = w.players[&host].home_system.unwrap();
+        let hpos = sys_pos(&w, hsys);
+        let garr = squad(&mut w, sender, hpos, ShipKind::Corvette, 1, FleetOrder::Idle);
+        // The HOST cannot command an ally's garrison (not their fleet) → soft-reject.
+        w.step(&[Command::MoveShip { player_id: host, ship_id: garr, dest: Vec2::new(9000.0, 0.0) }]);
+        assert!(matches!(w.fleets[&garr].order, FleetOrder::Idle), "the host cannot move an ally's garrison");
+        assert!(w.pending_commands(host).iter().all(|p| p.fleet != garr), "no host order was scheduled");
+        // The SENDER commands + recalls it (their fleet; light-delayed).
+        let home = w.players[&sender].home;
+        w.step(&[Command::MoveShip { player_id: sender, ship_id: garr, dest: home }]);
+        assert!(w.pending_commands(sender).iter().any(|p| p.fleet == garr), "the SENDER commands + recalls it");
+    }
+
+    #[test]
+    fn ally_aid_delivers_to_the_ally_stockpile() {
+        let mut w = test_world();
+        let (giver, friend) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: giver, name: "Give".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+        ]);
+        ally(&mut w, giver, friend);
+        let asys = w.players[&friend].home_system.unwrap();
+        set_provisions_no_production(&mut w, asys, 0.0); // measure the delivery cleanly
+        let apos = sys_pos(&w, asys);
+        // A GIVER convoy arriving at the ALLY's system with a deliver mission.
+        let cid = w.alloc_entity_id();
+        let mut convoy = Fleet::single(cid, giver, ShipKind::Convoy, apos, FleetOrder::Idle, Some(crate::cargo::Cargo { commodity: Commodity::Provisions, units: 20 }));
+        convoy.mission = Some(TradeMission::DeliverToSystem { system: asys });
+        w.fleets.insert(cid, convoy);
+        w.step(&[]); // resolve_trade_arrivals deposits into the ALLY's stockpile
+        let got = w.systems.iter().find(|s| s.id == asys).unwrap().stockpile.get(&Commodity::Provisions).copied().unwrap_or(0.0);
+        assert!(got >= 20.0, "aid credits the ALLY's stockpile (got {got})");
+        assert!(!w.fleets.contains_key(&cid), "the aid convoy delivered and was consumed");
+    }
+
+    #[test]
+    fn blockade_still_interdicts_ally_aid() {
+        let mut w = test_world();
+        let (atk, def, giver) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+            Command::AddPlayer { id: giver, name: "Give".into() },
+        ]);
+        ally(&mut w, def, giver);
+        let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0);
+        let pos = sys_pos(&w, sys);
+        blockader_on_station(&mut w, atk, sys, 1);
+        // A GIVER aid convoy inbound to the ally's (soon-blockaded) system.
+        let cid = w.alloc_entity_id();
+        let mut convoy = Fleet::single(cid, giver, ShipKind::Convoy, pos + Vec2::new(3000.0, 0.0), FleetOrder::MoveTo { dest: pos }, Some(crate::cargo::Cargo { commodity: Commodity::Provisions, units: 10 }));
+        convoy.mission = Some(TradeMission::DeliverToSystem { system: sys });
+        w.fleets.insert(cid, convoy);
+        w.step(&[]); // resolve_blockades establishes + re-targets the aid convoy
+        let dest = match w.fleets[&cid].order {
+            FleetOrder::MoveTo { dest } => dest,
+            _ => panic!("held aid convoy should still be moving (to standoff)"),
+        };
+        assert!(
+            (dest.distance(pos) - BLOCKADE_STANDOFF_RADIUS).abs() < 1.0,
+            "ally aid is interdicted at the standoff ring — relief is military-first",
+        );
+    }
+
+    #[test]
+    fn garrison_fed_flag_persists_serde() {
+        let mut w = test_world();
+        let (host, sender) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: host, name: "Host".into() },
+            Command::AddPlayer { id: sender, name: "Send".into() },
+        ]);
+        ally(&mut w, host, sender);
+        let hsys = w.players[&host].home_system.unwrap();
+        set_provisions_no_production(&mut w, hsys, 0.0);
+        let hpos = sys_pos(&w, hsys);
+        let garr = squad(&mut w, sender, hpos, ShipKind::Corvette, 1, FleetOrder::Idle);
+        w.step(&[]); // → unfed (no Provisions)
+        assert!(!w.fleets[&garr].garrison_fed);
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert!(!w2.fleets[&garr].garrison_fed, "garrison fed/unfed survives a snapshot");
+    }
+
+    // ===================================================================
+    // §PIRATES — neutral enclave faction
+    // ===================================================================
+
+    /// An enclave id + its base position.
+    fn an_enclave(w: &World) -> (EntityId, Vec2) {
+        let sid = *w.enclaves.keys().next().expect("enclaves seeded");
+        (sid, w.systems.iter().find(|s| s.id == sid).unwrap().pos)
+    }
+
+    #[test]
+    fn enclaves_are_seeded_mid_ring_clear_of_homes() {
+        let w = test_world();
+        assert_eq!(w.enclaves.len(), crate::pirate::PIRATE_ENCLAVE_COUNT, "the tunable count is seeded");
+        let radius = w.config.galaxy_radius;
+        for (sid, e) in &w.enclaves {
+            let sys = w.systems.iter().find(|s| s.id == *sid).unwrap();
+            assert!(sys.owner.is_none(), "an enclave sits at an UNCLAIMED system (dark until scouted)");
+            assert_eq!(sys.defense_tier, crate::pirate::base_defense_tiers(1), "base defense on the host system");
+            assert_eq!(e.tier, 1, "seeds at tier 1");
+            let r = sys.pos.length();
+            assert!(r >= radius * 0.30 && r <= radius * 0.80, "mid-ring placement");
+            for h in &w.home_slots {
+                assert!(sys.pos.distance(h.pos) >= crate::pirate::PIRATE_HOME_EXCLUSION, "clear of every home");
+            }
+        }
+    }
+
+    #[test]
+    fn pirate_pack_launches_and_raids_an_unescorted_broadcasting_convoy() {
+        let mut w = test_world();
+        let victim = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: victim, name: "V".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0; // launch at once
+        // A lone broadcasting convoy with cargo, inside the tier-1 hunt radius (2600).
+        let convoy = squad(&mut w, victim, epos + Vec2::new(1400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+        let mut pirate_raid = false;
+        for _ in 0..(90 * crate::config::TICK_HZ) {
+            let ev = w.step(&[]);
+            if ev.iter().any(|e| matches!(&e.payload, EventPayload::RaidResolved { attacker, .. } if attacker.is_pirate())) {
+                pirate_raid = true;
+                break;
+            }
+        }
+        assert!(pirate_raid, "an enclave launches a pack that RAIDS the unescorted broadcasting convoy");
+        assert!(w.fleets.values().any(|f| f.owner.is_pirate()), "a pirate pack exists");
+    }
+
+    #[test]
+    fn pirates_avoid_a_platform_covered_convoy_and_ignore_scouts() {
+        let mut w = test_world();
+        let victim = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: victim, name: "V".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0;
+        // The victim owns a DEFENSE PLATFORM system right at the convoy — it's covered.
+        let guard = grant_system_at(&mut w, victim, epos + Vec2::new(1200.0, 0.0), 2); // 2 platform tiers
+        let gpos = sys_pos(&w, guard);
+        let convoy = squad(&mut w, victim, gpos, ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+        // A lone SCOUT even closer to the base — must never be targeted (it's dark).
+        let _scout = squad(&mut w, victim, epos + Vec2::new(300.0, 0.0), ShipKind::Scout, 1, FleetOrder::Idle);
+        for _ in 0..(20 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        // No pirate ever intercepts the covered convoy or the scout.
+        assert!(
+            !w.fleets.values().any(|f| f.owner.is_pirate() && matches!(f.order, FleetOrder::Intercept { .. })),
+            "a pack never commits to a platform-covered convoy or a scout",
+        );
+    }
+
+    #[test]
+    fn enclave_is_scoutable() {
+        let mut w = test_world();
+        let scouter = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: scouter, name: "S".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        // A scout parked at the enclave.
+        let _s = squad(&mut w, scouter, epos, ShipKind::Scout, 1, FleetOrder::Idle);
+        w.step(&[]);
+        let snap = w.players[&scouter].intel.get(&sid).expect("scout captured the enclave");
+        assert_eq!(snap.enclave_tier, 1, "the base tier is in the snapshot (like fortifications)");
+    }
+
+    #[test]
+    fn enclave_escalates_when_ignored() {
+        let mut w = test_world();
+        let (sid, _epos) = an_enclave(&w);
+        // Force the grow clock. No players/convoys → nothing to raid, it just grows.
+        w.enclaves.get_mut(&sid).unwrap().next_grow_at = 0.0;
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // isolate escalation
+        w.step(&[]);
+        assert_eq!(w.enclaves[&sid].tier, 2, "an unsuppressed enclave grows a tier");
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().defense_tier, crate::pirate::base_defense_tiers(2), "the base defense grows with it");
+    }
+
+    #[test]
+    fn enclave_assault_yields_plunder_and_dormancy() {
+        let mut w = test_world();
+        let hunter = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: hunter, name: "H".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        // Seed loot in the base, and STATION a strong war-fleet on it.
+        w.enclaves.get_mut(&sid).unwrap().plunder.insert(Commodity::Alloys, 40);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // no packs
+        let fleet = squad(&mut w, hunter, epos, ShipKind::Raider, 12, FleetOrder::Idle);
+        let _ = fleet;
+        let before = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
+        let mut cleared = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            let ev = w.step(&[]);
+            if ev.iter().any(|e| matches!(&e.payload, EventPayload::PirateEnclaveCleared { system, .. } if *system == sid)) {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "a strong war-fleet stationed at the base grinds it down and CLEARS it");
+        let after = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
+        assert!(after >= before + 40, "the victor seizes the plunder ({before} → {after})");
+        assert!(!w.enclaves[&sid].active(w.time), "the cleared base goes DORMANT");
+        assert_eq!(w.enclaves[&sid].tier, 1, "it will respawn WEAKER (tier 1)");
+    }
+
+    #[test]
+    fn piracy_is_deterministic_same_seed_same_runs() {
+        // Two independent runs with the same seed produce byte-identical worlds.
+        let run = || {
+            let mut w = test_world();
+            w.step(&[Command::AddPlayer { id: PlayerId(1), name: "V".into() }]);
+            let (sid, epos) = an_enclave(&w);
+            let convoy = squad(&mut w, PlayerId(1), epos + Vec2::new(1200.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+            w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+            for _ in 0..(60 * crate::config::TICK_HZ) {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w).unwrap()
+        };
+        assert_eq!(run(), run(), "same seed → identical piracy (schedules, targets, outcomes)");
+    }
+
+    #[test]
+    fn enclaves_persist_serde() {
+        let w = test_world();
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w.enclaves.len(), w2.enclaves.len(), "enclaves survive a snapshot");
+        for (sid, e) in &w.enclaves {
+            assert_eq!(w2.enclaves[sid].tier, e.tier);
+        }
+    }
+
+    // ── §node: EXOTIC NODE AWAKENING ────────────────────────────────────────────
+
+    /// Force an UNCLAIMED system into an AWAKENED node of `bonus`, held by `owner`
+    /// at `pos`, fed with a fat upkeep buffer. Returns its system id.
+    fn owned_node(w: &mut World, owner: PlayerId, bonus: NodeBonus, pos: Vec2) -> EntityId {
+        let sid = {
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.owner = Some(owner);
+            sys.claimed_at = Some(0.0);
+            sys.pos = pos;
+            sys.id
+        };
+        w.nodes.insert(sid, Node { bonus, awakened: true, fed: true });
+        seed_stock(w, sid, &[(Commodity::Provisions, 1000.0), (Commodity::Fuel, 1000.0)]);
+        sid
+    }
+
+    /// PARITY LOCK: the sim's `node_bonus_for` MUST agree with the client's visual
+    /// exotic assignment (`client/src/stars.ts`), or a black-hole icon would grant
+    /// no node. This re-implements the client's `hashId` + `starTypeFor` from its
+    /// hard-coded constants (FNV-1a, 0.16 rarity, `>>17`, EXOTIC pool order) as an
+    /// INDEPENDENT reference and asserts the sim maps every id the same way — so a
+    /// drift in either constant fails here.
+    #[test]
+    fn node_bonus_matches_client_star_assignment() {
+        // Reference = client stars.ts, hand-translated (do NOT call node_bonus_for).
+        fn client_bonus(id: EntityId) -> Option<NodeBonus> {
+            let mut h: u32 = 2166136261;
+            for b in id.0.to_string().bytes() {
+                h ^= b as u32;
+                h = h.wrapping_mul(16777619);
+            }
+            let roll = (h % 100_000) as f64 / 100_000.0;
+            if roll >= 0.16 {
+                return None;
+            }
+            // EXOTIC pool order in stars.ts: neutron, binary, black_hole, magnetar.
+            Some(match (h >> 17) % 4 {
+                0 | 1 => NodeBonus::DeepScan,
+                2 => NodeBonus::RelayAnchor,
+                _ => NodeBonus::Veil,
+            })
+        }
+        let mut exotic = 0usize;
+        let (mut relay, mut veil, mut scan) = (0, 0, 0);
+        for raw in 1u64..=8000 {
+            let id = EntityId(raw);
+            assert_eq!(crate::node::node_bonus_for(id), client_bonus(id), "id {raw} diverges from the client");
+            match crate::node::node_bonus_for(id) {
+                Some(NodeBonus::RelayAnchor) => { exotic += 1; relay += 1; }
+                Some(NodeBonus::Veil) => { exotic += 1; veil += 1; }
+                Some(NodeBonus::DeepScan) => { exotic += 1; scan += 1; }
+                None => {}
+            }
+        }
+        // ~16% exotic, and all three bonuses actually occur (the mapping is live).
+        let frac = exotic as f64 / 8000.0;
+        assert!((frac - 0.16).abs() < 0.03, "exotic fraction ≈ 0.16 (got {frac:.3})");
+        assert!(relay > 0 && veil > 0 && scan > 0, "every bonus kind occurs (relay={relay} veil={veil} scan={scan})");
+    }
+
+    /// Nodes are seeded DORMANT at exotic systems — pure function of id (no RNG),
+    /// so the set is identical every run and matches the client's exotic icons.
+    #[test]
+    fn nodes_seeded_dormant_at_exotic_systems() {
+        let w = test_world();
+        assert!(!w.nodes.is_empty(), "a 4-player galaxy has exotic nodes");
+        for (sid, n) in &w.nodes {
+            assert!(!n.awakened, "dormant until the awakening time");
+            assert_eq!(crate::node::node_bonus_for(*sid), Some(n.bonus), "bonus fixed by the id");
+            assert!(w.systems.iter().any(|s| s.id == *sid), "a node sits on a real system");
+        }
+        // Determinism: a fresh galaxy of the same seed seeds the same node set.
+        let w2 = test_world();
+        assert_eq!(w.nodes.keys().copied().collect::<Vec<_>>(), w2.nodes.keys().copied().collect::<Vec<_>>());
+    }
+
+    /// AWAKENING (async-fair): at `node_awakening_time` every node latches awake
+    /// ONCE, each announced galaxy-wide with its position (so the timeline can
+    /// light-delay it per observer). No player need be online.
+    #[test]
+    fn nodes_awaken_once_at_configured_time_and_announce() {
+        let mut w = test_world();
+        w.config.node_awakening_time = 0.5;
+        assert!(w.nodes.values().all(|n| !n.awakened), "all dormant before T");
+        let mut fired = 0usize;
+        while w.time < 0.6 {
+            for e in w.step(&[]) {
+                if let EventPayload::NodeAwakened { system, pos, .. } = e.payload {
+                    fired += 1;
+                    let sys_pos = w.systems.iter().find(|s| s.id == system).unwrap().pos;
+                    assert_eq!(pos, sys_pos, "announced at the node's position (for the light-delay)");
+                }
+            }
+        }
+        assert!(w.nodes.values().all(|n| n.awakened), "all awake past T");
+        assert_eq!(fired, w.nodes.len(), "exactly one announcement per node, once");
+        // Stepping further fires nothing more (the latch holds).
+        let more = w.step(&[]);
+        assert!(!more.iter().any(|e| matches!(e.payload, EventPayload::NodeAwakened { .. })), "no re-announce");
+    }
+
+    /// Each bonus applies INSIDE its node's region and NOWHERE else, and only for
+    /// the HOLDER — the three tactical scopes are single-sourced by region math. A
+    /// DISTINCT holder per bonus keeps each corp under the per-corp cap.
+    #[test]
+    fn bonuses_apply_in_region_only_and_only_for_the_holder() {
+        let mut w = test_world();
+        let rival = PlayerId(9);
+        let inside = |p: Vec2| p + Vec2::new(NODE_REGION_RADIUS - 1.0, 0.0);
+        let outside = |p: Vec2| p + Vec2::new(NODE_REGION_RADIUS + 100.0, 0.0);
+
+        // Relay Anchor — command delay halved in region.
+        let (ra, pr) = (PlayerId(7), Vec2::new(1200.0, 0.0));
+        owned_node(&mut w, ra, NodeBonus::RelayAnchor, pr);
+        assert_eq!(w.relay_factor(ra, inside(pr)), RELAY_DELAY_MULT);
+        assert_eq!(w.relay_factor(ra, outside(pr)), 1.0, "no tempo beyond the region");
+        assert_eq!(w.relay_factor(rival, pr), 1.0, "a rival gets nothing from your node");
+
+        // Veil — signature reduced in region.
+        let (ve, pv) = (PlayerId(8), Vec2::new(-1500.0, 600.0));
+        owned_node(&mut w, ve, NodeBonus::Veil, pv);
+        assert_eq!(w.veil_factor(ve, inside(pv)), VEIL_SIGNATURE_MULT);
+        assert_eq!(w.veil_factor(ve, outside(pv)), 1.0);
+        assert_eq!(w.veil_factor(rival, pv), 1.0);
+
+        // Deep Scan — composition reveal in region.
+        let (ds, pd) = (PlayerId(10), Vec2::new(300.0, -2000.0));
+        owned_node(&mut w, ds, NodeBonus::DeepScan, pd);
+        assert!(w.deep_scan_covers(ds, inside(pd)));
+        assert!(!w.deep_scan_covers(ds, outside(pd)));
+        assert!(!w.deep_scan_covers(rival, pd));
+    }
+
+    /// UPKEEP: a held node draws its mix each tick; starve it and the bonus
+    /// SUSPENDS (owner-notified, nothing destroyed); resupply and it recovers.
+    #[test]
+    fn node_upkeep_draws_suspends_and_recovers() {
+        let mut w = test_world();
+        let own = PlayerId(7);
+        let p = Vec2::new(0.0, 1400.0);
+        let sid = owned_node(&mut w, own, NodeBonus::RelayAnchor, p);
+        // Strip stock + geology so upkeep can't be met (nor self-fed by deposits).
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+            s.stockpile.clear();
+            s.deposits.clear();
+        }
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::NodeSupplyChanged { system, fed: false, .. } if system == sid)),
+            "the holder is told the node went unfed"
+        );
+        assert!(!w.nodes[&sid].fed);
+        assert_eq!(w.relay_factor(own, p), 1.0, "an unfed node's bonus is SUSPENDED");
+
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 100.0), (Commodity::Fuel, 100.0)]);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::NodeSupplyChanged { system, fed: true, .. } if system == sid)),
+            "recovery notice when resupplied"
+        );
+        assert!(w.nodes[&sid].fed);
+        assert_eq!(w.relay_factor(own, p), RELAY_DELAY_MULT, "bonus restored when fed");
+    }
+
+    /// PER-CORP CAP: a corp benefits from at most `NODES_PER_CORP` nodes at once
+    /// (deterministic — lowest system id first); extra held nodes deny rivals and
+    /// cost upkeep but grant no further bonus.
+    #[test]
+    fn per_corp_cap_limits_active_bonuses() {
+        let mut w = test_world();
+        let own = PlayerId(7);
+        // One MORE than the cap, each in a disjoint region.
+        let mut nodes: Vec<(EntityId, Vec2)> = Vec::new();
+        for i in 0..(NODES_PER_CORP + 1) {
+            let pos = Vec2::new(i as f64 * 8000.0, 0.0);
+            nodes.push((owned_node(&mut w, own, NodeBonus::RelayAnchor, pos), pos));
+        }
+        assert_eq!(w.active_nodes_for(own).len(), NODES_PER_CORP, "capped at NODES_PER_CORP");
+        nodes.sort_by_key(|(id, _)| *id);
+        for (i, (_, pos)) in nodes.iter().enumerate() {
+            let expect = if i < NODES_PER_CORP { RELAY_DELAY_MULT } else { 1.0 };
+            assert_eq!(w.relay_factor(own, *pos), expect, "node #{i} active-status follows the cap");
+        }
+    }
+
+    /// EXPOSURE via the EXISTING claim flow: settling an awakened, unowned node
+    /// makes you its holder and announces it galaxy-wide (`NodeCaptured`). Before
+    /// capture the node grants the corp nothing; after, its bonus is available.
+    #[test]
+    fn claiming_an_awakened_node_flips_and_announces_the_holder() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // An unclaimed exotic node, force-awakened + stocked for its upkeep.
+        let sid = *w
+            .nodes
+            .keys()
+            .find(|sid| w.systems.iter().find(|s| s.id == **sid).unwrap().owner.is_none())
+            .expect("an unclaimed exotic node exists");
+        w.nodes.get_mut(&sid).unwrap().awakened = true;
+        let pos = w.systems.iter().find(|s| s.id == sid).unwrap().pos;
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 100.0), (Commodity::Fuel, 100.0)]);
+        assert!(w.active_nodes_for(id).is_empty(), "an unheld node grants nothing");
+
+        colony_at(&mut w, id, pos);
+        let ev = w.step(&[]);
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().owner, Some(id), "colony settles the node");
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::NodeCaptured { owner, system, .. } if owner == id && system == sid)),
+            "the new holder is announced galaxy-wide"
+        );
+        assert_eq!(w.active_nodes_for(id).len(), 1, "the holder now benefits from its node");
+    }
+
+    /// Node state (bonus + awakened + fed) round-trips through a snapshot, and a
+    /// PRE-feature snapshot (no `nodes` field) still loads (serde default).
+    #[test]
+    fn nodes_survive_a_snapshot() {
+        let mut w = test_world();
+        w.config.node_awakening_time = 0.05;
+        for _ in 0..3 {
+            w.step(&[]);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w.nodes.len(), w2.nodes.len(), "node set survives");
+        for (sid, n) in &w.nodes {
+            let m = &w2.nodes[sid];
+            assert_eq!((n.bonus, n.awakened, n.fed), (m.bonus, m.awakened, m.fed), "node state round-trips");
+        }
+        // A pre-feature snapshot with no `nodes` key still deserialises.
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        val.as_object_mut().unwrap().remove("nodes");
+        let w3: World = serde_json::from_value(val).unwrap();
+        assert!(w3.nodes.is_empty(), "an old snapshot loads with no nodes");
+    }
+
+    // ── §rankings: multi-category leaderboards on the ledger clock ──────────────
+
+    /// Each event-driven counter increments EXACTLY once per event, with the right
+    /// amount and beneficiary — the "increment at events" contract.
+    #[test]
+    fn rankings_counters_increment_on_their_events() {
+        use crate::cargo::Commodity;
+        let mut w = test_world();
+        let (p1, p2) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: p1, name: "A".into() },
+            Command::AddPlayer { id: p2, name: "B".into() },
+        ]);
+        let ev = |p: EventPayload| Event::new(0.0, p);
+
+        // Trade throughput + market profit.
+        w.accumulate_rankings(&[
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::Ore, units: 10 })),
+            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::Ore, units: 4, unit_price: 5.0 })),
+            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::Ore, units: 2, unit_price: 3.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::Ore, units: 3, unit_price: 2.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::Ore, units: 1, unit_price: 4.0 })),
+            ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::SystemUpgrade::Depot, tier: 1 }),
+            ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
+        ]);
+        {
+            let s = &w.players[&p1].stats;
+            assert_eq!(s.trade_units, 14, "delivered 10 + sold 4");
+            assert_eq!(s.market_revenue, 4.0 * 5.0 + 3.0 * 2.0);
+            assert_eq!(s.market_spend, 2.0 * 3.0 + 1.0 * 4.0);
+            assert_eq!(s.market_profit(), 26.0 - 10.0);
+            assert_eq!(s.tiers_built, 1);
+            assert_eq!(s.intel_snapshots, 1);
+        }
+
+        // Battle efficiency: both sides credited their destroyed/lost hull + one
+        // engagement each (p1 loses 1 raider = 20 hull; p2 loses 2 convoys = 20).
+        let mut a_loss = BTreeMap::new();
+        a_loss.insert(ShipKind::Raider, 1);
+        let mut d_loss = BTreeMap::new();
+        d_loss.insert(ShipKind::Convoy, 2);
+        w.accumulate_rankings(&[ev(EventPayload::RaidResolved {
+            attacker: p1, defender: p2, attacker_ship: EntityId(1), target_ship: EntityId(2),
+            attacker_kind: ShipKind::Raider, target_kind: ShipKind::Convoy, outcome: RaidOutcome::TargetDestroyed,
+            pos: Vec2::ZERO, attacker_losses: a_loss, target_losses: d_loss,
+        })]);
+        assert_eq!(w.players[&p1].stats.engagements, 1);
+        assert_eq!(w.players[&p1].stats.hull_lost, ShipKind::Raider.hull());
+        assert_eq!(w.players[&p1].stats.hull_destroyed, 2.0 * ShipKind::Convoy.hull());
+        assert_eq!(w.players[&p2].stats.engagements, 1);
+        assert_eq!(w.players[&p2].stats.hull_destroyed, ShipKind::Raider.hull());
+
+        // An ESCAPE (no contact) is not a fight — no engagement, no hull.
+        w.accumulate_rankings(&[ev(EventPayload::RaidResolved {
+            attacker: p1, defender: p2, attacker_ship: EntityId(1), target_ship: EntityId(2),
+            attacker_kind: ShipKind::Raider, target_kind: ShipKind::Convoy, outcome: RaidOutcome::Escaped,
+            pos: Vec2::ZERO, attacker_losses: BTreeMap::new(), target_losses: BTreeMap::new(),
+        })]);
+        assert_eq!(w.players[&p1].stats.engagements, 1, "an escape adds no engagement");
+
+        // Capture plunder → cargo captured for the captor; a major loss pends for
+        // the old owner (recovery floor stamps at the next valuation close).
+        let mut plunder = BTreeMap::new();
+        plunder.insert(Commodity::Ore, 5);
+        plunder.insert(Commodity::Fuel, 3);
+        w.accumulate_rankings(&[ev(EventPayload::SystemCaptured { old_owner: p2, new_owner: p1, system: EntityId(1), pos: Vec2::ZERO, plunder })]);
+        assert_eq!(w.players[&p1].stats.cargo_captured, 8);
+        assert!(w.players[&p2].stats.loss_pending);
+    }
+
+    /// A RAID that seizes a convoy's cargo credits the raider CARGO CAPTURED and
+    /// marks it as having fought.
+    #[test]
+    fn raid_seizure_credits_cargo_captured_and_marks_fought() {
+        use crate::cargo::{Cargo, Commodity};
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
+        {
+            let c = w.fleets.get_mut(&convoy).unwrap();
+            c.composition.clear();
+            c.composition.insert(ShipKind::Convoy, 1);
+            c.cargo = Some(Cargo { commodity: Commodity::Ore, units: 40 });
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&convoy));
+        assert_eq!(w.players[&atk].stats.cargo_captured, 40, "the raider banks the seized units");
+        assert!(w.fleets.get(&raider).map(|f| f.fought).unwrap_or(false), "the raider is marked fought");
+    }
+
+    /// CARGO PROTECTED is credited only for a convoy that FOUGHT and still
+    /// delivered; an un-fought delivery adds throughput but not protected units.
+    #[test]
+    fn protected_cargo_credited_only_when_the_convoy_fought() {
+        use crate::cargo::{Cargo, Commodity};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let make = |w: &mut World, fought: bool| {
+            let fid = w.alloc_entity_id();
+            let mut f = Fleet::single(fid, id, ShipKind::Convoy, Vec2::new(50.0, 0.0), FleetOrder::Idle, Some(Cargo { commodity: Commodity::Ore, units: 25 }));
+            f.mission = Some(TradeMission::DeliverHome);
+            f.fought = fought;
+            w.fleets.insert(fid, f);
+        };
+        make(&mut w, true);
+        w.step(&[]);
+        assert_eq!(w.players[&id].stats.trade_units, 25);
+        assert_eq!(w.players[&id].stats.cargo_protected, 25, "a survivor of a fight earns protected units");
+        make(&mut w, false);
+        w.step(&[]);
+        assert_eq!(w.players[&id].stats.trade_units, 50, "throughput accrues either way");
+        assert_eq!(w.players[&id].stats.cargo_protected, 25, "an un-fought delivery adds NO protected units");
+    }
+
+    /// The leaderboard PUBLISHES only on the ledger tick (the valuation close) —
+    /// nothing before it, a row per corp at the boundary.
+    #[test]
+    fn rankings_publish_on_the_ledger_interval() {
+        let mut w = test_world();
+        w.step(&[
+            Command::AddPlayer { id: PlayerId(1), name: "A".into() },
+            Command::AddPlayer { id: PlayerId(2), name: "B".into() },
+        ]);
+        assert!(w.rankings.is_empty(), "nothing published before the first close");
+        while w.tick < VALUATION_TICKS - 1 {
+            w.step(&[]);
+        }
+        assert!(w.rankings.is_empty(), "still nothing published before the boundary");
+        w.step(&[]);
+        assert_eq!(w.tick, VALUATION_TICKS);
+        assert_eq!(w.rankings.len(), 2, "a row per corp published at the ledger close");
+    }
+
+    /// A mid-interval counter change does NOT leak into the published table — it is
+    /// a SNAPSHOT copy that holds steady until the next close, then republishes.
+    #[test]
+    fn rankings_snapshot_does_not_leak_mid_interval() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        while w.tick < VALUATION_TICKS {
+            w.step(&[]);
+        }
+        assert_eq!(w.rankings.len(), 1);
+        let published = w.rankings[0].trade_throughput;
+        // Bump the LIVE counter mid-interval.
+        w.players.get_mut(&id).unwrap().stats.trade_units += 999;
+        w.step(&[]); // one tick past the close — not a new boundary
+        assert_eq!(w.rankings[0].trade_throughput, published, "the published table holds steady between closes");
+        // Advance to the next close → it republishes with the new value.
+        while !w.tick.is_multiple_of(VALUATION_TICKS) {
+            w.step(&[]);
+        }
+        assert!(w.rankings[0].trade_throughput >= 999, "the next close republishes the updated counter");
+    }
+
+    /// The published table is deterministic — same seed + inputs → identical bytes.
+    #[test]
+    fn rankings_are_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            w.step(&[
+                Command::AddPlayer { id: PlayerId(1), name: "A".into() },
+                Command::AddPlayer { id: PlayerId(2), name: "B".into() },
+            ]);
+            while w.tick < VALUATION_TICKS {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w.rankings).unwrap()
+        };
+        assert_eq!(run(), run());
+    }
+
+    /// Cumulative stats + the published table ride a snapshot; a pre-feature
+    /// snapshot (no `rankings`) still loads (serde default).
+    #[test]
+    fn rankings_and_stats_survive_a_snapshot() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.players.get_mut(&id).unwrap().stats.trade_units = 42;
+        while w.tick < VALUATION_TICKS {
+            w.step(&[]);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w2.players[&id].stats.trade_units, 42, "cumulative stats round-trip");
+        assert_eq!(
+            serde_json::to_string(&w.rankings).unwrap(),
+            serde_json::to_string(&w2.rankings).unwrap(),
+            "the published table round-trips"
+        );
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        val.as_object_mut().unwrap().remove("rankings");
+        let w3: World = serde_json::from_value(val).unwrap();
+        assert!(w3.rankings.is_empty(), "a pre-feature snapshot loads with no published table");
     }
 }

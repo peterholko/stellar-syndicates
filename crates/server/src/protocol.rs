@@ -15,15 +15,18 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sim::{
     Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
-    RaidOutcome, ShipKind, Side, StandingOrder, SystemUpgrade, TradeEvent, TransitMode, Vec2,
+    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, SyndicateId, SystemUpgrade, TradeEvent,
+    TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 2 by the §FLEETS change:
-/// the entity in a `View` is now a FLEET — `GhostView` gained `count_class`
-/// (always) and `composition` (coverage-gated), and the entity is drawn/named by
-/// its flagship kind. A client seeing an unexpected version can warn the user to
-/// refresh; the server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 2;
+/// The client↔server wire protocol version. BUMPED to 3 by the §SYNDICATES
+/// change: `GhostView` + `SystemStateView` gained an `ally` flag (light-delayed
+/// membership knowledge → friendly tint), the per-player view gained a
+/// `syndicate` roster + pending `syndicate_invites`, and new alliance-admin
+/// `ClientMsg`s were added. (v2 = §FLEETS: `count_class` + `composition`.)
+/// A client seeing an unexpected version can warn the user to refresh; the
+/// server sends it in [`ServerMsg::Welcome`].
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -124,6 +127,20 @@ pub enum ClientMsg {
     /// Defensive / WeaponsFree. Instant local administration on the player's own
     /// fleet (a standing per-fleet policy, like SetFleetTransit).
     SetFleetPosture { fleet_id: EntityId, posture: EngagementPosture },
+
+    // ---- SYNDICATES (§syndicates Part 1) -------------------------------------
+    /// FOUND a syndicate with the caller as founder. The server attaches the
+    /// issuing player.
+    CreateSyndicate { name: String },
+    /// INVITE a corp (BY NAME — resolved server-side to its stable id) into the
+    /// caller's syndicate. Founder-only; ignored if the name isn't a joined corp.
+    InviteToSyndicate { name: String },
+    /// ACCEPT a pending invitation to the named syndicate.
+    AcceptSyndicateInvite { syndicate_id: SyndicateId },
+    /// LEAVE the caller's syndicate.
+    LeaveSyndicate,
+    /// DISSOLVE the caller's syndicate (founder-only).
+    DissolveSyndicate,
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -368,6 +385,17 @@ pub struct GalaxyInfo {
     /// defense-suppressed siege must run before a colony ship can capture — the
     /// client renders siege progress against it.
     pub siege_secs: f64,
+    /// §pirates: the reserved neutral PIRATE faction id (a `PlayerId`), so the
+    /// client can label pirate contacts/raids/reports without a name lookup.
+    pub pirate_id: PlayerId,
+    /// §node: sim-time (seconds) at which every EXOTIC system AWAKENS into a
+    /// capturable node — the client telegraphs the countdown from t=0.
+    #[serde(default)]
+    pub node_awakening_time: f64,
+    /// §node: a node's region radius (sim units) — the client draws the holder's
+    /// region ring and the "in-region" cue with it.
+    #[serde(default)]
+    pub node_region_radius: f64,
     pub systems: Vec<SystemInfo>,
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
@@ -423,8 +451,27 @@ pub struct BuildStateView {
 pub struct IntelView {
     pub defense_tier: u32,
     pub shipyard_tier: u32,
-    /// Sim-time of the observation ("as of T").
+    /// Sim-time of the observation — T₁, the "as of T" the readout ages from
+    /// (the ORIGINAL observation, even when relayed by an ally; §syndicates Part 2).
     pub observed_at: f64,
+    /// §syndicates Part 2 relay PROVENANCE — present only for ALLY-sourced intel
+    /// (`None` for your own direct scout). Who observed it, and the two chain
+    /// legs: `relayed_at` = T₂ (the observation's light reached the ally's command
+    /// center — the earliest they could relay), `received_at` = T₃ (the relayed
+    /// report's light reached YOUR command center). The picture is honestly staler
+    /// than the ally's by the inter-command-center distance, and NEVER upgrades to
+    /// live truth — aging is always from T₁.
+    #[serde(default)]
+    pub relayed_by: Option<PlayerId>,
+    #[serde(default)]
+    pub relayed_at: Option<f64>,
+    #[serde(default)]
+    pub received_at: Option<f64>,
+    /// §pirates: the scouted PIRATE ENCLAVE tier at this system (0 = not an
+    /// enclave). When > 0 the site is a pirate base; `defense_tier` above is its
+    /// platform-equivalent base defense (what an assault must grind down).
+    #[serde(default)]
+    pub enclave_tier: u32,
 }
 
 /// The DYNAMIC, per-tick, light-gated state of a star system (companion to the
@@ -493,6 +540,76 @@ pub struct SystemStateView {
     /// center (§scout part 2). Never present on the viewer's own systems, and a
     /// scouted rival never sees anything here about being scouted.
     pub intel: Option<IntelView>,
+    /// True if this system's (light-gated known) owner is a SYNDICATE ally as the
+    /// viewer knows it (§syndicates Part 1). Drives the friendly ally tint; does
+    /// NOT grant any owner-only data (stockpile/tiers stay private in Part 1).
+    #[serde(default)]
+    pub ally: bool,
+    /// §syndicates Part 3: OWNER-ONLY — an ally GARRISON hosted at THIS system (the
+    /// coalition shield you're feeding). Total ally garrison ships stationed here,
+    /// and whether their Provisions upkeep is currently covered. `0` = none; rivals
+    /// always see 0 (a private detail of your own system).
+    #[serde(default)]
+    pub ally_garrison_ships: u32,
+    #[serde(default)]
+    pub ally_garrison_fed: bool,
+    /// §node: this system's EXOTIC NODE, if any. Present (light-gated with the
+    /// system) whenever the system carries a node — the bonus slug + awakened flag
+    /// are PUBLIC (an awakened node is a galaxy-wide landmark, and the exotic star
+    /// is already visible to everyone). `None` for ordinary systems.
+    #[serde(default)]
+    pub node: Option<NodeStateView>,
+}
+
+/// §node: the per-system view of an EXOTIC NODE. The bonus + awakened state are
+/// public (everyone sees the landmark); `fed` and `region_radius` are OWNER-ONLY
+/// (your own logistics + the region ring only you command), so a rival sees them as
+/// `false`/`0.0`.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeStateView {
+    /// Stable bonus slug — `relay_anchor` | `veil` | `deep_scan` (for the label).
+    pub bonus: String,
+    /// Human bonus title (e.g. "Relay Anchor").
+    pub title: String,
+    /// Has the node awakened (past the awakening time)? Before it, the system is a
+    /// telegraphed dormant landmark; after, a live capturable prize.
+    pub awakened: bool,
+    /// OWNER-ONLY: is the node's upkeep currently met? An unfed node's bonus is
+    /// SUSPENDED. Rivals always see false.
+    pub fed: bool,
+    /// OWNER-ONLY: the node's region radius (sim units) for the holder's map ring;
+    /// rivals see 0.0.
+    pub region_radius: f64,
+}
+
+/// The viewer's SYNDICATE (§syndicates Part 1) — their own roster, delivered in
+/// the per-player view so the client can render membership + manage it. Only
+/// ever the viewer's OWN syndicate (never a rival's private roster).
+#[derive(Debug, Clone, Serialize)]
+pub struct SyndicateView {
+    pub id: SyndicateId,
+    pub name: String,
+    pub founder: PlayerId,
+    /// Whether the VIEWER is the founder (may invite / dissolve).
+    pub is_founder: bool,
+    /// The roster (id + display name), member-id ordered for determinism.
+    pub members: Vec<SyndicateMember>,
+    /// Outstanding invites the founder has sent (names), for the roster panel.
+    pub invited: Vec<String>,
+}
+
+/// One member of a [`SyndicateView`] roster.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyndicateMember {
+    pub id: PlayerId,
+    pub name: String,
+}
+
+/// A pending invitation the VIEWER may accept (§syndicates Part 1).
+#[derive(Debug, Clone, Serialize)]
+pub struct SyndicateInviteView {
+    pub id: SyndicateId,
+    pub name: String,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within
@@ -617,6 +734,23 @@ pub struct GhostView {
     /// `Some(..)` for your own fleets and `None` for every rival (a standing
     /// per-fleet policy is private, like the corp doctrine; never leaks).
     pub posture: Option<EngagementPosture>,
+    /// True if this fleet's owner is a SYNDICATE ally as the viewer KNOWS it
+    /// (§syndicates Part 1) — light-delayed membership (`World::known_ally`), so a
+    /// fresh join/leave isn't seen early. Drives the friendly ally tint/pip.
+    #[serde(default)]
+    pub ally: bool,
+    /// §syndicates Part 3: OWNER-ONLY. When this is one of YOUR fleets stationed as
+    /// an ally GARRISON, the host system it defends; `None` otherwise (and always
+    /// for rivals — a private status). `garrison_fed` = the host is covering its
+    /// Provisions upkeep (else its defense contribution is suspended).
+    #[serde(default)]
+    pub garrison_host: Option<EntityId>,
+    #[serde(default)]
+    pub garrison_fed: bool,
+    /// §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
+    /// drives the distinct hostile-neutral tint. Hostile to everyone.
+    #[serde(default)]
+    pub pirate: bool,
 }
 
 /// Messages pushed by the server to a single player's connection.
@@ -685,6 +819,20 @@ pub enum ServerMsg {
         /// participant in and has LEARNED of (per-participant, light-delayed) —
         /// the capture aftermath markers + results. Retained (reconnect-safe).
         capture_reports: Vec<CaptureReportView>,
+        /// §syndicates Part 1: the viewer's OWN syndicate roster (fresh private
+        /// state, like the wallet), or `None` if unaffiliated. Never a rival's.
+        /// Boxed so this (already the largest) View variant stays lean; serde is
+        /// transparent through the `Box`, so the wire JSON is unchanged.
+        #[serde(default)]
+        syndicate: Option<Box<SyndicateView>>,
+        /// §syndicates Part 1: pending invitations the viewer may accept.
+        #[serde(default)]
+        syndicate_invites: Vec<SyndicateInviteView>,
+        /// §rankings: the PUBLISHED leaderboard — the same snapshot for every player
+        /// (public by design), taken on the ledger close. A verbatim copy of the
+        /// sim's `world.rankings`; between closes it holds steady (no live leak).
+        #[serde(default)]
+        rankings: Vec<RankingRow>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

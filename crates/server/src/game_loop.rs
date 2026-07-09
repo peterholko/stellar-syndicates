@@ -228,6 +228,11 @@ impl GameLoop {
                             refinery_yield: sim::build::REFINERY_YIELD,
                             // §contestable-territory Part 2: the siege duration.
                             siege_secs: self.world.siege_duration_secs(),
+                            pirate_id: sim::PlayerId::PIRATE,
+                            // §node: the awakening countdown + region radius so the
+                            // client can telegraph and draw the holder's region ring.
+                            node_awakening_time: self.world.config.node_awakening_time,
+                            node_region_radius: sim::NODE_REGION_RADIUS,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
                             systems: self
@@ -327,6 +332,37 @@ impl GameLoop {
                     // §offensive-orders Part 2: instant per-fleet standing policy.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetFleetPosture { player_id, fleet_id, posture });
+                    }
+                }
+                // §syndicates Part 1: instant owner-only alliance admin.
+                ClientMsg::CreateSyndicate { name } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::CreateSyndicate { player_id, name });
+                    }
+                }
+                ClientMsg::InviteToSyndicate { name } => {
+                    // Invite BY NAME: the invitee's stable id IS the hash of their
+                    // corp name (the same function `Join` uses), so the server can
+                    // resolve it without exposing a corp directory. A non-joined
+                    // name resolves to an id the sim soft-rejects.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        let invitee = crate::protocol::player_id_from_name(&name);
+                        self.pending.push(Command::InviteToSyndicate { player_id, invitee });
+                    }
+                }
+                ClientMsg::AcceptSyndicateInvite { syndicate_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AcceptSyndicateInvite { player_id, syndicate_id });
+                    }
+                }
+                ClientMsg::LeaveSyndicate => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::LeaveSyndicate { player_id });
+                    }
+                }
+                ClientMsg::DissolveSyndicate => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DissolveSyndicate { player_id });
                     }
                 }
                 ClientMsg::RecallRaid { raider_id } => {
@@ -603,7 +639,14 @@ impl GameLoop {
                     });
                 }
             }
-            let mut ghosts = self.history.view_for_with_arrays(player_id, cc, c, now, &arrays, &battle_reveal);
+            // §node: this viewer's regional dark-fleet effects (Veil quiets its
+            // holders' dark fleets; Deep Scan resolves exact composition in-region).
+            let veil_regions = self.world.active_veil_regions();
+            let deep_scan_regions = self.world.deep_scan_regions(player_id);
+            let mut ghosts = self.history.view_for_with_arrays(
+                player_id, cc, c, now, &arrays, &battle_reveal,
+                view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
+            );
             // §offensive-orders Part 2: attach each OWN fleet's engagement posture
             // (owner-only, fresh — a private standing policy like the corp doctrine;
             // rivals keep `None`, so it never leaks). The history-view can't see the
@@ -611,7 +654,17 @@ impl GameLoop {
             for g in ghosts.iter_mut() {
                 if g.own {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                    // §syndicates Part 3: OWNER-ONLY garrison status — if this fleet
+                    // is stationed as an ally garrison, its host + fed state.
+                    if let Some(host) = self.world.garrison_host_of(g.id) {
+                        g.garrison_host = Some(host);
+                        g.garrison_fed = self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
+                    }
                 }
+                // §syndicates Part 1: friendly ALLY tint — the owner (already on
+                // the ghost) is a syndicate member as THIS viewer knows it
+                // (light-delayed membership; `known_ally` returns false for own).
+                g.ally = self.world.known_ally(player_id, g.owner, now);
             }
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-
@@ -648,10 +701,83 @@ impl GameLoop {
                 })
                 .collect();
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
-            let systems = view::filter_systems(
+            // §syndicates Part 2: each syndicate ally's relayable scout intel (their
+            // command center is the relay source). The View chain-light-delays each
+            // ally's snapshots to this viewer, provenance preserved.
+            let ally_intel: Vec<view::AllyIntel> = self
+                .world
+                .allies_of(player_id)
+                .iter()
+                .filter_map(|a| {
+                    self.world
+                        .players
+                        .get(a)
+                        .map(|ac| view::AllyIntel { id: *a, cc: ac.command_center, intel: &ac.intel })
+                })
+                .collect();
+            let mut systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
-                &corp.intel,
+                &corp.intel, &ally_intel,
             );
+            // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
+            // known) owner is a syndicate member as THIS viewer knows it. Composes
+            // both light-gates; grants no owner-only data (Part 1 is tint only).
+            for sv in systems.iter_mut() {
+                sv.ally = sv.owner.is_some_and(|o| self.world.known_ally(player_id, o, now));
+                // §syndicates Part 3: OWNER-ONLY hosted-garrison indicator (the
+                // coalition shield you're feeding). Only for your OWN systems.
+                if sv.owner == Some(player_id)
+                    && let Some((ships, fed)) = self.world.hosted_garrison(sv.id)
+                {
+                    sv.ally_garrison_ships = ships;
+                    sv.ally_garrison_fed = fed;
+                }
+                // §node: attach the system's EXOTIC NODE, if any. Bonus + awakened
+                // are PUBLIC (an awakened node is a galaxy-wide landmark; its awaken
+                // time is public config, so the flag leaks nothing); `fed` and the
+                // region ring are OWNER-ONLY.
+                if let Some(n) = self.world.nodes.get(&sv.id) {
+                    let own = sv.owner == Some(player_id);
+                    sv.node = Some(crate::protocol::NodeStateView {
+                        bonus: n.bonus.slug().to_string(),
+                        title: n.bonus.title().to_string(),
+                        awakened: n.awakened,
+                        fed: own && n.fed,
+                        region_radius: if own { sim::NODE_REGION_RADIUS } else { 0.0 },
+                    });
+                }
+            }
+            // §syndicates Part 1: the viewer's OWN roster + pending invites (fresh
+            // private state, never a rival's private roster).
+            let syndicate = corp
+                .syndicate
+                .and_then(|sid| self.world.syndicates.get(&sid))
+                .map(|s| Box::new(crate::protocol::SyndicateView {
+                    id: s.id,
+                    name: s.name.clone(),
+                    founder: s.founder,
+                    is_founder: s.founder == player_id,
+                    members: s
+                        .members
+                        .iter()
+                        .map(|m| crate::protocol::SyndicateMember {
+                            id: *m,
+                            name: self.world.players.get(m).map(|c| c.name.clone()).unwrap_or_default(),
+                        })
+                        .collect(),
+                    invited: s
+                        .invites
+                        .iter()
+                        .filter_map(|i| self.world.players.get(i).map(|c| c.name.clone()))
+                        .collect(),
+                }));
+            let syndicate_invites: Vec<crate::protocol::SyndicateInviteView> = self
+                .world
+                .syndicates
+                .values()
+                .filter(|s| s.invites.contains(&player_id))
+                .map(|s| crate::protocol::SyndicateInviteView { id: s.id, name: s.name.clone() })
+                .collect();
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
@@ -732,6 +858,11 @@ impl GameLoop {
                     battles,
                     battle_reports,
                     capture_reports,
+                    syndicate,
+                    syndicate_invites,
+                    // §rankings: the published leaderboard — public, identical for
+                    // every player, a verbatim copy of the sim's last ledger close.
+                    rankings: self.world.rankings.clone(),
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);

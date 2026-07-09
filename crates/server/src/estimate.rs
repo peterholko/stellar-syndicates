@@ -20,7 +20,7 @@
 use sim::{PlayerId, Vec2, World};
 
 use crate::protocol::{CompCount, EngagementEstimate};
-use crate::view::PositionHistory;
+use crate::view::{NodeEffects, PositionHistory};
 
 /// Ticks to project forward before giving up (a hard cap for a runaway
 /// stalemate; real engagements resolve far sooner).
@@ -53,8 +53,15 @@ pub fn estimate_engagement(
     }
     let own = sim::Forces::from_fleet(&own_fleet.composition, &own_fleet.damage);
 
-    // TARGET — only what the observer's view reveals. Find its ghost.
-    let ghosts = history.view_for_with_arrays(viewer, cc, c, now, arrays, &std::collections::BTreeSet::new());
+    // TARGET — only what the observer's view reveals. Find its ghost. §node: feed
+    // the viewer's regional effects so a Deep-Scan target reads as exact (the
+    // estimate honours the same tactical certainty the map shows).
+    let veil = world.active_veil_regions();
+    let deep = world.deep_scan_regions(viewer);
+    let ghosts = history.view_for_with_arrays(
+        viewer, cc, c, now, arrays, &std::collections::BTreeSet::new(),
+        NodeEffects { veil: &veil, deep_scan: &deep },
+    );
     let ghost = ghosts.into_iter().find(|g| g.id == target)?;
     let composition_age = ghost.age;
 

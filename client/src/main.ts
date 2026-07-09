@@ -6,6 +6,7 @@ import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
+import { badgeChip, chip, icon, type IconKey, type IconSize } from "./icons";
 
 const state: ViewState = initialState();
 
@@ -176,23 +177,14 @@ const shipMass = (g: GhostView) =>
 // SUPERSEDES the earlier Stellar-Charters borrow. No loading="lazy" — these panels
 // re-render ~10 Hz, recreating the <img>; lazy would replace them before the
 // observer fires. Eager hits the browser cache instantly.
-const uiIcon = (slug: string, size = 16, cls = "") =>
-  `<img class="cicon ${cls}" src="/art/ui_icons/svg/${slug}.svg" width="${size}" height="${size}" alt="" />`;
+const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
+  `<img class="icon icon--${size}${cls ? ` ${cls}` : ""}" src="/art/ui_icons/svg/${slug}.svg" alt="" />`;
 
-// Commodity → resource icon. Exact where the set has one (the SVG accent colors
-// even match the map tints: metals=bronze=ore, industrials=purple=alloys,
-// supplies=green=provisions, fuel=fuel). Volatiles has NO native icon → it reuses
-// Fuel, hue-shifted cold, until it gets dedicated art (see README). Credits stay
-// the text label "Cr" (no icon).
-const RESOURCE_SLUG: Record<Commodity, string> = {
-  fuel: "resource-fuel",
-  ore: "resource-metals",
-  provisions: "resource-supplies",
-  alloys: "resource-industrials",
-  volatiles: "resource-fuel", // STAND-IN (hue-shifted cold) — wants dedicated art
-};
-const commodityIcon = (c: Commodity, size = 18) =>
-  `<img class="cicon${c === "volatiles" ? " cicon--cold" : ""}" src="/art/ui_icons/svg/${RESOURCE_SLUG[c]}.svg" width="${size}" height="${size}" alt="" title="${c}" />`;
+// A commodity icon is by definition a resource, so it always uses the dedicated
+// `--icon-resource` token + the downscaled PNG art (each commodity now has its own,
+// including Volatiles — no more hue-shifted Fuel stand-in). `size` kept for symmetry.
+const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
+  `<img class="icon icon--resource" src="/art/ui_icons/resource/${c}.png" alt="" title="${c}" />`;
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
@@ -201,21 +193,21 @@ const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
   warn: "status-warning-threat",
   info: "status-info",
 };
-const statusIcon = (sev: TimelineEntry["severity"], size = 13) => uiIcon(STATUS_SLUG[sev], size);
+const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => uiIcon(STATUS_SLUG[sev], size);
 
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
 // time; ✕ / Esc closes it → the map stays uncluttered. ----------------------
 // The right rail hosts only the SELECTION/holdings-context tabs. The Market is a
 // hub-wide institution → it lives in the TOP NAVBAR as its own overlay, not here.
-type RailTab = "system" | "logistics" | "doctrine";
+type RailTab = "system" | "logistics" | "doctrine" | "rankings";
 let railTab: RailTab = "system";
 let railBuilt = false;
 
 function setRailTab(tab: RailTab): void {
   railTab = tab;
-  const bodyId: Record<RailTab, string> = { system: "tab-system", logistics: "standing", doctrine: "doctrine" };
-  for (const t of ["system", "logistics", "doctrine"] as RailTab[]) {
+  const bodyId: Record<RailTab, string> = { system: "tab-system", logistics: "standing", doctrine: "doctrine", rankings: "tab-rankings" };
+  for (const t of ["system", "logistics", "doctrine", "rankings"] as RailTab[]) {
     $(bodyId[t]).classList.toggle("is-active", t === tab);
   }
   document.querySelectorAll<HTMLElement>("#rail-tabs button").forEach((b) => {
@@ -226,6 +218,7 @@ function setRailTab(tab: RailTab): void {
   if (tab === "system") updateSystemTab();
   else if (tab === "logistics") updateStandingPanel();
   else if (tab === "doctrine") updateDoctrinePanel();
+  else if (tab === "rankings") updateRankingsPanel();
 }
 function openRail(tab: RailTab): void {
   deselectShip(); // the rail and the ship panel share the right-dock slot
@@ -248,10 +241,42 @@ function buildRail(): void {
     const b = (e.target as HTMLElement).closest("button");
     if (b?.dataset.tab) setRailTab(b.dataset.tab as RailTab);
   });
-  // Top-navbar destinations (hub-wide, system-independent): Market + check-in Log.
+  // §rankings: pick the sort category (chips live inside the re-rendered body, so
+  // delegate off the STABLE tab container).
+  $("tab-rankings").addEventListener("click", (e) => {
+    const c = (e.target as HTMLElement).closest<HTMLElement>("[data-rankcat]");
+    if (c?.dataset.rankcat) {
+      rankingsSortCat = c.dataset.rankcat;
+      updateRankingsPanel();
+    }
+  });
+  // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate + Log.
   $("nav-market").addEventListener("click", toggleMarket);
+  $("nav-syndicate").addEventListener("click", toggleSyndicate);
   $("nav-log").addEventListener("click", toggleCheckin);
   $("market-close").addEventListener("click", closeMarket);
+  // §syndicates: delegated actions inside the alliance panel.
+  $("syndicate-panel").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button");
+    if (!b) return;
+    const act = b.dataset.sy;
+    if (act === "close") { closeSyndicate(); return; }
+    if (!net) return;
+    if (act === "create") {
+      const name = ($("sy-create-name") as HTMLInputElement | null)?.value.trim() || "Syndicate";
+      net.send({ type: "CreateSyndicate", name });
+    } else if (act === "invite") {
+      const name = ($("sy-invite-name") as HTMLInputElement | null)?.value.trim();
+      if (name) { net.send({ type: "InviteToSyndicate", name }); ($("sy-invite-name") as HTMLInputElement).value = ""; }
+    } else if (act === "accept") {
+      const sid = b.dataset.sid;
+      if (sid) net.send({ type: "AcceptSyndicateInvite", syndicate_id: sid });
+    } else if (act === "leave") {
+      net.send({ type: "LeaveSyndicate" });
+    } else if (act === "dissolve") {
+      net.send({ type: "DissolveSyndicate" });
+    }
+  });
 }
 
 // --- Ship details panel — a FOG-AWARE master→detail card for the SELECTED ship.
@@ -381,7 +406,7 @@ function orderLifecycleLine(g: GhostView): string {
   if (!p) {
     const exp = confirmedFlashUntil.get(g.id);
     if (exp && performance.now() < exp) {
-      return `<div class="sp-sec">Order</div><div class="sp-line"><span class="tone-up">✓ confirmed</span> — you can see the fleet complying.</div>`;
+      return `<div class="sp-sec">Order</div><div class="sp-line">${badgeChip("confirmed", "confirmed", "positive", "Confirmed — the echo light has returned; you can see the fleet complying.")}</div>`;
     }
     return "";
   }
@@ -389,9 +414,9 @@ function orderLifecycleLine(g: GhostView): string {
   if (p.echo_at - p.delivered_at < LIFECYCLE_MIN_S) return "";
   const now = liveSimTime();
   const line = now < p.delivered_at
-    ? `<span class="dim">◈</span> <b>IN TRANSIT</b> — arrives in ${fmtCountdown(p.delivered_at - now)}`
-    : `<span style="color:var(--accent)">◔</span> <b>DELIVERED — awaiting echo</b> ~${fmtCountdown(p.echo_at - now)}`;
-  return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div><div class="sp-line dim" style="margin-top:2px">The fleet has your ${esc(p.kind)} order; the light showing it hasn't returned yet.</div>`;
+    ? chip("delivered", fmtCountdown(p.delivered_at - now), `IN TRANSIT — your ${p.kind} order is crossing space; it reaches the fleet in ${fmtCountdown(p.delivered_at - now)}.`)
+    : chip("echo", fmtCountdown(p.echo_at - now), `DELIVERED — awaiting echo: the fleet has your ${p.kind} order, but the light showing it comply hasn't returned yet.`);
+  return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div>`;
 }
 
 // §Part 4: the player's chosen transit throttle per own fleet (optimistic —
@@ -406,11 +431,10 @@ function transitSection(g: GhostView): string {
   if (g.kind !== "raider" && g.kind !== "scout") return "";
   const mode = transitModes.get(g.id) ?? "full";
   const btn = (m: "full" | "stealth", label: string, hint: string) =>
-    `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${hint}">${label}</button>`;
-  const state = mode === "stealth"
-    ? `<span class="tone-up">running quiet</span> — ~2× trip time, a much smaller sensor signature`
-    : `<span class="dim">full speed</span> — fastest, but flank speed lights you up (high signature)`;
-  return `<div class="sp-sec">Transit</div><div class="sp-line">${btn("full", "Full", "Formation speed — loud")} ${btn("stealth", "Stealth", "Creep at half speed — quiet")}</div><div class="sp-line dim" style="margin-top:4px">${state}.</div>`;
+    `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${esc(hint)}">${label}</button>`;
+  // Short labels; the trade-off lives in the button tooltips (§UX-diet).
+  return `<div class="sp-sec">${icon(mode === "stealth" ? "stealth" : "flank", "sm")} Transit</div>` +
+    `<div class="sp-line">${btn("full", "Full", "Full speed — fastest, but flank speed lights you up (high sensor signature).")} ${btn("stealth", "Stealth", "Stealth — creep at ~half speed (about 2× trip time) for a much smaller signature.")}</div>`;
 }
 
 // §offensive-orders Part 2: the player's chosen engagement POSTURE per own fleet
@@ -429,9 +453,8 @@ function postureSection(g: GhostView): string {
   const cur = postureModes.get(g.id) ?? g.posture ?? "passive";
   const btn = (m: EngagementPosture, label: string, hint: string) =>
     `<button class="act${cur === m ? " is-on" : ""}" data-act="posture" data-mode="${m}" title="${esc(hint)}">${esc(label)}</button>`;
-  const desc = POSTURE_META.find((p) => p.key === cur) ?? POSTURE_META[0];
-  return `<div class="sp-sec">Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>` +
-    `<div class="sp-line dim" style="margin-top:4px">${esc(desc.hint)}</div>`;
+  // Short labels; each posture's full description is its button tooltip (§UX-diet).
+  return `<div class="sp-sec">${icon("posture", "sm")} Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>`;
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
@@ -449,7 +472,7 @@ function compositionSection(g: GhostView): string {
     const total = g.composition.reduce((a, c) => a + c.count, 0);
     return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>`;
   }
-  return `<div class="sp-sec">Composition</div><div class="sp-line dim">est. <b>${countClassLabel(g.count_class)}</b> ships — composition unknown (out of sensor range)</div>`;
+  return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
 
 // Another of your OWN fleets co-located with `g` (within the claim radius) — the
@@ -489,9 +512,8 @@ function fleetManagementSection(g: GhostView): string {
     parts.push(`<div class="sp-line">${splitBtns}</div>`);
   }
   if (merge) {
-    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one (at an owned system)">${uiIcon("concept-fleet", 13)} Merge co-located fleet</button>`);
+    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one — works only at one of your owned systems (idle).">${icon("fleet", "sm")} Merge co-located fleet</button>`);
   }
-  parts.push(`<div class="sp-line dim" style="margin-top:4px">Composing fleets works only at one of your owned systems.</div>`);
   return parts.join("");
 }
 
@@ -508,12 +530,13 @@ function headingCell(g: GhostView): string {
 // Inferred activity for an OWN ship — there is NO server order field, so this reads
 // purely from the client's own overlays (raids/orders/command signals/route/vel).
 function ownActivity(g: GhostView): string {
-  if (state.commandSignals.some((s) => s.shipId === g.id)) return "Order in transit — your command is still crossing space to it.";
-  if (state.raids[g.id]) return "Raiding — pursuing a rival contact (recall to break off).";
-  if (state.orders[g.id]) return "En route — proceeding on your last move order.";
-  if (g.route && g.route.length) return "Hauling — en route along its trade route.";
-  if (Math.hypot(g.vel.x, g.vel.y) < 0.5) return "Holding station — idle.";
-  return "Under way.";
+  const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
+  if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "order in transit", "Your command is still crossing space to this fleet.");
+  if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
+  if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
+  if (g.route && g.route.length) return a("convoy", "hauling", "En route along its trade route.");
+  if (Math.hypot(g.vel.x, g.vel.y) < 0.5) return `<span class="dim">holding station</span>`;
+  return a("move", "under way", "Under way.");
 }
 
 // OWN ship: full knowledge — activity, cargo + route (you always know your own),
@@ -526,12 +549,12 @@ function ownBody(g: GhostView): string {
 
   if (g.kind === "convoy") {
     const cargo = g.cargo
-      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)}</div>`
+      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)}</div>`
       : `<span class="dim">empty hold</span>`;
     parts.push(`<div class="sp-sec">Cargo</div>${cargo}`);
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
-      parts.push(`<div class="sp-sec">Route</div><div class="sp-line">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → final waypoint near (${d.x.toFixed(0)}, ${d.y.toFixed(0)}).</div>`);
+      parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="The waypoints this convoy will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
     }
   }
 
@@ -540,48 +563,63 @@ function ownBody(g: GhostView): string {
   // on this one ship. (See the per-ship deepening note in the README.)
   const reserve = state.wallet ? state.wallet.fuel_total : 0;
   const rate = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g);
-  let sub = `<span class="dim">~${rate.toFixed(1)} fuel / 1,000 su at this ship's mass</span>`;
   const dest = state.orders[g.id];
+  let burn = `~${rate.toFixed(1)}/1k su`;
   if (dest) {
     const cost = FUEL_PER_MASS_DISTANCE * Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) * shipMass(g);
-    sub = `<span class="dim">~${fmt(cost)} fuel for its current order · ${rate.toFixed(1)}/1,000 su</span>`;
+    burn = `order ~${fmt(cost)} · ${rate.toFixed(1)}/1k su`;
   }
   parts.push(
-    `<div class="sp-sec">Fuel</div>` +
-    `<div class="sp-fuel">${commodityIcon("fuel", 16)}<div><div>Fleet reserve: <span class="sp-fuel-v">${fmt(reserve)}</span></div>${sub}</div></div>` +
-    `<div class="sp-line dim" style="margin-top:6px">Shared reserve across all your systems — what every ship draws on to move, not a tank on this one ship.</div>`,
+    `<div class="sp-sec">${icon("fuel", "sm")} Fuel</div>` +
+    `<div class="sp-line">${chip("fuel", fmt(reserve), "Fleet fuel reserve — one pool shared across ALL your systems; every ship draws on it to move (not a tank on this one ship).")} <span class="dim" title="This ship's fuel burn at its current mass (and the cost of its current order, if any).">${burn}</span></div>`,
   );
 
+  // Role summaries: a one-liner on screen, the full doctrine in the tooltip.
   if (g.kind === "colony") {
-    parts.push(`<div class="sp-sec">Role — Settlement</div><div class="sp-line">Colonists + infrastructure. Send it to an <b>unclaimed system</b>: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable: <b>escort it</b>. If someone claims the target first, it holds there intact — redirect it.</div>`);
+    parts.push(`<div class="sp-sec">${icon("colony", "sm")} Settlement</div><div class="sp-line" title="Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.">Send to an <b>unclaimed system</b> → it becomes yours (ship consumed). Slow &amp; visible — escort it.</div>`);
   }
   if (g.kind === "corvette") {
-    parts.push(`<div class="sp-sec">Role — Escort · Garrison</div><div class="sp-line">A dedicated <b>defender</b>: any raid contact on one of your convoys within its protect radius must fight THROUGH this ship first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.</div>`);
+    parts.push(`<div class="sp-sec">${icon("corvette", "sm")} Escort · Garrison</div><div class="sp-line" title="A dedicated defender: any raid contact on one of your convoys within its protect radius must fight THROUGH this corvette first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.">Defends convoys (escort) &amp; systems (garrison). Can't raid.</div>`);
   }
   if (g.kind === "scout") {
     const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
-    parts.push(`<div class="sp-sec">Sensors</div><div class="sp-line">Projects a <b>×${mult}</b> sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses.</div>` +
-      `<div class="sp-line dim" style="margin-top:4px">No cargo, no weapons: if anything engages it, it dies. Cheap on purpose.</div>`);
+    parts.push(`<div class="sp-sec">${icon("sensor", "sm")} Sensors</div><div class="sp-line" title="Projects a ×${mult} sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses. No cargo, no weapons: if anything engages it, it dies — cheap on purpose.">${chip("sensorRange", `×${mult}`, "Mobile sensor bubble — sweep rival space for dark contacts, cargo &amp; defense intel.")} — dies if engaged (no weapons).</div>`);
   }
-  parts.push(`<div class="sp-sec">Actions</div>`);
+  parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div>`);
   // §battles-take-time: WITHDRAW when this fleet is in/near a visible battle.
   const inBattle = state.battles.some((b) => Math.hypot(b.pos.x - g.pos.x, b.pos.y - g.pos.y) <= 220);
   if (inBattle && (g.kind === "raider" || g.kind === "corvette")) {
-    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you)">↩ Withdraw from battle</button>`);
+    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you).">${icon("withdraw", "sm")} Withdraw</button>`);
   }
   if (g.kind === "raider") {
-    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed">${uiIcon("action-recall", 14)} Recall raider</button>`);
+    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed; it may arrive too late.">${icon("recall", "sm")} Recall</button>`);
   }
   const strike = !!g.composition?.some((c) => c.kind === "raider");
-  parts.push(`<div class="sp-line dim" style="margin-top:6px">${uiIcon("action-move-travel", 12)} Click empty space on the map to <b>move</b> this fleet${g.kind === "raider" ? ` · ${uiIcon("action-attack-raid", 12)} click a rival contact to <b>raid</b>` : ""}${strike ? ` · <b>shift+click</b> a rival to <b>attack</b> (destroy)` : ""}.</div>`);
-  // §contestable-territory Part 1: a raider fleet's second verb — blockade.
-  if (g.kind === "raider") {
-    parts.push(`<div class="sp-line dim" style="margin-top:4px">${uiIcon("status-warning-threat", 12)} Click a <b>rival system</b> to <b>blockade</b> it — take station and strangle its logistics (its defenses will fight you first).</div>`);
-  }
+  // Compact glyph legend replacing the how-to-click prose — words live in tooltips.
+  const legend: string[] = [`${icon("mouse", "sm", "Click empty space on the map to MOVE this fleet.")} move`];
+  if (g.kind === "raider") legend.push(`${icon("raid", "sm", "Click a rival contact on the map to RAID it — seize its cargo (brevity-capped skirmish).")} raid`);
+  if (strike) legend.push(`${icon("shift", "sm", "Shift+click a rival to ATTACK — a full battle that destroys it (a convoy's cargo is lost with it).")} ${icon("attack", "sm")} attack`);
+  if (g.kind === "raider") legend.push(`${icon("blockade", "sm", "Click a rival SYSTEM to blockade it — take station and strangle its logistics; its defenses fight you first.")} blockade`);
+  parts.push(`<div class="sp-line dim sp-legend">${legend.join(" · ")}</div>`);
   parts.push(transitSection(g));
   parts.push(postureSection(g));
+  parts.push(garrisonSection(g));
   parts.push(fleetManagementSection(g));
   return parts.join("");
+}
+
+// §syndicates Part 3: if this OWN fleet is stationed as an ally GARRISON, show its
+// host + supply state (fed = the host is covering its Provisions upkeep; UNFED =
+// its defense is suspended until fed — nothing destroyed).
+function garrisonSection(g: GhostView): string {
+  if (!g.own || !g.garrison_host) return "";
+  const hostName = systemName(g.garrison_host);
+  const fed = g.garrison_fed !== false;
+  const tip = fed
+    ? `Stationed at ally ${hostName}, joining its defense per your doctrine. The host is feeding this garrison its Provisions upkeep.`
+    : `Stationed at ally ${hostName}, but the host is OUT of Provisions — this garrison's defense is SUSPENDED until fed (nothing is destroyed).`;
+  return `<div class="sp-sec">${icon("garrison", "sm")} Garrison</div><div class="sp-line">` +
+    `${badgeChip("garrison", `${hostName} · ${fed ? "fed" : "UNFED"}`, fed ? "positive" : "negative", tip)}</div>`;
 }
 
 // RIVAL ship: ONLY what's observable. A convoy broadcasts its route (light-delayed)
@@ -593,27 +631,26 @@ function rivalBody(g: GhostView): string {
   if (g.kind === "convoy") {
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
-      parts.push(`<div class="sp-sec">Route (broadcast)</div><div class="sp-line">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → heading near (${d.x.toFixed(0)}, ${d.y.toFixed(0)}). <span class="dim">Light-delayed.</span></div>`);
+      parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="A convoy broadcasts its route under the Convention — light-delayed, like everything you see.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)}) <span class="dim">(broadcast)</span></div>`);
     }
     // Cargo ONLY when in sensor range (cargo present). NEVER shown otherwise.
-    parts.push(`<div class="sp-sec">Cargo</div>` + (g.cargo
-      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, 16)} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)} <span class="dim">— in sensor range</span></div>`
-      : `<span class="dim">unknown — out of sensor range</span>`));
+    parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Cargo</div>` + (g.cargo
+      ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(g.cargo.commodity)}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
+      : `<div class="sp-line dim">${icon("unknown", "sm", "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
   } else {
-    const what = g.kind === "scout" ? "scout" : "raider";
-    const hint = g.kind === "scout"
-      ? "A scout runs silent — someone is LOOKING at your space. It carries no cargo and no weapons."
-      : "A raider runs silent — no route or cargo is observable.";
-    parts.push(`<div class="sp-sec">Dark contact</div><div class="sp-line dim">${hint} You see this ${what} only because it is within your sensor range right now.</div>`);
+    const tip = g.kind === "scout"
+      ? "A scout runs silent — someone is LOOKING at your space. No cargo, no weapons. You see it only because it is within your sensor range right now."
+      : "A raider runs silent — no route or cargo is observable. You see it only because it is within your sensor range right now.";
+    parts.push(`<div class="sp-sec">${icon("stealth", "sm")} Dark contact</div><div class="sp-line dim" title="${esc(tip)}">${g.kind === "scout" ? "scout" : "raider"} — in sensor range</div>`);
     // §Part 4: how LOUD it is (signature) — a big pack at flank speed flares far out.
     if (g.signature != null) {
       const loud = g.signature >= 1.6 ? "running LOUD — flank speed and/or a big pack (flares far out)"
         : g.signature <= 0.6 ? "running quiet — creeping or small (you caught it close)"
         : "a moderate signature";
-      parts.push(`<div class="sp-line dim">Signature: <b>${g.signature.toFixed(2)}×</b> — ${loud}.</div>`);
+      parts.push(`<div class="sp-line">${chip("delay", `${g.signature.toFixed(2)}×`, `Detection signature — how LOUD this contact is: ${loud}.`)}</div>`);
     }
   }
-  parts.push(`<div class="sp-sec">Action</div><div class="sp-line dim">${uiIcon("action-attack-raid", 12)} Click this contact on the map to commit a <b>raid</b> with your selected raider.</div>`);
+  parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div><div class="sp-line dim sp-legend">${icon("raid", "sm", "Click this contact on the map to commit a RAID with your selected raider.")} raid · ${icon("shift", "sm", "Shift+click to ATTACK — a full battle that destroys it (needs a raider in your selected fleet).")} ${icon("attack", "sm")} attack</div>`);
   return parts.join("");
 }
 
@@ -628,7 +665,7 @@ function updateShipPanel(): void {
     root.innerHTML =
       `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">contact</div><h2>Contact lost</h2></div></div>` +
       `<button class="sp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
-      `<div class="sp-body"><div class="sp-note">This ship has passed beyond your sensors and the last light to reach you. Nothing more is observable.</div></div>`;
+      `<div class="sp-body"><div class="sp-note" title="It has passed beyond your sensors and the last light to reach you — nothing more is observable.">Passed beyond your sensors.</div></div>`;
     return;
   }
   const own = g.own;
@@ -638,7 +675,7 @@ function updateShipPanel(): void {
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", 15)} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -650,20 +687,14 @@ function updateShipPanel(): void {
   // and never grant your own ships false certainty (a distant own ship is as uncertain
   // as a rival). A ship at your command center has ~0 lag → "confirmed".
   const certain = g.uncertainty < 1;
+  // The uncertainty explanation rides the Position stat as a tooltip (§UX-diet).
+  const uncTip = own ? "Delayed sighting — true position uncertain; see the uncertainty cone on the map." : "Last sighting — it could be anywhere within the cone on the map.";
   const posCell = certain
-    ? stat("Position", `<span class="tone-up">confirmed</span>`)
-    : stat("Position", `±${fmt(g.uncertainty)} su`);
+    ? `<div class="stat" title="At your command center (or nearly): ~zero light-lag, so the position is effectively certain."><dt>Position</dt><dd><span class="tone-up">confirmed</span></dd></div>`
+    : `<div class="stat" title="${esc(uncTip)}"><dt>Position</dt><dd>±${fmt(g.uncertainty)} su</dd></div>`;
   const strip = statStrip([ageCell, headingCell(g), posCell]);
 
-  // Terse note — the stat strip already carries age / heading / ±uncertainty, so
-  // this only adds a glance of context (no numbers restated, no physics lecture).
-  const note = certain
-    ? "" // the "confirmed" Position stat already says it
-    : own
-      ? `<div class="sp-note">Delayed sighting — true position uncertain (see cone).</div>`
-      : `<div class="sp-note">Last sighting — could be anywhere in the cone.</div>`;
-
-  root.innerHTML = head + `<div class="sp-body">${strip}${note}${own ? ownBody(g) : rivalBody(g)}</div>`;
+  root.innerHTML = head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`;
 }
 
 // --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
@@ -679,6 +710,138 @@ function closeMarket(): void {
 function toggleMarket(): void {
   if ($("market").classList.contains("is-open")) closeMarket();
   else openMarket();
+}
+
+// --- §syndicates: the alliance panel (top-navbar destination) ------------------
+// Create / invite (by corp name) / accept / leave / dissolve. Strictly owner-only
+// content — the View only carries YOUR roster + YOUR pending invites, never a
+// rival's. Non-engagement itself is mechanical (server-side); this panel is how
+// you form the pact. Re-rendered only when the roster/invites CHANGE (a signature
+// guard), so a half-typed name is never wiped by a 10 Hz View.
+let lastSyndicateSig = "";
+function openSyndicate(): void {
+  $("syndicate-panel").classList.add("is-open");
+  $("nav-syndicate").classList.add("is-active");
+  lastSyndicateSig = ""; // force a fresh render on open
+  updateSyndicatePanel();
+}
+function closeSyndicate(): void {
+  $("syndicate-panel").classList.remove("is-open");
+  $("nav-syndicate").classList.remove("is-active");
+}
+function toggleSyndicate(): void {
+  if ($("syndicate-panel").classList.contains("is-open")) closeSyndicate();
+  else openSyndicate();
+}
+function updateSyndicatePanel(): void {
+  const el = $("syndicate-panel");
+  if (!el.classList.contains("is-open")) return;
+  const s = state.syndicate;
+  const invites = state.syndicateInvites;
+  const sig = JSON.stringify([s, invites, state.playerId]);
+  if (sig === lastSyndicateSig && el.innerHTML) return; // no roster change → keep DOM (+ any typing)
+  lastSyndicateSig = sig;
+  let body = "";
+  if (s) {
+    const roster = s.members
+      .map((m) => {
+        const tag =
+          m.id === state.playerId ? `<span class="you">you</span>`
+          : m.id === s.founder ? `<span class="fdr">founder</span>` : "";
+        return `<div class="sy-row">🟢 <span>${esc(m.name)}</span>${tag}</div>`;
+      })
+      .join("");
+    body += `<div><div class="sy-sub">Syndicate</div><div class="sy-name">🤝 ${esc(s.name)}</div></div>`;
+    body += `<div><div class="sy-sub">Members (${s.members.length})</div>${roster}</div>`;
+    if (s.is_founder) {
+      const invited = s.invited.length ? `<div class="sy-note">Invited: ${s.invited.map(esc).join(", ")}</div>` : "";
+      body += `<div><div class="sy-sub">Invite a corp (by name)</div><div class="sy-inv"><input id="sy-invite-name" type="text" placeholder="corp name" maxlength="32" />` +
+        `<button class="act" data-sy="invite">Invite</button></div>${invited}</div>`;
+    }
+    const dissolve = s.is_founder ? `<button class="act act--danger" data-sy="dissolve">Dissolve</button>` : "";
+    body += `<div class="sy-inv"><button class="act act--danger" data-sy="leave">Leave</button>${dissolve}</div>`;
+    body += `<div class="sy-note">Members never auto-engage each other, and can't raid / attack / blockade one another. Ally ships & systems tint <b style="color:#9df0b3">green</b> as their membership light reaches you.</div>`;
+  } else {
+    body += `<div class="sy-note">A syndicate is a mutual non-engagement pact: members can't raid, attack, or blockade each other, and their pickets leave allies alone.</div>`;
+    body += `<div><div class="sy-sub">Found a syndicate</div><div class="sy-inv"><input id="sy-create-name" type="text" placeholder="syndicate name" maxlength="32" />` +
+      `<button class="act act--primary" data-sy="create">Create</button></div></div>`;
+    if (invites.length) {
+      const list = invites
+        .map((i) => `<div class="sy-row">🤝 <span>${esc(i.name)}</span><button class="act" data-sy="accept" data-sid="${esc(i.id)}" style="margin-left:auto">Accept</button></div>`)
+        .join("");
+      body += `<div><div class="sy-sub">Invitations</div>${list}</div>`;
+    } else {
+      body += `<div class="sy-note">No pending invitations.</div>`;
+    }
+  }
+  el.innerHTML = `<div class="pp-head"><b>SYNDICATE</b><button class="pp-close" data-sy="close" title="Close">✕</button></div><div class="pp-body">${body}</div>`;
+}
+
+// --- §rankings: the published leaderboard (rail tab) ---------------------------
+// A public ledger snapshot (same for everyone), sortable by category. One category
+// at a time keeps it legible in the narrow rail; the chips ARE the "sortable
+// categories". Your row is highlighted; category leaders wear a title chip.
+type RankCat = {
+  slug: string;
+  label: string;
+  short: string;
+  fmt: (r: import("./protocol").RankingRow) => string;
+  sortVal: (r: import("./protocol").RankingRow) => number;
+  tip: string;
+};
+const RANK_CATS: RankCat[] = [
+  { slug: "valuation", label: "Valuation", short: "Val", fmt: (r) => fmt(r.valuation) + " Cr", sortVal: (r) => r.valuation, tip: "Net worth — credits + holdings at market (the classic ladder)." },
+  { slug: "trade_throughput", label: "Trade Throughput", short: "Trade", fmt: (r) => fmt(r.trade_throughput), sortVal: (r) => r.trade_throughput, tip: "Cargo units your convoys delivered (home, ally, or sold at the hub)." },
+  { slug: "market_profit", label: "Net Market Profit", short: "Profit", fmt: (r) => fmt(r.market_profit) + " Cr", sortVal: (r) => r.market_profit, tip: "Lifetime exchange P&L — sell proceeds minus buy spend." },
+  { slug: "cargo_captured", label: "Cargo Captured", short: "Seized", fmt: (r) => fmt(r.cargo_captured), sortVal: (r) => r.cargo_captured, tip: "Units seized by raiding convoys + plunder taken on captures." },
+  { slug: "cargo_protected", label: "Cargo Protected", short: "Guard", fmt: (r) => fmt(r.cargo_protected), sortVal: (r) => r.cargo_protected, tip: "Units delivered by convoys that survived a battle en route." },
+  { slug: "battle_efficiency", label: "Battle Efficiency", short: "Kill/Loss", fmt: (r) => (r.battle_ranked ? "×" + r.battle_efficiency.toFixed(2) : "prov."), sortVal: (r) => (r.battle_ranked ? r.battle_efficiency : -Infinity), tip: "Enemy hull destroyed ÷ own hull lost. 'prov.' = too few battles to rank." },
+  { slug: "systems_developed", label: "Systems Developed", short: "Built", fmt: (r) => fmt(r.systems_developed), sortVal: (r) => r.systems_developed, tip: "Total system-upgrade tiers built." },
+  { slug: "intel_gathered", label: "Intel Gathered", short: "Intel", fmt: (r) => fmt(r.intel_gathered), sortVal: (r) => r.intel_gathered, tip: "Scout snapshots captured." },
+  { slug: "recovery", label: "Recovery", short: "Comeback", fmt: (r) => fmt(r.recovery) + " Cr", sortVal: (r) => r.recovery, tip: "Valuation regained since your last major loss (a captured system)." },
+];
+let rankingsSortCat = "valuation";
+let lastRankingsSig = "";
+
+function updateRankingsPanel(): void {
+  if (!$("tab-rankings").classList.contains("is-active")) return;
+  if (renderDeferred("tab-rankings", updateRankingsPanel)) return; // §single-click guard
+  const rows = state.rankings;
+  const sig = JSON.stringify([rows, state.playerId, rankingsSortCat]);
+  if (sig === lastRankingsSig && $("rankings-body").innerHTML) return;
+  lastRankingsSig = sig;
+
+  const el = $("rankings-body");
+  if (!rows.length) {
+    el.innerHTML = `<div class="dim">No ledger published yet — the first close lands within a minute of the campaign start.</div>`;
+    return;
+  }
+  const cat = RANK_CATS.find((c) => c.slug === rankingsSortCat) ?? RANK_CATS[0];
+  // Category selector chips (the "sortable categories").
+  const chips = RANK_CATS.map((c) => {
+    const on = c.slug === cat.slug;
+    return `<button class="rk-chip${on ? " is-on" : ""}" data-rankcat="${c.slug}" title="${esc(c.tip)}">${esc(c.short)}</button>`;
+  }).join("");
+  // Rank by the chosen category, desc; provisional efficiency sinks to the bottom.
+  const sorted = [...rows].sort((a, b) => cat.sortVal(b) - cat.sortVal(a));
+  const body = sorted
+    .map((r, i) => {
+      const me = r.player_id === state.playerId;
+      const titles = r.titles.map((t) => badge("accent", t)).join(" ");
+      const engTip = cat.slug === "battle_efficiency" ? ` title="${r.battle_engagements} engagement(s)"` : "";
+      return (
+        `<div class="rk-row${me ? " is-me" : ""}">` +
+        `<span class="rk-rank">${i + 1}</span>` +
+        `<span class="rk-name">${esc(r.name)}${me ? ' <span class="you">you</span>' : ""}${titles ? " " + titles : ""}</span>` +
+        `<span class="rk-val"${engTip}>${cat.fmt(r)}</span>` +
+        `</div>`
+      );
+    })
+    .join("");
+  el.innerHTML =
+    `<div class="rk-chips">${chips}</div>` +
+    `<div class="rk-catname dim">Ranked by <b>${esc(cat.label)}</b></div>` +
+    `<div class="rk-table">${body}</div>`;
 }
 
 // --- Wormhole Hub detail panel (§hub-art) --------------------------------------
@@ -705,7 +868,7 @@ function openHubPanel(): void {
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
     `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
-    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", 14)} Open Market</button>` +
+    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", "sm")} Open Market</button>` +
     `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
@@ -883,41 +1046,61 @@ function updateSysviewManage(): void {
   const used = dyn.storage_used ?? 0;
   const storageFull = cap > 0 && used >= cap;
   const storageBar = cap > 0
-    ? `<div class="deps-head">Stockpile — ${fmt(used)} / ${fmt(cap)}</div>` +
+    ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile ${fmt(used)} / ${fmt(cap)}</div>` +
       `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
-      (storageFull ? `<span class="storage-warn">${badge("warn", "storage full")} production idling — ship goods out or build a Depot</span>` : "") +
+      (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
     : "";
-  // Developments at a glance (what the markers on the scene show ×N for).
-  const habTag = (dyn.habitat_tier ?? 0) > 0 ? (dyn.habitat_fed ? ` ${badge("positive", "fed")}` : ` ${badge("warn", "unfed")}`) : "";
-  const devs = `<div class="devs-row">` +
-    ([["Extractor", dyn.extractor_tier ?? 0, ""], ["Depot", dyn.depot_tier ?? 0, ""], ["Shipyard", dyn.shipyard_tier ?? 0, ""], ["Sensor", dyn.sensor_tier ?? 0, ""], ["Defense", dyn.defense_tier ?? 0, ""], ["Habitat", dyn.habitat_tier ?? 0, habTag], ["Refinery", dyn.refinery_tier ?? 0, ""]] as [string, number, string][])
-      .map(([n, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}">${n} ×${t}${tag}</span>`)
-      .join(`<span class="dev-sep">·</span>`) +
+  // Developments at a glance — building ICONS ×tier (names live in tooltips).
+  const habTag = (dyn.habitat_tier ?? 0) > 0
+    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "Habitat upkeep met — the output boost is active.")}`
+                       : ` ${badgeChip("unfed", "unfed", "warn", "Habitat upkeep NOT met — the boost is suspended until Provisions arrive. Nothing is destroyed; it recovers automatically.")}`)
+    : "";
+  const DEV_ROW: [string, IconKey, number, string][] = [
+    ["Extractor", "extractor", dyn.extractor_tier ?? 0, ""],
+    ["Depot", "depot", dyn.depot_tier ?? 0, ""],
+    ["Shipyard", "shipyard", dyn.shipyard_tier ?? 0, ""],
+    ["Sensor array", "sensor", dyn.sensor_tier ?? 0, ""],
+    ["Defense platform", "defense", dyn.defense_tier ?? 0, ""],
+    ["Habitat", "habitat", dyn.habitat_tier ?? 0, habTag],
+    ["Fuel refinery", "refinery", dyn.refinery_tier ?? 0, ""],
+  ];
+  const devs = `<div class="devs-row" title="System developments — the map markers show where each one anchors (not separate colonies). Click a body to see what would anchor there.">` +
+    DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, "sm", `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
     `</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
   // dispatches hold at origin, so the ship button is disabled while blockaded
   // (production still accrues into the stockpile). A prominent banner explains it.
   const blockaded = !!dyn.blockade;
   const siege = siegeProgress(dyn);
+  const siegeTip = "Defenses suppressed, the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system. (Your home can be blockaded but never falls.)";
   const siegeLine = siege
-    ? `<div class="deps-head" style="margin-top:6px">${badge("negative", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `under siege — falls in ${fmtCountdown(siege.left)}`)}</div>` +
-      `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>` +
-      `<div class="mhint dim">Defenses are suppressed and the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system.</div>`
+    ? `<div class="deps-head" style="margin-top:6px">${badgeChip("siege", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `siege — falls in ${fmtCountdown(siege.left)}`, "negative", siegeTip)}</div>` +
+      `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>`
     : "";
   const blockadeBanner = blockaded
-    ? `<div class="storage-warn" style="margin:6px 0">${badge("negative", "under blockade")} a rival fleet holds station — convoys are held in &amp; out. Production still accrues; break the blockade (relief, or a new Defense Platform tier) to resume shipping.</div>${siegeLine}`
+    ? `<div style="margin:6px 0">${badgeChip("blockade", "under blockade", "negative", "A rival fleet holds station — convoys are held in & out (production still accrues). Break the blockade (relief, or a new Defense Platform tier) to resume shipping.")}</div>${siegeLine}`
     : "";
   const canShip = !blockaded && shippableStock(dyn).length > 0;
-  const shipTitle = blockaded ? "held — this system is under blockade" : canShip ? "one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)" : "nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units";
+  const shipTitle = blockaded ? "Held — this system is under blockade." : canShip ? "Ship one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)." : "Nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units.";
   const actions =
     `<div style="margin-top:10px">` +
-    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${shipTitle}">${uiIcon("action-load-cargo", 14)} Ship production → hub</button>` +
-    `<button class="act" data-action="standing">${uiIcon("action-standing-order", 14)} Auto-supply from here</button>` +
-    `<button class="act" data-action="market">${uiIcon("concept-market-exchange", 14)} Open hub market</button></div>`;
-  const guard = `<div class="mhint dim" style="margin-top:8px">Buildings are SYSTEM developments — the markers on the map are where each one anchors, not separate colonies. Click a body to see what would anchor there.</div>`;
+    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", "sm")} Ship → hub</button>` +
+    `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button>` +
+    `<button class="act" data-action="market" title="Open the hub Exchange.">${icon("market", "sm")} Market</button></div>`;
+  const guard = "";
+  // §syndicates Part 3: the ally GARRISON you're hosting here — the coalition
+  // shield you feed (its Provisions upkeep draws from THIS system).
+  const gShips = dyn.ally_garrison_ships ?? 0;
+  const garrisonHost = gShips > 0
+    ? `<div class="deps-head" style="margin-top:6px">${icon("garrison", "sm")} Ally garrison: <b>${gShips}</b> ship${gShips > 1 ? "s" : ""} ` +
+      (dyn.ally_garrison_fed
+        ? badgeChip("garrison", "fed", "positive", "You're hosting an allied coalition shield here — its Provisions upkeep is covered from this system, and it joins your defense.")
+        : badgeChip("garrison", "UNFED", "warn", "The allied garrison here is UNFED — this system is out of Provisions to cover its upkeep, so its defense is suspended. Ship Provisions here to restore it.")) +
+      `</div>`
+    : "";
   $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
-  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
+  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + garrisonHost + productionReadout(sys, dyn) + buildPanel(sid, dyn) + actions + guard;
 }
 
 let planetPanelBuilt = false;
@@ -977,9 +1160,8 @@ function openPlanetPanel(d: SystemBodyDetail): void {
       const slotsTotal = dyn.slots_total ?? 0;
       const slotsFull = slotsTotal > 0 && (dyn.slots_used ?? 0) >= slotsTotal;
       const anchored = keys.map((k) => opts.find((o) => o.key === k)?.label ?? k).join(", ");
-      develop = `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px">Would anchor here</div>` +
-        `<div class="build-grid">${opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("")}</div>` +
-        `<div class="mhint dim" style="margin-top:4px">${esc(anchored)} would site its structure at this body — still a SYSTEM development (one system slot, system stockpile).</div>`;
+      develop = `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px" title="${esc(anchored)} would site its structure at this body — still a SYSTEM development (one system slot, the system stockpile).">Would anchor here</div>` +
+        `<div class="build-grid">${opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("")}</div>`;
     }
   }
   $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${develop}${note}</div>`;
@@ -1095,11 +1277,10 @@ function openBattlePanel(id: number): void {
     `<div class="sp-sec">Sides — as you learned them</div>` +
     `<div class="sp-line"><b>You</b> (${esc(youAtk ? "attacker" : "defender")}): ${esc(shipKindLabel(yourKind))}-led force</div>` +
     `<div class="sp-line"><b>Rival</b> (${esc(youAtk ? "defender" : "attacker")}): ${esc(shipKindLabel(theirKind))}-led force</div>` +
-    `<div class="sp-sec">Losses</div>` +
+    `<div class="sp-sec" title="Outcomes are as of the light that reached your command center — the site may look different by now.">Losses</div>` +
     `<div class="sp-line">You lost: <b>${esc(lossStr(yourLoss))}</b></div>` +
     `<div class="sp-line">They lost: <b>${esc(lossStr(theirLoss))}</b></div>` +
-    `<div class="mhint dim">Positions and outcomes are as of the light that reached your command center — the site may look different by now.</div>` +
-    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
 }
@@ -1161,7 +1342,7 @@ function shipChip(kind: ShipKind, count: number, opts: { lost?: number; est?: st
     ? `<span class="fs-fallen">−${opts.lost}</span>`
     : opts.shrunk ? `<span class="fs-fallen">▾</span>` : "";
   return `<span class="fs-chip${wiped ? " lost" : ""}" title="${esc(shipKindLabel(kind))}">` +
-    `${uiIcon(SHIP_ICON[kind], 15)}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
+    `${uiIcon(SHIP_ICON[kind], "md")}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
 }
 // A labelled side of the force strip. `chips` empty → a dim placeholder.
 function forceSide(label: string, cls: string, chips: string): string {
@@ -1231,7 +1412,7 @@ function updateOngoingBattlePanel(): void {
           echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
-          `↩ ${uiIcon(SHIP_ICON[g.kind], 13)}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
+          `↩ ${uiIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
       }).join("") + `</div>`
     : "";
 
@@ -1239,7 +1420,7 @@ function updateOngoingBattlePanel(): void {
   // wall-clock an order issued now would land at — plus a terse reach verdict.
   const delay = battleCommandDelay(b);
   const cmdDelayLine = delay !== null
-    ? `<div class="sp-line dim">${uiIcon("action-standing-order", 12)} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
+    ? `<div class="sp-line dim">${uiIcon("action-standing-order", "sm")} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
       (delay > 20 ? ` · <span style="color:#e88">too far to steer</span>` : ` · <span style="color:var(--accent)">still in reach</span>`) + `</div>`
     : "";
 
@@ -1254,9 +1435,9 @@ function updateOngoingBattlePanel(): void {
       ? `<div class="force-strip">${forceSide("You", "you", ownChips)}${forceSide("Enemy", "foe", rivalChips)}</div>` +
         withdrawRow +
         cmdDelayLine +
-        `<button class="act" data-act="doctrine">${uiIcon("action-standing-order", 14)} Change fleet doctrine ▸</button>`
+        `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", "sm")} Doctrine ▸</button>`
       : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
-        `<div class="mhint dim">Seen by its weapons-fire light — you have no forces here.</div>`);
+        `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>`);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
 }
 
@@ -1273,7 +1454,9 @@ function openCapturePanel(id: number): void {
   const now = liveSimTime();
   const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
   const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ") : "an empty stockpile";
-  const verdict = r.captor ? badge("positive", "captured — the system is yours") : badge("negative", "lost — the system was taken");
+  const verdict = r.captor
+    ? badgeChip("captured", "captured — yours", "positive", "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination.")
+    : badgeChip("lost", "lost — taken", "negative", "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship.");
   const head =
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">capture · delayed report</div>` +
     `<h2>${r.captor ? "Captured" : "Lost"} ${esc(nearestSystemName(r.pos))}</h2></div></div>` +
@@ -1282,10 +1465,9 @@ function openCapturePanel(id: number): void {
     `<div class="sp-line">${verdict}</div>` +
     `<div class="sp-sec">When</div>` +
     `<div class="sp-line">Fell <b>${ago(r.at_time)}</b> ago · you learned <b>${ago(r.learned_at)}</b> ago <span class="dim">(light delay ${fmtCountdown(Math.max(0, r.learned_at - r.at_time))})</span></div>` +
-    `<div class="sp-sec">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
-    `<div class="sp-line"><b>${plunderStr}</b> <span class="dim">— the besieged stockpile. Developments transferred at half tiers.</span></div>` +
-    `<div class="mhint dim">${r.captor ? "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination." : "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship."}</div>` +
-    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log">Dismiss marker</button>`;
+    `<div class="sp-sec" title="The besieged stockpile; developments transferred at HALF tiers.">${r.captor ? "Plunder seized" : "Plunder lost"}</div>` +
+    `<div class="sp-line" title="The besieged stockpile changed hands; developments transferred at half tiers."><b>${plunderStr}</b></div>` +
+    `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
 }
@@ -1690,8 +1872,12 @@ function installInteraction(): void {
       toggleRail("logistics");
     } else if (e.key === "f" || e.key === "F") {
       toggleRail("doctrine");
+    } else if (e.key === "g" || e.key === "G") {
+      toggleRail("rankings"); // §rankings: the published leaderboard
     } else if (e.key === "l" || e.key === "L") {
       toggleCheckin();
+    } else if (e.key === "y" || e.key === "Y") {
+      toggleSyndicate(); // §syndicates: alliance panel
     } else if (e.key === "Escape") {
       // In the System View, Escape steps out one level: planet panel → system → galaxy.
       if ($("planet-panel").classList.contains("is-open")) {
@@ -1700,6 +1886,7 @@ function installInteraction(): void {
         exitSystem();
       } else {
         closeMarket();
+        closeSyndicate();
         closeRail();
         closeHubPanel();
         deselectShip();
@@ -1744,7 +1931,7 @@ function depositRow(d: Deposit): string {
     ? `<span class="tone-up">renewable</span>`
     : d.reserves < 50 ? `<span class="is-warn">${fmt(d.reserves)} left</span>`
       : `${fmt(d.reserves)} left`;
-  return `<div class="dep-row"><span class="dep-ico">${commodityIcon(d.resource, 18)}</span>` +
+  return `<div class="dep-row"><span class="dep-ico">${commodityIcon(d.resource, "md")}</span>` +
     `<span class="dep-name">${d.resource}</span>${bar(pct)}` +
     `<span class="dep-r">~${d.richness.toFixed(2)}/s · ${reserves}</span></div>`;
 }
@@ -1780,7 +1967,7 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     : "";
   // Standing upkeep line (the game's first continuous consumption).
   const upkeep = habTier > 0
-    ? `<div class="mhint" style="margin-top:4px">Habitat upkeep: −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} provisions/s from this stockpile${habFed ? "" : ` — <span style="color:var(--warn)">UNFED: output boost suspended (nothing lost; resupply to restore)</span>`}.</div>`
+    ? `<div class="mhint" style="margin-top:4px" title="A fed Habitat draws this Provisions upkeep from the system stockpile each second; unfed, the output boost is suspended until Provisions arrive (nothing is lost).">${icon("habitat", "sm")} upkeep −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "unfed", "warn", "Output boost suspended until Provisions arrive — nothing is lost.")}`}</div>`
     : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
@@ -1790,14 +1977,14 @@ function productionReadout(sys: SystemInfo, dyn: SystemStateView | undefined): s
     const yieldK = state.galaxy?.refinery_yield ?? 0.8;
     const vol = stockOf.get("volatiles") ?? 0;
     refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px">Refinery: converting ${rate.toFixed(1)} volatiles/s → +${(rate * yieldK).toFixed(1)} fuel/s.</div>`
-      : `<div class="mhint" style="margin-top:4px">Refinery: <span style="color:var(--warn)">idle — no Volatiles</span>. Haul some in (${yieldK} fuel per volatile).</div>`;
+      ? `<div class="mhint" style="margin-top:4px" title="Fuel refinery: converting ${rate.toFixed(1)} Volatiles/s into ${(rate * yieldK).toFixed(1)} Fuel/s (slightly lossy).">${icon("refinery", "sm")} ${rate.toFixed(1)} ${icon("volatiles", "sm")}/s → +${(rate * yieldK).toFixed(1)} ${icon("fuel", "sm")}/s</div>`
+      : `<div class="mhint" style="margin-top:4px" title="Fuel refinery idle — no Volatiles to convert. Haul some in (${yieldK} Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
-  return `<div class="deps-head" style="margin-top:8px">Stockpile · production${tierTag}${habTag}</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${icon("storage", "sm")} Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
-      return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, 16)}</span>` +
+      return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("") + upkeep + refinery;
 }
@@ -1880,14 +2067,14 @@ function buildQueueRows(sid: string, dyn: SystemStateView | undefined): string {
     const ahead = aheadCount[j.key] ?? 0;
     aheadCount[j.key] = ahead + 1;
     const name = isDev ? `${buildLabel(j.key)} ×${(tierOf[j.key] ?? 0) + 1 + ahead}` : buildLabel(j.key);
-    return `<div class="bq-row"><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", 14)}</span>` +
+    return `<div class="bq-row"><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
       `<div class="bq-main"><div class="bq-head"><b>${esc(name)}</b>` +
       `<span class="bq-eta">${fmtCountdown(left)} · done ${doneAtLocal(j.complete_time)}</span></div>` +
       `${bar(pct)}</div></div>`;
   }).join("");
   const doneRows = flashes.map((f) =>
     `<div class="bq-row bq-done"><span class="bq-ic tone-up">✓</span><div class="bq-main"><b>${esc(f.label)}</b> <span class="dim">complete</span></div></div>`).join("");
-  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Under construction</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", "sm")} Under construction</div>` +
     `<div class="bq-list">${rows}${doneRows}</div>`;
 }
 
@@ -1903,15 +2090,30 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
   const yardShort = needYard > 0 && yard < needYard;
   const blocked = (isDev && slotsFull) || yardShort;
   const enabled = afford && !blocked;
-  const title = isDev && slotsFull ? "no free development slot — systems must specialize"
-    : yardShort ? `ships build only at a Shipyard system (this needs tier ${needYard})`
-      : afford ? "costs draw from this system's stockpile"
-        : "not enough resources stockpiled here";
-  const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, 13)}${c.units}`).join(" ");
-  const gate = isDev && slotsFull ? `<span class="bo-gate">slots full</span>`
-    : yardShort ? `<span class="bo-gate">requires Shipyard ${needYard}</span>` : "";
-  return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${title}">` +
-    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${o.build_secs}s</span></button>`;
+  const title = isDev && slotsFull ? "No free development slot — systems must specialize."
+    : yardShort ? `Ships build only at a Shipyard system — this needs Shipyard tier ${needYard}.`
+      : afford ? "Costs draw from this system's stockpile."
+        : "Not enough resources stockpiled here.";
+  const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, "sm")}${c.units}`).join(" ");
+  const gate = isDev && slotsFull ? `<span class="bo-gate" title="No free development slot.">${icon("slots", "sm")}full</span>`
+    : yardShort ? `<span class="bo-gate" title="Requires Shipyard tier ${needYard}.">${icon("shipyard", "sm")}${needYard}</span>` : "";
+  return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${esc(title)}">` +
+    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
+}
+
+// §node: one-line description of what a node's bonus does (by slug). Used in the
+// system panel + inbox so the tactical payoff is always legible.
+function nodeBonusDesc(slug: string): string {
+  switch (slug) {
+    case "relay_anchor":
+      return "Halves your command delay to targets in its region — orders and their echoes land twice as fast nearby.";
+    case "veil":
+      return "Your dark fleets in its region run quieter — detected only at half the usual range.";
+    case "deep_scan":
+      return "Your sensors resolve EXACT composition on anything already visible in its region (bucket → exact).";
+    default:
+      return "A tactical edge to whoever holds it.";
+  }
 }
 
 function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
@@ -1924,9 +2126,9 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const slotsTotal = dyn?.slots_total ?? 0;
   const slotsFull = slotsTotal > 0 && slotsUsed >= slotsTotal;
   const slotsTag = slotsTotal > 0
-    ? ` <span class="sp-tier" title="each development (Extractor/Depot/Shipyard tier) uses one slot — ships don't">· slots ${slotsUsed}/${slotsTotal}</span>`
+    ? ` <span class="sp-tier" title="Development slots used / total. Each development (Extractor/Depot/Shipyard tier…) uses one slot; ships don't.">· ${icon("slots", "sm")} ${slotsUsed}/${slotsTotal}</span>`
     : "";
-  const head = `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", 12)} Build · develop${slotsTag}</div>`;
+  const head = `<div class="deps-head" style="margin-top:8px">${icon("build", "sm")} Build · develop${slotsTag}</div>`;
   // §build-progress: the construction QUEUE renders above a menu that STAYS
   // open — concurrent jobs were always legal in the sim (costs debit up front;
   // pending upgrades already count against slots); the old "one job at a time"
@@ -1934,7 +2136,7 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   const queue = buildQueueRows(sid, dyn);
   const rows = opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
   const full = slotsFull
-    ? `<div class="mhint">${badge("warn", "slots full")} every development slot here is used — develop another system (specialize!).</div>`
+    ? `<div class="mhint">${badgeChip("slots", "slots full", "warn", "Every development slot here is used — develop another system (specialize!).")}</div>`
     : "";
   return queue + head + `<div class="build-grid">${rows}</div>` + full;
 }
@@ -2036,8 +2238,7 @@ function updateSystemTab(): void {
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   if (!sys) {
     root.innerHTML = rail +
-      `<div class="mhint">Click a star system on the map to inspect its geology, claim it, or ship its output.` +
-      (rail ? " Or pick one of your holdings above." : "") + `</div>`;
+      `<div class="mhint" title="Click a star system on the map to inspect its geology, claim it, or ship its output${rail ? " — or pick one of your holdings above" : ""}.">${icon("mouse", "sm")} Select a star system${rail ? ", or a holding above" : ""}.</div>`;
     return;
   }
   const dyn = state.systems.find((s) => s.id === sid);
@@ -2079,6 +2280,39 @@ function updateSystemTab(): void {
     `<div class="star-cap"><span class="star-type">${esc(st.title)}</span>` +
     `${st.exotic ? badge("accent", "exotic") : badge("neutral", "star")}</div></div>`;
 
+  // §node: EXOTIC NODE — the midgame catalyst. Dormant systems telegraph a
+  // countdown from t=0; awakened ones show the bonus, the holder (as our light
+  // knows it), and — for the holder — the fed state + region. bonus/awakened are
+  // public; fed/region are owner-only (a rival sees only the landmark + holder).
+  let nodeBlock = "";
+  if (dyn?.node) {
+    const n = dyn.node;
+    const desc = nodeBonusDesc(n.bonus);
+    if (!n.awakened) {
+      const awakenAt = state.galaxy?.node_awakening_time ?? 0;
+      const left = Math.max(0, awakenAt - liveSimTime());
+      nodeBlock =
+        `<div class="deps-head" style="margin-top:8px" title="An exotic system. At the awakening time it becomes a capturable NODE granting a tactical bonus — claim it if unowned, or blockade→siege→capture if held.">◈ Exotic node — ${esc(n.title)}</div>` +
+        `<div class="sp-line">${badge("accent", `awakens in ${fmtCountdown(left)}`)} <span class="dim">${esc(desc)}</span></div>`;
+    } else {
+      const holderTag = mine
+        ? badge("accent", "you hold it")
+        : rival
+          ? badge("negative", "held by a rival")
+          : badge("neutral", "unclaimed — capturable");
+      let fedLine = "";
+      if (mine) {
+        fedLine = n.fed
+          ? ` ${badgeChip("fed", "bonus live", "positive", "Upkeep met — the node's bonus is active.")}`
+          : ` ${badgeChip("unfed", "UNFED — suspended", "negative", "The node's upkeep isn't covered — its bonus is suspended until you ship supplies here (nothing is lost).")}`;
+      }
+      nodeBlock =
+        `<div class="deps-head" style="margin-top:8px" title="${esc(desc)}">◈ ${esc(n.title)} node</div>` +
+        `<div class="sp-line">${holderTag}${fedLine}</div>` +
+        `<div class="sp-line dim">${esc(desc)}</div>`;
+    }
+  }
+
   // Storage (§buildings step 2): the owner sees fill vs cap — the "ship it or
   // production idles" pressure made visible. Owner-only fields; rivals see —.
   const cap = dyn?.storage_cap ?? 0;
@@ -2108,13 +2342,14 @@ function updateSystemTab(): void {
     if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
     if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
+    if (dyn?.node?.awakened && !dyn.node.fed) cues.push(`${badge("warn", "node unfed")} bonus suspended — ship its upkeep`);
     // §build-progress: the compact construction line — a glance from the map
     // says work is running (and when the next job lands) without opening the view.
     const jobs = dyn?.builds ?? [];
     if (jobs.length === 1) {
-      cues.push(`${uiIcon("action-build", 12)} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${uiIcon("action-build", "sm")} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     } else if (jobs.length > 1) {
-      cues.push(`${uiIcon("action-build", 12)} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${uiIcon("action-build", "sm")} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     }
   }
   const attention = cues.length ? `<div class="mhint" style="margin-top:6px">${cues.join(" · ")}</div>` : "";
@@ -2124,47 +2359,68 @@ function updateSystemTab(): void {
 
   let actions: string;
   if (unclaimed && atHomeSite) {
-    actions = `<div class="mhint" style="margin-top:8px">${badge("neutral", "reserved")} A starting home site — a future corporation will begin here owning it, so it can't be claimed.</div>`;
+    actions = `<div class="mhint" style="margin-top:8px">${badgeChip("home", "reserved", "neutral", "A starting home site — a future corporation will begin here owning it, so it can't be claimed.")}</div>`;
   } else if (unclaimed) {
-    // Claiming is PHYSICAL now (§ships part 3): build a Colony Ship at a
-    // shipyard and SEND it here — it claims on arrival (and is raidable en
-    // route). The old instant credit purchase is gone. (The claim GUIDANCE
-    // stays here on the rail — an unclaimed system has no management view.)
-    actions = `<div class="mhint" style="margin-top:8px">${uiIcon("action-claim-system", 14)} <b>To claim:</b> build a <b>Colony Ship</b> at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.</div>`;
+    // Claiming is PHYSICAL (§ships part 3): build + send a Colony Ship; it claims
+    // on arrival (the how lives in the tooltip). No management view for an
+    // unclaimed system, so this guidance stays on the rail.
+    actions = `<div class="mhint" style="margin-top:8px" title="Build a Colony Ship at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.">${icon("claim", "sm")} <b>To claim:</b> send a ${icon("colony", "sm")} colony ship here.</div>`;
   } else if (mine) {
     // Management lives in the System View now; the rail's job is to take you there.
     actions = "";
   } else {
-    actions = `<div class="mhint" style="margin-top:8px">${badge("negative", "held by rival")} ownership is light-delayed — what you see may already be stale.</div>`;
+    actions = `<div class="mhint" style="margin-top:8px">${badgeChip("lost", "held by rival", "negative", "Ownership is light-delayed — what you see may already be stale.")}</div>`;
   }
   // OUR scout intel about a system we don't own (§scout part 2): a timestamped
   // SNAPSHOT of its fortifications — never live, aging until re-scouted. Shown
   // only to us (the View carries only our own snapshots, light-delayed).
   let intelBlock = "";
   if (!mine && dyn?.intel) {
-    const age = Math.max(0, state.simTime - dyn.intel.observed_at);
+    const iv = dyn.intel;
+    const age = Math.max(0, state.simTime - iv.observed_at);
     const ageTxt = age < 90 ? `${age.toFixed(0)}s ago` : `${(age / 60).toFixed(0)}m ago`;
-    intelBlock = `<div class="deps-head" style="margin-top:8px">${uiIcon("concept-sensor-range", 12)} Scout intel — snapshot</div>` +
-      `<div class="sp-line">Defense ×${dyn.intel.defense_tier} · Shipyard ×${dyn.intel.shipyard_tier} <span class="dim">· scouted ${ageTxt}</span></div>` +
-      `<div class="mhint">A snapshot, not a feed — they may have built since. Re-scout to refresh.</div>`;
+    // §syndicates Part 2: RELAYED intel is ally-sourced — name the reporter and
+    // show the honest chain (observed T₁ → relayed T₂ → received T₃). It ages from
+    // the ORIGINAL observation and never upgrades to live truth.
+    let prov = "";
+    let head = "Scout intel";
+    let headTip = "A scout SNAPSHOT of this rival system's fortifications — never a live feed; it ages until you re-scout (they may have built since).";
+    if (iv.relayed_by) {
+      const allyName = state.syndicate?.members.find((m) => m.id === iv.relayed_by)?.name ?? "an ally";
+      const relayTip =
+        `Relayed by ${allyName}. Observed T=${iv.observed_at.toFixed(0)}s (their scout) → reached them ${(iv.relayed_at ?? 0).toFixed(0)}s → reached you ${(iv.received_at ?? 0).toFixed(0)}s. ` +
+        `Ages from the original observation; honestly staler than their own picture, and never a live feed.`;
+      head = "Ally intel";
+      headTip = relayTip;
+      prov = ` <span class="dim" title="${esc(relayTip)}">${icon("ally", "sm")} via ${esc(allyName)}</span>`;
+    }
+    // §pirates: a scouted ENCLAVE reads as a pirate base (its `defense_tier` is the
+    // base defense an assault must grind down), distinct from a rival fortress.
+    const et = iv.enclave_tier ?? 0;
+    if (et > 0) {
+      head = "Pirate enclave";
+      headTip = "A scouted PIRATE BASE — it raids trade nearby and grows if ignored. Station a raider fleet on it to destroy the base (it drops its plunder). A snapshot; re-scout to refresh.";
+      intelBlock = `<div class="deps-head" style="margin-top:8px" title="${esc(headTip)}">${icon("raider", "sm")} ${head}</div>` +
+        `<div class="sp-line">${chip("raider", `tier ×${et}`, "Enclave escalation tier — bigger, bolder packs.")} ${chip("defense", `×${iv.defense_tier}`, "Base defense (what an assault must grind down).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span></div>`;
+    } else {
+      intelBlock = `<div class="deps-head" style="margin-top:8px" title="${esc(headTip)}">${icon("intel", "sm")} ${head}</div>` +
+        `<div class="sp-line">${chip("defense", `×${iv.defense_tier}`, "Defense platform tier (scouted).")} ${chip("shipyard", `×${iv.shipyard_tier}`, "Shipyard tier (scouted).")} <span class="dim" title="Age of this snapshot — re-scout to refresh.">${icon("time", "sm")} ${ageTxt}</span>${prov}</div>`;
+    }
   }
   // Open System View — for YOUR systems this is now THE way in to management
   // (city-screen pattern), so it's the rail's PRIMARY action; for any other
   // system it stays the presentation-only inspect. Also reachable by
   // double-click or deep-zoom on the map.
   actions += mine
-    ? `<button class="act act--primary" data-action="inspect" style="margin-top:8px">${uiIcon("action-build", 14)} Open System View — manage ▸</button>`
-    : `<button class="act" data-action="inspect">◎ Inspect system ▸</button>`;
+    ? `<button class="act act--primary" data-action="inspect" style="margin-top:8px" title="${isMyHome ? "Your command center sits here. " : ""}Run this system from its System View — build/develop, production, and shipping. Convoys cross fogged space to the hub, raidable in transit.">${icon("build", "sm")} Open System View ▸</button>`
+    : `<button class="act" data-action="inspect" title="Inspect this system (public geography — its holdings stay fogged unless you own it).">◎ Inspect ▸</button>`;
 
-  const hint = isMyHome
-    ? `<div class="mhint">Your command center sits here — your vantage on the galaxy. Build, develop and ship from the <b>System View</b>; automate supply from Logistics.</div>`
-    : mine
-      ? `<div class="mhint">Run this system from its <b>System View</b> — build/develop, production, shipping. Convoys cross fogged space to the hub, raidable in transit.</div>`
-      : unclaimed && !atHomeSite
-        ? `<div class="mhint">Settlement starts production at once; rivals learn you hold it only when the claim's light reaches them.</div>`
-        : "";
+  // Only the unclaimed case keeps a short one-liner; the rest live in tooltips.
+  const hint = !mine && unclaimed && !atHomeSite
+    ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.</div>`
+    : "";
 
-  root.innerHTML = rail + header + starFeature + strip + storageBar + attention + deps + intelBlock + actions + hint;
+  root.innerHTML = rail + header + starFeature + nodeBlock + strip + storageBar + attention + deps + intelBlock + actions + hint;
 }
 
 // --- Delayed reports log -----------------------------------------------------
@@ -2195,6 +2451,13 @@ function addReport(r: import("./protocol").RaidReport): void {
       if (yourShipDied && theirShipDied) { icon = "✺"; cls = "bad"; text = `Your ${mine} and a rival ${theirs} destroyed each other.`; }
       else if (yourShipDied) { icon = "‼"; cls = "bad"; text = `Your ${mine} was destroyed by a rival ${theirs}.`; }
       else { icon = "✓"; cls = "good"; text = `Your ${mine} destroyed a rival ${theirs}.`; }
+  }
+  // §pirates: name the neutral faction distinctly — "a pirate ..." instead of
+  // "a rival ..." when the aggressor is the pirate faction (the first raid report
+  // is how a player DISCOVERS pirates exist).
+  const pid = state.galaxy?.pirate_id;
+  if (pid && (r.attacker === pid || r.defender === pid)) {
+    text = text.split("rival").join("pirate");
   }
   // Per-kind losses (§FLEETS Part 2) — a composition-vs-composition tally.
   const fmtLosses = (l: import("./protocol").CompCount[]): string =>
@@ -2320,7 +2583,7 @@ function renderMarketBoard(): void {
     const active = composer.commodity === c ? "is-active" : "";
     const priceTxt = p === undefined ? `<span class="is-stale">—</span>` : `${stale ? "~" : ""}${p.toFixed(2)}`;
     return `<button class="board__row ${active}" data-resource="${c}" title="observed from your own price history — not a market forecast">` +
-      `<span class="dep-ico">${commodityIcon(c, 18)}</span>` +
+      `<span class="dep-ico">${commodityIcon(c, "md")}</span>` +
       `<span class="b-name">${c}</span>` +
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
@@ -2342,14 +2605,14 @@ function renderComposer(): void {
   const limitOn = ($("mk-limit-on") as HTMLInputElement).checked;
   const submit = $("mk-submit");
   if (limitOn) {
-    $("mk-preview").innerHTML = `<b>Limit ${composer.side} ${qty} ${c}</b> rests on the book and clears in the periodic <span class="accent">uniform-price batch</span> — reacting fastest confers no edge. Partial fills carry to the next batch.`;
+    $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${c}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `Settles <b>now</b> at ${px}/u (~<span class="accent">${cost} Cr</span>). The goods then cross fogged space to your home anchor — that delivery convoy is <b>raidable</b> in transit.`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} <b>raidable</b> delivery</span>`;
     submit.textContent = `Buy ${qty} ${c}`;
   } else {
-    $("mk-preview").innerHTML = `Convoy <b>dispatched now</b>; it clears at the price <b>on arrival</b> (not today's ${px}) and is <b>raidable</b> until it reaches the hub — double uncertainty: price + delivery.`;
+    $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
     submit.textContent = `Sell ${qty} ${c}`;
   }
 }
@@ -2418,6 +2681,14 @@ function ownedSystems(): { id: string; name: string }[] {
     .filter((s) => s.owner === state.playerId)
     .map((s) => ({ id: s.id, name: systemName(s.id) }));
 }
+// §syndicates Part 3: SYNDICATE-ally systems (per the viewer's known membership)
+// are valid AID destinations for standing orders / convoys — deliveries credit the
+// ally's stockpile (blockades still interdict the run).
+function allySystems(): { id: string; name: string }[] {
+  return state.systems
+    .filter((s) => s.ally)
+    .map((s) => ({ id: s.id, name: systemName(s.id) }));
+}
 function endpointLabel(e: StandingEndpoint): string {
   return e.kind === "hub" ? "hub" : e.kind === "home" ? "home" : systemName(e.id);
 }
@@ -2477,18 +2748,23 @@ function updateStandingPanel(): void {
   // Rebuild source/dest selects only when the owned-systems set changes (so a
   // mid-edit selection isn't clobbered every tick).
   const owned = ownedSystems();
-  const ownedKey = owned.map((s) => s.id).join(",");
+  const allies = allySystems();
+  // Key includes the ally set so the dest list rebuilds when an alliance forms/ends.
+  const ownedKey = owned.map((s) => s.id).join(",") + "|" + allies.map((s) => s.id).join(",");
   const srcSel = $("so-source") as HTMLSelectElement;
   if (srcSel.dataset.key !== ownedKey) {
     srcSel.dataset.key = ownedKey;
     const destSel = $("so-dest") as HTMLSelectElement;
     const prevSrc = srcSel.value, prevDest = destSel.value;
+    // Source is always your OWN system; destinations add hub/home + your depots +
+    // ally systems (§syndicates Part 3 AID).
     srcSel.innerHTML = owned.length
       ? owned.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")
       : `<option value="">(claim a system first)</option>`;
     if (owned.some((s) => s.id === prevSrc)) srcSel.value = prevSrc;
     destSel.innerHTML = `<option value="hub">hub (sell)</option><option value="home">home (store)</option>` +
-      owned.map((s) => `<option value="${s.id}">${s.name} (depot)</option>`).join("");
+      owned.map((s) => `<option value="${s.id}">${s.name} (depot)</option>`).join("") +
+      allies.map((s) => `<option value="${s.id}">${s.name} (ally aid)</option>`).join("");
     if (prevDest) destSel.value = prevDest;
   }
   const comSel = $("so-commodity") as HTMLSelectElement;
@@ -2505,7 +2781,7 @@ function updateStandingPanel(): void {
       const flight = o.in_flight ? `<span class="run">● convoy en route</span>` : `<span class="dim">idle</span>`;
       const paused = o.status === "paused" ? " · paused" : "";
       return `<div class="so"><span class="x" data-clear="${o.id}" title="remove">✕</span>` +
-        `<b>#${o.id}</b> ${commodityIcon(o.commodity, 14)} ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
+        `<b>#${o.id}</b> ${commodityIcon(o.commodity, "sm")} ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
         `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
     })
     .join("");
@@ -2594,64 +2870,325 @@ function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: n
   return { pct: Math.min(100, (elapsed / total) * 100), left: Math.max(0, total - elapsed), ripe: elapsed >= total };
 }
 
-type Attn = { severity: TimelineEntry["severity"]; text: string };
-function computeAttention(): Attn[] {
-  if (state.playerId === null) return [];
-  const items: Attn[] = [];
+// ================= DECISION INBOX (§decision-inbox) =========================
+// The digest's PRIMARY surface: not "what happened" but "what deserves a
+// decision". Every item is a PURE FUNCTION of already-delivered, OWNER-GATED View
+// state — blockade is participant-only, stockpile/tiers/garrison are owner-only,
+// battle/capture reports are per-participant, ghosts are the fog-safe delayed
+// feed — so the inbox carries NO new information and there is nothing to leak
+// beyond what the View already (leak-tested) reveals. Priority is encoded in the
+// weights: threats > strangulation > idle capacity > information (tunable here).
+const INBOX_W = {
+  siege: 100, battle: 92, hostile: 85, captureLost: 82, blockade: 80,
+  garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
+  brokenOrder: 46, nodeAwakening: 44, dryRefinery: 42, nodeOpportunity: 41, myGarrisonUnfed: 40, emptyQueue: 34,
+  captureWon: 28, battleReport: 26, noAutomation: 20,
+};
+const HOSTILE_CONCERN_MULT = 1.6; // a raider within this × sensor_range of an asset
+const REPORT_RECENT_S = 300; // capture/battle reports surface only while this fresh
+const IDLE_UNITS = 30; // idle-stockpile threshold
+const MAX_HOSTILE_ITEMS = 4;
+
+type InboxTone = "negative" | "warn" | "info" | "neutral";
+type InboxAction = { label: string; icon?: IconKey; run: () => void; deliveryPos?: Vec2; primary?: boolean; danger?: boolean };
+type InboxItem = { key: string; weight: number; tone: InboxTone; icon: IconKey; headline: string; stakes?: string; age?: number; confidence?: string; actions: InboxAction[] };
+
+const dismissedInbox = new Set<string>();
+let currentInbox: InboxItem[] = [];
+
+// One-way command delay (cc → pos) — the SAME echo math the order lifecycle uses;
+// null before the galaxy/CC arrive.
+function commandDelayTo(pos: Vec2): number | null {
+  if (!state.commandCenter || !state.galaxy) return null;
+  return Math.hypot(pos.x - state.commandCenter.x, pos.y - state.commandCenter.y) / state.galaxy.c;
+}
+// Nearest KNOWN system name to a point (for naming a battle/report location).
+function locName(pos: Vec2): string {
+  if (!state.galaxy) return `(${Math.round(pos.x)}, ${Math.round(pos.y)})`;
+  let best: { name: string; d: number } | null = null;
+  for (const s of state.galaxy.systems) {
+    const d = Math.hypot(s.pos.x - pos.x, s.pos.y - pos.y);
+    if (!best || d < best.d) best = { name: s.name, d };
+  }
+  return best ? best.name : `(${Math.round(pos.x)}, ${Math.round(pos.y)})`;
+}
+// Deep-link actions (close the inbox, focus the relevant panel/target).
+function inboxFocusSystem(id: string): void { state.selectedShipId = null; state.selectedSystemId = id; closeCheckin(); openRail("system"); }
+function inboxFocusFleet(id: string): void { closeCheckin(); selectShip(id); }
+function inboxOpenLogistics(): void { closeCheckin(); openRail("logistics"); }
+const dismissAct = (key: string): InboxAction => ({ label: "Dismiss", run: () => { dismissedInbox.add(key); renderInbox(); } });
+
+// Derive the prioritized inbox from owner-gated View state. Deterministic order
+// (weight desc, then key) so it rebuilds identically on reconnect.
+function computeInbox(): InboxItem[] {
+  const out: InboxItem[] = [];
+  if (state.playerId === null || !state.galaxy) return out;
+  const galaxy = state.galaxy;
   const owned = state.systems.filter((s) => s.owner === state.playerId);
   const ownedIds = new Set(owned.map((s) => s.id));
   const active = state.standingOrders.filter((o) => o.status === "active");
-  const IDLE = 30;
-  // 0⁻. UNDER BLOCKADE (§contestable-territory Part 1) — the most urgent
-  //     territorial cue: a rival fleet is strangling this system's logistics.
-  //     Owner-only view field, light-delayed, so it never fires spuriously.
+  const now = liveSimTime();
+  const push = (it: InboxItem) => { if (!dismissedInbox.has(it.key)) out.push(it); };
+  const sysPos = (id: string) => galaxy.systems.find((x) => x.id === id)?.pos ?? null;
+
+  // --- SIEGE / BLOCKADE (threat / strangulation; owner-only blockade field) ---
   for (const s of owned) {
-    if (s.blockade) {
-      items.push({ severity: "bad", text: `${systemName(s.id)}: under BLOCKADE — convoys held in &amp; out. Break it with relief, or grind the blockader down with a Defense Platform.` });
+    if (!s.blockade) continue;
+    const sg = siegeProgress(s);
+    if (sg) {
+      push({ key: `siege:${s.id}`, weight: INBOX_W.siege, tone: "negative", icon: "siege",
+        headline: `${systemName(s.id)} — SIEGE in progress`,
+        stakes: sg.ripe ? "CRITICAL — a rival colony ship landing now CAPTURES it." : `Falls in ${fmtCountdown(sg.left)} unless you break the blockade or rebuild a Defense Platform.`,
+        age: s.blockade.since,
+        actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(`siege:${s.id}`)] });
+    } else {
+      push({ key: `blockade:${s.id}`, weight: INBOX_W.blockade, tone: "negative", icon: "blockade",
+        headline: `${systemName(s.id)} — under BLOCKADE`,
+        stakes: "Convoys held in & out; production idles. Break it with relief, or build a Defense Platform tier.",
+        age: s.blockade.since,
+        actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(`blockade:${s.id}`)] });
     }
   }
-  // 0. STORAGE FULL (§buildings step 2) — production is idling right now; the
-  //    most urgent economy cue there is. Owner-only fields, so this never fires
-  //    for systems the player doesn't hold.
+
+  // --- ONGOING BATTLE you're in (threat; per-participant BattleView) ---
+  for (const b of state.battles) {
+    if (!b.own) continue;
+    const ownFleet = state.ghosts.find((g) => g.own && b.participants.includes(g.id));
+    const acts: InboxAction[] = [{ label: "Open battle", run: () => { closeCheckin(); openOngoingBattlePanel(b.id); }, primary: true }];
+    if (ownFleet && net) acts.push({ label: "Withdraw", danger: true, deliveryPos: b.pos, run: () => net!.send({ type: "Withdraw", fleet_id: ownFleet.id }) });
+    acts.push(dismissAct(`battle:${b.id}`));
+    push({ key: `battle:${b.id}`, weight: INBOX_W.battle, tone: "negative", icon: "battle",
+      headline: `Your fleet is ENGAGED near ${locName(b.pos)}`,
+      stakes: "A battle is underway — reinforce, or Withdraw to break off (light-delayed).",
+      age: b.started_at, actions: acts });
+  }
+
+  // --- HOSTILE CONTACTS near an owned asset (threat; the fog-safe ghost feed) ---
+  const threatR = galaxy.sensor_range * HOSTILE_CONCERN_MULT;
+  const hostiles: InboxItem[] = [];
+  for (const g of state.ghosts) {
+    if (g.own || g.ally || g.kind !== "raider") continue; // rival strike craft only
+    let near: { id: string; d: number; pos: Vec2 } | null = null;
+    for (const s of owned) {
+      const p = sysPos(s.id);
+      if (!p) continue;
+      const d = Math.hypot(g.pos.x - p.x, g.pos.y - p.y);
+      if (d <= threatR && (!near || d < near.d)) near = { id: s.id, d, pos: p };
+    }
+    if (!near) continue;
+    const speed = Math.hypot(g.vel.x, g.vel.y);
+    const closing = speed > 1 && (g.vel.x * (near.pos.x - g.pos.x) + g.vel.y * (near.pos.y - g.pos.y)) > 0;
+    const size = g.composition ? `${g.composition.reduce((n, c) => n + c.count, 0)}-ship` : `~${countClassLabel(g.count_class)}`;
+    // §pirates: name a neutral-faction pack distinctly (and weight it higher).
+    const foe = g.pirate ? "PIRATE" : "Hostile";
+    hostiles.push({ key: `hostile:${g.id}:${near.id}`, weight: INBOX_W.hostile + (g.pirate ? 3 : 0), tone: "warn", icon: "warning",
+      headline: `${foe} ${size} raider near ${systemName(near.id)}`,
+      stakes: closing ? `Closing on ${systemName(near.id)} — ~${fmtCountdown(near.d / speed)} out at its shown speed (a delayed sighting).` : `${Math.round(near.d)} su out, holding — watch it (delayed sighting).`,
+      age: g.age,
+      confidence: g.composition ? undefined : "size estimate only — the contact is outside your sensor coverage",
+      actions: [{ label: "Focus", run: () => inboxFocusSystem(near!.id), primary: true }, dismissAct(`hostile:${g.id}:${near.id}`)] });
+  }
+  hostiles.sort((a, b) => (b.age ?? 0) - (a.age ?? 0)).slice(0, MAX_HOSTILE_ITEMS).forEach(push);
+
+  // --- SCOUTED PIRATE ENCLAVE (§pirates): an objective you found — clear it. ---
+  for (const s of state.systems) {
+    const et = s.intel?.enclave_tier ?? 0;
+    if (et <= 0) continue;
+    const key = `enclave:${s.id}`;
+    push({ key, weight: INBOX_W.enclave, tone: "warn", icon: "raider",
+      headline: `Pirate enclave at ${systemName(s.id)} — tier ${et}`,
+      stakes: "It raids careless trade nearby and grows if ignored. Station a raider fleet on it to destroy the base (yields its plunder).",
+      age: s.intel?.observed_at,
+      actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
+  }
+
+  // --- CAPTURE reports (territory flip; per-participant, recent only) ---
+  for (const r of state.captureReports) {
+    if (now - r.learned_at > REPORT_RECENT_S) continue;
+    const key = `capture:${r.id}`;
+    push({ key, weight: r.captor ? INBOX_W.captureWon : INBOX_W.captureLost, tone: r.captor ? "info" : "negative", icon: r.captor ? "captured" : "lost",
+      headline: r.captor ? `You CAPTURED ${locName(r.pos)}` : `You LOST ${locName(r.pos)}`,
+      stakes: r.captor ? "Territory taken — plunder seized." : "A rival colony ship landed at full siege and took the system.",
+      age: r.learned_at,
+      actions: [{ label: "Open report", run: () => { closeCheckin(); openCapturePanel(r.id); }, primary: true }, dismissAct(key)] });
+  }
+
+  // --- GARRISON UNFED — an ally shield YOU host is starving (owner-only) ---
+  for (const s of owned) {
+    if ((s.ally_garrison_ships ?? 0) > 0 && s.ally_garrison_fed === false) {
+      const key = `garrison:${s.id}`;
+      push({ key, weight: INBOX_W.garrisonUnfed, tone: "warn", icon: "garrison",
+        headline: `Ally garrison at ${systemName(s.id)} is UNFED`,
+        stakes: `${s.ally_garrison_ships} allied ship(s) here — their defense is SUSPENDED until you supply Provisions.`,
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
+    }
+  }
+  // --- your OWN garrison, stationed at an ally, going unfed (owner-only ghost) ---
+  for (const g of state.ghosts) {
+    if (g.own && g.garrison_host && g.garrison_fed === false) {
+      const key = `mygarr:${g.id}`;
+      push({ key, weight: INBOX_W.myGarrisonUnfed, tone: "warn", icon: "garrison",
+        headline: `Your garrison at ${systemName(g.garrison_host)} is UNFED`,
+        stakes: "The host is out of Provisions — this garrison isn't defending. Recall it, or wait for the host to resupply.",
+        actions: [{ label: "Inspect", run: () => inboxFocusFleet(g.id), primary: true }, dismissAct(key)] });
+    }
+  }
+
+  // --- IDLE CAPACITY (owner-only economy fields) ---
   for (const s of owned) {
     if (s.storage_cap > 0 && s.storage_used >= s.storage_cap) {
-      items.push({ severity: "warn", text: `${systemName(s.id)}: storage FULL (${s.storage_used}/${s.storage_cap}) — production idling. Ship goods out or build a Depot.` });
+      const key = `storage:${s.id}`;
+      push({ key, weight: INBOX_W.storageFull, tone: "warn", icon: "storage",
+        headline: `${systemName(s.id)} — storage FULL (${s.storage_used}/${s.storage_cap})`,
+        stakes: "Production idles at the cap. Ship goods out, automate it, or build a Depot (nothing is lost).",
+        actions: [{ label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, { label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics }, { label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
-  }
-  // 0b. UNFED HABITAT (§buildings step 3a) — the boost is suspended right now;
-  //     a Provisions haul (or standing order) restores it. Owner-only fields.
-  for (const s of owned) {
     if (s.habitat_tier >= 1 && !s.habitat_fed) {
-      items.push({ severity: "warn", text: `${systemName(s.id)}: Habitat UNFED — output boost suspended. Ship Provisions there (nothing is lost).` });
+      const key = `habitat:${s.id}`;
+      push({ key, weight: INBOX_W.unfedHabitat, tone: "warn", icon: "habitat",
+        headline: `${systemName(s.id)} — Habitat UNFED`,
+        stakes: "Output boost suspended. Ship Provisions here or set a standing order (nothing is lost).",
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
     }
-  }
-  // 0c. DRY REFINERY (§buildings step 3b) — built industry sitting idle.
-  for (const s of owned) {
+    // §node: a held node whose upkeep lapsed — its TACTICAL BONUS is suspended.
+    if (s.node?.awakened && !s.node.fed) {
+      const key = `node:${s.id}`;
+      push({ key, weight: INBOX_W.nodeUnfed, tone: "warn", icon: "unfed",
+        headline: `${systemName(s.id)} — ${s.node.title} node UNFED`,
+        stakes: `Its bonus is SUSPENDED. ${nodeBonusDesc(s.node.bonus)} Ship its upkeep here or automate it (nothing is lost).`,
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
+    }
     const vol = (s.stockpile ?? []).find((k) => k.commodity === "volatiles")?.units ?? 0;
     if (s.refinery_tier >= 1 && vol === 0) {
-      items.push({ severity: "info", text: `${systemName(s.id)}: Refinery idle — no Volatiles. Haul some in to produce Fuel locally.` });
+      const key = `refinery:${s.id}`;
+      push({ key, weight: INBOX_W.dryRefinery, tone: "info", icon: "refinery",
+        headline: `${systemName(s.id)} — Refinery idle`,
+        stakes: "No Volatiles — Fuel production stopped. Haul some in or automate it.",
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
     }
-  }
-  // 1. Idle stockpile not covered by a standing order sourced there → automate it.
-  for (const s of owned) {
     const total = (s.stockpile ?? []).reduce((n, k) => n + k.units, 0);
     const covered = active.some((o) => o.source.kind === "system" && o.source.id === s.id);
-    if (total >= IDLE && !covered) {
-      items.push({ severity: "warn", text: `${systemName(s.id)}: ${total} units sitting idle — set a standing order (O) or ship it.` });
+    if (total >= IDLE_UNITS && !covered && !(s.storage_cap > 0 && s.storage_used >= s.storage_cap)) {
+      const key = `idle:${s.id}`;
+      push({ key, weight: INBOX_W.idleStockpile, tone: "info", icon: "market",
+        headline: `${systemName(s.id)} — ${total} units idle`,
+        stakes: "No standing order ships from here — automate it so it works while you're away.",
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, dismissAct(key)] });
+    }
+    // A DEVELOPED-but-idle system (a claimed frontier with nothing built/building).
+    if ((s.slots_total ?? 0) > 0 && (s.slots_used ?? 0) === 0 && (s.builds?.length ?? 0) === 0) {
+      const key = `queue:${s.id}`;
+      push({ key, weight: INBOX_W.emptyQueue, tone: "info", icon: "build",
+        headline: `${systemName(s.id)} — nothing built yet`,
+        stakes: `${s.slots_total} development slot(s) free and idle — develop it (Extractor, Depot, Sensor…).`,
+        actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
   }
-  // 2. A rule that points at a system you no longer hold → fix it.
+
+  // --- §node: EXOTIC NODES — awakening telegraph + capturable opportunities ---
+  {
+    const nodeSystems = state.systems.filter((s) => s.node);
+    const awakenAt = galaxy.node_awakening_time ?? 0;
+    const secsLeft = awakenAt - now;
+    // TELEGRAPH: while any node is still dormant, one low-priority countdown card
+    // (the "nodes awaken at T" notice, from campaign start through the run-up).
+    if (nodeSystems.length && nodeSystems.some((s) => !s.node!.awakened) && secsLeft > 0) {
+      const key = "nodes:awakening";
+      push({ key, weight: INBOX_W.nodeAwakening, tone: "info", icon: "intel",
+        headline: `Exotic nodes awaken in ${fmtCountdown(secsLeft)}`,
+        stakes: `${nodeSystems.length} exotic system(s) become capturable tactical prizes. Stage colony ships + fleets now — first arrival claims an unowned node.`,
+        actions: [dismissAct(key)] });
+    }
+    // OPPORTUNITY: an AWAKENED, UNCLAIMED node — claim it before a rival does.
+    for (const s of nodeSystems) {
+      if (!s.node!.awakened || s.owner) continue; // held (mine/rival) → not an open claim
+      const key = `nodeopen:${s.id}`;
+      push({ key, weight: INBOX_W.nodeOpportunity, tone: "info", icon: "claim",
+        headline: `${systemName(s.id)} — ${s.node!.title} node UNCLAIMED`,
+        stakes: `A capturable tactical prize. ${nodeBonusDesc(s.node!.bonus)} Send a colony ship — first arrival claims it.`,
+        actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
+    }
+  }
+
+  // --- BROKEN standing order (points at a system you no longer hold; an ALLY-aid
+  //     destination is valid, so it doesn't count as broken) ---
+  const allyIds = new Set(state.systems.filter((x) => x.ally).map((x) => x.id));
   for (const o of active) {
     const refs: string[] = [];
     if (o.source.kind === "system" && !ownedIds.has(o.source.id)) refs.push(systemName(o.source.id));
-    if (o.dest.kind === "system" && !ownedIds.has(o.dest.id)) refs.push(systemName(o.dest.id));
-    if (refs.length) items.push({ severity: "warn", text: `Standing order #${o.id} targets ${refs.join(" & ")} — you no longer hold it; update it (O).` });
+    if (o.dest.kind === "system" && !ownedIds.has(o.dest.id) && !allyIds.has(o.dest.id)) refs.push(systemName(o.dest.id));
+    if (refs.length) {
+      const key = `order:${o.id}`;
+      push({ key, weight: INBOX_W.brokenOrder, tone: "warn", icon: "doctrine",
+        headline: `Standing order #${o.id} targets a system you don't hold`,
+        stakes: `Points at ${refs.join(" & ")} — update or clear it.`,
+        actions: [{ label: "Open logistics", run: inboxOpenLogistics, primary: true }, dismissAct(key)] });
+    }
   }
-  // 3. General nudge toward automation if you hold producers but run nothing.
-  if (owned.length > 0 && active.length === 0 && items.length === 0) {
-    items.push({ severity: "info", text: `You hold ${owned.length} system${owned.length > 1 ? "s" : ""} but run no standing orders — automate supply so it works while you're away (O).` });
+
+  // --- CONCLUDED battle you learned of (information; unviewed + recent) ---
+  for (const r of state.battleReports) {
+    if (state.battleViewed.has(r.id) || now - r.learned_at > REPORT_RECENT_S) continue;
+    const key = `report:${r.id}`;
+    push({ key, weight: INBOX_W.battleReport, tone: "info", icon: "aftermath",
+      headline: `A battle you were in concluded near ${locName(r.pos)}`,
+      stakes: "Open the report for losses and the outcome.",
+      age: r.learned_at,
+      actions: [{ label: "Open results", run: () => { closeCheckin(); openBattlePanel(r.id); }, primary: true }, dismissAct(key)] });
   }
-  return items;
+
+  // --- NO AUTOMATION nudge (only when nothing else needs a decision) ---
+  if (owned.length > 0 && active.length === 0 && out.length === 0) {
+    push({ key: "noauto", weight: INBOX_W.noAutomation, tone: "info", icon: "doctrine",
+      headline: "No standing orders running",
+      stakes: `You hold ${owned.length} system${owned.length > 1 ? "s" : ""} — automate supply so it works while you're away.`,
+      actions: [{ label: "Open logistics", run: inboxOpenLogistics, primary: true }] });
+  }
+
+  out.sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key));
+  return out;
+}
+
+// The "all clear" line — the single most check-in-respecting sentence in the
+// game: when nothing needs a decision, show the NEXT known timestamp that will.
+function nextDecisionLabel(): string {
+  const now = liveSimTime();
+  let at = Infinity, label = "";
+  const consider = (t: number, l: string) => { if (t > now && t < at) { at = t; label = l; } };
+  const owned = state.systems.filter((s) => s.owner === state.playerId);
+  for (const s of owned) {
+    for (const b of s.builds ?? []) consider(b.complete_time, `a build completes at ${systemName(s.id)}`);
+    if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
+  }
+  for (const p of state.pendingOrders.values()) consider(p.echo_at, "an order confirms");
+  if (!isFinite(at)) return "All quiet — nothing scheduled needs you.";
+  return `Nothing needs you until ${doneAtLocal(at)} (${label}).`;
+}
+
+// Render one inbox card (headline+icon, age chip, stakes, confidence, action row
+// with per-button delivery times for order-issuing verbs).
+function inboxCardHtml(it: InboxItem, i: number): string {
+  const age = it.age != null ? `<span class="ic-age" title="Information age — how stale this is on your clock (light-delayed).">${agoLabel(it.age)}</span>` : "";
+  const stakes = it.stakes ? `<div class="ic-stakes">${it.stakes}</div>` : "";
+  const conf = it.confidence ? `<div class="ic-conf">${icon("uncertainty", "sm")} ${esc(it.confidence)}</div>` : "";
+  const btns = it.actions.map((a, j) => {
+    const d = a.deliveryPos ? commandDelayTo(a.deliveryPos) : null;
+    const eta = d != null ? ` <span class="ic-eta" title="When your order's light reaches the target — the echo lifecycle.">arrives ~${arrivalLocal(d)}</span>` : "";
+    const cls = `ic-btn${a.primary ? " ic-btn--primary" : ""}${a.danger ? " ic-btn--danger" : ""}`;
+    return `<button class="${cls}" data-i="${i}" data-j="${j}">${a.icon ? icon(a.icon, "sm") + " " : ""}${esc(a.label)}${eta}</button>`;
+  }).join("");
+  return `<div class="inbox-card tone-${it.tone}"><div class="ic-head">${icon(it.icon, "sm")} <b>${it.headline}</b> ${age}</div>${stakes}${conf}<div class="ic-actions">${btns}</div></div>`;
+}
+
+// Render the inbox (or the all-clear line) into the check-in panel's primary slot.
+function renderInbox(): void {
+  const items = computeInbox();
+  currentInbox = items;
+  const el = $("checkin-attention");
+  $("checkin-att-head").textContent = `Decision inbox${items.length ? ` (${items.length})` : ""}`;
+  el.innerHTML = items.length
+    ? items.map((it, i) => inboxCardHtml(it, i)).join("")
+    : `<div class="inbox-clear">${icon("success", "sm")} ${esc(nextDecisionLabel())}</div>`;
 }
 
 let checkinBuilt = false;
@@ -2659,11 +3196,22 @@ function buildCheckinPanel(): void {
   if (checkinBuilt) return;
   checkinBuilt = true;
   $("checkin-toggle").addEventListener("click", closeCheckin);
+  // Delegated inbox actions — the buttons are rebuilt each render; the live
+  // closures live in `currentInbox` (kept fresh by renderInbox each View).
+  $("checkin-attention").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button.ic-btn") as HTMLElement | null;
+    if (!b) return;
+    const i = Number(b.dataset.i), j = Number(b.dataset.j);
+    currentInbox[i]?.actions[j]?.run();
+  });
 }
 
 function updateCheckinPanel(): void {
   if (!checkinBuilt) return;
   if (renderDeferred("checkin", updateCheckinPanel)) return; // §single-click (the ✕ toggle sits inside)
+  // DECISION INBOX first (the primary surface — "what deserves a decision").
+  renderInbox();
+  // The LOG below (what happened) — the light-correct, offline-buffered timeline.
   const tl = state.timeline;
   const away = tl.filter((e) => e.at_time > state.awaySince);
   const earlier = tl.filter((e) => e.at_time <= state.awaySince);
@@ -2674,14 +3222,8 @@ function updateCheckinPanel(): void {
   const earlierHtml = earlier.length
     ? `<div class="ci-sub">Earlier</div>` + earlier.slice().reverse().map(row).join("")
     : "";
-  $("checkin-timeline").innerHTML =
-    `<div class="ci-sub">Since you were away${away.length ? ` (${away.length})` : ""}</div>${awayHtml}${earlierHtml}`;
-
-  const att = computeAttention();
-  $("checkin-attention").innerHTML = att.length
-    ? att.map((a) => `<div class="ci ${a.severity}">${statusIcon(a.severity)} ${a.text}</div>`).join("")
-    : `<span class="dim">Nothing needs your attention.</span>`;
-  $("checkin-att-head").textContent = `Needs attention${att.length ? ` (${att.length})` : ""}`;
+  $("checkin-log-head").textContent = `Log${away.length ? ` (${away.length} new)` : ""}`;
+  $("checkin-timeline").innerHTML = awayHtml + earlierHtml;
 }
 
 // --- Networking ------------------------------------------------------------
@@ -2755,6 +3297,9 @@ function join(): void {
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
           state.captureReports = msg.capture_reports;
+          state.syndicate = msg.syndicate ?? null;
+          state.syndicateInvites = msg.syndicate_invites ?? [];
+          state.rankings = msg.rankings ?? [];
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
@@ -2766,10 +3311,14 @@ function join(): void {
             if (railTab === "system") updateSystemTab();
             else if (railTab === "logistics") updateStandingPanel();
             else if (railTab === "doctrine") updateDoctrinePanel();
+            else if (railTab === "rankings") updateRankingsPanel();
           }
           // The selected-ship panel keeps the information AGE ticking (and handles a
           // contact passing out of view) while it's open.
           if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
+          // §syndicates: refresh the alliance roster/invites if the panel is open
+          // (guarded by a signature so a half-typed name survives).
+          if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
           // §management-home: inside the System View, refresh the management
           // column + the structure markers (a cached no-op unless tiers changed).
           updateSysviewDynamic();
