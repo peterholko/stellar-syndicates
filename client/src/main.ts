@@ -584,6 +584,8 @@ function ownBody(g: GhostView): string {
   if (g.kind === "scout") {
     const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
     parts.push(`<div class="sp-sec">${icon("sensor", "sm")} Sensors</div><div class="sp-line" title="Projects a ×${mult} sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses. No cargo, no weapons: if anything engages it, it dies — cheap on purpose.">${chip("sensorRange", `×${mult}`, "Mobile sensor bubble — sweep rival space for dark contacts, cargo &amp; defense intel.")} — dies if engaged (no weapons).</div>`);
+    // §explore Part 2: the scout's SECOND job — click-to-survey (blockade idiom).
+    parts.push(`<div class="sp-line dim" title="Click an UNSURVEYED system (its geology shows '?') to order a survey: the scout flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detected farther) — then the exact geology travels home at light speed. Allies receive a relayed copy. Already-surveyed systems select normally.">${icon("intel", "sm")} <b>Survey:</b> click an unsurveyed system.</div>`);
   }
   parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div>`);
   // §battles-take-time: WITHDRAW when this fleet is in/near a visible battle.
@@ -1527,6 +1529,29 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
           return;
         }
       }
+      // §explore Part 2 — SURVEY-ON-CLICK (the blockade idiom for the scout's
+      // second job): a SCOUT-carrying own fleet selected + click an UNSURVEYED
+      // system → order a survey. Surveyed systems click-select normally (no
+      // intercept — you already know their geology).
+      if (selF && selF.own && net && state.galaxy && (selF.composition ?? []).some((c) => c.kind === "scout" && c.count > 0)) {
+        let hitSys: SystemInfo | null = null;
+        let bestD = Infinity;
+        for (const sys of state.galaxy.systems) {
+          const s = renderer.worldToScreen(sys.pos);
+          const d = Math.hypot(s.x - sx, s.y - sy);
+          if (d < Math.max(15, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; hitSys = sys; }
+        }
+        if (hitSys && knownDeposits(hitSys.id) === null) {
+          net.send({ type: "SurveySystem", fleet_id: selF.id, system_id: hitSys.id });
+          delete state.orders[selF.id];
+          updateShipPanel();
+          readout().innerHTML =
+            `Survey ordered: your <b>scout fleet</b> → <b>${esc(hitSys.name)}</b> (${esc(hitSys.band.toUpperCase())} band). ` +
+            `It flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detectable farther). ` +
+            `<span class="dim">The exact geology travels home at light speed; allies receive a relayed copy.</span>`;
+          return;
+        }
+      }
     }
 
     // Selection priority + CO-LOCATION CYCLING. A star SYSTEM and your own SHIPS
@@ -1952,6 +1977,10 @@ function depositRow(d: Deposit): string {
 // readout shows the ACTUAL current output, not the intrinsic geology (which the
 // Geology section above shows unmodified).
 const EXTRACTOR_RICHNESS_MULT = 1.5;
+
+// §explore Part 2 — UI mirror of the sim's SURVEY_SECS (the dwell duration), for
+// the order readout + the progress-ring tooltip. Display only, never authoritative.
+const SURVEY_SECS_UI = 20;
 
 function productionReadout(dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));

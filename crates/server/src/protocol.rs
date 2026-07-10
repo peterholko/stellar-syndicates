@@ -117,6 +117,11 @@ pub enum ClientMsg {
     /// system and strangle its logistics. Light-delayed like a move order.
     BlockadeSystem { fleet_id: EntityId, system_id: EntityId },
 
+    /// SURVEY a system's exact geology (§explore Part 2): order one of the
+    /// player's fleets (must contain a Scout) to fly on-site and dwell. Valid on
+    /// ANY system (pre-siege prospecting intended). Light-delayed like a move.
+    SurveySystem { fleet_id: EntityId, system_id: EntityId },
+
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
     /// Orderable on any rival fleet; the attacker must contain a raider. Light-
     /// delayed like a raid; on contact it's a FULL battle (destroy, cargo lost),
@@ -744,6 +749,12 @@ pub struct GhostView {
     /// `Some(..)` for your own fleets and `None` for every rival (a standing
     /// per-fleet policy is private, like the corp doctrine; never leaks).
     pub posture: Option<EngagementPosture>,
+    /// §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your own
+    /// fleet's live order state, like `posture`; a rival never sees it — they
+    /// see only the louder signature under the normal detection rules). `None`
+    /// when not dwelling.
+    #[serde(default)]
+    pub survey_progress: Option<f64>,
     /// True if this fleet's owner is a SYNDICATE ally as the viewer KNOWS it
     /// (§syndicates Part 1) — light-delayed membership (`World::known_ally`), so a
     /// fresh join/leave isn't seen early. Drives the friendly ally tint/pip.

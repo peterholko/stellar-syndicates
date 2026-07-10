@@ -374,6 +374,29 @@ pub struct World {
     pub band_lo: f64,
     #[serde(default)]
     pub band_hi: f64,
+    /// §explore Part 2: SURVEY REPORTS in flight — knowledge travelling home at c.
+    /// The owner's leg is scheduled at dwell completion (`pos → owner cc`); when
+    /// it lands, ally-relay legs are scheduled (`owner cc → each ally cc`, the
+    /// same chain the scout-intel relay uses). Delivery INSERTS into the
+    /// recipient's `surveyed` set (permanent). `#[serde(default)]` for old snaps.
+    #[serde(default)]
+    pub pending_survey_reports: Vec<SurveyReport>,
+}
+
+/// §explore Part 2: one in-flight survey-report leg (see
+/// [`World::pending_survey_reports`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurveyReport {
+    /// Who receives the knowledge when this leg lands.
+    pub recipient: PlayerId,
+    pub system: EntityId,
+    /// Sim time the leg's light arrives at the recipient's command center.
+    pub arrive_at: f64,
+    /// `false` = the surveyor's own report (on delivery it FANS OUT relay legs to
+    /// the origin's allies-at-that-moment); `true` = an ally-relayed copy (terminal).
+    pub relay: bool,
+    /// The surveying corp (the relay origin).
+    pub origin: PlayerId,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -534,6 +557,7 @@ impl World {
             rankings: Vec::new(),
             band_lo: 0.0,
             band_hi: 0.0,
+            pending_survey_reports: Vec::new(),
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
@@ -997,6 +1021,14 @@ impl World {
         //     Also where a besieging colony ship CAPTURES a strangled system (§Part 2).
         self.resolve_colony_arrivals(&mut events);
 
+        // 4b'. §explore Part 2: run the SURVEY dwell clocks (after movement so
+        //      positions are this tick's truth; after the combat passes so the
+        //      abort-on-engagement rule sees this tick's battles), then deliver
+        //      any survey-report legs whose light has arrived (knowledge inserts
+        //      into `surveyed`; the owner's landing fans out ally-relay legs).
+        self.resolve_surveys(&mut events);
+        self.deliver_survey_reports();
+
         // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
         //     settled, confirm delivered orders whose echo light has returned
         //     (owner-only `OrderConfirmed`), and drop echoes for fleets just lost.
@@ -1185,7 +1217,7 @@ impl World {
                 combatant: s.is_combatant(),
                 // §node Veil: a fed magnetar node quiets its holder's dark fleets
                 // in-region — the SAME signature both pickets and the View read.
-                signature: s.signature() * self.veil_factor(s.owner, s.pos),
+                signature: s.signature() * self.veil_factor(s.owner, s.pos) * if s.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
             })
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
@@ -1502,7 +1534,7 @@ impl World {
                 combatant: s.is_combatant(),
                 // §node Veil: a fed magnetar node quiets its holder's dark fleets
                 // in-region — the SAME signature both pickets and the View read.
-                signature: s.signature() * self.veil_factor(s.owner, s.pos),
+                signature: s.signature() * self.veil_factor(s.owner, s.pos) * if s.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
                 broadcasts: s.broadcasts(),
             })
             .collect();
@@ -2598,6 +2630,103 @@ impl World {
             .collect()
     }
 
+    /// §explore Part 2: run every Survey order's dwell clock. Per surveying fleet:
+    /// * IN AN ENGAGEMENT → ABORT to Idle, no partial credit (re-issuable). A
+    ///   fight interrupts the sweep — the all-or-nothing rule.
+    /// * OUT OF RANGE → the dwell clock resets (still approaching, or shoved off
+    ///   station): no partial credit; the approach continues and the dwell
+    ///   restarts from zero once back on-site.
+    /// * IN RANGE → start/continue the dwell; at `SURVEY_SECS` the survey
+    ///   COMPLETES: fire `SurveyCompleted` AT THE FLEET'S POSITION (knowledge
+    ///   travels home at c — the owner's report leg is scheduled here), order →
+    ///   Idle. Idempotent on an already-surveyed system (legal, wasted time).
+    ///
+    /// Deterministic + fully offline (§5.1 — surveys run whether the owner is
+    /// logged in or not).
+    fn resolve_surveys(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let c = self.config.c;
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
+        let mut completions: Vec<(PlayerId, EntityId, Vec2)> = Vec::new();
+        for (fid, fleet) in self.fleets.iter_mut() {
+            let FleetOrder::Survey { system, station, dwell_since } = &mut fleet.order else {
+                continue;
+            };
+            if engaged.contains(fid) {
+                // A battle interrupts the sweep — abort, nothing banked.
+                fleet.order = FleetOrder::Idle;
+                continue;
+            }
+            if fleet.pos.distance(*station) > crate::explore::SURVEY_RANGE {
+                *dwell_since = None; // off-site: no partial credit, keep approaching
+                continue;
+            }
+            match *dwell_since {
+                None => *dwell_since = Some(now),
+                Some(since) if now - since >= crate::explore::SURVEY_SECS => {
+                    completions.push((fleet.owner, *system, fleet.pos));
+                    fleet.order = FleetOrder::Idle;
+                }
+                Some(_) => {} // mid-dwell, loud, counting down
+            }
+        }
+        for (owner, system, pos) in completions {
+            events.push(Event::new(now, EventPayload::SurveyCompleted { owner, system, pos }));
+            // The report leg: the knowledge lands when its light reaches the
+            // OWNER's command center (same formula the timeline notice uses).
+            if let Some(cc) = self.players.get(&owner).map(|p| p.command_center) {
+                self.pending_survey_reports.push(SurveyReport {
+                    recipient: owner,
+                    system,
+                    arrive_at: now + pos.distance(cc) / c,
+                    relay: false,
+                    origin: owner,
+                });
+            }
+        }
+    }
+
+    /// §explore Part 2: deliver survey-report legs whose light has arrived —
+    /// INSERT the system into the recipient's `surveyed` set (permanent R2
+    /// knowledge). When the SURVEYOR'S OWN leg lands, fan out ALLY-RELAY legs to
+    /// the origin's allies AT THAT MOMENT (`owner cc → ally cc`, the same
+    /// chain-delay shape the §syndicates scout-intel relay uses: observed → own
+    /// cc → ally cc, each leg at c). Deterministic + async-fair.
+    fn deliver_survey_reports(&mut self) {
+        let now = self.time;
+        let c = self.config.c;
+        let mut i = 0;
+        while i < self.pending_survey_reports.len() {
+            if self.pending_survey_reports[i].arrive_at > now {
+                i += 1;
+                continue;
+            }
+            let r = self.pending_survey_reports.swap_remove(i);
+            if let Some(corp) = self.players.get_mut(&r.recipient) {
+                corp.surveyed.insert(r.system);
+            }
+            if !r.relay
+                && let Some(occ) = self.players.get(&r.origin).map(|p| p.command_center)
+            {
+                for ally in self.allies_of(r.origin) {
+                    if let Some(acc) = self.players.get(&ally).map(|p| p.command_center) {
+                        self.pending_survey_reports.push(SurveyReport {
+                            recipient: ally,
+                            system: r.system,
+                            arrive_at: now + occ.distance(acc) / c,
+                            relay: true,
+                            origin: r.origin,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     /// §syndicates Part 3: feed ALLY GARRISONS. A COMBATANT fleet stationed (Idle)
     /// within `DEFENSE_PLATFORM_RADIUS` of a syndicate ALLY's system is a garrison:
     /// the HOST draws `GARRISON_UPKEEP_PER_SHIP × ships × dt` Provisions from its
@@ -3334,6 +3463,38 @@ impl World {
                     *fleet_id,
                     FleetOrder::Blockade { system: *system_id, station },
                     crate::event::OrderKind::Blockade,
+                );
+            }
+            Command::SurveySystem { player_id, fleet_id, system_id } => {
+                // §explore Part 2: the fleet must exist, be the player's, and
+                // CONTAIN a Scout (the sensing capability — escorts ride along but
+                // can't survey alone; crisp roles like the Blockade raider-gate).
+                let Some(fleet) = self.fleets.get(fleet_id) else { return };
+                if fleet.owner != *player_id || !fleet.contains(ShipKind::Scout) {
+                    return;
+                }
+                // ANY system is fair game — unclaimed frontier, an ally's, or a
+                // rival's (pre-siege prospecting is intended). Re-surveying an
+                // already-known system is legal and idempotent (wasted time —
+                // the UI notes it; the sim doesn't forbid).
+                let Some(sys) = self.systems.iter().find(|s| s.id == *system_id) else { return };
+                let station = sys.pos;
+                // Fuel the run ∝ distance × fleet mass, like a move; a shortfall
+                // HOLDS it (keeps the current order, notifies) — never lost.
+                let cost = crate::fuel::fuel_cost(fleet.pos.distance(station), fleet.mass());
+                let origin = fleet.pos;
+                if !self.charge_fuel(*player_id, origin, cost) {
+                    events.push(Event::new(self.time, EventPayload::FuelShortfall {
+                        owner: *player_id, needed: cost, kind: crate::fuel::ShortfallKind::Move,
+                    }));
+                    return;
+                }
+                // Light-delayed like any order to a mobile asset (echo lifecycle).
+                self.schedule_for_owner(
+                    *player_id,
+                    *fleet_id,
+                    FleetOrder::Survey { system: *system_id, station, dwell_since: None },
+                    crate::event::OrderKind::Survey,
                 );
             }
             Command::AttackFleet { player_id, fleet_id, target_id } => {
@@ -4342,6 +4503,11 @@ impl World {
                 }
                 // INTEL GATHERED — one scout snapshot captured.
                 EventPayload::IntelGathered { owner, .. } => {
+                    self.bump_stats(*owner, |s| s.intel_snapshots += 1);
+                }
+                // §explore: a completed SURVEY is intel gathered too (the scout's
+                // second job feeds the same All-Seeing ladder).
+                EventPayload::SurveyCompleted { owner, .. } => {
                     self.bump_stats(*owner, |s| s.intel_snapshots += 1);
                 }
                 // CARGO CAPTURED (plunder) + RECOVERY (the old owner's major loss).
@@ -10533,5 +10699,189 @@ mod tests {
             "fixup restores thresholds (within the shared 1-ULP float wobble)"
         );
         assert!(!w3.players[&id].surveyed.is_empty(), "fixup restores the home valley");
+    }
+
+    // ── §explore Part 2: the SURVEY order ───────────────────────────────────────
+
+    /// A joined player + a scout fleet at `pos` + an UNSURVEYED frontier system to
+    /// target. Returns (player, scout fleet id, system id, system pos).
+    fn survey_setup(w: &mut World) -> (PlayerId, EntityId, EntityId, Vec2) {
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(w);
+        assert!(!w.players[&id].surveyed.contains(&sysid), "target starts unsurveyed");
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        // Park the scout NEAR the target (a short approach) — the ORDER still
+        // travels from the cc at c, so step past the delivery before dwelling.
+        let scout = squad(w, id, pos + Vec2::new(300.0, 0.0), ShipKind::Scout, 1, FleetOrder::Idle);
+        (id, scout, sysid, pos)
+    }
+
+    /// The SCOUT GATE: a fleet without a scout soft-rejects the order; with one
+    /// it schedules (light-delayed) and eventually flies.
+    #[test]
+    fn survey_requires_a_scout() {
+        let mut w = test_world();
+        let (id, _scout, sysid, pos) = survey_setup(&mut w);
+        let raider = squad(&mut w, id, pos + Vec2::new(300.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.step(&[Command::SurveySystem { player_id: id, fleet_id: raider, system_id: sysid }]);
+        run_until(&mut w, 20, |w| !matches!(w.fleets[&raider].order, FleetOrder::Idle));
+        assert!(matches!(w.fleets[&raider].order, FleetOrder::Idle), "no scout → soft-reject (order never lands)");
+    }
+
+    /// APPROACH → DWELL → COMPLETE: the dwell is all-or-nothing and LOUD; the
+    /// report travels home at c and inserts PERMANENT knowledge; rankings credit.
+    #[test]
+    fn survey_dwell_completes_and_knowledge_travels_at_c() {
+        let mut w = test_world();
+        let (id, scout, sysid, _pos) = survey_setup(&mut w);
+        let intel0 = w.players[&id].stats.intel_snapshots;
+        w.step(&[Command::SurveySystem { player_id: id, fleet_id: scout, system_id: sysid }]);
+        // The order lands (light-delayed), the scout flies + dwells. While the
+        // dwell runs, the fleet is LOUD (surveying() true) — sample mid-dwell.
+        assert!(run_until(&mut w, 60, |w| w.fleets.get(&scout).is_some_and(|f| f.surveying())), "the dwell starts");
+        assert!(w.fleets[&scout].surveying(), "LOUD during the dwell window");
+        // Completion fires SurveyCompleted + goes Idle; loudness ends with it.
+        assert!(
+            run_until(&mut w, 60, |w| w.fleets.get(&scout).is_some_and(|f| matches!(f.order, FleetOrder::Idle))),
+            "the dwell completes"
+        );
+        assert!(!w.fleets[&scout].surveying(), "loudness ends outside the window");
+        // The knowledge is IN FLIGHT (pending report) — the corp doesn't know yet
+        // unless the light already landed; wait for the delivery.
+        assert!(
+            run_until(&mut w, 120, |w| w.players[&id].surveyed.contains(&sysid)),
+            "the report light lands at the cc and the knowledge inserts"
+        );
+        assert_eq!(w.players[&id].stats.intel_snapshots, intel0 + 1, "a survey feeds the intel ladder");
+        // PERMANENT: nothing removes it.
+        for _ in 0..(5 * TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(w.players[&id].surveyed.contains(&sysid), "survey knowledge never stales");
+    }
+
+    /// The report is LIGHT-DELAYED: between completion and `pos→cc` arrival the
+    /// corp provably does NOT know the geology.
+    #[test]
+    fn survey_report_is_light_delayed_to_the_cc() {
+        let mut w = test_world();
+        let (id, scout, sysid, pos) = survey_setup(&mut w);
+        // Drive the dwell DIRECTLY (skip the order round-trip): on-site, clock set.
+        w.fleets.get_mut(&scout).unwrap().pos = pos;
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        let cc = w.players[&id].command_center;
+        let delay = pos.distance(cc) / w.config.c;
+        assert!(delay > 1.0, "the frontier prize is far enough for a measurable delay ({delay:.1}s)");
+        // Step just past completion: completed, but the light hasn't landed.
+        let steps = (crate::explore::SURVEY_SECS / DT) as u32 + 3;
+        for _ in 0..steps {
+            w.step(&[]);
+        }
+        assert!(matches!(w.fleets[&scout].order, FleetOrder::Idle), "dwell completed");
+        assert!(!w.players[&id].surveyed.contains(&sysid), "knowledge NOT known before its light arrives");
+        assert!(
+            run_until(&mut w, delay.ceil() as u32 + 2, |w| w.players[&id].surveyed.contains(&sysid)),
+            "knowledge lands once the report light reaches the cc"
+        );
+    }
+
+    /// ALLY RELAY: the owner's landing fans a relayed copy to each ally, arriving
+    /// one more cc→cc light-leg later; a non-ally NEVER receives it.
+    #[test]
+    fn survey_reports_relay_to_allies_on_the_intel_chain() {
+        let mut w = test_world();
+        let (a, b, c_id) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer { id: c_id, name: "C".into() },
+        ]);
+        ally(&mut w, a, b);
+        let sysid = richest_system(&w);
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        let scout = squad(&mut w, a, pos, ShipKind::Scout, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        // Run until A knows; B must not know yet at that exact moment (the relay
+        // leg still has cc→cc distance to cover), then B learns; C never does.
+        assert!(run_until(&mut w, 180, |w| w.players[&a].surveyed.contains(&sysid)), "A learns first");
+        assert!(!w.players[&b].surveyed.contains(&sysid), "the ally copy is still in flight (chain delay)");
+        assert!(run_until(&mut w, 120, |w| w.players[&b].surveyed.contains(&sysid)), "the ally receives the relayed copy");
+        assert!(!w.players[&c_id].surveyed.contains(&sysid), "a NON-ally never receives it");
+    }
+
+    /// An ENGAGEMENT aborts the dwell — all-or-nothing, no partial credit; the
+    /// order is re-issuable (it goes Idle, nothing banked).
+    #[test]
+    fn survey_aborts_on_engagement_with_no_credit() {
+        let mut w = test_world();
+        let (id, scout, sysid, pos) = survey_setup(&mut w);
+        let rival = PlayerId(2);
+        w.step(&[Command::AddPlayer { id: rival, name: "R".into() }]);
+        // Scout on-site, mid-dwell; a rival raider parked on top ATTACKS it.
+        w.fleets.get_mut(&scout).unwrap().pos = pos;
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        let raider = squad(&mut w, rival, pos + Vec2::new(10.0, 0.0), ShipKind::Raider, 2, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: rival, fleet_id: raider, target_id: scout }]);
+        assert!(
+            run_until(&mut w, 60, |w| w.fleets.get(&scout).is_none_or(|f| matches!(f.order, FleetOrder::Idle))),
+            "contact aborts the dwell"
+        );
+        assert!(!w.players[&id].surveyed.contains(&sysid), "no partial credit — the fight interrupted the sweep");
+    }
+
+    /// LEAVING RANGE resets the dwell clock (no partial credit): shoved off
+    /// station, the clock restarts from zero once back on-site.
+    #[test]
+    fn survey_dwell_resets_out_of_range() {
+        let mut w = test_world();
+        let (_id, scout, sysid, pos) = survey_setup(&mut w);
+        let f = w.fleets.get_mut(&scout).unwrap();
+        f.pos = pos;
+        f.order = FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        // Displace the fleet BEYOND the survey range mid-dwell.
+        w.fleets.get_mut(&scout).unwrap().pos = pos + Vec2::new(crate::explore::SURVEY_RANGE + 500.0, 0.0);
+        w.step(&[]);
+        match w.fleets[&scout].order {
+            FleetOrder::Survey { dwell_since, .. } => {
+                assert!(dwell_since.is_none(), "off-site → the clock resets (no partial credit)")
+            }
+            ref o => panic!("the order should persist through a reset (got {o:?})"),
+        }
+    }
+
+    /// RE-SURVEYING an already-surveyed system is legal and idempotent.
+    #[test]
+    fn survey_is_idempotent_on_a_known_system() {
+        let mut w = test_world();
+        let (id, scout, sysid, pos) = survey_setup(&mut w);
+        w.players.get_mut(&id).unwrap().surveyed.insert(sysid); // already known
+        w.fleets.get_mut(&scout).unwrap().pos = pos;
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        assert!(
+            run_until(&mut w, 60, |w| matches!(w.fleets[&scout].order, FleetOrder::Idle)),
+            "the re-survey runs to completion (wasted time, not an error)"
+        );
+        assert!(w.players[&id].surveyed.contains(&sysid), "still known — idempotent");
+    }
+
+    /// DETERMINISM: the whole survey flow (order → dwell → report → relay) is
+    /// byte-identical across two same-seed runs.
+    #[test]
+    fn surveys_are_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            let (id, scout, sysid, _pos) = survey_setup(&mut w);
+            w.step(&[Command::SurveySystem { player_id: id, fleet_id: scout, system_id: sysid }]);
+            for _ in 0..(90 * TICK_HZ) {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w).unwrap()
+        };
+        assert_eq!(run(), run());
     }
 }

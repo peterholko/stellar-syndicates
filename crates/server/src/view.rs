@@ -44,6 +44,10 @@ struct Sample {
     time: f64,
     pos: Vec2,
     vel: Vec2,
+    /// §explore Part 2: was the fleet ACTIVELY SURVEYING (loud) at this sample?
+    /// Rides the per-sample history so the loudness is judged in the RETARDED
+    /// frame — exactly like velocity — and can never leak or lag FTL.
+    loud: bool,
 }
 
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
@@ -157,6 +161,7 @@ impl PositionHistory {
                 time: now,
                 pos: ship.pos,
                 vel: ship.vel,
+                loud: ship.surveying(),
             });
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
@@ -330,7 +335,11 @@ impl PositionHistory {
                 } else {
                     1.0
                 };
-                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed) * veil
+                // §explore Part 2: ACTIVE SENSING IS LOUD — a fleet surveying at
+                // the retarded sample carries the survey multiplier, exactly the
+                // same factor the sim's pickets apply (parity, one seam).
+                let survey = if p.sample.loud { sim::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 };
+                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed) * veil * survey
             };
             let in_coverage = within_coverage(&coverage, p.sample.pos);
             // Weapons fire is LOUD: a battle participant whose battle-light has
@@ -414,6 +423,8 @@ impl PositionHistory {
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
                 posture: None,
+                // §explore: OWNER-ONLY survey progress — injected by the game loop.
+                survey_progress: None,
                 // §syndicates: ally tint (Part 1) + garrison status (Part 3) are
                 // injected by the game loop from authoritative state (this
                 // history-only view can't see them).
@@ -877,7 +888,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel });
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -911,6 +922,7 @@ mod tests {
                 time: t,
                 pos: if t < 10.0 { x } else { y },
                 vel: Vec2::ZERO,
+                loud: false,
             });
             t += 0.1;
         }
@@ -944,6 +956,7 @@ mod tests {
                 time: t,
                 pos: Vec2::new(0.0, t * 5.0),
                 vel: Vec2::new(0.0, 5.0),
+                loud: false,
             });
             t += 0.1;
         }
@@ -973,7 +986,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0) });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false });
             t += 0.1;
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
@@ -1372,7 +1385,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         track_from(samples, owner, kind)
@@ -1459,7 +1472,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel });
+            samples.push(Sample { time: t, pos, vel, loud: false });
             t += 0.1;
         }
         track.samples = samples.into();
@@ -1495,7 +1508,7 @@ mod tests {
         let mut t = 0.0;
         while t <= 8.0 {
             let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
-            samples.push(Sample { time: t, pos, vel });
+            samples.push(Sample { time: t, pos, vel, loud: false });
             t += 0.1;
         }
         let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
@@ -1605,13 +1618,37 @@ mod tests {
         assert!(!still.is_empty(), "a Veil only quiets its OWN holder's fleets");
     }
 
+    /// §explore Part 2 — SURVEY LOUDNESS: a dwelling (loud) scout is detected
+    /// FARTHER than a quiet one at the same spot/speed, judged from the RETARDED
+    /// sample's flag — the loitering surveyor is an interceptable target (the
+    /// risk price of knowledge), and only while the sample is loud.
+    #[test]
+    fn survey_loudness_extends_detection_in_the_retarded_frame() {
+        let full = ShipKind::Scout.max_speed();
+        let comp: BTreeMap<ShipKind, u32> = [(ShipKind::Scout, 1)].into_iter().collect();
+        let sig = sim::detection::signature(&comp, 0.0, full); // holding still (stealth-quiet)
+        let sensor = 3000.0;
+        // Between the quiet radius and the loud radius: hidden quiet, seen loud.
+        let d = sensor * sig * (1.0 + sim::explore::SURVEY_SIGNATURE_FACTOR) / 2.0;
+        let pos = Vec2::new(d, 0.0);
+        let mk = |loud: bool| {
+            let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Scout, 1)]);
+            for s in track.samples.iter_mut() {
+                s.loud = loud;
+            }
+            history_of(vec![(EntityId(1), track)], sensor)
+        };
+        assert!(mk(false).view_for(VIEWER, Vec2::ZERO, 300.0, 60.0).is_empty(), "a QUIET holding scout at d stays dark");
+        assert_eq!(mk(true).view_for(VIEWER, Vec2::ZERO, 300.0, 60.0).len(), 1, "the SAME scout DWELLING (loud) is detected — active sensing is loud");
+    }
+
     /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
     /// scalars `record()` snapshots from a real `sim::Fleet`.
     fn fleet_track(owner: PlayerId, pos: Vec2, comp: &[(ShipKind, u32)]) -> Track {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
@@ -1830,7 +1867,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 10.0 {
-            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
@@ -1860,7 +1897,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 20.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0) });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false });
             t += 0.1;
         }
         let dpos = Vec2::new(200.0, 0.0);
@@ -1918,7 +1955,7 @@ mod tests {
         let mut s = Vec::new();
         let mut t = 0.0;
         while t <= t_end + 1e-9 {
-            s.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         s
@@ -1936,7 +1973,7 @@ mod tests {
             } else {
                 (start + unit * (speed * (t - t_turn)), unit * speed)
             };
-            s.push(Sample { time: t, pos, vel });
+            s.push(Sample { time: t, pos, vel, loud: false });
             t += 0.1;
         }
         s

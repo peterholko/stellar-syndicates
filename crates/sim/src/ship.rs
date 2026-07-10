@@ -365,6 +365,20 @@ pub enum FleetOrder {
     /// target's kind — so a convoy is destroyed (its cargo lost with it), not
     /// raided. RAID (`Intercept` on a convoy) steals; ATTACK destroys.
     Attack { target: EntityId },
+    /// SURVEY a system's geology (§explore Part 2 — the scout's second job): fly
+    /// to within `SURVEY_RANGE` of the star and DWELL `SURVEY_SECS`, all-or-nothing
+    /// (leaving range or entering an engagement aborts with no partial credit —
+    /// re-issuable). `station` is the star's position (captured at issue, like
+    /// Blockade) so the self-contained advance steers without a world lookup;
+    /// `dwell_since` is the world-managed dwell clock (None = still approaching /
+    /// reset). While dwelling the fleet runs LOUD (active sensing). On completion
+    /// the exact geology travels home at c and the order goes Idle.
+    Survey {
+        system: EntityId,
+        station: Vec2,
+        #[serde(default)]
+        dwell_since: Option<f64>,
+    },
 }
 
 /// What a trade convoy does when it reaches its destination (§9). A buy spawns a
@@ -569,6 +583,13 @@ impl Fleet {
         self.composition.keys().any(|k| k.broadcasts())
     }
 
+    /// §explore: is this fleet ACTIVELY SURVEYING (in the dwell window)? Drives
+    /// the loudness multiplier through the one shared signature path — true only
+    /// while the dwell clock runs, never during the approach.
+    pub fn surveying(&self) -> bool {
+        matches!(self.order, FleetOrder::Survey { dwell_since: Some(_), .. })
+    }
+
     /// The best sensor bubble this fleet projects into its owner's coverage —
     /// the MAX `sensor_mult` among its members (a scout aboard extends vision).
     pub fn sensor_mult(&self) -> f64 {
@@ -678,6 +699,13 @@ impl Fleet {
                 // world reads on-station presence as an active blockade; going
                 // Idle would drop it). Once arrived, advance_toward returns the
                 // station point at zero velocity, so it simply holds each tick.
+                let step = advance_toward(self.pos, *station, speed, dt);
+                self.pos = step.pos;
+                self.vel = step.vel;
+            }
+            FleetOrder::Survey { station, .. } => {
+                // §explore: fly to the star and HOLD (the world's survey resolver
+                // runs the dwell clock + completion; going Idle would drop it).
                 let step = advance_toward(self.pos, *station, speed, dt);
                 self.pos = step.pos;
                 self.vel = step.vel;

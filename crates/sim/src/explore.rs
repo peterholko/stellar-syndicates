@@ -36,6 +36,22 @@ use crate::galaxy::Deposit;
 /// starting valley is known; the frontier isn't. Tunable.
 pub const SURVEY_INITIAL_RADIUS: f64 = 1200.0;
 
+/// §explore Part 2 — the SURVEY order (the scout's second job). The fleet must
+/// close to within this range of the star to survey (hulls on-site only — no
+/// remote surveying). Tunable.
+pub const SURVEY_RANGE: f64 = 120.0;
+
+/// The DWELL: how long the fleet must hold on-site, uninterrupted, for the
+/// survey to complete. All-or-nothing — leaving range or entering an engagement
+/// aborts with no partial credit. Tunable.
+pub const SURVEY_SECS: f64 = 20.0;
+
+/// ACTIVE SENSING IS LOUD: while dwelling, the fleet's detection signature is
+/// multiplied by this (> 1 — seen from farther). Applies during the dwell window
+/// ONLY, through the one shared `detection::signature` path — the risk price of
+/// knowledge. Tunable.
+pub const SURVEY_SIGNATURE_FACTOR: f64 = 1.5;
+
 /// The public richness BAND — the spectral read (R1). Poor / Fair / Rich by the
 /// terciles of the galaxy's system values. Should predict ~70% of a system's
 /// worth; the survey buys the rest (the exact composition + the trait gamble).

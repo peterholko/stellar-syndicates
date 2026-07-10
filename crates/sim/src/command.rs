@@ -207,6 +207,18 @@ pub enum Command {
         system_id: EntityId,
     },
 
+    /// SURVEY a system's exact geology (§explore Part 2 — the scout's second
+    /// job). The fleet must CONTAIN ≥1 Scout (the sensing capability; escorts
+    /// ride along). Valid on ANY system — unclaimed frontier, an ally's, or a
+    /// RIVAL's (pre-siege prospecting is intended). Fuel-charged and
+    /// LIGHT-DELAYED via the echo lifecycle like any order; on-site the fleet
+    /// dwells `SURVEY_SECS`, LOUD, then the knowledge travels home at c.
+    SurveySystem {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system_id: EntityId,
+    },
+
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted DESTROY verb.
     /// Orderable on ANY rival fleet (not just convoys). The attacking fleet must
     /// CONTAIN ≥1 raider (strike capability — consistent with `BlockadeSystem`;

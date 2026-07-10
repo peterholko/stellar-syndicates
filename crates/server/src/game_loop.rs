@@ -316,6 +316,13 @@ impl GameLoop {
                         self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
                     }
                 }
+                ClientMsg::SurveySystem { fleet_id, system_id } => {
+                    // §explore Part 2: light-delayed like a move.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet_id);
+                        self.pending.push(Command::SurveySystem { player_id, fleet_id, system_id });
+                    }
+                }
                 ClientMsg::AttackFleet { fleet_id, target_id } => {
                     // §offensive-orders Part 1: light-delayed like a raid.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
@@ -655,6 +662,14 @@ impl GameLoop {
                         g.garrison_host = Some(host);
                         g.garrison_fed = self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
                     }
+                    // §explore Part 2: OWNER-ONLY survey-dwell progress (0..1) for
+                    // the progress ring — a rival never sees your order state.
+                    g.survey_progress = self.world.fleets.get(&g.id).and_then(|f| match f.order {
+                        sim::FleetOrder::Survey { dwell_since: Some(since), .. } => {
+                            Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0))
+                        }
+                        _ => None,
+                    });
                 }
                 // §syndicates Part 1: friendly ALLY tint — the owner (already on
                 // the ghost) is a syndicate member as THIS viewer knows it

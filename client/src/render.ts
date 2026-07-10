@@ -1504,6 +1504,17 @@ export class Renderer {
       const rPx = ghost.uncertainty * this.scale;
       sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
     }
+    // §explore Part 2: SURVEY PROGRESS RING — owner-only (the field is only ever
+    // sent for own fleets): an arc filling clockwise as the dwell runs, in the
+    // scout's own cyan. A rival sees none of this — only the louder signature.
+    if (own && ghost.survey_progress != null) {
+      const p = Math.max(0, Math.min(1, ghost.survey_progress));
+      const r = 9;
+      sp.cone.circle(0, 0, r).stroke({ width: 1, color: COL_OWN, alpha: 0.25 });
+      if (p > 0.01) {
+        sp.cone.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2).stroke({ width: 2, color: COL_OWN, alpha: 0.9 });
+      }
+    }
     // §order-lifecycle: is this own fleet's LATEST order still unconfirmed (its
     // compliance light hasn't returned)? While so, the commanded-heading hint is
     // drawn DASHED (= commanded/claimed) and a pending badge shows; both resolve

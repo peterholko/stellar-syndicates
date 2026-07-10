@@ -379,6 +379,9 @@ export interface GhostView {
   // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
   // fleets, null for every rival; a private standing policy that never leaks).
   posture: EngagementPosture | null;
+  // §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your fleet's own
+  // order state); null/absent when not dwelling. Drives the progress ring.
+  survey_progress?: number | null;
   // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
   // (light-delayed membership) — drives the friendly ally tint/pip.
   ally?: boolean;
@@ -441,6 +444,8 @@ export type ClientMsg =
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
   // §contestable-territory Part 1 — order a raider fleet to blockade a rival system.
   | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
+  // §explore Part 2 — order a scout-carrying fleet to SURVEY a system's geology.
+  | { type: "SurveySystem"; fleet_id: EntityId; system_id: EntityId }
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
@@ -543,7 +548,7 @@ export interface EngagementEstimate {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack";
+export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids

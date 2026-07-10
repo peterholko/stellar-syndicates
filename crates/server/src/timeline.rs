@@ -273,6 +273,19 @@ impl Timeline {
                         self.push(p, observe, sev, text);
                     }
                 }
+                // §explore Part 2: a SURVEY completed — OWNER-ONLY, light-delayed
+                // from the fleet's position (knowledge travels home at c; the sim
+                // inserts into `surveyed` on the same clock, so the notice and the
+                // map's new geology land together).
+                EventPayload::SurveyCompleted { owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "Survey of {name} complete — exact geology charted (permanent; allies receive a relayed copy)."
+                        ));
+                    }
+                }
                 // §node: a held node's upkeep flipped — OWNER-ONLY, on the owner's own
                 // clock (own-economy precedent, like HabitatSupplyChanged). Transitions
                 // only, so it never spams.
