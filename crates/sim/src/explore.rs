@@ -52,6 +52,74 @@ pub const SURVEY_SECS: f64 = 20.0;
 /// knowledge. Tunable.
 pub const SURVEY_SIGNATURE_FACTOR: f64 = 1.5;
 
+// ── §explore Part 3: hidden TRAITS (R3 — ownership knowledge) ───────────────────
+
+/// Fraction of systems carrying exactly ONE hidden trait (uniform over the five),
+/// rolled at galaxy generation from an isolated seeded stream. Tunable.
+pub const TRAIT_FRACTION: f64 = 0.25;
+
+/// Bonus Vein: that commodity's deposit richness ×this in accrual. Tunable.
+pub const BONUS_VEIN_MULT: f64 = 1.5;
+
+/// Deep Deposits: base richness ×this — but the Extractor multiplier applies as
+/// `^(tier−1)` (the FIRST Extractor tier is wasted breaking through). Tunable.
+pub const DEEP_DEPOSITS_BASE_MULT: f64 = 1.5;
+
+/// Unstable Geology: development (upgrade) recipe costs ×this here — the lemon
+/// a survey can't see. Tunable.
+pub const UNSTABLE_COST_MULT: f64 = 1.25;
+
+/// Volatile Pockets: Refinery output ×this here. Tunable.
+pub const VOLATILE_REFINERY_MULT: f64 = 1.3;
+
+/// Precursor Cache: a ONE-TIME Alloys grant to the stockpile at claim completion
+/// (latched — pays exactly once, ever, including across capture). Tunable.
+pub const PRECURSOR_ALLOYS: f64 = 40.0;
+
+/// A system's hidden TRAIT (R3) — revealed only by OWNERSHIP (claim or capture:
+/// the blind claimer's gamble resolving IS the reveal; capture transfers the
+/// knowledge as spoils). Effects are ALWAYS-ON ground truth, applying to whoever
+/// owns/builds regardless of when they learned. Never telegraphed pre-claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SystemTrait {
+    /// One commodity's vein runs deep — its richness ×`BONUS_VEIN_MULT`.
+    BonusVein { commodity: crate::cargo::Commodity },
+    /// Richer ground, harder to open: base ×`DEEP_DEPOSITS_BASE_MULT`, but the
+    /// Extractor multiplier applies as `^(tier−1)` — tier 1 is wasted.
+    DeepDeposits,
+    /// The lemon: development recipe costs ×`UNSTABLE_COST_MULT` here.
+    UnstableGeology,
+    /// Refinery output ×`VOLATILE_REFINERY_MULT` here.
+    VolatilePockets,
+    /// A one-time `PRECURSOR_ALLOYS` stockpile grant at claim (latched).
+    PrecursorCache,
+}
+
+impl SystemTrait {
+    /// Stable machine slug (the owner-only wire form).
+    pub fn slug(self) -> &'static str {
+        match self {
+            SystemTrait::BonusVein { .. } => "bonus_vein",
+            SystemTrait::DeepDeposits => "deep_deposits",
+            SystemTrait::UnstableGeology => "unstable_geology",
+            SystemTrait::VolatilePockets => "volatile_pockets",
+            SystemTrait::PrecursorCache => "precursor_cache",
+        }
+    }
+
+    /// Human title for the reveal notice / panel line.
+    pub fn title(self) -> &'static str {
+        match self {
+            SystemTrait::BonusVein { .. } => "Bonus Vein",
+            SystemTrait::DeepDeposits => "Deep Deposits",
+            SystemTrait::UnstableGeology => "Unstable Geology",
+            SystemTrait::VolatilePockets => "Volatile Pockets",
+            SystemTrait::PrecursorCache => "Precursor Cache",
+        }
+    }
+}
+
 /// The public richness BAND — the spectral read (R1). Poor / Fair / Rich by the
 /// terciles of the galaxy's system values. Should predict ~70% of a system's
 /// worth; the survey buys the rest (the exact composition + the trait gamble).

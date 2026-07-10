@@ -286,6 +286,30 @@ impl Timeline {
                         ));
                     }
                 }
+                // §explore Part 3: the system's HIDDEN TRAIT revealed to its (new)
+                // owner — the blind claimer's gamble resolving (or capture spoils).
+                // OWNER-ONLY, light-delayed from the system.
+                EventPayload::TraitRevealed { owner, system, pos, trait_ } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        let what = match trait_ {
+                            sim::explore::SystemTrait::BonusVein { commodity } => {
+                                format!("Bonus Vein — its {} deposit runs ×{} richer", commodity.slug(), sim::explore::BONUS_VEIN_MULT)
+                            }
+                            sim::explore::SystemTrait::DeepDeposits => format!("Deep Deposits — base ×{} richer, but the FIRST Extractor tier is wasted breaking through", sim::explore::DEEP_DEPOSITS_BASE_MULT),
+                            sim::explore::SystemTrait::UnstableGeology => format!("Unstable Geology — development costs ×{} here", sim::explore::UNSTABLE_COST_MULT),
+                            sim::explore::SystemTrait::VolatilePockets => format!("Volatile Pockets — Refinery output ×{} here", sim::explore::VOLATILE_REFINERY_MULT),
+                            sim::explore::SystemTrait::PrecursorCache => format!("Precursor Cache — a one-time {} Alloys deposited to the stockpile", sim::explore::PRECURSOR_ALLOYS),
+                        };
+                        let sev = if matches!(trait_, sim::explore::SystemTrait::UnstableGeology) {
+                            TimelineSeverity::Warn
+                        } else {
+                            TimelineSeverity::Good
+                        };
+                        self.push(*owner, observe, sev, format!("TRAIT REVEALED at {name}: {what}."));
+                    }
+                }
                 // §node: a held node's upkeep flipped — OWNER-ONLY, on the owner's own
                 // clock (own-economy precedent, like HabitatSupplyChanged). Transitions
                 // only, so it never spams.

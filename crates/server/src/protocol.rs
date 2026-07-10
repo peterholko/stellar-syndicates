@@ -574,6 +574,11 @@ pub struct SystemStateView {
     /// Never leaks a rival's survey state (each corp is gated on its OWN set).
     #[serde(default)]
     pub deposits: Option<Vec<DepositView>>,
+    /// §explore R3: the system's HIDDEN TRAIT slug — CURRENT-OWNER-ONLY (rivals
+    /// and past owners get `None`, always; traits are never telegraphed). A
+    /// Bonus Vein carries its commodity as `bonus_vein:<commodity>`.
+    #[serde(default, rename = "trait")]
+    pub trait_: Option<String>,
 }
 
 /// §node: the per-system view of an EXOTIC NODE. The bonus + awakened state are

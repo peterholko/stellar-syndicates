@@ -2141,6 +2141,28 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
     `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
 }
 
+// §explore Part 3: the trait line (name + one-line effect) for the OWNER's
+// system panel. Warn-tinted for the lemon. Slug "bonus_vein:<commodity>" carries
+// the vein's commodity.
+function traitLine(slug: string): { title: string; desc: string; warn: boolean } {
+  if (slug.startsWith("bonus_vein:")) {
+    const c = slug.split(":")[1];
+    return { title: "Bonus Vein", desc: `Its ${c} deposit runs ×1.5 richer — always on.`, warn: false };
+  }
+  switch (slug) {
+    case "deep_deposits":
+      return { title: "Deep Deposits", desc: "Base output ×1.5 — but the FIRST Extractor tier is wasted breaking through.", warn: false };
+    case "unstable_geology":
+      return { title: "Unstable Geology", desc: "Development costs ×1.25 here — the lemon a survey can't see.", warn: true };
+    case "volatile_pockets":
+      return { title: "Volatile Pockets", desc: "Refinery output ×1.3 here.", warn: false };
+    case "precursor_cache":
+      return { title: "Precursor Cache", desc: "A one-time 40 Alloys was deposited to the stockpile at claim.", warn: false };
+    default:
+      return { title: slug, desc: "", warn: false };
+  }
+}
+
 // §node: one-line description of what a node's bonus does (by slug). Used in the
 // system panel + inbox so the tactical payoff is always legible.
 function nodeBonusDesc(slug: string): string {
@@ -2401,11 +2423,18 @@ function updateSystemTab(): void {
 
   // §explore R2: surveyed-or-owner → the full geology table; unsurveyed → the
   // band + "composition unsurveyed" (survey it — or claim blind and find out).
+  // §explore R3: the OWNER's hidden-trait line (never shown to anyone else —
+  // the field only ever arrives for your own systems).
+  const tr = dyn?.trait ? traitLine(dyn.trait) : null;
+  const traitRow = tr
+    ? `<div class="mhint" style="margin-top:4px${tr.warn ? ";color:var(--warn)" : ""}" title="${esc(tr.desc)} Hidden trait — revealed by ownership; a survey can't see it.">` +
+      `${badge(tr.warn ? "warn" : "accent", tr.title)} ${esc(tr.desc)}</div>`
+    : "";
   const geology = deps
     ? `<div class="sysview__deps"><div class="deps-head">Geology — richer toward the frontier</div>` +
-      deps.map(depositRow).join("") + `</div>`
+      deps.map(depositRow).join("") + traitRow + `</div>`
     : `<div class="sysview__deps"><div class="deps-head">Geology</div>` +
-      `<div class="mhint" title="The spectral read gives only the richness band. Send a scout to SURVEY the exact composition — or claim blind and find out the hard way.">` +
+      `<div class="mhint" title="The spectral read gives only the richness band. Send a scout to SURVEY the exact composition — or claim blind and find out the hard way. Some systems also hide a TRAIT only ownership reveals.">` +
       `${badge(sys.band === "rich" ? "accent" : "neutral", `${sys.band.toUpperCase()} band`)} composition unsurveyed</div></div>`;
 
   let actions: string;

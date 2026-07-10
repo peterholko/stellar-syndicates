@@ -117,6 +117,11 @@ export interface SystemStateView {
   /// system or own it (survey knowledge is permanent). Absent = unsurveyed:
   /// only the public band is known.
   deposits?: Deposit[] | null;
+  /// §explore R3: the hidden TRAIT slug — CURRENT-OWNER-ONLY (never on a rival's
+  /// wire; a survey doesn't reveal it). "bonus_vein:<commodity>" carries the
+  /// vein's commodity; else "deep_deposits" | "unstable_geology" |
+  /// "volatile_pockets" | "precursor_cache".
+  trait?: string | null;
 }
 
 /// §node: the per-system view of an EXOTIC NODE — the midgame catalyst.

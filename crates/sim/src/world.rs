@@ -568,7 +568,41 @@ impl World {
         // §explore: the richness-band terciles — a pure derivation from the
         // finished systems (no RNG), fixed for the life of the galaxy.
         world.compute_band_thresholds();
+        // §explore Part 3: seed hidden TRAITS on an isolated stream (like the
+        // enclaves) — deterministic, never perturbs the frontier/home streams.
+        world.seed_traits();
         world
+    }
+
+    /// §explore Part 3: give `TRAIT_FRACTION` of systems exactly ONE hidden trait,
+    /// uniform over the five kinds, on an ISOLATED RNG stream (seed ^ magic — the
+    /// house pattern; the frontier/home/enclave streams are untouched, so this is
+    /// reproducible and perturbs nothing). A Bonus Vein picks a commodity the
+    /// system actually HAS (uniform over its deposits). Id-ordered iteration →
+    /// deterministic. Pre-feature snapshots simply have no traits (acceptable).
+    fn seed_traits(&mut self) {
+        let mut rng = crate::rng::Rng::new(self.config.seed ^ 0x5452_4149_5453_5F53); // "TRAITS_S"
+        for sys in self.systems.iter_mut() {
+            let roll = (rng.next_u64() % 100_000) as f64 / 100_000.0;
+            if roll >= crate::explore::TRAIT_FRACTION {
+                continue;
+            }
+            let t = match rng.next_u64() % 5 {
+                0 => {
+                    // A vein of something the system actually has.
+                    if sys.deposits.is_empty() {
+                        continue; // (defensive — every system generates deposits)
+                    }
+                    let dep = &sys.deposits[(rng.next_u64() % sys.deposits.len() as u64) as usize];
+                    crate::explore::SystemTrait::BonusVein { commodity: dep.resource }
+                }
+                1 => crate::explore::SystemTrait::DeepDeposits,
+                2 => crate::explore::SystemTrait::UnstableGeology,
+                3 => crate::explore::SystemTrait::VolatilePockets,
+                _ => crate::explore::SystemTrait::PrecursorCache,
+            };
+            sys.trait_ = Some(t);
+        }
     }
 
     /// §explore: (re)compute the band tercile thresholds from the current systems
@@ -3699,17 +3733,27 @@ impl World {
                 return;
             }
         }
+        // §explore Part 3 Unstable Geology: DEVELOPMENT (upgrade) recipe costs run
+        // ×UNSTABLE_COST_MULT here — the lemon a survey can't see. ONE multiplier
+        // read shared by the affordability check AND the debit (they can't drift).
+        let cost_mult = if matches!(what, crate::build::BuildKind::Upgrade { .. })
+            && sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology)
+        {
+            crate::explore::UNSTABLE_COST_MULT
+        } else {
+            1.0
+        };
         let affordable = recipe
             .costs
             .iter()
-            .all(|(c, need)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *need);
+            .all(|(c, need)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *need * cost_mult);
         if !affordable {
             return; // soft reject — no event, no debit
         }
         // Deduct the whole recipe from the system stockpile.
         let sys = self.systems.iter_mut().find(|s| s.id == system_id).unwrap();
         for (c, need) in recipe.costs {
-            *sys.stockpile.entry(*c).or_insert(0.0) -= *need;
+            *sys.stockpile.entry(*c).or_insert(0.0) -= *need * cost_mult;
         }
         self.next_build_id += 1;
         let complete_tick = self.tick + recipe.build_ticks;
@@ -4028,6 +4072,17 @@ impl World {
                     if let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id) {
                         sy.owner = Some(owner);
                         sy.claimed_at = Some(now);
+                        // §explore Part 3: the claim REVEALS the hidden trait (R3 —
+                        // the blind claimer's gamble resolving), and a Precursor
+                        // Cache pays its one-time grant (latched — once, ever).
+                        if let Some(t) = sy.trait_ {
+                            if t == crate::explore::SystemTrait::PrecursorCache && !sy.cache_claimed {
+                                sy.cache_claimed = true;
+                                let grant = crate::explore::PRECURSOR_ALLOYS.min(sy.storage_headroom());
+                                *sy.stockpile.entry(crate::cargo::Commodity::Alloys).or_insert(0.0) += grant;
+                            }
+                            events.push(Event::new(now, EventPayload::TraitRevealed { owner, system: sys_id, pos, trait_: t }));
+                        }
                     }
                     // §explore: holding a system IS knowing it — the blind claimer's
                     // gamble resolves here (permanent survey knowledge, R2).
@@ -4157,6 +4212,11 @@ impl World {
         if let Some(node) = self.nodes.get(&sys_id).filter(|n| n.awakened) {
             events.push(Event::new(now, EventPayload::NodeCaptured { owner: new_owner, system: sys_id, pos, bonus: node.bonus }));
         }
+        // §explore Part 3: capture TRANSFERS the trait knowledge — spoils. (The
+        // Precursor Cache latch survives the flip: it pays exactly once, ever.)
+        if let Some(t) = self.systems.iter().find(|s| s.id == sys_id).and_then(|s| s.trait_) {
+            events.push(Event::new(now, EventPayload::TraitRevealed { owner: new_owner, system: sys_id, pos, trait_: t }));
+        }
     }
 
     /// Fleet a claimed system's accumulated production to the hub: one raidable
@@ -4278,12 +4338,27 @@ impl World {
                 // Extractor upgrades (§step1 structure sink) multiply every
                 // deposit's output: richness · MULT^tier; a FED Habitat multiplies
                 // the system's ENTIRE output on top (compounding, deterministic).
-                let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
+                // §explore Part 3 (always-on ground truth, learned or not):
+                //   Deep Deposits — base ×DEEP_DEPOSITS_BASE_MULT, but the
+                //   Extractor multiplier applies as ^(tier−1): tier 1 is WASTED
+                //   breaking through (the survey can't see this; the claim does).
+                let deep = sys.trait_ == Some(crate::explore::SystemTrait::DeepDeposits);
+                let ext_exp = if deep { sys.extractor_tier.saturating_sub(1) } else { sys.extractor_tier };
+                let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(ext_exp as i32);
+                if deep {
+                    mult *= crate::explore::DEEP_DEPOSITS_BASE_MULT;
+                }
                 if sys.habitat_tier >= 1 && sys.habitat_fed {
                     mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.habitat_tier as i32);
                 }
+                // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
+                let vein = match sys.trait_ {
+                    Some(crate::explore::SystemTrait::BonusVein { commodity }) => Some(commodity),
+                    _ => None,
+                };
                 for dep in &mut sys.deposits {
-                    let mut amount = (dep.richness * mult * DT).min(headroom);
+                    let vein_mult = if vein == Some(dep.resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
+                    let mut amount = (dep.richness * mult * vein_mult * DT).min(headroom);
                     if let Some(reserves) = dep.reserves.as_mut() {
                         amount = amount.min(*reserves);
                         *reserves -= amount;
@@ -4317,9 +4392,16 @@ impl World {
                         take = (room / (crate::build::REFINERY_YIELD - 1.0)).max(0.0);
                     }
                     if take > 0.0 {
+                        // §explore Part 3 Volatile Pockets: richer feedstock —
+                        // Refinery OUTPUT ×VOLATILE_REFINERY_MULT here (always-on).
+                        let pocket = if sys.trait_ == Some(crate::explore::SystemTrait::VolatilePockets) {
+                            crate::explore::VOLATILE_REFINERY_MULT
+                        } else {
+                            1.0
+                        };
                         *sys.stockpile.entry(crate::cargo::Commodity::Volatiles).or_insert(0.0) -= take;
                         *sys.stockpile.entry(crate::cargo::Commodity::Fuel).or_insert(0.0) +=
-                            take * crate::build::REFINERY_YIELD;
+                            take * crate::build::REFINERY_YIELD * pocket;
                     }
                 }
             }
@@ -10883,5 +10965,225 @@ mod tests {
             serde_json::to_string(&w).unwrap()
         };
         assert_eq!(run(), run());
+    }
+
+    // ── §explore Part 3: hidden TRAITS ──────────────────────────────────────────
+
+    use crate::explore::SystemTrait;
+
+    /// Force `sys` to a claimed system with the given trait + a single Ore deposit
+    /// (richness 1.0, renewable); returns its id.
+    fn trait_system(w: &mut World, owner: PlayerId, t: Option<SystemTrait>) -> EntityId {
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.trait_ = t;
+        sys.deposits = vec![crate::galaxy::Deposit {
+            resource: Commodity::Ore,
+            richness: 1.0,
+            reserves: None,
+            accessibility: 0.5,
+        }];
+        sys.id
+    }
+
+    /// Trait assignment is deterministic from the seed, hits ~TRAIT_FRACTION, and
+    /// all five kinds occur (checked across seeds — one galaxy is small).
+    #[test]
+    fn traits_are_seeded_deterministically_at_the_fraction() {
+        let a = test_world();
+        let b = test_world();
+        for (sa, sb) in a.systems.iter().zip(&b.systems) {
+            assert_eq!(sa.trait_, sb.trait_, "same seed → same traits");
+        }
+        let mut with = 0usize;
+        let mut total = 0usize;
+        let mut kinds = std::collections::BTreeSet::new();
+        for seed in 0..40u64 {
+            let w = World::new(SimConfig::for_players(seed, 4));
+            for s in &w.systems {
+                total += 1;
+                if let Some(t) = s.trait_ {
+                    with += 1;
+                    kinds.insert(t.slug());
+                    if let SystemTrait::BonusVein { commodity } = t {
+                        assert!(
+                            s.deposits.iter().any(|d| d.resource == commodity),
+                            "a Bonus Vein is always of a commodity the system HAS"
+                        );
+                    }
+                }
+            }
+        }
+        let frac = with as f64 / total as f64;
+        assert!((frac - crate::explore::TRAIT_FRACTION).abs() < 0.06, "≈{} of systems carry a trait (got {frac:.3})", crate::explore::TRAIT_FRACTION);
+        assert_eq!(kinds.len(), 5, "all five trait kinds occur (got {kinds:?})");
+    }
+
+    /// BONUS VEIN: that commodity's accrual runs ×BONUS_VEIN_MULT; others don't.
+    #[test]
+    fn bonus_vein_boosts_only_its_commodity() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = trait_system(&mut w, id, Some(SystemTrait::BonusVein { commodity: Commodity::Ore }));
+        // Add a second, non-vein deposit for the control.
+        w.systems.iter_mut().find(|s| s.id == sid).unwrap().deposits.push(crate::galaxy::Deposit {
+            resource: Commodity::Provisions,
+            richness: 1.0,
+            reserves: None,
+            accessibility: 0.5,
+        });
+        w.step(&[]);
+        let ore = system_stock(&w, sid, Commodity::Ore);
+        let prov = system_stock(&w, sid, Commodity::Provisions);
+        assert!((ore - crate::explore::BONUS_VEIN_MULT * DT).abs() < 1e-9, "the vein commodity runs ×{} (got {ore})", crate::explore::BONUS_VEIN_MULT);
+        assert!((prov - DT).abs() < 1e-9, "other commodities are untouched (got {prov})");
+    }
+
+    /// DEEP DEPOSITS: base ×1.5, and the FIRST Extractor tier is WASTED —
+    /// tier 0 and tier 1 produce identically; tier 2 applies one multiplier.
+    #[test]
+    fn deep_deposits_waste_the_first_extractor_tier() {
+        let gain_at_tier = |tier: u32| {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            let sid = trait_system(&mut w, id, Some(SystemTrait::DeepDeposits));
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().extractor_tier = tier;
+            w.step(&[]);
+            system_stock(&w, sid, Commodity::Ore)
+        };
+        let base = crate::explore::DEEP_DEPOSITS_BASE_MULT;
+        let mult = crate::build::EXTRACTOR_RICHNESS_MULT;
+        assert!((gain_at_tier(0) - base * DT).abs() < 1e-9, "tier 0: base ×{base}");
+        assert!((gain_at_tier(1) - base * DT).abs() < 1e-9, "tier 1: IDENTICAL — the first tier is wasted");
+        assert!((gain_at_tier(2) - base * mult * DT).abs() < 1e-9, "tier 2: one multiplier applies");
+    }
+
+    /// UNSTABLE GEOLOGY: development costs ×UNSTABLE_COST_MULT at BOTH the
+    /// affordability gate and the debit (one shared multiplier); ships unaffected.
+    #[test]
+    fn unstable_geology_taxes_developments() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = trait_system(&mut w, id, Some(SystemTrait::UnstableGeology));
+        let recipe = crate::build::recipe_for(crate::build::BuildKind::Upgrade { upgrade: crate::build::SystemUpgrade::Extractor });
+        // Stock EXACTLY the plain cost → must be REJECTED (needs ×1.25).
+        for (c, need) in recipe.costs {
+            seed_stock(&mut w, sid, &[(*c, *need)]);
+        }
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::SystemUpgrade::Extractor }]);
+        assert!(w.build_queue.is_empty(), "plain-cost stock can't afford the unstable premium");
+        // Top up to ×UNSTABLE_COST_MULT → accepted, and debited at the premium.
+        for (c, need) in recipe.costs {
+            seed_stock(&mut w, sid, &[(*c, *need * (crate::explore::UNSTABLE_COST_MULT - 1.0) + 0.001)]);
+        }
+        let before: Vec<f64> = recipe.costs.iter().map(|(c, _)| system_stock(&w, sid, *c)).collect();
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::SystemUpgrade::Extractor }]);
+        assert_eq!(w.build_queue.len(), 1, "the premium stock affords it");
+        for ((c, need), b4) in recipe.costs.iter().zip(before) {
+            let now_units = system_stock(&w, sid, *c);
+            let debited = b4 - now_units;
+            // The system also ACCRUES its Ore deposit during the step — allow that.
+            assert!(
+                (debited - need * crate::explore::UNSTABLE_COST_MULT).abs() < 0.05,
+                "{c:?} debited at the ×{} premium (debited {debited}, want {})",
+                crate::explore::UNSTABLE_COST_MULT,
+                need * crate::explore::UNSTABLE_COST_MULT
+            );
+        }
+    }
+
+    /// VOLATILE POCKETS: the Refinery's Fuel output runs ×VOLATILE_REFINERY_MULT.
+    #[test]
+    fn volatile_pockets_boost_refinery_output() {
+        let fuel_out = |t: Option<SystemTrait>| {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            let sid = trait_system(&mut w, id, t);
+            {
+                let s = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+                s.deposits.clear(); // no accrual noise
+                s.refinery_tier = 1;
+            }
+            seed_stock(&mut w, sid, &[(Commodity::Volatiles, 100.0)]);
+            w.step(&[]);
+            system_stock(&w, sid, Commodity::Fuel)
+        };
+        let plain = fuel_out(None);
+        let pocket = fuel_out(Some(SystemTrait::VolatilePockets));
+        assert!(plain > 0.0, "the refinery runs");
+        assert!(
+            (pocket - plain * crate::explore::VOLATILE_REFINERY_MULT).abs() < 1e-9,
+            "pockets multiply the OUTPUT ×{} (plain {plain}, pocket {pocket})",
+            crate::explore::VOLATILE_REFINERY_MULT
+        );
+    }
+
+    /// PRECURSOR CACHE pays EXACTLY ONCE at claim (latched), reveals on claim,
+    /// transfers knowledge (a fresh TraitRevealed) on capture — but never re-pays.
+    #[test]
+    fn precursor_cache_pays_once_and_capture_transfers_knowledge() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        // An unclaimed frontier system carrying the cache.
+        let sid = {
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.trait_ = Some(SystemTrait::PrecursorCache);
+            sys.id
+        };
+        let pos = w.systems.iter().find(|s| s.id == sid).unwrap().pos;
+        // A claims it physically.
+        colony_at(&mut w, a, pos);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::TraitRevealed { owner, system, .. } if owner == a && system == sid)),
+            "the claim REVEALS the trait to the claimer"
+        );
+        let alloys = system_stock(&w, sid, Commodity::Alloys);
+        assert!((alloys - crate::explore::PRECURSOR_ALLOYS).abs() < 0.01, "the cache pays its one-time grant (got {alloys})");
+        assert!(w.systems.iter().find(|s| s.id == sid).unwrap().cache_claimed, "the latch is set");
+
+        // B captures it — knowledge transfers (a fresh reveal), the cache does NOT re-pay.
+        let stock_before: f64 = system_stock(&w, sid, Commodity::Alloys);
+        let colony = colony_at(&mut w, b, pos);
+        let mut ev2 = Vec::new();
+        w.capture_system(sid, a, b, colony, pos, &mut ev2);
+        assert!(
+            ev2.iter().any(|e| matches!(e.payload, EventPayload::TraitRevealed { owner, system, .. } if owner == b && system == sid)),
+            "capture transfers the trait knowledge (spoils)"
+        );
+        // Capture PLUNDERS the stockpile (the pre-flip alloys ride the plunder) and
+        // the latch survives — no re-mint for the new owner.
+        let after = system_stock(&w, sid, Commodity::Alloys);
+        assert!(after < stock_before + 0.01, "the cache never re-pays (latch survives the flip)");
+        assert!(w.systems.iter().find(|s| s.id == sid).unwrap().cache_claimed, "latch intact across capture");
+    }
+
+    /// Traits + latches ride a snapshot; a PRE-feature snapshot (fields absent)
+    /// loads trait-less.
+    #[test]
+    fn traits_survive_a_snapshot() {
+        let w = test_world();
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        for (sa, sb) in w.systems.iter().zip(&w2.systems) {
+            assert_eq!(sa.trait_, sb.trait_, "traits round-trip");
+            assert_eq!(sa.cache_claimed, sb.cache_claimed);
+        }
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for s in val["systems"].as_array_mut().unwrap() {
+            s.as_object_mut().unwrap().remove("trait_");
+            s.as_object_mut().unwrap().remove("cache_claimed");
+        }
+        let w3: World = serde_json::from_value(val).unwrap();
+        assert!(w3.systems.iter().all(|s| s.trait_.is_none()), "a pre-feature snapshot loads trait-less");
     }
 }

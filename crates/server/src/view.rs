@@ -737,6 +737,14 @@ pub fn filter_systems(
                         })
                         .collect()
                 }),
+                // §explore R3: the hidden TRAIT — CURRENT-OWNER-ONLY (never
+                // telegraphed; a survey doesn't see it; only ownership does).
+                trait_: own.then_some(sys.trait_).flatten().map(|t| match t {
+                    sim::explore::SystemTrait::BonusVein { commodity } => {
+                        format!("{}:{}", t.slug(), commodity.slug())
+                    }
+                    _ => t.slug().to_string(),
+                }),
             }
         })
         .collect()
@@ -1056,6 +1064,7 @@ mod tests {
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None, cache_claimed: false,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1173,6 +1182,9 @@ mod tests {
             defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            // §explore Part 3: every test system carries a trait — the leak
+            // assertions below prove it reaches ONLY its current owner.
+            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::Ore }), cache_claimed: false,
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
@@ -1198,6 +1210,14 @@ mod tests {
         let rv = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(rv[1].deposits.is_some(), "the rival sees their own geology");
         assert!(rv[2].deposits.is_none(), "MY survey knowledge never reaches the rival's wire");
+        // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
+        // never a rival (even with ownership visible), never on an unowned
+        // system (even one I surveyed: a survey grants geology, NOT the trait).
+        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:ore"), "the owner sees their trait (with the vein commodity)");
+        assert!(v[1].trait_.is_none(), "a rival's trait must never leak");
+        assert!(v[2].trait_.is_none(), "surveying does NOT reveal the trait (ownership does)");
+        assert!(rv[1].trait_.is_some(), "the rival sees their own system's trait");
+        assert!(rv[0].trait_.is_none(), "my trait never reaches the rival's wire");
     }
 
     /// BLOCKADE state (§contestable-territory Part 1) is surfaced to the two
@@ -1219,6 +1239,7 @@ mod tests {
             defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
             refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+            trait_: None, cache_claimed: false,
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1274,6 +1295,7 @@ mod tests {
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None, cache_claimed: false,
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1322,6 +1344,7 @@ mod tests {
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None, cache_claimed: false,
         }]
     }
 

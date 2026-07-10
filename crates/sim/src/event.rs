@@ -226,6 +226,16 @@ pub enum EventPayload {
     /// allies on the intel chain), and the timeline light-delays the owner's
     /// notice from this same `pos`. Owner-only news.
     SurveyCompleted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+    /// §explore Part 3: a system's HIDDEN TRAIT revealed to its (new) owner —
+    /// fired at claim AND at capture (the knowledge transfers as spoils). The
+    /// blind claimer's gamble resolving IS the reveal. OWNER-ONLY, light-delayed
+    /// from the system (knowledge travels home at c, like the survey report).
+    TraitRevealed {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        trait_: crate::explore::SystemTrait,
+    },
     /// §syndicates Part 3: an ALLY GARRISON's supply state changed at a host system.
     /// `owner` = the garrison's SENDER (whose fleet it is — they learn their shield
     /// went hungry/recovered); `host` = the system feeding it; `fed = false` means

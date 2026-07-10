@@ -24,6 +24,17 @@ impl Commodity {
         Commodity::Provisions,
         Commodity::Volatiles,
     ];
+
+    /// The lowercase wire slug (matches the serde `rename_all = "lowercase"`).
+    pub fn slug(self) -> &'static str {
+        match self {
+            Commodity::Fuel => "fuel",
+            Commodity::Ore => "ore",
+            Commodity::Alloys => "alloys",
+            Commodity::Provisions => "provisions",
+            Commodity::Volatiles => "volatiles",
+        }
+    }
 }
 
 /// A convoy's manifest: what it is hauling and how much.
