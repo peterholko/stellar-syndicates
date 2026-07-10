@@ -21,7 +21,7 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{
-    BuildOptionView, ClientMsg, DepositView, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView,
+    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView,
     ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
@@ -235,6 +235,9 @@ impl GameLoop {
                             node_region_radius: sim::NODE_REGION_RADIUS,
                             // Static geography + geology (deposits, claim cost).
                             // Dynamic ownership/stockpile comes light-gated in View.
+                            // §explore: PUBLIC geography only — the exact deposits
+                            // are corp knowledge now (SystemStateView.deposits,
+                            // surveyed-or-owner); the free spectral read is the BAND.
                             systems: self
                                 .world
                                 .systems
@@ -243,15 +246,7 @@ impl GameLoop {
                                     id: s.id,
                                     pos: s.pos,
                                     name: s.name.clone(),
-                                    deposits: s
-                                        .deposits
-                                        .iter()
-                                        .map(|d| DepositView {
-                                            resource: d.resource,
-                                            richness: d.richness,
-                                            reserves: d.reserves,
-                                        })
-                                        .collect(),
+                                    band: self.world.band_of(s).slug(),
                                     claim_cost: s.claim_cost,
                                 })
                                 .collect(),
@@ -319,6 +314,13 @@ impl GameLoop {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, fleet_id);
                         self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
+                    }
+                }
+                ClientMsg::SurveySystem { fleet_id, system_id } => {
+                    // §explore Part 2: light-delayed like a move.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet_id);
+                        self.pending.push(Command::SurveySystem { player_id, fleet_id, system_id });
                     }
                 }
                 ClientMsg::AttackFleet { fleet_id, target_id } => {
@@ -660,6 +662,14 @@ impl GameLoop {
                         g.garrison_host = Some(host);
                         g.garrison_fed = self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
                     }
+                    // §explore Part 2: OWNER-ONLY survey-dwell progress (0..1) for
+                    // the progress ring — a rival never sees your order state.
+                    g.survey_progress = self.world.fleets.get(&g.id).and_then(|f| match f.order {
+                        sim::FleetOrder::Survey { dwell_since: Some(since), .. } => {
+                            Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0))
+                        }
+                        _ => None,
+                    });
                 }
                 // §syndicates Part 1: friendly ALLY tint — the owner (already on
                 // the ghost) is a syndicate member as THIS viewer knows it
@@ -717,7 +727,7 @@ impl GameLoop {
                 .collect();
             let mut systems = view::filter_systems(
                 &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
-                &corp.intel, &ally_intel,
+                &corp.intel, &ally_intel, &corp.surveyed,
             );
             // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
             // known) owner is a syndicate member as THIS viewer knows it. Composes

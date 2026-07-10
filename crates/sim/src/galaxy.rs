@@ -122,6 +122,16 @@ pub struct StarSystem {
     /// keeps the (unbroken) `since` / siege clock. `default` None (no blockade).
     #[serde(default)]
     pub blockade: Option<Blockade>,
+    /// §explore Part 3: the system's HIDDEN TRAIT (R3) — revealed only by
+    /// ownership; effects are always-on ground truth. Seeded at generation
+    /// (`TRAIT_FRACTION` of systems, an isolated stream). `default` None — a
+    /// pre-feature galaxy simply has none (acceptable; new generations do).
+    #[serde(default)]
+    pub trait_: Option<crate::explore::SystemTrait>,
+    /// §explore Part 3: the Precursor Cache has PAID (latched — exactly once,
+    /// ever; deliberately NOT reset on capture, so a flip can't re-mint it).
+    #[serde(default)]
+    pub cache_claimed: bool,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -277,6 +287,8 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None,
+            cache_claimed: false,
         });
     }
     systems
@@ -395,6 +407,8 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         habitat_fed: false,
         refinery_tier: 0,
             blockade: None,
+            trait_: None,
+            cache_claimed: false,
     }
 }
 

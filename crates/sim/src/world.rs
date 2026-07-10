@@ -95,6 +95,16 @@ pub struct Corporation {
     /// corp. `#[serde(default)]` so pre-feature snapshots load with zeroed stats.
     #[serde(default)]
     pub stats: crate::rankings::RankingStats,
+    /// §explore R2: the systems whose EXACT geology this corp knows — the survey
+    /// knowledge set. Seeded at join (everything within `SURVEY_INITIAL_RADIUS`
+    /// of home), grown by claiming/capturing (holding a system IS knowing it) and
+    /// by Survey orders (Part 2). PERMANENT (deposits are static — survey data
+    /// never stales, and losing a system doesn't un-know its geology). Gates the
+    /// `deposits` field in the server View; never on a rival's wire itself.
+    /// `#[serde(default)]` — pre-feature snapshots load empty and are healed by
+    /// [`World::fixup_after_load`] (a live corp is never amnesiac about home).
+    #[serde(default)]
+    pub surveyed: std::collections::BTreeSet<EntityId>,
 }
 
 /// One scouted observation of a rival system's fortifications (§scout part 2):
@@ -356,6 +366,37 @@ pub struct World {
     /// into the public View. `#[serde(default)]` so old snapshots load empty.
     #[serde(default)]
     pub rankings: Vec<crate::rankings::RankingRow>,
+    /// §explore R1: the richness-band TERCILE thresholds `(lo, hi)` over all
+    /// systems' `band_value`, computed once at generation (deposits are static,
+    /// so these never change). `#[serde(default)]` = (0,0) on a pre-feature
+    /// snapshot — healed by [`World::fixup_after_load`] (a pure recompute).
+    #[serde(default)]
+    pub band_lo: f64,
+    #[serde(default)]
+    pub band_hi: f64,
+    /// §explore Part 2: SURVEY REPORTS in flight — knowledge travelling home at c.
+    /// The owner's leg is scheduled at dwell completion (`pos → owner cc`); when
+    /// it lands, ally-relay legs are scheduled (`owner cc → each ally cc`, the
+    /// same chain the scout-intel relay uses). Delivery INSERTS into the
+    /// recipient's `surveyed` set (permanent). `#[serde(default)]` for old snaps.
+    #[serde(default)]
+    pub pending_survey_reports: Vec<SurveyReport>,
+}
+
+/// §explore Part 2: one in-flight survey-report leg (see
+/// [`World::pending_survey_reports`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurveyReport {
+    /// Who receives the knowledge when this leg lands.
+    pub recipient: PlayerId,
+    pub system: EntityId,
+    /// Sim time the leg's light arrives at the recipient's command center.
+    pub arrive_at: f64,
+    /// `false` = the surveyor's own report (on delivery it FANS OUT relay legs to
+    /// the origin's allies-at-that-moment); `true` = an ally-relayed copy (terminal).
+    pub relay: bool,
+    /// The surveying corp (the relay origin).
+    pub origin: PlayerId,
 }
 
 /// An ongoing BATTLE at a location (§battles-take-time). Persistent + observable.
@@ -514,6 +555,9 @@ impl World {
             enclaves: BTreeMap::new(),
             nodes: BTreeMap::new(),
             rankings: Vec::new(),
+            band_lo: 0.0,
+            band_hi: 0.0,
+            pending_survey_reports: Vec::new(),
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
@@ -521,7 +565,85 @@ impl World {
         // §node: seed DORMANT nodes at every exotic system (pure function of id,
         // no RNG — determinism intact, parity with the client's visual exotics).
         world.seed_nodes();
+        // §explore: the richness-band terciles — a pure derivation from the
+        // finished systems (no RNG), fixed for the life of the galaxy.
+        world.compute_band_thresholds();
+        // §explore Part 3: seed hidden TRAITS on an isolated stream (like the
+        // enclaves) — deterministic, never perturbs the frontier/home streams.
+        world.seed_traits();
         world
+    }
+
+    /// §explore Part 3: give `TRAIT_FRACTION` of systems exactly ONE hidden trait,
+    /// uniform over the five kinds, on an ISOLATED RNG stream (seed ^ magic — the
+    /// house pattern; the frontier/home/enclave streams are untouched, so this is
+    /// reproducible and perturbs nothing). A Bonus Vein picks a commodity the
+    /// system actually HAS (uniform over its deposits). Id-ordered iteration →
+    /// deterministic. Pre-feature snapshots simply have no traits (acceptable).
+    fn seed_traits(&mut self) {
+        let mut rng = crate::rng::Rng::new(self.config.seed ^ 0x5452_4149_5453_5F53); // "TRAITS_S"
+        for sys in self.systems.iter_mut() {
+            let roll = (rng.next_u64() % 100_000) as f64 / 100_000.0;
+            if roll >= crate::explore::TRAIT_FRACTION {
+                continue;
+            }
+            let t = match rng.next_u64() % 5 {
+                0 => {
+                    // A vein of something the system actually has.
+                    if sys.deposits.is_empty() {
+                        continue; // (defensive — every system generates deposits)
+                    }
+                    let dep = &sys.deposits[(rng.next_u64() % sys.deposits.len() as u64) as usize];
+                    crate::explore::SystemTrait::BonusVein { commodity: dep.resource }
+                }
+                1 => crate::explore::SystemTrait::DeepDeposits,
+                2 => crate::explore::SystemTrait::UnstableGeology,
+                3 => crate::explore::SystemTrait::VolatilePockets,
+                _ => crate::explore::SystemTrait::PrecursorCache,
+            };
+            sys.trait_ = Some(t);
+        }
+    }
+
+    /// §explore: (re)compute the band tercile thresholds from the current systems
+    /// — pure and deterministic (deposits are static, so this is idempotent).
+    fn compute_band_thresholds(&mut self) {
+        let (lo, hi) = crate::explore::band_thresholds(
+            self.systems.iter().map(|s| crate::explore::band_value(&s.deposits)),
+        );
+        self.band_lo = lo;
+        self.band_hi = hi;
+    }
+
+    /// §explore R1: a system's PUBLIC richness band — the free spectral read
+    /// (same for every corp; the exact composition stays behind the survey gate).
+    pub fn band_of(&self, sys: &StarSystem) -> crate::explore::RichnessBand {
+        crate::explore::band_for(crate::explore::band_value(&sys.deposits), self.band_lo, self.band_hi)
+    }
+
+    /// §explore MIGRATION FIXUP — heal a pre-feature snapshot after load (called
+    /// by the server's restore path; harmless on a current one):
+    /// * band thresholds at the serde default (0,0) → recompute (pure).
+    /// * a corp with an EMPTY `surveyed` set (impossible post-feature — join
+    ///   always seeds the home valley) → mark its OWNED systems + everything
+    ///   within `SURVEY_INITIAL_RADIUS` of home as surveyed, so live playtest
+    ///   corps don't wake up amnesiac about their own holdings.
+    pub fn fixup_after_load(&mut self) {
+        if self.band_lo == 0.0 && self.band_hi == 0.0 {
+            self.compute_band_thresholds();
+        }
+        let sys_info: Vec<(EntityId, Vec2, Option<PlayerId>)> =
+            self.systems.iter().map(|s| (s.id, s.pos, s.owner)).collect();
+        for corp in self.players.values_mut() {
+            if !corp.surveyed.is_empty() {
+                continue;
+            }
+            for (sid, pos, owner) in &sys_info {
+                if *owner == Some(corp.id) || pos.distance(corp.home) <= crate::explore::SURVEY_INITIAL_RADIUS {
+                    corp.surveyed.insert(*sid);
+                }
+            }
+        }
     }
 
     /// §node: seed a DORMANT [`crate::node::Node`] at every EXOTIC system. Pure
@@ -933,6 +1055,14 @@ impl World {
         //     Also where a besieging colony ship CAPTURES a strangled system (§Part 2).
         self.resolve_colony_arrivals(&mut events);
 
+        // 4b'. §explore Part 2: run the SURVEY dwell clocks (after movement so
+        //      positions are this tick's truth; after the combat passes so the
+        //      abort-on-engagement rule sees this tick's battles), then deliver
+        //      any survey-report legs whose light has arrived (knowledge inserts
+        //      into `surveyed`; the owner's landing fans out ally-relay legs).
+        self.resolve_surveys(&mut events);
+        self.deliver_survey_reports();
+
         // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
         //     settled, confirm delivered orders whose echo light has returned
         //     (owner-only `OrderConfirmed`), and drop echoes for fleets just lost.
@@ -1121,7 +1251,7 @@ impl World {
                 combatant: s.is_combatant(),
                 // §node Veil: a fed magnetar node quiets its holder's dark fleets
                 // in-region — the SAME signature both pickets and the View read.
-                signature: s.signature() * self.veil_factor(s.owner, s.pos),
+                signature: s.signature() * self.veil_factor(s.owner, s.pos) * if s.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
             })
             .collect();
         let doctrines: BTreeMap<PlayerId, FleetDoctrine> =
@@ -1438,7 +1568,7 @@ impl World {
                 combatant: s.is_combatant(),
                 // §node Veil: a fed magnetar node quiets its holder's dark fleets
                 // in-region — the SAME signature both pickets and the View read.
-                signature: s.signature() * self.veil_factor(s.owner, s.pos),
+                signature: s.signature() * self.veil_factor(s.owner, s.pos) * if s.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
                 broadcasts: s.broadcasts(),
             })
             .collect();
@@ -2534,6 +2664,103 @@ impl World {
             .collect()
     }
 
+    /// §explore Part 2: run every Survey order's dwell clock. Per surveying fleet:
+    /// * IN AN ENGAGEMENT → ABORT to Idle, no partial credit (re-issuable). A
+    ///   fight interrupts the sweep — the all-or-nothing rule.
+    /// * OUT OF RANGE → the dwell clock resets (still approaching, or shoved off
+    ///   station): no partial credit; the approach continues and the dwell
+    ///   restarts from zero once back on-site.
+    /// * IN RANGE → start/continue the dwell; at `SURVEY_SECS` the survey
+    ///   COMPLETES: fire `SurveyCompleted` AT THE FLEET'S POSITION (knowledge
+    ///   travels home at c — the owner's report leg is scheduled here), order →
+    ///   Idle. Idempotent on an already-surveyed system (legal, wasted time).
+    ///
+    /// Deterministic + fully offline (§5.1 — surveys run whether the owner is
+    /// logged in or not).
+    fn resolve_surveys(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let c = self.config.c;
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
+        let mut completions: Vec<(PlayerId, EntityId, Vec2)> = Vec::new();
+        for (fid, fleet) in self.fleets.iter_mut() {
+            let FleetOrder::Survey { system, station, dwell_since } = &mut fleet.order else {
+                continue;
+            };
+            if engaged.contains(fid) {
+                // A battle interrupts the sweep — abort, nothing banked.
+                fleet.order = FleetOrder::Idle;
+                continue;
+            }
+            if fleet.pos.distance(*station) > crate::explore::SURVEY_RANGE {
+                *dwell_since = None; // off-site: no partial credit, keep approaching
+                continue;
+            }
+            match *dwell_since {
+                None => *dwell_since = Some(now),
+                Some(since) if now - since >= crate::explore::SURVEY_SECS => {
+                    completions.push((fleet.owner, *system, fleet.pos));
+                    fleet.order = FleetOrder::Idle;
+                }
+                Some(_) => {} // mid-dwell, loud, counting down
+            }
+        }
+        for (owner, system, pos) in completions {
+            events.push(Event::new(now, EventPayload::SurveyCompleted { owner, system, pos }));
+            // The report leg: the knowledge lands when its light reaches the
+            // OWNER's command center (same formula the timeline notice uses).
+            if let Some(cc) = self.players.get(&owner).map(|p| p.command_center) {
+                self.pending_survey_reports.push(SurveyReport {
+                    recipient: owner,
+                    system,
+                    arrive_at: now + pos.distance(cc) / c,
+                    relay: false,
+                    origin: owner,
+                });
+            }
+        }
+    }
+
+    /// §explore Part 2: deliver survey-report legs whose light has arrived —
+    /// INSERT the system into the recipient's `surveyed` set (permanent R2
+    /// knowledge). When the SURVEYOR'S OWN leg lands, fan out ALLY-RELAY legs to
+    /// the origin's allies AT THAT MOMENT (`owner cc → ally cc`, the same
+    /// chain-delay shape the §syndicates scout-intel relay uses: observed → own
+    /// cc → ally cc, each leg at c). Deterministic + async-fair.
+    fn deliver_survey_reports(&mut self) {
+        let now = self.time;
+        let c = self.config.c;
+        let mut i = 0;
+        while i < self.pending_survey_reports.len() {
+            if self.pending_survey_reports[i].arrive_at > now {
+                i += 1;
+                continue;
+            }
+            let r = self.pending_survey_reports.swap_remove(i);
+            if let Some(corp) = self.players.get_mut(&r.recipient) {
+                corp.surveyed.insert(r.system);
+            }
+            if !r.relay
+                && let Some(occ) = self.players.get(&r.origin).map(|p| p.command_center)
+            {
+                for ally in self.allies_of(r.origin) {
+                    if let Some(acc) = self.players.get(&ally).map(|p| p.command_center) {
+                        self.pending_survey_reports.push(SurveyReport {
+                            recipient: ally,
+                            system: r.system,
+                            arrive_at: now + occ.distance(acc) / c,
+                            relay: true,
+                            origin: r.origin,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     /// §syndicates Part 3: feed ALLY GARRISONS. A COMBATANT fleet stationed (Idle)
     /// within `DEFENSE_PLATFORM_RADIUS` of a syndicate ALLY's system is a garrison:
     /// the HOST draws `GARRISON_UPKEEP_PER_SHIP × ships × dt` Provisions from its
@@ -2933,6 +3160,14 @@ impl World {
                         syndicate_prev: None,
                         syndicate_since: 0.0,
                         stats: crate::rankings::RankingStats::default(),
+                        // §explore: the starting valley is KNOWN (pre-surveyed);
+                        // the frontier isn't — that's what scouts are for.
+                        surveyed: self
+                            .systems
+                            .iter()
+                            .filter(|s| s.pos.distance(home) <= crate::explore::SURVEY_INITIAL_RADIUS)
+                            .map(|s| s.id)
+                            .collect(),
                     },
                 );
                 events.push(Event::new(
@@ -3264,6 +3499,38 @@ impl World {
                     crate::event::OrderKind::Blockade,
                 );
             }
+            Command::SurveySystem { player_id, fleet_id, system_id } => {
+                // §explore Part 2: the fleet must exist, be the player's, and
+                // CONTAIN a Scout (the sensing capability — escorts ride along but
+                // can't survey alone; crisp roles like the Blockade raider-gate).
+                let Some(fleet) = self.fleets.get(fleet_id) else { return };
+                if fleet.owner != *player_id || !fleet.contains(ShipKind::Scout) {
+                    return;
+                }
+                // ANY system is fair game — unclaimed frontier, an ally's, or a
+                // rival's (pre-siege prospecting is intended). Re-surveying an
+                // already-known system is legal and idempotent (wasted time —
+                // the UI notes it; the sim doesn't forbid).
+                let Some(sys) = self.systems.iter().find(|s| s.id == *system_id) else { return };
+                let station = sys.pos;
+                // Fuel the run ∝ distance × fleet mass, like a move; a shortfall
+                // HOLDS it (keeps the current order, notifies) — never lost.
+                let cost = crate::fuel::fuel_cost(fleet.pos.distance(station), fleet.mass());
+                let origin = fleet.pos;
+                if !self.charge_fuel(*player_id, origin, cost) {
+                    events.push(Event::new(self.time, EventPayload::FuelShortfall {
+                        owner: *player_id, needed: cost, kind: crate::fuel::ShortfallKind::Move,
+                    }));
+                    return;
+                }
+                // Light-delayed like any order to a mobile asset (echo lifecycle).
+                self.schedule_for_owner(
+                    *player_id,
+                    *fleet_id,
+                    FleetOrder::Survey { system: *system_id, station, dwell_since: None },
+                    crate::event::OrderKind::Survey,
+                );
+            }
             Command::AttackFleet { player_id, fleet_id, target_id } => {
                 // The target must exist and belong to someone else.
                 let Some(target) = self.fleets.get(target_id) else {
@@ -3466,17 +3733,27 @@ impl World {
                 return;
             }
         }
+        // §explore Part 3 Unstable Geology: DEVELOPMENT (upgrade) recipe costs run
+        // ×UNSTABLE_COST_MULT here — the lemon a survey can't see. ONE multiplier
+        // read shared by the affordability check AND the debit (they can't drift).
+        let cost_mult = if matches!(what, crate::build::BuildKind::Upgrade { .. })
+            && sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology)
+        {
+            crate::explore::UNSTABLE_COST_MULT
+        } else {
+            1.0
+        };
         let affordable = recipe
             .costs
             .iter()
-            .all(|(c, need)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *need);
+            .all(|(c, need)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *need * cost_mult);
         if !affordable {
             return; // soft reject — no event, no debit
         }
         // Deduct the whole recipe from the system stockpile.
         let sys = self.systems.iter_mut().find(|s| s.id == system_id).unwrap();
         for (c, need) in recipe.costs {
-            *sys.stockpile.entry(*c).or_insert(0.0) -= *need;
+            *sys.stockpile.entry(*c).or_insert(0.0) -= *need * cost_mult;
         }
         self.next_build_id += 1;
         let complete_tick = self.tick + recipe.build_ticks;
@@ -3795,6 +4072,22 @@ impl World {
                     if let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id) {
                         sy.owner = Some(owner);
                         sy.claimed_at = Some(now);
+                        // §explore Part 3: the claim REVEALS the hidden trait (R3 —
+                        // the blind claimer's gamble resolving), and a Precursor
+                        // Cache pays its one-time grant (latched — once, ever).
+                        if let Some(t) = sy.trait_ {
+                            if t == crate::explore::SystemTrait::PrecursorCache && !sy.cache_claimed {
+                                sy.cache_claimed = true;
+                                let grant = crate::explore::PRECURSOR_ALLOYS.min(sy.storage_headroom());
+                                *sy.stockpile.entry(crate::cargo::Commodity::Alloys).or_insert(0.0) += grant;
+                            }
+                            events.push(Event::new(now, EventPayload::TraitRevealed { owner, system: sys_id, pos, trait_: t }));
+                        }
+                    }
+                    // §explore: holding a system IS knowing it — the blind claimer's
+                    // gamble resolves here (permanent survey knowledge, R2).
+                    if let Some(corp) = self.players.get_mut(&owner) {
+                        corp.surveyed.insert(sys_id);
                     }
                     // Consume ONE colony ship (it BECAME the colony); the rest of
                     // the fleet — escorts, extra colonists — persists and parks at
@@ -3881,6 +4174,11 @@ impl World {
                 (u >= 1).then_some((*c, u))
             }).collect())
             .unwrap_or_default();
+        // §explore: capture transfers the geology knowledge too (spoils — the new
+        // holder walks the ground; permanent survey knowledge, R2).
+        if let Some(corp) = self.players.get_mut(&new_owner) {
+            corp.surveyed.insert(sys_id);
+        }
         if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
             sys.owner = Some(new_owner);
             sys.claimed_at = Some(now);
@@ -3913,6 +4211,11 @@ impl World {
         // galaxy-wide, light-delayed, so every corp learns who now commands it.
         if let Some(node) = self.nodes.get(&sys_id).filter(|n| n.awakened) {
             events.push(Event::new(now, EventPayload::NodeCaptured { owner: new_owner, system: sys_id, pos, bonus: node.bonus }));
+        }
+        // §explore Part 3: capture TRANSFERS the trait knowledge — spoils. (The
+        // Precursor Cache latch survives the flip: it pays exactly once, ever.)
+        if let Some(t) = self.systems.iter().find(|s| s.id == sys_id).and_then(|s| s.trait_) {
+            events.push(Event::new(now, EventPayload::TraitRevealed { owner: new_owner, system: sys_id, pos, trait_: t }));
         }
     }
 
@@ -4035,12 +4338,27 @@ impl World {
                 // Extractor upgrades (§step1 structure sink) multiply every
                 // deposit's output: richness · MULT^tier; a FED Habitat multiplies
                 // the system's ENTIRE output on top (compounding, deterministic).
-                let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(sys.extractor_tier as i32);
+                // §explore Part 3 (always-on ground truth, learned or not):
+                //   Deep Deposits — base ×DEEP_DEPOSITS_BASE_MULT, but the
+                //   Extractor multiplier applies as ^(tier−1): tier 1 is WASTED
+                //   breaking through (the survey can't see this; the claim does).
+                let deep = sys.trait_ == Some(crate::explore::SystemTrait::DeepDeposits);
+                let ext_exp = if deep { sys.extractor_tier.saturating_sub(1) } else { sys.extractor_tier };
+                let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(ext_exp as i32);
+                if deep {
+                    mult *= crate::explore::DEEP_DEPOSITS_BASE_MULT;
+                }
                 if sys.habitat_tier >= 1 && sys.habitat_fed {
                     mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.habitat_tier as i32);
                 }
+                // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
+                let vein = match sys.trait_ {
+                    Some(crate::explore::SystemTrait::BonusVein { commodity }) => Some(commodity),
+                    _ => None,
+                };
                 for dep in &mut sys.deposits {
-                    let mut amount = (dep.richness * mult * DT).min(headroom);
+                    let vein_mult = if vein == Some(dep.resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
+                    let mut amount = (dep.richness * mult * vein_mult * DT).min(headroom);
                     if let Some(reserves) = dep.reserves.as_mut() {
                         amount = amount.min(*reserves);
                         *reserves -= amount;
@@ -4074,9 +4392,16 @@ impl World {
                         take = (room / (crate::build::REFINERY_YIELD - 1.0)).max(0.0);
                     }
                     if take > 0.0 {
+                        // §explore Part 3 Volatile Pockets: richer feedstock —
+                        // Refinery OUTPUT ×VOLATILE_REFINERY_MULT here (always-on).
+                        let pocket = if sys.trait_ == Some(crate::explore::SystemTrait::VolatilePockets) {
+                            crate::explore::VOLATILE_REFINERY_MULT
+                        } else {
+                            1.0
+                        };
                         *sys.stockpile.entry(crate::cargo::Commodity::Volatiles).or_insert(0.0) -= take;
                         *sys.stockpile.entry(crate::cargo::Commodity::Fuel).or_insert(0.0) +=
-                            take * crate::build::REFINERY_YIELD;
+                            take * crate::build::REFINERY_YIELD * pocket;
                     }
                 }
             }
@@ -4260,6 +4585,11 @@ impl World {
                 }
                 // INTEL GATHERED — one scout snapshot captured.
                 EventPayload::IntelGathered { owner, .. } => {
+                    self.bump_stats(*owner, |s| s.intel_snapshots += 1);
+                }
+                // §explore: a completed SURVEY is intel gathered too (the scout's
+                // second job feeds the same All-Seeing ladder).
+                EventPayload::SurveyCompleted { owner, .. } => {
                     self.bump_stats(*owner, |s| s.intel_snapshots += 1);
                 }
                 // CARGO CAPTURED (plunder) + RECOVERY (the old owner's major loss).
@@ -10325,5 +10655,535 @@ mod tests {
         val.as_object_mut().unwrap().remove("rankings");
         let w3: World = serde_json::from_value(val).unwrap();
         assert!(w3.rankings.is_empty(), "a pre-feature snapshot loads with no published table");
+    }
+
+    // ── §explore Part 1: richness bands + per-corp survey knowledge ─────────────
+
+    /// Band thresholds are terciles over the galaxy, deterministic from the seed,
+    /// and the three bands all occur (the spectral read carries real signal).
+    #[test]
+    fn band_terciles_are_deterministic_and_populated() {
+        let a = test_world();
+        let b = test_world();
+        assert_eq!((a.band_lo, a.band_hi), (b.band_lo, b.band_hi), "same seed → same terciles");
+        assert!(a.band_lo > 0.0 && a.band_hi > a.band_lo, "thresholds are real and ordered");
+        let mut counts = [0usize; 3];
+        for s in &a.systems {
+            match a.band_of(s) {
+                crate::explore::RichnessBand::Poor => counts[0] += 1,
+                crate::explore::RichnessBand::Fair => counts[1] += 1,
+                crate::explore::RichnessBand::Rich => counts[2] += 1,
+            }
+        }
+        assert!(counts.iter().all(|&n| n > 0), "all three bands occur (got {counts:?})");
+        // Bands agree across the two same-seed worlds, system by system.
+        for (sa, sb) in a.systems.iter().zip(&b.systems) {
+            assert_eq!(a.band_of(sa), b.band_of(sb));
+        }
+    }
+
+    /// Joining pre-surveys the home valley (everything within the initial radius)
+    /// and nothing beyond it — the frontier starts dark.
+    #[test]
+    fn join_preseeds_the_home_survey_radius() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let corp = &w.players[&id];
+        let home = corp.home;
+        assert!(!corp.surveyed.is_empty(), "the starting valley is known");
+        for s in &w.systems {
+            let near = s.pos.distance(home) <= crate::explore::SURVEY_INITIAL_RADIUS;
+            assert_eq!(corp.surveyed.contains(&s.id), near, "surveyed iff within the initial radius");
+        }
+        assert!(
+            w.systems.iter().any(|s| !corp.surveyed.contains(&s.id)),
+            "the frontier is NOT pre-surveyed"
+        );
+    }
+
+    /// Claiming a system (even blind) makes it surveyed — holding is knowing; the
+    /// knowledge is permanent.
+    #[test]
+    fn claiming_inserts_survey_knowledge() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(&w);
+        assert!(!w.players[&id].surveyed.contains(&sysid), "the frontier prize starts unsurveyed");
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        colony_at(&mut w, id, pos);
+        w.step(&[]);
+        assert_eq!(w.systems.iter().find(|s| s.id == sysid).unwrap().owner, Some(id));
+        assert!(w.players[&id].surveyed.contains(&sysid), "the blind claim resolves the gamble — geology known");
+    }
+
+    /// The MIGRATION FIXUP heals a pre-feature snapshot: zeroed thresholds are
+    /// recomputed and an empty survey set is seeded with owned + home-radius
+    /// systems; a post-feature corp is left untouched.
+    #[test]
+    fn fixup_after_load_heals_pre_feature_state() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Give the corp a distant owned system (a blind-claimed frontier hold).
+        let far = richest_system(&w);
+        w.systems.iter_mut().find(|s| s.id == far).unwrap().owner = Some(id);
+        // Simulate the pre-feature snapshot: no thresholds, no survey knowledge.
+        let (lo, hi) = (w.band_lo, w.band_hi);
+        w.band_lo = 0.0;
+        w.band_hi = 0.0;
+        w.players.get_mut(&id).unwrap().surveyed.clear();
+        w.fixup_after_load();
+        assert_eq!((w.band_lo, w.band_hi), (lo, hi), "thresholds recomputed identically (pure)");
+        let corp = &w.players[&id];
+        assert!(corp.surveyed.contains(&far), "owned systems are re-known");
+        let home = corp.home;
+        for s in &w.systems {
+            if s.pos.distance(home) <= crate::explore::SURVEY_INITIAL_RADIUS {
+                assert!(corp.surveyed.contains(&s.id), "the home valley is re-known");
+            }
+        }
+        // A corp WITH knowledge is untouched (the fixup only heals amnesia).
+        let before = w.players[&id].surveyed.clone();
+        w.players.get_mut(&id).unwrap().surveyed.remove(&far);
+        w.fixup_after_load();
+        assert!(!w.players[&id].surveyed.contains(&far), "a non-empty set is never modified");
+        assert_eq!(w.players[&id].surveyed.len(), before.len() - 1);
+    }
+
+    /// Survey knowledge + band thresholds ride a snapshot; a PRE-feature snapshot
+    /// (fields absent) still loads with the serde defaults.
+    #[test]
+    fn survey_knowledge_survives_a_snapshot() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w.players[&id].surveyed, w2.players[&id].surveyed, "survey set round-trips");
+        // Floats through serde_json can drift 1 ULP (no float_roundtrip feature)
+        // — a measure-zero band-boundary wobble every snapshot f64 shares.
+        assert!((w.band_lo - w2.band_lo).abs() < 1e-9 && (w.band_hi - w2.band_hi).abs() < 1e-9, "thresholds round-trip");
+        // Pre-feature: strip the new fields → defaults (then the fixup heals).
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        val.as_object_mut().unwrap().remove("band_lo");
+        val.as_object_mut().unwrap().remove("band_hi");
+        for p in val["players"].as_object_mut().unwrap().values_mut() {
+            p.as_object_mut().unwrap().remove("surveyed");
+        }
+        let mut w3: World = serde_json::from_value(val).unwrap();
+        assert_eq!((w3.band_lo, w3.band_hi), (0.0, 0.0));
+        assert!(w3.players[&id].surveyed.is_empty());
+        w3.fixup_after_load();
+        assert!(
+            (w3.band_lo - w.band_lo).abs() < 1e-9 && (w3.band_hi - w.band_hi).abs() < 1e-9,
+            "fixup restores thresholds (within the shared 1-ULP float wobble)"
+        );
+        assert!(!w3.players[&id].surveyed.is_empty(), "fixup restores the home valley");
+    }
+
+    // ── §explore Part 2: the SURVEY order ───────────────────────────────────────
+
+    /// A joined player + a scout fleet at `pos` + an UNSURVEYED frontier system to
+    /// target. Returns (player, scout fleet id, system id, system pos).
+    fn survey_setup(w: &mut World) -> (PlayerId, EntityId, EntityId, Vec2) {
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sysid = richest_system(w);
+        assert!(!w.players[&id].surveyed.contains(&sysid), "target starts unsurveyed");
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        // Park the scout NEAR the target (a short approach) — the ORDER still
+        // travels from the cc at c, so step past the delivery before dwelling.
+        let scout = squad(w, id, pos + Vec2::new(300.0, 0.0), ShipKind::Scout, 1, FleetOrder::Idle);
+        (id, scout, sysid, pos)
+    }
+
+    /// The SCOUT GATE: a fleet without a scout soft-rejects the order; with one
+    /// it schedules (light-delayed) and eventually flies.
+    #[test]
+    fn survey_requires_a_scout() {
+        let mut w = test_world();
+        let (id, _scout, sysid, pos) = survey_setup(&mut w);
+        let raider = squad(&mut w, id, pos + Vec2::new(300.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
+        w.step(&[Command::SurveySystem { player_id: id, fleet_id: raider, system_id: sysid }]);
+        run_until(&mut w, 20, |w| !matches!(w.fleets[&raider].order, FleetOrder::Idle));
+        assert!(matches!(w.fleets[&raider].order, FleetOrder::Idle), "no scout → soft-reject (order never lands)");
+    }
+
+    /// APPROACH → DWELL → COMPLETE: the dwell is all-or-nothing and LOUD; the
+    /// report travels home at c and inserts PERMANENT knowledge; rankings credit.
+    #[test]
+    fn survey_dwell_completes_and_knowledge_travels_at_c() {
+        let mut w = test_world();
+        let (id, scout, sysid, _pos) = survey_setup(&mut w);
+        let intel0 = w.players[&id].stats.intel_snapshots;
+        w.step(&[Command::SurveySystem { player_id: id, fleet_id: scout, system_id: sysid }]);
+        // The order lands (light-delayed), the scout flies + dwells. While the
+        // dwell runs, the fleet is LOUD (surveying() true) — sample mid-dwell.
+        assert!(run_until(&mut w, 60, |w| w.fleets.get(&scout).is_some_and(|f| f.surveying())), "the dwell starts");
+        assert!(w.fleets[&scout].surveying(), "LOUD during the dwell window");
+        // Completion fires SurveyCompleted + goes Idle; loudness ends with it.
+        assert!(
+            run_until(&mut w, 60, |w| w.fleets.get(&scout).is_some_and(|f| matches!(f.order, FleetOrder::Idle))),
+            "the dwell completes"
+        );
+        assert!(!w.fleets[&scout].surveying(), "loudness ends outside the window");
+        // The knowledge is IN FLIGHT (pending report) — the corp doesn't know yet
+        // unless the light already landed; wait for the delivery.
+        assert!(
+            run_until(&mut w, 120, |w| w.players[&id].surveyed.contains(&sysid)),
+            "the report light lands at the cc and the knowledge inserts"
+        );
+        assert_eq!(w.players[&id].stats.intel_snapshots, intel0 + 1, "a survey feeds the intel ladder");
+        // PERMANENT: nothing removes it.
+        for _ in 0..(5 * TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(w.players[&id].surveyed.contains(&sysid), "survey knowledge never stales");
+    }
+
+    /// The report is LIGHT-DELAYED: between completion and `pos→cc` arrival the
+    /// corp provably does NOT know the geology.
+    #[test]
+    fn survey_report_is_light_delayed_to_the_cc() {
+        let mut w = test_world();
+        let (id, scout, sysid, pos) = survey_setup(&mut w);
+        // Drive the dwell DIRECTLY (skip the order round-trip): on-site, clock set.
+        w.fleets.get_mut(&scout).unwrap().pos = pos;
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        let cc = w.players[&id].command_center;
+        let delay = pos.distance(cc) / w.config.c;
+        assert!(delay > 1.0, "the frontier prize is far enough for a measurable delay ({delay:.1}s)");
+        // Step just past completion: completed, but the light hasn't landed.
+        let steps = (crate::explore::SURVEY_SECS / DT) as u32 + 3;
+        for _ in 0..steps {
+            w.step(&[]);
+        }
+        assert!(matches!(w.fleets[&scout].order, FleetOrder::Idle), "dwell completed");
+        assert!(!w.players[&id].surveyed.contains(&sysid), "knowledge NOT known before its light arrives");
+        assert!(
+            run_until(&mut w, delay.ceil() as u32 + 2, |w| w.players[&id].surveyed.contains(&sysid)),
+            "knowledge lands once the report light reaches the cc"
+        );
+    }
+
+    /// ALLY RELAY: the owner's landing fans a relayed copy to each ally, arriving
+    /// one more cc→cc light-leg later; a non-ally NEVER receives it.
+    #[test]
+    fn survey_reports_relay_to_allies_on_the_intel_chain() {
+        let mut w = test_world();
+        let (a, b, c_id) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer { id: c_id, name: "C".into() },
+        ]);
+        ally(&mut w, a, b);
+        let sysid = richest_system(&w);
+        let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        let scout = squad(&mut w, a, pos, ShipKind::Scout, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        // Run until A knows; B must not know yet at that exact moment (the relay
+        // leg still has cc→cc distance to cover), then B learns; C never does.
+        assert!(run_until(&mut w, 180, |w| w.players[&a].surveyed.contains(&sysid)), "A learns first");
+        assert!(!w.players[&b].surveyed.contains(&sysid), "the ally copy is still in flight (chain delay)");
+        assert!(run_until(&mut w, 120, |w| w.players[&b].surveyed.contains(&sysid)), "the ally receives the relayed copy");
+        assert!(!w.players[&c_id].surveyed.contains(&sysid), "a NON-ally never receives it");
+    }
+
+    /// An ENGAGEMENT aborts the dwell — all-or-nothing, no partial credit; the
+    /// order is re-issuable (it goes Idle, nothing banked).
+    #[test]
+    fn survey_aborts_on_engagement_with_no_credit() {
+        let mut w = test_world();
+        let (id, scout, sysid, pos) = survey_setup(&mut w);
+        let rival = PlayerId(2);
+        w.step(&[Command::AddPlayer { id: rival, name: "R".into() }]);
+        // Scout on-site, mid-dwell; a rival raider parked on top ATTACKS it.
+        w.fleets.get_mut(&scout).unwrap().pos = pos;
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        let raider = squad(&mut w, rival, pos + Vec2::new(10.0, 0.0), ShipKind::Raider, 2, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: rival, fleet_id: raider, target_id: scout }]);
+        assert!(
+            run_until(&mut w, 60, |w| w.fleets.get(&scout).is_none_or(|f| matches!(f.order, FleetOrder::Idle))),
+            "contact aborts the dwell"
+        );
+        assert!(!w.players[&id].surveyed.contains(&sysid), "no partial credit — the fight interrupted the sweep");
+    }
+
+    /// LEAVING RANGE resets the dwell clock (no partial credit): shoved off
+    /// station, the clock restarts from zero once back on-site.
+    #[test]
+    fn survey_dwell_resets_out_of_range() {
+        let mut w = test_world();
+        let (_id, scout, sysid, pos) = survey_setup(&mut w);
+        let f = w.fleets.get_mut(&scout).unwrap();
+        f.pos = pos;
+        f.order = FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        // Displace the fleet BEYOND the survey range mid-dwell.
+        w.fleets.get_mut(&scout).unwrap().pos = pos + Vec2::new(crate::explore::SURVEY_RANGE + 500.0, 0.0);
+        w.step(&[]);
+        match w.fleets[&scout].order {
+            FleetOrder::Survey { dwell_since, .. } => {
+                assert!(dwell_since.is_none(), "off-site → the clock resets (no partial credit)")
+            }
+            ref o => panic!("the order should persist through a reset (got {o:?})"),
+        }
+    }
+
+    /// RE-SURVEYING an already-surveyed system is legal and idempotent.
+    #[test]
+    fn survey_is_idempotent_on_a_known_system() {
+        let mut w = test_world();
+        let (id, scout, sysid, pos) = survey_setup(&mut w);
+        w.players.get_mut(&id).unwrap().surveyed.insert(sysid); // already known
+        w.fleets.get_mut(&scout).unwrap().pos = pos;
+        w.fleets.get_mut(&scout).unwrap().order =
+            FleetOrder::Survey { system: sysid, station: pos, dwell_since: Some(w.time) };
+        assert!(
+            run_until(&mut w, 60, |w| matches!(w.fleets[&scout].order, FleetOrder::Idle)),
+            "the re-survey runs to completion (wasted time, not an error)"
+        );
+        assert!(w.players[&id].surveyed.contains(&sysid), "still known — idempotent");
+    }
+
+    /// DETERMINISM: the whole survey flow (order → dwell → report → relay) is
+    /// byte-identical across two same-seed runs.
+    #[test]
+    fn surveys_are_deterministic() {
+        let run = || {
+            let mut w = test_world();
+            let (id, scout, sysid, _pos) = survey_setup(&mut w);
+            w.step(&[Command::SurveySystem { player_id: id, fleet_id: scout, system_id: sysid }]);
+            for _ in 0..(90 * TICK_HZ) {
+                w.step(&[]);
+            }
+            serde_json::to_string(&w).unwrap()
+        };
+        assert_eq!(run(), run());
+    }
+
+    // ── §explore Part 3: hidden TRAITS ──────────────────────────────────────────
+
+    use crate::explore::SystemTrait;
+
+    /// Force `sys` to a claimed system with the given trait + a single Ore deposit
+    /// (richness 1.0, renewable); returns its id.
+    fn trait_system(w: &mut World, owner: PlayerId, t: Option<SystemTrait>) -> EntityId {
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.trait_ = t;
+        sys.deposits = vec![crate::galaxy::Deposit {
+            resource: Commodity::Ore,
+            richness: 1.0,
+            reserves: None,
+            accessibility: 0.5,
+        }];
+        sys.id
+    }
+
+    /// Trait assignment is deterministic from the seed, hits ~TRAIT_FRACTION, and
+    /// all five kinds occur (checked across seeds — one galaxy is small).
+    #[test]
+    fn traits_are_seeded_deterministically_at_the_fraction() {
+        let a = test_world();
+        let b = test_world();
+        for (sa, sb) in a.systems.iter().zip(&b.systems) {
+            assert_eq!(sa.trait_, sb.trait_, "same seed → same traits");
+        }
+        let mut with = 0usize;
+        let mut total = 0usize;
+        let mut kinds = std::collections::BTreeSet::new();
+        for seed in 0..40u64 {
+            let w = World::new(SimConfig::for_players(seed, 4));
+            for s in &w.systems {
+                total += 1;
+                if let Some(t) = s.trait_ {
+                    with += 1;
+                    kinds.insert(t.slug());
+                    if let SystemTrait::BonusVein { commodity } = t {
+                        assert!(
+                            s.deposits.iter().any(|d| d.resource == commodity),
+                            "a Bonus Vein is always of a commodity the system HAS"
+                        );
+                    }
+                }
+            }
+        }
+        let frac = with as f64 / total as f64;
+        assert!((frac - crate::explore::TRAIT_FRACTION).abs() < 0.06, "≈{} of systems carry a trait (got {frac:.3})", crate::explore::TRAIT_FRACTION);
+        assert_eq!(kinds.len(), 5, "all five trait kinds occur (got {kinds:?})");
+    }
+
+    /// BONUS VEIN: that commodity's accrual runs ×BONUS_VEIN_MULT; others don't.
+    #[test]
+    fn bonus_vein_boosts_only_its_commodity() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = trait_system(&mut w, id, Some(SystemTrait::BonusVein { commodity: Commodity::Ore }));
+        // Add a second, non-vein deposit for the control.
+        w.systems.iter_mut().find(|s| s.id == sid).unwrap().deposits.push(crate::galaxy::Deposit {
+            resource: Commodity::Provisions,
+            richness: 1.0,
+            reserves: None,
+            accessibility: 0.5,
+        });
+        w.step(&[]);
+        let ore = system_stock(&w, sid, Commodity::Ore);
+        let prov = system_stock(&w, sid, Commodity::Provisions);
+        assert!((ore - crate::explore::BONUS_VEIN_MULT * DT).abs() < 1e-9, "the vein commodity runs ×{} (got {ore})", crate::explore::BONUS_VEIN_MULT);
+        assert!((prov - DT).abs() < 1e-9, "other commodities are untouched (got {prov})");
+    }
+
+    /// DEEP DEPOSITS: base ×1.5, and the FIRST Extractor tier is WASTED —
+    /// tier 0 and tier 1 produce identically; tier 2 applies one multiplier.
+    #[test]
+    fn deep_deposits_waste_the_first_extractor_tier() {
+        let gain_at_tier = |tier: u32| {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            let sid = trait_system(&mut w, id, Some(SystemTrait::DeepDeposits));
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().extractor_tier = tier;
+            w.step(&[]);
+            system_stock(&w, sid, Commodity::Ore)
+        };
+        let base = crate::explore::DEEP_DEPOSITS_BASE_MULT;
+        let mult = crate::build::EXTRACTOR_RICHNESS_MULT;
+        assert!((gain_at_tier(0) - base * DT).abs() < 1e-9, "tier 0: base ×{base}");
+        assert!((gain_at_tier(1) - base * DT).abs() < 1e-9, "tier 1: IDENTICAL — the first tier is wasted");
+        assert!((gain_at_tier(2) - base * mult * DT).abs() < 1e-9, "tier 2: one multiplier applies");
+    }
+
+    /// UNSTABLE GEOLOGY: development costs ×UNSTABLE_COST_MULT at BOTH the
+    /// affordability gate and the debit (one shared multiplier); ships unaffected.
+    #[test]
+    fn unstable_geology_taxes_developments() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = trait_system(&mut w, id, Some(SystemTrait::UnstableGeology));
+        let recipe = crate::build::recipe_for(crate::build::BuildKind::Upgrade { upgrade: crate::build::SystemUpgrade::Extractor });
+        // Stock EXACTLY the plain cost → must be REJECTED (needs ×1.25).
+        for (c, need) in recipe.costs {
+            seed_stock(&mut w, sid, &[(*c, *need)]);
+        }
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::SystemUpgrade::Extractor }]);
+        assert!(w.build_queue.is_empty(), "plain-cost stock can't afford the unstable premium");
+        // Top up to ×UNSTABLE_COST_MULT → accepted, and debited at the premium.
+        for (c, need) in recipe.costs {
+            seed_stock(&mut w, sid, &[(*c, *need * (crate::explore::UNSTABLE_COST_MULT - 1.0) + 0.001)]);
+        }
+        let before: Vec<f64> = recipe.costs.iter().map(|(c, _)| system_stock(&w, sid, *c)).collect();
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::SystemUpgrade::Extractor }]);
+        assert_eq!(w.build_queue.len(), 1, "the premium stock affords it");
+        for ((c, need), b4) in recipe.costs.iter().zip(before) {
+            let now_units = system_stock(&w, sid, *c);
+            let debited = b4 - now_units;
+            // The system also ACCRUES its Ore deposit during the step — allow that.
+            assert!(
+                (debited - need * crate::explore::UNSTABLE_COST_MULT).abs() < 0.05,
+                "{c:?} debited at the ×{} premium (debited {debited}, want {})",
+                crate::explore::UNSTABLE_COST_MULT,
+                need * crate::explore::UNSTABLE_COST_MULT
+            );
+        }
+    }
+
+    /// VOLATILE POCKETS: the Refinery's Fuel output runs ×VOLATILE_REFINERY_MULT.
+    #[test]
+    fn volatile_pockets_boost_refinery_output() {
+        let fuel_out = |t: Option<SystemTrait>| {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            let sid = trait_system(&mut w, id, t);
+            {
+                let s = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+                s.deposits.clear(); // no accrual noise
+                s.refinery_tier = 1;
+            }
+            seed_stock(&mut w, sid, &[(Commodity::Volatiles, 100.0)]);
+            w.step(&[]);
+            system_stock(&w, sid, Commodity::Fuel)
+        };
+        let plain = fuel_out(None);
+        let pocket = fuel_out(Some(SystemTrait::VolatilePockets));
+        assert!(plain > 0.0, "the refinery runs");
+        assert!(
+            (pocket - plain * crate::explore::VOLATILE_REFINERY_MULT).abs() < 1e-9,
+            "pockets multiply the OUTPUT ×{} (plain {plain}, pocket {pocket})",
+            crate::explore::VOLATILE_REFINERY_MULT
+        );
+    }
+
+    /// PRECURSOR CACHE pays EXACTLY ONCE at claim (latched), reveals on claim,
+    /// transfers knowledge (a fresh TraitRevealed) on capture — but never re-pays.
+    #[test]
+    fn precursor_cache_pays_once_and_capture_transfers_knowledge() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        // An unclaimed frontier system carrying the cache.
+        let sid = {
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.trait_ = Some(SystemTrait::PrecursorCache);
+            sys.id
+        };
+        let pos = w.systems.iter().find(|s| s.id == sid).unwrap().pos;
+        // A claims it physically.
+        colony_at(&mut w, a, pos);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::TraitRevealed { owner, system, .. } if owner == a && system == sid)),
+            "the claim REVEALS the trait to the claimer"
+        );
+        let alloys = system_stock(&w, sid, Commodity::Alloys);
+        assert!((alloys - crate::explore::PRECURSOR_ALLOYS).abs() < 0.01, "the cache pays its one-time grant (got {alloys})");
+        assert!(w.systems.iter().find(|s| s.id == sid).unwrap().cache_claimed, "the latch is set");
+
+        // B captures it — knowledge transfers (a fresh reveal), the cache does NOT re-pay.
+        let stock_before: f64 = system_stock(&w, sid, Commodity::Alloys);
+        let colony = colony_at(&mut w, b, pos);
+        let mut ev2 = Vec::new();
+        w.capture_system(sid, a, b, colony, pos, &mut ev2);
+        assert!(
+            ev2.iter().any(|e| matches!(e.payload, EventPayload::TraitRevealed { owner, system, .. } if owner == b && system == sid)),
+            "capture transfers the trait knowledge (spoils)"
+        );
+        // Capture PLUNDERS the stockpile (the pre-flip alloys ride the plunder) and
+        // the latch survives — no re-mint for the new owner.
+        let after = system_stock(&w, sid, Commodity::Alloys);
+        assert!(after < stock_before + 0.01, "the cache never re-pays (latch survives the flip)");
+        assert!(w.systems.iter().find(|s| s.id == sid).unwrap().cache_claimed, "latch intact across capture");
+    }
+
+    /// Traits + latches ride a snapshot; a PRE-feature snapshot (fields absent)
+    /// loads trait-less.
+    #[test]
+    fn traits_survive_a_snapshot() {
+        let w = test_world();
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        for (sa, sb) in w.systems.iter().zip(&w2.systems) {
+            assert_eq!(sa.trait_, sb.trait_, "traits round-trip");
+            assert_eq!(sa.cache_claimed, sb.cache_claimed);
+        }
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for s in val["systems"].as_array_mut().unwrap() {
+            s.as_object_mut().unwrap().remove("trait_");
+            s.as_object_mut().unwrap().remove("cache_claimed");
+        }
+        let w3: World = serde_json::from_value(val).unwrap();
+        assert!(w3.systems.iter().all(|s| s.trait_.is_none()), "a pre-feature snapshot loads trait-less");
     }
 }

@@ -34,8 +34,8 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BlockadeStateView, BuildStateView, CargoView, CompCount, GhostView, IntelView,
-    StockSlot, SystemStateView,
+    AnchorView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView,
+    IntelView, StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -44,6 +44,10 @@ struct Sample {
     time: f64,
     pos: Vec2,
     vel: Vec2,
+    /// §explore Part 2: was the fleet ACTIVELY SURVEYING (loud) at this sample?
+    /// Rides the per-sample history so the loudness is judged in the RETARDED
+    /// frame — exactly like velocity — and can never leak or lag FTL.
+    loud: bool,
 }
 
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
@@ -157,6 +161,7 @@ impl PositionHistory {
                 time: now,
                 pos: ship.pos,
                 vel: ship.vel,
+                loud: ship.surveying(),
             });
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
@@ -330,7 +335,11 @@ impl PositionHistory {
                 } else {
                     1.0
                 };
-                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed) * veil
+                // §explore Part 2: ACTIVE SENSING IS LOUD — a fleet surveying at
+                // the retarded sample carries the survey multiplier, exactly the
+                // same factor the sim's pickets apply (parity, one seam).
+                let survey = if p.sample.loud { sim::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 };
+                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed) * veil * survey
             };
             let in_coverage = within_coverage(&coverage, p.sample.pos);
             // Weapons fire is LOUD: a battle participant whose battle-light has
@@ -414,6 +423,8 @@ impl PositionHistory {
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
                 posture: None,
+                // §explore: OWNER-ONLY survey progress — injected by the game loop.
+                survey_progress: None,
                 // §syndicates: ally tint (Part 1) + garrison status (Part 3) are
                 // injected by the game loop from authoritative state (this
                 // history-only view can't see them).
@@ -531,18 +542,21 @@ pub struct AllyIntel<'a> {
 }
 
 /// Filter the dynamic, per-tick state of star systems for a player (§4, §6). A
-/// system's geography/geology (pos, name, deposits, claim cost) is public and
-/// sent once at join; here we light-gate the DYNAMIC state:
+/// system's PUBLIC geography (pos, name, richness BAND, claim cost) is sent once
+/// at join; here we gate the per-corp and DYNAMIC state:
 ///
 /// * **owner** — the viewer sees their OWN claim instantly, but a rival's
 ///   ownership only once the claim's light has reached the viewer's command
 ///   center (`claimed_at + |pos − cc|/c ≤ now`). Exactly the home-anchor rule —
 ///   no faster-than-light presence/claim leak.
+/// * **deposits (§explore R2)** — the EXACT geology is corp KNOWLEDGE: present
+///   iff the viewer has surveyed the system or owns it. The public band is the
+///   only free read; a rival's survey state never rides this wire.
 /// * **stockpile** — a system's accumulated production is private: shown only to
-///   the owner (who can anyway predict it from the known deposit rates), never to
-///   rivals. So no information about a rival's holdings ever leaks.
+///   the owner, never to rivals. So no information about a rival's holdings ever
+///   leaks.
 // A per-player view filter legitimately takes many light-cone inputs; bundling
-// them into a struct would only move the noise. (10 args.)
+// them into a struct would only move the noise. (11 args.)
 #[allow(clippy::too_many_arguments)]
 pub fn filter_systems(
     systems: &[StarSystem],
@@ -555,6 +569,7 @@ pub fn filter_systems(
     dt: f64,
     intel: &BTreeMap<EntityId, sim::IntelSnapshot>,
     allies: &[AllyIntel<'_>],
+    surveyed: &BTreeSet<EntityId>,
 ) -> Vec<SystemStateView> {
     systems
         .iter()
@@ -708,6 +723,28 @@ pub fn filter_systems(
                 // §node: injected by the game loop from `world.nodes` (it holds the
                 // authoritative node state, and the fed/region gate needs `own`).
                 node: None,
+                // §explore R2: the exact geology is CORP KNOWLEDGE — surveyed or
+                // owner only. A rival that never surveyed gets None (band only);
+                // their own survey set gates their own wire, so nothing about
+                // ANOTHER corp's knowledge ever leaks.
+                deposits: (own || surveyed.contains(&sys.id)).then(|| {
+                    sys.deposits
+                        .iter()
+                        .map(|d| DepositView {
+                            resource: d.resource,
+                            richness: d.richness,
+                            reserves: d.reserves,
+                        })
+                        .collect()
+                }),
+                // §explore R3: the hidden TRAIT — CURRENT-OWNER-ONLY (never
+                // telegraphed; a survey doesn't see it; only ownership does).
+                trait_: own.then_some(sys.trait_).flatten().map(|t| match t {
+                    sim::explore::SystemTrait::BonusVein { commodity } => {
+                        format!("{}:{}", t.slug(), commodity.slug())
+                    }
+                    _ => t.slug().to_string(),
+                }),
             }
         })
         .collect()
@@ -859,7 +896,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel });
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -893,6 +930,7 @@ mod tests {
                 time: t,
                 pos: if t < 10.0 { x } else { y },
                 vel: Vec2::ZERO,
+                loud: false,
             });
             t += 0.1;
         }
@@ -926,6 +964,7 @@ mod tests {
                 time: t,
                 pos: Vec2::new(0.0, t * 5.0),
                 vel: Vec2::new(0.0, 5.0),
+                loud: false,
             });
             t += 0.1;
         }
@@ -955,7 +994,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0) });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false });
             t += 0.1;
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
@@ -1025,6 +1064,7 @@ mod tests {
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None, cache_claimed: false,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1057,7 +1097,7 @@ mod tests {
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
         assert!(v10[1].build.is_none(), "a rival's build state must never leak");
         // The full queue list (§build-progress) follows the same fog rule and
@@ -1113,12 +1153,71 @@ mod tests {
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert_eq!(v25[1].owner, Some(rival));
         // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
         assert_eq!(v25[1].extractor_tier, 0, "ownership visible, development tier still private");
         assert_eq!((v25[1].slots_used, v25[1].slots_total), (0, 0), "ownership visible, slots still private");
+    }
+
+    /// §explore R2 LEAK CHECK: the exact deposit table is CORP KNOWLEDGE — an
+    /// unsurveyed system carries NO deposit vec on the wire (band only); the
+    /// viewer's own systems and their surveyed systems carry the full table.
+    /// Each corp is gated on its OWN survey set, so nothing about a rival's
+    /// knowledge ever rides the wire (there is no field for it at all).
+    #[test]
+    fn deposits_are_gated_to_surveyed_or_owner() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let me = PlayerId(7);
+        let rival = PlayerId(8);
+        let cc = Vec2::new(0.0, 0.0);
+        let mk = |id, pos, o| StarSystem {
+            id: EntityId(id), pos, name: "S".into(),
+            deposits: vec![sim::Deposit { resource: Commodity::Ore, richness: 2.5, reserves: None, accessibility: 0.5 }],
+            claim_cost: 0.0,
+            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
+            extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
+            defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
+            refinery_tier: 0,
+            blockade: None,
+            // §explore Part 3: every test system carries a trait — the leak
+            // assertions below prove it reaches ONLY its current owner.
+            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::Ore }), cache_claimed: false,
+        };
+        let systems = vec![
+            mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
+            mk(2, Vec2::new(6000.0, 0.0), Some(rival)),  // rival's, unsurveyed by me
+            mk(3, Vec2::new(0.0, 3000.0), None),         // free frontier, SURVEYED by me
+        ];
+        let builds: Vec<sim::BuildJob> = Vec::new();
+        let surveyed: BTreeSet<EntityId> = [EntityId(3)].into_iter().collect();
+        let v = filter_systems(&systems, me, cc, c, 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &surveyed);
+        // OWNER always sees own geology (holding is knowing).
+        let mine = v[0].deposits.as_ref().expect("owner sees own geology");
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].resource, Commodity::Ore);
+        assert_eq!(mine[0].richness, 2.5);
+        // An UNSURVEYED rival system carries NO deposit vec — even with its
+        // ownership long visible (t=1000 s ≫ the 20 s light). Band only.
+        assert_eq!(v[1].owner, Some(rival), "ownership is visible (light arrived)");
+        assert!(v[1].deposits.is_none(), "unsurveyed geology must never leak");
+        // A SURVEYED (unowned) frontier system reveals its exact table.
+        assert!(v[2].deposits.is_some(), "surveyed knowledge shows the exact table");
+        // And the RIVAL's own view is gated on THEIR set: with an empty set they
+        // see their own system but not my surveyed frontier one.
+        let rv = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        assert!(rv[1].deposits.is_some(), "the rival sees their own geology");
+        assert!(rv[2].deposits.is_none(), "MY survey knowledge never reaches the rival's wire");
+        // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
+        // never a rival (even with ownership visible), never on an unowned
+        // system (even one I surveyed: a survey grants geology, NOT the trait).
+        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:ore"), "the owner sees their trait (with the vein commodity)");
+        assert!(v[1].trait_.is_none(), "a rival's trait must never leak");
+        assert!(v[2].trait_.is_none(), "surveying does NOT reveal the trait (ownership does)");
+        assert!(rv[1].trait_.is_some(), "the rival sees their own system's trait");
+        assert!(rv[0].trait_.is_none(), "my trait never reaches the rival's wire");
     }
 
     /// BLOCKADE state (§contestable-territory Part 1) is surfaced to the two
@@ -1140,6 +1239,7 @@ mod tests {
             defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
             refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+            trait_: None, cache_claimed: false,
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1147,7 +1247,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let builds = vec![];
         let q = |viewer, now| {
-            filter_systems(&systems, viewer, cc, c, now, &builds, 0, sim::DT, &BTreeMap::new(), &[])[0].blockade
+            filter_systems(&systems, viewer, cc, c, now, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].blockade
         };
 
         // The BESIEGER sees it at once (by_me), regardless of light.
@@ -1195,6 +1295,7 @@ mod tests {
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None, cache_claimed: false,
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1204,21 +1305,21 @@ mod tests {
         let builds: Vec<sim::BuildJob> = vec![];
 
         // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel, &[]);
+        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
         assert!(v10[0].intel.is_none(), "intel must not appear before its light arrives");
 
         // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel, &[]);
+        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
         let iv = v25[0].intel.expect("intel delivered once its light arrives");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
         assert!((iv.observed_at - 0.0).abs() < 1e-9, "a snapshot keeps its capture time — it ages");
 
         // Leak checks: a viewer WITHOUT snapshots sees nothing…
-        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
+        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
         // …and the SCOUTED RIVAL's own view is untouched: their own system never
         // carries intel (own => None), even if a stale map were passed in.
-        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel, &[]);
+        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
         assert!(v_rival[0].intel.is_none(), "the scouted side learns nothing — not even that it was scouted");
     }
 
@@ -1243,6 +1344,7 @@ mod tests {
             habitat_fed: false,
             refinery_tier: 0,
             blockade: None,
+            trait_: None, cache_claimed: false,
         }]
     }
 
@@ -1263,9 +1365,9 @@ mod tests {
         ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
         // Chain: T2 = 6000/300 = 20 (ally learns), T3 = 20 + 12000/300 = 60 (I learn).
-        let v55 = filter_systems(&systems, me, cc, c, 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies);
+        let v55 = filter_systems(&systems, me, cc, c, 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
         assert!(v55[0].intel.is_none(), "a relayed snapshot waits for the FULL chain (observed→ally→me)");
-        let v65 = filter_systems(&systems, me, cc, c, 65.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies);
+        let v65 = filter_systems(&systems, me, cc, c, 65.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
         let iv = v65[0].intel.expect("relayed once the chain completes");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (3, 2));
         assert_eq!(iv.relayed_by, Some(ally), "provenance names the reporting ally");
@@ -1289,13 +1391,13 @@ mod tests {
         let mut ally_map = BTreeMap::new();
         ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         // Non-member: no allies passed → nothing relayed, even long after the chain.
-        let v_non = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[]);
+        let v_non = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v_non[0].intel.is_none(), "a non-member receives no relayed intel");
         // Own direct snapshot present AND ally relay present → OWN wins (no provenance).
         let mut own_map = BTreeMap::new();
         own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
-        let v = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &own_map, &allies);
+        let v = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &own_map, &allies, &BTreeSet::new());
         let iv = v[0].intel.expect("own intel delivered");
         assert_eq!(iv.relayed_by, None, "your own direct scouting is authoritative — no relay provenance");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (1, 1), "own snapshot values, not the ally's");
@@ -1306,7 +1408,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         track_from(samples, owner, kind)
@@ -1393,7 +1495,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel });
+            samples.push(Sample { time: t, pos, vel, loud: false });
             t += 0.1;
         }
         track.samples = samples.into();
@@ -1429,7 +1531,7 @@ mod tests {
         let mut t = 0.0;
         while t <= 8.0 {
             let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
-            samples.push(Sample { time: t, pos, vel });
+            samples.push(Sample { time: t, pos, vel, loud: false });
             t += 0.1;
         }
         let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
@@ -1539,13 +1641,37 @@ mod tests {
         assert!(!still.is_empty(), "a Veil only quiets its OWN holder's fleets");
     }
 
+    /// §explore Part 2 — SURVEY LOUDNESS: a dwelling (loud) scout is detected
+    /// FARTHER than a quiet one at the same spot/speed, judged from the RETARDED
+    /// sample's flag — the loitering surveyor is an interceptable target (the
+    /// risk price of knowledge), and only while the sample is loud.
+    #[test]
+    fn survey_loudness_extends_detection_in_the_retarded_frame() {
+        let full = ShipKind::Scout.max_speed();
+        let comp: BTreeMap<ShipKind, u32> = [(ShipKind::Scout, 1)].into_iter().collect();
+        let sig = sim::detection::signature(&comp, 0.0, full); // holding still (stealth-quiet)
+        let sensor = 3000.0;
+        // Between the quiet radius and the loud radius: hidden quiet, seen loud.
+        let d = sensor * sig * (1.0 + sim::explore::SURVEY_SIGNATURE_FACTOR) / 2.0;
+        let pos = Vec2::new(d, 0.0);
+        let mk = |loud: bool| {
+            let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Scout, 1)]);
+            for s in track.samples.iter_mut() {
+                s.loud = loud;
+            }
+            history_of(vec![(EntityId(1), track)], sensor)
+        };
+        assert!(mk(false).view_for(VIEWER, Vec2::ZERO, 300.0, 60.0).is_empty(), "a QUIET holding scout at d stays dark");
+        assert_eq!(mk(true).view_for(VIEWER, Vec2::ZERO, 300.0, 60.0).len(), 1, "the SAME scout DWELLING (loud) is detected — active sensing is loud");
+    }
+
     /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
     /// scalars `record()` snapshots from a real `sim::Fleet`.
     fn fleet_track(owner: PlayerId, pos: Vec2, comp: &[(ShipKind, u32)]) -> Track {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
@@ -1764,7 +1890,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 10.0 {
-            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO });
+            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
@@ -1794,7 +1920,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 20.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0) });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false });
             t += 0.1;
         }
         let dpos = Vec2::new(200.0, 0.0);
@@ -1852,7 +1978,7 @@ mod tests {
         let mut s = Vec::new();
         let mut t = 0.0;
         while t <= t_end + 1e-9 {
-            s.push(Sample { time: t, pos, vel: Vec2::ZERO });
+            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
             t += 0.1;
         }
         s
@@ -1870,7 +1996,7 @@ mod tests {
             } else {
                 (start + unit * (speed * (t - t_turn)), unit * speed)
             };
-            s.push(Sample { time: t, pos, vel });
+            s.push(Sample { time: t, pos, vel, loud: false });
             t += 0.1;
         }
         s

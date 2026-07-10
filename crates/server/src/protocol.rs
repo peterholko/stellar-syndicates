@@ -117,6 +117,11 @@ pub enum ClientMsg {
     /// system and strangle its logistics. Light-delayed like a move order.
     BlockadeSystem { fleet_id: EntityId, system_id: EntityId },
 
+    /// SURVEY a system's exact geology (§explore Part 2): order one of the
+    /// player's fleets (must contain a Scout) to fly on-site and dwell. Valid on
+    /// ANY system (pre-siege prospecting intended). Light-delayed like a move.
+    SurveySystem { fleet_id: EntityId, system_id: EntityId },
+
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
     /// Orderable on any rival fleet; the attacker must contain a raider. Light-
     /// delayed like a raid; on contact it's a FULL battle (destroy, cargo lost),
@@ -325,9 +330,10 @@ pub struct TimelineEntry {
     pub text: String,
 }
 
-/// One resource deposit on a system, as the client sees it (static geology,
-/// public knowledge — prospecting/fog of deposits is deferred). Lets the client
-/// render the frontier-richer gradient and the system's would-be production.
+/// One resource deposit on a system, as the client sees it. §explore: NO LONGER
+/// public — the exact geology is CORP KNOWLEDGE (surveyed-or-owner), shipped
+/// per-player in [`SystemStateView::deposits`]; the public spectral read is the
+/// richness `band` on [`SystemInfo`].
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct DepositView {
     pub resource: Commodity,
@@ -337,15 +343,18 @@ pub struct DepositView {
     pub reserves: Option<f64>,
 }
 
-/// A star system as static geography + geology: position, name, deposits, and
-/// the credit cost to claim it. Sent once at join. Dynamic state (who owns it,
-/// how much it has stockpiled) is light-gated and lives in [`SystemStateView`].
+/// A star system as static PUBLIC geography: position, name, and the richness
+/// BAND (§explore R1 — the free spectral read; Poor/Fair/Rich by galaxy-wide
+/// terciles, same for everyone, never changes). Sent once at join. The exact
+/// geology is per-corp knowledge in [`SystemStateView::deposits`]; dynamic state
+/// (owner, stockpile) is light-gated there too.
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
     pub id: EntityId,
     pub pos: Vec2,
     pub name: String,
-    pub deposits: Vec<DepositView>,
+    /// §explore: the public richness band slug — "poor" | "fair" | "rich".
+    pub band: &'static str,
     pub claim_cost: f64,
 }
 
@@ -559,6 +568,17 @@ pub struct SystemStateView {
     /// is already visible to everyone). `None` for ordinary systems.
     #[serde(default)]
     pub node: Option<NodeStateView>,
+    /// §explore R2: the EXACT deposit table — present iff the viewer has SURVEYED
+    /// this system or OWNS it (survey knowledge is permanent; holding a system is
+    /// knowing it). `None` = unsurveyed: the viewer gets only the public band.
+    /// Never leaks a rival's survey state (each corp is gated on its OWN set).
+    #[serde(default)]
+    pub deposits: Option<Vec<DepositView>>,
+    /// §explore R3: the system's HIDDEN TRAIT slug — CURRENT-OWNER-ONLY (rivals
+    /// and past owners get `None`, always; traits are never telegraphed). A
+    /// Bonus Vein carries its commodity as `bonus_vein:<commodity>`.
+    #[serde(default, rename = "trait")]
+    pub trait_: Option<String>,
 }
 
 /// §node: the per-system view of an EXOTIC NODE. The bonus + awakened state are
@@ -734,6 +754,12 @@ pub struct GhostView {
     /// `Some(..)` for your own fleets and `None` for every rival (a standing
     /// per-fleet policy is private, like the corp doctrine; never leaks).
     pub posture: Option<EngagementPosture>,
+    /// §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your own
+    /// fleet's live order state, like `posture`; a rival never sees it — they
+    /// see only the louder signature under the normal detection rules). `None`
+    /// when not dwelling.
+    #[serde(default)]
+    pub survey_progress: Option<f64>,
     /// True if this fleet's owner is a SYNDICATE ally as the viewer KNOWS it
     /// (§syndicates Part 1) — light-delayed membership (`World::known_ally`), so a
     /// fresh join/leave isn't seen early. Drives the friendly ally tint/pip.

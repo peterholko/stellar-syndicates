@@ -258,10 +258,12 @@ function radiusForKind(kind: PlanetKind, rng: () => number): number {
 
 // ---- The generator -----------------------------------------------------------
 //
-// Deterministic from the public system id + its public geology. Produces the
-// schematic SHAPE only. Ownership/dynamic state is added later by the scene from
-// the light-gated view — never here.
-export function buildVisualSystem(sys: SystemInfo): VisualSystem {
+// Deterministic from the public system id + the VIEWER'S KNOWN geology
+// (§explore — `deposits` comes from the light-gated view: the exact table when
+// surveyed-or-owner, EMPTY when unsurveyed, in which case the schematic degrades
+// to filler bodies with no resource pips). Produces the schematic SHAPE only.
+// Ownership/dynamic state is added later by the scene — never here.
+export function buildVisualSystem(sys: SystemInfo, sysDeposits: Deposit[]): VisualSystem {
   const rng = mulberry32(hashId(sys.id) ^ 0x5eed1a7); // salt: distinct from star assignment
   const st = starTypeFor(sys.id);
 
@@ -272,12 +274,12 @@ export function buildVisualSystem(sys: SystemInfo): VisualSystem {
     return p;
   };
 
-  // 1. Give each SYSTEM deposit a visual home body (association, not a new entity).
+  // 1. Give each KNOWN deposit a visual home body (association, not a new entity).
   //    Volatiles prefer an icy MOON of a gas giant (the "icy moon" motif) when the
   //    system also has a fuel/gas-giant body; otherwise an ice world.
   let gasGiant: VisualPlanet | null = null;
   const volatiles: Deposit[] = [];
-  for (const d of sys.deposits) {
+  for (const d of sysDeposits) {
     if (d.resource === "volatiles") { volatiles.push(d); continue; }
     const kind = pick(rng, DEP_KINDS[d.resource]);
     const p = mkPlanet(kind, d.resource === "provisions", [d]);
@@ -292,7 +294,7 @@ export function buildVisualSystem(sys: SystemInfo): VisualSystem {
   }
 
   // 2. Fill out to 3–8 decorative planets (no deposits — purely for a sense of place).
-  const target = Math.max(3, Math.min(8, sys.deposits.length + 1 + Math.floor(rng() * 3)));
+  const target = Math.max(3, Math.min(8, sysDeposits.length + 1 + Math.floor(rng() * 3)));
   while (planets.length < target) mkPlanet(pick(rng, FILLER_KINDS), false, []);
 
   // 3. Deterministic shuffle, then lay planets on spaced orbits with slight jitter.

@@ -88,8 +88,13 @@ async fn main() -> anyhow::Result<()> {
     // If a snapshot exists, the galaxy is restored from it (surviving a restart).
     let (persistence, restored) = persistence::init_persistence().await;
     let world = match restored {
-        Some(w) => {
+        Some(mut w) => {
             info!(tick = w.tick, players = w.players.len(), "resuming galaxy from snapshot");
+            // §explore: heal a pre-feature snapshot — recompute band terciles if
+            // defaulted, and seed each corp's survey knowledge (owned systems +
+            // home radius) so live corps don't wake up amnesiac. Pure fixup;
+            // harmless (no-op) on a current snapshot.
+            w.fixup_after_load();
             w
         }
         None => {

@@ -12,21 +12,28 @@ export interface Vec2 {
 
 export type ShipKind = "convoy" | "raider" | "corvette" | "colony" | "scout";
 
-// A resource deposit on a system (static geology, public). Richer/more valuable
-// toward the frontier — the distance/value gradient (§4).
+// A resource deposit on a system. §explore: NO LONGER public — the exact geology
+// is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
+// `SystemStateView.deposits`; the public spectral read is the `band` below.
 export interface Deposit {
   resource: Commodity;
   richness: number; // units/sec at full extraction
   reserves: number | null; // null = renewable
 }
 
-// Static system geography + geology, sent once at join. Dynamic ownership/
-// stockpile arrives light-gated per tick in `SystemStateView`.
+/// §explore R1: the public richness band — the free spectral read (galaxy-wide
+/// terciles; static, same for everyone).
+export type RichnessBand = "poor" | "fair" | "rich";
+
+// Static PUBLIC system geography, sent once at join. The exact geology is
+// per-corp knowledge in `SystemStateView.deposits`; dynamic ownership/stockpile
+// arrives light-gated per tick there too.
 export interface SystemInfo {
   id: EntityId;
   pos: Vec2;
   name: string;
-  deposits: Deposit[];
+  /// §explore: the public richness band (Poor / Fair / Rich).
+  band: RichnessBand;
   /// DEPRECATED (§ships part 3): claiming is physical (colony ships) — no
   /// longer charged or displayed; kept for wire compatibility.
   claim_cost: number;
@@ -106,6 +113,15 @@ export interface SystemStateView {
   /// §node: this system's EXOTIC NODE, if any. bonus + awakened are PUBLIC (an
   /// awakened node is a galaxy-wide landmark); fed + region_radius are OWNER-ONLY.
   node?: NodeStateView;
+  /// §explore R2: the EXACT deposit table — present iff WE have surveyed this
+  /// system or own it (survey knowledge is permanent). Absent = unsurveyed:
+  /// only the public band is known.
+  deposits?: Deposit[] | null;
+  /// §explore R3: the hidden TRAIT slug — CURRENT-OWNER-ONLY (never on a rival's
+  /// wire; a survey doesn't reveal it). "bonus_vein:<commodity>" carries the
+  /// vein's commodity; else "deep_deposits" | "unstable_geology" |
+  /// "volatile_pockets" | "precursor_cache".
+  trait?: string | null;
 }
 
 /// §node: the per-system view of an EXOTIC NODE — the midgame catalyst.
@@ -368,6 +384,9 @@ export interface GhostView {
   // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
   // fleets, null for every rival; a private standing policy that never leaks).
   posture: EngagementPosture | null;
+  // §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your fleet's own
+  // order state); null/absent when not dwelling. Drives the progress ring.
+  survey_progress?: number | null;
   // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
   // (light-delayed membership) — drives the friendly ally tint/pip.
   ally?: boolean;
@@ -430,6 +449,8 @@ export type ClientMsg =
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
   // §contestable-territory Part 1 — order a raider fleet to blockade a rival system.
   | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
+  // §explore Part 2 — order a scout-carrying fleet to SURVEY a system's geology.
+  | { type: "SurveySystem"; fleet_id: EntityId; system_id: EntityId }
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
@@ -532,7 +553,7 @@ export interface EngagementEstimate {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack";
+export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
