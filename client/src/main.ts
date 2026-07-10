@@ -1787,11 +1787,20 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
       state.orders[sel!.id] = dest;
       updateShipPanel();
       const out = sel!.age; // ≈ light delay command-center → ship
+      // §explore Part 4: a COLONY ship sent toward an UNSURVEYED system is a
+      // blind claim — informational friction only (never blocks the order).
+      let blind = "";
+      if (sel!.kind === "colony" && state.galaxy) {
+        const near = state.galaxy.systems.find((sys) => Math.hypot(sys.pos.x - dest.x, sys.pos.y - dest.y) <= 150);
+        if (near && knownDeposits(near.id) === null) {
+          blind = ` <span style="color:var(--warn)">Heading to <b>${esc(near.name)}</b> (${esc(near.band.toUpperCase())} band) — unsurveyed, claiming blind: the composition and any hidden trait are a gamble.</span>`;
+        }
+      }
       readout().innerHTML =
         `Order away to <b>${esc(shipKindLabel(sel!.kind))}</b>. ` +
         `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
         `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>`;
+        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>` + blind;
     }
 }
 
@@ -2444,7 +2453,11 @@ function updateSystemTab(): void {
     // Claiming is PHYSICAL (§ships part 3): build + send a Colony Ship; it claims
     // on arrival (the how lives in the tooltip). No management view for an
     // unclaimed system, so this guidance stays on the rail.
-    actions = `<div class="mhint" style="margin-top:8px" title="Build a Colony Ship at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.">${icon("claim", "sm")} <b>To claim:</b> send a ${icon("colony", "sm")} colony ship here.</div>`;
+    // §explore Part 4: informational blind-claim friction — never blocks.
+    const blind = deps === null
+      ? ` <span style="color:var(--warn)" title="You know only the band — the exact composition (and any hidden trait) is a gamble. Survey first with a scout, or claim blind and find out.">unsurveyed — claiming blind</span>`
+      : "";
+    actions = `<div class="mhint" style="margin-top:8px" title="Build a Colony Ship at a shipyard system and send it here — the system becomes yours when it ARRIVES (slow, visible, raidable: escort it). First arrival wins.">${icon("claim", "sm")} <b>To claim:</b> send a ${icon("colony", "sm")} colony ship here.${blind}</div>`;
   } else if (mine) {
     // Management lives in the System View now; the rail's job is to take you there.
     actions = "";
@@ -2497,7 +2510,7 @@ function updateSystemTab(): void {
 
   // Only the unclaimed case keeps a short one-liner; the rest live in tooltips.
   const hint = !mine && unclaimed && !atHomeSite
-    ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.</div>`
+    ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.${deps === null ? ` <span style="color:var(--warn)">unsurveyed — claiming blind</span>` : ""}</div>`
     : "";
 
   root.innerHTML = rail + header + starFeature + nodeBlock + strip + storageBar + attention + geology + intelBlock + actions + hint;
@@ -2961,7 +2974,8 @@ function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: n
 const INBOX_W = {
   siege: 100, battle: 92, hostile: 85, captureLost: 82, blockade: 80,
   garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
-  brokenOrder: 46, nodeAwakening: 44, dryRefinery: 42, nodeOpportunity: 41, myGarrisonUnfed: 40, emptyQueue: 34,
+  brokenOrder: 46, surveyReport: 45, nodeAwakening: 44, dryRefinery: 42, nodeOpportunity: 41, myGarrisonUnfed: 40,
+  surveyOpportunity: 36, emptyQueue: 34,
   captureWon: 28, battleReport: 26, noAutomation: 20,
 };
 const HOSTILE_CONCERN_MULT = 1.6; // a raider within this × sensor_range of an asset
@@ -2975,6 +2989,34 @@ type InboxItem = { key: string; weight: number; tone: InboxTone; icon: IconKey; 
 
 const dismissedInbox = new Set<string>();
 let currentInbox: InboxItem[] = [];
+
+// §explore Part 4: SURVEY REPORT detection — geology APPEARING for a system we
+// didn't previously know (our survey landing, or an ally's relayed copy; the
+// view field is the single source, so this is fog-safe by construction). Seeded
+// silently on the first View (the join payload isn't news); systems WE own are
+// suppressed (claiming reveals by holding, not by a report).
+let knownGeologyIds: Set<string> | null = null;
+const freshSurveyReports = new Map<string, number>(); // system id → sim-time noticed
+
+function noteSurveyReports(simTime: number): void {
+  const cur = new Set(state.systems.filter((x) => x.deposits != null).map((x) => x.id));
+  if (knownGeologyIds === null) {
+    knownGeologyIds = cur; // first View: seed silently
+    return;
+  }
+  for (const id of cur) {
+    if (!knownGeologyIds.has(id)) {
+      knownGeologyIds.add(id);
+      const dyn = state.systems.find((x) => x.id === id);
+      if (dyn?.owner !== state.playerId) freshSurveyReports.set(id, simTime);
+    }
+  }
+  // Age out stale reports (they remain in the log/panel; the CARD is for the
+  // decision window).
+  for (const [id, t] of freshSurveyReports) {
+    if (simTime - t > REPORT_RECENT_S) freshSurveyReports.delete(id);
+  }
+}
 
 // One-way command delay (cc → pos) — the SAME echo math the order lifecycle uses;
 // null before the galaxy/CC arrive.
@@ -3190,6 +3232,48 @@ function computeInbox(): InboxItem[] {
     }
   }
 
+  // --- §explore Part 4: SURVEY REPORTS + the survey-first opportunity ---
+  // A fresh survey report (our scout's, or an ally's relayed copy): the geology
+  // just ARRIVED for a system we didn't know — the "claim it or skip it?" moment.
+  for (const [sid, t] of freshSurveyReports) {
+    const key = `surveyrep:${sid}`;
+    const dyn = state.systems.find((x) => x.id === sid);
+    const info = galaxy.systems.find((x) => x.id === sid);
+    if (!dyn?.deposits || !info) continue;
+    const summary = dyn.deposits
+      .map((d) => `${d.resource} ~${d.richness.toFixed(1)}/s`)
+      .join(" · ");
+    const unowned = dyn.owner === null;
+    push({ key, weight: INBOX_W.surveyReport, tone: "info", icon: "intel",
+      headline: `Survey report: ${systemName(sid)} (${info.band.toUpperCase()} band)`,
+      age: t,
+      stakes: `${summary || "barren"}. Trait UNKNOWN — only a claim reveals it.` +
+        (unowned ? " Unclaimed: send a colony ship if it's worth holding." : ""),
+      actions: [{ label: "Focus", run: () => inboxFocusSystem(sid), primary: true }, dismissAct(key)] });
+  }
+  // OPPORTUNITY: Rich-band systems still unsurveyed near your holdings — the
+  // survey-first nudge (pure function of the public band + own knowledge).
+  {
+    const NEAR_SU = 3000;
+    const ownedPos = owned
+      .map((s) => galaxy.systems.find((x) => x.id === s.id)?.pos)
+      .filter((p): p is Vec2 => !!p);
+    const richUnsurveyed = state.systems.filter((x) => {
+      if (x.deposits != null) return false; // known
+      const info = galaxy.systems.find((z) => z.id === x.id);
+      if (!info || info.band !== "rich") return false;
+      return ownedPos.some((p) => Math.hypot(p.x - info.pos.x, p.y - info.pos.y) <= NEAR_SU);
+    });
+    if (richUnsurveyed.length) {
+      const key = "surveyops";
+      const nearest = richUnsurveyed[0];
+      push({ key, weight: INBOX_W.surveyOpportunity, tone: "info", icon: "sensor",
+        headline: `${richUnsurveyed.length} RICH-band system(s) unsurveyed within ${NEAR_SU} su`,
+        stakes: "The spectral read says rich; the composition (and any hidden trait) is a gamble. Send a scout to survey before committing a colony ship — or claim blind and find out.",
+        actions: [{ label: "Focus nearest", run: () => inboxFocusSystem(nearest.id), primary: true }, dismissAct(key)] });
+    }
+  }
+
   // --- BROKEN standing order (points at a system you no longer hold; an ALLY-aid
   //     destination is valid, so it doesn't count as broken) ---
   const allyIds = new Set(state.systems.filter((x) => x.ally).map((x) => x.id));
@@ -3241,6 +3325,13 @@ function nextDecisionLabel(): string {
     if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
   }
   for (const p of state.pendingOrders.values()) consider(p.echo_at, "an order confirms");
+  // §explore Part 4: an in-flight survey DWELL — its completion is often the
+  // soonest thing worth waiting for (owner-only live progress, honest estimate).
+  for (const g of state.ghosts) {
+    if (g.own && g.survey_progress != null) {
+      consider(now + (1 - g.survey_progress) * SURVEY_SECS_UI, "a survey completes");
+    }
+  }
   if (!isFinite(at)) return "All quiet — nothing scheduled needs you.";
   return `Nothing needs you until ${doneAtLocal(at)} (${label}).`;
 }
@@ -3380,6 +3471,7 @@ function join(): void {
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];
+          noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
