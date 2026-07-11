@@ -420,14 +420,14 @@ impl GameLoop {
                         self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join });
                     }
                 }
-                ClientMsg::DevelopSystem { system_id, upgrade } => {
+                ClientMsg::DevelopSystem { system_id, upgrade, body_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
+                        self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade, body_id });
                     }
                 }
-                ClientMsg::SetAssignment { system_id, structure, workers, specialists } => {
+                ClientMsg::SetAssignment { system_id, structure, workers, specialists, body_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers, specialists });
+                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers, specialists, body_id });
                     }
                 }
                 ClientMsg::HireSpecialist { specialist, dest_system } => {

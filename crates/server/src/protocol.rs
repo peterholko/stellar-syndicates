@@ -88,7 +88,13 @@ pub enum ClientMsg {
 
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
     /// Extractor tier that raises its output — costs a recipe, completes over time.
-    DevelopSystem { system_id: EntityId, upgrade: StructureKind },
+    DevelopSystem {
+        system_id: EntityId,
+        upgrade: StructureKind,
+        /// §bodies: the body to build on; omitted (old clients) auto-sites.
+        #[serde(default)]
+        body_id: Option<u32>,
+    },
 
     /// §economy Part 3: post workforce crews (and §Part 4: specialists from the
     /// resident pool) to a structure at one of the player's owned systems (all
@@ -99,6 +105,9 @@ pub enum ClientMsg {
         workers: u32,
         #[serde(default)]
         specialists: BTreeMap<sim::SpecialistKind, u32>,
+        /// §bodies: the body whose line this staffs; omitted targets the holder.
+        #[serde(default)]
+        body_id: Option<u32>,
     },
 
     /// §economy Part 4: sign a Sol specialist contract — credits now, a

@@ -191,6 +191,10 @@ pub enum Command {
         player_id: PlayerId,
         system_id: EntityId,
         upgrade: crate::build::StructureKind,
+        /// §bodies: the BODY to build on. `None` (old clients) auto-sites via
+        /// the shared siting rules — same layouts the anchors always used.
+        #[serde(default)]
+        body_id: Option<u32>,
     },
 
     /// §economy Part 3: post `workers` workforce crews to a structure at one of
@@ -205,6 +209,10 @@ pub enum Command {
         system_id: EntityId,
         structure: crate::build::StructureKind,
         workers: u32,
+        /// §bodies: the BODY whose line this staffs. `None` (old clients)
+        /// targets the body holding the structure (highest tier first).
+        #[serde(default)]
+        body_id: Option<u32>,
         /// §economy Part 4: SPECIALISTS posted to the line, from the system's
         /// resident pool (clamped so totals across lines fit the pool).
         /// `default` empty keeps pre-specialist clients/commands parsing.

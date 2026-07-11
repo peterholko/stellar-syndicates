@@ -198,6 +198,11 @@ pub struct BuildJob {
     pub owner: PlayerId,
     /// Where it spawns (ship) / what it upgrades.
     pub system: EntityId,
+    /// §bodies: the BODY this job builds on (structures) or displays at (ship
+    /// jobs at the yard's body, courses at the Academy's). `default` 0 lets
+    /// pre-bodies snapshots parse; migration re-sites in-flight jobs.
+    #[serde(default)]
+    pub body_id: u32,
     pub what: BuildKind,
     /// Absolute sim tick of completion.
     pub complete_tick: u64,

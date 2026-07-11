@@ -673,16 +673,24 @@ pub fn filter_systems(
                 // "Well Supplied" — the client's amber tint keys off it.)
                 habitat_fed: own && sys.food_state == sim::FoodState::WellSupplied,
                 food_state: if own { sys.food_state } else { sim::FoodState::WellSupplied }.slug().to_string(),
-                population: if own { sys.population } else { 0.0 },
+                population: if own { sys.population() } else { 0.0 },
                 // §economy Part 4: your talent is private intel.
                 specialists: if own { sys.specialists.clone() } else { Default::default() },
                 structures: if own {
-                    sys.structures.iter().map(|(k, t)| (k.slug().to_string(), *t)).collect()
+                    // §bodies: the wire keeps the summed map this commit; the
+                    // per-body roster ships in the bodies-4/5 view pass.
+                    let mut sums: std::collections::BTreeMap<String, u32> = Default::default();
+                    for b in &sys.bodies {
+                        for (k, t) in &b.structures {
+                            *sums.entry(k.slug().to_string()).or_insert(0) += t;
+                        }
+                    }
+                    sums
                 } else {
                     Default::default()
                 },
                 workforce: own.then(|| crate::protocol::WorkforceView {
-                    units: sim::colony::workforce_units(sys.population),
+                    units: sim::colony::workforce_units(sys.population()),
                     posted: sys.workforce_posted(),
                 }),
                 // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
@@ -757,8 +765,7 @@ pub fn filter_systems(
                 // their own survey set gates their own wire, so nothing about
                 // ANOTHER corp's knowledge ever leaks.
                 deposits: (own || surveyed.contains(&sys.id)).then(|| {
-                    sys.deposits
-                        .iter()
+                    sys.all_deposits()
                         .map(|d| DepositView {
                             resource: d.resource,
                             richness: d.richness,
@@ -783,21 +790,21 @@ pub fn filter_systems(
 /// OWNER's view — the shown-math law: the client renders exactly these
 /// numbers; nothing is recomputed or hidden client-side. Pure read.
 fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentView> {
-    let line_spec = sys.effective_specialists();
-    sys.assignments
+    sys.bodies
         .iter()
-        .map(|(kind, asg)| {
-            let tier = sys.tier(*kind);
+        .flat_map(|b| b.assignments.iter().map(move |(k, a)| (b, *k, a)))
+        .map(|(body, kind, asg)| {
+            let kind = &kind;
+            let tier = body.tier(*kind);
             let throughput = sim::production::tier_throughput(tier);
-            let staffing = sys.staffing_factor(*kind);
-            let skill = sys.skill_factor(*kind);
+            let staffing = sys.staffing_factor(body.id, *kind);
+            let skill = sys.skill_factor(body.id, *kind);
             let food = sim::production::food_factor(*kind, sys.food_state);
-            let (_, _matched) = line_spec.get(kind).copied().unwrap_or((0, 0));
             let mut outputs: Vec<(Commodity, f64)> = Vec::new();
             if let Some(conv) = sim::production::converter_for(*kind) {
                 outputs.push((conv.output, conv.rate * throughput * staffing * skill * food));
             } else {
-                for d in &sys.deposits {
+                for d in &body.deposits {
                     if sim::production::extraction_structure(d.resource) == Some(*kind) {
                         outputs.push((d.resource, d.richness * throughput * staffing * skill * food));
                     }
@@ -1117,7 +1124,7 @@ mod tests {
             id: EntityId(id),
             pos,
             name: name.into(),
-            deposits: vec![],
+            bodies: vec![], legacy_deposits: vec![],
             claim_cost: 1000.0,
             owner,
             claimed_at,
@@ -1131,7 +1138,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
+            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1139,6 +1146,10 @@ mod tests {
             mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::MetallicOre, 99.0)]),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
+        // §bodies: give each test system a roster so tiers land on bodies.
+        for s in systems.iter_mut() {
+            s.migrate_to_bodies();
+        }
         systems[0].set_tier(sim::StructureKind::MiningComplex, 2); // mine — developed
         systems[0].set_tier(sim::StructureKind::Shipyard, 1); // mine — a shipyard (visible to me only)
         systems[0].set_tier(sim::StructureKind::SensorArray, 1); // mine — an array (visible to me only)
@@ -1148,20 +1159,20 @@ mod tests {
         systems[1].set_tier(sim::StructureKind::SensorArray, 2); // rival — their intel infrastructure must stay hidden
         systems[1].set_tier(sim::StructureKind::DefensePlatform, 3); // rival — their fortification must stay hidden
         systems[0].set_tier(sim::StructureKind::Habitat, 1); // mine — a colony (visible to me only)
-        systems[0].population = 2.5; // …with people (owner-only)
+        systems[0].set_population(2.5); // …with people (owner-only)
         systems[1].set_tier(sim::StructureKind::Habitat, 2); // rival — their colonies must stay hidden
-        systems[1].population = 6.0; // …and their size, doubly so
+        systems[1].set_population(6.0); // …and their size, doubly so
         systems[1].food_state = sim::FoodState::Critical; // …and whether they're STARVING, triply so
         systems[0].set_tier(sim::StructureKind::FuelRefinery, 1); // mine — a refinery (visible to me only)
         systems[1].set_tier(sim::StructureKind::FuelRefinery, 2); // rival — their fuel industry must stay hidden
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
-            sim::BuildJob { id: 1, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None },
-            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None },
+            sim::BuildJob { id: 1, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None },
+            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None },
             // A second concurrent job of mine, finishing FIRST — the queue list
             // must come back completion-ordered (§build-progress).
-            sim::BuildJob { id: 3, owner: me, system: EntityId(1), what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None },
+            sim::BuildJob { id: 3, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None },
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
@@ -1250,7 +1261,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let mk = |id, pos, o| StarSystem {
             id: EntityId(id), pos, name: "S".into(),
-            deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
+            bodies: vec![], legacy_deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
             claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
             legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
@@ -1260,13 +1271,17 @@ mod tests {
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
             trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
-            structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
+            legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
-        let systems = vec![
+        let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
             mk(2, Vec2::new(6000.0, 0.0), Some(rival)),  // rival's, unsurveyed by me
             mk(3, Vec2::new(0.0, 3000.0), None),         // free frontier, SURVEYED by me
         ];
+        // §bodies: fold the legacy deposit onto the roster (the load path).
+        for s in systems.iter_mut() {
+            s.migrate_to_bodies();
+        }
         let builds: Vec<sim::BuildJob> = Vec::new();
         let surveyed: BTreeSet<EntityId> = [EntityId(3)].into_iter().collect();
         let v = filter_systems(&systems, me, cc, c, 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &surveyed);
@@ -1309,13 +1324,13 @@ mod tests {
         let besieger = PlayerId(8);
         let third = PlayerId(9);
         let mk = |id, pos, o| StarSystem {
-            id: EntityId(id), pos, name: "S".into(), deposits: vec![], claim_cost: 0.0,
+            id: EntityId(id), pos, name: "S".into(), bodies: vec![], legacy_deposits: vec![], claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
             legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
+            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1357,7 +1372,7 @@ mod tests {
             id: EntityId(1),
             pos: Vec2::new(6000.0, 0.0),
             name: "S".into(),
-            deposits: vec![],
+            bodies: vec![], legacy_deposits: vec![],
             claim_cost: 1000.0,
             owner: Some(rival),
             claimed_at: Some(0.0),
@@ -1371,7 +1386,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
+            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1405,7 +1420,7 @@ mod tests {
             id: EntityId(1),
             pos: Vec2::new(6000.0, 0.0),
             name: "S".into(),
-            deposits: vec![],
+            bodies: vec![], legacy_deposits: vec![],
             claim_cost: 1000.0,
             owner: Some(rival),
             claimed_at: Some(0.0),
@@ -1420,7 +1435,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
+            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         }]
     }
 

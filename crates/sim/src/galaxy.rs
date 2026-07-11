@@ -43,9 +43,16 @@ pub struct StarSystem {
     pub id: EntityId,
     pub pos: Vec2,
     pub name: String,
-    /// Resource deposits (static geology). Richer/more valuable toward the rim.
+    /// §bodies: the system's PLANETS AND MOONS — first-class sim entities.
+    /// Deposits, structures, population, and assignments live ON bodies now;
+    /// every system-level number is a derived sum. Empty on a pre-bodies
+    /// snapshot until `migrate_to_bodies` folds the legacy fields in.
     #[serde(default)]
-    pub deposits: Vec<Deposit>,
+    pub bodies: Vec<crate::body::Body>,
+    /// DEPRECATED §bodies: the legacy SYSTEM-scoped deposit list — a parse-only
+    /// shell consumed by `migrate_to_bodies` (deposits belong to bodies now).
+    #[serde(default, rename = "deposits")]
+    pub legacy_deposits: Vec<Deposit>,
     /// DEPRECATED (§ships part 3): the old instant-claim credit cost. Claiming
     /// is now PHYSICAL (a Colony Ship's recipe absorbs the economics), so this
     /// charges nothing and gates nothing. Kept on the struct/wire for snapshot
@@ -133,24 +140,19 @@ pub struct StarSystem {
     /// ever; deliberately NOT reset on capture, so a flip can't re-mint it).
     #[serde(default)]
     pub cache_claimed: bool,
-    /// §economy: the system's STRUCTURES (kind → built tier) — the ONE keyed map
-    /// that replaces the flat per-building tier fields above. Those legacy fields
-    /// stay as deprecated parse-only carriers and are folded in by
-    /// [`StarSystem::fold_legacy_structures`] on load. Owner-only in the View.
-    #[serde(default)]
-    pub structures: BTreeMap<crate::build::StructureKind, u32>,
-    /// §economy Part 2: colony POPULATION in millions. Grows toward Habitat
-    /// capacity when well-supplied; NEVER decreases. Drives the Industrial /
-    /// Infrastructure slot pools via `pop_tier`. Dormant (0) until Part 3 wires
-    /// growth/consumption. Owner-only in the View.
-    #[serde(default)]
-    pub population: f64,
-    /// §economy Part 3: standing PRODUCTION ASSIGNMENTS — workforce crews
-    /// posted per structure kind (extraction, converters, Shipyard boost).
-    /// Nothing produces unstaffed. Owner-only in the View; `default` empty is
-    /// right for old snapshots (Part 7's migration seeds sensible defaults).
-    #[serde(default)]
-    pub assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment>,
+    /// DEPRECATED §bodies: the legacy SYSTEM-scoped structure map — a parse-only
+    /// shell (the flat tier fields above fold into it, then `migrate_to_bodies`
+    /// sites everything onto bodies and zeroes it).
+    #[serde(default, rename = "structures")]
+    pub legacy_structures: BTreeMap<crate::build::StructureKind, u32>,
+    /// DEPRECATED §bodies: the legacy SYSTEM-scoped population — a parse-only
+    /// shell folded onto the Habitat's body by `migrate_to_bodies`.
+    #[serde(default, rename = "population")]
+    pub legacy_population: f64,
+    /// DEPRECATED §bodies: the legacy SYSTEM-scoped assignments — a parse-only
+    /// shell re-homed onto their structures' bodies by `migrate_to_bodies`.
+    #[serde(default, rename = "assignments")]
+    pub legacy_assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment>,
     /// §economy Part 4: the RESIDENT SPECIALIST POOL (kind → headcount) —
     /// hired from Sol, trained at an Academy, delivered by convoy. Posted to
     /// lines via assignments; conquest KEEPS them with the system (people
@@ -182,27 +184,227 @@ impl StarSystem {
         self.owner.is_none()
     }
 
-    /// §economy: the built tier of a structure kind (0 = none). THE tier read —
-    /// every consumer goes through this (the legacy flat fields are parse-only).
-    pub fn tier(&self, kind: crate::build::StructureKind) -> u32 {
-        self.structures.get(&kind).copied().unwrap_or(0)
+    // --- §bodies: DERIVED system reads (bodies are the store; every
+    // system-level number the player sees is a sum or max over them). --------
+
+    /// Every deposit in the system, walking bodies in roster order.
+    pub fn all_deposits(&self) -> impl Iterator<Item = &Deposit> {
+        self.bodies.iter().flat_map(|b| b.deposits.iter())
     }
 
-    /// §economy: set a structure's tier (0 removes the entry — the map stays
-    /// minimal and deterministic).
+    /// Total system POPULATION — the sum of every body's (millions).
+    pub fn population(&self) -> f64 {
+        self.bodies.iter().map(|b| b.population).sum()
+    }
+
+    /// The BEST tier of a structure kind anywhere in the system — the read for
+    /// capability GATES (a ship builds at the best yard; the sensor bubble is
+    /// the best array's; an Academy anywhere teaches).
+    pub fn tier(&self, kind: crate::build::StructureKind) -> u32 {
+        self.bodies.iter().map(|b| b.tier(kind)).max().unwrap_or(0)
+    }
+
+    /// The SUMMED tiers of a kind across bodies — the read for quantities that
+    /// STACK (Depot storage capacity, Defense Platform strength).
+    pub fn tier_sum(&self, kind: crate::build::StructureKind) -> u32 {
+        self.bodies.iter().map(|b| b.tier(kind)).sum()
+    }
+
+    /// §bodies: write a kind's tier. Reads went per-body; the writers that
+    /// remain system-scoped (combat platform losses, pirate base seeding,
+    /// capture halving fallbacks, tests) target the body that HOLDS the kind
+    /// (highest tier first), else the kind's natural SITE, else the primary.
+    /// The write is total: it sets the SYSTEM total to `tier` by zeroing other
+    /// holders — matching the old single-store semantics those callers assume.
     pub fn set_tier(&mut self, kind: crate::build::StructureKind, tier: u32) {
-        if tier == 0 {
-            self.structures.remove(&kind);
-        } else {
-            self.structures.insert(kind, tier);
+        if self.bodies.is_empty() {
+            // Pre-migration shell (or a bare test fixture): keep the legacy map
+            // coherent so `migrate_to_bodies` sites it later.
+            if tier == 0 {
+                self.legacy_structures.remove(&kind);
+            } else {
+                self.legacy_structures.insert(kind, tier);
+            }
+            return;
+        }
+        let target = self
+            .bodies
+            .iter()
+            .filter(|b| b.tier(kind) > 0)
+            .max_by_key(|b| b.tier(kind))
+            .map(|b| b.id)
+            .or_else(|| self.site_for(kind))
+            .unwrap_or(self.bodies[0].id);
+        for b in self.bodies.iter_mut() {
+            if b.id == target {
+                b.set_tier(kind, tier);
+            } else if b.tier(kind) > 0 {
+                b.set_tier(kind, 0);
+            }
         }
     }
 
-    /// §economy: fold the LEGACY flat tier fields into `structures` (Extractor →
-    /// MiningComplex, Refinery → FuelRefinery, the rest 1:1), zeroing the legacy
-    /// carriers. Idempotent (zeroed fields fold nothing); called on snapshot load
-    /// so a pre-economy world keeps every built tier. `defense_pool` and the
-    /// combat semantics ride along untouched.
+    /// §bodies: the natural SITE for a structure kind — the Part-5 siting
+    /// rules, shared by migration, the home bootstrap, and system-scoped
+    /// writers. Returns a body id (None only for an empty roster).
+    pub fn site_for(&self, kind: crate::build::StructureKind) -> Option<u32> {
+        use crate::build::StructureKind as K;
+        if self.bodies.is_empty() {
+            return None;
+        }
+        let planets: Vec<&crate::body::Body> = self.bodies.iter().filter(|b| b.parent.is_none()).collect();
+        let primary = planets.first().map(|b| b.id).or(Some(self.bodies[0].id));
+        let richest_matching = |k: K| {
+            self.bodies
+                .iter()
+                .flat_map(|b| b.deposits.iter().map(move |d| (b, d)))
+                .filter(|(_, d)| crate::production::extraction_structure(d.resource) == Some(k))
+                .max_by(|a, b| a.1.richness.partial_cmp(&b.1.richness).expect("finite"))
+                .map(|(b, _)| b.id)
+        };
+        let volatiles_body = self
+            .bodies
+            .iter()
+            .find(|b| b.deposits.iter().any(|d| d.resource == crate::cargo::Commodity::Volatiles))
+            .map(|b| b.id)
+            .or_else(|| planets.iter().find(|b| b.kind == crate::body::BodyKind::GasGiant).map(|b| b.id))
+            .or(primary);
+        let habitable_body = self
+            .bodies
+            .iter()
+            .find(|b| b.habitable)
+            .map(|b| b.id)
+            .or_else(|| {
+                planets
+                    .iter()
+                    .find(|b| matches!(b.kind, crate::body::BodyKind::Terrestrial | crate::body::BodyKind::Ocean))
+                    .map(|b| b.id)
+            })
+            .or(primary);
+        let industrial_body = planets
+            .iter()
+            .find(|b| !b.habitable && !matches!(b.kind, crate::body::BodyKind::GasGiant | crate::body::BodyKind::Ice))
+            .map(|b| b.id)
+            .or(primary);
+        let outermost = planets.last().map(|b| b.id).or(primary);
+        match kind {
+            K::MiningComplex | K::VolatileHarvester | K::Bioharvester => {
+                richest_matching(kind).or(match kind {
+                    K::VolatileHarvester => volatiles_body,
+                    K::Bioharvester => habitable_body,
+                    _ => industrial_body,
+                })
+            }
+            K::FuelRefinery | K::ChemicalWorks => volatiles_body,
+            K::Habitat | K::Agroplex | K::Academy => habitable_body,
+            K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex => industrial_body,
+            K::Shipyard | K::Depot | K::DefensePlatform => primary,
+            K::SensorArray => outermost,
+        }
+    }
+
+    /// §bodies: seed `millions` of population onto the system's natural
+    /// habitable body (colony landings, home bootstraps, migration, tests).
+    pub fn seed_population(&mut self, millions: f64) {
+        let Some(target) = self.site_for(crate::build::StructureKind::Habitat) else {
+            self.legacy_population += millions; // pre-migration shell
+            return;
+        };
+        if let Some(b) = self.bodies.iter_mut().find(|b| b.id == target) {
+            b.population += millions;
+        }
+    }
+
+    /// §bodies: REPLACE this system's geology for tests/tools — regenerates
+    /// the roster from `deposits` (the shared generator), then RE-SITES any
+    /// structures/assignments already present and re-seeds the population
+    /// (structures placed before a geology change keep working).
+    pub fn set_test_deposits(&mut self, deposits: Vec<Deposit>) {
+        let mut structures: BTreeMap<crate::build::StructureKind, u32> = BTreeMap::new();
+        let mut assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment> = BTreeMap::new();
+        let mut pop = 0.0;
+        for b in &self.bodies {
+            for (k, t) in &b.structures {
+                *structures.entry(*k).or_insert(0) += t;
+            }
+            for (k, a) in &b.assignments {
+                assignments.insert(*k, a.clone());
+            }
+            pop += b.population;
+        }
+        self.bodies = crate::body::generate_bodies(&self.id.0.to_string(), &self.name, &deposits);
+        for (kind, tier) in structures {
+            let target = self.site_for(kind).unwrap_or(0);
+            if let Some(b) = self.bodies.iter_mut().find(|b| b.id == target) {
+                b.set_tier(kind, tier);
+            }
+        }
+        for (kind, asg) in assignments {
+            if let Some(b) = self.bodies.iter_mut().find(|b| b.tier(kind) > 0) {
+                b.assignments.insert(kind, asg);
+            }
+        }
+        if pop > 0.0 {
+            self.seed_population(pop);
+        }
+    }
+
+    /// §bodies: append ONE deposit onto an affinity-matching body (tests /
+    /// tools). Falls back to the first body; a bodiless shell keeps it legacy.
+    pub fn add_test_deposit(&mut self, d: Deposit) {
+        if self.bodies.is_empty() {
+            self.legacy_deposits.push(d);
+            return;
+        }
+        let kind = crate::production::extraction_structure(d.resource);
+        let idx = self
+            .bodies
+            .iter()
+            .position(|b| match kind {
+                Some(crate::build::StructureKind::Bioharvester) => b.habitable,
+                Some(crate::build::StructureKind::VolatileHarvester) => matches!(b.kind, crate::body::BodyKind::Ice | crate::body::BodyKind::GasGiant),
+                _ => matches!(b.kind, crate::body::BodyKind::Rocky | crate::body::BodyKind::Terrestrial),
+            })
+            .unwrap_or(0);
+        self.bodies[idx].deposits.push(d);
+    }
+
+    /// §bodies: zero every body's population, then seed `millions` on the
+    /// natural habitable body (test/tool shorthand for "the colony IS this big").
+    pub fn set_population(&mut self, millions: f64) {
+        for b in self.bodies.iter_mut() {
+            b.population = 0.0;
+        }
+        self.seed_population(millions);
+    }
+
+    /// §bodies: post an assignment on the body HOLDING `kind` (highest tier
+    /// first) — the pre-bodies call shape, for tests and simple tools.
+    pub fn assign(&mut self, kind: crate::build::StructureKind, asg: crate::production::Assignment) {
+        if let Some(b) = self
+            .bodies
+            .iter_mut()
+            .filter(|b| b.tier(kind) > 0)
+            .max_by_key(|b| b.tier(kind))
+        {
+            b.assignments.insert(kind, asg);
+        }
+    }
+
+    /// §bodies: the assignment on the body holding `kind`, if any.
+    pub fn assignment(&self, kind: crate::build::StructureKind) -> Option<&crate::production::Assignment> {
+        self.bodies
+            .iter()
+            .filter(|b| b.tier(kind) > 0)
+            .max_by_key(|b| b.tier(kind))
+            .and_then(|b| b.assignments.get(&kind))
+            .or_else(|| self.bodies.iter().find_map(|b| b.assignments.get(&kind)))
+    }
+
+    /// §economy: fold the LEGACY flat tier fields into the legacy structure
+    /// map (Extractor → MiningComplex, Refinery → FuelRefinery, the rest 1:1),
+    /// zeroing the carriers. Idempotent; `migrate_to_bodies` then sites the
+    /// map onto bodies. `defense_pool` and combat semantics ride along.
     pub fn fold_legacy_structures(&mut self) {
         use crate::build::StructureKind as K;
         let folds = [
@@ -216,116 +418,147 @@ impl StarSystem {
         ];
         for (legacy, kind) in folds {
             if legacy > 0 {
-                let cur = self.tier(kind);
-                self.set_tier(kind, cur + legacy);
+                let cur = self.legacy_structures.get(&kind).copied().unwrap_or(0);
+                self.legacy_structures.insert(kind, cur + legacy);
             }
         }
     }
 
-    /// §economy: the three DERIVED slot pools (never stored — the old
-    /// `dev_slots()` philosophy; migration-free by construction).
-    /// RESOURCE slots come from geology: one per deposit, clamped 1..=4.
-    pub fn resource_slots(&self) -> u32 {
-        (self.deposits.len() as u32).clamp(1, 4)
-    }
-
-    /// INDUSTRIAL slots come from population: 1 / 2 / 3 by `pop_tier`.
-    pub fn industrial_slots(&self) -> u32 {
-        1 + crate::build::pop_tier(self.population)
-    }
-
-    /// INFRASTRUCTURE slots: 2 / 3 / 3 by `pop_tier`.
-    pub fn infrastructure_slots(&self) -> u32 {
-        2 + (crate::build::pop_tier(self.population) >= 1) as u32
-    }
-
-    /// The slot budget of one pool.
-    pub fn pool_slots(&self, pool: crate::build::SlotPool) -> u32 {
-        match pool {
-            crate::build::SlotPool::Resource => self.resource_slots(),
-            crate::build::SlotPool::Industrial => self.industrial_slots(),
-            crate::build::SlotPool::Infrastructure => self.infrastructure_slots(),
+    /// §bodies: MIGRATE this system onto its body roster — idempotent (a
+    /// system with bodies passes through untouched). Generates the ported
+    /// roster from the legacy deposit list (layout-preserving), distributes
+    /// the deposits, sites the legacy structures, seeds the population onto
+    /// the Habitat's body, and re-homes assignments with their structures.
+    pub fn migrate_to_bodies(&mut self) {
+        if self.bodies.is_empty() {
+            let deposits = std::mem::take(&mut self.legacy_deposits);
+            self.bodies = crate::body::generate_bodies(&self.id.0.to_string(), &self.name, &deposits);
+        } else if !self.legacy_deposits.is_empty() {
+            // A mixed-era state: bodies exist but a legacy deposit list is
+            // still riding along — distribute it by affinity (nothing lost).
+            for d in std::mem::take(&mut self.legacy_deposits) {
+                self.add_test_deposit(d);
+            }
+        }
+        // Site every legacy structure per the shared rules.
+        let structures = std::mem::take(&mut self.legacy_structures);
+        for (kind, tier) in structures {
+            if tier == 0 {
+                continue;
+            }
+            let target = self.site_for(kind).unwrap_or(0);
+            if let Some(b) = self.bodies.iter_mut().find(|b| b.id == target) {
+                let cur = b.tier(kind);
+                b.set_tier(kind, cur + tier);
+            }
+        }
+        // Population lands on the Habitat's body.
+        let pop = std::mem::take(&mut self.legacy_population);
+        if pop > 0.0 {
+            self.seed_population(pop);
+        }
+        // Assignments re-home with their structures.
+        let assignments = std::mem::take(&mut self.legacy_assignments);
+        for (kind, asg) in assignments {
+            if let Some(b) = self
+                .bodies
+                .iter_mut()
+                .find(|b| b.tier(kind) > 0)
+            {
+                b.assignments.insert(kind, asg);
+            }
         }
     }
 
-    /// Slots of one pool already CONSUMED — one per DISTINCT built structure
-    /// (§economy Part 3): a slot is a FOOTPRINT, and tiers go DEEP on the same
-    /// slot (that's the throughput ladder's whole job). Slots bound BREADTH —
-    /// how many kinds a colony runs — never depth; otherwise a 2-deposit home
-    /// could never upgrade its mine at all. In-progress jobs founding a NEW
-    /// structure also hold a slot (the World's `pool_slots_pending`).
+    /// §bodies: the SUMMED slot pools across bodies (the system panel's
+    /// "industrial 4/7 across 5 bodies" readout; gating is per body).
+    pub fn resource_slots(&self) -> u32 {
+        self.bodies.iter().map(|b| b.resource_slots()).sum()
+    }
+
+    pub fn industrial_slots(&self) -> u32 {
+        self.bodies.iter().map(|b| b.industrial_slots()).sum()
+    }
+
+    pub fn infrastructure_slots(&self) -> u32 {
+        self.bodies.iter().map(|b| b.infrastructure_slots()).sum()
+    }
+
+    /// The summed slot budget of one pool.
+    pub fn pool_slots(&self, pool: crate::build::SlotPool) -> u32 {
+        self.bodies.iter().map(|b| b.pool_slots(pool)).sum()
+    }
+
+    /// Summed slots of one pool consumed across bodies (breadth per body).
     pub fn pool_slots_built(&self, pool: crate::build::SlotPool) -> u32 {
-        self.structures
-            .iter()
-            .filter(|(k, t)| k.slot_pool() == pool && **t >= 1)
-            .count() as u32
+        self.bodies.iter().map(|b| b.pool_slots_built(pool)).sum()
     }
 
-    /// §economy Part 3: total workforce crews POSTED across all assignments.
+    /// §economy Part 3: total workforce crews POSTED across every body's
+    /// assignments (labor is ONE system pool — it commutes inside the well).
     pub fn workforce_posted(&self) -> u32 {
-        self.assignments.values().map(|a| a.workers).sum()
+        self.bodies
+            .iter()
+            .flat_map(|b| b.assignments.values())
+            .map(|a| a.workers)
+            .sum()
     }
 
-    /// §economy Part 3: the colony-wide STAFFING SHARE — when the posting
-    /// exceeds what the population fields, every line dilutes by the same
-    /// fraction (fair, legible, and deadlock-free: no line ever starves
-    /// another outright). 1.0 when fully covered or nothing is posted.
+    /// §economy Part 3: the SYSTEM-wide staffing share — the one workforce
+    /// pool (Σ body populations) diluted across every posted crew on every
+    /// body, uniformly (fair, legible, deadlock-free).
     pub fn staffing_share(&self) -> f64 {
         let posted = self.workforce_posted();
         if posted == 0 {
             return 1.0;
         }
-        (crate::colony::workforce_units(self.population) as f64 / posted as f64).min(1.0)
+        (crate::colony::workforce_units(self.population()) as f64 / posted as f64).min(1.0)
     }
 
     /// §economy Part 4: the EFFECTIVE specialists on every line this tick —
-    /// per structure `(crew, matched)`: how many posted specialists actually
-    /// work it (clamped by the resident pool, walked in deterministic BTreeMap
-    /// order so a shrunken pool degrades the same way everywhere) and how many
-    /// of those are AFFINE (drive the skill factor). Non-destructive: stored
-    /// postings are untouched, so a returning specialist re-validates free.
+    /// keyed `(body id, structure)` now; the resident pool stays SYSTEM-scoped
+    /// and is walked in deterministic (body id, kind) order, non-destructively.
     pub fn effective_specialists(
         &self,
-    ) -> BTreeMap<crate::build::StructureKind, (u32, u32)> {
+    ) -> BTreeMap<(u32, crate::build::StructureKind), (u32, u32)> {
         let mut pool_left = self.specialists.clone();
         let mut out = BTreeMap::new();
-        for (kind, asg) in &self.assignments {
-            let (mut crew, mut matched) = (0u32, 0u32);
-            for (&sk, &n) in &asg.specialists {
-                let left = pool_left.entry(sk).or_insert(0);
-                let take = n.min(*left);
-                *left -= take;
-                crew += take;
-                if sk.affine(*kind) {
-                    matched += take;
+        for b in &self.bodies {
+            for (kind, asg) in &b.assignments {
+                let (mut crew, mut matched) = (0u32, 0u32);
+                for (&sk, &n) in &asg.specialists {
+                    let left = pool_left.entry(sk).or_insert(0);
+                    let take = n.min(*left);
+                    *left -= take;
+                    crew += take;
+                    if sk.affine(*kind) {
+                        matched += take;
+                    }
                 }
+                out.insert((b.id, *kind), (crew, matched));
             }
-            out.insert(*kind, (crew, matched));
         }
         out
     }
 
-    /// §economy Part 3: the STAFFING factor of one structure's line —
-    /// `(crew/tier) · share` where crew = generic workers + posted specialists
-    /// (a specialist always works, affinity or not — never a penalty): a
-    /// tier-N plant wants N crews for full throughput; posting fewer
-    /// under-crews it, over-posting the colony dilutes everyone. 0.0 when
-    /// nothing is posted (unstaffed = idle).
-    pub fn staffing_factor(&self, kind: crate::build::StructureKind) -> f64 {
-        let tier = self.tier(kind);
+    /// §economy Part 3: the STAFFING factor of one BODY's line —
+    /// `(crew/tier) · share` (crew = workers + posted specialists).
+    pub fn staffing_factor(&self, body_id: u32, kind: crate::build::StructureKind) -> f64 {
+        let Some(b) = self.bodies.iter().find(|b| b.id == body_id) else { return 0.0 };
+        let tier = b.tier(kind);
         if tier == 0 {
             return 0.0;
         }
-        let workers = self.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
-        let spec_crew = self.effective_specialists().get(&kind).map(|(c, _)| *c).unwrap_or(0);
+        let workers = b.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+        let spec_crew = self.effective_specialists().get(&(body_id, kind)).map(|(c, _)| *c).unwrap_or(0);
         ((workers + spec_crew).min(tier) as f64 / tier as f64) * self.staffing_share()
     }
 
-    /// §economy Part 4: the SKILL factor of one structure's line (1.0 bare,
-    /// up to `SPECIALIST_SKILL_MULT` fully affine-staffed).
-    pub fn skill_factor(&self, kind: crate::build::StructureKind) -> f64 {
-        let (_, matched) = self.effective_specialists().get(&kind).copied().unwrap_or((0, 0));
-        crate::production::skill_factor(matched, self.tier(kind))
+    /// §economy Part 4: the SKILL factor of one BODY's line.
+    pub fn skill_factor(&self, body_id: u32, kind: crate::build::StructureKind) -> f64 {
+        let tier = self.bodies.iter().find(|b| b.id == body_id).map(|b| b.tier(kind)).unwrap_or(0);
+        let (_, matched) = self.effective_specialists().get(&(body_id, kind)).copied().unwrap_or((0, 0));
+        crate::production::skill_factor(matched, tier)
     }
 
     /// LEGACY single-budget readouts, now sums over the three pools — keeps the
@@ -338,7 +571,7 @@ impl StarSystem {
     /// Development slots already CONSUMED here (all pools) — one per distinct
     /// built structure (see `pool_slots_built`).
     pub fn dev_slots_built(&self) -> u32 {
-        self.structures.values().filter(|t| **t >= 1).count() as u32
+        self.bodies.iter().map(|b| b.structures.values().filter(|t| **t >= 1).count() as u32).sum()
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
@@ -427,11 +660,16 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
         let frontier = u; // == (r/radius - 0.12) / 0.84, monotonic in distance
         let deposits = generate_deposits(rng, frontier);
         let claim_cost = claim_cost_for(&deposits);
+        // §bodies: NEW systems are born with their roster — deposits are
+        // rolled first (the frontier gradient is untouched), then placed onto
+        // affinity-correct bodies by the shared generator.
+        let bodies = crate::body::generate_bodies(&id.0.to_string(), &name, &deposits);
         systems.push(StarSystem {
             id,
             pos,
             name,
-            deposits,
+            bodies,
+            legacy_deposits: Vec::new(),
             claim_cost,
             owner: None,
             claimed_at: None,
@@ -448,9 +686,9 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             blockade: None,
             trait_: None,
             cache_claimed: false,
-            structures: BTreeMap::new(),
-            population: 0.0,
-            assignments: BTreeMap::new(),
+            legacy_structures: BTreeMap::new(),
+            legacy_population: 0.0,
+            legacy_assignments: BTreeMap::new(),
             specialists: BTreeMap::new(),
         });
     }
@@ -550,11 +788,16 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
     let mut rng = Rng::new(seed ^ HOME_SYSTEM_MAGIC ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let deposits = generate_home_deposits(&mut rng);
     let claim_cost = claim_cost_for(&deposits);
-    StarSystem {
+    let name = system_name(&mut rng);
+    // §bodies: the home is born with its roster; the bootstrap then SITES its
+    // structures on the right bodies via the shared rules.
+    let bodies = crate::body::generate_bodies(&id.0.to_string(), &name, &deposits);
+    let mut sys = StarSystem {
         id,
         pos,
-        name: system_name(&mut rng),
-        deposits,
+        name,
+        bodies,
+        legacy_deposits: Vec::new(),
         claim_cost,
         owner: None,
         claimed_at: None,
@@ -583,33 +826,43 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         blockade: None,
         trait_: None,
         cache_claimed: false,
-        // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3): a home is born
-        // a WORKING developed colony — Shipyard (convoys turn one), the two
-        // extraction structures its geology calls for, the Agroplex that turns
-        // Biomass into food, and the Habitat housing 2.0M colonists. Every
-        // slot pool is born exactly FULL (Resource 2/2, Industrial 1/1, Infra
-        // 2/2): all expansion runs through population growth, by design.
-        structures: [
-            (crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER),
-            (crate::build::StructureKind::Bioharvester, 1),
-            (crate::build::StructureKind::MiningComplex, 1),
-            (crate::build::StructureKind::Agroplex, 1),
-            (crate::build::StructureKind::Habitat, 1),
-        ]
-        .into_iter()
-        .collect(),
-        population: crate::colony::HOME_FOUNDING_POP,
-        // Pre-staffed: the food chain + the mine (the Shipyard boost crew is
-        // the player's first staffing decision once population grows).
-        assignments: [
-            (crate::build::StructureKind::Bioharvester, crate::production::Assignment::crew(1)),
-            (crate::build::StructureKind::MiningComplex, crate::production::Assignment::crew(1)),
-            (crate::build::StructureKind::Agroplex, crate::production::Assignment::crew(1)),
-        ]
-        .into_iter()
-        .collect(),
+        legacy_structures: BTreeMap::new(),
+        legacy_population: 0.0,
+        legacy_assignments: BTreeMap::new(),
         specialists: BTreeMap::new(),
+    };
+    // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3 → §bodies): a home
+    // is born a WORKING developed colony — Shipyard (convoys turn one), the
+    // extraction its geology calls for, the Agroplex, the Habitat with 2.0M
+    // colonists — each structure SITED on its natural body (the mine on the
+    // ore body, the farm chain + Habitat on the habitable world, the yard
+    // over the primary), pre-staffed on those bodies.
+    let bootstrap = [
+        (crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER),
+        (crate::build::StructureKind::Bioharvester, 1),
+        (crate::build::StructureKind::MiningComplex, 1),
+        (crate::build::StructureKind::Agroplex, 1),
+        (crate::build::StructureKind::Habitat, 1),
+    ];
+    for (kind, tier) in bootstrap {
+        let target = sys.site_for(kind).unwrap_or(0);
+        if let Some(b) = sys.bodies.iter_mut().find(|b| b.id == target) {
+            b.set_tier(kind, tier);
+        }
     }
+    sys.seed_population(crate::colony::HOME_FOUNDING_POP);
+    // Pre-staffed: the food chain + the mine (the Shipyard boost crew is the
+    // player's first staffing decision once population grows).
+    for kind in [
+        crate::build::StructureKind::Bioharvester,
+        crate::build::StructureKind::MiningComplex,
+        crate::build::StructureKind::Agroplex,
+    ] {
+        if let Some(b) = sys.bodies.iter_mut().find(|b| b.tier(kind) > 0) {
+            b.assignments.insert(kind, crate::production::Assignment::crew(1));
+        }
+    }
+    sys
 }
 
 /// One home star system per home slot, co-located with each slot — the developed

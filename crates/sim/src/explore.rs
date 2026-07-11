@@ -146,7 +146,13 @@ impl RichnessBand {
 /// richness only (reserves deplete but richness doesn't), weighted by the fixed
 /// bootstrap anchors. Pure + deterministic; the single banding input.
 pub fn band_value(deposits: &[Deposit]) -> f64 {
-    deposits.iter().map(|d| d.richness * crate::market::base_price(d.resource)).sum()
+    band_value_iter(deposits.iter())
+}
+
+/// §bodies: the iterator form — deposits live on bodies now, so callers sum
+/// over `StarSystem::all_deposits()`.
+pub fn band_value_iter<'a>(deposits: impl Iterator<Item = &'a Deposit>) -> f64 {
+    deposits.map(|d| d.richness * crate::market::base_price(d.resource)).sum()
 }
 
 /// Bucket a system value against the stored tercile thresholds `(lo, hi)`.
