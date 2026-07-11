@@ -558,11 +558,19 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         claim_cost,
         owner: None,
         claimed_at: None,
-        // A standing Provisions buffer so the food ladder starts Well Supplied
-        // while the seeded farm chain spins up (§economy Part 3 bootstrap).
-        stockpile: [(Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED)]
-            .into_iter()
-            .collect(),
+        // §economy Part 3+5 bootstrap stock: a standing Provisions buffer (the
+        // food ladder starts Well Supplied while the farm chain spins up) plus
+        // the STARTER KIT — enough Machinery/Alloys/Polymers that the first
+        // Depot/Habitat/industry doesn't require a market round-trip. (The
+        // Fuel movement seed lands on join.) All Tunable.
+        stockpile: [
+            (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
+            (Commodity::Machinery, 40.0),
+            (Commodity::Alloys, 60.0),
+            (Commodity::Polymers, 30.0),
+        ]
+        .into_iter()
+        .collect(),
         legacy_extractor_tier: 0,
         legacy_depot_tier: 0,
         legacy_shipyard_tier: 0,

@@ -227,37 +227,37 @@ const HZ: u64 = TICK_HZ as u64;
 // **Alloys + Fuel** (gather them across systems, the §step1 "spread of systems matters").
 
 /// Convoy (bulk hauler): plain **Ore** — cheap, the workhorse you build at home.
-pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 35.0)], build_ticks: 12 * HZ };
+pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Machinery, 10.0), (Commodity::Polymers, 10.0)], build_ticks: 12 * HZ };
 /// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
-pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 18.0), (Commodity::Fuel, 12.0)], build_ticks: 10 * HZ };
+pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 20.0), (Commodity::Electronics, 12.0), (Commodity::Armaments, 15.0), (Commodity::Fuel, 10.0)], build_ticks: 10 * HZ };
 /// Scout: cheap **Ore + Fuel** — the entry unit, buildable at the home turn one
 /// (cheap enough that a caught scout is an acceptable loss).
-pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 20.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
+pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 15.0), (Commodity::Electronics, 8.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
 /// Corvette: **Ore + Alloys** — the dedicated defender; military industry.
-pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 30.0), (Commodity::Alloys, 15.0)], build_ticks: 14 * HZ };
+pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 12.0), (Commodity::Armaments, 12.0)], build_ticks: 14 * HZ };
 /// Colony Ship: **Ore + Alloys + Provisions** (colonists eat) — absorbs the old
 /// instant-claim economics into a physical, raidable investment (§ships part 3).
-pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 60.0), (Commodity::Alloys, 20.0), (Commodity::Provisions, 40.0)], build_ticks: 30 * HZ };
-// §economy: structure recipes. The 7 LEGACY-MAPPED kinds keep their pre-economy
-// costs for now (commit 6 swaps the whole cost table to the industrial-web
-// recipes); the 9 NEW kinds land with their industrial-web costs directly —
+pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 15.0), (Commodity::Polymers, 20.0), (Commodity::Provisions, 30.0), (Commodity::Fuel, 15.0)], build_ticks: 30 * HZ };
+// §economy Part 5: the FULL industrial-web cost table (design doc). Everything
+// advanced needs MACHINERY, and early Machinery comes from Sol — the intended
+// loop is extract → sell raws → buy Machinery → build industry → make your own.
 // they need Machinery/Electronics, purchasable at the hub (Sol's off-map
 // industry lists all 12 from day one).
-pub const MINING_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 60.0)], build_ticks: 18 * HZ };
+pub const MINING_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
 pub const VOLATILE_HARVESTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
 pub const BIOHARVESTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
 pub const SMELTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
 pub const ELECTRONICS_FABRICATOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 20.0), (Commodity::Silicates, 10.0)], build_ticks: 20 * HZ };
 pub const CHEMICAL_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
-pub const FUEL_REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 50.0), (Commodity::Alloys, 15.0)], build_ticks: 20 * HZ };
+pub const FUEL_REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
 pub const AGROPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
 pub const MACHINE_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
 pub const ARMAMENTS_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
-pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 50.0), (Commodity::Alloys, 10.0)], build_ticks: 20 * HZ };
-pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 45.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
-pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 45.0)], build_ticks: 15 * HZ };
-pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 40.0), (Commodity::Alloys, 15.0)], build_ticks: 18 * HZ };
-pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
+pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 20 * HZ };
+pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Polymers, 20.0), (Commodity::Machinery, 8.0)], build_ticks: 20 * HZ };
+pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)], build_ticks: 15 * HZ };
+pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Electronics, 18.0), (Commodity::Machinery, 10.0)], build_ticks: 18 * HZ };
+pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 35.0), (Commodity::Electronics, 15.0), (Commodity::Armaments, 15.0)], build_ticks: 22 * HZ };
 pub const ACADEMY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 15.0), (Commodity::Provisions, 20.0)], build_ticks: 20 * HZ };
 
 /// §economy Part 4: one Academy training course (Provisions feed the cohort,
@@ -415,6 +415,6 @@ pub const DEV_SLOTS_MAX: u32 = 5;
 /// home's 300-unit fuel seed so a fresh corporation starts with headroom, while
 /// still filling within minutes of idle production — the "ship it or lose the
 /// flow" pressure that gives standing orders a real job. Tunable.
-pub const STORAGE_BASE_CAP: f64 = 500.0;
+pub const STORAGE_BASE_CAP: f64 = 700.0;
 /// Extra capacity per Depot tier. Tunable.
 pub const STORAGE_PER_DEPOT_TIER: f64 = 400.0;

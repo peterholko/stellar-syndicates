@@ -5860,15 +5860,15 @@ mod tests {
         let id = PlayerId(2);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
-        let ore0 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::MetallicOre];
+        // (§economy Part 5: the convoy recipe is Alloys + Machinery + Polymers —
+        // the starter kit covers it; measure the ALLOYS line, nothing at the
+        // home produces Alloys so the debit is exact.)
+        let alloys0 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
         let ships0 = w.fleets.len();
 
         w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
-        // Recipe deducted at once (minus this tick's accrual on the ore deposit; home
-        // produces ore, so assert it dropped by ~the recipe, not exactly).
-        let ore1 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::MetallicOre];
-        assert!(ore1 < ore0 - 30.0, "ore stockpile debited by the convoy recipe (~40)");
+        let alloys1 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
+        assert!((alloys0 - alloys1 - 25.0).abs() < 1e-9, "alloys debited by the convoy recipe (got {})", alloys0 - alloys1);
         assert_eq!(w.build_queue.len(), 1, "a build job is enqueued");
         assert_eq!(w.fleets.len(), ships0, "no ship yet — it builds over time");
 
@@ -6210,7 +6210,9 @@ mod tests {
         let id = PlayerId(27);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Alloys, 100.0), (Commodity::Fuel, 100.0), (Commodity::MetallicOre, 200.0)]);
+        // §economy Part 5: raider = Alloys+Electronics+Armaments+Fuel; the
+        // Shipyard-2 build needs Machinery/Alloys/Electronics (kit + seeds).
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 60.0), (Commodity::Electronics, 40.0), (Commodity::Armaments, 20.0)]);
 
         // Home is tier 1 → a Raider (needs 2) SOFT-rejects with the owner notice.
         let alloys0 = system_stock(&w, home, Commodity::Alloys);
@@ -6716,6 +6718,24 @@ mod tests {
         assert_eq!(plain - boosted, expect, "ticks / (1 + BOOST·staffing), locked at enqueue");
     }
 
+    /// §economy Part 5: THE STARTER KIT — a fresh home affords its opening
+    /// moves from seeded stock alone (no market round-trip): a Convoy AND a
+    /// Mining Complex tier-up enqueue turn one on the kit's Machinery/Alloys/
+    /// Polymers.
+    #[test]
+    fn starter_kit_funds_the_opening_moves_without_the_market() {
+        let mut w = test_world();
+        let id = PlayerId(70);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let ev = w.step(&[
+            Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None },
+            Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex },
+        ]);
+        let started = ev.iter().filter(|e| matches!(e.payload, EventPayload::BuildStarted { .. })).count();
+        assert_eq!(started, 2, "the kit funds a convoy AND the first mine tier-up, turn one");
+    }
+
     // --- §economy Part 4: specialists ------------------------------------------
 
     /// The SKILL factor: an AFFINE specialist multiplies its line ×1.75 fully
@@ -7113,7 +7133,7 @@ mod tests {
         let id = PlayerId(41);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]); // fuel seed covers the 8 Fuel
+        seed_stock(&mut w, home, &[(Commodity::Electronics, 10.0)]); // kit covers Alloys; fuel seed covers the 8 Fuel
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Scout, join: None }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "a tier-1 shipyard builds scouts");
         let mut spawned = false;
@@ -8807,7 +8827,7 @@ mod tests {
         let id = PlayerId(44);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
+        seed_stock(&mut w, home, &[(Commodity::Electronics, 20.0), (Commodity::Armaments, 20.0)]); // kit covers Alloys
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None }]);
         assert!(
             ev.iter().any(|e| matches!(
