@@ -1715,14 +1715,25 @@ impl World {
                 }
             }
         }
-        // Drop any fleet emptied out.
+        // Drop any fleet emptied out. §economy Part 4: a fleet that died with
+        // specialists aboard loses them WITH the ship — the one specialist loss
+        // rule — and the owner is told (light-delayed from the wreck).
         members.retain(|id| self.fleets.get(id).is_some_and(|f| !f.is_empty()));
-        for id in members.clone() {
-            if self.fleets.get(&id).is_some_and(|f| f.is_empty()) {
-                self.fleets.remove(&id);
+        let mut lost: Vec<Event> = Vec::new();
+        self.fleets.retain(|_, f| {
+            if f.is_empty() {
+                if !f.passengers.is_empty() {
+                    lost.push(Event::new(
+                        self.time,
+                        EventPayload::SpecialistsLost { owner: f.owner, manifest: f.passengers.clone(), pos: f.pos },
+                    ));
+                }
+                false
+            } else {
+                true
             }
-        }
-        self.fleets.retain(|_, f| !f.is_empty());
+        });
+        events.extend(lost);
     }
 
     /// Resolve BATTLES this tick (§battles-take-time). Combat is deterministic
@@ -3452,12 +3463,14 @@ impl World {
             Command::DevelopSystem { player_id, system_id, upgrade } => {
                 self.apply_build(*player_id, *system_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, events);
             }
-            Command::SetAssignment { player_id, system_id, structure, workers } => {
+            Command::SetAssignment { player_id, system_id, structure, workers, specialists } => {
                 // §economy Part 3: INSTANT local administration (standing-order
                 // precedent). Owner + built structure required; `workers` clamps
                 // to the tier (a tier-N plant fields at most N crews); 0 clears
-                // the line. Over-posting the workforce is legal — the uniform
-                // staffing share dilutes every line fairly, no reject edge.
+                // the line (with everyone posted to it). Over-posting the
+                // workforce is legal — the uniform staffing share dilutes every
+                // line fairly, no reject edge. §Part 4: posted SPECIALISTS clamp
+                // so the per-kind total across ALL lines fits the resident pool.
                 let Some(sys) = self.systems.iter_mut().find(|s| s.id == *system_id && s.owner == Some(*player_id)) else {
                     return;
                 };
@@ -3466,17 +3479,123 @@ impl World {
                     return; // nothing built to staff — soft-reject
                 }
                 let workers = (*workers).min(tier);
-                if workers == 0 {
+                if workers == 0 && specialists.values().all(|n| *n == 0) {
                     sys.assignments.remove(structure);
                 } else {
+                    let mut posted = std::collections::BTreeMap::new();
+                    for (&kind, &want) in specialists {
+                        if want == 0 {
+                            continue;
+                        }
+                        let resident = sys.specialists.get(&kind).copied().unwrap_or(0);
+                        let elsewhere: u32 = sys
+                            .assignments
+                            .iter()
+                            .filter(|(k, _)| *k != structure)
+                            .map(|(_, a)| a.specialists.get(&kind).copied().unwrap_or(0))
+                            .sum();
+                        let free = resident.saturating_sub(elsewhere);
+                        if free > 0 {
+                            posted.insert(kind, want.min(free));
+                        }
+                    }
                     // A fresh posting starts un-suspended; the engine re-latches
                     // real outages next tick (no stale banner on a re-post).
-                    sys.assignments.insert(*structure, crate::production::Assignment { workers, suspended: None });
+                    sys.assignments.insert(*structure, crate::production::Assignment { workers, specialists: posted, suspended: None });
                 }
                 events.push(Event::new(
                     self.time,
                     EventPayload::AssignmentSet { owner: *player_id, system: *system_id, structure: *structure, workers },
                 ));
+            }
+            Command::HireSpecialist { player_id, specialist, dest_system } => {
+                // §economy Part 4: Sol contract — price-certain, delivery-risky.
+                // Validate the destination is the player's OWN system (allies
+                // route through Transfer; Sol won't ship to someone else's
+                // ground), then debit and dispatch a personnel convoy from the
+                // hub. Soft-reject on ownership or credits.
+                let Some(dest) = self.systems.iter().find(|s| s.id == *dest_system && s.owner == Some(*player_id)).map(|s| s.pos) else {
+                    return;
+                };
+                let cost = crate::specialist::SPECIALIST_HIRE_COST;
+                let Some(corp) = self.players.get_mut(player_id) else { return };
+                if corp.credits + 1e-9 < cost {
+                    return; // can't pay — soft reject
+                }
+                corp.credits -= cost;
+                let hub = self.hub;
+                let cid = self.spawn_trade_convoy(*player_id, hub, dest, Cargo { commodity: crate::cargo::Commodity::Provisions, units: 0 }, TradeMission::DeliverToSystem { system: *dest_system });
+                // A pure personnel run: no cargo, one contractor aboard.
+                if let Some(f) = self.fleets.get_mut(&cid) {
+                    f.cargo = None;
+                    f.passengers.insert(*specialist, 1);
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::SpecialistHired { owner: *player_id, kind: *specialist, dest: *dest_system },
+                ));
+            }
+            Command::TrainSpecialist { player_id, system_id, specialist } => {
+                // §economy Part 4: an Academy course rides the normal build
+                // queue (deduct now, complete later; no slot, no shipyard gate —
+                // apply_build's gates only bind Ship/Upgrade). Requires the
+                // Academy built at the player's own system.
+                let has_academy = self
+                    .systems
+                    .iter()
+                    .any(|s| s.id == *system_id && s.owner == Some(*player_id) && s.tier(crate::build::StructureKind::Academy) >= 1);
+                if !has_academy {
+                    return; // soft reject — no Academy standing there
+                }
+                self.apply_build(*player_id, *system_id, crate::build::BuildKind::Train { specialist: *specialist }, None, events);
+            }
+            Command::TransferSpecialists { player_id, from, to, manifest } => {
+                // §economy Part 4: a dedicated personnel convoy between the
+                // player's own ground (or an ally's destination — aid in human
+                // form). Manifest clamps to the resident pool and one convoy's
+                // berths; the pool is debited at LOADING (the people are aboard,
+                // not at home). Soft-reject if nothing valid remains.
+                let allies = self.allies_of(*player_id);
+                let Some(to_pos) = self
+                    .systems
+                    .iter()
+                    .find(|s| s.id == *to && s.owner.is_some_and(|o| o == *player_id || allies.contains(&o)))
+                    .map(|s| s.pos)
+                else {
+                    return;
+                };
+                let Some(src) = self.systems.iter_mut().find(|s| s.id == *from && s.owner == Some(*player_id)) else {
+                    return;
+                };
+                let mut berths = crate::specialist::passenger_capacity(ShipKind::Convoy);
+                let mut load: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> = Default::default();
+                for (&kind, &want) in manifest {
+                    if berths == 0 {
+                        break;
+                    }
+                    let resident = src.specialists.get(&kind).copied().unwrap_or(0);
+                    let take = want.min(resident).min(berths);
+                    if take > 0 {
+                        load.insert(kind, take);
+                        berths -= take;
+                    }
+                }
+                if load.is_empty() {
+                    return; // nothing to carry — soft reject
+                }
+                for (kind, n) in &load {
+                    let r = src.specialists.get_mut(kind).expect("clamped above");
+                    *r -= n;
+                    if *r == 0 {
+                        src.specialists.remove(kind);
+                    }
+                }
+                let spawn = src.pos;
+                let cid = self.spawn_trade_convoy(*player_id, spawn, to_pos, Cargo { commodity: crate::cargo::Commodity::Provisions, units: 0 }, TradeMission::DeliverToSystem { system: *to });
+                if let Some(f) = self.fleets.get_mut(&cid) {
+                    f.cargo = None;
+                    f.passengers = load;
+                }
             }
             Command::MergeFleets { player_id, into, from } => {
                 self.apply_merge_fleets(*player_id, *into, *from, events);
@@ -3828,7 +3947,8 @@ impl World {
         // (deterministic — no mid-flight retiming when crews move); structures
         // are unaffected. skill = 1.0 until specialists (Part 4).
         let ticks = if matches!(what, crate::build::BuildKind::Ship { .. }) {
-            let boost = 1.0 + crate::production::SHIPYARD_BOOST * sys.staffing_factor(crate::build::StructureKind::Shipyard) * 1.0;
+            let yard = crate::build::StructureKind::Shipyard;
+            let boost = 1.0 + crate::production::SHIPYARD_BOOST * sys.staffing_factor(yard) * sys.skill_factor(yard);
             (recipe.build_ticks as f64 / boost).round() as u64
         } else {
             recipe.build_ticks
@@ -3892,6 +4012,10 @@ impl World {
         }
         if target.cargo.is_none() {
             target.cargo = removed.cargo;
+        }
+        // §economy Part 4: passengers walk across the gangway (never deleted).
+        for (k, n) in removed.passengers {
+            *target.passengers.entry(k).or_insert(0) += n;
         }
     }
 
@@ -3980,6 +4104,15 @@ impl World {
                         let id = self.alloc_entity_id();
                         self.fleets.insert(id, Fleet::single(id, job.owner, ship, pos, FleetOrder::Idle, None));
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
+                    }
+                }
+                crate::build::BuildKind::Train { specialist } => {
+                    // §economy Part 4: the cohort graduates into the RESIDENT
+                    // pool — only if the owner still holds the system (like an
+                    // upgrade: the resources were already spent, frontier risk).
+                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
+                        *sys.specialists.entry(specialist).or_insert(0) += 1;
+                        events.push(Event::new(self.time, EventPayload::SpecialistTrained { owner: job.owner, system: job.system, kind: specialist }));
                     }
                 }
                 crate::build::BuildKind::Upgrade { upgrade } => {
@@ -4147,14 +4280,25 @@ impl World {
                     // Consume ONE colony ship (it BECAME the colony); the rest of
                     // the fleet — escorts, extra colonists — persists and parks at
                     // the new holding. A fleet-of-one colony empties and is removed,
-                    // exactly as the old single-ship consume did.
+                    // exactly as the old single-ship consume did. §economy Part 4:
+                    // any specialists ABOARD the fleet disembark into the new
+                    // colony's resident pool (founding talent — never deleted).
                     if let Some(fl) = self.fleets.get_mut(&cid) {
                         fl.remove_one(ShipKind::Colony);
+                        let landed = std::mem::take(&mut fl.passengers);
                         if fl.is_empty() {
                             self.fleets.remove(&cid);
                         } else {
                             fl.order = FleetOrder::Idle;
                             fl.notified_held = false;
+                        }
+                        if !landed.is_empty()
+                            && let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id)
+                        {
+                            for (k, n) in &landed {
+                                *sy.specialists.entry(*k).or_insert(0) += n;
+                            }
+                            events.push(Event::new(now, EventPayload::SpecialistsDelivered { owner, system: sys_id, manifest: landed }));
                         }
                     }
                     events.push(Event::new(
@@ -4418,7 +4562,10 @@ impl World {
             // net-add units (baskets ≥ 1:1) so the cap can't bind on them
             // (a guard still bounds retunings).
             let share = sys.staffing_share();
-            let skill = 1.0; // §economy Part 4: specialists plug in here (×SPECIALIST_SKILL_MULT)
+            // §economy Part 4: the effective specialists on every line this
+            // tick (pool-clamped, deterministic) — crew counts join staffing,
+            // AFFINE counts drive the skill factor.
+            let line_spec = sys.effective_specialists();
             let deep = sys.trait_ == Some(crate::explore::SystemTrait::DeepDeposits);
             let vein = match sys.trait_ {
                 Some(crate::explore::SystemTrait::BonusVein { commodity }) => Some(commodity),
@@ -4433,7 +4580,8 @@ impl World {
                 let Some(kind) = crate::production::extraction_structure(resource) else { continue };
                 let tier = sys.tier(kind);
                 let workers = sys.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
-                if tier == 0 || workers == 0 {
+                let posted_spec = line_spec.get(&kind).map(|(c, _)| *c).unwrap_or(0);
+                if tier == 0 || workers + posted_spec == 0 {
                     continue; // unbuilt/unposted = idle by choice, not "suspended"
                 }
                 // §explore Part 3 Deep Deposits (always-on ground truth): the
@@ -4446,7 +4594,9 @@ impl World {
                 } else {
                     crate::production::tier_throughput(tier)
                 };
-                let staffing = (workers.min(tier) as f64 / tier as f64) * share;
+                let (spec_crew, matched) = line_spec.get(&kind).copied().unwrap_or((0, 0));
+                let staffing = ((workers + spec_crew).min(tier) as f64 / tier as f64) * share;
+                let skill = crate::production::skill_factor(matched, tier);
                 let food = crate::production::food_factor(kind, sys.food_state);
                 // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
                 let vein_mult = if vein == Some(resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
@@ -4472,8 +4622,9 @@ impl World {
                 crate::build::StructureKind::Bioharvester,
             ] {
                 let tier = sys.tier(kind);
+                let posted_spec = line_spec.get(&kind).map(|(c, _)| *c).unwrap_or(0);
                 let Some(asg) = sys.assignments.get_mut(&kind) else { continue };
-                if tier == 0 || asg.workers == 0 {
+                if tier == 0 || asg.workers + posted_spec == 0 {
                     continue;
                 }
                 let works_here = sys.deposits.iter().any(|d| crate::production::extraction_structure(d.resource) == Some(kind));
@@ -4496,11 +4647,13 @@ impl World {
                 let kind = conv.structure;
                 let tier = sys.tier(kind);
                 let workers = sys.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
-                if tier == 0 || workers == 0 {
+                let (spec_crew, matched) = line_spec.get(&kind).copied().unwrap_or((0, 0));
+                if tier == 0 || workers + spec_crew == 0 {
                     continue; // unbuilt/unposted = idle by choice
                 }
                 let food = crate::production::food_factor(kind, sys.food_state);
-                let staffing = (workers.min(tier) as f64 / tier as f64) * share;
+                let staffing = ((workers + spec_crew).min(tier) as f64 / tier as f64) * share;
+                let skill = crate::production::skill_factor(matched, tier);
                 // §explore Part 3 Volatile Pockets: richer feedstock — the Fuel
                 // Refinery's OUTPUT runs ×VOLATILE_REFINERY_MULT here (always-on).
                 let pocket = if kind == crate::build::StructureKind::FuelRefinery
@@ -5053,7 +5206,48 @@ impl World {
             .map(|(id, _)| *id)
             .collect();
         for id in arrived {
-            let ship = self.fleets.remove(&id).unwrap();
+            let mut ship = self.fleets.remove(&id).unwrap();
+            // §economy Part 4: PASSENGERS DISEMBARK FIRST (people before goods).
+            // They land only on ground the owner (or an ally) still holds; a
+            // destination lost mid-transit REDIRECTS the convoy to the owner's
+            // home system instead — nobody is ever silently deleted (the home
+            // is always held: home protection guarantees termination).
+            if !ship.passengers.is_empty() {
+                let land_at = match ship.mission {
+                    Some(TradeMission::DeliverToSystem { system }) => Some(system),
+                    Some(TradeMission::DeliverHome) => self.players.get(&ship.owner).and_then(|c| c.home_system),
+                    _ => None,
+                };
+                let allies = self.allies_of(ship.owner);
+                let landed = land_at.is_some_and(|sid| {
+                    self.systems
+                        .iter_mut()
+                        .find(|s| s.id == sid && s.owner.is_some_and(|o| o == ship.owner || allies.contains(&o)))
+                        .map(|sys| {
+                            for (k, n) in &ship.passengers {
+                                *sys.specialists.entry(*k).or_insert(0) += n;
+                            }
+                        })
+                        .is_some()
+                });
+                if landed {
+                    let manifest = std::mem::take(&mut ship.passengers);
+                    events.push(Event::new(
+                        now,
+                        EventPayload::SpecialistsDelivered { owner: ship.owner, system: land_at.unwrap(), manifest },
+                    ));
+                } else if let Some(corp) = self.players.get(&ship.owner)
+                    && let Some(home_sys) = corp.home_system
+                    && land_at != Some(home_sys)
+                {
+                    // Turn for home, people (and any cargo) still aboard.
+                    ship.order = FleetOrder::MoveTo { dest: corp.home };
+                    ship.mission = Some(TradeMission::DeliverToSystem { system: home_sys });
+                    self.fleets.insert(id, ship);
+                    continue;
+                }
+            }
+            let ship = ship;
             let (Some(cargo), Some(mission)) = (ship.cargo, ship.mission) else {
                 continue;
             };
@@ -5639,7 +5833,7 @@ mod tests {
             s.deposits.iter().filter_map(|d| crate::production::extraction_structure(d.resource)).collect();
         for k in kinds {
             s.set_tier(k, s.tier(k).max(1));
-            s.assignments.insert(k, crate::production::Assignment { workers: 1, suspended: None });
+            s.assignments.insert(k, crate::production::Assignment::crew(1));
         }
         s.population = 4.0; // 5 workforce units — ample for ≤3 posted crews
         s.stockpile.insert(Commodity::Provisions, 100.0); // ~7 min of food at 4M
@@ -5745,7 +5939,7 @@ mod tests {
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
         assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 2, "the home's seeded tier-1 mine upgraded to 2");
         // Post the full crew the bigger plant wants, then measure one tick.
-        w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: StructureKind::MiningComplex, workers: 2 }]);
+        w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: StructureKind::MiningComplex, workers: 2, specialists: Default::default() }]);
         let ore_before = system_stock(&w, home, Commodity::MetallicOre);
         w.step(&[]);
         let gained = system_stock(&w, home, Commodity::MetallicOre) - ore_before;
@@ -6081,6 +6275,10 @@ mod tests {
             sys.population = 2.5;
             sys.food_state = crate::colony::FoodState::Rationing;
             sys.stockpile.insert(Commodity::MetallicOre, 123.5);
+            sys.specialists.insert(crate::specialist::SpecialistKind::Geologist, 2);
+            let mut asg = crate::production::Assignment::crew(1);
+            asg.specialists.insert(crate::specialist::SpecialistKind::Geologist, 1);
+            sys.assignments.insert(crate::build::StructureKind::MiningComplex, asg);
         }
         // Scout intel rides the snapshot too (§scout part 2).
         w.players.get_mut(&id).unwrap().intel.insert(
@@ -6098,6 +6296,8 @@ mod tests {
         assert_eq!((a.tier(crate::build::StructureKind::MiningComplex), a.tier(crate::build::StructureKind::Depot), a.tier(crate::build::StructureKind::Shipyard)), (b.tier(crate::build::StructureKind::MiningComplex), b.tier(crate::build::StructureKind::Depot), b.tier(crate::build::StructureKind::Shipyard)));
         assert_eq!((a.tier(crate::build::StructureKind::Habitat), a.food_state), (b.tier(crate::build::StructureKind::Habitat), b.food_state), "habitat tier + food state round-trip");
         assert!((a.population - b.population).abs() < 1e-9, "population rides the snapshot");
+        assert_eq!(a.specialists, b.specialists, "the resident specialist pool rides the snapshot");
+        assert_eq!(a.assignments, b.assignments, "assignments (with posted specialists + latches) ride the snapshot");
         assert_eq!(a.dev_slots(), b.dev_slots(), "derived slot budget identical after reload");
         assert!((a.storage_cap() - b.storage_cap()).abs() < 1e-12);
         // Stockpiles match commodity-for-commodity (tolerating the last-ulp
@@ -6348,8 +6548,8 @@ mod tests {
 
         // Post BOTH lines against the single crew: each runs at share 1/2.
         w.step(&[
-            Command::SetAssignment { player_id: id, system_id: sid, structure: crate::build::StructureKind::MiningComplex, workers: 1 },
-            Command::SetAssignment { player_id: id, system_id: sid, structure: crate::build::StructureKind::Bioharvester, workers: 1 },
+            Command::SetAssignment { player_id: id, system_id: sid, structure: crate::build::StructureKind::MiningComplex, workers: 1, specialists: Default::default() },
+            Command::SetAssignment { player_id: id, system_id: sid, structure: crate::build::StructureKind::Bioharvester, workers: 1, specialists: Default::default() },
         ]);
         let ore0 = system_stock(&w, sid, Commodity::MetallicOre);
         let bio0 = system_stock(&w, sid, Commodity::Biomass);
@@ -6375,21 +6575,21 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
 
         // A rival's posting bounces (no state change, no event).
-        let ev = w.step(&[Command::SetAssignment { player_id: rival, system_id: home, structure: crate::build::StructureKind::MiningComplex, workers: 1 }]);
+        let ev = w.step(&[Command::SetAssignment { player_id: rival, system_id: home, structure: crate::build::StructureKind::MiningComplex, workers: 1, specialists: Default::default() }]);
         assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::AssignmentSet { .. })), "a rival can't staff your colony");
 
         // An UNBUILT structure bounces.
-        let ev = w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Smelter, workers: 1 }]);
+        let ev = w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Smelter, workers: 1, specialists: Default::default() }]);
         assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::AssignmentSet { .. })), "nothing built to staff");
 
         // Over-posting a tier-1 structure clamps to 1 crew (announced as such).
-        let ev = w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Shipyard, workers: 5 }]);
+        let ev = w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Shipyard, workers: 5, specialists: Default::default() }]);
         assert!(
             ev.iter().any(|e| matches!(e.payload, EventPayload::AssignmentSet { owner, structure: crate::build::StructureKind::Shipyard, workers: 1, .. } if owner == id)),
             "workers clamp to the structure tier"
         );
         // Zero clears the line.
-        w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Shipyard, workers: 0 }]);
+        w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Shipyard, workers: 0, specialists: Default::default() }]);
         assert!(!w.systems.iter().find(|s| s.id == home).unwrap().assignments.contains_key(&crate::build::StructureKind::Shipyard));
     }
 
@@ -6413,8 +6613,8 @@ mod tests {
         sys.stockpile.insert(Commodity::Electronics, 30.0);
         sys.set_tier(crate::build::StructureKind::Smelter, 1);
         sys.set_tier(crate::build::StructureKind::MachineWorks, 1);
-        sys.assignments.insert(crate::build::StructureKind::Smelter, crate::production::Assignment { workers: 1, suspended: None });
-        sys.assignments.insert(crate::build::StructureKind::MachineWorks, crate::production::Assignment { workers: 1, suspended: None });
+        sys.assignments.insert(crate::build::StructureKind::Smelter, crate::production::Assignment::crew(1));
+        sys.assignments.insert(crate::build::StructureKind::MachineWorks, crate::production::Assignment::crew(1));
         let sid = sys.id;
 
         for _ in 0..(20.0 / crate::config::DT) as usize {
@@ -6459,7 +6659,7 @@ mod tests {
         sys.stockpile.insert(Commodity::Electronics, 100.0);
         sys.stockpile.insert(Commodity::Fuel, 100.0);
         sys.set_tier(crate::build::StructureKind::MachineWorks, 1);
-        sys.assignments.insert(crate::build::StructureKind::MachineWorks, crate::production::Assignment { workers: 1, suspended: None });
+        sys.assignments.insert(crate::build::StructureKind::MachineWorks, crate::production::Assignment::crew(1));
         sys.food_state = crate::colony::FoodState::Critical; // starving in
         let sid = sys.id;
 
@@ -6497,7 +6697,7 @@ mod tests {
                 let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
                 sys.population = 8.0; // covers the extra crew without diluting
                 if staff {
-                    sys.assignments.insert(crate::build::StructureKind::Shipyard, crate::production::Assignment { workers: 1, suspended: None });
+                    sys.assignments.insert(crate::build::StructureKind::Shipyard, crate::production::Assignment::crew(1));
                 }
             }
             seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]);
@@ -6514,6 +6714,242 @@ mod tests {
         // Same enqueue tick in both worlds, so the difference is pure boost.
         let expect = CONVOY_RECIPE.build_ticks - (CONVOY_RECIPE.build_ticks as f64 / (1.0 + crate::production::SHIPYARD_BOOST)).round() as u64;
         assert_eq!(plain - boosted, expect, "ticks / (1 + BOOST·staffing), locked at enqueue");
+    }
+
+    // --- §economy Part 4: specialists ------------------------------------------
+
+    /// The SKILL factor: an AFFINE specialist multiplies its line ×1.75 fully
+    /// staffed; an OFF-AFFINITY specialist still works as generic crew (never a
+    /// penalty, no bonus). Measured on a tier-1 mine, everything else pinned.
+    #[test]
+    fn specialist_skill_multiplies_affine_lines_only() {
+        let ore_gain = |kind: Option<crate::specialist::SpecialistKind>| {
+            let mut w = test_world();
+            let id = PlayerId(60);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            sys.owner = Some(id);
+            sys.claimed_at = Some(0.0);
+            sys.deposits = vec![crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 1.0, reserves: None, accessibility: 0.5 }];
+            sys.population = 8.0;
+            sys.stockpile.insert(Commodity::Provisions, 100.0);
+            sys.set_tier(crate::build::StructureKind::MiningComplex, 1);
+            let mut asg = crate::production::Assignment::crew(0); // NO generic workers
+            if let Some(k) = kind {
+                sys.specialists.insert(k, 1);
+                asg.specialists.insert(k, 1);
+            } else {
+                asg.workers = 1;
+            }
+            sys.assignments.insert(crate::build::StructureKind::MiningComplex, asg);
+            let sid = sys.id;
+            w.step(&[]);
+            system_stock(&w, sid, Commodity::MetallicOre)
+        };
+        let plain = ore_gain(None);
+        let geologist = ore_gain(Some(crate::specialist::SpecialistKind::Geologist));
+        let xeno = ore_gain(Some(crate::specialist::SpecialistKind::Xenobiologist));
+        assert!((geologist - plain * crate::production::SPECIALIST_SKILL_MULT).abs() < 1e-9,
+            "an affine specialist alone runs the line ×1.75 (plain {plain}, geologist {geologist})");
+        assert!((xeno - plain).abs() < 1e-9,
+            "an off-affinity specialist works as a generic crew — never a penalty (got {xeno})");
+    }
+
+    /// A posted specialist who ISN'T resident (transferred away) degrades the
+    /// line non-destructively: the posting survives, the bonus just lapses
+    /// until someone is home again.
+    #[test]
+    fn missing_residents_degrade_the_bonus_without_state_loss() {
+        let mut w = test_world();
+        let id = PlayerId(61);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.deposits = vec![crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 1.0, reserves: None, accessibility: 0.5 }];
+        sys.population = 8.0;
+        sys.stockpile.insert(Commodity::Provisions, 100.0);
+        sys.set_tier(crate::build::StructureKind::MiningComplex, 1);
+        let mut asg = crate::production::Assignment::crew(1);
+        asg.specialists.insert(crate::specialist::SpecialistKind::Geologist, 1); // posted but NOT resident
+        sys.assignments.insert(crate::build::StructureKind::MiningComplex, asg);
+        let sid = sys.id;
+        w.step(&[]);
+        let gain = system_stock(&w, sid, Commodity::MetallicOre);
+        assert!((gain - 1.0 * crate::config::DT).abs() < 1e-9, "no resident = no bonus, plain rate (got {gain})");
+        let s = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert_eq!(s.assignments[&crate::build::StructureKind::MiningComplex].specialists[&crate::specialist::SpecialistKind::Geologist], 1,
+            "the POSTING survives — a returning specialist re-validates for free");
+    }
+
+    /// HIRE: credits debited, a personnel convoy departs the HUB with the
+    /// contractor aboard (no cargo), and on arrival the resident pool grows.
+    #[test]
+    fn hired_specialist_ships_from_the_hub_and_joins_the_pool() {
+        let mut w = test_world();
+        w.enclaves.clear(); // no ambient piracy on the delivery run
+        let id = PlayerId(62);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let credits0 = w.players[&id].credits;
+        let ev = w.step(&[Command::HireSpecialist { player_id: id, specialist: crate::specialist::SpecialistKind::NavalArchitect, dest_system: home }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::SpecialistHired { owner, kind: crate::specialist::SpecialistKind::NavalArchitect, .. } if owner == id)));
+        assert!((w.players[&id].credits - (credits0 - crate::specialist::SPECIALIST_HIRE_COST)).abs() < 1e-9, "price-certain debit");
+        let convoy = w.fleets.values().find(|f| f.owner == id && !f.passengers.is_empty()).expect("a personnel convoy exists");
+        assert!(convoy.pos.distance(w.hub) < 100.0, "it departs from the HUB (one tick of travel allowed)");
+        assert!(convoy.cargo.is_none(), "people, not goods");
+
+        let mut delivered = false;
+        for _ in 0..(600 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::SpecialistsDelivered { owner, system, .. } if owner == id && system == home) {
+                    delivered = true;
+                }
+            }
+            if delivered { break; }
+        }
+        assert!(delivered, "the contractor lands");
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.specialists.get(&crate::specialist::SpecialistKind::NavalArchitect), Some(&1), "resident pool grew");
+    }
+
+    /// TRAIN: needs an Academy; the course debits the recipe, rides the build
+    /// queue, and graduates into the resident pool.
+    #[test]
+    fn academy_trains_into_the_resident_pool() {
+        let mut w = test_world();
+        let id = PlayerId(63);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Electronics, 20.0)]); // provisions seed already aboard
+
+        // No Academy → soft reject (no job, no debit).
+        w.step(&[Command::TrainSpecialist { player_id: id, system_id: home, specialist: crate::specialist::SpecialistKind::Geologist }]);
+        assert!(w.build_queue.is_empty(), "no Academy, no course");
+
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::Academy, 1);
+        w.step(&[Command::TrainSpecialist { player_id: id, system_id: home, specialist: crate::specialist::SpecialistKind::Geologist }]);
+        assert_eq!(w.build_queue.len(), 1, "the course is a build-queue job");
+        let mut trained = false;
+        for _ in 0..(crate::specialist::ACADEMY_TRAIN_TICKS + 5) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::SpecialistTrained { owner, system, kind: crate::specialist::SpecialistKind::Geologist } if owner == id && system == home) {
+                    trained = true;
+                }
+            }
+        }
+        assert!(trained, "graduation announced");
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.specialists.get(&crate::specialist::SpecialistKind::Geologist), Some(&1));
+    }
+
+    /// TRANSFER + the REDIRECT rule: people never land on hostile ground and
+    /// are never deleted — a destination lost mid-flight turns the convoy home.
+    #[test]
+    fn transfer_redirects_home_when_the_destination_is_lost() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (id, rival) = (PlayerId(64), PlayerId(65));
+        w.step(&[
+            Command::AddPlayer { id, name: "Acme".into() },
+            Command::AddPlayer { id: rival, name: "Rival".into() },
+        ]);
+        let home = w.players[&id].home_system.unwrap();
+        // A second owned system, close by, as the destination.
+        let dest = {
+            let hp = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+            let sys = w
+                .systems
+                .iter_mut()
+                .filter(|s| s.is_unclaimed())
+                .min_by(|a, b| a.pos.distance(hp).total_cmp(&b.pos.distance(hp)).then(a.id.cmp(&b.id)))
+                .unwrap();
+            sys.owner = Some(id);
+            sys.claimed_at = Some(0.0);
+            sys.id
+        };
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().specialists.insert(crate::specialist::SpecialistKind::IndustrialEngineer, 2);
+        w.step(&[Command::TransferSpecialists { player_id: id, from: home, to: dest, manifest: [(crate::specialist::SpecialistKind::IndustrialEngineer, 2)].into_iter().collect() }]);
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert!(sys.specialists.is_empty(), "the pool is debited at loading — the people are aboard");
+        assert!(w.fleets.values().any(|f| f.owner == id && f.passengers.values().sum::<u32>() == 2), "a personnel convoy flies");
+
+        // The destination FLIPS mid-flight → the convoy must turn for home.
+        w.systems.iter_mut().find(|s| s.id == dest).unwrap().owner = Some(rival);
+        let mut landed_home = false;
+        for _ in 0..(600 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::SpecialistsDelivered { owner, system, .. } if owner == id && system == home) {
+                    landed_home = true;
+                }
+            }
+            if landed_home { break; }
+        }
+        assert!(landed_home, "nobody lands on hostile ground; nobody is deleted — they come home");
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.specialists.get(&crate::specialist::SpecialistKind::IndustrialEngineer), Some(&2));
+        let rival_sys = w.systems.iter().find(|s| s.id == dest).unwrap();
+        assert!(rival_sys.specialists.is_empty(), "the captor got nobody");
+    }
+
+    /// LOSS + CONQUEST: a fleet destroyed with specialists aboard loses them
+    /// (one event, light-delayed news); a CAPTURED system's residents stay.
+    #[test]
+    fn passengers_die_with_the_ship_and_residents_survive_capture() {
+        // Aboard a destroyed fleet → SpecialistsLost.
+        let mut w = test_world();
+        let (def, atk) = (PlayerId(66), PlayerId(67));
+        w.step(&[
+            Command::AddPlayer { id: def, name: "D".into() },
+            Command::AddPlayer { id: atk, name: "A".into() },
+        ]);
+        let cc = w.players[&def].home;
+        let cid = w.alloc_entity_id();
+        let mut convoy = Fleet::single(cid, def, ShipKind::Convoy, cc + Vec2::new(3000.0, 0.0), FleetOrder::Idle, None);
+        convoy.passengers.insert(crate::specialist::SpecialistKind::Geologist, 2);
+        w.fleets.insert(cid, convoy);
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(3040.0, 0.0);
+        }
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: cid }]);
+        let mut lost = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::SpecialistsLost { owner, ref manifest, .. } = e.payload {
+                    assert_eq!(owner, def);
+                    assert_eq!(manifest.get(&crate::specialist::SpecialistKind::Geologist), Some(&2));
+                    lost = true;
+                }
+            }
+            if lost || !w.fleets.contains_key(&cid) {
+                break;
+            }
+        }
+        // The convoy may survive some raid outcomes (steal); only a DESTROYED
+        // convoy must have announced the loss.
+        if !w.fleets.contains_key(&cid) {
+            assert!(lost, "a destroyed fleet announces its lost specialists");
+        }
+
+        // Residents survive capture: exercise capture_system directly.
+        let sid = w.systems.iter().find(|s| s.is_unclaimed()).unwrap().id;
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+            sys.owner = Some(def);
+            sys.claimed_at = Some(0.0);
+            sys.specialists.insert(crate::specialist::SpecialistKind::NavalArchitect, 3);
+        }
+        let colony = w.alloc_entity_id();
+        let pos = w.systems.iter().find(|s| s.id == sid).unwrap().pos;
+        w.fleets.insert(colony, Fleet::single(colony, atk, ShipKind::Colony, pos, FleetOrder::Idle, None));
+        let mut ev = Vec::new();
+        w.capture_system(sid, def, atk, colony, pos, &mut ev);
+        let sys = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert_eq!(sys.owner, Some(atk));
+        assert_eq!(sys.specialists.get(&crate::specialist::SpecialistKind::NavalArchitect), Some(&3),
+            "conquest KEEPS the resident specialists — people outlast the flag");
     }
 
     // --- §buildings step 3b: Fuel Refinery ------------------------------------
@@ -6533,7 +6969,7 @@ mod tests {
             // (the home's seeded 60 Provisions cover these few ticks; more
             // would overflow the 500-unit cap on top of the 300-Fuel seed)
             sys.set_tier(crate::build::StructureKind::FuelRefinery, 2);
-            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 2, suspended: None });
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment::crew(2));
         }
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
 
@@ -6565,7 +7001,7 @@ mod tests {
             // (the home's seeded 60 Provisions cover these few ticks; more
             // would overflow the 500-unit cap on top of the 300-Fuel seed)
             sys.set_tier(crate::build::StructureKind::FuelRefinery, 3);
-            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 3, suspended: None });
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment::crew(3));
         }
 
         // Dry: fuel unchanged, ONE latched suspension notice (no per-tick spam).
@@ -6611,7 +7047,7 @@ mod tests {
             let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             sys.population = 8.0;
             sys.set_tier(crate::build::StructureKind::FuelRefinery, 1);
-            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 1, suspended: None });
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment::crew(1));
         }
         // Fill exactly to the cap, with volatiles included in the fill.
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
@@ -6644,7 +7080,7 @@ mod tests {
             // (the home's seeded 60 Provisions cover these few ticks; more
             // would overflow the 500-unit cap on top of the 300-Fuel seed)
             sys.set_tier(crate::build::StructureKind::FuelRefinery, 2);
-            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 2, suspended: None });
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment::crew(2));
         }
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
         // Refine for a while → a real fuel reserve appears from Volatiles.
@@ -11551,7 +11987,7 @@ mod tests {
         let sys = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
         sys.set_tier(kind, tier);
         if tier > 0 {
-            sys.assignments.insert(kind, crate::production::Assignment { workers: tier, suspended: None });
+            sys.assignments.insert(kind, crate::production::Assignment::crew(tier));
         } else {
             sys.assignments.remove(&kind);
         }

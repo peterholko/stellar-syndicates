@@ -205,6 +205,43 @@ pub enum Command {
         system_id: EntityId,
         structure: crate::build::StructureKind,
         workers: u32,
+        /// §economy Part 4: SPECIALISTS posted to the line, from the system's
+        /// resident pool (clamped so totals across lines fit the pool).
+        /// `default` empty keeps pre-specialist clients/commands parsing.
+        #[serde(default)]
+        specialists: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
+    },
+
+    /// §economy Part 4: sign a Sol SPECIALIST CONTRACT — `SPECIALIST_HIRE_COST`
+    /// credits debited instantly (price-certain), then a personnel convoy
+    /// spawns at the hub carrying the specialist to `dest_system`
+    /// (delivery-risky: sub-light, raidable, manifest sensor-gated). Soft-
+    /// reject unless the player owns `dest_system` and can pay.
+    HireSpecialist {
+        player_id: PlayerId,
+        specialist: crate::specialist::SpecialistKind,
+        dest_system: EntityId,
+    },
+
+    /// §economy Part 4: enqueue an Academy TRAINING COURSE at one of the
+    /// player's owned systems (needs Academy tier ≥ 1; costs
+    /// `ACADEMY_TRAIN_RECIPE` from the local stockpile; completes into the
+    /// resident pool). Instant local administration, like any build.
+    TrainSpecialist {
+        player_id: PlayerId,
+        system_id: EntityId,
+        specialist: crate::specialist::SpecialistKind,
+    },
+
+    /// §economy Part 4: load resident specialists onto a dedicated personnel
+    /// convoy from `from` to `to` (owned or allied). Manifest clamps to the
+    /// resident pool and the convoy's passenger berths. The convoy is a normal
+    /// sub-light, raidable hull — losing it loses the people aboard.
+    TransferSpecialists {
+        player_id: PlayerId,
+        from: EntityId,
+        to: EntityId,
+        manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
     },
 
     /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the

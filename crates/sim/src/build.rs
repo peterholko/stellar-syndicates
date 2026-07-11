@@ -24,6 +24,10 @@ pub enum BuildKind {
     /// aliases parse legacy slugs, so in-flight pre-economy build jobs complete
     /// as their mapped successor structure.
     Upgrade { upgrade: StructureKind },
+    /// §economy Part 4: an Academy TRAINING COURSE — completes into one
+    /// resident specialist of `kind` (if the system is still held). Rides the
+    /// same build queue; holds no slot, needs no shipyard.
+    Train { specialist: crate::specialist::SpecialistKind },
 }
 
 /// §economy: which SLOT POOL a structure consumes. Slot budgets are DERIVED,
@@ -256,6 +260,13 @@ pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOr
 pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
 pub const ACADEMY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 15.0), (Commodity::Provisions, 20.0)], build_ticks: 20 * HZ };
 
+/// §economy Part 4: one Academy training course (Provisions feed the cohort,
+/// Electronics equip the lab). Costs live in `specialist::ACADEMY_TRAIN_COSTS`.
+pub const ACADEMY_TRAIN_RECIPE: Recipe = Recipe {
+    costs: crate::specialist::ACADEMY_TRAIN_COSTS,
+    build_ticks: crate::specialist::ACADEMY_TRAIN_TICKS,
+};
+
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
         BuildKind::Ship { ship: ShipKind::Convoy } => &CONVOY_RECIPE,
@@ -263,6 +274,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Scout } => &SCOUT_RECIPE,
         BuildKind::Ship { ship: ShipKind::Corvette } => &CORVETTE_RECIPE,
         BuildKind::Ship { ship: ShipKind::Colony } => &COLONY_RECIPE,
+        BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
         BuildKind::Upgrade { upgrade } => match upgrade {
             StructureKind::MiningComplex => &MINING_COMPLEX_RECIPE,
             StructureKind::VolatileHarvester => &VOLATILE_HARVESTER_RECIPE,

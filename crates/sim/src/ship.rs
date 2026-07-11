@@ -451,6 +451,15 @@ pub struct Fleet {
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
+    /// §economy Part 4: SPECIALIST PASSENGERS aboard (kind → headcount) —
+    /// people, not cargo, but they ride the SAME two-tier fog rule: the
+    /// broadcast never includes them, a sensor-revealed manifest does. Berths
+    /// come from the logistics hulls (`specialist::passenger_capacity`). Lost
+    /// with the fleet (the one specialist loss rule); a merging fleet folds
+    /// them in; a consumed colony ship DISEMBARKS them into the new colony.
+    /// serde default keeps every old snapshot loading (nobody aboard).
+    #[serde(default)]
+    pub passengers: BTreeMap<crate::specialist::SpecialistKind, u32>,
     /// ENGAGEMENT POSTURE (§offensive-orders Part 2): standing per-fleet aggression
     /// — Passive (default), Defensive, or WeaponsFree. serde default = Passive so
     /// every old snapshot loads with today's behaviour (byte-preserving).
@@ -503,6 +512,7 @@ impl Fleet {
             notified_held: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
+            passengers: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
             garrison_fed: true,
             fought: false,

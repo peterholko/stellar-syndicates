@@ -90,10 +90,27 @@ pub enum ClientMsg {
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem { system_id: EntityId, upgrade: StructureKind },
 
-    /// §economy Part 3: post workforce crews to a structure at one of the
-    /// player's owned systems (0 clears the line). Instant local administration;
-    /// `workers` clamps to the structure's tier server-side.
-    SetAssignment { system_id: EntityId, structure: StructureKind, workers: u32 },
+    /// §economy Part 3: post workforce crews (and §Part 4: specialists from the
+    /// resident pool) to a structure at one of the player's owned systems (all
+    /// zero clears the line). Instant local administration; clamps server-side.
+    SetAssignment {
+        system_id: EntityId,
+        structure: StructureKind,
+        workers: u32,
+        #[serde(default)]
+        specialists: BTreeMap<sim::SpecialistKind, u32>,
+    },
+
+    /// §economy Part 4: sign a Sol specialist contract — credits now, a
+    /// personnel convoy hub → dest (sub-light, raidable, manifest fogged).
+    HireSpecialist { specialist: sim::SpecialistKind, dest_system: EntityId },
+
+    /// §economy Part 4: enqueue an Academy training course (needs Academy ≥ 1).
+    TrainSpecialist { system_id: EntityId, specialist: sim::SpecialistKind },
+
+    /// §economy Part 4: carry resident specialists between owned/allied systems
+    /// on a dedicated personnel convoy.
+    TransferSpecialists { from: EntityId, to: EntityId, manifest: BTreeMap<sim::SpecialistKind, u32> },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
     /// light-delayed break-off order.
@@ -538,6 +555,9 @@ pub struct SystemStateView {
     /// §economy Part 2: colony POPULATION in millions — owner-only; rivals
     /// always see 0 (workforce/economy strength is private intel).
     pub population: f64,
+    /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
+    /// always see an empty map (your talent is private intel).
+    pub specialists: BTreeMap<sim::SpecialistKind, u32>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under
@@ -751,6 +771,9 @@ pub struct GhostView {
     /// The convoy's broadcast route (waypoints), light-delayed like its
     /// position. `None` for raiders (they don't broadcast).
     pub route: Option<Vec<Vec2>>,
+    /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
+    /// included under exactly the cargo rule below (empty = none visible).
+    pub passengers: BTreeMap<sim::SpecialistKind, u32>,
     /// The convoy's cargo — present ONLY when this convoy is within the viewing
     /// player's sensor coverage (Tier 2). `None` out of range, or for raiders.
     pub cargo: Option<CargoView>,

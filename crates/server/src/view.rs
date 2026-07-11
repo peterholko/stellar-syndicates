@@ -77,6 +77,9 @@ struct Track {
     /// dynamic cargo (§9), cargo would move into the per-sample history so it is
     /// delayed exactly like position.
     cargo: Option<Cargo>,
+    /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
+    /// fogged exactly like cargo (same caveat about per-sample delay).
+    passengers: std::collections::BTreeMap<sim::SpecialistKind, u32>,
     /// Current broadcast route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
@@ -144,6 +147,7 @@ impl PositionHistory {
                 samples: VecDeque::new(),
                 last_seen: now,
                 cargo: None,
+                passengers: Default::default(),
                 route: None,
                 destroyed: None,
             });
@@ -156,6 +160,7 @@ impl PositionHistory {
             track.count_class = ship.count_class();
             track.last_seen = now;
             track.cargo = ship.cargo;
+            track.passengers = ship.passengers.clone();
             track.route = route_of(&ship.order);
             track.samples.push_back(Sample {
                 time: now,
@@ -255,6 +260,7 @@ impl PositionHistory {
             composition: &'a BTreeMap<ShipKind, u32>,
             sample: Sample,
             cargo: Option<Cargo>,
+            passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             route: &'a Option<Vec<Vec2>>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
@@ -304,6 +310,7 @@ impl PositionHistory {
                 composition: &track.composition,
                 sample,
                 cargo: track.cargo,
+                passengers: &track.passengers,
                 route: &track.route,
                 destroyed_detected,
             });
@@ -376,6 +383,9 @@ impl PositionHistory {
             // Convoy fleets broadcast their route; cargo only within sensor
             // coverage (Tier 2), exactly as before.
             let route = if is_convoy { p.route.clone() } else { None };
+            // §economy Part 4: PASSENGERS obey the same tier-2 rule as cargo —
+            // part of the manifest, shown exactly when the manifest is.
+            let passengers = if detected { p.passengers.clone() } else { Default::default() };
             let cargo = if detected {
                 p.cargo.map(|cg| CargoView {
                     commodity: cg.commodity,
@@ -417,6 +427,7 @@ impl PositionHistory {
                 own,
                 route,
                 cargo,
+                passengers,
                 count_class: p.count_class,
                 composition,
                 signature: if p.broadcasts { None } else { Some(signature) },
@@ -663,6 +674,8 @@ pub fn filter_systems(
                 habitat_fed: own && sys.food_state == sim::FoodState::WellSupplied,
                 food_state: if own { sys.food_state } else { sim::FoodState::WellSupplied }.slug().to_string(),
                 population: if own { sys.population } else { 0.0 },
+                // §economy Part 4: your talent is private intel.
+                specialists: if own { sys.specialists.clone() } else { Default::default() },
                 refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
@@ -763,6 +776,8 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
         sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
+        // §economy Part 4: Academy courses key by profession slug.
+        sim::BuildKind::Train { specialist } => specialist.slug(),
     }
 }
 
@@ -880,6 +895,7 @@ mod tests {
             samples: samples.into(),
             last_seen: last,
             cargo,
+            passengers: Default::default(),
             route: None,
             destroyed: None,
         }
@@ -1062,7 +1078,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1187,7 +1203,7 @@ mod tests {
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
             trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
-            structures: Default::default(), population: 0.0, assignments: Default::default(),
+            structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
@@ -1242,7 +1258,7 @@ mod tests {
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1298,7 +1314,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1347,7 +1363,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         }]
     }
 
@@ -1486,6 +1502,28 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
         assert_eq!(view.len(), 1);
         assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
+    }
+
+    /// §economy Part 4 FOG: passengers are MANIFEST data — a broadcasting
+    /// personnel convoy outside sensor coverage shows NO passengers (identity/
+    /// route only); inside coverage the same convoy shows them, exactly like
+    /// cargo. A convoy full of Naval Architects looks like any convoy until
+    /// someone's sensors touch it.
+    #[test]
+    fn passengers_ride_the_two_tier_manifest_rule() {
+        let mk = |x: f64| {
+            let (id, mut track) = at(1, x, 0.0, RIVAL, ShipKind::Convoy);
+            track.passengers.insert(sim::SpecialistKind::NavalArchitect, 3);
+            history_of(vec![(id, track)], 1000.0)
+        };
+        // 5000 su out, viewer at 300 su sensor range → OUT of coverage.
+        let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert_eq!(far.len(), 1, "the convoy itself broadcasts — identity is public");
+        assert!(far[0].passengers.is_empty(), "…but the PEOPLE aboard must never leak outside coverage");
+        assert!(far[0].cargo.is_none(), "(same rule as cargo)");
+        // 200 su away → inside coverage: the manifest opens.
+        let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(near[0].passengers.get(&sim::SpecialistKind::NavalArchitect), Some(&3), "sensors read the manifest — people included");
     }
 
     // ---- §Part 4: speed-signature detection ----
@@ -1695,6 +1733,7 @@ mod tests {
             samples: samples.into(),
             last_seen: 100.0,
             cargo: None,
+            passengers: Default::default(),
             route: None,
             destroyed: None,
         }

@@ -96,6 +96,8 @@ export interface SystemStateView {
   food_state: string;
   /// §economy Part 2: colony population in MILLIONS — owner-only; rivals see 0.
   population: number;
+  /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
+  specialists: Record<string, number>;
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -385,6 +387,9 @@ export interface GhostView {
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   // Cargo present only when this convoy is within your sensor coverage.
+  /// Specialist passengers aboard — manifest data, included under exactly the
+  /// cargo rule (empty object = none visible / none aboard).
+  passengers: Record<string, number>;
   cargo: CargoView | null;
   // Estimated-size bucket — always present on a visible fleet.
   count_class: CountClass;
@@ -451,7 +456,10 @@ export type ClientMsg =
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string }
-  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number }
+  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number> }
+  | { type: "HireSpecialist"; specialist: string; dest_system: EntityId }
+  | { type: "TrainSpecialist"; system_id: EntityId; specialist: string }
+  | { type: "TransferSpecialists"; from: EntityId; to: EntityId; manifest: Record<string, number> }
   // §battles-take-time — withdraw an engaged fleet (light-delayed).
   | { type: "Withdraw"; fleet_id: EntityId }
   // §Part 4 — set a fleet's transit throttle (Full/Stealth).

@@ -151,6 +151,12 @@ pub struct StarSystem {
     /// right for old snapshots (Part 7's migration seeds sensible defaults).
     #[serde(default)]
     pub assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment>,
+    /// §economy Part 4: the RESIDENT SPECIALIST POOL (kind → headcount) —
+    /// hired from Sol, trained at an Academy, delivered by convoy. Posted to
+    /// lines via assignments; conquest KEEPS them with the system (people
+    /// outlast the flag). Owner-only in the View.
+    #[serde(default)]
+    pub specialists: BTreeMap<crate::specialist::SpecialistKind, u32>,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -272,17 +278,54 @@ impl StarSystem {
         (crate::colony::workforce_units(self.population) as f64 / posted as f64).min(1.0)
     }
 
+    /// §economy Part 4: the EFFECTIVE specialists on every line this tick —
+    /// per structure `(crew, matched)`: how many posted specialists actually
+    /// work it (clamped by the resident pool, walked in deterministic BTreeMap
+    /// order so a shrunken pool degrades the same way everywhere) and how many
+    /// of those are AFFINE (drive the skill factor). Non-destructive: stored
+    /// postings are untouched, so a returning specialist re-validates free.
+    pub fn effective_specialists(
+        &self,
+    ) -> BTreeMap<crate::build::StructureKind, (u32, u32)> {
+        let mut pool_left = self.specialists.clone();
+        let mut out = BTreeMap::new();
+        for (kind, asg) in &self.assignments {
+            let (mut crew, mut matched) = (0u32, 0u32);
+            for (&sk, &n) in &asg.specialists {
+                let left = pool_left.entry(sk).or_insert(0);
+                let take = n.min(*left);
+                *left -= take;
+                crew += take;
+                if sk.affine(*kind) {
+                    matched += take;
+                }
+            }
+            out.insert(*kind, (crew, matched));
+        }
+        out
+    }
+
     /// §economy Part 3: the STAFFING factor of one structure's line —
-    /// `(workers/tier) · share`: a tier-N plant wants N crews for full
-    /// throughput; posting fewer under-crews it, over-posting the colony
-    /// dilutes everyone. 0.0 when nothing is posted (unstaffed = idle).
+    /// `(crew/tier) · share` where crew = generic workers + posted specialists
+    /// (a specialist always works, affinity or not — never a penalty): a
+    /// tier-N plant wants N crews for full throughput; posting fewer
+    /// under-crews it, over-posting the colony dilutes everyone. 0.0 when
+    /// nothing is posted (unstaffed = idle).
     pub fn staffing_factor(&self, kind: crate::build::StructureKind) -> f64 {
         let tier = self.tier(kind);
         if tier == 0 {
             return 0.0;
         }
         let workers = self.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
-        (workers.min(tier) as f64 / tier as f64) * self.staffing_share()
+        let spec_crew = self.effective_specialists().get(&kind).map(|(c, _)| *c).unwrap_or(0);
+        ((workers + spec_crew).min(tier) as f64 / tier as f64) * self.staffing_share()
+    }
+
+    /// §economy Part 4: the SKILL factor of one structure's line (1.0 bare,
+    /// up to `SPECIALIST_SKILL_MULT` fully affine-staffed).
+    pub fn skill_factor(&self, kind: crate::build::StructureKind) -> f64 {
+        let (_, matched) = self.effective_specialists().get(&kind).copied().unwrap_or((0, 0));
+        crate::production::skill_factor(matched, self.tier(kind))
     }
 
     /// LEGACY single-budget readouts, now sums over the three pools — keeps the
@@ -408,6 +451,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             structures: BTreeMap::new(),
             population: 0.0,
             assignments: BTreeMap::new(),
+            specialists: BTreeMap::new(),
         });
     }
     systems
@@ -550,12 +594,13 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         // Pre-staffed: the food chain + the mine (the Shipyard boost crew is
         // the player's first staffing decision once population grows).
         assignments: [
-            (crate::build::StructureKind::Bioharvester, crate::production::Assignment { workers: 1, suspended: None }),
-            (crate::build::StructureKind::MiningComplex, crate::production::Assignment { workers: 1, suspended: None }),
-            (crate::build::StructureKind::Agroplex, crate::production::Assignment { workers: 1, suspended: None }),
+            (crate::build::StructureKind::Bioharvester, crate::production::Assignment::crew(1)),
+            (crate::build::StructureKind::MiningComplex, crate::production::Assignment::crew(1)),
+            (crate::build::StructureKind::Agroplex, crate::production::Assignment::crew(1)),
         ]
         .into_iter()
         .collect(),
+        specialists: BTreeMap::new(),
     }
 }
 

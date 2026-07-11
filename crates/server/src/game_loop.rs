@@ -424,9 +424,24 @@ impl GameLoop {
                         self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
                     }
                 }
-                ClientMsg::SetAssignment { system_id, structure, workers } => {
+                ClientMsg::SetAssignment { system_id, structure, workers, specialists } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers });
+                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers, specialists });
+                    }
+                }
+                ClientMsg::HireSpecialist { specialist, dest_system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HireSpecialist { player_id, specialist, dest_system });
+                    }
+                }
+                ClientMsg::TrainSpecialist { system_id, specialist } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::TrainSpecialist { player_id, system_id, specialist });
+                    }
+                }
+                ClientMsg::TransferSpecialists { from, to, manifest } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::TransferSpecialists { player_id, from, to, manifest });
                     }
                 }
                 ClientMsg::Withdraw { fleet_id } => {

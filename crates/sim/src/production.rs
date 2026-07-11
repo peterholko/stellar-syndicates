@@ -95,14 +95,28 @@ pub fn converter_for(kind: StructureKind) -> Option<&'static Converter> {
 /// throughput (big plants need big shifts); under-crewing runs it at
 /// `workers/tier`. If the colony's total posting exceeds its workforce, every
 /// assignment dilutes by the same share (fair, legible, deadlock-free).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Assignment {
     pub workers: u32,
+    /// §economy Part 4: SPECIALISTS posted to this line, drawn from the
+    /// system's resident pool. Every posted specialist works as crew; the
+    /// AFFINE ones additionally drive the `skill` factor. Validated against
+    /// the pool at command time AND re-checked (non-destructively) each tick,
+    /// so a shrunken pool degrades the bonus instead of panicking.
+    #[serde(default)]
+    pub specialists: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
     /// LATCHED suspension state — why this line produced nothing last tick
     /// (`None` = running). Transitions emit owner-only notices; the latch is
     /// persisted so a snapshot doesn't re-announce old trouble.
     #[serde(default)]
     pub suspended: Option<SuspendReason>,
+}
+
+impl Assignment {
+    /// A plain posting of `workers` generic crews (the common test/bootstrap case).
+    pub fn crew(workers: u32) -> Assignment {
+        Assignment { workers, ..Default::default() }
+    }
 }
 
 /// Why a production line is suspended. Priority when several bind at once:
@@ -130,10 +144,19 @@ impl SuspendReason {
 
 // --- THE FACTOR CHAIN ---------------------------------------------------------------
 
-/// The SKILL factor a matching specialist contributes (§economy Part 4 wires
-/// specialists in; until then every line runs at 1.0). Declared here so the
-/// factor chain's shape is fixed from day one. Tunable.
+/// The SKILL ceiling a fully specialist-staffed line reaches. Tunable.
 pub const SPECIALIST_SKILL_MULT: f64 = 1.75;
+
+/// The SKILL factor of a line: `1 + (MULT−1) · matched/tier`, with `matched`
+/// (the AFFINE specialists posted) capped at the tier — 1.75× when every crew
+/// berth of the plant is an affine specialist, pro-rata below, never < 1.0
+/// (off-affinity specialists count as crew, not as a penalty).
+pub fn skill_factor(matched: u32, tier: u32) -> f64 {
+    if tier == 0 {
+        return 1.0;
+    }
+    1.0 + (SPECIALIST_SKILL_MULT - 1.0) * (matched.min(tier) as f64 / tier as f64)
+}
 
 /// The FOOD factor of a structure's output — `FoodState::efficiency()` shaped
 /// by sector: the primary sector (extraction + Agroplex) never drops below

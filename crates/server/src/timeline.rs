@@ -192,6 +192,41 @@ impl Timeline {
                         ));
                     }
                 }
+                // §economy Part 4: specialist news — hire/training/delivery on
+                // the owner's own clock; a LOSS light-delayed from the wreck
+                // (battle-news precedent). All owner-only.
+                EventPayload::SpecialistHired { owner, kind, dest } => {
+                    let name = system_name(world, *dest);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "Contract signed: a {} ships out from Sol for {name} (sub-light — protect the run).",
+                        kind.title()
+                    ));
+                }
+                EventPayload::SpecialistTrained { owner, system, kind } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "The Academy at {name} graduated a {}.",
+                        kind.title()
+                    ));
+                }
+                EventPayload::SpecialistsDelivered { owner, system, manifest } => {
+                    let name = system_name(world, *system);
+                    let who: Vec<String> = manifest.iter().map(|(k, n)| format!("{}× {}", n, k.title())).collect();
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "Personnel landed at {name}: {}.",
+                        who.join(", ")
+                    ));
+                }
+                EventPayload::SpecialistsLost { owner, manifest, pos } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        let who: Vec<String> = manifest.iter().map(|(k, n)| format!("{}× {}", n, k.title())).collect();
+                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                            "Lost with the ship: {}.",
+                            who.join(", ")
+                        ));
+                    }
+                }
                 // §economy Part 3: a production line STOPPED or RECOVERED —
                 // OWNER-ONLY, own clock, transitions only (latched in the sim, so
                 // it can never spam). The named cause is the fix-first pointer.
@@ -497,6 +532,14 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
         sim::BuildKind::Upgrade { upgrade } => upgrade.title(),
+        // §economy Part 4: an Academy course — label by profession.
+        sim::BuildKind::Train { specialist } => match specialist {
+            sim::SpecialistKind::Geologist => "a Geologist (training)",
+            sim::SpecialistKind::PetrochemicalEngineer => "a Petrochemical Engineer (training)",
+            sim::SpecialistKind::Xenobiologist => "a Xenobiologist (training)",
+            sim::SpecialistKind::IndustrialEngineer => "an Industrial Engineer (training)",
+            sim::SpecialistKind::NavalArchitect => "a Naval Architect (training)",
+        },
     }
 }
 

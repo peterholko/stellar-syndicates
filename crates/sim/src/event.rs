@@ -184,6 +184,21 @@ pub enum EventPayload {
         /// The scout's position at capture — the report's light source.
         pos: crate::math::Vec2,
     },
+    /// §economy Part 4: a Sol specialist CONTRACT was signed — credits debited,
+    /// a personnel convoy dispatched hub → `dest`. OWNER-ONLY, own clock
+    /// (price-certain; the delivery is the risky part).
+    SpecialistHired { owner: PlayerId, kind: crate::specialist::SpecialistKind, dest: EntityId },
+    /// §economy Part 4: an Academy finished a training course — one specialist
+    /// joined the system's resident pool. OWNER-ONLY, own clock.
+    SpecialistTrained { owner: PlayerId, system: EntityId, kind: crate::specialist::SpecialistKind },
+    /// §economy Part 4: a personnel convoy LANDED its passengers into a
+    /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
+    SpecialistsDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> },
+    /// §economy Part 4: a fleet DIED with specialists aboard — the people are
+    /// lost with the ship (the one true loss rule for specialists; residents
+    /// on the ground are never destroyed). OWNER-ONLY, light-delayed from the
+    /// wreck like any battle news.
+    SpecialistsLost { owner: PlayerId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>, pos: crate::math::Vec2 },
     /// §economy Part 3: an assignment was (re)posted — `workers` crews to
     /// `structure` at `system`. OWNER-ONLY, own clock (instant local admin,
     /// like standing orders). The UI's confirmation signal.
