@@ -112,8 +112,22 @@ export interface SystemBodyDetail {
 //   defense    → a battle-station marker in close STAR orbit (bodyId null)
 //   (interdictor: no such development exists yet — add its row when it does)
 export type DevKey = "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
-/// §economy: wire build keys → the visual anchor family (new structures reuse
-/// the nearest existing icon family until the Part-7 icon pass).
+/// §body-management: every structure anchors INDIVIDUALLY now (one marker per
+/// structure, several sharing a body is normal). Fixed order = deterministic
+/// stacking + a stable panel ordering.
+export type StructureKey =
+  | "mining_complex" | "volatile_harvester" | "bioharvester"
+  | "smelter" | "electronics_fabricator" | "chemical_works" | "fuel_refinery" | "agroplex"
+  | "machine_works" | "armaments_complex" | "shipyard"
+  | "habitat" | "depot" | "sensor_array" | "defense_platform" | "academy";
+export const STRUCTURE_KEYS: StructureKey[] = [
+  "mining_complex", "volatile_harvester", "bioharvester",
+  "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery", "agroplex",
+  "machine_works", "armaments_complex", "shipyard",
+  "habitat", "depot", "sensor_array", "defense_platform", "academy",
+];
+/// Wire build keys → the visual GLYPH family (marker art only — anchors are
+/// per-structure via `developmentAnchors`). Legacy slugs still parse.
 export function devKeyForBuildKey(key: string): DevKey | null {
   switch (key) {
     case "mining_complex": case "volatile_harvester": case "bioharvester": case "extractor": return "extractor";
@@ -130,17 +144,13 @@ export function devKeyForBuildKey(key: string): DevKey | null {
 /// The owner's built tiers, passed from the SAME owner-only view fields the rail
 /// used (state.systems) — rivals' views carry 0s, so markers can never leak.
 export interface DevTiers {
-  extractor: number;
-  depot: number;
-  shipyard: number;
-  sensor_array: number;
-  defense_platform: number;
-  habitat: number;
-  refinery: number;
+  /// §body-management: built tier per STRUCTURE slug — straight off the
+  /// owner-only `structures` view map (rivals get null upstream, fog holds).
+  structures: Record<string, number>;
   habitat_fed: boolean;
   /// §build-progress: build keys currently UNDER CONSTRUCTION here (owner-only,
-  /// straight from the view's queue). A development key hangs a construction
-  /// glyph at that development's anchor body; any SHIP key hangs it at the
+  /// straight from the view's queue). A structure key hangs a construction
+  /// glyph at that structure's OWN anchor; any SHIP key hangs it at the
   /// shipyard anchor (Travian's hammer-on-the-plot). Decoration only.
   inProgress: string[];
 }
@@ -148,42 +158,78 @@ export interface DevTiers {
 /// bodyId per development (null = anchors at the star). Walk order is the
 /// sorted (inner→outer) planet list, moons after their planet — fixed, so the
 /// choice is stable across visits.
-export function developmentAnchors(vis: VisualSystem): Record<DevKey, string | null> {
+export function developmentAnchors(vis: VisualSystem): Record<StructureKey, string | null> {
   interface Walk { id: string; kind: PlanetKind; habitable: boolean; deposits: Deposit[]; isMoon: boolean }
   const walk: Walk[] = [];
   for (const p of vis.planets) {
     walk.push({ id: p.id, kind: p.kind, habitable: p.habitable, deposits: p.deposits, isMoon: false });
     for (const mn of p.moons) walk.push({ id: mn.id, kind: "ice", habitable: false, deposits: mn.deposits, isMoon: true });
   }
-  let richest: Walk | null = null;
-  let richestVal = -1;
-  for (const b of walk) {
-    for (const d of b.deposits) {
-      if (d.richness > richestVal) { richestVal = d.richness; richest = b; }
-    }
-  }
   const first = (pred: (b: Walk) => boolean): string | null => walk.find(pred)?.id ?? null;
   const primary = vis.planets[0]?.id ?? null; // planets are sorted inner→outer
   const outermost = vis.planets[vis.planets.length - 1]?.id ?? null;
-  return {
-    extractor: richest?.id ?? primary,
-    refinery: first((b) => b.deposits.some((d) => d.resource === "volatiles"))
-      ?? first((b) => b.kind === "gas_giant") ?? outermost,
-    habitat: first((b) => b.habitable)
-      ?? first((b) => !b.isMoon && (b.kind === "terrestrial" || b.kind === "ocean")) ?? primary,
-    shipyard: primary,
-    depot: primary,
-    sensor_array: outermost,
+
+  // Mining: the body carrying the richest MINERAL deposit (the mine sits on
+  // the ore), tie → first in walk order.
+  const MINERALS = new Set<Commodity>(["metallic_ore", "rare_elements", "silicates"]);
+  let mineBody: string | null = null;
+  let mineVal = -1;
+  for (const b of walk) {
+    for (const d of b.deposits) {
+      if (MINERALS.has(d.resource) && d.richness > mineVal) { mineVal = d.richness; mineBody = b.id; }
+    }
+  }
+  // Volatiles family: first volatiles body (the icy-moon motif) → first gas
+  // giant → outermost.
+  const volatilesBody =
+    first((b) => b.deposits.some((d) => d.resource === "volatiles"))
+    ?? first((b) => b.kind === "gas_giant") ?? outermost;
+  // Life family: first habitable world → first terrestrial/ocean → innermost.
+  const habitableBody =
+    first((b) => b.habitable)
+    ?? first((b) => !b.isMoon && (b.kind === "terrestrial" || b.kind === "ocean")) ?? primary;
+  // Heavy industry: the INDUSTRIAL WORLD — first non-habitable rocky planet
+  // (not a moon, not a giant, not ice) → else primary.
+  const industrialBody =
+    first((b) => !b.isMoon && !b.habitable && b.kind !== "gas_giant" && b.kind !== "ice")
+    ?? primary;
+
+  const anchors: Record<StructureKey, string | null> = {
+    mining_complex: mineBody ?? primary,
+    volatile_harvester: volatilesBody,
+    bioharvester: habitableBody,
+    agroplex: habitableBody,
+    academy: habitableBody,
+    habitat: habitableBody,
+    smelter: industrialBody,
+    electronics_fabricator: industrialBody,
+    machine_works: industrialBody,
+    armaments_complex: industrialBody,
+    fuel_refinery: volatilesBody,
+    chemical_works: volatilesBody,
+    shipyard: primary, // the orbital yard over the primary planet
+    depot: primary, // the orbital warehouse, same station
+    sensor_array: outermost, // the far vantage
     defense_platform: null, // the star — guarding the system core
   };
+  // §body-management edge cover (dev builds only): the fallback chains
+  // guarantee every structure lands on SOME body whenever the system has
+  // planets at all — a null here (defense aside) would orphan its marker,
+  // chips, and build rows.
+  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV && vis.planets.length > 0) {
+    for (const k of STRUCTURE_KEYS) {
+      console.assert(k === "defense_platform" || anchors[k] !== null, `anchor fallback failed for ${k}`, vis.systemId);
+    }
+  }
+  return anchors;
 }
 
-/// Which developments ANCHOR at a given body — the caller's contextual build
-/// sugar ("this icy moon would host the Refinery"). Same system-level build
-/// either way; this only picks a friendlier entry point.
-export function anchorsAtBody(vis: VisualSystem, bodyId: string): DevKey[] {
+/// Which STRUCTURES anchor at a given body — the caller's contextual build
+/// sugar ("a Smelter would anchor here"). Same system-level build either way;
+/// this only picks a friendlier entry point. Order = STRUCTURE_KEYS (stable).
+export function anchorsAtBody(vis: VisualSystem, bodyId: string): StructureKey[] {
   const a = developmentAnchors(vis);
-  return (Object.keys(a) as DevKey[]).filter((k) => a[k] === bodyId);
+  return STRUCTURE_KEYS.filter((k) => a[k] === bodyId);
 }
 
 // ---- Per-kind presentation (color + flavor). Descriptions are flavor only. ---
@@ -449,6 +495,8 @@ export class SystemViewScene {
   /// Body screen positions keyed by visual body id — the markers' anchor lookup.
   private bodyScreen = new Map<string, { sx: number; sy: number; r: number; detail: SystemBodyDetail }>();
   private selected: { sx: number; sy: number; r: number } | null = null;
+  /// §body-management: the transient chip-click pulse (see `pulseBody`).
+  private pulse: { sx: number; sy: number; r: number; until: number } | null = null;
   private viewW = 0;
   private viewH = 0;
   private sceneScale = 1;
@@ -520,7 +568,7 @@ export class SystemViewScene {
   /// the system/owner changed) or on layout.
   setDevelopments(tiers: DevTiers | null): void {
     const sig = tiers
-      ? `${this.vis?.systemId ?? ""}|${tiers.extractor},${tiers.depot},${tiers.shipyard},${tiers.sensor_array},${tiers.defense_platform},${tiers.habitat},${tiers.refinery},${tiers.habitat_fed}|${tiers.inProgress.join(",")}`
+      ? `${this.vis?.systemId ?? ""}|${STRUCTURE_KEYS.map((k) => tiers.structures[k] ?? 0).join(",")},${tiers.habitat_fed}|${tiers.inProgress.join(",")}`
       : "";
     if (sig === this.devSig) return; // same picture — keep the cached markers
     this.devTiers = tiers;
@@ -757,12 +805,13 @@ export class SystemViewScene {
     const anchors = developmentAnchors(this.vis);
     const cx = this.viewW / 2;
     const cy = this.viewH / 2;
-    // Fixed draw order → stable stacking offsets when anchors coincide.
-    const ORDER: DevKey[] = ["extractor", "refinery", "habitat", "shipyard", "depot", "sensor_array", "defense_platform"];
+    // Fixed draw order (STRUCTURE_KEYS) → stable stacking when anchors coincide.
+    // §body-management: one marker PER STRUCTURE — several on one body stack
+    // along the same arc; the glyph art reuses the visual families.
     const perBody = new Map<string, number>(); // stack index per anchor body
     const tagStyle = () => new TextStyle({ fill: 0x9fb0c8, fontFamily: "ui-monospace, monospace", fontSize: 9 });
-    for (const key of ORDER) {
-      const tier = this.devTiers[key];
+    for (const key of STRUCTURE_KEYS) {
+      const tier = this.devTiers.structures[key] ?? 0;
       if (!tier) continue;
       const bodyId = anchors[key];
       let mx: number;
@@ -788,7 +837,7 @@ export class SystemViewScene {
         my = cy + Math.sin(ang) * rr;
       }
       const g = new Graphics();
-      this.drawDevGlyph(g, key, this.devTiers);
+      this.drawDevGlyph(g, devKeyForBuildKey(key) ?? "extractor", this.devTiers);
       g.position.set(mx, my);
       this.markers.addChild(g);
       const tag = new Text({ text: `×${tier}`, style: tagStyle() });
@@ -808,14 +857,11 @@ export class SystemViewScene {
     // cleared automatically when the job leaves the queue (tier-signature
     // change → rebuild). Decoration on the cached scene — never per frame.
     const SHIP_BUILD_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
-    const sites = new Set<DevKey>();
+    const sites = new Set<StructureKey>();
     for (const k of this.devTiers.inProgress) {
       if (SHIP_BUILD_KEYS.has(k)) sites.add("shipyard");
-      else {
-        // §economy: map the 16 structure slugs onto the visual anchor families.
-        const dk = devKeyForBuildKey(k);
-        if (dk) sites.add(dk);
-      }
+      else if ((STRUCTURE_KEYS as string[]).includes(k)) sites.add(k as StructureKey);
+      // (anything else — e.g. an Academy training course — glyphs nowhere)
     }
     for (const key of sites) {
       const bodyId = anchors[key];
@@ -912,6 +958,23 @@ export class SystemViewScene {
     return best.detail;
   }
 
+  /// §body-management: resolve a VISUAL body id to its detail (for the summary
+  /// panel's navigation chips — "open the body this structure anchors at").
+  /// Reads the laid-out screen table, so it's valid whenever the view is.
+  detailFor(bodyId: string): SystemBodyDetail | null {
+    return this.bodyScreen.get(bodyId)?.detail ?? null;
+  }
+
+  /// §body-management: pulse a body's sprite for a moment (the chip-click
+  /// affordance — "HERE is the thing you tapped"). Also selects it, so the
+  /// standard ring lingers after the pulse fades.
+  pulseBody(bodyId: string): void {
+    const bs = this.bodyScreen.get(bodyId);
+    if (!bs) return;
+    this.selected = { sx: bs.sx, sy: bs.sy, r: bs.r };
+    this.pulse = { sx: bs.sx, sy: bs.sy, r: bs.r, until: performance.now() + 1400 };
+  }
+
   /// Draw the per-frame DYNAMIC overlay: the star's ownership treatment (mine /
   /// rival / unclaimed) and the selection ring. `owner` comes from the caller's
   /// light-gated per-player view (state.systems) — identical fog to the galaxy
@@ -935,6 +998,18 @@ export class SystemViewScene {
     }
     if (this.selected) {
       g.circle(this.selected.sx, this.selected.sy, this.selected.r + 4).stroke({ width: 1.5, color: 0xffffff, alpha: 0.85 });
+    }
+    // §body-management: the chip-click pulse — an expanding, fading ring.
+    if (this.pulse) {
+      const left = this.pulse.until - nowMs;
+      if (left <= 0) {
+        this.pulse = null;
+      } else {
+        const t = 1 - left / 1400; // 0 → 1 over the pulse life
+        const wave = 0.5 + 0.5 * Math.sin(nowMs / 120);
+        g.circle(this.pulse.sx, this.pulse.sy, this.pulse.r + 6 + t * 14)
+          .stroke({ width: 2, color: 0x4fc3ff, alpha: (1 - t) * (0.5 + 0.4 * wave) });
+      }
     }
   }
 }

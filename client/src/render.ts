@@ -14,7 +14,7 @@ import type { Deposit, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from 
 import { countClassLabel, fleetExactCount } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
-import { anchorsAtBody, buildVisualSystem, SystemViewScene, type DevKey, type DevTiers, type SystemBodyDetail } from "./systemview";
+import { anchorsAtBody, buildVisualSystem, developmentAnchors, SystemViewScene, type DevTiers, type StructureKey, type SystemBodyDetail } from "./systemview";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
 // The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
@@ -537,8 +537,24 @@ export class Renderer {
   /// The contextual-build helper: which developments would ANCHOR at this visual
   /// body in the CURRENT System View (presentation sugar for the panel).
   /// §explore: takes the viewer's known deposits (owner-only surface in practice).
-  systemAnchorsAtBody(sys: SystemInfo, deposits: Deposit[], bodyId: string): DevKey[] {
+  systemAnchorsAtBody(sys: SystemInfo, deposits: Deposit[], bodyId: string): StructureKey[] {
     return anchorsAtBody(buildVisualSystem(sys, deposits), bodyId);
+  }
+
+  /// §body-management: the full per-structure anchor map (structure → visual
+  /// body id, null = the star) for the summary's grouped inventory chips.
+  systemAnchors(sys: SystemInfo, deposits: Deposit[]): Record<StructureKey, string | null> {
+    return developmentAnchors(buildVisualSystem(sys, deposits));
+  }
+
+  /// §body-management: resolve a visual body id to its detail (chip → panel).
+  systemBodyDetail(bodyId: string): SystemBodyDetail | null {
+    return this.systemScene.detailFor(bodyId);
+  }
+
+  /// §body-management: pulse a body sprite (the chip-click affordance).
+  pulseSystemBody(bodyId: string): void {
+    this.systemScene.pulseBody(bodyId);
   }
 
   setGalaxy(galaxy: GalaxyInfo): void {

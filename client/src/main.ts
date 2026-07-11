@@ -5,7 +5,7 @@ import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type AssignmentView, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
-import type { DevTiers, SystemBodyDetail } from "./systemview";
+import { devKeyForBuildKey, STRUCTURE_KEYS, type DevTiers, type StructureKey, type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 
 const state: ViewState = initialState();
@@ -955,7 +955,7 @@ function enterSystem(sys: SystemInfo): void {
   updateSysviewManage();
   const mine = state.systems.find((s) => s.id === sys.id)?.owner === state.playerId;
   readout().innerHTML = mine
-    ? `<b>${esc(sys.name)}</b> — your system, managed from here. <span class="dim">Build/develop in the right column · click a body to see what anchors there · Esc returns to the galaxy. ` +
+    ? `<b>${esc(sys.name)}</b> — your system. <span class="dim">The right column is the colony at a glance; CLICK A BODY (or a chip) to manage what anchors there — build, staff, ship. Esc closes panels, then returns to the galaxy. ` +
       `Buildings stay SYSTEM-level (slots, stockpile, defense — exactly as before).</span>`
     : `<b>${esc(sys.name)}</b> — schematic system view. <span class="dim">Click a planet for details · Esc / Back / zoom out returns to the galaxy. ` +
       `This is a VIEW: claims, production &amp; defense stay at the system level.</span>`;
@@ -986,13 +986,9 @@ function devTiersFor(sid: string): DevTiers | null {
   const dyn = state.systems.find((s) => s.id === sid);
   if (!dyn || dyn.owner === null || dyn.owner !== state.playerId) return null; // fog gate: markers only on YOUR systems
   return {
-    extractor: dyn.extractor_tier ?? 0,
-    depot: dyn.depot_tier ?? 0,
-    shipyard: dyn.shipyard_tier ?? 0,
-    sensor_array: dyn.sensor_tier ?? 0,
-    defense_platform: dyn.defense_tier ?? 0,
-    habitat: dyn.habitat_tier ?? 0,
-    refinery: dyn.refinery_tier ?? 0,
+    // §body-management: the owner-only per-structure map drives one marker per
+    // structure (rivals never reach here — the fog gate above returned null).
+    structures: dyn.structures ?? {},
     habitat_fed: dyn.habitat_fed ?? false,
     inProgress: (dyn.builds ?? []).map((b) => b.key), // §build-progress site glyphs
   };
@@ -1004,6 +1000,9 @@ function updateSysviewDynamic(): void {
   if (!sid) return;
   renderer.setSystemDevelopments(devTiersFor(sid));
   updateSysviewManage();
+  // §body-management: the open body panel is live — crew counts, queue bars,
+  // and afford states track the Views (single-click-guarded like every panel).
+  refreshOpenBodyPanel();
 }
 function buildSysviewManage(): void {
   if (sysviewManageBuilt) return;
@@ -1011,40 +1010,21 @@ function buildSysviewManage(): void {
   $("svm-close").addEventListener("click", exitSystem);
   // ONE delegated listener on the static panel shell (only #svm-body's innerHTML
   // is ever rewritten), so build clicks can never lose their handler.
+  // §body-management: the summary is PURE DATA — its only clickables are
+  // NAVIGATION chips (data-body) that open a body's panel; every command verb
+  // (build / crew / ship / auto-supply) lives on the body panels now.
   $("sysview-manage").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-build],[data-action],[data-crew]") as HTMLElement | null;
-    if (!el) return;
-    const sid = viewedSystemId();
-    if (!sid || !net) return;
-    if (el.dataset.crew) {
-      sendCrew(sid, el.dataset.crew);
-      updateSysviewManage();
-      return;
-    }
-    if (el.dataset.build) {
-      dispatchBuildKey(el.dataset.build, sid);
-      return;
-    }
-    switch (el.dataset.action) {
-      case "ship": {
-        const manifest = shippableStock(state.systems.find((s) => s.id === sid));
-        if (manifest.length) net.send({ type: "ShipProduction", system_id: sid });
-        updateSysviewManage();
-        break;
-      }
-      case "standing":
-        // Logistics is a corp-wide galaxy concern — a deliberate context switch.
-        exitSystem();
-        openRail("logistics");
-        updateStandingPanel();
-        {
-          const sel = $("so-source") as HTMLSelectElement;
-          if ([...sel.options].some((o) => o.value === sid)) sel.value = sid;
-        }
-        break;
-      case "market": openMarket(); break;
-    }
+    const el = (e.target as HTMLElement).closest("[data-body]") as HTMLElement | null;
+    if (el?.dataset.body) openBodyPanelById(el.dataset.body);
   });
+}
+/// §body-management: chip → the body's panel, with a sprite pulse so the eye
+/// lands on the right dot ("HERE is the thing you tapped").
+function openBodyPanelById(bodyId: string): void {
+  const d = renderer.systemBodyDetail(bodyId);
+  if (!d) return;
+  renderer.pulseSystemBody(bodyId);
+  openPlanetPanel(d);
 }
 function closeSysviewManage(): void {
   $("sysview-manage").classList.remove("is-open");
@@ -1081,23 +1061,55 @@ function updateSysviewManage(): void {
       (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
     : "";
-  // Developments at a glance — building ICONS ×tier (names live in tooltips).
-  const habTag = (dyn.habitat_tier ?? 0) > 0
-    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "The colony is well supplied — full workforce, population growing.")}`
-                       : ` ${badgeChip("unfed", label(dyn.food_state ?? "rationing"), "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`)
+  // §body-management: COLONY VITALS — population, food rung, workforce (the
+  // Part-7 owner-only fields as a stat strip; pure data).
+  const wf = dyn.workforce;
+  const foodState = label(dyn.food_state ?? "well_supplied");
+  const vitals = (dyn.population ?? 0) > 0 || wf
+    ? statStrip([
+        stat("Population", `${(dyn.population ?? 0).toFixed(1)}M`),
+        stat("Food", foodState, dyn.habitat_fed ? "" : "is-warn"),
+        stat("Workforce", wf ? `${Math.min(wf.posted, wf.units)}/${wf.posted}` : "—", wf && wf.posted > wf.units ? "is-warn" : ""),
+      ])
     : "";
-  const DEV_ROW: [string, IconKey, number, string][] = [
-    ["Mining Complex", "extractor", dyn.extractor_tier ?? 0, ""],
-    ["Depot", "depot", dyn.depot_tier ?? 0, ""],
-    ["Shipyard", "shipyard", dyn.shipyard_tier ?? 0, ""],
-    ["Sensor array", "sensor", dyn.sensor_tier ?? 0, ""],
-    ["Defense platform", "defense", dyn.defense_tier ?? 0, ""],
-    ["Habitat", "habitat", dyn.habitat_tier ?? 0, habTag],
-    ["Fuel Refinery", "refinery", dyn.refinery_tier ?? 0, ""],
-  ];
-  const devs = `<div class="devs-row" title="System developments — the map markers show where each one anchors (not separate colonies). Click a body to see what would anchor there.">` +
-    DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, "sm", `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
-    `</div>`;
+  // §body-management: the three SLOT POOLS — a system fact, so it reads here
+  // (the per-pool gating itself lives with the build rows on the body panels).
+  const pools = poolUsage(dyn);
+  const poolStrip = `<div class="mhint" title="Slots bound BREADTH — one per distinct structure; deepening a built structure's tier never needs a slot.">` +
+    (["resource", "industrial", "infrastructure"] as const)
+      .map((k) => `${k} ${pools[k].used}/${pools[k].total}`)
+      .join(" · ") + `</div>`;
+  // §body-management: the STRUCTURE INVENTORY — one chip per built structure,
+  // grouped by ANCHOR BODY. Chips are NAVIGATION, not actions: clicking one
+  // opens that body's panel (the discoverability bridge to the action surface).
+  const anchors = renderer.systemAnchors(sys, dyn.deposits ?? []);
+  const built = STRUCTURE_KEYS.filter((k) => ((dyn.structures ?? {})[k] ?? 0) > 0);
+  const byBody = new Map<string, StructureKey[]>();
+  for (const k of built) {
+    const b = anchors[k] ?? "star";
+    byBody.set(b, [...(byBody.get(b) ?? []), k]);
+  }
+  const FAMILY_ICON: Record<string, IconKey> = {
+    extractor: "extractor", refinery: "refinery", habitat: "habitat",
+    shipyard: "shipyard", depot: "depot", sensor_array: "sensor", defense_platform: "defense",
+  };
+  const chipFor = (k: StructureKey): string => {
+    const t = (dyn.structures ?? {})[k] ?? 0;
+    const ic = FAMILY_ICON[devKeyForBuildKey(k) ?? "extractor"] ?? "extractor";
+    const fedTag = k === "habitat" && !dyn.habitat_fed
+      ? ` ${badgeChip("unfed", foodState, "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`
+      : "";
+    const bodyId = anchors[k];
+    return bodyId
+      ? `<button class="dev act" data-body="${bodyId}" title="${esc(label(k))} ×${t} — click to manage it at its body">${icon(ic, "sm")}${esc(label(k))} <b>×${t}</b></button>${fedTag}`
+      : `<span class="dev" title="${esc(label(k))} ×${t} — anchored in star orbit">${icon(ic, "sm")}${esc(label(k))} <b>×${t}</b></span>${fedTag}`;
+  };
+  const devs = built.length
+    ? [...byBody.entries()].map(([bodyId, ks]) => {
+        const name = bodyId === "star" ? "Star orbit" : renderer.systemBodyDetail(bodyId)?.name ?? "—";
+        return `<div class="devs-row"><span class="dim">${esc(name)}</span> — ${ks.map(chipFor).join(" ")}</div>`;
+      }).join("")
+    : `<div class="mhint">No structures yet — click a body to build where things anchor.</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
   // dispatches hold at origin, so the ship button is disabled while blockaded
   // (production still accrues into the stockpile). A prominent banner explains it.
@@ -1111,14 +1123,8 @@ function updateSysviewManage(): void {
   const blockadeBanner = blockaded
     ? `<div style="margin:6px 0">${badgeChip("blockade", "under blockade", "negative", "A rival fleet holds station — convoys are held in & out (production still accrues). Break the blockade (relief, or a new Defense Platform tier) to resume shipping.")}</div>${siegeLine}`
     : "";
-  const canShip = !blockaded && shippableStock(dyn).length > 0;
-  const shipTitle = blockaded ? "Held — this system is under blockade." : canShip ? "Ship one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)." : "Nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units.";
-  const actions =
-    `<div style="margin-top:10px">` +
-    `<button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", "sm")} Ship → hub</button>` +
-    `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button>` +
-    `<button class="act" data-action="market" title="Open the hub Exchange.">${icon("market", "sm")} Market</button></div>`;
-  const guard = "";
+  // §body-management: NO action buttons here — shipping/auto-supply live on
+  // the Depot's station panel, builds/crews on their anchor bodies.
   // §syndicates Part 3: the ally GARRISON you're hosting here — the coalition
   // shield you feed (its Provisions upkeep draws from THIS system).
   const gShips = dyn.ally_garrison_ships ?? 0;
@@ -1129,32 +1135,75 @@ function updateSysviewManage(): void {
         : badgeChip("garrison", "UNFED", "warn", "The allied garrison here is UNFED — this system is out of Provisions to cover its upkeep, so its defense is suspended. Ship Provisions here to restore it.")) +
       `</div>`
     : "";
-  $("svm-eyebrow").textContent = blockaded ? "system management · UNDER BLOCKADE" : "system management · yours";
-  $("svm-body").innerHTML = blockadeBanner + storageBar + devs + garrisonHost + productionReadout(dyn) + buildPanel(sid, dyn) + actions + guard;
+  $("svm-eyebrow").textContent = blockaded ? "colony summary · UNDER BLOCKADE" : "colony summary · click a body to manage it";
+  const queue = buildQueueRows(sid, dyn, { anchors });
+  $("svm-body").innerHTML = blockadeBanner + vitals + storageBar + poolStrip + devs + garrisonHost + productionReadout(dyn) + queue;
 }
 
 let planetPanelBuilt = false;
 function buildPlanetPanel(): void {
   if (planetPanelBuilt) return;
   planetPanelBuilt = true;
+  // §body-management: the body panel is THE action surface — every branch
+  // sends the SAME system-level command the old summary buttons sent (the
+  // anchor is a lens, not an address; nothing here is per-planet on the wire).
   $("planet-panel").addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest("[data-act='close']")) { closePlanetPanel(); return; }
-    // §management-home contextual build sugar: the body panel offers the
-    // developments that would ANCHOR here — the SAME system-level DevelopSystem
-    // the full menu sends (a friendlier entry point, not a per-planet build).
-    const b = (e.target as HTMLElement).closest("[data-build]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-build],[data-crew],[data-action]") as HTMLElement | null;
     const sid = viewedSystemId();
-    if (b?.dataset.build && sid && net) {
-      dispatchBuildKey(b.dataset.build, sid);
-      updateSysviewManage(); // the queue/slots readout reflects it on the next View
+    if (!el || !sid || !net) return;
+    if (el.dataset.crew) {
+      sendCrew(sid, el.dataset.crew);
+      refreshOpenBodyPanel();
+      updateSysviewManage();
+      return;
+    }
+    if (el.dataset.build) {
+      dispatchBuildKey(el.dataset.build, sid);
+      refreshOpenBodyPanel(); // the queue row appears on the next View push
+      updateSysviewManage();
+      return;
+    }
+    switch (el.dataset.action) {
+      case "ship": {
+        const manifest = shippableStock(state.systems.find((s) => s.id === sid));
+        if (manifest.length) net.send({ type: "ShipProduction", system_id: sid });
+        refreshOpenBodyPanel();
+        updateSysviewManage();
+        break;
+      }
+      case "standing":
+        // Logistics is a corp-wide galaxy concern — a deliberate context switch.
+        exitSystem();
+        openRail("logistics");
+        updateStandingPanel();
+        {
+          const sel = $("so-source") as HTMLSelectElement;
+          if ([...sel.options].some((o) => o.value === sid)) sel.value = sid;
+        }
+        break;
     }
   });
 }
+/// §body-management: the OPEN body panel (its visual detail), for live
+/// re-renders as Views land — crew counts, queue bars, afford states.
+let openBodyDetail: SystemBodyDetail | null = null;
+function refreshOpenBodyPanel(): void {
+  if (!openBodyDetail || !$("planet-panel").classList.contains("is-open")) return;
+  if (renderDeferred("planet-panel", refreshOpenBodyPanel)) return; // §single-click
+  openPlanetPanel(openBodyDetail);
+}
 function closePlanetPanel(): void {
+  openBodyDetail = null;
   $("planet-panel").classList.remove("is-open");
 }
+/// §body-management: a section header for the body panel.
+const ppSec = (title: string, tip = ""): string =>
+  `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px"${tip ? ` title="${esc(tip)}"` : ""}>${esc(title)}</div>`;
+
 function openPlanetPanel(d: SystemBodyDetail): void {
   buildPlanetPanel();
+  openBodyDetail = d;
   const eyebrow = d.isMoon ? "natural satellite" : d.habitable ? "habitable world" : "planet";
   const habitable = d.habitable ? " " + badge("positive", "habitable") : "";
   const head =
@@ -1167,34 +1216,87 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     ? `<img class="pp-thumb" src="${d.icon}" alt="" />`
     : "";
   const kindLine = `<div class="pp-kindrow">${thumb}<div><span class="pp-swatch" style="background:${hex6(d.kindColor)}"></span>${esc(d.kindLabel)}${habitable}</div></div>`;
-  // The SYSTEM's deposits, shown here as a VISUAL ASSOCIATION with this body — the
-  // deposit still belongs to the system (claim/produce/ship it at the system level).
+  // 1. GEOLOGY — the SYSTEM's deposits, shown as a VISUAL ASSOCIATION with this
+  // body (the deposit still belongs to the system).
   const deps = d.deposits.length
-    ? `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px">Associated deposit</div>` +
-      d.deposits.map(depositRow).join("")
+    ? ppSec("Geology") + d.deposits.map(depositRow).join("")
     : `<div class="pp-note" style="border:0;padding:0;margin-top:10px">No deposit associated with this body.</div>`;
-  const note = `<div class="pp-note">Public geography — the same for every corporation. Any deposit here belongs to the <b>star system</b>; claim it, develop it, and ship its output from the system panel, exactly as on the galaxy map.</div>`;
-  // §management-home: contextual DEVELOP offers — the developments whose marker
-  // ANCHORS at this body (icy moon → Refinery, agri world → Habitat, …). Owner's
-  // own system only; the buttons issue the ordinary system-level DevelopSystem
-  // with the full menu's exact gating (shared row renderer), so this is sugar,
-  // never a new capability. The full build menu stays in the management column.
-  let develop = "";
+  const note = `<div class="pp-note">Public geography — the same for every corporation. Everything built here belongs to the <b>star system</b> (its slots, its stockpile); this panel is the friendlier handle, not a separate colony.</div>`;
+
+  // §body-management: THE ACTION SURFACE — owner's own system only (fog law:
+  // rivals get geology + flavor, nothing else, ever).
+  let manage = "";
   const sid = viewedSystemId();
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
-  if (sys && dyn && dyn.owner !== null && dyn.owner === state.playerId) {
+  const mine = !!sys && !!dyn && dyn.owner !== null && dyn.owner === state.playerId;
+  if (mine && sid) {
     const keys = renderer.systemAnchorsAtBody(sys, dyn.deposits ?? [], d.id);
-    const opts = (state.galaxy?.build_options ?? []).filter((o) => (keys as string[]).includes(o.key));
-    if (opts.length) {
-      const slotsTotal = dyn.slots_total ?? 0;
-      const slotsFull = slotsTotal > 0 && (dyn.slots_used ?? 0) >= slotsTotal;
-      const anchored = keys.map((k) => opts.find((o) => o.key === k)?.label ?? k).join(", ");
-      develop = `<div class="sp-sec" style="color:var(--dim);text-transform:uppercase;font-size:9px;letter-spacing:0.6px;margin:12px 0 4px" title="${esc(anchored)} would site its structure at this body — still a SYSTEM development (one system slot, the system stockpile).">Would anchor here</div>` +
-        `<div class="build-grid">${opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("")}</div>`;
+    const here = new Set<string>(keys);
+    const tiers = dyn.structures ?? {};
+    const blockaded = !!dyn.blockade;
+    const blockChip = blockaded
+      ? `<div style="margin-top:8px">${badgeChip("blockade", "under blockade", "negative", "A rival fleet holds station — convoys are held in & out. Production and construction continue; shipping resumes when the blockade breaks.")}</div>`
+      : "";
+
+    // 2. BUILT HERE — structures anchored at this body, with status chips.
+    const builtKeys = keys.filter((k) => (tiers[k] ?? 0) > 0);
+    const lineOf = (slug: string) => dyn.assignments?.find((a) => a.structure === slug);
+    const built = builtKeys.length
+      ? ppSec("Built here") + `<div class="devs-row">` + builtKeys.map((k) => {
+          const line = lineOf(k);
+          const status = line?.suspended
+            ? ` ${badgeChip("unfed", esc(label(line.suspended)), "warn", SUSPEND_HINT[line.suspended] ?? "suspended — nothing is lost")}`
+            : !line && PRODUCER_SLUGS.has(k) ? ` ${badge("warn", "unstaffed")}` : "";
+          return `<span class="dev" title="${esc(label(k))} ×${tiers[k]}">${esc(label(k))} <b>×${tiers[k]}</b>${status}</span>`;
+        }).join(`<span class="dev-sep">·</span>`) + `</div>`
+      : "";
+
+    // 3. PRODUCTION LINES — crew ± controls live HERE now (same SetAssignment).
+    const lines = assignmentLines(dyn, true, (slug) => here.has(slug));
+    const linesSec = lines ? ppSec("Production lines", "output = richness/rate × tier × staffing × skill × food — hover a row for its chain") + lines : "";
+
+    // 4. BUILD HERE — the build menu FILTERED to structures anchoring at this
+    // body (including not-yet-built ones), same recipe/pool gating as ever.
+    const pools = poolUsage(dyn);
+    const devOpts = (state.galaxy?.build_options ?? []).filter((o) => !SHIP_KEYS.has(o.key) && here.has(o.key));
+    const buildSec = devOpts.length
+      ? ppSec("Build here", "These structures would site at this body — still a SYSTEM development (a system slot, the system stockpile).") +
+        `<div class="build-grid">${devOpts.map((o) => {
+          const pool = POOL_OF[o.key];
+          const poolFull = pool ? pools[pool].used >= pools[pool].total : false;
+          return buildOptionRow(o, dyn, poolFull && !((tiers[o.key] ?? 0) > 0));
+        }).join("")}</div>`
+      : "";
+
+    // 5. SHIPYARD anchor: SHIP CONSTRUCTION — the orbital yard's menu + queue.
+    let yardSec = "";
+    if (here.has("shipyard")) {
+      const shipOpts = (state.galaxy?.build_options ?? []).filter((o) => SHIP_KEYS.has(o.key));
+      const shipQueue = buildQueueRows(sid, dyn, { filter: (k) => SHIP_KEYS.has(k), seenKey: `${sid}#yard` });
+      yardSec = shipOpts.length
+        ? ppSec("Orbital yard — ship construction", "Ships build at the system's Shipyard (tier-gated exactly as before) and spawn here.") +
+          `<div class="build-grid">${shipOpts.map((o) => buildOptionRow(o, dyn, false)).join("")}</div>` + shipQueue
+        : "";
     }
+
+    // 6. DEPOT anchor: LOGISTICS — cargo leaves from the orbital warehouse.
+    let depotSec = "";
+    if (here.has("depot")) {
+      const canShip = !blockaded && shippableStock(dyn).length > 0;
+      const shipTitle = blockaded ? "Held — this system is under blockade." : canShip ? "Ship one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)." : "Nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units.";
+      depotSec = ppSec("Orbital warehouse — logistics", "The system stockpile ships out from this station.") +
+        `<div><button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", "sm")} Ship → hub</button>` +
+        `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button></div>`;
+    }
+
+    manage = blockChip + built + linesSec + buildSec + yardSec + depotSec;
+    // §body-management edge state: a body with nothing anchored and nothing
+    // buildable stays a quiet piece of scenery.
+    if (!manage) manage = `<div class="mhint">Nothing anchors here.</div>`;
   }
-  $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${develop}${note}</div>`;
+
+  $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${manage}${note}</div>`;
   $("planet-panel").classList.add("is-open");
 }
 
@@ -2074,16 +2176,14 @@ const SUSPEND_HINT: Record<string, string> = {
   no_inputs: "input basket dry — ship raws in or staff extraction",
   storage_full: "storage full — ship goods out or build a Depot",
 };
-function colonyPanel(dyn: SystemStateView | undefined): string {
-  const wf = dyn?.workforce;
-  if (!wf) return "";
-  const lines = dyn?.assignments ?? [];
-  const posted = new Set(lines.map((a) => a.structure));
-  const short = wf.posted > wf.units;
-  const head = `<div class="deps-head" style="margin-top:8px">${icon("habitat", "sm")} Colony · workforce ` +
-    `<b>${Math.min(wf.posted, wf.units)}/${wf.posted}</b> crews` +
-    (short ? ` ${badgeChip("unfed", "short-staffed", "warn", `Only ${wf.units} of ${wf.posted} posted crews are filled — every line runs at ${((wf.units / Math.max(1, wf.posted)) * 100).toFixed(0)}%. Population growth adds crews.`)}` : "") +
-    `</div>`;
+// §body-management: the production-line rows, shared between the read-only
+// summary/rail digest (withControls=false — pure data) and the BODY PANELS
+// (withControls=true — the ONLY place crew ± controls render; the SetAssignment
+// sends are byte-identical, just relocated). `slugFilter` scopes a body panel
+// to the structures anchored there.
+function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean, slugFilter?: (slug: string) => boolean): string {
+  const lines = (dyn?.assignments ?? []).filter((a) => !slugFilter || slugFilter(a.structure));
+  const posted = new Set((dyn?.assignments ?? []).map((a) => a.structure));
   const rowFor = (a: AssignmentView): string => {
     const chain = `×${a.throughput.toFixed(1)} tier · ×${a.staffing.toFixed(2)} staffing · ×${a.skill.toFixed(2)} skill · ×${a.food.toFixed(2)} food`;
     const out = a.outputs.filter(([, r]) => r > 0.001).map(([c, r]) => `+${r.toFixed(2)} ${esc(label(c))}/s`).join(" ");
@@ -2091,24 +2191,38 @@ function colonyPanel(dyn: SystemStateView | undefined): string {
     const susp = a.suspended
       ? ` ${badgeChip("unfed", esc(label(a.suspended)), "warn", SUSPEND_HINT[a.suspended] ?? "suspended — nothing is lost")}`
       : "";
+    const controls = withControls
+      ? `<button class="act" data-crew="${a.structure}:${a.workers + 1}" title="post another crew">+</button>` +
+        `<button class="act" data-crew="${a.structure}:${Math.max(0, a.workers - 1)}" title="withdraw a crew">−</button>`
+      : "";
     return `<div class="sys-prod" title="${esc(a.title)} ×${a.tier} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
       `<span>${esc(a.title)} ×${a.tier}</span>` +
       `<span class="sp-stock">${a.workers}👷${spec ? ` +${Object.values(a.specialists).reduce((s: number, n) => s + (n as number), 0)}🎓` : ""}</span>` +
-      `<span class="sp-rate">${out || "—"}</span>${susp}` +
-      `<button class="act" data-crew="${a.structure}:${a.workers + 1}" title="post another crew">+</button>` +
-      `<button class="act" data-crew="${a.structure}:${Math.max(0, a.workers - 1)}" title="withdraw a crew">−</button>` +
+      `<span class="sp-rate">${out || "—"}</span>${susp}${controls}` +
       `</div>`;
   };
   const idle = Object.entries(dyn?.structures ?? {})
-    .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !posted.has(slug))
+    .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !posted.has(slug) && (!slugFilter || slugFilter(slug)))
     .map(([slug, t]) =>
-      `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted">` +
+      `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted${withControls ? "" : " (staff it from its body's panel)"}">` +
       `<span>${esc(label(slug))} ×${t}</span><span class="sp-none">unstaffed</span>` +
-      `<button class="act" data-crew="${slug}:1" title="post a crew">+ crew</button></div>`)
+      (withControls ? `<button class="act" data-crew="${slug}:1" title="post a crew">+ crew</button>` : "") +
+      `</div>`)
     .join("");
+  return lines.map(rowFor).join("") + idle;
+}
+function colonyPanel(dyn: SystemStateView | undefined): string {
+  const wf = dyn?.workforce;
+  if (!wf) return "";
+  const short = wf.posted > wf.units;
+  const head = `<div class="deps-head" style="margin-top:8px">${icon("habitat", "sm")} Colony · workforce ` +
+    `<b>${Math.min(wf.posted, wf.units)}/${wf.posted}</b> crews` +
+    (short ? ` ${badgeChip("unfed", "short-staffed", "warn", `Only ${wf.units} of ${wf.posted} posted crews are filled — every line runs at ${((wf.units / Math.max(1, wf.posted)) * 100).toFixed(0)}%. Population growth adds crews.`)}` : "") +
+    `</div>`;
   const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(label(k))}`).join(", ");
   const poolLine = pool ? `<div class="mhint" style="margin-top:2px">${icon("habitat", "sm")} resident specialists: ${pool}</div>` : "";
-  return head + lines.map(rowFor).join("") + idle + poolLine;
+  // Pure DATA — the crew controls live on the body panels (§body-management).
+  return head + assignmentLines(dyn, false) + poolLine;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
@@ -2161,11 +2275,25 @@ function doneAtLocal(completeTime: number): string {
 // last-seen stamp keeps a long-closed panel from "flashing" stale history.
 const buildQueueSeen = new Map<string, { keys: string[]; at: number }>();
 const buildDoneFlash = new Map<string, { label: string; until: number }[]>();
-function buildQueueRows(sid: string, dyn: SystemStateView | undefined): string {
-  const jobs = dyn?.builds ?? [];
+function buildQueueRows(
+  sid: string,
+  dyn: SystemStateView | undefined,
+  opts?: {
+    /// §body-management: with the anchor map, each row becomes a NAV chip to
+    /// its anchor body (data-body — never a command).
+    anchors?: Record<StructureKey, string | null>;
+    /// Scope the rows (e.g. the shipyard panel shows only ship jobs).
+    filter?: (key: string) => boolean;
+    /// Independent completion-flash bookkeeping per surface (the summary and a
+    /// body panel may both render queues for one system).
+    seenKey?: string;
+  },
+): string {
+  const jobs = (dyn?.builds ?? []).filter((j) => !opts?.filter || opts.filter(j.key));
   const now = liveSimTime();
+  const seenAs = opts?.seenKey ?? sid;
   // Diff vs the previous render to catch completions (only if seen recently).
-  const prev = buildQueueSeen.get(sid);
+  const prev = buildQueueSeen.get(seenAs);
   const keys = jobs.map((j) => j.key);
   if (prev && performance.now() - prev.at < 2000) {
     const remaining = [...keys];
@@ -2173,23 +2301,20 @@ function buildQueueRows(sid: string, dyn: SystemStateView | undefined): string {
       const i = remaining.indexOf(k);
       if (i >= 0) remaining.splice(i, 1);
       else {
-        const flashes = buildDoneFlash.get(sid) ?? [];
+        const flashes = buildDoneFlash.get(seenAs) ?? [];
         flashes.push({ label: buildLabel(k), until: performance.now() + 4000 });
-        buildDoneFlash.set(sid, flashes);
+        buildDoneFlash.set(seenAs, flashes);
       }
     }
   }
-  buildQueueSeen.set(sid, { keys, at: performance.now() });
-  const flashes = (buildDoneFlash.get(sid) ?? []).filter((f) => f.until > performance.now());
-  buildDoneFlash.set(sid, flashes);
+  buildQueueSeen.set(seenAs, { keys, at: performance.now() });
+  const flashes = (buildDoneFlash.get(seenAs) ?? []).filter((f) => f.until > performance.now());
+  buildDoneFlash.set(seenAs, flashes);
   if (!jobs.length && !flashes.length) return "";
 
-  // Resulting tier per development job: current tier + 1 + same-key jobs ahead.
-  const tierOf: Record<string, number> = {
-    extractor: dyn?.extractor_tier ?? 0, depot: dyn?.depot_tier ?? 0, shipyard: dyn?.shipyard_tier ?? 0,
-    sensor_array: dyn?.sensor_tier ?? 0, defense_platform: dyn?.defense_tier ?? 0,
-    habitat: dyn?.habitat_tier ?? 0, refinery: dyn?.refinery_tier ?? 0,
-  };
+  // Resulting tier per development job: current tier + 1 + same-key jobs ahead
+  // (§body-management: read the full per-structure map — all 16 kinds).
+  const tierOf: Record<string, number> = { ...(dyn?.structures ?? {}) };
   const aheadCount: Record<string, number> = {};
   const rows = jobs.map((j) => {
     const total = buildOption(j.key)?.build_secs ?? 0;
@@ -2200,7 +2325,13 @@ function buildQueueRows(sid: string, dyn: SystemStateView | undefined): string {
     const ahead = aheadCount[j.key] ?? 0;
     aheadCount[j.key] = ahead + 1;
     const name = isDev ? `${buildLabel(j.key)} ×${(tierOf[j.key] ?? 0) + 1 + ahead}` : buildLabel(j.key);
-    return `<div class="bq-row"><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
+    // §body-management: a queue row NAVIGATES to its anchor body (ship jobs →
+    // the shipyard's station) when the caller supplies the anchor map.
+    const bodyId = opts?.anchors
+      ? (SHIP_KEYS.has(j.key) ? opts.anchors.shipyard : opts.anchors[j.key as StructureKey] ?? null)
+      : null;
+    const nav = bodyId ? ` data-body="${bodyId}" style="cursor:pointer" title="under construction — click to open its body panel"` : "";
+    return `<div class="bq-row"${nav}><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
       `<div class="bq-main"><div class="bq-head"><b>${esc(name)}</b>` +
       `<span class="bq-eta">${fmtCountdown(left)} · done ${doneAtLocal(j.complete_time)}</span></div>` +
       `${bar(pct)}</div></div>`;
@@ -2271,40 +2402,8 @@ function nodeBonusDesc(slug: string): string {
   }
 }
 
-function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
-  const opts = state.galaxy?.build_options ?? [];
-  if (!opts.length) return "";
-  // Development slots (§buildings step 1) — the scarcity that forces the
-  // Extractor-vs-Depot-vs-Shipyard choice. Owner-only fields (rivals see 0/0);
-  // this panel renders only for owned systems, so the readout is always real.
-  const slotsUsed = dyn?.slots_used ?? 0;
-  const slotsTotal = dyn?.slots_total ?? 0;
-  const slotsFull = slotsTotal > 0 && slotsUsed >= slotsTotal;
-  const slotsTag = slotsTotal > 0
-    ? ` <span class="sp-tier" title="Development slots used / total. Each development (Extractor/Depot/Shipyard tier…) uses one slot; ships don't.">· ${icon("slots", "sm")} ${slotsUsed}/${slotsTotal}</span>`
-    : "";
-  const head = `<div class="deps-head" style="margin-top:8px">${icon("build", "sm")} Build · develop${slotsTag}</div>`;
-  // §build-progress: the construction QUEUE renders above a menu that STAYS
-  // open — concurrent jobs were always legal in the sim (costs debit up front;
-  // pending upgrades already count against slots); the old "one job at a time"
-  // was only this panel hiding itself.
-  const queue = buildQueueRows(sid, dyn);
-  // §economy Part 6: the menu groups by SLOT POOL with per-pool used/total —
-  // derived from owner-only data exactly as the sim derives it (slots bound
-  // BREADTH: one per distinct built structure; tier-ups are never gated).
-  const pools = poolUsage(dyn);
-  const shipRows = opts.filter((o) => SHIP_KEYS.has(o.key)).map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
-  const sections = (["resource", "industrial", "infrastructure"] as const).map((pool) => {
-    const inPool = opts.filter((o) => !SHIP_KEYS.has(o.key) && POOL_OF[o.key] === pool);
-    if (!inPool.length) return "";
-    const u = pools[pool];
-    const poolFull = u.used >= u.total;
-    return `<div class="mhint" style="margin-top:6px" title="Slots bound BREADTH — one per distinct structure; deepening a built structure's tier never needs a slot.">` +
-      `${pool} pool · ${u.used}/${u.total}${poolFull ? " · full (tier-ups still allowed)" : ""}</div>` +
-      `<div class="build-grid">${inPool.map((o) => buildOptionRow(o, dyn, poolFull && !((dyn?.structures ?? {})[o.key] > 0))).join("")}</div>`;
-  }).join("");
-  return queue + head + `<div class="build-grid">${shipRows}</div>` + sections;
-}
+// §body-management: the monolithic buildPanel is gone — its pool readout
+// lives in the summary, its rows on the body panels (openPlanetPanel).
 
 // Slug → pool + derived pool budgets — MIRRORS the sim (build.rs slot_pool /
 // galaxy.rs *_slots): Resource = deposits.clamp(1,4); Industrial = 1+pop_tier;
