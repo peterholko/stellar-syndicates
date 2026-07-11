@@ -642,6 +642,28 @@ impl World {
         for sys in self.systems.iter_mut() {
             sys.migrate_to_bodies();
         }
+        // §bodies: re-site IN-FLIGHT build jobs. Pre-bodies jobs default to
+        // body 0; route each structure job to its natural site unless its
+        // current target already makes sense (holds the kind = a tier-up, or
+        // carries the matching deposit for extraction). Idempotent: a
+        // correctly-sited job re-sites to itself.
+        for job in self.build_queue.iter_mut() {
+            let crate::build::BuildKind::Upgrade { upgrade } = job.what else { continue };
+            let Some(sys) = self.systems.iter().find(|s| s.id == job.system) else { continue };
+            let ok = sys.bodies.iter().any(|b| {
+                b.id == job.body_id
+                    && (b.tier(upgrade) > 0
+                        || match upgrade {
+                            crate::build::StructureKind::MiningComplex
+                            | crate::build::StructureKind::VolatileHarvester
+                            | crate::build::StructureKind::Bioharvester => b.has_deposit_for(upgrade),
+                            _ => true,
+                        })
+            });
+            if !ok {
+                job.body_id = sys.site_for(upgrade).unwrap_or(0);
+            }
+        }
         if self.band_lo == 0.0 && self.band_hi == 0.0 {
             self.compute_band_thresholds();
         }
@@ -6954,8 +6976,33 @@ mod tests {
             ]));
             o.insert("stockpile".into(), serde_json::json!({ "ore": 50.0, "provisions": 80.0 }));
         }
+        // An IN-FLIGHT legacy build job (no body_id key — pre-bodies shape):
+        // an extractor tier-up at the colony. Must re-site onto the ore body.
+        v["build_queue"] = serde_json::json!([{
+            "id": 900, "owner": id, "system": colony,
+            "what": { "kind": "upgrade", "upgrade": "extractor" },
+            "complete_tick": 100, "join": null
+        }]);
         let mut w2: World = serde_json::from_value(v).expect("legacy snapshot parses");
+        // Pre-migration totals, straight off the legacy JSON (the invariant's
+        // left-hand side): per-system structure-tier sums + populations.
+        let pre_tiers: f64 = 2.0 + 2.0 + 1.0 + 2.0 + 1.0 + 1.0; // home: mine2+hab2+yard1 · colony: mine2+ref1+yard1
         w2.fixup_after_load(); // fold + migrate (the server's load path)
+        // SUM INVARIANT: the summed per-body tiers equal the legacy totals.
+        let post_tiers: u32 = [home, colony]
+            .iter()
+            .map(|sid| {
+                w2.systems
+                    .iter()
+                    .find(|s| s.id == *sid)
+                    .unwrap()
+                    .bodies
+                    .iter()
+                    .flat_map(|b| b.structures.values())
+                    .sum::<u32>()
+            })
+            .sum();
+        assert_eq!(post_tiers as f64, pre_tiers, "Σ per-body tiers == the legacy system totals");
 
         // Shape checks: raw-only deposits, folded tiers, seeded people + lines.
         let h = w2.systems.iter().find(|s| s.id == home).unwrap();
@@ -6967,6 +7014,17 @@ mod tests {
         let c = w2.systems.iter().find(|s| s.id == colony).unwrap();
         assert!((c.population() - 1.0).abs() < 1e-9, "a habitat-less producer colony gets its working crews");
         assert!(c.assignment(crate::build::StructureKind::FuelRefinery).is_some(), "the refinery line survives the upgrade");
+
+        // The in-flight legacy job re-sited onto a deposit-bearing body.
+        {
+            let job = w2.build_queue.iter().find(|j| j.id == 900).expect("the legacy job survived");
+            let csys = w2.systems.iter().find(|s| s.id == colony).unwrap();
+            let jb = csys.bodies.iter().find(|b| b.id == job.body_id).expect("job body exists");
+            assert!(
+                jb.has_deposit_for(crate::build::StructureKind::MiningComplex) || jb.tier(crate::build::StructureKind::MiningComplex) > 0,
+                "the pre-bodies extractor job re-sited where a mine belongs"
+            );
+        }
 
         // Idempotency: a second pass is a no-op.
         let before = serde_json::to_string(&w2).unwrap();
@@ -7006,6 +7064,106 @@ mod tests {
         ]);
         let started = ev.iter().filter(|e| matches!(e.payload, EventPayload::BuildStarted { .. })).count();
         assert_eq!(started, 2, "the kit funds a convoy AND the first mine tier-up, turn one");
+    }
+
+    // --- §bodies: per-body building + the shared labor pool ---------------------
+
+    /// §bodies: EXTRACTION REQUIRES A MATCHING DEPOSIT ON THE BODY — real now,
+    /// not a visual association. The same build on the right body proceeds.
+    #[test]
+    fn extraction_requires_a_matching_deposit_on_the_body() {
+        let mut w = test_world();
+        let id = PlayerId(90);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.set_test_deposits(vec![
+            crate::galaxy::Deposit { resource: Commodity::Volatiles, richness: 0.5, reserves: None, accessibility: 0.5 },
+            crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 0.5, reserves: None, accessibility: 0.5 },
+        ]);
+        let sid = sys.id;
+        seed_stock(&mut w, sid, &[(Commodity::Machinery, 60.0), (Commodity::Alloys, 120.0)]);
+        let (ore_body, vol_body) = {
+            let s = w.systems.iter().find(|s| s.id == sid).unwrap();
+            (
+                s.bodies.iter().find(|b| b.deposits.iter().any(|d| d.resource == Commodity::MetallicOre)).unwrap().id,
+                s.bodies.iter().find(|b| b.deposits.iter().any(|d| d.resource == Commodity::Volatiles)).unwrap().id,
+            )
+        };
+        assert_ne!(ore_body, vol_body, "the two deposits landed on different bodies");
+
+        // A VolatileHarvester on the ORE body: rejected (no volatiles there).
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: StructureKind::VolatileHarvester, body_id: Some(ore_body) }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NoSlot, .. })),
+            "no matching deposit on that body — rejected"
+        );
+        assert!(w.build_queue.is_empty());
+
+        // The SAME build on the VOLATILES body proceeds.
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: StructureKind::VolatileHarvester, body_id: Some(vol_body) }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the right body hosts it");
+        assert_eq!(w.build_queue[0].body_id, vol_body, "the job carries its body");
+    }
+
+    /// §bodies: a build with an explicit body_id COMPLETES ON THAT BODY (and
+    /// only there), and the job's body drives the queue display.
+    #[test]
+    fn builds_land_on_the_requested_body() {
+        let mut w = test_world();
+        let id = PlayerId(91);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Electronics, 40.0)]);
+        // A Sensor Array explicitly on the PRIMARY body (its natural site is
+        // the outermost — so an explicit override must be honored).
+        let primary = w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter().find(|b| b.parent.is_none()).unwrap().id;
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::SensorArray, body_id: Some(primary) }]);
+        assert_eq!(w.build_queue[0].body_id, primary);
+        for _ in 0..(crate::build::SENSOR_ARRAY_RECIPE.build_ticks + 3) {
+            w.step(&[]);
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let b = sys.bodies.iter().find(|b| b.id == primary).unwrap();
+        assert_eq!(b.tier(StructureKind::SensorArray), 1, "the tier landed on the REQUESTED body");
+        assert_eq!(sys.tier_sum(StructureKind::SensorArray), 1, "…and nowhere else");
+    }
+
+    /// §bodies: ONE workforce pool spans the system — crews posted on two
+    /// bodies dilute by the same share (labor commutes inside the well).
+    #[test]
+    fn workforce_is_one_pool_across_bodies() {
+        let mut w = test_world();
+        let id = PlayerId(92);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.set_test_deposits(vec![
+            crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 1.0, reserves: None, accessibility: 0.5 },
+            crate::galaxy::Deposit { resource: Commodity::Biomass, richness: 1.0, reserves: None, accessibility: 0.5 },
+        ]);
+        sys.set_population(0.9); // exactly ONE crew for the whole system
+        sys.stockpile.insert(Commodity::Provisions, 100.0);
+        // Staff BOTH bodies' extraction (a mine on the ore body, a harvester
+        // on the biomass body) — one crew each posted, one unit available.
+        for (res, kind) in [
+            (Commodity::MetallicOre, StructureKind::MiningComplex),
+            (Commodity::Biomass, StructureKind::Bioharvester),
+        ] {
+            let b = sys.bodies.iter_mut().find(|b| b.deposits.iter().any(|d| d.resource == res)).unwrap();
+            b.set_tier(kind, 1);
+            b.assignments.insert(kind, crate::production::Assignment::crew(1));
+        }
+        let sid = sys.id;
+        assert!((w.systems.iter().find(|s| s.id == sid).unwrap().staffing_share() - 0.5).abs() < 1e-12, "1 unit / 2 posted = half share");
+        w.step(&[]);
+        let expect = 1.0 * crate::production::tier_throughput(1) * 0.5 * crate::config::DT;
+        let ore = system_stock(&w, sid, Commodity::MetallicOre);
+        let bio = system_stock(&w, sid, Commodity::Biomass);
+        assert!((ore - expect).abs() < 1e-9, "the mine ran at the SYSTEM share (got {ore})");
+        assert!((bio - expect).abs() < 1e-9, "…and so did the harvester on the other body (got {bio})");
     }
 
     // --- §economy Part 4: specialists ------------------------------------------
