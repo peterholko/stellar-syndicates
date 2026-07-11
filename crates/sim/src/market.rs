@@ -25,13 +25,33 @@ const REVERSION: f64 = 0.02;
 /// The long-run base price of a commodity (what it reverts toward). Also the
 /// canonical "how valuable is this good" ranking used by galaxy generation to
 /// place richer/more-valuable deposits toward the frontier (§4).
+///
+/// §economy: the 12-commodity ladder (all Tunable), chosen so every PROCESSED
+/// good clears its input basket at base prices and every ADVANCED good clears
+/// its own (test-enforced: `processed_prices_clear_their_input_baskets`) —
+/// industry is worth doing without making raw-selling worthless. Note Volatiles
+/// dropped 18 → 9: it is a common raw now, not a frontier prize; RARE ELEMENTS
+/// takes that role at the rim.
 pub fn base_price(c: Commodity) -> f64 {
     match c {
-        Commodity::Provisions => 6.0,
-        Commodity::Ore => 8.0,
-        Commodity::Fuel => 10.0,
-        Commodity::Volatiles => 18.0,
+        // Raw
+        Commodity::Biomass => 5.0,
+        Commodity::Silicates => 6.0,
+        Commodity::MetallicOre => 8.0,
+        Commodity::Volatiles => 9.0,
+        Commodity::RareElements => 22.0,
+        // Processed
+        Commodity::Provisions => 9.0,
+        Commodity::Fuel => 14.0,
+        Commodity::Polymers => 16.0,
         Commodity::Alloys => 26.0,
+        Commodity::Electronics => 34.0,
+        // Advanced
+        // (Machinery raised from the handoff's suggested 48: its input basket —
+        // 1.2 Alloys + 0.6 Electronics + 0.4 Fuel = 57.2 — didn't clear. 62
+        // clears with margin; nothing consumes Machinery in a chain, no cascade.)
+        Commodity::Machinery => 62.0,
+        Commodity::Armaments => 56.0,
     }
 }
 
@@ -200,4 +220,39 @@ pub fn clear_call_auction(orders: &[LimitOrder]) -> Option<Clearing> {
         }
     }
     Some(Clearing { price, fills })
+}
+
+#[cfg(test)]
+mod economy_price_tests {
+    use super::*;
+
+    /// §economy BALANCE INVARIANT: every PROCESSED/ADVANCED good's base price
+    /// clears its per-unit input basket at base prices — industry is worth doing
+    /// (without making raw-selling worthless, which the raw ladder itself keeps).
+    /// Baskets mirror the Part-3 converter table; when the data-driven converter
+    /// lands (Part 4) this test re-points at it so the two can never drift.
+    #[test]
+    fn processed_prices_clear_their_input_baskets() {
+        use Commodity::*;
+        // (output, inputs per 1.0 OUTPUT unit) — the converter table's "Inputs
+        // /unit" column reads per unit of output; the output column is the RATE
+        // (units/s at tier throughput 1) and doesn't enter the basket math.
+        let chains: &[(Commodity, &[(Commodity, f64)])] = &[
+            (Alloys, &[(MetallicOre, 1.5), (Fuel, 0.3)]),
+            (Electronics, &[(RareElements, 0.8), (Silicates, 0.8)]),
+            (Polymers, &[(Volatiles, 1.0), (Biomass, 0.8)]),
+            (Fuel, &[(Volatiles, 1.0)]),
+            (Provisions, &[(Biomass, 1.0)]),
+            (Machinery, &[(Alloys, 1.2), (Electronics, 0.6), (Fuel, 0.4)]),
+            (Armaments, &[(Alloys, 1.0), (Electronics, 0.5), (Polymers, 0.5)]),
+        ];
+        for (out, basket) in chains {
+            let input_cost: f64 = basket.iter().map(|(c, per_unit)| base_price(*c) * per_unit).sum();
+            assert!(
+                base_price(*out) > input_cost,
+                "{out:?} base {} must clear its input basket {input_cost:.2}",
+                base_price(*out)
+            );
+        }
+    }
 }

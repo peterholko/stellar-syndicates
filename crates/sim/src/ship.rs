@@ -760,7 +760,7 @@ mod tests {
     fn fleet_of_one_matches_the_old_single_ship_exactly() {
         // A convoy fleet-of-one moves at the convoy's constant speed (§14.1) —
         // cargo affects fuel (mass), not speed.
-        let cargo = Some(Cargo { commodity: Commodity::Ore, units: 100 });
+        let cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 100 });
         let f = fleet(&[(ShipKind::Convoy, 1)], cargo);
         assert_eq!(f.max_speed(), ShipKind::Convoy.max_speed(), "fleet-of-one speed == its kind's speed");
         assert_eq!(f.flagship_kind(), ShipKind::Convoy);
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn mass_and_fuel_sum_over_the_whole_convoy_count() {
-        let cargo = Some(Cargo { commodity: Commodity::Ore, units: 50 });
+        let cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 50 });
         let f = fleet(&[(ShipKind::Convoy, 3)], cargo);
         let expected = 3.0 * ShipKind::Convoy.hull_mass() + 50.0 * CARGO_MASS_PER_UNIT;
         assert!((f.mass() - expected).abs() < 1e-9, "mass = Σ hull×count + cargo");

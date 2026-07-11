@@ -160,7 +160,9 @@ function trend(h: number[]): { glyph: string; tone: string } {
 // Mirror of the sim's commodity value-rank (also in render.ts) — for flavor text
 // and dominant-resource selection. Client-only; no server data.
 const COMMODITY_VALUE: Record<Commodity, number> = {
-  provisions: 6, ore: 8, fuel: 10, volatiles: 18, alloys: 26,
+  biomass: 5, silicates: 6, metallic_ore: 8, volatiles: 9, rare_elements: 22,
+  provisions: 9, fuel: 14, polymers: 16, alloys: 26, electronics: 34,
+  machinery: 48, armaments: 56,
 };
 
 // Mirror of the sim's fuel-cost model (crates/sim/src/fuel.rs + ship.rs) — so the
@@ -183,8 +185,23 @@ const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
 // A commodity icon is by definition a resource, so it always uses the dedicated
 // `--icon-resource` token + the downscaled PNG art (each commodity now has its own,
 // including Volatiles — no more hue-shifted Fuel stand-in). `size` kept for symmetry.
-const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
-  `<img class="icon icon--resource" src="/art/ui_icons/resource/${c}.png" alt="" title="${c}" />`;
+// §economy: the ORIGINAL five have dedicated PNG art (metallic_ore reuses the
+// old ore art); the seven new industrial goods fall back to tinted glyphs until
+// their art lands.
+const COMMODITY_ART: Partial<Record<Commodity, string>> = {
+  fuel: "fuel", metallic_ore: "ore", alloys: "alloys", provisions: "provisions", volatiles: "volatiles",
+};
+const COMMODITY_GLYPH: Record<Commodity, string> = {
+  metallic_ore: "\u26cf", rare_elements: "\u2728", silicates: "\u25a6", volatiles: "\u2744", biomass: "\ud83c\udf3f",
+  alloys: "\ud83d\udd29", electronics: "\ud83d\udda5", polymers: "\ud83e\uddea", fuel: "\u26fd", provisions: "\ud83c\udf5e",
+  machinery: "\u2699", armaments: "\ud83d\udd2b",
+};
+const commodityIcon = (c: Commodity, _size: IconSize = "md") => {
+  const art = COMMODITY_ART[c];
+  return art
+    ? `<img class="icon icon--resource" src="/art/ui_icons/resource/${art}.png" alt="" title="${c.replace("_", " ")}" />`
+    : `<span class="icon icon--resource icon--glyph" title="${c.replace("_", " ")}">${COMMODITY_GLYPH[c]}</span>`;
+};
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
@@ -2603,7 +2620,11 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
 // sparklines + honest staleness, and a buy/sell composer that surfaces the
 // buy(instant)/sell(raidable convoy, clears on arrival) asymmetry. Inspired by
 // Stellar Charters' Exchange. UI-only: same messages, same lagged-price model. --
-const COMMODITIES: Commodity[] = ["fuel", "ore", "alloys", "provisions", "volatiles"];
+const COMMODITIES: Commodity[] = [
+  "metallic_ore", "rare_elements", "silicates", "volatiles", "biomass",
+  "alloys", "electronics", "polymers", "fuel", "provisions",
+  "machinery", "armaments",
+];
 
 // The composer's local selection (the board is the master list, this the detail).
 const composer: { side: Side; commodity: Commodity } = { side: "buy", commodity: "fuel" };

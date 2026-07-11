@@ -1069,7 +1069,7 @@ mod tests {
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
             // Rival's claim 6000 su away → 20 s of light.
-            mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::Ore, 99.0)]),
+            mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::MetallicOre, 99.0)]),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
         systems[0].extractor_tier = 2; // mine — developed
@@ -1175,7 +1175,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let mk = |id, pos, o| StarSystem {
             id: EntityId(id), pos, name: "S".into(),
-            deposits: vec![sim::Deposit { resource: Commodity::Ore, richness: 2.5, reserves: None, accessibility: 0.5 }],
+            deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
             claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
             extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
@@ -1184,7 +1184,7 @@ mod tests {
             blockade: None,
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
-            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::Ore }), cache_claimed: false,
+            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
@@ -1197,7 +1197,7 @@ mod tests {
         // OWNER always sees own geology (holding is knowing).
         let mine = v[0].deposits.as_ref().expect("owner sees own geology");
         assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0].resource, Commodity::Ore);
+        assert_eq!(mine[0].resource, Commodity::MetallicOre);
         assert_eq!(mine[0].richness, 2.5);
         // An UNSURVEYED rival system carries NO deposit vec — even with its
         // ownership long visible (t=1000 s ≫ the 20 s light). Band only.
@@ -1213,7 +1213,7 @@ mod tests {
         // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
         // never a rival (even with ownership visible), never on an unowned
         // system (even one I surveyed: a survey grants geology, NOT the trait).
-        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:ore"), "the owner sees their trait (with the vein commodity)");
+        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:metallic_ore"), "the owner sees their trait (with the vein commodity)");
         assert!(v[1].trait_.is_none(), "a rival's trait must never leak");
         assert!(v[2].trait_.is_none(), "surveying does NOT reveal the trait (ownership does)");
         assert!(rv[1].trait_.is_some(), "the rival sees their own system's trait");

@@ -421,12 +421,20 @@ impl Timeline {
 }
 
 fn commodity_name(c: Commodity) -> &'static str {
+    // §economy: human names for the timeline prose (the wire uses `slug()`).
     match c {
-        Commodity::Fuel => "fuel",
-        Commodity::Ore => "ore",
-        Commodity::Alloys => "alloys",
-        Commodity::Provisions => "provisions",
+        Commodity::MetallicOre => "metallic ore",
+        Commodity::RareElements => "rare elements",
+        Commodity::Silicates => "silicates",
         Commodity::Volatiles => "volatiles",
+        Commodity::Biomass => "biomass",
+        Commodity::Alloys => "alloys",
+        Commodity::Electronics => "electronics",
+        Commodity::Polymers => "polymers",
+        Commodity::Fuel => "fuel",
+        Commodity::Provisions => "provisions",
+        Commodity::Machinery => "machinery",
+        Commodity::Armaments => "armaments",
     }
 }
 
@@ -619,7 +627,7 @@ mod tests {
             w.time,
             EventPayload::Trade(TradeEvent::Sold {
                 player: a,
-                commodity: Commodity::Ore,
+                commodity: Commodity::MetallicOre,
                 units: 12,
                 unit_price: 8.0,
             }),
@@ -628,7 +636,7 @@ mod tests {
         tl.promote(w.time);
         let (entries, _away) = tl.digest(a);
         assert_eq!(entries.len(), 1, "own sale should journal at once");
-        assert!(entries[0].text.contains("Sold 12 ore"));
+        assert!(entries[0].text.contains("Sold 12 metallic ore"));
     }
 
     #[test]
@@ -689,7 +697,7 @@ mod tests {
                 i as f64,
                 EventPayload::Trade(TradeEvent::Delivered {
                     player: a,
-                    commodity: Commodity::Ore,
+                    commodity: Commodity::MetallicOre,
                     units: i + 1,
                 }),
             );

@@ -230,15 +230,16 @@ pub struct HomeSlot {
     pub system: Option<EntityId>,
 }
 
-/// Commodities ordered cheapest → most valuable (by base price). Deposits are
-/// drawn from this ladder biased by distance from the hub, so near-hub systems
-/// hold common/cheap resources and the frontier holds the valuable ones (§4).
-const VALUE_TIER: [Commodity; 5] = [
-    Commodity::Provisions,
-    Commodity::Ore,
-    Commodity::Fuel,
+/// §economy: the RAW commodity ladder, cheapest → frontier-most (by base
+/// price). Deposits are drawn ONLY from raws (processed/advanced goods are
+/// MADE, never mined), biased by distance from the hub — near-hub systems hold
+/// common/cheap raws, the frontier holds Rare Elements and rich Volatiles (§4).
+const RAW_VALUE_TIER: [Commodity; 5] = [
+    Commodity::Biomass,
+    Commodity::Silicates,
+    Commodity::MetallicOre,
     Commodity::Volatiles,
-    Commodity::Alloys,
+    Commodity::RareElements,
 ];
 
 /// Base extraction rate (units/sec) a deposit produces; scaled up toward the
@@ -304,9 +305,9 @@ fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
     for _ in 0..n {
         // Pick a commodity tier centred on the frontier (cheap near hub, valuable
         // at the rim) with seeded spread.
-        let center = frontier * (VALUE_TIER.len() - 1) as f64;
-        let idx = (center + rng.range(-1.1, 1.1)).round().clamp(0.0, 4.0) as usize;
-        let resource = VALUE_TIER[idx];
+        let center = frontier * (RAW_VALUE_TIER.len() - 1) as f64;
+        let idx = (center + rng.range(-1.1, 1.1)).round().clamp(0.0, (RAW_VALUE_TIER.len() - 1) as f64) as usize;
+        let resource = RAW_VALUE_TIER[idx];
         // Richness rises toward the frontier, jittered.
         let richness = DEPOSIT_BASE_RICHNESS * (0.5 + 1.7 * frontier) * rng.range(0.6, 1.4);
         deposits.push(Deposit {
@@ -360,15 +361,18 @@ const HOME_SYSTEM_MAGIC: u64 = 0x484F_4D45_5359_5354; // "HOMESYST"
 /// that produces from turn one — deliberately weaker than the dangerous frontier,
 /// so expansion outward stays the reward/risk (the distance/value gradient holds).
 fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
+    // §economy: the direct successors of the old Provisions + Ore pair — the
+    // home extracts BIOMASS (→ Provisions via the Agroplex) and METALLIC ORE
+    // (→ Alloys via a Smelter), at the same modest richnesses.
     vec![
         Deposit {
-            resource: Commodity::Provisions,
+            resource: Commodity::Biomass,
             richness: DEPOSIT_BASE_RICHNESS * rng.range(0.85, 1.15),
             reserves: None,
             accessibility: 0.1,
         },
         Deposit {
-            resource: Commodity::Ore,
+            resource: Commodity::MetallicOre,
             richness: DEPOSIT_BASE_RICHNESS * rng.range(0.7, 1.0),
             reserves: None,
             accessibility: 0.1,

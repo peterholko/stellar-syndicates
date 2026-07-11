@@ -107,36 +107,36 @@ const HZ: u64 = TICK_HZ as u64;
 // **Alloys + Fuel** (gather them across systems, the §step1 "spread of systems matters").
 
 /// Convoy (bulk hauler): plain **Ore** — cheap, the workhorse you build at home.
-pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 35.0)], build_ticks: 12 * HZ };
+pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 35.0)], build_ticks: 12 * HZ };
 /// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
 pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 18.0), (Commodity::Fuel, 12.0)], build_ticks: 10 * HZ };
 /// Scout: cheap **Ore + Fuel** — the entry unit, buildable at the home turn one
 /// (cheap enough that a caught scout is an acceptable loss).
-pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 20.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
+pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 20.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
 /// Corvette: **Ore + Alloys** — the dedicated defender; military industry.
-pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 30.0), (Commodity::Alloys, 15.0)], build_ticks: 14 * HZ };
+pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 30.0), (Commodity::Alloys, 15.0)], build_ticks: 14 * HZ };
 /// Colony Ship: **Ore + Alloys + Provisions** (colonists eat) — absorbs the old
 /// instant-claim economics into a physical, raidable investment (§ships part 3).
-pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0), (Commodity::Alloys, 20.0), (Commodity::Provisions, 40.0)], build_ticks: 30 * HZ };
+pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 60.0), (Commodity::Alloys, 20.0), (Commodity::Provisions, 40.0)], build_ticks: 30 * HZ };
 /// Extractor (system development): bulk **Ore** — a structure that grows the system's output.
-pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0)], build_ticks: 18 * HZ };
+pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 60.0)], build_ticks: 18 * HZ };
 /// Depot (system development): light **Ore** — cheaper than an Extractor, so early
 /// storage capacity is accessible before income compounds.
-pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0)], build_ticks: 15 * HZ };
+pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 45.0)], build_ticks: 15 * HZ };
 /// Shipyard (system development): **Ore + Alloys** per tier — the Alloys component
 /// means expanding military industry needs FRONTIER material shipped in (Ore and
 /// Alloys rarely co-occur), reinforcing the industrial geography.
-pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 10.0)], build_ticks: 20 * HZ };
+pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 50.0), (Commodity::Alloys, 10.0)], build_ticks: 20 * HZ };
 /// Sensor Array (system development): **Ore + Alloys** — advanced intel
 /// infrastructure stays tied to frontier material.
-pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 40.0), (Commodity::Alloys, 15.0)], build_ticks: 18 * HZ };
+pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 40.0), (Commodity::Alloys, 15.0)], build_ticks: 18 * HZ };
 /// Defense Platform (system development): the priciest development yet —
 /// fortification is an INVESTMENT (**Ore + Alloys** per tier).
-pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
+pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
 /// Habitat (system development): **Ore + Provisions** — food to found a colony.
-pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
+pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 45.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
 /// Fuel Refinery (system development): **Ore + Alloys** industrial plant.
-pub const REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 15.0)], build_ticks: 20 * HZ };
+pub const REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::MetallicOre, 50.0), (Commodity::Alloys, 15.0)], build_ticks: 20 * HZ };
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {

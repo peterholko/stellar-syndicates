@@ -205,7 +205,11 @@ export interface GalaxyInfo {
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
 
-export type Commodity = "fuel" | "ore" | "alloys" | "provisions" | "volatiles";
+// §economy: the 12-commodity industrial web (5 raw · 5 processed · 2 advanced).
+export type Commodity =
+  | "metallic_ore" | "rare_elements" | "silicates" | "volatiles" | "biomass"      // raw
+  | "alloys" | "electronics" | "polymers" | "fuel" | "provisions"                 // processed
+  | "machinery" | "armaments";                                                    // advanced
 
 export interface CargoView {
   commodity: Commodity;

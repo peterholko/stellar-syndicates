@@ -215,17 +215,28 @@ const STAR_TINT: Record<string, number> = {
 // the deposit remains a SYSTEM-level entity). Mirrors the spec's mapping:
 //   ore → rocky/barren · alloys → industrial (barren/desert) · fuel → gas giant
 //   provisions → habitable (ocean/terrestrial) · volatiles → icy body.
+// §economy: only RAWS occur as deposits post-migration; processed/advanced
+// entries are graceful fallbacks for any legacy deposit still in flight.
 const DEP_KINDS: Record<Commodity, PlanetKind[]> = {
-  ore: ["barren", "desert", "terrestrial"],
+  metallic_ore: ["barren", "desert", "terrestrial"],
+  rare_elements: ["lava", "barren"],
+  silicates: ["desert", "barren"],
+  volatiles: ["ice"],
+  biomass: ["ocean", "terrestrial"],
   alloys: ["barren", "desert"],
+  electronics: ["barren"],
+  polymers: ["barren"],
   fuel: ["gas_giant"],
   provisions: ["ocean", "terrestrial"],
-  volatiles: ["ice"],
+  machinery: ["barren"],
+  armaments: ["barren"],
 };
 const FILLER_KINDS: PlanetKind[] = ["terrestrial", "desert", "barren", "lava", "ice", "gas_giant", "ocean"];
 
 const COMMODITY_COLOR: Record<Commodity, number> = {
-  provisions: 0x7fdc8a, ore: 0xb0894f, fuel: 0xff9d5c, volatiles: 0x6bd0ff, alloys: 0xc99bff,
+  metallic_ore: 0xb0894f, rare_elements: 0xffd76b, silicates: 0xd8c9a3, volatiles: 0x6bd0ff, biomass: 0x7fdc8a,
+  alloys: 0xc99bff, electronics: 0x6be2d8, polymers: 0xe89ad1, fuel: 0xff9d5c, provisions: 0x9fe08a,
+  machinery: 0x9fb0c8, armaments: 0xff7a6b,
 };
 
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
@@ -282,7 +293,7 @@ export function buildVisualSystem(sys: SystemInfo, sysDeposits: Deposit[]): Visu
   for (const d of sysDeposits) {
     if (d.resource === "volatiles") { volatiles.push(d); continue; }
     const kind = pick(rng, DEP_KINDS[d.resource]);
-    const p = mkPlanet(kind, d.resource === "provisions", [d]);
+    const p = mkPlanet(kind, d.resource === "biomass" || d.resource === "provisions", [d]);
     if (kind === "gas_giant") gasGiant = p;
   }
   for (const d of volatiles) {

@@ -188,7 +188,7 @@ mod tests {
     /// band_value mirrors the bootstrap anchors (Σ richness × base_price).
     #[test]
     fn band_value_uses_the_bootstrap_anchors() {
-        let deps = vec![dep(Commodity::Ore, 2.0), dep(Commodity::Alloys, 1.0)];
+        let deps = vec![dep(Commodity::MetallicOre, 2.0), dep(Commodity::Alloys, 1.0)];
         assert_eq!(band_value(&deps), 2.0 * 8.0 + 26.0);
         assert_eq!(band_value(&[]), 0.0);
     }

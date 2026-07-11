@@ -3134,12 +3134,20 @@ impl World {
                     // convoys turn one. max() never removes an earned higher tier.
                     sys.shipyard_tier = sys.shipyard_tier.max(crate::build::HOME_SHIPYARD_TIER);
                 }
-                // Starting inventory: a stock of each commodity to sell, plus a
-                // treasury to buy with.
-                let inventory = crate::cargo::Commodity::ALL
-                    .into_iter()
-                    .map(|c| (c, 120u32))
-                    .collect();
+                // Starting inventory: a stock of the ORIGINAL five goods to sell,
+                // plus a treasury to buy with. §economy: deliberately NOT all 12 —
+                // handing out free Machinery/Armaments would skip the industrial
+                // ladder; the Part-6 starter kit seeds the home STOCKPILE instead.
+                let inventory = [
+                    crate::cargo::Commodity::MetallicOre,
+                    crate::cargo::Commodity::Volatiles,
+                    crate::cargo::Commodity::Alloys,
+                    crate::cargo::Commodity::Fuel,
+                    crate::cargo::Commodity::Provisions,
+                ]
+                .into_iter()
+                .map(|c| (c, 120u32))
+                .collect();
                 self.players.insert(
                     *id,
                     Corporation {
@@ -5214,10 +5222,12 @@ impl World {
         let hub = self.hub;
         let nearest = self.nearest_system(home).unwrap_or(hub);
 
-        // Deterministic demo cargo for the convoy (becomes real trade goods in §9).
+        // Deterministic demo cargo for the convoy. §economy: draws from the RAW
+        // ladder explicitly (a starting convoy hauls raws — the old `ALL % 5` was
+        // a magic modulo that silently narrowed when ALL grew to 12).
         let cargo = {
-            let commodity =
-                crate::cargo::Commodity::ALL[(self.rng.next_u64() % 5) as usize];
+            let commodity = crate::cargo::Commodity::RAW
+                [(self.rng.next_u64() % crate::cargo::Commodity::RAW.len() as u64) as usize];
             let units = 40 + (self.rng.next_u64() % 160) as u32;
             crate::cargo::Cargo { commodity, units }
         };
@@ -5508,14 +5518,14 @@ mod tests {
         let id = PlayerId(2);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
-        let ore0 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Ore];
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
+        let ore0 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::MetallicOre];
         let ships0 = w.fleets.len();
 
         w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
         // Recipe deducted at once (minus this tick's accrual on the ore deposit; home
         // produces ore, so assert it dropped by ~the recipe, not exactly).
-        let ore1 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Ore];
+        let ore1 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::MetallicOre];
         assert!(ore1 < ore0 - 30.0, "ore stockpile debited by the convoy recipe (~40)");
         assert_eq!(w.build_queue.len(), 1, "a build job is enqueued");
         assert_eq!(w.fleets.len(), ships0, "no ship yet — it builds over time");
@@ -5563,7 +5573,7 @@ mod tests {
         let id = PlayerId(4);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
         let rate0: f64 = w.systems.iter().find(|s| s.id == home).unwrap().deposits.iter().map(|d| d.richness).sum();
 
         w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
@@ -5588,7 +5598,7 @@ mod tests {
         let id = PlayerId(5);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
         w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
         // Lose the system mid-build (e.g. a future conquest).
         w.systems.iter_mut().find(|s| s.id == home).unwrap().owner = Some(PlayerId(999));
@@ -5611,7 +5621,7 @@ mod tests {
         let id = PlayerId(6);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
         w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
         w.systems.iter_mut().find(|s| s.id == home).unwrap().owner = Some(PlayerId(999));
         for _ in 0..(crate::build::EXTRACTOR_RECIPE.build_ticks + 4) {
@@ -5629,7 +5639,7 @@ mod tests {
         let id = PlayerId(21);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 10_000.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 10_000.0)]);
 
         // Fill every FREE slot (budget − whatever the home starts with, e.g. a
         // seeded Shipyard) with Extractor developments — each enqueue holds a slot.
@@ -5645,7 +5655,7 @@ mod tests {
         }
 
         // One more: SOFT reject — no debit, no job, an owner-only NoSlot notice.
-        let ore_before = system_stock(&w, home, Commodity::Ore);
+        let ore_before = system_stock(&w, home, Commodity::MetallicOre);
         let jobs_before = w.build_queue.len();
         let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
         assert!(
@@ -5657,7 +5667,7 @@ mod tests {
         );
         assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no build started");
         assert_eq!(w.build_queue.len(), jobs_before, "no job enqueued");
-        let ore_after = system_stock(&w, home, Commodity::Ore);
+        let ore_after = system_stock(&w, home, Commodity::MetallicOre);
         assert!(ore_after > ore_before - 1.0, "nothing was debited (accrual aside)");
 
         // Ships are UNITS, not developments — never slot-gated (only recipe-gated).
@@ -5736,7 +5746,7 @@ mod tests {
         let id = PlayerId(24);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0)]);
         let cap0 = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
         let slots0 = w.systems.iter().find(|s| s.id == home).unwrap().dev_slots_built();
 
@@ -5773,7 +5783,7 @@ mod tests {
             ShipKind::Convoy,
             pos, // already at the destination → arrives immediately
             FleetOrder::MoveTo { dest: pos },
-            Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 40 }),
+            Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 40 }),
         );
         ship.mission = Some(TradeMission::DeliverToSystem { system: home });
         w.fleets.insert(sid, ship);
@@ -5783,7 +5793,7 @@ mod tests {
         for _ in 0..5 {
             for ev in w.step(&[]) {
                 match ev.payload {
-                    EventPayload::Trade(TradeEvent::Delivered { units, commodity: Commodity::Ore, .. }) => delivered += units,
+                    EventPayload::Trade(TradeEvent::Delivered { units, commodity: Commodity::MetallicOre, .. }) => delivered += units,
                     EventPayload::Trade(TradeEvent::StorageOverflow { units, system, .. }) => {
                         assert_eq!(system, home);
                         overflow += units;
@@ -5813,7 +5823,7 @@ mod tests {
         assert!(sys.dev_slots_built() >= 1, "the seeded shipyard consumes a development slot");
 
         // Convoy (needs tier 1) builds turn one — no chicken-and-egg stall.
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0)]);
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "convoy builds at the home shipyard");
     }
@@ -5824,7 +5834,7 @@ mod tests {
         let id = PlayerId(27);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Alloys, 100.0), (Commodity::Fuel, 100.0), (Commodity::Ore, 200.0)]);
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 100.0), (Commodity::Fuel, 100.0), (Commodity::MetallicOre, 200.0)]);
 
         // Home is tier 1 → a Raider (needs 2) SOFT-rejects with the owner notice.
         let alloys0 = system_stock(&w, home, Commodity::Alloys);
@@ -5858,7 +5868,7 @@ mod tests {
         let claim = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
         grant_system(&mut w, id, claim);
         assert_eq!(w.systems.iter().find(|s| s.id == claim).unwrap().owner, Some(id), "claimed");
-        seed_stock(&mut w, claim, &[(Commodity::Ore, 100.0)]);
+        seed_stock(&mut w, claim, &[(Commodity::MetallicOre, 100.0)]);
 
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: claim, ship_kind: ShipKind::Convoy, join: None }]);
         assert!(
@@ -5884,7 +5894,7 @@ mod tests {
             sys.depot_tier = 1;
             sys.habitat_tier = 1;
             sys.habitat_fed = true;
-            sys.stockpile.insert(Commodity::Ore, 123.5);
+            sys.stockpile.insert(Commodity::MetallicOre, 123.5);
         }
         // Scout intel rides the snapshot too (§scout part 2).
         w.players.get_mut(&id).unwrap().intel.insert(
@@ -5937,16 +5947,16 @@ mod tests {
         w.systems.iter_mut().find(|s| s.id == home).unwrap().habitat_tier = 1;
         seed_stock(&mut w, home, &[(Commodity::Provisions, 50.0)]);
 
-        let ore_rate = deposit_rate(&w, home, Commodity::Ore);
+        let ore_rate = deposit_rate(&w, home, Commodity::MetallicOre);
         let prov_rate = deposit_rate(&w, home, Commodity::Provisions);
-        let ore0 = system_stock(&w, home, Commodity::Ore);
+        let ore0 = system_stock(&w, home, Commodity::MetallicOre);
         let prov0 = system_stock(&w, home, Commodity::Provisions);
         w.step(&[]);
         let dt = crate::config::DT;
         let mult = crate::build::HABITAT_OUTPUT_MULT;
         let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER;
 
-        let ore_gain = system_stock(&w, home, Commodity::Ore) - ore0;
+        let ore_gain = system_stock(&w, home, Commodity::MetallicOre) - ore0;
         assert!((ore_gain - ore_rate * mult * dt).abs() < 1e-9, "every deposit is boosted ×{mult} (got {ore_gain})");
         let prov_delta = system_stock(&w, home, Commodity::Provisions) - prov0;
         let expect = prov_rate * mult * dt - upkeep * dt;
@@ -5969,7 +5979,7 @@ mod tests {
         sys.habitat_tier = 1;
         sys.habitat_fed = true; // as a fresh build leaves it (presumed fed)
         sys.deposits = vec![crate::galaxy::Deposit {
-            resource: Commodity::Ore,
+            resource: Commodity::MetallicOre,
             richness: 1.0,
             reserves: None,
             accessibility: 0.5,
@@ -5977,14 +5987,14 @@ mod tests {
         let sid = sys.id;
 
         // Tick 1: no Provisions → UNFED (notice), output UN-boosted, tier intact.
-        let ore0 = system_stock(&w, sid, Commodity::Ore);
+        let ore0 = system_stock(&w, sid, Commodity::MetallicOre);
         let ev = w.step(&[]);
         assert!(
             ev.iter().any(|e| matches!(e.payload, EventPayload::HabitatSupplyChanged { system, fed: false, .. } if system == sid)),
             "the owner is told the habitat went unfed"
         );
         let dt = crate::config::DT;
-        let gain = system_stock(&w, sid, Commodity::Ore) - ore0;
+        let gain = system_stock(&w, sid, Commodity::MetallicOre) - ore0;
         assert!((gain - 1.0 * dt).abs() < 1e-9, "unfed = plain un-boosted output (got {gain})");
         let s = w.systems.iter().find(|s| s.id == sid).unwrap();
         assert_eq!(s.habitat_tier, 1, "nothing is destroyed, no tier lost");
@@ -5992,40 +6002,23 @@ mod tests {
 
         // Resupply (a hauled delivery) → FED again next tick, boost restored.
         seed_stock(&mut w, sid, &[(Commodity::Provisions, 10.0)]);
-        let ore1 = system_stock(&w, sid, Commodity::Ore);
+        let ore1 = system_stock(&w, sid, Commodity::MetallicOre);
         let ev = w.step(&[]);
         assert!(
             ev.iter().any(|e| matches!(e.payload, EventPayload::HabitatSupplyChanged { system, fed: true, .. } if system == sid)),
             "recovery is announced"
         );
-        let gain = system_stock(&w, sid, Commodity::Ore) - ore1;
+        let gain = system_stock(&w, sid, Commodity::MetallicOre) - ore1;
         let mult = crate::build::HABITAT_OUTPUT_MULT;
         assert!((gain - 1.0 * mult * dt).abs() < 1e-9, "boost restored once fed (got {gain})");
     }
 
-    /// BALANCE SANITY: the home's renewable Provisions output feeds TWO Habitat
-    /// tiers from a standing start — the natural first Habitats are
-    /// self-sustaining, never a starving home. (Worst-case home provisions
-    /// richness 0.3825/s vs 2 × 0.15 = 0.30/s upkeep.)
-    #[test]
-    fn home_two_tier_habitat_is_self_sufficient() {
-        let mut w = test_world();
-        let id = PlayerId(33);
-        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().habitat_tier = 2;
-        // From ZERO stored food: tick 1 runs unfed, geology replenishes, then the
-        // colony feeds itself indefinitely with a growing surplus.
-        for _ in 0..(30 * crate::config::TICK_HZ) {
-            w.step(&[]);
-        }
-        let s = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert!(s.habitat_fed, "a 2-tier home habitat sustains itself on home geology");
-        assert!(
-            system_stock(&w, home, Commodity::Provisions) > 1.0,
-            "…with a growing food surplus, not a knife-edge"
-        );
-    }
+    // §economy NOTE: `home_two_tier_habitat_is_self_sufficient` was retired here.
+    // The home now extracts BIOMASS (a raw), not Provisions (a processed good),
+    // so direct geological self-feeding is impossible BY DESIGN in the industrial
+    // web. The self-sustaining-home guarantee is re-established by the Part-4
+    // bootstrap (seeded Bioharvester + Agroplex feed the starting population) and
+    // its test replaces this one.
 
     // --- §buildings step 3b: Fuel Refinery ------------------------------------
 
@@ -6147,7 +6140,7 @@ mod tests {
         let id = PlayerId(41);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 50.0)]); // fuel seed covers the 8 Fuel
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]); // fuel seed covers the 8 Fuel
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Scout, join: None }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "a tier-1 shipyard builds scouts");
         let mut spawned = false;
@@ -6313,7 +6306,7 @@ mod tests {
             let id = PlayerId(7);
             w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
             let home = w.players[&id].home_system.unwrap();
-            seed_stock(&mut w, home, &[(Commodity::Ore, 200.0), (Commodity::Alloys, 100.0)]);
+            seed_stock(&mut w, home, &[(Commodity::MetallicOre, 200.0), (Commodity::Alloys, 100.0)]);
             w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
             for _ in 0..400 {
                 w.step(&[]);
@@ -6417,12 +6410,12 @@ mod tests {
         let id = PlayerId(3);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 50.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]);
         let f0 = home_fuel(&w, id);
         let ev = w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
         assert!(
             ev.iter().any(|e| matches!(&e.payload,
-                EventPayload::Trade(TradeEvent::SellDispatched { commodity: Commodity::Ore, .. }))),
+                EventPayload::Trade(TradeEvent::SellDispatched { commodity: Commodity::MetallicOre, .. }))),
             "ore fleets to the hub",
         );
         assert!(
@@ -6441,14 +6434,14 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         drain_fuel(&mut w, id);
-        seed_stock(&mut w, home, &[(Commodity::Ore, 40.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 40.0)]);
         let ev = w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
         assert!(
             ev.iter().any(|e| matches!(e.payload,
                 EventPayload::FuelShortfall { kind: crate::fuel::ShortfallKind::Shipment, .. })),
             "a held shipment notifies its owner",
         );
-        assert!(system_stock(&w, home, Commodity::Ore) >= 40.0, "held goods are refunded, never lost");
+        assert!(system_stock(&w, home, Commodity::MetallicOre) >= 40.0, "held goods are refunded, never lost");
     }
 
     #[test]
@@ -6867,7 +6860,7 @@ mod tests {
                 let c = w.fleets.get_mut(&convoy).unwrap();
                 c.composition.clear();
                 c.composition.insert(ShipKind::Convoy, 1);
-                c.cargo = Some(Cargo { commodity: Commodity::Ore, units: 40 });
+                c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
             }
             let cmd = if attack {
                 Command::AttackFleet { player_id: atk, fleet_id: raider, target_id: convoy }
@@ -7841,7 +7834,7 @@ mod tests {
         let id = PlayerId(44);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 100.0), (Commodity::Alloys, 50.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None }]);
         assert!(
             ev.iter().any(|e| matches!(
@@ -7981,16 +7974,16 @@ mod tests {
 
     #[test]
     fn market_sell_commits_goods_and_clears_on_arrival() {
-        use crate::cargo::Commodity::Ore;
+        use crate::cargo::Commodity::MetallicOre;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let credits0 = w.players[&id].credits;
-        let ore0 = w.players[&id].inventory[&Ore];
+        let ore0 = w.players[&id].inventory[&MetallicOre];
 
-        w.step(&[Command::MarketSell { player_id: id, commodity: Ore, units: 40 }]);
+        w.step(&[Command::MarketSell { player_id: id, commodity: MetallicOre, units: 40 }]);
         // Goods committed to the crossing now; credits unchanged until arrival.
-        assert_eq!(w.players[&id].inventory[&Ore], ore0 - 40);
+        assert_eq!(w.players[&id].inventory[&MetallicOre], ore0 - 40);
         assert_eq!(w.players[&id].credits, credits0);
         let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
         assert!(convoy.is_some(), "sell should spawn a convoy toward the hub");
@@ -8026,7 +8019,7 @@ mod tests {
 
     #[test]
     fn limit_orders_clear_in_uniform_price_batch() {
-        use crate::cargo::Commodity::Ore;
+        use crate::cargo::Commodity::MetallicOre;
         let mut w = test_world();
         let (buyer, seller) = (PlayerId(1), PlayerId(2));
         w.step(&[
@@ -8035,15 +8028,15 @@ mod tests {
         ]);
         let buyer_credits0 = w.players[&buyer].credits;
         let seller_credits0 = w.players[&seller].credits;
-        let seller_ore0 = w.players[&seller].inventory[&Ore];
+        let seller_ore0 = w.players[&seller].inventory[&MetallicOre];
 
         // A crossing pair: buyer pays up to 9, seller wants at least 7.
         w.step(&[
-            Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: Ore, units: 50, limit_price: 7.0 },
-            Command::PlaceLimitOrder { player_id: buyer, side: Side::Buy, commodity: Ore, units: 50, limit_price: 9.0 },
+            Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: MetallicOre, units: 50, limit_price: 7.0 },
+            Command::PlaceLimitOrder { player_id: buyer, side: Side::Buy, commodity: MetallicOre, units: 50, limit_price: 9.0 },
         ]);
         // Reservations taken at placement.
-        assert_eq!(w.players[&seller].inventory[&Ore], seller_ore0 - 50);
+        assert_eq!(w.players[&seller].inventory[&MetallicOre], seller_ore0 - 50);
         assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 9.0)).abs() < 1e-6);
         assert_eq!(w.book.len(), 2);
 
@@ -8325,7 +8318,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
-        seed_stock(&mut w, home, &[(Commodity::Ore, 300.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 300.0)]);
         let dock = park_fleet(&mut w, id, hpos, ShipKind::Raider);
         let fleets_before = w.fleets.len();
         w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: Some(dock) }]);
@@ -8473,7 +8466,7 @@ mod tests {
         let id = PlayerId(2);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::Ore, 300.0)]);
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 300.0)]);
         let fleets_before = w.fleets.len();
         w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
         for _ in 0..CONVOY_RECIPE.build_ticks + 2 {
@@ -8901,7 +8894,7 @@ mod tests {
             player_id: id,
             order: StandingOrder {
                 id: 0, source: Endpoint::Hub, dest: Endpoint::Home,
-                commodity: crate::cargo::Commodity::Ore,
+                commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
             },
@@ -8912,7 +8905,7 @@ mod tests {
             player_id: id,
             order: StandingOrder {
                 id: 0, source: Endpoint::System { id: unowned }, dest: Endpoint::Hub,
-                commodity: crate::cargo::Commodity::Ore,
+                commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
             },
@@ -8922,7 +8915,7 @@ mod tests {
             player_id: id,
             order: StandingOrder {
                 id: 0, source: Endpoint::System { id: sysid }, dest: Endpoint::Hub,
-                commodity: crate::cargo::Commodity::Ore,
+                commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::MaintainAtDest { target: 5.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
             },
@@ -8934,7 +8927,7 @@ mod tests {
             player_id: id,
             order: StandingOrder {
                 id: 0, source: Endpoint::System { id: sysid }, dest: Endpoint::Hub,
-                commodity: crate::cargo::Commodity::Ore,
+                commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
             },
@@ -8950,7 +8943,7 @@ mod tests {
     /// in-flight accounting.
     #[test]
     fn maintain_at_dest_two_sources_do_not_overship() {
-        use crate::cargo::Commodity::Ore;
+        use crate::cargo::Commodity::MetallicOre;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
@@ -8965,9 +8958,9 @@ mod tests {
         }
         // Stock both sources well above the target; empty the destination.
         for &sid in &[a, b] {
-            w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(Ore, 50.0);
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(MetallicOre, 50.0);
         }
-        w.systems.iter_mut().find(|s| s.id == d).unwrap().stockpile.remove(&Ore);
+        w.systems.iter_mut().find(|s| s.id == d).unwrap().stockpile.remove(&MetallicOre);
 
         for &src in &[a, b] {
             w.step(&[Command::SetStandingOrder {
@@ -8976,7 +8969,7 @@ mod tests {
                     id: 0,
                     source: Endpoint::System { id: src },
                     dest: Endpoint::System { id: d },
-                    commodity: Ore,
+                    commodity: MetallicOre,
                     trigger: Trigger::MaintainAtDest { target: 5.0 },
                     status: OrderStatus::Active,
                     next_eval_tick: 0,
@@ -8989,9 +8982,9 @@ mod tests {
         // launched during setup, refill sources, empty the depot, clear the gates.
         w.fleets.retain(|_, s| s.mission.is_none());
         for &sid in &[a, b] {
-            w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(Ore, 50.0);
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(MetallicOre, 50.0);
         }
-        w.systems.iter_mut().find(|s| s.id == d).unwrap().stockpile.remove(&Ore);
+        w.systems.iter_mut().find(|s| s.id == d).unwrap().stockpile.remove(&MetallicOre);
         for o in w.players.get_mut(&id).unwrap().standing_orders.iter_mut() {
             o.next_eval_tick = 0;
             o.in_flight = None;
@@ -9199,7 +9192,7 @@ mod tests {
     fn doomed_supply(w: &mut World, owner: PlayerId) -> (EntityId, EntityId) {
         let d = w.systems.iter().find(|s| s.owner.is_none()).unwrap().id;
         let d_pos = w.systems.iter().find(|s| s.id == d).unwrap().pos;
-        let cargo = Cargo { commodity: crate::cargo::Commodity::Ore, units: 30 };
+        let cargo = Cargo { commodity: crate::cargo::Commodity::MetallicOre, units: 30 };
         // Spawn essentially on top of the destination so it "arrives" at once.
         let convoy = w.spawn_trade_convoy(
             owner,
@@ -9325,7 +9318,7 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let sys = grant_system_at(&mut w, def, Vec2::new(5000.0, 0.0), 0); // no platform
-        seed_stock(&mut w, sys, &[(Commodity::Ore, 50.0), (crate::fuel::MOVEMENT_FUEL, 500.0)]);
+        seed_stock(&mut w, sys, &[(Commodity::MetallicOre, 50.0), (crate::fuel::MOVEMENT_FUEL, 500.0)]);
         let blk = blockader_on_station(&mut w, atk, sys, 1);
 
         let mut established = None;
@@ -9512,7 +9505,7 @@ mod tests {
             s.extractor_tier = 4;
             s.shipyard_tier = 2;
             s.habitat_tier = 3;
-            *s.stockpile.entry(Commodity::Ore).or_insert(0.0) += 100.0;
+            *s.stockpile.entry(Commodity::MetallicOre).or_insert(0.0) += 100.0;
         }
         let colony = colony_at(&mut w, atk, pos);
 
@@ -9537,7 +9530,7 @@ mod tests {
         assert_eq!(s.shipyard_tier, 1, "2→1");
         assert_eq!(s.habitat_tier, 1, "3→1 (rounded down)");
         assert!(s.blockade.is_none(), "the captured system is no longer besieged");
-        assert_eq!(plunder.unwrap().get(&Commodity::Ore).copied(), Some(100), "the stockpile is plundered (itemized)");
+        assert_eq!(plunder.unwrap().get(&Commodity::MetallicOre).copied(), Some(100), "the stockpile is plundered (itemized)");
         assert!(!w.fleets.contains_key(&colony), "the lone colony ship was consumed (occupation)");
     }
 
@@ -10102,7 +10095,7 @@ mod tests {
         w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0; // launch at once
         // A lone broadcasting convoy with cargo, inside the tier-1 hunt radius (2600).
         let convoy = squad(&mut w, victim, epos + Vec2::new(1400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
-        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
         let mut pirate_raid = false;
         for _ in 0..(90 * crate::config::TICK_HZ) {
             let ev = w.step(&[]);
@@ -10126,7 +10119,7 @@ mod tests {
         let guard = grant_system_at(&mut w, victim, epos + Vec2::new(1200.0, 0.0), 2); // 2 platform tiers
         let gpos = sys_pos(&w, guard);
         let convoy = squad(&mut w, victim, gpos, ShipKind::Convoy, 1, FleetOrder::Idle);
-        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
         // A lone SCOUT even closer to the base — must never be targeted (it's dark).
         let _scout = squad(&mut w, victim, epos + Vec2::new(300.0, 0.0), ShipKind::Scout, 1, FleetOrder::Idle);
         for _ in 0..(20 * crate::config::TICK_HZ) {
@@ -10199,7 +10192,7 @@ mod tests {
             w.step(&[Command::AddPlayer { id: PlayerId(1), name: "V".into() }]);
             let (sid, epos) = an_enclave(&w);
             let convoy = squad(&mut w, PlayerId(1), epos + Vec2::new(1200.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
-            w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::Ore, units: 20 });
+            w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
             for _ in 0..(60 * crate::config::TICK_HZ) {
                 w.step(&[]);
             }
@@ -10475,11 +10468,11 @@ mod tests {
 
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
-            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::Ore, units: 10 })),
-            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::Ore, units: 4, unit_price: 5.0 })),
-            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::Ore, units: 2, unit_price: 3.0 })),
-            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::Ore, units: 3, unit_price: 2.0 })),
-            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::Ore, units: 1, unit_price: 4.0 })),
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10 })),
+            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0 })),
+            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0 })),
             ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::SystemUpgrade::Depot, tier: 1 }),
             ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
         ]);
@@ -10521,7 +10514,7 @@ mod tests {
         // Capture plunder → cargo captured for the captor; a major loss pends for
         // the old owner (recovery floor stamps at the next valuation close).
         let mut plunder = BTreeMap::new();
-        plunder.insert(Commodity::Ore, 5);
+        plunder.insert(Commodity::MetallicOre, 5);
         plunder.insert(Commodity::Fuel, 3);
         w.accumulate_rankings(&[ev(EventPayload::SystemCaptured { old_owner: p2, new_owner: p1, system: EntityId(1), pos: Vec2::ZERO, plunder })]);
         assert_eq!(w.players[&p1].stats.cargo_captured, 8);
@@ -10540,7 +10533,7 @@ mod tests {
             let c = w.fleets.get_mut(&convoy).unwrap();
             c.composition.clear();
             c.composition.insert(ShipKind::Convoy, 1);
-            c.cargo = Some(Cargo { commodity: Commodity::Ore, units: 40 });
+            c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
         }
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
         run_until(&mut w, 30, |w| !w.fleets.contains_key(&convoy));
@@ -10558,7 +10551,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let make = |w: &mut World, fought: bool| {
             let fid = w.alloc_entity_id();
-            let mut f = Fleet::single(fid, id, ShipKind::Convoy, Vec2::new(50.0, 0.0), FleetOrder::Idle, Some(Cargo { commodity: Commodity::Ore, units: 25 }));
+            let mut f = Fleet::single(fid, id, ShipKind::Convoy, Vec2::new(50.0, 0.0), FleetOrder::Idle, Some(Cargo { commodity: Commodity::MetallicOre, units: 25 }));
             f.mission = Some(TradeMission::DeliverHome);
             f.fought = fought;
             w.fleets.insert(fid, f);
@@ -10646,11 +10639,13 @@ mod tests {
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
         assert_eq!(w2.players[&id].stats.trade_units, 42, "cumulative stats round-trip");
-        assert_eq!(
-            serde_json::to_string(&w.rankings).unwrap(),
-            serde_json::to_string(&w2.rankings).unwrap(),
-            "the published table round-trips"
-        );
+        // Floats through serde_json can drift 1 ULP (no float_roundtrip feature) —
+        // compare the table field-wise with an epsilon on the float columns.
+        assert_eq!(w.rankings.len(), w2.rankings.len(), "the published table round-trips");
+        for (a, b) in w.rankings.iter().zip(&w2.rankings) {
+            assert_eq!((a.player_id, &a.name, a.trade_throughput, &a.titles), (b.player_id, &b.name, b.trade_throughput, &b.titles));
+            assert!((a.valuation - b.valuation).abs() < 1e-6, "valuation round-trips within the shared 1-ULP wobble");
+        }
         let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
         val.as_object_mut().unwrap().remove("rankings");
         let w3: World = serde_json::from_value(val).unwrap();
@@ -10979,7 +10974,7 @@ mod tests {
         sys.claimed_at = Some(0.0);
         sys.trait_ = t;
         sys.deposits = vec![crate::galaxy::Deposit {
-            resource: Commodity::Ore,
+            resource: Commodity::MetallicOre,
             richness: 1.0,
             reserves: None,
             accessibility: 0.5,
@@ -11026,7 +11021,7 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "A".into() }]);
-        let sid = trait_system(&mut w, id, Some(SystemTrait::BonusVein { commodity: Commodity::Ore }));
+        let sid = trait_system(&mut w, id, Some(SystemTrait::BonusVein { commodity: Commodity::MetallicOre }));
         // Add a second, non-vein deposit for the control.
         w.systems.iter_mut().find(|s| s.id == sid).unwrap().deposits.push(crate::galaxy::Deposit {
             resource: Commodity::Provisions,
@@ -11035,7 +11030,7 @@ mod tests {
             accessibility: 0.5,
         });
         w.step(&[]);
-        let ore = system_stock(&w, sid, Commodity::Ore);
+        let ore = system_stock(&w, sid, Commodity::MetallicOre);
         let prov = system_stock(&w, sid, Commodity::Provisions);
         assert!((ore - crate::explore::BONUS_VEIN_MULT * DT).abs() < 1e-9, "the vein commodity runs ×{} (got {ore})", crate::explore::BONUS_VEIN_MULT);
         assert!((prov - DT).abs() < 1e-9, "other commodities are untouched (got {prov})");
@@ -11052,7 +11047,7 @@ mod tests {
             let sid = trait_system(&mut w, id, Some(SystemTrait::DeepDeposits));
             w.systems.iter_mut().find(|s| s.id == sid).unwrap().extractor_tier = tier;
             w.step(&[]);
-            system_stock(&w, sid, Commodity::Ore)
+            system_stock(&w, sid, Commodity::MetallicOre)
         };
         let base = crate::explore::DEEP_DEPOSITS_BASE_MULT;
         let mult = crate::build::EXTRACTOR_RICHNESS_MULT;
