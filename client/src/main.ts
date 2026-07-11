@@ -1078,8 +1078,8 @@ function updateSysviewManage(): void {
     : "";
   // Developments at a glance — building ICONS ×tier (names live in tooltips).
   const habTag = (dyn.habitat_tier ?? 0) > 0
-    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "Habitat upkeep met — the output boost is active.")}`
-                       : ` ${badgeChip("unfed", "unfed", "warn", "Habitat upkeep NOT met — the boost is suspended until Provisions arrive. Nothing is destroyed; it recovers automatically.")}`)
+    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "The colony is well supplied — full workforce, population growing.")}`
+                       : ` ${badgeChip("unfed", (dyn.food_state ?? "rationing").replace("_", " "), "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`)
     : "";
   const DEV_ROW: [string, IconKey, number, string][] = [
     ["Mining Complex", "extractor", dyn.extractor_tier ?? 0, ""],
@@ -2011,13 +2011,13 @@ const SURVEY_SECS_UI = 20;
 function productionReadout(dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const tier = dyn?.extractor_tier ?? 0;
-  let mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
-  // A FED Habitat multiplies the whole system's output on top of the Extractor
-  // (§buildings step 3a); unfed = suspended (shown, not applied). Owner-only.
+  const mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
+  // §economy Part 2: the colony EATS (Provisions ∝ population) and the old
+  // fed-Habitat output boost is retired — supply trouble shows as the food
+  // rung, not a multiplier. Owner-only, like every colony readout.
   const habTier = dyn?.habitat_tier ?? 0;
-  const habMult = state.galaxy?.habitat_output_mult ?? 1.25;
-  const habFed = !!dyn?.habitat_fed;
-  if (habTier > 0 && habFed) mult *= Math.pow(habMult, habTier);
+  const habFed = !!dyn?.habitat_fed; // legacy wire alias for "well supplied"
+  const popM = dyn?.population ?? 0;
   const rateOf = new Map<Commodity, number>();
   // §explore: the readout is owner-only, and an owner always knows their own
   // geology (dyn.deposits present) — read from the light-gated view.
@@ -2026,14 +2026,13 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
   const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
-  const habTag = habTier > 0
-    ? (habFed
-      ? ` <span class="sp-tier" title="a fed Habitat boosts ALL output ×${habMult} per tier">· Habitat ×${habTier}</span>`
-      : ` <span class="sp-tier" style="color:var(--warn)" title="unfed — boost suspended until Provisions arrive (nothing is lost)">· Habitat UNFED</span>`)
+  const habTag = habTier > 0 && !habFed
+    ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${(dyn?.food_state ?? "rationing").replace("_", " ").toUpperCase()}</span>`
     : "";
-  // Standing upkeep line (the game's first continuous consumption).
-  const upkeep = habTier > 0
-    ? `<div class="mhint" style="margin-top:4px" title="A fed Habitat draws this Provisions upkeep from the system stockpile each second; unfed, the output boost is suspended until Provisions arrive (nothing is lost).">${icon("habitat", "sm")} upkeep −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "unfed", "warn", "Output boost suspended until Provisions arrive — nothing is lost.")}`}</div>`
+  // Standing upkeep line (the game's first continuous consumption): the
+  // POPULATION eats, `provisions_per_million_per_s · millions` (§economy Part 2).
+  const upkeep = popM > 0
+    ? `<div class="mhint" style="margin-top:4px" title="The colony's population draws Provisions from the system stockpile each second; shortages slow the workforce and pause growth — nothing is lost, nobody dies.">${icon("habitat", "sm")} pop ${popM.toFixed(1)}M eats −${((state.galaxy?.provisions_per_million_per_s ?? 0.06) * popM).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "short", "warn", "Provisions running low — workforce slowed, growth paused (nothing is lost).")}`}</div>`
     : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
@@ -2429,12 +2428,11 @@ function updateSystemTab(): void {
   // readout, and developments detail moved INTO the System View's management
   // column (one management UI to maintain, not two). The rail keeps the header,
   // stats strip, stockpile summary, ATTENTION CUES, and a prominent way in.
-  const habTier = dyn?.habitat_tier ?? 0;
   const cues: string[] = [];
   if (mine) {
     if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
-    if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
+    if ((dyn?.population ?? 0) > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", (dyn?.food_state ?? "rationing").replace("_", " "))} workforce slowed — ship provisions`);
     if (dyn?.node?.awakened && !dyn.node.fed) cues.push(`${badge("warn", "node unfed")} bonus suspended — ship its upkeep`);
     // §build-progress: the compact construction line — a glance from the map
     // says work is running (and when the next job lands) without opening the view.
@@ -3186,11 +3184,11 @@ function computeInbox(): InboxItem[] {
         stakes: "Production idles at the cap. Ship goods out, automate it, or build a Depot (nothing is lost).",
         actions: [{ label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, { label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics }, { label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
-    if (s.habitat_tier >= 1 && !s.habitat_fed) {
+    if (s.population > 0 && !s.habitat_fed) {
       const key = `habitat:${s.id}`;
       push({ key, weight: INBOX_W.unfedHabitat, tone: "warn", icon: "habitat",
-        headline: `${systemName(s.id)} — Habitat UNFED`,
-        stakes: "Output boost suspended. Ship Provisions here or set a standing order (nothing is lost).",
+        headline: `${systemName(s.id)} — food ${(s.food_state ?? "rationing").replace("_", " ").toUpperCase()}`,
+        stakes: "Workforce slowed, growth paused. Ship Provisions here or set a standing order (nothing is lost, nobody dies).",
         actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
     }
     // §node: a held node whose upkeep lapsed — its TACTICAL BONUS is suspended.

@@ -3941,13 +3941,10 @@ impl World {
                     // system you lost; the resources were already spent — frontier risk).
                     if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
                         // §economy: ONE keyed increment replaces the per-field match.
+                        // (A fresh Habitat needs no food-state priming — the
+                        // ladder is recomputed from stock coverage next tick.)
                         let tier = sys.tier(upgrade) + 1;
                         sys.set_tier(upgrade, tier);
-                        if upgrade == crate::build::StructureKind::Habitat {
-                            // A fresh habitat is presumed FED, so its FIRST
-                            // shortfall emits the unfed transition notice.
-                            sys.habitat_fed = true;
-                        }
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
                     }
                 }
@@ -4078,6 +4075,12 @@ impl World {
                     if let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id) {
                         sy.owner = Some(owner);
                         sy.claimed_at = Some(now);
+                        // §economy Part 2: the ship's crew and berths FOUND the
+                        // colony — a small hungry outpost (ship Provisions to
+                        // grow it; it holds at founding size until a Habitat
+                        // gives it capacity). Additive, so re-settling a
+                        // captured-then-lost colony never shrinks anyone.
+                        sy.population += crate::colony::COLONY_FOUNDING_POP;
                         // §explore Part 3: the claim REVEALS the hidden trait (R3 —
                         // the blind claimer's gamble resolving), and a Precursor
                         // Cache pays its one-time grant (latched — once, ever).
@@ -4197,7 +4200,10 @@ impl World {
                 sys.set_tier(k, t);
             }
             sys.defense_pool = 0.0;
-            sys.habitat_fed = false; // recomputed next tick
+            // §economy Part 2: POPULATION STAYS through a capture (people don't
+            // vanish with the flag — never-decrease holds even here). food_state
+            // is recomputed next tick under the new owner; a halved Habitat may
+            // leave pop over capacity — that just freezes growth, nothing dies.
             sys.blockade = None; // it's the captor's now — no longer besieged
         }
         // Drop the OLD owner's in-progress builds here (they no longer own it).
@@ -4303,37 +4309,54 @@ impl World {
     /// only). Reserves are drawn down only by what actually accrues, so a full
     /// depot never wastes a finite deposit.
     ///
-    /// HABITAT (§buildings step 3a) — ordering rule, per owned system each tick:
-    /// UPKEEP DRAWS FIRST (before accrual), so a colony must hold a standing food
-    /// stock — this tick's fresh production replenishes it for the next tick.
-    /// The draw is ATOMIC per tick (all `tier · UPKEEP · DT` Provisions or
-    /// nothing — a shortfall never partially eats food): covered → FED, the
-    /// system's whole output is boosted ×`HABITAT_OUTPUT_MULT^tier` (stacking
-    /// multiplicatively on the Extractor's per-deposit multiplier); short →
-    /// UNFED, the boost is suspended and NOTHING else happens (no destruction,
-    /// no tier loss — async-fair). Transitions emit owner-only notices.
+    /// COLONY LIFE (§economy Part 2) — ordering rule, per owned system each
+    /// tick, BEFORE accrual (a colony eats from its standing stock; this
+    /// tick's fresh production replenishes it for the next):
+    ///   1. EAT — draw `population · PROVISIONS_PER_MILLION_PER_S · DT` of
+    ///      Provisions, PARTIAL draws allowed (rationing literally stretches
+    ///      the last crumbs; the old atomic rule belonged to the binary boost).
+    ///   2. LADDER — recompute the food state from post-draw stock coverage
+    ///      (down instantly, up only past the hysteresis margin); transitions
+    ///      emit owner-only notices.
+    ///   3. GROW — Well Supplied AND below Habitat capacity → population rises
+    ///      `POP_GROWTH_PER_S · DT`, clamped to the cap. THERE IS NO NEGATIVE
+    ///      BRANCH: famine freezes growth, it never kills (§5.1 async-fair; an
+    ///      offline player's colony waits hungry, exactly as big as they left
+    ///      it). The old fed-Habitat OUTPUT BOOST is retired — Part 3's
+    ///      assignment engine multiplies `food_state.efficiency()` into every
+    ///      output instead (the legible factor chain).
     fn accrue_production(&mut self, events: &mut Vec<Event>) {
         for sys in &mut self.systems {
             let Some(owner) = sys.owner else {
                 continue;
             };
-            // --- Habitat upkeep (before accrual; atomic per tick) ---
-            if sys.tier(crate::build::StructureKind::Habitat) >= 1 {
-                let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER * sys.tier(crate::build::StructureKind::Habitat) as f64 * DT;
+            // --- Colony life (eat → ladder → grow; before accrual) ---
+            let demand_per_s = sys.population * crate::colony::PROVISIONS_PER_MILLION_PER_S;
+            if demand_per_s > 0.0 {
                 let have = sys.stockpile.get(&crate::cargo::Commodity::Provisions).copied().unwrap_or(0.0);
-                let fed = have + 1e-12 >= upkeep;
-                if fed {
-                    *sys.stockpile.entry(crate::cargo::Commodity::Provisions).or_insert(0.0) -= upkeep;
+                let draw = (demand_per_s * DT).min(have);
+                if draw > 0.0 {
+                    // (never inserts a zero entry — a dry colony leaves no crumbs)
+                    *sys.stockpile.get_mut(&crate::cargo::Commodity::Provisions).unwrap() -= draw;
                 }
-                if fed != sys.habitat_fed {
+                let coverage_secs = (have - draw) / demand_per_s;
+                let state = crate::colony::food_state_for(coverage_secs, demand_per_s, sys.food_state);
+                if state != sys.food_state {
+                    sys.food_state = state;
                     events.push(Event::new(
                         self.time,
-                        EventPayload::HabitatSupplyChanged { owner, system: sys.id, fed },
+                        EventPayload::FoodStateChanged { owner, system: sys.id, state },
                     ));
                 }
-                sys.habitat_fed = fed;
+                let cap = crate::colony::POP_CAP_PER_HABITAT_TIER
+                    * sys.tier(crate::build::StructureKind::Habitat) as f64;
+                if state == crate::colony::FoodState::WellSupplied && sys.population < cap {
+                    sys.population = (sys.population + crate::colony::POP_GROWTH_PER_S * DT).min(cap);
+                }
             } else {
-                sys.habitat_fed = false; // no habitat — flag is meaningless/off
+                // No population, no demand — vacuously supplied (and silent:
+                // an empty rock never spams food notices).
+                sys.food_state = crate::colony::FoodState::WellSupplied;
             }
 
             // Accrual idles at a FULL depot (nothing destroyed, nothing drawn) —
@@ -4355,9 +4378,9 @@ impl World {
                 if deep {
                     mult *= crate::explore::DEEP_DEPOSITS_BASE_MULT;
                 }
-                if sys.tier(crate::build::StructureKind::Habitat) >= 1 && sys.habitat_fed {
-                    mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.tier(crate::build::StructureKind::Habitat) as i32);
-                }
+                // (§economy Part 2: the fed-Habitat output boost is RETIRED —
+                // population's production leverage returns in Part 3 as the
+                // staffing/food factors of the assignment engine.)
                 // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
                 let vein = match sys.trait_ {
                     Some(crate::explore::SystemTrait::BonusVein { commodity }) => Some(commodity),
@@ -5910,7 +5933,8 @@ mod tests {
             sys.set_tier(crate::build::StructureKind::MiningComplex, 2);
             sys.set_tier(crate::build::StructureKind::Depot, 1);
             sys.set_tier(crate::build::StructureKind::Habitat, 1);
-            sys.habitat_fed = true;
+            sys.population = 2.5;
+            sys.food_state = crate::colony::FoodState::Rationing;
             sys.stockpile.insert(Commodity::MetallicOre, 123.5);
         }
         // Scout intel rides the snapshot too (§scout part 2).
@@ -5927,7 +5951,8 @@ mod tests {
         let a = w.systems.iter().find(|s| s.id == home).unwrap();
         let b = w2.systems.iter().find(|s| s.id == home).unwrap();
         assert_eq!((a.tier(crate::build::StructureKind::MiningComplex), a.tier(crate::build::StructureKind::Depot), a.tier(crate::build::StructureKind::Shipyard)), (b.tier(crate::build::StructureKind::MiningComplex), b.tier(crate::build::StructureKind::Depot), b.tier(crate::build::StructureKind::Shipyard)));
-        assert_eq!((a.tier(crate::build::StructureKind::Habitat), a.habitat_fed), (b.tier(crate::build::StructureKind::Habitat), b.habitat_fed), "habitat tier + fed state round-trip");
+        assert_eq!((a.tier(crate::build::StructureKind::Habitat), a.food_state), (b.tier(crate::build::StructureKind::Habitat), b.food_state), "habitat tier + food state round-trip");
+        assert!((a.population - b.population).abs() < 1e-9, "population rides the snapshot");
         assert_eq!(a.dev_slots(), b.dev_slots(), "derived slot budget identical after reload");
         assert!((a.storage_cap() - b.storage_cap()).abs() < 1e-12);
         // Stockpiles match commodity-for-commodity (tolerating the last-ulp
@@ -5938,63 +5963,40 @@ mod tests {
         }
     }
 
-    // --- §buildings step 3a: Habitat ------------------------------------------
+    // --- §economy Part 2: colony life (population / food ladder / growth) ------
 
-    fn deposit_rate(w: &World, sys: EntityId, c: Commodity) -> f64 {
-        w.systems
-            .iter()
-            .find(|s| s.id == sys)
-            .unwrap()
-            .deposits
-            .iter()
-            .filter(|d| d.resource == c)
-            .map(|d| d.richness)
-            .sum()
+    /// An old snapshot carrying the RETIRED `habitat_fed` bool (and no
+    /// `food_state`/`population`) still loads: the unknown key is ignored and
+    /// the defaults (WellSupplied, pop 0) are exactly right for a world that
+    /// predates people.
+    #[test]
+    fn pre_population_snapshots_load_with_vacuous_food_state() {
+        let w = test_world();
+        let mut v: serde_json::Value = serde_json::to_value(&w).unwrap();
+        for sys in v["systems"].as_array_mut().unwrap() {
+            let o = sys.as_object_mut().unwrap();
+            o.remove("food_state");
+            o.remove("population");
+            o.insert("habitat_fed".into(), serde_json::Value::Bool(true));
+        }
+        let w2: World = serde_json::from_value(v).expect("pre-economy snapshot loads");
+        assert!(w2.systems.iter().all(|s| s.food_state == crate::colony::FoodState::WellSupplied && s.population == 0.0));
     }
 
-    /// A FED Habitat boosts the whole system's output ×MULT^tier and draws its
-    /// Provisions upkeep from the system's own stockpile — measured exactly over
-    /// one tick (upkeep-BEFORE-accrual ordering).
+    /// §economy Part 2: a claimed ore-rock with `population` and no local food
+    /// production — the drained stockpile walks the colony DOWN the whole food
+    /// ladder (transition notices at every rung), the draw is exactly
+    /// `pop · PROVISIONS_PER_MILLION_PER_S`/s while stock lasts, and POPULATION
+    /// NEVER DECREASES, not even bone-dry.
     #[test]
-    fn fed_habitat_boosts_output_and_draws_upkeep() {
+    fn famine_walks_the_ladder_down_but_never_kills() {
         let mut w = test_world();
         let id = PlayerId(31);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::Habitat, 1);
-        seed_stock(&mut w, home, &[(Commodity::Provisions, 50.0)]);
-
-        let ore_rate = deposit_rate(&w, home, Commodity::MetallicOre);
-        let prov_rate = deposit_rate(&w, home, Commodity::Provisions);
-        let ore0 = system_stock(&w, home, Commodity::MetallicOre);
-        let prov0 = system_stock(&w, home, Commodity::Provisions);
-        w.step(&[]);
-        let dt = crate::config::DT;
-        let mult = crate::build::HABITAT_OUTPUT_MULT;
-        let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER;
-
-        let ore_gain = system_stock(&w, home, Commodity::MetallicOre) - ore0;
-        assert!((ore_gain - ore_rate * mult * dt).abs() < 1e-9, "every deposit is boosted ×{mult} (got {ore_gain})");
-        let prov_delta = system_stock(&w, home, Commodity::Provisions) - prov0;
-        let expect = prov_rate * mult * dt - upkeep * dt;
-        assert!((prov_delta - expect).abs() < 1e-9, "provisions = boosted accrual − upkeep (got {prov_delta}, want {expect})");
-        assert!(w.systems.iter().find(|s| s.id == home).unwrap().habitat_fed, "covered upkeep = FED");
-    }
-
-    /// UNFED merely SUSPENDS the boost: no destruction, no tier loss, and the
-    /// habitat recovers the tick food is available again (transition notices
-    /// both ways). Uses an ore-only system so geology can't self-feed it.
-    #[test]
-    fn unfed_habitat_suspends_boost_and_recovers() {
-        let mut w = test_world();
-        let id = PlayerId(32);
-        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        // A claimed system with ONLY an Ore deposit + a habitat and NO food.
         let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
         sys.owner = Some(id);
         sys.claimed_at = Some(0.0);
-        sys.set_tier(crate::build::StructureKind::Habitat, 1);
-        sys.habitat_fed = true; // as a fresh build leaves it (presumed fed)
+        sys.population = 2.0;
         sys.deposits = vec![crate::galaxy::Deposit {
             resource: Commodity::MetallicOre,
             richness: 1.0,
@@ -6002,40 +6004,150 @@ mod tests {
             accessibility: 0.5,
         }];
         let sid = sys.id;
+        // Stock just over the WellSupplied line so every rung gets crossed.
+        let demand = 2.0 * crate::colony::PROVISIONS_PER_MILLION_PER_S;
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, demand * (crate::colony::FOOD_WELL_S + 2.0))]);
 
-        // Tick 1: no Provisions → UNFED (notice), output UN-boosted, tier intact.
-        let ore0 = system_stock(&w, sid, Commodity::MetallicOre);
-        let ev = w.step(&[]);
-        assert!(
-            ev.iter().any(|e| matches!(e.payload, EventPayload::HabitatSupplyChanged { system, fed: false, .. } if system == sid)),
-            "the owner is told the habitat went unfed"
-        );
-        let dt = crate::config::DT;
-        let gain = system_stock(&w, sid, Commodity::MetallicOre) - ore0;
-        assert!((gain - 1.0 * dt).abs() < 1e-9, "unfed = plain un-boosted output (got {gain})");
+        // One tick: draw is exactly demand·DT; state settles at WellSupplied.
+        let prov0 = system_stock(&w, sid, Commodity::Provisions);
+        w.step(&[]);
+        let drawn = prov0 - system_stock(&w, sid, Commodity::Provisions);
+        assert!((drawn - demand * crate::config::DT).abs() < 1e-9, "eats pop·rate·DT (got {drawn})");
+
+        // Run it dry; collect every transition.
+        let mut states = Vec::new();
+        for _ in 0..(45.0 / crate::config::DT) as usize {
+            for e in w.step(&[]) {
+                if let EventPayload::FoodStateChanged { system, state, .. } = e.payload
+                    && system == sid
+                {
+                    states.push(state);
+                }
+            }
+        }
+        use crate::colony::FoodState::*;
+        assert_eq!(states, vec![Rationing, Critical, NoProvisions], "every rung announced, in order, once");
         let s = w.systems.iter().find(|s| s.id == sid).unwrap();
-        assert_eq!(s.tier(crate::build::StructureKind::Habitat), 1, "nothing is destroyed, no tier lost");
-        assert!(!s.habitat_fed);
-
-        // Resupply (a hauled delivery) → FED again next tick, boost restored.
-        seed_stock(&mut w, sid, &[(Commodity::Provisions, 10.0)]);
-        let ore1 = system_stock(&w, sid, Commodity::MetallicOre);
-        let ev = w.step(&[]);
-        assert!(
-            ev.iter().any(|e| matches!(e.payload, EventPayload::HabitatSupplyChanged { system, fed: true, .. } if system == sid)),
-            "recovery is announced"
-        );
-        let gain = system_stock(&w, sid, Commodity::MetallicOre) - ore1;
-        let mult = crate::build::HABITAT_OUTPUT_MULT;
-        assert!((gain - 1.0 * mult * dt).abs() < 1e-9, "boost restored once fed (got {gain})");
+        assert_eq!(s.food_state, NoProvisions);
+        assert!((s.population - 2.0).abs() < 1e-12, "POPULATION NEVER DECREASES — famine freezes, it never kills");
+        assert_eq!(s.tier(crate::build::StructureKind::Habitat), 0, "nothing destroyed");
+        assert!(system_stock(&w, sid, Commodity::Provisions).abs() < 1e-9, "the last crumbs were stretched, not deleted");
     }
 
-    // §economy NOTE: `home_two_tier_habitat_is_self_sufficient` was retired here.
-    // The home now extracts BIOMASS (a raw), not Provisions (a processed good),
-    // so direct geological self-feeding is impossible BY DESIGN in the industrial
-    // web. The self-sustaining-home guarantee is re-established by the Part-4
-    // bootstrap (seeded Bioharvester + Agroplex feed the starting population) and
-    // its test replaces this one.
+    /// §economy Part 2: a big Provisions delivery lifts a starving colony back
+    /// up the ladder (announced), and while Well Supplied and under Habitat
+    /// capacity the population GROWS at `POP_GROWTH_PER_S`, clamping exactly at
+    /// `POP_CAP_PER_HABITAT_TIER · tier` — and pop-tier crossings WIDEN the
+    /// industrial slot pool (the designed road to industrial capacity).
+    #[test]
+    fn deliveries_restore_supply_and_population_grows_to_habitat_cap() {
+        let mut w = test_world();
+        let id = PlayerId(32);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.set_tier(crate::build::StructureKind::Habitat, 1); // cap 4.0M
+        sys.population = crate::build::POP_DEVELOPED - 0.001; // just under the tier line
+        sys.food_state = crate::colony::FoodState::NoProvisions;
+        sys.deposits.clear(); // no geology noise
+        let sid = sys.id;
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().industrial_slots(), 1);
+
+        // A fat shipment lands → straight back to WellSupplied (one notice —
+        // the margin allows multi-rung climbs) and growth starts.
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 1000.0)]);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::FoodStateChanged { system, state: crate::colony::FoodState::WellSupplied, .. } if system == sid)),
+            "recovery is announced"
+        );
+        let p0 = w.systems.iter().find(|s| s.id == sid).unwrap().population;
+        w.step(&[]);
+        let p1 = w.systems.iter().find(|s| s.id == sid).unwrap().population;
+        assert!((p1 - p0 - crate::colony::POP_GROWTH_PER_S * crate::config::DT).abs() < 1e-12, "linear growth while fed + under cap");
+
+        // Crossing POP_DEVELOPED widens the INDUSTRIAL pool 1 → 2 (§economy:
+        // growing population is the road to industrial capacity).
+        for _ in 0..(1.0 / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        let s = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert!(s.population >= crate::build::POP_DEVELOPED);
+        assert_eq!(s.industrial_slots(), 2, "pop tier 1 unlocks the second industrial slot");
+
+        // Run long enough to hit the cap: growth clamps EXACTLY, never over.
+        let cap = crate::colony::POP_CAP_PER_HABITAT_TIER;
+        let secs_to_cap = (cap - s.population) / crate::colony::POP_GROWTH_PER_S + 5.0;
+        for _ in 0..(secs_to_cap / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        let s = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert!((s.population - cap).abs() < 1e-9, "population parks exactly at Habitat capacity (got {})", s.population);
+        assert_eq!(s.food_state, crate::colony::FoodState::WellSupplied);
+    }
+
+    /// §economy Part 2: a colony ship FOUNDS a population when it settles — and
+    /// with no Habitat the outpost holds at founding size (capacity 0 = no
+    /// growth), well-fed or not. An UNPEOPLED rock is vacuously WellSupplied
+    /// and never emits food notices.
+    #[test]
+    fn colony_ships_found_population_and_empty_rocks_stay_silent() {
+        let mut w = test_world();
+        let id = PlayerId(33);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let target = w
+            .systems
+            .iter()
+            .filter(|s| s.is_unclaimed() && !w.home_slots.iter().any(|h| h.system == Some(s.id)))
+            .min_by(|a, b| {
+                let hp = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+                a.pos.distance(hp).total_cmp(&b.pos.distance(hp)).then(a.id.cmp(&b.id))
+            })
+            .unwrap()
+            .id;
+        // Plant a colony fleet right on the target (unit test shortcut — the
+        // transit itself is covered by the §ships part 3 claiming tests).
+        let pos = w.systems.iter().find(|s| s.id == target).unwrap().pos;
+        let fid = EntityId(9001);
+        w.fleets.insert(fid, crate::ship::Fleet::single(fid, id, ShipKind::Colony, pos, FleetOrder::Idle, None));
+        w.step(&[]);
+        let s = w.systems.iter().find(|s| s.id == target).unwrap();
+        assert_eq!(s.owner, Some(id), "the colony settled");
+        assert!((s.population - crate::colony::COLONY_FOUNDING_POP).abs() < 1e-12, "the ship's crew founds the colony");
+
+        // Feed it lavishly: NO growth without a Habitat (capacity 0)...
+        seed_stock(&mut w, target, &[(Commodity::Provisions, 500.0)]);
+        for _ in 0..(5.0 / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        let s = w.systems.iter().find(|s| s.id == target).unwrap();
+        assert!((s.population - crate::colony::COLONY_FOUNDING_POP).abs() < 1e-12, "no Habitat = no growth (and never shrink)");
+        assert!(crate::colony::workforce_units(s.population) == 0, "an outpost this small fields no workforce yet");
+
+        // ...and an unpeopled owned rock never makes food noise.
+        let empty = w.systems.iter().find(|s| s.owner == Some(id) && s.population == 0.0).map(|s| s.id);
+        if let Some(eid) = empty {
+            for _ in 0..60 {
+                let ev = w.step(&[]);
+                assert!(
+                    !ev.iter().any(|e| matches!(e.payload, EventPayload::FoodStateChanged { system, .. } if system == eid)),
+                    "an empty rock never spams food notices"
+                );
+            }
+            assert_eq!(w.systems.iter().find(|s| s.id == eid).unwrap().food_state, crate::colony::FoodState::WellSupplied);
+        }
+    }
+
+    // §economy NOTE: `home_two_tier_habitat_is_self_sufficient`, the fed-boost
+    // test, and the unfed-suspension test were retired here with the binary
+    // Habitat model. The home now extracts BIOMASS (a raw), not Provisions, so
+    // direct geological self-feeding is impossible BY DESIGN in the industrial
+    // web; the self-sustaining-home guarantee is re-established by the Part-4
+    // bootstrap (seeded Bioharvester + Agroplex feed the starting population)
+    // and its tests. Population leverage over output returns there too, as the
+    // staffing/food factors of the assignment engine.
 
     // --- §buildings step 3b: Fuel Refinery ------------------------------------
 

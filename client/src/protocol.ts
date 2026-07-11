@@ -86,9 +86,16 @@ export interface SystemStateView {
   defense_tier: number;
   /// Habitat tiers here (§buildings step 3a) — owner-only; rivals see 0.
   habitat_tier: number;
-  /// Whether the Habitat's Provisions upkeep is covered — owner-only; rivals
-  /// always see false. UNFED = boost suspended (nothing destroyed).
+  /// §economy Part 2: whether the colony is WELL SUPPLIED — owner-only; rivals
+  /// always see false. Legacy wire name (keys the amber supply-trouble tint);
+  /// `food_state` carries the full rung.
   habitat_fed: boolean;
+  /// §economy Part 2: the colony's food-ladder rung — "well_supplied" /
+  /// "rationing" / "critical" / "no_provisions". Owner-only; rivals always see
+  /// "well_supplied" (the vacuous rung).
+  food_state: string;
+  /// §economy Part 2: colony population in MILLIONS — owner-only; rivals see 0.
+  population: number;
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -182,10 +189,12 @@ export interface GalaxyInfo {
   /// Defense Platform protection radius (§buildings step 2c) — for the subtle
   /// ring on our OWN defended systems (owner-only by construction).
   defense_platform_radius: number;
-  /// Habitat tunables (§buildings step 3a): output ×mult^tier when fed; upkeep
-  /// per_tier·tier Provisions/s — for the owner-only readout.
-  habitat_output_mult: number;
-  habitat_upkeep_per_tier: number;
+  /// §economy Part 2 colony tunables: Provisions/s eaten per million
+  /// population; capacity (millions) per Habitat tier; growth (millions/s
+  /// while Well Supplied) — for the owner-only colony readout.
+  provisions_per_million_per_s: number;
+  pop_cap_per_habitat_tier: number;
+  pop_growth_per_s: number;
   /// Refinery tunables (§buildings step 3b): rate·tier Volatiles/s in, yield
   /// Fuel out per Volatile — for the owner-only refining readout.
   refinery_rate_per_tier: number;

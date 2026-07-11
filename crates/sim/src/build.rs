@@ -289,20 +289,11 @@ pub const REFINERY_RATE_PER_TIER: f64 = 0.5;
 /// tunings). Tunable.
 pub const REFINERY_YIELD: f64 = 0.8;
 
-// --- HABITAT (§buildings step 3a) ----------------------------------------------
-
-/// Output multiplier per FED Habitat tier, applied to the system's TOTAL
-/// production (compounding, and stacking multiplicatively with the Extractor's
-/// per-deposit multiplier). Deliberately smaller than the Extractor's 1.5 — the
-/// Habitat's edge is that it boosts ALL deposits, including what Extractors
-/// already multiplied. Tunable.
-pub const HABITAT_OUTPUT_MULT: f64 = 1.25;
-/// Provisions consumed per second PER Habitat tier, drawn from the system's own
-/// stockpile each tick. Sized so the HOME's renewable Provisions deposit
-/// (0.45 × [0.85, 1.15] ≈ 0.38–0.52/s, un-boosted worst case 0.3825/s)
-/// comfortably feeds TWO tiers (2 × 0.15 = 0.30/s) even before the boost — the
-/// natural first Habitats are self-sustaining, never a starving home. Tunable.
-pub const HABITAT_UPKEEP_PER_TIER: f64 = 0.15;
+// --- HABITAT (§buildings step 3a → §economy Part 2) ------------------------------
+// The old per-tier upkeep + fed-boost pair is RETIRED: a Habitat now houses
+// POPULATION (capacity `colony::POP_CAP_PER_HABITAT_TIER` per tier), and it is
+// the population that eats (`colony::PROVISIONS_PER_MILLION_PER_S`), works, and
+// unlocks slots. All colony-life tunables live in `crate::colony`.
 
 /// §syndicates Part 3: Provisions consumed per second PER SHIP of an ALLY GARRISON
 /// stationed at a host system, drawn from the HOST's own stockpile each tick.

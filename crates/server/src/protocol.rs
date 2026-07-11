@@ -382,10 +382,12 @@ pub struct GalaxyInfo {
     /// Defense Platform protection radius (§buildings step 2c) — lets the client
     /// draw a subtle ring on the OWNER's own defended systems.
     pub defense_platform_radius: f64,
-    /// Habitat tunables (§buildings step 3a): output ×`mult^tier` when fed;
-    /// upkeep `per_tier · tier` Provisions/s — for the owner-only readout.
-    pub habitat_output_mult: f64,
-    pub habitat_upkeep_per_tier: f64,
+    /// §economy Part 2 colony tunables — for the owner-only colony readout:
+    /// Provisions/s eaten per million population, population capacity per
+    /// Habitat tier (millions), and growth (millions/s while Well Supplied).
+    pub provisions_per_million_per_s: f64,
+    pub pop_cap_per_habitat_tier: f64,
+    pub pop_growth_per_s: f64,
     /// Refinery tunables (§buildings step 3b): `rate·tier` Volatiles/s in,
     /// `yield` Fuel out per Volatile — for the owner-only refining readout.
     pub refinery_rate_per_tier: f64,
@@ -519,9 +521,18 @@ pub struct SystemStateView {
     pub defense_tier: u32,
     /// Number of Habitat tiers here (§buildings step 3a) — owner-only.
     pub habitat_tier: u32,
-    /// Whether the Habitat's Provisions upkeep is currently covered — owner-only
-    /// (rivals always see false). UNFED = the output boost is suspended.
+    /// §economy Part 2: whether the colony is WELL SUPPLIED — owner-only (rivals
+    /// always see false; a rival must never learn whether your colonies are
+    /// hungry). Kept under the legacy wire name so the client's amber
+    /// supply-trouble tint keeps working; `food_state` below has the full rung.
     pub habitat_fed: bool,
+    /// §economy Part 2: the colony's food-ladder rung (slug: `well_supplied` /
+    /// `rationing` / `critical` / `no_provisions`) — owner-only; rivals always
+    /// see `well_supplied` (the vacuous rung — same fog rule as `habitat_fed`).
+    pub food_state: String,
+    /// §economy Part 2: colony POPULATION in millions — owner-only; rivals
+    /// always see 0 (workforce/economy strength is private intel).
+    pub population: f64,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under

@@ -219,10 +219,11 @@ impl GameLoop {
                             // Platform protection radius, for the owner's own
                             // defended-system ring (§buildings step 2c).
                             defense_platform_radius: sim::build::DEFENSE_PLATFORM_RADIUS,
-                            // Habitat tunables, for the owner-only boost/upkeep
-                            // readout (§buildings step 3a).
-                            habitat_output_mult: sim::build::HABITAT_OUTPUT_MULT,
-                            habitat_upkeep_per_tier: sim::build::HABITAT_UPKEEP_PER_TIER,
+                            // §economy Part 2 colony tunables, for the owner-only
+                            // population/food readout.
+                            provisions_per_million_per_s: sim::colony::PROVISIONS_PER_MILLION_PER_S,
+                            pop_cap_per_habitat_tier: sim::colony::POP_CAP_PER_HABITAT_TIER,
+                            pop_growth_per_s: sim::colony::POP_GROWTH_PER_S,
                             // Refinery tunables (§buildings step 3b).
                             refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
                             refinery_yield: sim::build::REFINERY_YIELD,

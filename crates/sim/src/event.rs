@@ -184,12 +184,12 @@ pub enum EventPayload {
         /// The scout's position at capture — the report's light source.
         pos: crate::math::Vec2,
     },
-    /// A Habitat's supply state flipped (§buildings step 3a). OWNER-ONLY news:
-    /// `fed = false` means this tick's Provisions upkeep couldn't be covered, so
-    /// the output boost is SUSPENDED (nothing destroyed, no tier lost — it
-    /// recovers the tick food is available again); `fed = true` is the recovery.
-    /// Emitted only on TRANSITIONS, never per-tick (no spam).
-    HabitatSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
+    /// §economy Part 2: a colony's FOOD STATE moved on the 4-rung ladder
+    /// (replaces the old binary HabitatSupplyChanged). OWNER-ONLY news, on the
+    /// owner's own clock (own-economy precedent). Down-rungs are warnings
+    /// (workforce efficiency drops — nothing destroyed, nobody dies);
+    /// up-rungs are recoveries. Emitted only on TRANSITIONS, never per-tick.
+    FoodStateChanged { owner: PlayerId, system: EntityId, state: crate::colony::FoodState },
     /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
     /// 0). `owner` = the victor (they seize the plunder into their inventory);
     /// light-delayed from the base to their command center. The base goes dormant

@@ -658,7 +658,11 @@ pub fn filter_systems(
                 defense_tier: if own { sys.tier(sim::StructureKind::DefensePlatform) } else { 0 },
                 habitat_tier: if own { sys.tier(sim::StructureKind::Habitat) } else { 0 },
                 // A rival must never learn whether your colonies are starving.
-                habitat_fed: own && sys.habitat_fed,
+                // (§economy Part 2: `habitat_fed` is the legacy wire alias for
+                // "Well Supplied" — the client's amber tint keys off it.)
+                habitat_fed: own && sys.food_state == sim::FoodState::WellSupplied,
+                food_state: if own { sys.food_state } else { sim::FoodState::WellSupplied }.slug().to_string(),
+                population: if own { sys.population } else { 0.0 },
                 refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
@@ -1055,7 +1059,7 @@ mod tests {
             legacy_sensor_tier: 0,
             legacy_defense_tier: 0, defense_pool: 0.0,
             legacy_habitat_tier: 0,
-            habitat_fed: false,
+            food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
@@ -1075,9 +1079,10 @@ mod tests {
         systems[1].set_tier(sim::StructureKind::SensorArray, 2); // rival — their intel infrastructure must stay hidden
         systems[1].set_tier(sim::StructureKind::DefensePlatform, 3); // rival — their fortification must stay hidden
         systems[0].set_tier(sim::StructureKind::Habitat, 1); // mine — a colony (visible to me only)
-        systems[0].habitat_fed = true;
+        systems[0].population = 2.5; // …with people (owner-only)
         systems[1].set_tier(sim::StructureKind::Habitat, 2); // rival — their colonies must stay hidden
-        systems[1].habitat_fed = true; // …and whether they're starving, doubly so
+        systems[1].population = 6.0; // …and their size, doubly so
+        systems[1].food_state = sim::FoodState::Critical; // …and whether they're STARVING, triply so
         systems[0].set_tier(sim::StructureKind::FuelRefinery, 1); // mine — a refinery (visible to me only)
         systems[1].set_tier(sim::StructureKind::FuelRefinery, 2); // rival — their fuel industry must stay hidden
 
@@ -1138,10 +1143,12 @@ mod tests {
         // engagement outcome), never from the View.
         assert_eq!(v10[0].defense_tier, systems[0].tier(sim::StructureKind::DefensePlatform), "owner sees their platform tier");
         assert_eq!(v10[1].defense_tier, 0, "a rival's platform never leaks — deterrence is discovered by engagement");
-        // Habitat tier + FED state (§buildings step 3a) — owner-only: a rival
-        // must never learn you have colonies, let alone whether they're starving.
+        // Habitat tier + colony life (§economy Part 2) — owner-only: a rival
+        // must never learn you have colonies, their size, or whether they starve.
         assert_eq!((v10[0].habitat_tier, v10[0].habitat_fed), (1, true), "owner sees their habitat + supply state");
-        assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/starvation never leaks");
+        assert_eq!((v10[0].food_state.as_str(), v10[0].population), ("well_supplied", 2.5), "owner sees their own colony's rung + population");
+        assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/supply never leaks");
+        assert_eq!((v10[1].food_state.as_str(), v10[1].population), ("well_supplied", 0.0), "a rival's STARVATION and population never leak (vacuous rung, zero pop)");
         // Refinery tier (§buildings step 3b) — owner-only on the same rule.
         assert_eq!(v10[0].refinery_tier, systems[0].tier(sim::StructureKind::FuelRefinery), "owner sees their refinery tier");
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
@@ -1173,7 +1180,7 @@ mod tests {
             claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
             legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, habitat_fed: false,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             // §explore Part 3: every test system carries a trait — the leak
@@ -1231,7 +1238,7 @@ mod tests {
             id: EntityId(id), pos, name: "S".into(), deposits: vec![], claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
             legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, habitat_fed: false,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
             trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
@@ -1287,7 +1294,7 @@ mod tests {
             legacy_sensor_tier: 0,
             legacy_defense_tier: 0, defense_pool: 0.0,
             legacy_habitat_tier: 0,
-            habitat_fed: false,
+            food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
@@ -1336,7 +1343,7 @@ mod tests {
             legacy_defense_tier: 0,
             defense_pool: 0.0,
             legacy_habitat_tier: 0,
-            habitat_fed: false,
+            food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,

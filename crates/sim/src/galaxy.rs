@@ -103,14 +103,15 @@ pub struct StarSystem {
     /// `HABITAT_UPKEEP_PER_TIER`/s of Provisions from this stockpile. Owner-only.
     #[serde(default, rename = "habitat_tier")]
     pub legacy_habitat_tier: u32,
-    /// Whether the Habitat's upkeep was covered last tick (§buildings step 3a).
-    /// UNFED merely SUSPENDS the boost — nothing is destroyed, no tier is lost;
-    /// it recovers the tick food is available again (async-fair: an offline
-    /// player's colony underperforms, it never starves away). Recomputed every
-    /// tick for owned systems; owner-only in the View. `default` (false) is
-    /// harmless on old snapshots — corrected on the first tick.
+    /// §economy Part 2: the colony's FOOD STATE on the 4-rung ladder (replaces
+    /// the old binary `habitat_fed`). Recomputed every tick for owned systems
+    /// from stock coverage vs population demand; hunger only SUSPENDS
+    /// (efficiency drops, growth stops) — nothing is destroyed, nobody dies
+    /// (async-fair). Owner-only in the View. `default` WellSupplied is right
+    /// for old snapshots (population defaults 0 = no demand) and corrected on
+    /// the first tick regardless; the old `habitat_fed` key is simply ignored.
     #[serde(default)]
-    pub habitat_fed: bool,
+    pub food_state: crate::colony::FoodState,
     /// Number of Fuel Refinery tiers here (§buildings step 3b). Converts
     /// stockpiled Volatiles → Fuel at `REFINERY_RATE_PER_TIER · tier`/s
     /// (`REFINERY_YIELD` Fuel per Volatile); idles dry. Owner-only in the View.
@@ -359,7 +360,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             legacy_defense_tier: 0,
             defense_pool: 0.0,
             legacy_habitat_tier: 0,
-            habitat_fed: false,
+            food_state: crate::colony::FoodState::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             trait_: None,
@@ -480,7 +481,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         legacy_defense_tier: 0,
         defense_pool: 0.0,
         legacy_habitat_tier: 0,
-        habitat_fed: false,
+        food_state: crate::colony::FoodState::default(),
         legacy_refinery_tier: 0,
         blockade: None,
         trait_: None,

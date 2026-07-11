@@ -192,15 +192,17 @@ impl Timeline {
                         ));
                     }
                 }
-                // A Habitat's supply state flipped (§buildings step 3a) — OWNER-ONLY,
+                // §economy Part 2: a colony moved on the FOOD LADDER — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
                 // and FuelShortfall). Transitions only, so it never spams.
-                EventPayload::HabitatSupplyChanged { owner, system, fed } => {
+                EventPayload::FoodStateChanged { owner, system, state } => {
                     let name = system_name(world, *system);
-                    let (sev, text) = if *fed {
-                        (TimelineSeverity::Good, format!("Habitat at {name} is fed again — output boost restored."))
-                    } else {
-                        (TimelineSeverity::Warn, format!("Habitat at {name} is UNFED — output boost suspended. Ship Provisions there (nothing is lost)."))
+                    use sim::FoodState as F;
+                    let (sev, text) = match state {
+                        F::WellSupplied => (TimelineSeverity::Good, format!("{name} is WELL SUPPLIED again — full workforce, growth resumed.")),
+                        F::Rationing => (TimelineSeverity::Warn, format!("{name} is RATIONING — workforce slowed, growth paused. Ship Provisions there (nothing is lost).")),
+                        F::Critical => (TimelineSeverity::Warn, format!("Food CRITICAL at {name} — workforce at half strength. Ship Provisions there (nothing is lost).")),
+                        F::NoProvisions => (TimelineSeverity::Bad, format!("{name} is OUT OF PROVISIONS — industry stalled; the colony endures (nobody dies). Ship Provisions there.")),
                     };
                     self.push(*owner, e.time, sev, text);
                 }

@@ -13,6 +13,7 @@
 
 pub mod build;
 pub mod cargo;
+pub mod colony;
 pub mod combat;
 pub mod command;
 pub mod config;
@@ -37,6 +38,7 @@ pub mod world;
 
 pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
+pub use colony::FoodState;
 pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Losses};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
