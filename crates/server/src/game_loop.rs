@@ -219,13 +219,14 @@ impl GameLoop {
                             // Platform protection radius, for the owner's own
                             // defended-system ring (§buildings step 2c).
                             defense_platform_radius: sim::build::DEFENSE_PLATFORM_RADIUS,
-                            // Habitat tunables, for the owner-only boost/upkeep
-                            // readout (§buildings step 3a).
-                            habitat_output_mult: sim::build::HABITAT_OUTPUT_MULT,
-                            habitat_upkeep_per_tier: sim::build::HABITAT_UPKEEP_PER_TIER,
-                            // Refinery tunables (§buildings step 3b).
-                            refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
-                            refinery_yield: sim::build::REFINERY_YIELD,
+                            // §economy Part 2 colony tunables, for the owner-only
+                            // population/food readout.
+                            provisions_per_million_per_s: sim::colony::PROVISIONS_PER_MILLION_PER_S,
+                            pop_cap_per_habitat_tier: sim::colony::POP_CAP_PER_HABITAT_TIER,
+                            pop_growth_per_s: sim::colony::POP_GROWTH_PER_S,
+                            specialist_hire_cost: sim::specialist::SPECIALIST_HIRE_COST,
+                            // §economy Part 3: the refinery hint rate (full converter table on the wire in Part 6).
+                            fuel_refinery_rate: sim::production::converter_for(sim::StructureKind::FuelRefinery).expect("refinery converts").rate,
                             // §contestable-territory Part 2: the siege duration.
                             siege_secs: self.world.siege_duration_secs(),
                             pirate_id: sim::PlayerId::PIRATE,
@@ -422,6 +423,26 @@ impl GameLoop {
                 ClientMsg::DevelopSystem { system_id, upgrade } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
+                    }
+                }
+                ClientMsg::SetAssignment { system_id, structure, workers, specialists } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers, specialists });
+                    }
+                }
+                ClientMsg::HireSpecialist { specialist, dest_system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HireSpecialist { player_id, specialist, dest_system });
+                    }
+                }
+                ClientMsg::TrainSpecialist { system_id, specialist } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::TrainSpecialist { player_id, system_id, specialist });
+                    }
+                }
+                ClientMsg::TransferSpecialists { from, to, manifest } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::TransferSpecialists { player_id, from, to, manifest });
                     }
                 }
                 ClientMsg::Withdraw { fleet_id } => {
@@ -917,22 +938,19 @@ impl GameLoop {
 /// The buildable options + their recipes (§step1), built from the sim's const
 /// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
 fn build_options() -> Vec<BuildOptionView> {
-    use sim::{BuildKind, ShipKind, SystemUpgrade};
-    [
+    use sim::{BuildKind, ShipKind, StructureKind};
+    // §economy: the 5 ships + ALL 16 structures, data-driven (keys = slugs; a
+    // legacy client sending an old slug still parses via the serde aliases).
+    let ships = [
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
         ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
         ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
         ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
-        ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
-        ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
-        ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
-        ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
-        ("defense_platform", "Defense Platform", BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform }),
-        ("habitat", "Habitat", BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat }),
-        ("refinery", "Fuel Refinery", BuildKind::Upgrade { upgrade: SystemUpgrade::Refinery }),
-    ]
+    ];
+    ships
     .into_iter()
+    .chain(StructureKind::ALL.into_iter().map(|k| (k.slug(), k.title(), BuildKind::Upgrade { upgrade: k })))
     .map(|(key, label, what)| {
         let r = sim::build::recipe_for(what);
         BuildOptionView {

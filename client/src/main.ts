@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AssignmentView, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize } from "./icons";
@@ -160,7 +160,9 @@ function trend(h: number[]): { glyph: string; tone: string } {
 // Mirror of the sim's commodity value-rank (also in render.ts) — for flavor text
 // and dominant-resource selection. Client-only; no server data.
 const COMMODITY_VALUE: Record<Commodity, number> = {
-  provisions: 6, ore: 8, fuel: 10, volatiles: 18, alloys: 26,
+  biomass: 5, silicates: 6, metallic_ore: 8, volatiles: 9, rare_elements: 22,
+  provisions: 9, fuel: 14, polymers: 16, alloys: 26, electronics: 34,
+  machinery: 48, armaments: 56,
 };
 
 // Mirror of the sim's fuel-cost model (crates/sim/src/fuel.rs + ship.rs) — so the
@@ -183,8 +185,23 @@ const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
 // A commodity icon is by definition a resource, so it always uses the dedicated
 // `--icon-resource` token + the downscaled PNG art (each commodity now has its own,
 // including Volatiles — no more hue-shifted Fuel stand-in). `size` kept for symmetry.
-const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
-  `<img class="icon icon--resource" src="/art/ui_icons/resource/${c}.png" alt="" title="${c}" />`;
+// §economy: the ORIGINAL five have dedicated PNG art (metallic_ore reuses the
+// old ore art); the seven new industrial goods fall back to tinted glyphs until
+// their art lands.
+const COMMODITY_ART: Partial<Record<Commodity, string>> = {
+  fuel: "fuel", metallic_ore: "ore", alloys: "alloys", provisions: "provisions", volatiles: "volatiles",
+};
+const COMMODITY_GLYPH: Record<Commodity, string> = {
+  metallic_ore: "\u26cf", rare_elements: "\u2728", silicates: "\u25a6", volatiles: "\u2744", biomass: "\ud83c\udf3f",
+  alloys: "\ud83d\udd29", electronics: "\ud83d\udda5", polymers: "\ud83e\uddea", fuel: "\u26fd", provisions: "\ud83c\udf5e",
+  machinery: "\u2699", armaments: "\ud83d\udd2b",
+};
+const commodityIcon = (c: Commodity, _size: IconSize = "md") => {
+  const art = COMMODITY_ART[c];
+  return art
+    ? `<img class="icon icon--resource" src="/art/ui_icons/resource/${art}.png" alt="" title="${c.replace("_", " ")}" />`
+    : `<span class="icon icon--resource icon--glyph" title="${c.replace("_", " ")}">${COMMODITY_GLYPH[c]}</span>`;
+};
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
@@ -995,10 +1012,15 @@ function buildSysviewManage(): void {
   // ONE delegated listener on the static panel shell (only #svm-body's innerHTML
   // is ever rewritten), so build clicks can never lose their handler.
   $("sysview-manage").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-build],[data-action]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-build],[data-action],[data-crew]") as HTMLElement | null;
     if (!el) return;
     const sid = viewedSystemId();
     if (!sid || !net) return;
+    if (el.dataset.crew) {
+      sendCrew(sid, el.dataset.crew);
+      updateSysviewManage();
+      return;
+    }
     if (el.dataset.build) {
       dispatchBuildKey(el.dataset.build, sid);
       return;
@@ -1061,17 +1083,17 @@ function updateSysviewManage(): void {
     : "";
   // Developments at a glance — building ICONS ×tier (names live in tooltips).
   const habTag = (dyn.habitat_tier ?? 0) > 0
-    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "Habitat upkeep met — the output boost is active.")}`
-                       : ` ${badgeChip("unfed", "unfed", "warn", "Habitat upkeep NOT met — the boost is suspended until Provisions arrive. Nothing is destroyed; it recovers automatically.")}`)
+    ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "The colony is well supplied — full workforce, population growing.")}`
+                       : ` ${badgeChip("unfed", (dyn.food_state ?? "rationing").replace("_", " "), "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`)
     : "";
   const DEV_ROW: [string, IconKey, number, string][] = [
-    ["Extractor", "extractor", dyn.extractor_tier ?? 0, ""],
+    ["Mining Complex", "extractor", dyn.extractor_tier ?? 0, ""],
     ["Depot", "depot", dyn.depot_tier ?? 0, ""],
     ["Shipyard", "shipyard", dyn.shipyard_tier ?? 0, ""],
     ["Sensor array", "sensor", dyn.sensor_tier ?? 0, ""],
     ["Defense platform", "defense", dyn.defense_tier ?? 0, ""],
     ["Habitat", "habitat", dyn.habitat_tier ?? 0, habTag],
-    ["Fuel refinery", "refinery", dyn.refinery_tier ?? 0, ""],
+    ["Fuel Refinery", "refinery", dyn.refinery_tier ?? 0, ""],
   ];
   const devs = `<div class="devs-row" title="System developments — the map markers show where each one anchors (not separate colonies). Click a body to see what would anchor there.">` +
     DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, "sm", `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
@@ -1994,13 +2016,13 @@ const SURVEY_SECS_UI = 20;
 function productionReadout(dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const tier = dyn?.extractor_tier ?? 0;
-  let mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
-  // A FED Habitat multiplies the whole system's output on top of the Extractor
-  // (§buildings step 3a); unfed = suspended (shown, not applied). Owner-only.
+  const mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
+  // §economy Part 2: the colony EATS (Provisions ∝ population) and the old
+  // fed-Habitat output boost is retired — supply trouble shows as the food
+  // rung, not a multiplier. Owner-only, like every colony readout.
   const habTier = dyn?.habitat_tier ?? 0;
-  const habMult = state.galaxy?.habitat_output_mult ?? 1.25;
-  const habFed = !!dyn?.habitat_fed;
-  if (habTier > 0 && habFed) mult *= Math.pow(habMult, habTier);
+  const habFed = !!dyn?.habitat_fed; // legacy wire alias for "well supplied"
+  const popM = dyn?.population ?? 0;
   const rateOf = new Map<Commodity, number>();
   // §explore: the readout is owner-only, and an owner always knows their own
   // geology (dyn.deposits present) — read from the light-gated view.
@@ -2009,25 +2031,25 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
   const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
-  const habTag = habTier > 0
-    ? (habFed
-      ? ` <span class="sp-tier" title="a fed Habitat boosts ALL output ×${habMult} per tier">· Habitat ×${habTier}</span>`
-      : ` <span class="sp-tier" style="color:var(--warn)" title="unfed — boost suspended until Provisions arrive (nothing is lost)">· Habitat UNFED</span>`)
+  const habTag = habTier > 0 && !habFed
+    ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${(dyn?.food_state ?? "rationing").replace("_", " ").toUpperCase()}</span>`
     : "";
-  // Standing upkeep line (the game's first continuous consumption).
-  const upkeep = habTier > 0
-    ? `<div class="mhint" style="margin-top:4px" title="A fed Habitat draws this Provisions upkeep from the system stockpile each second; unfed, the output boost is suspended until Provisions arrive (nothing is lost).">${icon("habitat", "sm")} upkeep −${((state.galaxy?.habitat_upkeep_per_tier ?? 0.15) * habTier).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "unfed", "warn", "Output boost suspended until Provisions arrive — nothing is lost.")}`}</div>`
+  // Standing upkeep line (the game's first continuous consumption): the
+  // POPULATION eats, `provisions_per_million_per_s · millions` (§economy Part 2).
+  const upkeep = popM > 0
+    ? `<div class="mhint" style="margin-top:4px" title="The colony's population draws Provisions from the system stockpile each second; shortages slow the workforce and pause growth — nothing is lost, nobody dies.">${icon("habitat", "sm")} pop ${popM.toFixed(1)}M eats −${((state.galaxy?.provisions_per_million_per_s ?? 0.06) * popM).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "short", "warn", "Provisions running low — workforce slowed, growth paused (nothing is lost).")}`}</div>`
     : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
   let refinery = "";
   if (refTier > 0) {
-    const rate = (state.galaxy?.refinery_rate_per_tier ?? 0.5) * refTier;
-    const yieldK = state.galaxy?.refinery_yield ?? 0.8;
+    // §economy: the refinery is a STAFFED converter line now — this hint shows
+    // its base rate; the Part-7 colony panel carries the live factor chain.
+    const rate = state.galaxy?.fuel_refinery_rate ?? 0.8;
     const vol = stockOf.get("volatiles") ?? 0;
     refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px" title="Fuel refinery: converting ${rate.toFixed(1)} Volatiles/s into ${(rate * yieldK).toFixed(1)} Fuel/s (slightly lossy).">${icon("refinery", "sm")} ${rate.toFixed(1)} ${icon("volatiles", "sm")}/s → +${(rate * yieldK).toFixed(1)} ${icon("fuel", "sm")}/s</div>`
-      : `<div class="mhint" style="margin-top:4px" title="Fuel refinery idle — no Volatiles to convert. Haul some in (${yieldK} Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
+      ? `<div class="mhint" style="margin-top:4px" title="Fuel Refinery ×${refTier}: converts Volatiles → Fuel (1:1) up to ${rate.toFixed(1)}/s per throughput tier when staffed.">${icon("refinery", "sm")} ${icon("volatiles", "sm")} → ${icon("fuel", "sm")} up to ${rate.toFixed(1)}/s · staffed line</div>`
+      : `<div class="mhint" style="margin-top:4px" title="Fuel Refinery idle — no Volatiles to convert. Haul some in (1 Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
   return `<div class="deps-head" style="margin-top:8px">${icon("storage", "sm")} Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {
@@ -2035,7 +2057,58 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + upkeep + refinery;
+    }).join("") + upkeep + refinery + colonyPanel(dyn);
+}
+
+// §economy Part 6: the COLONY PRODUCTION PANEL — workforce, one row per line
+// with the server-resolved factor chain (shown math: throughput × staffing ×
+// skill × food), crew ± controls (data-crew), suspension causes. Functional,
+// not pretty: this is the alpha's management surface.
+const PRODUCER_SLUGS = new Set([
+  "mining_complex", "volatile_harvester", "bioharvester", "smelter",
+  "electronics_fabricator", "chemical_works", "fuel_refinery", "agroplex",
+  "machine_works", "armaments_complex", "shipyard",
+]);
+const SUSPEND_HINT: Record<string, string> = {
+  no_food: "out of Provisions — ship food",
+  no_inputs: "input basket dry — ship raws in or staff extraction",
+  storage_full: "storage full — ship goods out or build a Depot",
+};
+function colonyPanel(dyn: SystemStateView | undefined): string {
+  const wf = dyn?.workforce;
+  if (!wf) return "";
+  const lines = dyn?.assignments ?? [];
+  const posted = new Set(lines.map((a) => a.structure));
+  const short = wf.posted > wf.units;
+  const head = `<div class="deps-head" style="margin-top:8px">${icon("habitat", "sm")} Colony · workforce ` +
+    `<b>${Math.min(wf.posted, wf.units)}/${wf.posted}</b> crews` +
+    (short ? ` ${badgeChip("unfed", "short-staffed", "warn", `Only ${wf.units} of ${wf.posted} posted crews are filled — every line runs at ${((wf.units / Math.max(1, wf.posted)) * 100).toFixed(0)}%. Population growth adds crews.`)}` : "") +
+    `</div>`;
+  const rowFor = (a: AssignmentView): string => {
+    const chain = `×${a.throughput.toFixed(1)} tier · ×${a.staffing.toFixed(2)} staffing · ×${a.skill.toFixed(2)} skill · ×${a.food.toFixed(2)} food`;
+    const out = a.outputs.filter(([, r]) => r > 0.001).map(([c, r]) => `+${r.toFixed(2)} ${esc(c)}/s`).join(" ");
+    const spec = Object.entries(a.specialists).map(([k, n]) => `${n as number}× ${esc(k.replace(/_/g, " "))}`).join(", ");
+    const susp = a.suspended
+      ? ` ${badgeChip("unfed", esc(a.suspended.replace(/_/g, " ")), "warn", SUSPEND_HINT[a.suspended] ?? "suspended — nothing is lost")}`
+      : "";
+    return `<div class="sys-prod" title="${esc(a.title)} ×${a.tier} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
+      `<span>${esc(a.title)} ×${a.tier}</span>` +
+      `<span class="sp-stock">${a.workers}👷${spec ? ` +${Object.values(a.specialists).reduce((s: number, n) => s + (n as number), 0)}🎓` : ""}</span>` +
+      `<span class="sp-rate">${out || "—"}</span>${susp}` +
+      `<button class="act" data-crew="${a.structure}:${a.workers + 1}" title="post another crew">+</button>` +
+      `<button class="act" data-crew="${a.structure}:${Math.max(0, a.workers - 1)}" title="withdraw a crew">−</button>` +
+      `</div>`;
+  };
+  const idle = Object.entries(dyn?.structures ?? {})
+    .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !posted.has(slug))
+    .map(([slug, t]) =>
+      `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted">` +
+      `<span>${esc(slug.replace(/_/g, " "))} ×${t}</span><span class="sp-none">unstaffed</span>` +
+      `<button class="act" data-crew="${slug}:1" title="post a crew">+ crew</button></div>`)
+    .join("");
+  const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(k.replace(/_/g, " "))}`).join(", ");
+  const poolLine = pool ? `<div class="mhint" style="margin-top:2px">${icon("habitat", "sm")} resident specialists: ${pool}</div>` : "";
+  return head + lines.map(rowFor).join("") + idle + poolLine;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
@@ -2045,6 +2118,17 @@ function productionReadout(dyn: SystemStateView | undefined): string {
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
 const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
+
+// §economy Part 6: crew ± control → SetAssignment. `spec` is "slug:workers";
+// posted specialists are preserved server-side only if re-sent, so we send the
+// current line's specialists along (read from the live view).
+function sendCrew(systemId: EntityId, spec: string): void {
+  if (!net) return;
+  const [slug, n] = spec.split(":");
+  const dyn = state.systems.find((s) => s.id === systemId);
+  const line = dyn?.assignments?.find((a) => a.structure === slug);
+  net.send({ type: "SetAssignment", system_id: systemId, structure: slug, workers: Math.max(0, Number(n) || 0), specialists: line?.specialists ?? {} });
+}
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
@@ -2205,11 +2289,49 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   // pending upgrades already count against slots); the old "one job at a time"
   // was only this panel hiding itself.
   const queue = buildQueueRows(sid, dyn);
-  const rows = opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
-  const full = slotsFull
-    ? `<div class="mhint">${badgeChip("slots", "slots full", "warn", "Every development slot here is used — develop another system (specialize!).")}</div>`
-    : "";
-  return queue + head + `<div class="build-grid">${rows}</div>` + full;
+  // §economy Part 6: the menu groups by SLOT POOL with per-pool used/total —
+  // derived from owner-only data exactly as the sim derives it (slots bound
+  // BREADTH: one per distinct built structure; tier-ups are never gated).
+  const pools = poolUsage(dyn);
+  const shipRows = opts.filter((o) => SHIP_KEYS.has(o.key)).map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
+  const sections = (["resource", "industrial", "infrastructure"] as const).map((pool) => {
+    const inPool = opts.filter((o) => !SHIP_KEYS.has(o.key) && POOL_OF[o.key] === pool);
+    if (!inPool.length) return "";
+    const u = pools[pool];
+    const poolFull = u.used >= u.total;
+    return `<div class="mhint" style="margin-top:6px" title="Slots bound BREADTH — one per distinct structure; deepening a built structure's tier never needs a slot.">` +
+      `${pool} pool · ${u.used}/${u.total}${poolFull ? " · full (tier-ups still allowed)" : ""}</div>` +
+      `<div class="build-grid">${inPool.map((o) => buildOptionRow(o, dyn, poolFull && !((dyn?.structures ?? {})[o.key] > 0))).join("")}</div>`;
+  }).join("");
+  return queue + head + `<div class="build-grid">${shipRows}</div>` + sections;
+}
+
+// Slug → pool + derived pool budgets — MIRRORS the sim (build.rs slot_pool /
+// galaxy.rs *_slots): Resource = deposits.clamp(1,4); Industrial = 1+pop_tier;
+// Infrastructure = 2+(pop_tier≥1); pop tiers at 3.0M / 8.0M.
+const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure"> = {
+  mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource",
+  smelter: "industrial", electronics_fabricator: "industrial", chemical_works: "industrial",
+  fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial", shipyard: "industrial",
+  agroplex: "infrastructure", habitat: "infrastructure", depot: "infrastructure",
+  sensor_array: "infrastructure", defense_platform: "infrastructure", academy: "infrastructure",
+};
+function poolUsage(dyn: SystemStateView | undefined): Record<"resource" | "industrial" | "infrastructure", { used: number; total: number }> {
+  const popTier = (dyn?.population ?? 0) >= 8.0 ? 2 : (dyn?.population ?? 0) >= 3.0 ? 1 : 0;
+  const totals = {
+    resource: Math.min(4, Math.max(1, (dyn?.deposits ?? []).length)),
+    industrial: 1 + popTier,
+    infrastructure: 2 + (popTier >= 1 ? 1 : 0),
+  };
+  const used = { resource: 0, industrial: 0, infrastructure: 0 };
+  for (const [slug, t] of Object.entries(dyn?.structures ?? {})) {
+    if (t > 0 && POOL_OF[slug]) used[POOL_OF[slug]] += 1;
+  }
+  return {
+    resource: { used: used.resource, total: totals.resource },
+    industrial: { used: used.industrial, total: totals.industrial },
+    infrastructure: { used: used.infrastructure, total: totals.infrastructure },
+  };
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
@@ -2233,7 +2355,7 @@ function buildSystemTab(): void {
   if (systemTabBuilt) return;
   systemTabBuilt = true;
   $("tab-system").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-action],[data-sys],[data-build]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-action],[data-sys],[data-build],[data-crew]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.sys) {
       state.selectedSystemId = el.dataset.sys; // re-selects; map highlights it too
@@ -2242,6 +2364,10 @@ function buildSystemTab(): void {
     }
     const sid = state.selectedSystemId;
     if (!sid || !net) return;
+    if (el.dataset.crew) {
+      sendCrew(sid, el.dataset.crew);
+      return;
+    }
     if (el.dataset.build) {
       dispatchBuildKey(el.dataset.build, sid);
       return;
@@ -2288,7 +2414,7 @@ function buildSystemTab(): void {
 function dispatchBuildKey(k: string, sid: string): void {
   if (!net) return;
   if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-  else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat" || k === "refinery") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
+  else net.send({ type: "DevelopSystem", system_id: sid, upgrade: k }); // §economy: any structure slug
 }
 
 // What "Ship production → hub" will ACTUALLY dispatch: the system's NON-FUEL
@@ -2412,12 +2538,11 @@ function updateSystemTab(): void {
   // readout, and developments detail moved INTO the System View's management
   // column (one management UI to maintain, not two). The rail keeps the header,
   // stats strip, stockpile summary, ATTENTION CUES, and a prominent way in.
-  const habTier = dyn?.habitat_tier ?? 0;
   const cues: string[] = [];
   if (mine) {
     if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
-    if (habTier > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", "habitat unfed")} boost suspended`);
+    if ((dyn?.population ?? 0) > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", (dyn?.food_state ?? "rationing").replace("_", " "))} workforce slowed — ship provisions`);
     if (dyn?.node?.awakened && !dyn.node.fed) cues.push(`${badge("warn", "node unfed")} bonus suspended — ship its upkeep`);
     // §build-progress: the compact construction line — a glance from the map
     // says work is running (and when the next job lands) without opening the view.
@@ -2603,7 +2728,11 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
 // sparklines + honest staleness, and a buy/sell composer that surfaces the
 // buy(instant)/sell(raidable convoy, clears on arrival) asymmetry. Inspired by
 // Stellar Charters' Exchange. UI-only: same messages, same lagged-price model. --
-const COMMODITIES: Commodity[] = ["fuel", "ore", "alloys", "provisions", "volatiles"];
+const COMMODITIES: Commodity[] = [
+  "metallic_ore", "rare_elements", "silicates", "volatiles", "biomass",
+  "alloys", "electronics", "polymers", "fuel", "provisions",
+  "machinery", "armaments",
+];
 
 // The composer's local selection (the board is the master list, this the detail).
 const composer: { side: Side; commodity: Commodity } = { side: "buy", commodity: "fuel" };
@@ -2629,6 +2758,17 @@ function buildMarketPanel(): void {
   marketBuilt = true;
   // Board row click = select commodity (master→detail drives the composer).
   $("market-board").addEventListener("click", (e) => {
+    // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
+    const h = (e.target as HTMLElement).closest("[data-hire]") as HTMLElement | null;
+    if (h && net) {
+      // Ships to the first owned system (the home — always held).
+      const dest = state.systems.find((s) => s.owner === state.playerId)?.id;
+      if (dest) {
+        net.send({ type: "HireSpecialist", specialist: h.dataset.hire!, dest_system: dest });
+        $("mk-feedback").textContent = `Contract signed — a ${h.dataset.hire!.replace(/_/g, " ")} ships out from Sol.`;
+      }
+      return;
+    }
     const b = (e.target as HTMLElement).closest("[data-resource]") as HTMLElement | null;
     if (!b?.dataset.resource) return;
     composer.commodity = b.dataset.resource as Commodity;
@@ -2681,7 +2821,28 @@ function renderMarketBoard(): void {
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
       `<span class="b-held">${heldOf.get(c) ?? 0}</span></button>`;
-  }).join("");
+  }).join("") + hirePanel();
+}
+
+// §economy Part 6: SOL SPECIALIST CONTRACTS — five professions at the standing
+// price; the contractor ships to the player's HOME on a normal raidable
+// personnel convoy (price-certain, delivery-risky).
+const SPECIALIST_SLUGS: [string, string][] = [
+  ["geologist", "Geologist — mineral extraction"],
+  ["petrochemical_engineer", "Petrochemical Engineer — volatiles, fuel, chemicals"],
+  ["xenobiologist", "Xenobiologist — biomass + agroplex"],
+  ["industrial_engineer", "Industrial Engineer — heavy industry"],
+  ["naval_architect", "Naval Architect — shipyards + armaments"],
+];
+function hirePanel(): string {
+  const cost = state.galaxy?.specialist_hire_cost ?? 800;
+  const credits = state.wallet?.credits ?? 0;
+  return `<div class="deps-head" style="margin-top:10px">${icon("habitat", "sm")} Specialists · Sol contracts (${cost.toFixed(0)} cr, ships to your home)</div>` +
+    SPECIALIST_SLUGS.map(([slug, label]) =>
+      `<button class="board__row" data-hire="${slug}" ${credits >= cost ? "" : "disabled"} ` +
+      `title="Hire — a specialist multiplies affine production lines ×1.75 when posted. The personnel convoy from Sol is sub-light and raidable.">` +
+      `<span class="b-name">${esc(label)}</span><span class="b-price">${cost.toFixed(0)} cr</span></button>`
+    ).join("");
 }
 
 // The composer preview surfaces the buy/sell asymmetry in plain language — the
@@ -3165,11 +3326,11 @@ function computeInbox(): InboxItem[] {
         stakes: "Production idles at the cap. Ship goods out, automate it, or build a Depot (nothing is lost).",
         actions: [{ label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, { label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics }, { label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
-    if (s.habitat_tier >= 1 && !s.habitat_fed) {
+    if (s.population > 0 && !s.habitat_fed) {
       const key = `habitat:${s.id}`;
       push({ key, weight: INBOX_W.unfedHabitat, tone: "warn", icon: "habitat",
-        headline: `${systemName(s.id)} — Habitat UNFED`,
-        stakes: "Output boost suspended. Ship Provisions here or set a standing order (nothing is lost).",
+        headline: `${systemName(s.id)} — food ${(s.food_state ?? "rationing").replace("_", " ").toUpperCase()}`,
+        stakes: "Workforce slowed, growth paused. Ship Provisions here or set a standing order (nothing is lost, nobody dies).",
         actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
     }
     // §node: a held node whose upkeep lapsed — its TACTICAL BONUS is suspended.

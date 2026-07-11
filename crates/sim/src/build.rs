@@ -19,52 +19,172 @@ use crate::ship::ShipKind;
 pub enum BuildKind {
     /// Construct a ship of `ship` kind; it spawns Idle at the building system.
     Ship { ship: ShipKind },
-    /// Apply a system upgrade (raises the system's output / capability).
-    Upgrade { upgrade: SystemUpgrade },
+    /// Build/raise a STRUCTURE tier (§economy — the industrial web). The field
+    /// keeps its legacy name `upgrade` on the wire; `StructureKind`'s serde
+    /// aliases parse legacy slugs, so in-flight pre-economy build jobs complete
+    /// as their mapped successor structure.
+    Upgrade { upgrade: StructureKind },
+    /// §economy Part 4: an Academy TRAINING COURSE — completes into one
+    /// resident specialist of `kind` (if the system is still held). Rides the
+    /// same build queue; holds no slot, needs no shipyard.
+    Train { specialist: crate::specialist::SpecialistKind },
 }
 
-/// The system developments (STRUCTURE sinks). Kept flat (Travian-style) — no
-/// refining chain. Each BUILT tier of any of these consumes one development slot.
+/// §economy: which SLOT POOL a structure consumes. Slot budgets are DERIVED,
+/// never stored (same philosophy as the old `dev_slots()` — migration-free by
+/// construction): Resource slots come from geology, Industrial and
+/// Infrastructure slots from population (see `StarSystem::*_slots`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SystemUpgrade {
-    /// Lifts deposit output: `richness · EXTRACTOR_RICHNESS_MULT^tier`.
-    Extractor,
-    /// Raises the system's STORAGE CAP (§buildings step 2): capacity =
-    /// `STORAGE_BASE_CAP + STORAGE_PER_DEPOT_TIER · tier`. Caps create the
-    /// "ship it / sell it / spend it before it overflows" logistics pressure.
-    Depot,
-    /// GATES ship construction (§buildings step 3): a system can only build
-    /// ships up to its Shipyard tier (`required_shipyard_tier`). Industrial
-    /// geography — your shipyard system becomes strategically important.
+pub enum SlotPool {
+    Resource,
+    Industrial,
+    Infrastructure,
+}
+
+/// §economy: the STRUCTURES of the industrial web — extraction works deposits,
+/// processing turns raws into goods, advanced industry caps the chains, support
+/// holds the colony together. Replaces the flat `SystemUpgrade`; serde aliases
+/// keep every legacy slug parsing (Extractor→MiningComplex, Refinery→
+/// FuelRefinery, the rest 1:1), so old snapshots, in-flight build jobs, and old
+/// client commands all land on the mapped successor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StructureKind {
+    // ── Extraction (Resource slots) ─────────────────────────────────────────
+    /// Works MetallicOre / RareElements / Silicates deposits.
+    #[serde(alias = "extractor")]
+    MiningComplex,
+    /// Works Volatiles deposits.
+    VolatileHarvester,
+    /// Works Biomass deposits.
+    Bioharvester,
+    // ── Processing (Industrial slots) ───────────────────────────────────────
+    /// MetallicOre + Fuel → Alloys.
+    Smelter,
+    /// RareElements + Silicates → Electronics.
+    ElectronicsFabricator,
+    /// Volatiles + Biomass → Polymers.
+    ChemicalWorks,
+    /// Volatiles → Fuel (the old Refinery, renamed).
+    #[serde(alias = "refinery")]
+    FuelRefinery,
+    /// Biomass → Provisions.
+    Agroplex,
+    // ── Advanced industry (Industrial slots) ────────────────────────────────
+    /// Alloys + Electronics + Fuel → Machinery.
+    MachineWorks,
+    /// Alloys + Electronics + Polymers → Armaments.
+    ArmamentsComplex,
+    /// GATES ship construction (`required_shipyard_tier`), exactly as before.
     Shipyard,
-    /// Projects a per-system SENSOR BUBBLE for the system's owner (§buildings
-    /// step 2b): radius `sensor_array_radius(tier)`. Buying VISION — the most
-    /// on-identity building in a game about information. Feeds the SAME
-    /// coverage model as ship bubbles (detection, cargo reveal, pickets, View).
-    SensorArray,
-    /// STATIC system defense (§buildings step 2c): within
-    /// `DEFENSE_PLATFORM_RADIUS` of the system, a hostile raider committing on
-    /// one of the owner's convoys must fight THROUGH the platform (tier =
-    /// stationary defender units, resolved by the existing seeded battle) before
-    /// it can touch the convoy. Makes PLACE defensible — the fortress
-    /// specialization, and the prerequisite for any future siege mechanics.
-    DefensePlatform,
-    /// POPULATION (§buildings step 3a — the Travian-crop analogue): each tier
-    /// BOOSTS the system's total output ×`HABITAT_OUTPUT_MULT` but CONSUMES
-    /// Provisions continuously (`HABITAT_UPKEEP_PER_TIER`/s) from the system's
-    /// own stockpile — the game's first STANDING consumption. A shortfall makes
-    /// the habitat UNFED: the boost suspends (never destroys anything) until
-    /// food arrives again. Sustaining boosted frontier output becomes a supply
-    /// line rivals can raid.
+    // ── Support (Infrastructure slots) ──────────────────────────────────────
+    /// Population capacity + workforce slots (§economy Part 2 — the boost/upkeep
+    /// semantics retire; capacity is the Habitat's value now).
     Habitat,
-    /// FUEL REFINERY (§buildings step 3b): converts the system's stockpiled
-    /// **Volatiles → Fuel** continuously (`REFINERY_RATE_PER_TIER`/s per tier at
-    /// `REFINERY_YIELD` Fuel per Volatile). Volatiles' job — and forward fuel
-    /// production: a refinery near your theater turns a Volatiles supply line
-    /// into a fuel depot, easing the fuel-∝-distance operating cost. Idles dry
-    /// (soft; nothing destroyed).
-    Refinery,
+    /// Raises the storage cap (unchanged semantics).
+    Depot,
+    /// Standing sensor bubble (unchanged semantics).
+    SensorArray,
+    /// Static defense (combat semantics + `defense_pool` untouched).
+    DefensePlatform,
+    /// Trains specialists locally (§economy Part 4) — endogenous supply so Sol
+    /// never stays a permanent monopoly.
+    Academy,
+}
+
+impl StructureKind {
+    /// Every kind, in display order.
+    pub const ALL: [StructureKind; 16] = [
+        StructureKind::MiningComplex,
+        StructureKind::VolatileHarvester,
+        StructureKind::Bioharvester,
+        StructureKind::Smelter,
+        StructureKind::ElectronicsFabricator,
+        StructureKind::ChemicalWorks,
+        StructureKind::FuelRefinery,
+        StructureKind::Agroplex,
+        StructureKind::MachineWorks,
+        StructureKind::ArmamentsComplex,
+        StructureKind::Shipyard,
+        StructureKind::Habitat,
+        StructureKind::Depot,
+        StructureKind::SensorArray,
+        StructureKind::DefensePlatform,
+        StructureKind::Academy,
+    ];
+
+    /// Which slot pool a built tier of this kind consumes.
+    pub fn slot_pool(self) -> SlotPool {
+        match self {
+            StructureKind::MiningComplex
+            | StructureKind::VolatileHarvester
+            | StructureKind::Bioharvester => SlotPool::Resource,
+            StructureKind::Smelter
+            | StructureKind::ElectronicsFabricator
+            | StructureKind::ChemicalWorks
+            | StructureKind::FuelRefinery
+            | StructureKind::MachineWorks
+            | StructureKind::ArmamentsComplex
+            | StructureKind::Shipyard => SlotPool::Industrial,
+            // §economy Part 3: the AGROPLEX is CIVIC — food security lives in
+            // the Infrastructure pool (Habitat + Agroplex = a self-feeding
+            // outpost on the base 2 slots, no industrial investment needed),
+            // and the home's single starting Industrial slot stays the
+            // Shipyard's — preserving the designed gate: Shipyard 2 (raiders)
+            // needs the SECOND industrial slot, i.e. a DEVELOPED colony.
+            StructureKind::Agroplex
+            | StructureKind::Habitat
+            | StructureKind::Depot
+            | StructureKind::SensorArray
+            | StructureKind::DefensePlatform
+            | StructureKind::Academy => SlotPool::Infrastructure,
+        }
+    }
+
+    /// The snake_case wire slug (matches `rename_all`).
+    pub fn slug(self) -> &'static str {
+        match self {
+            StructureKind::MiningComplex => "mining_complex",
+            StructureKind::VolatileHarvester => "volatile_harvester",
+            StructureKind::Bioharvester => "bioharvester",
+            StructureKind::Smelter => "smelter",
+            StructureKind::ElectronicsFabricator => "electronics_fabricator",
+            StructureKind::ChemicalWorks => "chemical_works",
+            StructureKind::FuelRefinery => "fuel_refinery",
+            StructureKind::Agroplex => "agroplex",
+            StructureKind::MachineWorks => "machine_works",
+            StructureKind::ArmamentsComplex => "armaments_complex",
+            StructureKind::Shipyard => "shipyard",
+            StructureKind::Habitat => "habitat",
+            StructureKind::Depot => "depot",
+            StructureKind::SensorArray => "sensor_array",
+            StructureKind::DefensePlatform => "defense_platform",
+            StructureKind::Academy => "academy",
+        }
+    }
+
+    /// Human title for panels / timeline prose.
+    pub fn title(self) -> &'static str {
+        match self {
+            StructureKind::MiningComplex => "Mining Complex",
+            StructureKind::VolatileHarvester => "Volatile Harvester",
+            StructureKind::Bioharvester => "Bioharvester",
+            StructureKind::Smelter => "Smelter",
+            StructureKind::ElectronicsFabricator => "Electronics Fabricator",
+            StructureKind::ChemicalWorks => "Chemical Works",
+            StructureKind::FuelRefinery => "Fuel Refinery",
+            StructureKind::Agroplex => "Agroplex",
+            StructureKind::MachineWorks => "Machine Works",
+            StructureKind::ArmamentsComplex => "Armaments Complex",
+            StructureKind::Shipyard => "Shipyard",
+            StructureKind::Habitat => "Habitat",
+            StructureKind::Depot => "Depot",
+            StructureKind::SensorArray => "Sensor Array",
+            StructureKind::DefensePlatform => "Defense Platform",
+            StructureKind::Academy => "Academy",
+        }
+    }
 }
 
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
@@ -107,36 +227,45 @@ const HZ: u64 = TICK_HZ as u64;
 // **Alloys + Fuel** (gather them across systems, the §step1 "spread of systems matters").
 
 /// Convoy (bulk hauler): plain **Ore** — cheap, the workhorse you build at home.
-pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 35.0)], build_ticks: 12 * HZ };
+pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Machinery, 10.0), (Commodity::Polymers, 10.0)], build_ticks: 12 * HZ };
 /// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
-pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 18.0), (Commodity::Fuel, 12.0)], build_ticks: 10 * HZ };
+pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 20.0), (Commodity::Electronics, 12.0), (Commodity::Armaments, 15.0), (Commodity::Fuel, 10.0)], build_ticks: 10 * HZ };
 /// Scout: cheap **Ore + Fuel** — the entry unit, buildable at the home turn one
 /// (cheap enough that a caught scout is an acceptable loss).
-pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 20.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
+pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 15.0), (Commodity::Electronics, 8.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
 /// Corvette: **Ore + Alloys** — the dedicated defender; military industry.
-pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 30.0), (Commodity::Alloys, 15.0)], build_ticks: 14 * HZ };
+pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 12.0), (Commodity::Armaments, 12.0)], build_ticks: 14 * HZ };
 /// Colony Ship: **Ore + Alloys + Provisions** (colonists eat) — absorbs the old
 /// instant-claim economics into a physical, raidable investment (§ships part 3).
-pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0), (Commodity::Alloys, 20.0), (Commodity::Provisions, 40.0)], build_ticks: 30 * HZ };
-/// Extractor (system development): bulk **Ore** — a structure that grows the system's output.
-pub const EXTRACTOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 60.0)], build_ticks: 18 * HZ };
-/// Depot (system development): light **Ore** — cheaper than an Extractor, so early
-/// storage capacity is accessible before income compounds.
-pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0)], build_ticks: 15 * HZ };
-/// Shipyard (system development): **Ore + Alloys** per tier — the Alloys component
-/// means expanding military industry needs FRONTIER material shipped in (Ore and
-/// Alloys rarely co-occur), reinforcing the industrial geography.
-pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 10.0)], build_ticks: 20 * HZ };
-/// Sensor Array (system development): **Ore + Alloys** — advanced intel
-/// infrastructure stays tied to frontier material.
-pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 40.0), (Commodity::Alloys, 15.0)], build_ticks: 18 * HZ };
-/// Defense Platform (system development): the priciest development yet —
-/// fortification is an INVESTMENT (**Ore + Alloys** per tier).
-pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 55.0), (Commodity::Alloys, 20.0)], build_ticks: 22 * HZ };
-/// Habitat (system development): **Ore + Provisions** — food to found a colony.
-pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 45.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
-/// Fuel Refinery (system development): **Ore + Alloys** industrial plant.
-pub const REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Ore, 50.0), (Commodity::Alloys, 15.0)], build_ticks: 20 * HZ };
+pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 15.0), (Commodity::Polymers, 20.0), (Commodity::Provisions, 30.0), (Commodity::Fuel, 15.0)], build_ticks: 30 * HZ };
+// §economy Part 5: the FULL industrial-web cost table (design doc). Everything
+// advanced needs MACHINERY, and early Machinery comes from Sol — the intended
+// loop is extract → sell raws → buy Machinery → build industry → make your own.
+// they need Machinery/Electronics, purchasable at the hub (Sol's off-map
+// industry lists all 12 from day one).
+pub const MINING_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
+pub const VOLATILE_HARVESTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
+pub const BIOHARVESTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
+pub const SMELTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
+pub const ELECTRONICS_FABRICATOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 20.0), (Commodity::Silicates, 10.0)], build_ticks: 20 * HZ };
+pub const CHEMICAL_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
+pub const FUEL_REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
+pub const AGROPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
+pub const MACHINE_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
+pub const ARMAMENTS_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
+pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 20 * HZ };
+pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Polymers, 20.0), (Commodity::Machinery, 8.0)], build_ticks: 20 * HZ };
+pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)], build_ticks: 15 * HZ };
+pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Electronics, 18.0), (Commodity::Machinery, 10.0)], build_ticks: 18 * HZ };
+pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 35.0), (Commodity::Electronics, 15.0), (Commodity::Armaments, 15.0)], build_ticks: 22 * HZ };
+pub const ACADEMY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 15.0), (Commodity::Provisions, 20.0)], build_ticks: 20 * HZ };
+
+/// §economy Part 4: one Academy training course (Provisions feed the cohort,
+/// Electronics equip the lab). Costs live in `specialist::ACADEMY_TRAIN_COSTS`.
+pub const ACADEMY_TRAIN_RECIPE: Recipe = Recipe {
+    costs: crate::specialist::ACADEMY_TRAIN_COSTS,
+    build_ticks: crate::specialist::ACADEMY_TRAIN_TICKS,
+};
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
@@ -145,41 +274,38 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Scout } => &SCOUT_RECIPE,
         BuildKind::Ship { ship: ShipKind::Corvette } => &CORVETTE_RECIPE,
         BuildKind::Ship { ship: ShipKind::Colony } => &COLONY_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor } => &EXTRACTOR_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::Depot } => &DEPOT_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard } => &SHIPYARD_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray } => &SENSOR_ARRAY_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform } => &DEFENSE_PLATFORM_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat } => &HABITAT_RECIPE,
-        BuildKind::Upgrade { upgrade: SystemUpgrade::Refinery } => &REFINERY_RECIPE,
+        BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
+        BuildKind::Upgrade { upgrade } => match upgrade {
+            StructureKind::MiningComplex => &MINING_COMPLEX_RECIPE,
+            StructureKind::VolatileHarvester => &VOLATILE_HARVESTER_RECIPE,
+            StructureKind::Bioharvester => &BIOHARVESTER_RECIPE,
+            StructureKind::Smelter => &SMELTER_RECIPE,
+            StructureKind::ElectronicsFabricator => &ELECTRONICS_FABRICATOR_RECIPE,
+            StructureKind::ChemicalWorks => &CHEMICAL_WORKS_RECIPE,
+            StructureKind::FuelRefinery => &FUEL_REFINERY_RECIPE,
+            StructureKind::Agroplex => &AGROPLEX_RECIPE,
+            StructureKind::MachineWorks => &MACHINE_WORKS_RECIPE,
+            StructureKind::ArmamentsComplex => &ARMAMENTS_COMPLEX_RECIPE,
+            StructureKind::Shipyard => &SHIPYARD_RECIPE,
+            StructureKind::Habitat => &HABITAT_RECIPE,
+            StructureKind::Depot => &DEPOT_RECIPE,
+            StructureKind::SensorArray => &SENSOR_ARRAY_RECIPE,
+            StructureKind::DefensePlatform => &DEFENSE_PLATFORM_RECIPE,
+            StructureKind::Academy => &ACADEMY_RECIPE,
+        },
     }
 }
 
-// --- FUEL REFINERY (§buildings step 3b) -----------------------------------------
+// --- FUEL REFINERY (§buildings step 3b → §economy Part 3) -------------------------
+// The old REFINERY_RATE/YIELD pair is RETIRED: the Fuel Refinery is one row of
+// the data-driven converter table now (`production::CONVERTERS` — 1.0 Volatiles
+// per Fuel at 0.40/s), staffed and factor-chained like all industry.
 
-/// Volatiles consumed per second PER Refinery tier (input-side rate). Tunable.
-pub const REFINERY_RATE_PER_TIER: f64 = 0.5;
-/// Fuel produced per Volatile consumed. Slightly LOSSY (< 1) so raw Volatiles
-/// trade keeps a niche — refine for logistics, sell for margin. Because the
-/// yield is < 1, conversion always SHRINKS the stockpile total, so it can never
-/// violate the Depot storage cap (a guard still bounds it for yield ≥ 1
-/// tunings). Tunable.
-pub const REFINERY_YIELD: f64 = 0.8;
-
-// --- HABITAT (§buildings step 3a) ----------------------------------------------
-
-/// Output multiplier per FED Habitat tier, applied to the system's TOTAL
-/// production (compounding, and stacking multiplicatively with the Extractor's
-/// per-deposit multiplier). Deliberately smaller than the Extractor's 1.5 — the
-/// Habitat's edge is that it boosts ALL deposits, including what Extractors
-/// already multiplied. Tunable.
-pub const HABITAT_OUTPUT_MULT: f64 = 1.25;
-/// Provisions consumed per second PER Habitat tier, drawn from the system's own
-/// stockpile each tick. Sized so the HOME's renewable Provisions deposit
-/// (0.45 × [0.85, 1.15] ≈ 0.38–0.52/s, un-boosted worst case 0.3825/s)
-/// comfortably feeds TWO tiers (2 × 0.15 = 0.30/s) even before the boost — the
-/// natural first Habitats are self-sustaining, never a starving home. Tunable.
-pub const HABITAT_UPKEEP_PER_TIER: f64 = 0.15;
+// --- HABITAT (§buildings step 3a → §economy Part 2) ------------------------------
+// The old per-tier upkeep + fed-boost pair is RETIRED: a Habitat now houses
+// POPULATION (capacity `colony::POP_CAP_PER_HABITAT_TIER` per tier), and it is
+// the population that eats (`colony::PROVISIONS_PER_MILLION_PER_S`), works, and
+// unlocks slots. All colony-life tunables live in `crate::colony`.
 
 /// §syndicates Part 3: Provisions consumed per second PER SHIP of an ALLY GARRISON
 /// stationed at a host system, drawn from the HOST's own stockpile each tick.
@@ -221,6 +347,28 @@ pub fn sensor_array_radius(tier: u32) -> f64 {
     }
 }
 
+// --- §economy: POPULATION TIERS (drive the derived slot pools) ------------------
+
+/// Population (millions) at which a colony counts as DEVELOPED — unlocking the
+/// second Industrial slot and the third Infrastructure slot. Tunable.
+pub const POP_DEVELOPED: f64 = 3.0;
+/// Population (millions) at which a colony counts as MAJOR — the third
+/// Industrial slot. Tunable.
+pub const POP_MAJOR: f64 = 8.0;
+
+/// The population tier: 0 below `POP_DEVELOPED`, 1 from there, 2 at `POP_MAJOR`.
+/// Population only ever grows (§economy Part 2), so pools never shrink under a
+/// player — no un-build edge case.
+pub fn pop_tier(population: f64) -> u32 {
+    if population >= POP_MAJOR {
+        2
+    } else if population >= POP_DEVELOPED {
+        1
+    } else {
+        0
+    }
+}
+
 // --- SHIPYARD GATING (§buildings step 3) --------------------------------------
 
 /// The Shipyard tier a system needs to build each ship kind: the workhorse
@@ -241,9 +389,9 @@ pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
 /// slot) — the bootstrap that avoids a convoy chicken-and-egg stall on turn one.
 pub const HOME_SHIPYARD_TIER: u32 = 1;
 
-/// Multiplier applied to every deposit's richness PER Extractor tier (compounding):
-/// `richness · MULT^tier`. The upgrade payoff. Tunable.
-pub const EXTRACTOR_RICHNESS_MULT: f64 = 1.5;
+// §economy Part 3: EXTRACTOR_RICHNESS_MULT is RETIRED — extraction runs the
+// same factor chain as all industry (`production::tier_throughput` on the
+// structure tier, × staffing × skill × food), not a compounding multiplier.
 
 // --- DEVELOPMENT SLOTS (§buildings step 1) ----------------------------------
 // Every development BUILT (each Extractor/Depot/Shipyard tier) consumes ONE slot
@@ -267,6 +415,6 @@ pub const DEV_SLOTS_MAX: u32 = 5;
 /// home's 300-unit fuel seed so a fresh corporation starts with headroom, while
 /// still filling within minutes of idle production — the "ship it or lose the
 /// flow" pressure that gives standing orders a real job. Tunable.
-pub const STORAGE_BASE_CAP: f64 = 500.0;
+pub const STORAGE_BASE_CAP: f64 = 700.0;
 /// Extra capacity per Depot tier. Tunable.
 pub const STORAGE_PER_DEPOT_TIER: f64 = 400.0;

@@ -77,6 +77,9 @@ struct Track {
     /// dynamic cargo (§9), cargo would move into the per-sample history so it is
     /// delayed exactly like position.
     cargo: Option<Cargo>,
+    /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
+    /// fogged exactly like cargo (same caveat about per-sample delay).
+    passengers: std::collections::BTreeMap<sim::SpecialistKind, u32>,
     /// Current broadcast route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
@@ -144,6 +147,7 @@ impl PositionHistory {
                 samples: VecDeque::new(),
                 last_seen: now,
                 cargo: None,
+                passengers: Default::default(),
                 route: None,
                 destroyed: None,
             });
@@ -156,6 +160,7 @@ impl PositionHistory {
             track.count_class = ship.count_class();
             track.last_seen = now;
             track.cargo = ship.cargo;
+            track.passengers = ship.passengers.clone();
             track.route = route_of(&ship.order);
             track.samples.push_back(Sample {
                 time: now,
@@ -255,6 +260,7 @@ impl PositionHistory {
             composition: &'a BTreeMap<ShipKind, u32>,
             sample: Sample,
             cargo: Option<Cargo>,
+            passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             route: &'a Option<Vec<Vec2>>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
@@ -304,6 +310,7 @@ impl PositionHistory {
                 composition: &track.composition,
                 sample,
                 cargo: track.cargo,
+                passengers: &track.passengers,
                 route: &track.route,
                 destroyed_detected,
             });
@@ -376,6 +383,9 @@ impl PositionHistory {
             // Convoy fleets broadcast their route; cargo only within sensor
             // coverage (Tier 2), exactly as before.
             let route = if is_convoy { p.route.clone() } else { None };
+            // §economy Part 4: PASSENGERS obey the same tier-2 rule as cargo —
+            // part of the manifest, shown exactly when the manifest is.
+            let passengers = if detected { p.passengers.clone() } else { Default::default() };
             let cargo = if detected {
                 p.cargo.map(|cg| CargoView {
                     commodity: cg.commodity,
@@ -417,6 +427,7 @@ impl PositionHistory {
                 own,
                 route,
                 cargo,
+                passengers,
                 count_class: p.count_class,
                 composition,
                 signature: if p.broadcasts { None } else { Some(signature) },
@@ -649,17 +660,35 @@ pub fn filter_systems(
                 // private intel. Gating it also avoids leaking an upgrade to a rival
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
-                extractor_tier: if own { sys.extractor_tier } else { 0 },
-                depot_tier: if own { sys.depot_tier } else { 0 },
-                shipyard_tier: if own { sys.shipyard_tier } else { 0 },
-                sensor_tier: if own { sys.sensor_tier } else { 0 },
+                extractor_tier: if own { sys.tier(sim::StructureKind::MiningComplex) } else { 0 },
+                depot_tier: if own { sys.tier(sim::StructureKind::Depot) } else { 0 },
+                shipyard_tier: if own { sys.tier(sim::StructureKind::Shipyard) } else { 0 },
+                sensor_tier: if own { sys.tier(sim::StructureKind::SensorArray) } else { 0 },
                 // A rival NEVER sees a platform in the View — it reveals itself
                 // only through engagement outcomes (delayed battle reports).
-                defense_tier: if own { sys.defense_tier } else { 0 },
-                habitat_tier: if own { sys.habitat_tier } else { 0 },
+                defense_tier: if own { sys.tier(sim::StructureKind::DefensePlatform) } else { 0 },
+                habitat_tier: if own { sys.tier(sim::StructureKind::Habitat) } else { 0 },
                 // A rival must never learn whether your colonies are starving.
-                habitat_fed: own && sys.habitat_fed,
-                refinery_tier: if own { sys.refinery_tier } else { 0 },
+                // (§economy Part 2: `habitat_fed` is the legacy wire alias for
+                // "Well Supplied" — the client's amber tint keys off it.)
+                habitat_fed: own && sys.food_state == sim::FoodState::WellSupplied,
+                food_state: if own { sys.food_state } else { sim::FoodState::WellSupplied }.slug().to_string(),
+                population: if own { sys.population } else { 0.0 },
+                // §economy Part 4: your talent is private intel.
+                specialists: if own { sys.specialists.clone() } else { Default::default() },
+                structures: if own {
+                    sys.structures.iter().map(|(k, t)| (k.slug().to_string(), *t)).collect()
+                } else {
+                    Default::default()
+                },
+                workforce: own.then(|| crate::protocol::WorkforceView {
+                    units: sim::colony::workforce_units(sys.population),
+                    posted: sys.workforce_posted(),
+                }),
+                // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
+                // owner-only (rivals: empty — production is private intel).
+                assignments: if own { assignment_views(sys) } else { Vec::new() },
+                refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
                 // Storage (§buildings step 2) — owner-only like everything above.
@@ -750,6 +779,47 @@ pub fn filter_systems(
         .collect()
 }
 
+/// §economy Part 6: resolve every production line's factor chain for the
+/// OWNER's view — the shown-math law: the client renders exactly these
+/// numbers; nothing is recomputed or hidden client-side. Pure read.
+fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentView> {
+    let line_spec = sys.effective_specialists();
+    sys.assignments
+        .iter()
+        .map(|(kind, asg)| {
+            let tier = sys.tier(*kind);
+            let throughput = sim::production::tier_throughput(tier);
+            let staffing = sys.staffing_factor(*kind);
+            let skill = sys.skill_factor(*kind);
+            let food = sim::production::food_factor(*kind, sys.food_state);
+            let (_, _matched) = line_spec.get(kind).copied().unwrap_or((0, 0));
+            let mut outputs: Vec<(Commodity, f64)> = Vec::new();
+            if let Some(conv) = sim::production::converter_for(*kind) {
+                outputs.push((conv.output, conv.rate * throughput * staffing * skill * food));
+            } else {
+                for d in &sys.deposits {
+                    if sim::production::extraction_structure(d.resource) == Some(*kind) {
+                        outputs.push((d.resource, d.richness * throughput * staffing * skill * food));
+                    }
+                }
+            }
+            crate::protocol::AssignmentView {
+                structure: kind.slug().to_string(),
+                title: kind.title().to_string(),
+                tier,
+                workers: asg.workers,
+                specialists: asg.specialists.clone(),
+                suspended: asg.suspended.map(|r| r.slug().to_string()),
+                throughput,
+                staffing,
+                skill,
+                food,
+                outputs,
+            }
+        })
+        .collect()
+}
+
 /// Stable key string for a buildable thing (matches the client's build commands).
 pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
@@ -758,13 +828,9 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "shipyard",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "sensor_array",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "defense_platform",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "habitat",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Refinery } => "refinery",
+        sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
+        // §economy Part 4: Academy courses key by profession slug.
+        sim::BuildKind::Train { specialist } => specialist.slug(),
     }
 }
 
@@ -882,6 +948,7 @@ mod tests {
             samples: samples.into(),
             last_seen: last,
             cargo,
+            passengers: Default::default(),
             route: None,
             destroyed: None,
         }
@@ -1055,37 +1122,38 @@ mod tests {
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0,
-            sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0,
-            habitat_tier: 0,
-            habitat_fed: false,
-            refinery_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
+            legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
             // Rival's claim 6000 su away → 20 s of light.
-            mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::Ore, 99.0)]),
+            mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::MetallicOre, 99.0)]),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
-        systems[0].extractor_tier = 2; // mine — developed
-        systems[0].shipyard_tier = 1; // mine — a shipyard (visible to me only)
-        systems[0].sensor_tier = 1; // mine — an array (visible to me only)
-        systems[0].defense_tier = 1; // mine — a platform (visible to me only)
-        systems[1].extractor_tier = 3; // rival — must stay hidden
-        systems[1].shipyard_tier = 2; // rival — their military industry must stay hidden
-        systems[1].sensor_tier = 2; // rival — their intel infrastructure must stay hidden
-        systems[1].defense_tier = 3; // rival — their fortification must stay hidden
-        systems[0].habitat_tier = 1; // mine — a colony (visible to me only)
-        systems[0].habitat_fed = true;
-        systems[1].habitat_tier = 2; // rival — their colonies must stay hidden
-        systems[1].habitat_fed = true; // …and whether they're starving, doubly so
-        systems[0].refinery_tier = 1; // mine — a refinery (visible to me only)
-        systems[1].refinery_tier = 2; // rival — their fuel industry must stay hidden
+        systems[0].set_tier(sim::StructureKind::MiningComplex, 2); // mine — developed
+        systems[0].set_tier(sim::StructureKind::Shipyard, 1); // mine — a shipyard (visible to me only)
+        systems[0].set_tier(sim::StructureKind::SensorArray, 1); // mine — an array (visible to me only)
+        systems[0].set_tier(sim::StructureKind::DefensePlatform, 1); // mine — a platform (visible to me only)
+        systems[1].set_tier(sim::StructureKind::MiningComplex, 3); // rival — must stay hidden
+        systems[1].set_tier(sim::StructureKind::Shipyard, 2); // rival — their military industry must stay hidden
+        systems[1].set_tier(sim::StructureKind::SensorArray, 2); // rival — their intel infrastructure must stay hidden
+        systems[1].set_tier(sim::StructureKind::DefensePlatform, 3); // rival — their fortification must stay hidden
+        systems[0].set_tier(sim::StructureKind::Habitat, 1); // mine — a colony (visible to me only)
+        systems[0].population = 2.5; // …with people (owner-only)
+        systems[1].set_tier(sim::StructureKind::Habitat, 2); // rival — their colonies must stay hidden
+        systems[1].population = 6.0; // …and their size, doubly so
+        systems[1].food_state = sim::FoodState::Critical; // …and whether they're STARVING, triply so
+        systems[0].set_tier(sim::StructureKind::FuelRefinery, 1); // mine — a refinery (visible to me only)
+        systems[1].set_tier(sim::StructureKind::FuelRefinery, 2); // rival — their fuel industry must stay hidden
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
@@ -1121,9 +1189,10 @@ mod tests {
         assert_eq!(v10[0].extractor_tier, 2, "owner sees their own development tier");
         assert_eq!(v10[1].extractor_tier, 0, "a rival's tier must never leak (not even faster-than-light)");
         // Development SLOTS follow the same owner-only rule (§buildings step 1):
-        // used counts built tiers (2) — the queued job at MINE is a SHIP, which
-        // holds no slot — and rivals see 0/0, never the budget or usage.
-        assert_eq!(v10[0].slots_used, 7, "owner sees slots used (all built tiers; ships hold none)");
+        // used counts DISTINCT built structures (§economy: slots bound breadth,
+        // tiers deepen in place) — MINE has 6 footprints; the queued job is a
+        // SHIP, which holds no slot — and rivals see 0/0, never the budget.
+        assert_eq!(v10[0].slots_used, 6, "owner sees slots used (distinct structures; ships hold none)");
         assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
         assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
         assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
@@ -1133,23 +1202,29 @@ mod tests {
         assert_eq!(v10[0].depot_tier, 0);
         assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].depot_tier), (0, 0, 0), "a rival's storage never leaks");
         // Shipyard tier (§buildings step 3) — owner-only on the same rule.
-        assert_eq!(v10[0].shipyard_tier, systems[0].shipyard_tier, "owner sees their shipyard tier");
+        assert_eq!(v10[0].shipyard_tier, systems[0].tier(sim::StructureKind::Shipyard), "owner sees their shipyard tier");
         assert_eq!(v10[1].shipyard_tier, 0, "a rival's shipyard tier never leaks");
         // Sensor Array tier (§buildings step 2b) — owner-only on the same rule:
         // a rival must never learn where you can see.
-        assert_eq!(v10[0].sensor_tier, systems[0].sensor_tier, "owner sees their sensor tier");
+        assert_eq!(v10[0].sensor_tier, systems[0].tier(sim::StructureKind::SensorArray), "owner sees their sensor tier");
         assert_eq!(v10[1].sensor_tier, 0, "a rival's sensor tier never leaks");
         // Defense Platform tier (§buildings step 2c) — owner-only: a rival
         // weighing a raid learns fortification ONLY the hard way (via the
         // engagement outcome), never from the View.
-        assert_eq!(v10[0].defense_tier, systems[0].defense_tier, "owner sees their platform tier");
+        assert_eq!(v10[0].defense_tier, systems[0].tier(sim::StructureKind::DefensePlatform), "owner sees their platform tier");
         assert_eq!(v10[1].defense_tier, 0, "a rival's platform never leaks — deterrence is discovered by engagement");
-        // Habitat tier + FED state (§buildings step 3a) — owner-only: a rival
-        // must never learn you have colonies, let alone whether they're starving.
+        // Habitat tier + colony life (§economy Part 2) — owner-only: a rival
+        // must never learn you have colonies, their size, or whether they starve.
         assert_eq!((v10[0].habitat_tier, v10[0].habitat_fed), (1, true), "owner sees their habitat + supply state");
-        assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/starvation never leaks");
+        assert_eq!((v10[0].food_state.as_str(), v10[0].population), ("well_supplied", 2.5), "owner sees their own colony's rung + population");
+        assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/supply never leaks");
+        assert_eq!((v10[1].food_state.as_str(), v10[1].population), ("well_supplied", 0.0), "a rival's STARVATION and population never leak (vacuous rung, zero pop)");
+        // §economy Part 6: the whole colony readout obeys the same fog rule.
+        assert!(!v10[0].structures.is_empty() && v10[0].workforce.is_some(), "owner sees their structures + workforce");
+        assert!(v10[1].structures.is_empty() && v10[1].workforce.is_none() && v10[1].assignments.is_empty() && v10[1].specialists.is_empty(),
+            "a rival's structures/workforce/assignments/specialists never leak");
         // Refinery tier (§buildings step 3b) — owner-only on the same rule.
-        assert_eq!(v10[0].refinery_tier, systems[0].refinery_tier, "owner sees their refinery tier");
+        assert_eq!(v10[0].refinery_tier, systems[0].tier(sim::StructureKind::FuelRefinery), "owner sees their refinery tier");
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
@@ -1175,16 +1250,17 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let mk = |id, pos, o| StarSystem {
             id: EntityId(id), pos, name: "S".into(),
-            deposits: vec![sim::Deposit { resource: Commodity::Ore, richness: 2.5, reserves: None, accessibility: 0.5 }],
+            deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
             claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
-            extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
-            refinery_tier: 0,
+            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+            legacy_refinery_tier: 0,
             blockade: None,
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
-            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::Ore }), cache_claimed: false,
+            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
+            structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
@@ -1197,7 +1273,7 @@ mod tests {
         // OWNER always sees own geology (holding is knowing).
         let mine = v[0].deposits.as_ref().expect("owner sees own geology");
         assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0].resource, Commodity::Ore);
+        assert_eq!(mine[0].resource, Commodity::MetallicOre);
         assert_eq!(mine[0].richness, 2.5);
         // An UNSURVEYED rival system carries NO deposit vec — even with its
         // ownership long visible (t=1000 s ≫ the 20 s light). Band only.
@@ -1213,7 +1289,7 @@ mod tests {
         // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
         // never a rival (even with ownership visible), never on an unowned
         // system (even one I surveyed: a survey grants geology, NOT the trait).
-        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:ore"), "the owner sees their trait (with the vein commodity)");
+        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:metallic_ore"), "the owner sees their trait (with the vein commodity)");
         assert!(v[1].trait_.is_none(), "a rival's trait must never leak");
         assert!(v[2].trait_.is_none(), "surveying does NOT reveal the trait (ownership does)");
         assert!(rv[1].trait_.is_some(), "the rival sees their own system's trait");
@@ -1235,11 +1311,11 @@ mod tests {
         let mk = |id, pos, o| StarSystem {
             id: EntityId(id), pos, name: "S".into(), deposits: vec![], claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
-            extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
-            refinery_tier: 0,
+            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+            legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1286,16 +1362,16 @@ mod tests {
             owner: Some(rival),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0,
-            sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0,
-            habitat_tier: 0,
-            habitat_fed: false,
-            refinery_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
+            legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1334,17 +1410,17 @@ mod tests {
             owner: Some(rival),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0,
-            sensor_tier: 0,
-            defense_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
             defense_pool: 0.0,
-            habitat_tier: 0,
-            habitat_fed: false,
-            refinery_tier: 0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
+            legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(), specialists: Default::default(),
         }]
     }
 
@@ -1483,6 +1559,28 @@ mod tests {
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
         assert_eq!(view.len(), 1);
         assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
+    }
+
+    /// §economy Part 4 FOG: passengers are MANIFEST data — a broadcasting
+    /// personnel convoy outside sensor coverage shows NO passengers (identity/
+    /// route only); inside coverage the same convoy shows them, exactly like
+    /// cargo. A convoy full of Naval Architects looks like any convoy until
+    /// someone's sensors touch it.
+    #[test]
+    fn passengers_ride_the_two_tier_manifest_rule() {
+        let mk = |x: f64| {
+            let (id, mut track) = at(1, x, 0.0, RIVAL, ShipKind::Convoy);
+            track.passengers.insert(sim::SpecialistKind::NavalArchitect, 3);
+            history_of(vec![(id, track)], 1000.0)
+        };
+        // 5000 su out, viewer at 300 su sensor range → OUT of coverage.
+        let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert_eq!(far.len(), 1, "the convoy itself broadcasts — identity is public");
+        assert!(far[0].passengers.is_empty(), "…but the PEOPLE aboard must never leak outside coverage");
+        assert!(far[0].cargo.is_none(), "(same rule as cargo)");
+        // 200 su away → inside coverage: the manifest opens.
+        let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert_eq!(near[0].passengers.get(&sim::SpecialistKind::NavalArchitect), Some(&3), "sensors read the manifest — people included");
     }
 
     // ---- §Part 4: speed-signature detection ----
@@ -1692,6 +1790,7 @@ mod tests {
             samples: samples.into(),
             last_seen: 100.0,
             cargo: None,
+            passengers: Default::default(),
             route: None,
             destroyed: None,
         }

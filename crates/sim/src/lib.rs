@@ -13,6 +13,7 @@
 
 pub mod build;
 pub mod cargo;
+pub mod colony;
 pub mod combat;
 pub mod command;
 pub mod config;
@@ -30,13 +31,18 @@ pub mod node;
 pub mod rankings;
 pub mod rng;
 pub mod pirate;
+pub mod production;
 pub mod ship;
+pub mod specialist;
 pub mod standing;
 pub mod syndicate;
 pub mod world;
 
-pub use build::{BuildJob, BuildKind, SystemUpgrade};
+pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
+pub use colony::FoodState;
+pub use production::{Assignment, SuspendReason};
+pub use specialist::SpecialistKind;
 pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Losses};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};

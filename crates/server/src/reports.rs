@@ -303,7 +303,7 @@ mod tests {
 
     fn capture_event(time: f64, old_owner: PlayerId, new_owner: PlayerId, pos: Vec2) -> Event {
         let mut plunder = BTreeMap::new();
-        plunder.insert(sim::Commodity::Ore, 42);
+        plunder.insert(sim::Commodity::MetallicOre, 42);
         Event::new(time, EventPayload::SystemCaptured {
             old_owner, new_owner, system: EntityId(9), pos, plunder,
         })

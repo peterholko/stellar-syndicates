@@ -55,6 +55,24 @@ export interface BuildState {
   complete_time: number;
 }
 
+
+/// §economy Part 6: one production line with its resolved factor chain
+/// (output = base · throughput · staffing · skill · food — shown math).
+export interface AssignmentView {
+  structure: string;
+  title: string;
+  tier: number;
+  workers: number;
+  specialists: Record<string, number>;
+  suspended: string | null;
+  throughput: number;
+  staffing: number;
+  skill: number;
+  food: number;
+  /// (commodity, units/s) at the factors above.
+  outputs: [Commodity, number][];
+}
+
 export interface SystemStateView {
   id: EntityId;
   owner: PlayerId | null;
@@ -86,9 +104,24 @@ export interface SystemStateView {
   defense_tier: number;
   /// Habitat tiers here (§buildings step 3a) — owner-only; rivals see 0.
   habitat_tier: number;
-  /// Whether the Habitat's Provisions upkeep is covered — owner-only; rivals
-  /// always see false. UNFED = boost suspended (nothing destroyed).
+  /// §economy Part 2: whether the colony is WELL SUPPLIED — owner-only; rivals
+  /// always see false. Legacy wire name (keys the amber supply-trouble tint);
+  /// `food_state` carries the full rung.
   habitat_fed: boolean;
+  /// §economy Part 2: the colony's food-ladder rung — "well_supplied" /
+  /// "rationing" / "critical" / "no_provisions". Owner-only; rivals always see
+  /// "well_supplied" (the vacuous rung).
+  food_state: string;
+  /// §economy Part 2: colony population in MILLIONS — owner-only; rivals see 0.
+  population: number;
+  /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
+  specialists: Record<string, number>;
+  /// Built structures (slug -> tier) — owner-only; rivals see {}.
+  structures: Record<string, number>;
+  /// Workforce numbers — owner-only; null for rivals.
+  workforce: { units: number; posted: number } | null;
+  /// Production lines with resolved factor chains — owner-only; rivals see [].
+  assignments: AssignmentView[];
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -182,14 +215,17 @@ export interface GalaxyInfo {
   /// Defense Platform protection radius (§buildings step 2c) — for the subtle
   /// ring on our OWN defended systems (owner-only by construction).
   defense_platform_radius: number;
-  /// Habitat tunables (§buildings step 3a): output ×mult^tier when fed; upkeep
-  /// per_tier·tier Provisions/s — for the owner-only readout.
-  habitat_output_mult: number;
-  habitat_upkeep_per_tier: number;
-  /// Refinery tunables (§buildings step 3b): rate·tier Volatiles/s in, yield
-  /// Fuel out per Volatile — for the owner-only refining readout.
-  refinery_rate_per_tier: number;
-  refinery_yield: number;
+  /// §economy Part 2 colony tunables: Provisions/s eaten per million
+  /// population; capacity (millions) per Habitat tier; growth (millions/s
+  /// while Well Supplied) — for the owner-only colony readout.
+  provisions_per_million_per_s: number;
+  pop_cap_per_habitat_tier: number;
+  pop_growth_per_s: number;
+  /// Sol's standing specialist contract price (credits) — the hire panel.
+  specialist_hire_cost: number;
+  /// §economy Part 3: Fuel Refinery converter rate — Fuel/s at tier-throughput
+  /// 1.0, full staffing (1 Volatile per Fuel). For the refining hint.
+  fuel_refinery_rate: number;
   /// §contestable-territory Part 2: siege duration (sim s) — the client renders
   /// siege progress = (now − blockade.siege_since) / siege_secs.
   siege_secs: number;
@@ -205,7 +241,11 @@ export interface GalaxyInfo {
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
 
-export type Commodity = "fuel" | "ore" | "alloys" | "provisions" | "volatiles";
+// §economy: the 12-commodity industrial web (5 raw · 5 processed · 2 advanced).
+export type Commodity =
+  | "metallic_ore" | "rare_elements" | "silicates" | "volatiles" | "biomass"      // raw
+  | "alloys" | "electronics" | "polymers" | "fuel" | "provisions"                 // processed
+  | "machinery" | "armaments";                                                    // advanced
 
 export interface CargoView {
   commodity: Commodity;
@@ -373,6 +413,9 @@ export interface GhostView {
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   // Cargo present only when this convoy is within your sensor coverage.
+  /// Specialist passengers aboard — manifest data, included under exactly the
+  /// cargo rule (empty object = none visible / none aboard).
+  passengers: Record<string, number>;
   cargo: CargoView | null;
   // Estimated-size bucket — always present on a visible fleet.
   count_class: CountClass;
@@ -437,7 +480,12 @@ export type ClientMsg =
   // `join` (optional): a fleet docked at that system for the finished ship to
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
+  // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: string }
+  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number> }
+  | { type: "HireSpecialist"; specialist: string; dest_system: EntityId }
+  | { type: "TrainSpecialist"; system_id: EntityId; specialist: string }
+  | { type: "TransferSpecialists"; from: EntityId; to: EntityId; manifest: Record<string, number> }
   // §battles-take-time — withdraw an engaged fleet (light-delayed).
   | { type: "Withdraw"; fleet_id: EntityId }
   // §Part 4 — set a fleet's transit throttle (Full/Stealth).

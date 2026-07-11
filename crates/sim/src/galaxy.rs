@@ -65,25 +65,25 @@ pub struct StarSystem {
     pub stockpile: BTreeMap<Commodity, f64>,
     /// Number of Extractor upgrades built here (§step1 structure sink). Scales
     /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
-    #[serde(default)]
-    pub extractor_tier: u32,
+    #[serde(default, rename = "extractor_tier")]
+    pub legacy_extractor_tier: u32,
     /// Number of Depot upgrades built here (§buildings step 2). Each tier raises
     /// the system's storage cap by `STORAGE_PER_DEPOT_TIER`. `default` = 0 on old
     /// snapshots (they get the base cap; oversize stockpiles are grandfathered —
     /// the cap blocks NEW inflow only, it never destroys what's stored).
-    #[serde(default)]
-    pub depot_tier: u32,
+    #[serde(default, rename = "depot_tier")]
+    pub legacy_depot_tier: u32,
     /// Number of Shipyard upgrades built here (§buildings step 3). Gates ship
     /// construction: Convoy needs tier ≥ 1, Raider ≥ 2 (`required_shipyard_tier`).
     /// HOME systems generate at tier 1 (the turn-one convoy bootstrap).
-    #[serde(default)]
-    pub shipyard_tier: u32,
+    #[serde(default, rename = "shipyard_tier")]
+    pub legacy_shipyard_tier: u32,
     /// Number of Sensor Array upgrades built here (§buildings step 2b). An owned
     /// system with tier ≥ 1 projects a standing sensor bubble for its OWNER
     /// (radius `sensor_array_radius(tier)`), feeding the same coverage model as
     /// ship bubbles. Owner-only in the View, like every tier.
-    #[serde(default)]
-    pub sensor_tier: u32,
+    #[serde(default, rename = "sensor_tier")]
+    pub legacy_sensor_tier: u32,
     /// Number of Defense Platform tiers standing here (§buildings step 2c). A
     /// hostile raider making contact with one of the owner's convoys within
     /// `DEFENSE_PLATFORM_RADIUS` must fight through `tier` stationary defender
@@ -91,8 +91,8 @@ pub struct StarSystem {
     /// (damage), so this can go down as well as up; the system itself is never
     /// destroyed. Owner-only in the View — a rival learns a platform exists only
     /// through engagement outcomes (delayed battle reports).
-    #[serde(default)]
-    pub defense_tier: u32,
+    #[serde(default, rename = "defense_tier")]
+    pub legacy_defense_tier: u32,
     /// The platform's accumulated DAMAGE POOL (§FLEETS Part 2 Lanchester): a tier
     /// dies when this fills a `PLATFORM_TIER_HULL`, carrying the remainder. serde
     /// default keeps pre-Lanchester snapshots loading (a fresh, undamaged pool).
@@ -101,21 +101,22 @@ pub struct StarSystem {
     /// Number of Habitat tiers here (§buildings step 3a). When FED, boosts the
     /// system's total output ×`HABITAT_OUTPUT_MULT^tier`; consumes
     /// `HABITAT_UPKEEP_PER_TIER`/s of Provisions from this stockpile. Owner-only.
+    #[serde(default, rename = "habitat_tier")]
+    pub legacy_habitat_tier: u32,
+    /// §economy Part 2: the colony's FOOD STATE on the 4-rung ladder (replaces
+    /// the old binary `habitat_fed`). Recomputed every tick for owned systems
+    /// from stock coverage vs population demand; hunger only SUSPENDS
+    /// (efficiency drops, growth stops) — nothing is destroyed, nobody dies
+    /// (async-fair). Owner-only in the View. `default` WellSupplied is right
+    /// for old snapshots (population defaults 0 = no demand) and corrected on
+    /// the first tick regardless; the old `habitat_fed` key is simply ignored.
     #[serde(default)]
-    pub habitat_tier: u32,
-    /// Whether the Habitat's upkeep was covered last tick (§buildings step 3a).
-    /// UNFED merely SUSPENDS the boost — nothing is destroyed, no tier is lost;
-    /// it recovers the tick food is available again (async-fair: an offline
-    /// player's colony underperforms, it never starves away). Recomputed every
-    /// tick for owned systems; owner-only in the View. `default` (false) is
-    /// harmless on old snapshots — corrected on the first tick.
-    #[serde(default)]
-    pub habitat_fed: bool,
+    pub food_state: crate::colony::FoodState,
     /// Number of Fuel Refinery tiers here (§buildings step 3b). Converts
     /// stockpiled Volatiles → Fuel at `REFINERY_RATE_PER_TIER · tier`/s
     /// (`REFINERY_YIELD` Fuel per Volatile); idles dry. Owner-only in the View.
-    #[serde(default)]
-    pub refinery_tier: u32,
+    #[serde(default, rename = "refinery_tier")]
+    pub legacy_refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1): `Some` while ≥1 hostile
     /// fleet holds station here. Recomputed every tick by `resolve_blockades`
     /// from on-station fleet presence — persisted so a mid-blockade snapshot
@@ -132,6 +133,30 @@ pub struct StarSystem {
     /// ever; deliberately NOT reset on capture, so a flip can't re-mint it).
     #[serde(default)]
     pub cache_claimed: bool,
+    /// §economy: the system's STRUCTURES (kind → built tier) — the ONE keyed map
+    /// that replaces the flat per-building tier fields above. Those legacy fields
+    /// stay as deprecated parse-only carriers and are folded in by
+    /// [`StarSystem::fold_legacy_structures`] on load. Owner-only in the View.
+    #[serde(default)]
+    pub structures: BTreeMap<crate::build::StructureKind, u32>,
+    /// §economy Part 2: colony POPULATION in millions. Grows toward Habitat
+    /// capacity when well-supplied; NEVER decreases. Drives the Industrial /
+    /// Infrastructure slot pools via `pop_tier`. Dormant (0) until Part 3 wires
+    /// growth/consumption. Owner-only in the View.
+    #[serde(default)]
+    pub population: f64,
+    /// §economy Part 3: standing PRODUCTION ASSIGNMENTS — workforce crews
+    /// posted per structure kind (extraction, converters, Shipyard boost).
+    /// Nothing produces unstaffed. Owner-only in the View; `default` empty is
+    /// right for old snapshots (Part 7's migration seeds sensible defaults).
+    #[serde(default)]
+    pub assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment>,
+    /// §economy Part 4: the RESIDENT SPECIALIST POOL (kind → headcount) —
+    /// hired from Sol, trained at an Academy, delivered by convoy. Posted to
+    /// lines via assignments; conquest KEEPS them with the system (people
+    /// outlast the flag). Owner-only in the View.
+    #[serde(default)]
+    pub specialists: BTreeMap<crate::specialist::SpecialistKind, u32>,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -157,43 +182,176 @@ impl StarSystem {
         self.owner.is_none()
     }
 
-    /// This system's DEVELOPMENT SLOT budget (§buildings step 1) — how many
-    /// developments (Extractor/Depot/Shipyard tiers) it can hold in total. The
-    /// scarcity that forces specialization: you can't build everything everywhere.
-    ///
-    /// DERIVED from static geology (deposit count), not stored: deterministic,
-    /// identical for every player, and migration-free (old snapshots pick it up
-    /// automatically). 1 deposit → 3 slots … 3 deposits → 5 slots; a HOME system
-    /// (2 deposits) gets the standard 4. Tunable via the consts in `build.rs`.
-    pub fn dev_slots(&self) -> u32 {
-        (crate::build::DEV_SLOTS_BASE + (self.deposits.len() as u32).saturating_sub(1))
-            .min(crate::build::DEV_SLOTS_MAX)
+    /// §economy: the built tier of a structure kind (0 = none). THE tier read —
+    /// every consumer goes through this (the legacy flat fields are parse-only).
+    pub fn tier(&self, kind: crate::build::StructureKind) -> u32 {
+        self.structures.get(&kind).copied().unwrap_or(0)
     }
 
-    /// Development slots already CONSUMED by completed tiers here. (In-progress
-    /// upgrade jobs also hold a slot; those live on the World's build queue —
-    /// see `World::dev_slots_pending` — so the full "used" count is
-    /// `dev_slots_built() + pending`.)
+    /// §economy: set a structure's tier (0 removes the entry — the map stays
+    /// minimal and deterministic).
+    pub fn set_tier(&mut self, kind: crate::build::StructureKind, tier: u32) {
+        if tier == 0 {
+            self.structures.remove(&kind);
+        } else {
+            self.structures.insert(kind, tier);
+        }
+    }
+
+    /// §economy: fold the LEGACY flat tier fields into `structures` (Extractor →
+    /// MiningComplex, Refinery → FuelRefinery, the rest 1:1), zeroing the legacy
+    /// carriers. Idempotent (zeroed fields fold nothing); called on snapshot load
+    /// so a pre-economy world keeps every built tier. `defense_pool` and the
+    /// combat semantics ride along untouched.
+    pub fn fold_legacy_structures(&mut self) {
+        use crate::build::StructureKind as K;
+        let folds = [
+            (std::mem::take(&mut self.legacy_extractor_tier), K::MiningComplex),
+            (std::mem::take(&mut self.legacy_depot_tier), K::Depot),
+            (std::mem::take(&mut self.legacy_shipyard_tier), K::Shipyard),
+            (std::mem::take(&mut self.legacy_sensor_tier), K::SensorArray),
+            (std::mem::take(&mut self.legacy_defense_tier), K::DefensePlatform),
+            (std::mem::take(&mut self.legacy_habitat_tier), K::Habitat),
+            (std::mem::take(&mut self.legacy_refinery_tier), K::FuelRefinery),
+        ];
+        for (legacy, kind) in folds {
+            if legacy > 0 {
+                let cur = self.tier(kind);
+                self.set_tier(kind, cur + legacy);
+            }
+        }
+    }
+
+    /// §economy: the three DERIVED slot pools (never stored — the old
+    /// `dev_slots()` philosophy; migration-free by construction).
+    /// RESOURCE slots come from geology: one per deposit, clamped 1..=4.
+    pub fn resource_slots(&self) -> u32 {
+        (self.deposits.len() as u32).clamp(1, 4)
+    }
+
+    /// INDUSTRIAL slots come from population: 1 / 2 / 3 by `pop_tier`.
+    pub fn industrial_slots(&self) -> u32 {
+        1 + crate::build::pop_tier(self.population)
+    }
+
+    /// INFRASTRUCTURE slots: 2 / 3 / 3 by `pop_tier`.
+    pub fn infrastructure_slots(&self) -> u32 {
+        2 + (crate::build::pop_tier(self.population) >= 1) as u32
+    }
+
+    /// The slot budget of one pool.
+    pub fn pool_slots(&self, pool: crate::build::SlotPool) -> u32 {
+        match pool {
+            crate::build::SlotPool::Resource => self.resource_slots(),
+            crate::build::SlotPool::Industrial => self.industrial_slots(),
+            crate::build::SlotPool::Infrastructure => self.infrastructure_slots(),
+        }
+    }
+
+    /// Slots of one pool already CONSUMED — one per DISTINCT built structure
+    /// (§economy Part 3): a slot is a FOOTPRINT, and tiers go DEEP on the same
+    /// slot (that's the throughput ladder's whole job). Slots bound BREADTH —
+    /// how many kinds a colony runs — never depth; otherwise a 2-deposit home
+    /// could never upgrade its mine at all. In-progress jobs founding a NEW
+    /// structure also hold a slot (the World's `pool_slots_pending`).
+    pub fn pool_slots_built(&self, pool: crate::build::SlotPool) -> u32 {
+        self.structures
+            .iter()
+            .filter(|(k, t)| k.slot_pool() == pool && **t >= 1)
+            .count() as u32
+    }
+
+    /// §economy Part 3: total workforce crews POSTED across all assignments.
+    pub fn workforce_posted(&self) -> u32 {
+        self.assignments.values().map(|a| a.workers).sum()
+    }
+
+    /// §economy Part 3: the colony-wide STAFFING SHARE — when the posting
+    /// exceeds what the population fields, every line dilutes by the same
+    /// fraction (fair, legible, and deadlock-free: no line ever starves
+    /// another outright). 1.0 when fully covered or nothing is posted.
+    pub fn staffing_share(&self) -> f64 {
+        let posted = self.workforce_posted();
+        if posted == 0 {
+            return 1.0;
+        }
+        (crate::colony::workforce_units(self.population) as f64 / posted as f64).min(1.0)
+    }
+
+    /// §economy Part 4: the EFFECTIVE specialists on every line this tick —
+    /// per structure `(crew, matched)`: how many posted specialists actually
+    /// work it (clamped by the resident pool, walked in deterministic BTreeMap
+    /// order so a shrunken pool degrades the same way everywhere) and how many
+    /// of those are AFFINE (drive the skill factor). Non-destructive: stored
+    /// postings are untouched, so a returning specialist re-validates free.
+    pub fn effective_specialists(
+        &self,
+    ) -> BTreeMap<crate::build::StructureKind, (u32, u32)> {
+        let mut pool_left = self.specialists.clone();
+        let mut out = BTreeMap::new();
+        for (kind, asg) in &self.assignments {
+            let (mut crew, mut matched) = (0u32, 0u32);
+            for (&sk, &n) in &asg.specialists {
+                let left = pool_left.entry(sk).or_insert(0);
+                let take = n.min(*left);
+                *left -= take;
+                crew += take;
+                if sk.affine(*kind) {
+                    matched += take;
+                }
+            }
+            out.insert(*kind, (crew, matched));
+        }
+        out
+    }
+
+    /// §economy Part 3: the STAFFING factor of one structure's line —
+    /// `(crew/tier) · share` where crew = generic workers + posted specialists
+    /// (a specialist always works, affinity or not — never a penalty): a
+    /// tier-N plant wants N crews for full throughput; posting fewer
+    /// under-crews it, over-posting the colony dilutes everyone. 0.0 when
+    /// nothing is posted (unstaffed = idle).
+    pub fn staffing_factor(&self, kind: crate::build::StructureKind) -> f64 {
+        let tier = self.tier(kind);
+        if tier == 0 {
+            return 0.0;
+        }
+        let workers = self.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+        let spec_crew = self.effective_specialists().get(&kind).map(|(c, _)| *c).unwrap_or(0);
+        ((workers + spec_crew).min(tier) as f64 / tier as f64) * self.staffing_share()
+    }
+
+    /// §economy Part 4: the SKILL factor of one structure's line (1.0 bare,
+    /// up to `SPECIALIST_SKILL_MULT` fully affine-staffed).
+    pub fn skill_factor(&self, kind: crate::build::StructureKind) -> f64 {
+        let (_, matched) = self.effective_specialists().get(&kind).copied().unwrap_or((0, 0));
+        crate::production::skill_factor(matched, self.tier(kind))
+    }
+
+    /// LEGACY single-budget readouts, now sums over the three pools — keeps the
+    /// existing wire fields (`slots_used`/`slots_total`) meaningful until the
+    /// per-pool client panel lands (Part 6/7).
+    pub fn dev_slots(&self) -> u32 {
+        self.resource_slots() + self.industrial_slots() + self.infrastructure_slots()
+    }
+
+    /// Development slots already CONSUMED here (all pools) — one per distinct
+    /// built structure (see `pool_slots_built`).
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier
-            + self.depot_tier
-            + self.shipyard_tier
-            + self.sensor_tier
-            + self.defense_tier
-            + self.habitat_tier
-            + self.refinery_tier
+        self.structures.values().filter(|t| **t >= 1).count() as u32
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
     pub fn sensor_bubble(&self) -> f64 {
-        crate::build::sensor_array_radius(self.sensor_tier)
+        crate::build::sensor_array_radius(self.tier(crate::build::StructureKind::SensorArray))
     }
 
     /// This system's TOTAL storage capacity (§buildings step 2): a base every
     /// system has, plus a chunk per Depot tier. New inflow is capped at this;
     /// what's already stored is never destroyed.
     pub fn storage_cap(&self) -> f64 {
-        crate::build::STORAGE_BASE_CAP + crate::build::STORAGE_PER_DEPOT_TIER * self.depot_tier as f64
+        crate::build::STORAGE_BASE_CAP
+            + crate::build::STORAGE_PER_DEPOT_TIER * self.tier(crate::build::StructureKind::Depot) as f64
     }
 
     /// Total units currently stored (summed across commodities) — what the cap
@@ -230,15 +388,16 @@ pub struct HomeSlot {
     pub system: Option<EntityId>,
 }
 
-/// Commodities ordered cheapest → most valuable (by base price). Deposits are
-/// drawn from this ladder biased by distance from the hub, so near-hub systems
-/// hold common/cheap resources and the frontier holds the valuable ones (§4).
-const VALUE_TIER: [Commodity; 5] = [
-    Commodity::Provisions,
-    Commodity::Ore,
-    Commodity::Fuel,
+/// §economy: the RAW commodity ladder, cheapest → frontier-most (by base
+/// price). Deposits are drawn ONLY from raws (processed/advanced goods are
+/// MADE, never mined), biased by distance from the hub — near-hub systems hold
+/// common/cheap raws, the frontier holds Rare Elements and rich Volatiles (§4).
+const RAW_VALUE_TIER: [Commodity; 5] = [
+    Commodity::Biomass,
+    Commodity::Silicates,
+    Commodity::MetallicOre,
     Commodity::Volatiles,
-    Commodity::Alloys,
+    Commodity::RareElements,
 ];
 
 /// Base extraction rate (units/sec) a deposit produces; scaled up toward the
@@ -277,18 +436,22 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             owner: None,
             claimed_at: None,
             stockpile: BTreeMap::new(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0, // frontier systems must EARN their shipyards
-            sensor_tier: 0,
-            defense_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0, // frontier systems must EARN their shipyards
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
             defense_pool: 0.0,
-            habitat_tier: 0,
-            habitat_fed: false,
-            refinery_tier: 0,
+            legacy_habitat_tier: 0,
+            food_state: crate::colony::FoodState::default(),
+            legacy_refinery_tier: 0,
             blockade: None,
             trait_: None,
             cache_claimed: false,
+            structures: BTreeMap::new(),
+            population: 0.0,
+            assignments: BTreeMap::new(),
+            specialists: BTreeMap::new(),
         });
     }
     systems
@@ -304,9 +467,9 @@ fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
     for _ in 0..n {
         // Pick a commodity tier centred on the frontier (cheap near hub, valuable
         // at the rim) with seeded spread.
-        let center = frontier * (VALUE_TIER.len() - 1) as f64;
-        let idx = (center + rng.range(-1.1, 1.1)).round().clamp(0.0, 4.0) as usize;
-        let resource = VALUE_TIER[idx];
+        let center = frontier * (RAW_VALUE_TIER.len() - 1) as f64;
+        let idx = (center + rng.range(-1.1, 1.1)).round().clamp(0.0, (RAW_VALUE_TIER.len() - 1) as f64) as usize;
+        let resource = RAW_VALUE_TIER[idx];
         // Richness rises toward the frontier, jittered.
         let richness = DEPOSIT_BASE_RICHNESS * (0.5 + 1.7 * frontier) * rng.range(0.6, 1.4);
         deposits.push(Deposit {
@@ -360,15 +523,18 @@ const HOME_SYSTEM_MAGIC: u64 = 0x484F_4D45_5359_5354; // "HOMESYST"
 /// that produces from turn one — deliberately weaker than the dangerous frontier,
 /// so expansion outward stays the reward/risk (the distance/value gradient holds).
 fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
+    // §economy: the direct successors of the old Provisions + Ore pair — the
+    // home extracts BIOMASS (→ Provisions via the Agroplex) and METALLIC ORE
+    // (→ Alloys via a Smelter), at the same modest richnesses.
     vec![
         Deposit {
-            resource: Commodity::Provisions,
+            resource: Commodity::Biomass,
             richness: DEPOSIT_BASE_RICHNESS * rng.range(0.85, 1.15),
             reserves: None,
             accessibility: 0.1,
         },
         Deposit {
-            resource: Commodity::Ore,
+            resource: Commodity::MetallicOre,
             richness: DEPOSIT_BASE_RICHNESS * rng.range(0.7, 1.0),
             reserves: None,
             accessibility: 0.1,
@@ -392,23 +558,57 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         claim_cost,
         owner: None,
         claimed_at: None,
-        stockpile: BTreeMap::new(),
-        extractor_tier: 0,
-        depot_tier: 0,
-        // HOME BOOTSTRAP (§buildings step 3): every home starts with Shipyard
-        // tier 1 already built (consuming one development slot), so a new player
-        // can build convoys turn one. Raiders (tier 2) and frontier shipbuilding
-        // must be EARNED.
-        shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
-        sensor_tier: 0,
-        defense_tier: 0,
+        // §economy Part 3+5 bootstrap stock: a standing Provisions buffer (the
+        // food ladder starts Well Supplied while the farm chain spins up) plus
+        // the STARTER KIT — enough Machinery/Alloys/Polymers that the first
+        // Depot/Habitat/industry doesn't require a market round-trip. (The
+        // Fuel movement seed lands on join.) All Tunable.
+        stockpile: [
+            (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
+            (Commodity::Machinery, 40.0),
+            (Commodity::Alloys, 60.0),
+            (Commodity::Polymers, 30.0),
+        ]
+        .into_iter()
+        .collect(),
+        legacy_extractor_tier: 0,
+        legacy_depot_tier: 0,
+        legacy_shipyard_tier: 0,
+        legacy_sensor_tier: 0,
+        legacy_defense_tier: 0,
         defense_pool: 0.0,
-        habitat_tier: 0,
-        habitat_fed: false,
-        refinery_tier: 0,
-            blockade: None,
-            trait_: None,
-            cache_claimed: false,
+        legacy_habitat_tier: 0,
+        food_state: crate::colony::FoodState::default(),
+        legacy_refinery_tier: 0,
+        blockade: None,
+        trait_: None,
+        cache_claimed: false,
+        // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3): a home is born
+        // a WORKING developed colony — Shipyard (convoys turn one), the two
+        // extraction structures its geology calls for, the Agroplex that turns
+        // Biomass into food, and the Habitat housing 2.0M colonists. Every
+        // slot pool is born exactly FULL (Resource 2/2, Industrial 1/1, Infra
+        // 2/2): all expansion runs through population growth, by design.
+        structures: [
+            (crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER),
+            (crate::build::StructureKind::Bioharvester, 1),
+            (crate::build::StructureKind::MiningComplex, 1),
+            (crate::build::StructureKind::Agroplex, 1),
+            (crate::build::StructureKind::Habitat, 1),
+        ]
+        .into_iter()
+        .collect(),
+        population: crate::colony::HOME_FOUNDING_POP,
+        // Pre-staffed: the food chain + the mine (the Shipyard boost crew is
+        // the player's first staffing decision once population grows).
+        assignments: [
+            (crate::build::StructureKind::Bioharvester, crate::production::Assignment::crew(1)),
+            (crate::build::StructureKind::MiningComplex, crate::production::Assignment::crew(1)),
+            (crate::build::StructureKind::Agroplex, crate::production::Assignment::crew(1)),
+        ]
+        .into_iter()
+        .collect(),
+        specialists: BTreeMap::new(),
     }
 }
 

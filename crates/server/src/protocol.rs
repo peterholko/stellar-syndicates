@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sim::{
     Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
-    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, SyndicateId, SystemUpgrade, TradeEvent,
+    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, StructureKind, SyndicateId, TradeEvent,
     TransitMode, Vec2,
 };
 
@@ -88,7 +88,29 @@ pub enum ClientMsg {
 
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
     /// Extractor tier that raises its output — costs a recipe, completes over time.
-    DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
+    DevelopSystem { system_id: EntityId, upgrade: StructureKind },
+
+    /// §economy Part 3: post workforce crews (and §Part 4: specialists from the
+    /// resident pool) to a structure at one of the player's owned systems (all
+    /// zero clears the line). Instant local administration; clamps server-side.
+    SetAssignment {
+        system_id: EntityId,
+        structure: StructureKind,
+        workers: u32,
+        #[serde(default)]
+        specialists: BTreeMap<sim::SpecialistKind, u32>,
+    },
+
+    /// §economy Part 4: sign a Sol specialist contract — credits now, a
+    /// personnel convoy hub → dest (sub-light, raidable, manifest fogged).
+    HireSpecialist { specialist: sim::SpecialistKind, dest_system: EntityId },
+
+    /// §economy Part 4: enqueue an Academy training course (needs Academy ≥ 1).
+    TrainSpecialist { system_id: EntityId, specialist: sim::SpecialistKind },
+
+    /// §economy Part 4: carry resident specialists between owned/allied systems
+    /// on a dedicated personnel convoy.
+    TransferSpecialists { from: EntityId, to: EntityId, manifest: BTreeMap<sim::SpecialistKind, u32> },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
     /// light-delayed break-off order.
@@ -382,14 +404,19 @@ pub struct GalaxyInfo {
     /// Defense Platform protection radius (§buildings step 2c) — lets the client
     /// draw a subtle ring on the OWNER's own defended systems.
     pub defense_platform_radius: f64,
-    /// Habitat tunables (§buildings step 3a): output ×`mult^tier` when fed;
-    /// upkeep `per_tier · tier` Provisions/s — for the owner-only readout.
-    pub habitat_output_mult: f64,
-    pub habitat_upkeep_per_tier: f64,
-    /// Refinery tunables (§buildings step 3b): `rate·tier` Volatiles/s in,
-    /// `yield` Fuel out per Volatile — for the owner-only refining readout.
-    pub refinery_rate_per_tier: f64,
-    pub refinery_yield: f64,
+    /// §economy Part 2 colony tunables — for the owner-only colony readout:
+    /// Provisions/s eaten per million population, population capacity per
+    /// Habitat tier (millions), and growth (millions/s while Well Supplied).
+    pub provisions_per_million_per_s: f64,
+    pub pop_cap_per_habitat_tier: f64,
+    pub pop_growth_per_s: f64,
+    /// §economy Part 6: Sol's standing specialist contract price (credits) —
+    /// for the hire panel.
+    pub specialist_hire_cost: f64,
+    /// §economy Part 3: the Fuel Refinery's converter rate — units of Fuel/s
+    /// at tier-throughput 1.0 with full staffing (the basket is 1 Volatile per
+    /// Fuel). For the owner-only refining hint until the Part-6 colony panel.
+    pub fuel_refinery_rate: f64,
     /// §contestable-territory Part 2: how long (sim seconds) an unbroken,
     /// defense-suppressed siege must run before a colony ship can capture — the
     /// client renders siege progress against it.
@@ -519,9 +546,31 @@ pub struct SystemStateView {
     pub defense_tier: u32,
     /// Number of Habitat tiers here (§buildings step 3a) — owner-only.
     pub habitat_tier: u32,
-    /// Whether the Habitat's Provisions upkeep is currently covered — owner-only
-    /// (rivals always see false). UNFED = the output boost is suspended.
+    /// §economy Part 2: whether the colony is WELL SUPPLIED — owner-only (rivals
+    /// always see false; a rival must never learn whether your colonies are
+    /// hungry). Kept under the legacy wire name so the client's amber
+    /// supply-trouble tint keeps working; `food_state` below has the full rung.
     pub habitat_fed: bool,
+    /// §economy Part 2: the colony's food-ladder rung (slug: `well_supplied` /
+    /// `rationing` / `critical` / `no_provisions`) — owner-only; rivals always
+    /// see `well_supplied` (the vacuous rung — same fog rule as `habitat_fed`).
+    pub food_state: String,
+    /// §economy Part 2: colony POPULATION in millions — owner-only; rivals
+    /// always see 0 (workforce/economy strength is private intel).
+    pub population: f64,
+    /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
+    /// always see an empty map (your talent is private intel).
+    pub specialists: BTreeMap<sim::SpecialistKind, u32>,
+    /// §economy Part 6: every built STRUCTURE (slug → tier) — owner-only;
+    /// rivals always see an empty map (the legacy per-kind tier fields above
+    /// stay for the map's visual anchors).
+    pub structures: BTreeMap<String, u32>,
+    /// §economy Part 6: the colony's WORKFORCE — owner-only; None for rivals.
+    pub workforce: Option<WorkforceView>,
+    /// §economy Part 6: every production line with its RESOLVED factor chain
+    /// (the shown-math law: output = base · throughput · staffing · skill ·
+    /// food) — owner-only; rivals always see an empty list.
+    pub assignments: Vec<AssignmentView>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under
@@ -632,6 +681,39 @@ pub struct SyndicateInviteView {
     pub name: String,
 }
 
+/// §economy Part 6: a colony's workforce numbers — owner-only.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WorkforceView {
+    /// Workforce units the population fields (`floor(pop / 0.8M)`).
+    pub units: u32,
+    /// Crews posted across all assignments (may exceed `units` — every line
+    /// then dilutes by the same share).
+    pub posted: u32,
+}
+
+/// §economy Part 6: one production line, with the RESOLVED factor chain the
+/// client shows verbatim (no hidden math). Owner-only.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssignmentView {
+    /// Structure slug (matches build keys / icons).
+    pub structure: String,
+    pub title: String,
+    pub tier: u32,
+    pub workers: u32,
+    /// Specialists posted to this line (kind → n).
+    pub specialists: BTreeMap<sim::SpecialistKind, u32>,
+    /// Why the line is stopped (`no_food` / `no_inputs` / `storage_full`), if it is.
+    pub suspended: Option<String>,
+    /// The factor chain, resolved this tick.
+    pub throughput: f64,
+    pub staffing: f64,
+    pub skill: f64,
+    pub food: f64,
+    /// Net output lines at those factors (commodity, units/s) — extraction
+    /// lists each deposit's commodity; a converter lists its output.
+    pub outputs: Vec<(Commodity, f64)>,
+}
+
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within
 /// range (Tier 2). Absent from the ghost when out of sensor coverage.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -735,6 +817,9 @@ pub struct GhostView {
     /// The convoy's broadcast route (waypoints), light-delayed like its
     /// position. `None` for raiders (they don't broadcast).
     pub route: Option<Vec<Vec2>>,
+    /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
+    /// included under exactly the cargo rule below (empty = none visible).
+    pub passengers: BTreeMap<sim::SpecialistKind, u32>,
     /// The convoy's cargo — present ONLY when this convoy is within the viewing
     /// player's sensor coverage (Tier 2). `None` out of range, or for raiders.
     pub cargo: Option<CargoView>,

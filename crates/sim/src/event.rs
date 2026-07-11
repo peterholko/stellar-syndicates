@@ -153,7 +153,7 @@ pub enum EventPayload {
         system: EntityId,
         owner: PlayerId,
         /// Which development completed (Extractor/Depot/…).
-        upgrade: crate::build::SystemUpgrade,
+        upgrade: crate::build::StructureKind,
         /// The new tier of that development.
         tier: u32,
     },
@@ -184,12 +184,37 @@ pub enum EventPayload {
         /// The scout's position at capture — the report's light source.
         pos: crate::math::Vec2,
     },
-    /// A Habitat's supply state flipped (§buildings step 3a). OWNER-ONLY news:
-    /// `fed = false` means this tick's Provisions upkeep couldn't be covered, so
-    /// the output boost is SUSPENDED (nothing destroyed, no tier lost — it
-    /// recovers the tick food is available again); `fed = true` is the recovery.
-    /// Emitted only on TRANSITIONS, never per-tick (no spam).
-    HabitatSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
+    /// §economy Part 4: a Sol specialist CONTRACT was signed — credits debited,
+    /// a personnel convoy dispatched hub → `dest`. OWNER-ONLY, own clock
+    /// (price-certain; the delivery is the risky part).
+    SpecialistHired { owner: PlayerId, kind: crate::specialist::SpecialistKind, dest: EntityId },
+    /// §economy Part 4: an Academy finished a training course — one specialist
+    /// joined the system's resident pool. OWNER-ONLY, own clock.
+    SpecialistTrained { owner: PlayerId, system: EntityId, kind: crate::specialist::SpecialistKind },
+    /// §economy Part 4: a personnel convoy LANDED its passengers into a
+    /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
+    SpecialistsDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> },
+    /// §economy Part 4: a fleet DIED with specialists aboard — the people are
+    /// lost with the ship (the one true loss rule for specialists; residents
+    /// on the ground are never destroyed). OWNER-ONLY, light-delayed from the
+    /// wreck like any battle news.
+    SpecialistsLost { owner: PlayerId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>, pos: crate::math::Vec2 },
+    /// §economy Part 3: an assignment was (re)posted — `workers` crews to
+    /// `structure` at `system`. OWNER-ONLY, own clock (instant local admin,
+    /// like standing orders). The UI's confirmation signal.
+    AssignmentSet { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind, workers: u32 },
+    /// §economy Part 3: a production line STOPPED producing — latched, so it
+    /// fires once per outage, with the binding cause (food > inputs > storage).
+    /// OWNER-ONLY, own clock. Nothing is destroyed; fixing the cause resumes it.
+    ProductionSuspended { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind, reason: crate::production::SuspendReason },
+    /// §economy Part 3: a suspended line PRODUCED again (the recovery notice).
+    ProductionResumed { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind },
+    /// §economy Part 2: a colony's FOOD STATE moved on the 4-rung ladder
+    /// (replaces the old binary HabitatSupplyChanged). OWNER-ONLY news, on the
+    /// owner's own clock (own-economy precedent). Down-rungs are warnings
+    /// (workforce efficiency drops — nothing destroyed, nobody dies);
+    /// up-rungs are recoveries. Emitted only on TRANSITIONS, never per-tick.
+    FoodStateChanged { owner: PlayerId, system: EntityId, state: crate::colony::FoodState },
     /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
     /// 0). `owner` = the victor (they seize the plunder into their inventory);
     /// light-delayed from the base to their command center. The base goes dormant

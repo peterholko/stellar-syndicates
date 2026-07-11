@@ -102,15 +102,8 @@ impl Timeline {
                 }
                 EventPayload::SystemUpgraded { owner, system, upgrade, tier } => {
                     let name = system_name(world, *system);
-                    let what = match upgrade {
-                        sim::SystemUpgrade::Extractor => format!("Extractor tier {tier} (more output)"),
-                        sim::SystemUpgrade::Depot => format!("Depot tier {tier} (more storage)"),
-                        sim::SystemUpgrade::Shipyard => format!("Shipyard tier {tier} (builds ships)"),
-                        sim::SystemUpgrade::SensorArray => format!("Sensor Array tier {tier} (standing vision)"),
-                        sim::SystemUpgrade::DefensePlatform => format!("Defense Platform tier {tier} (static defense)"),
-                        sim::SystemUpgrade::Habitat => format!("Habitat tier {tier} (boosts output; consumes Provisions)"),
-                        sim::SystemUpgrade::Refinery => format!("Fuel Refinery tier {tier} (Volatiles → Fuel)"),
-                    };
+                    // §economy: one title-driven line for all 16 structure kinds.
+                    let what = format!("{} tier {tier}", upgrade.title());
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
                 // A soft-rejected build (§buildings step 1) — owner-only, instant
@@ -199,15 +192,75 @@ impl Timeline {
                         ));
                     }
                 }
-                // A Habitat's supply state flipped (§buildings step 3a) — OWNER-ONLY,
+                // §economy Part 4: specialist news — hire/training/delivery on
+                // the owner's own clock; a LOSS light-delayed from the wreck
+                // (battle-news precedent). All owner-only.
+                EventPayload::SpecialistHired { owner, kind, dest } => {
+                    let name = system_name(world, *dest);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "Contract signed: a {} ships out from Sol for {name} (sub-light — protect the run).",
+                        kind.title()
+                    ));
+                }
+                EventPayload::SpecialistTrained { owner, system, kind } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "The Academy at {name} graduated a {}.",
+                        kind.title()
+                    ));
+                }
+                EventPayload::SpecialistsDelivered { owner, system, manifest } => {
+                    let name = system_name(world, *system);
+                    let who: Vec<String> = manifest.iter().map(|(k, n)| format!("{}× {}", n, k.title())).collect();
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "Personnel landed at {name}: {}.",
+                        who.join(", ")
+                    ));
+                }
+                EventPayload::SpecialistsLost { owner, manifest, pos } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        let who: Vec<String> = manifest.iter().map(|(k, n)| format!("{}× {}", n, k.title())).collect();
+                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                            "Lost with the ship: {}.",
+                            who.join(", ")
+                        ));
+                    }
+                }
+                // §economy Part 3: a production line STOPPED or RECOVERED —
+                // OWNER-ONLY, own clock, transitions only (latched in the sim, so
+                // it can never spam). The named cause is the fix-first pointer.
+                EventPayload::ProductionSuspended { owner, system, structure, reason } => {
+                    let name = system_name(world, *system);
+                    use sim::SuspendReason as R;
+                    let cause = match reason {
+                        R::NoFood => "the colony is out of Provisions — ship food",
+                        R::NoInputs => "its input basket ran dry — ship raws in or staff extraction",
+                        R::StorageFull => "storage is FULL — ship goods out or build a Depot",
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
+                        "{} at {name} SUSPENDED — {cause} (nothing is lost).",
+                        structure.title()
+                    ));
+                }
+                EventPayload::ProductionResumed { owner, system, structure } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "{} at {name} is producing again.",
+                        structure.title()
+                    ));
+                }
+                // §economy Part 2: a colony moved on the FOOD LADDER — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
                 // and FuelShortfall). Transitions only, so it never spams.
-                EventPayload::HabitatSupplyChanged { owner, system, fed } => {
+                EventPayload::FoodStateChanged { owner, system, state } => {
                     let name = system_name(world, *system);
-                    let (sev, text) = if *fed {
-                        (TimelineSeverity::Good, format!("Habitat at {name} is fed again — output boost restored."))
-                    } else {
-                        (TimelineSeverity::Warn, format!("Habitat at {name} is UNFED — output boost suspended. Ship Provisions there (nothing is lost)."))
+                    use sim::FoodState as F;
+                    let (sev, text) = match state {
+                        F::WellSupplied => (TimelineSeverity::Good, format!("{name} is WELL SUPPLIED again — full workforce, growth resumed.")),
+                        F::Rationing => (TimelineSeverity::Warn, format!("{name} is RATIONING — workforce slowed, growth paused. Ship Provisions there (nothing is lost).")),
+                        F::Critical => (TimelineSeverity::Warn, format!("Food CRITICAL at {name} — workforce at half strength. Ship Provisions there (nothing is lost).")),
+                        F::NoProvisions => (TimelineSeverity::Bad, format!("{name} is OUT OF PROVISIONS — industry stalled; the colony endures (nobody dies). Ship Provisions there.")),
                     };
                     self.push(*owner, e.time, sev, text);
                 }
@@ -421,12 +474,20 @@ impl Timeline {
 }
 
 fn commodity_name(c: Commodity) -> &'static str {
+    // §economy: human names for the timeline prose (the wire uses `slug()`).
     match c {
-        Commodity::Fuel => "fuel",
-        Commodity::Ore => "ore",
-        Commodity::Alloys => "alloys",
-        Commodity::Provisions => "provisions",
+        Commodity::MetallicOre => "metallic ore",
+        Commodity::RareElements => "rare elements",
+        Commodity::Silicates => "silicates",
         Commodity::Volatiles => "volatiles",
+        Commodity::Biomass => "biomass",
+        Commodity::Alloys => "alloys",
+        Commodity::Electronics => "electronics",
+        Commodity::Polymers => "polymers",
+        Commodity::Fuel => "fuel",
+        Commodity::Provisions => "provisions",
+        Commodity::Machinery => "machinery",
+        Commodity::Armaments => "armaments",
     }
 }
 
@@ -470,13 +531,15 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "a Sensor Array",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "a Defense Platform",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "a Habitat",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Refinery } => "a Fuel Refinery",
+        sim::BuildKind::Upgrade { upgrade } => upgrade.title(),
+        // §economy Part 4: an Academy course — label by profession.
+        sim::BuildKind::Train { specialist } => match specialist {
+            sim::SpecialistKind::Geologist => "a Geologist (training)",
+            sim::SpecialistKind::PetrochemicalEngineer => "a Petrochemical Engineer (training)",
+            sim::SpecialistKind::Xenobiologist => "a Xenobiologist (training)",
+            sim::SpecialistKind::IndustrialEngineer => "an Industrial Engineer (training)",
+            sim::SpecialistKind::NavalArchitect => "a Naval Architect (training)",
+        },
     }
 }
 
@@ -619,7 +682,7 @@ mod tests {
             w.time,
             EventPayload::Trade(TradeEvent::Sold {
                 player: a,
-                commodity: Commodity::Ore,
+                commodity: Commodity::MetallicOre,
                 units: 12,
                 unit_price: 8.0,
             }),
@@ -628,7 +691,7 @@ mod tests {
         tl.promote(w.time);
         let (entries, _away) = tl.digest(a);
         assert_eq!(entries.len(), 1, "own sale should journal at once");
-        assert!(entries[0].text.contains("Sold 12 ore"));
+        assert!(entries[0].text.contains("Sold 12 metallic ore"));
     }
 
     #[test]
@@ -689,7 +752,7 @@ mod tests {
                 i as f64,
                 EventPayload::Trade(TradeEvent::Delivered {
                     player: a,
-                    commodity: Commodity::Ore,
+                    commodity: Commodity::MetallicOre,
                     units: i + 1,
                 }),
             );

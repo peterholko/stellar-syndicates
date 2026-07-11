@@ -451,6 +451,15 @@ pub struct Fleet {
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
+    /// §economy Part 4: SPECIALIST PASSENGERS aboard (kind → headcount) —
+    /// people, not cargo, but they ride the SAME two-tier fog rule: the
+    /// broadcast never includes them, a sensor-revealed manifest does. Berths
+    /// come from the logistics hulls (`specialist::passenger_capacity`). Lost
+    /// with the fleet (the one specialist loss rule); a merging fleet folds
+    /// them in; a consumed colony ship DISEMBARKS them into the new colony.
+    /// serde default keeps every old snapshot loading (nobody aboard).
+    #[serde(default)]
+    pub passengers: BTreeMap<crate::specialist::SpecialistKind, u32>,
     /// ENGAGEMENT POSTURE (§offensive-orders Part 2): standing per-fleet aggression
     /// — Passive (default), Defensive, or WeaponsFree. serde default = Passive so
     /// every old snapshot loads with today's behaviour (byte-preserving).
@@ -503,6 +512,7 @@ impl Fleet {
             notified_held: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
+            passengers: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
             garrison_fed: true,
             fought: false,
@@ -760,7 +770,7 @@ mod tests {
     fn fleet_of_one_matches_the_old_single_ship_exactly() {
         // A convoy fleet-of-one moves at the convoy's constant speed (§14.1) —
         // cargo affects fuel (mass), not speed.
-        let cargo = Some(Cargo { commodity: Commodity::Ore, units: 100 });
+        let cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 100 });
         let f = fleet(&[(ShipKind::Convoy, 1)], cargo);
         assert_eq!(f.max_speed(), ShipKind::Convoy.max_speed(), "fleet-of-one speed == its kind's speed");
         assert_eq!(f.flagship_kind(), ShipKind::Convoy);
@@ -779,7 +789,7 @@ mod tests {
 
     #[test]
     fn mass_and_fuel_sum_over_the_whole_convoy_count() {
-        let cargo = Some(Cargo { commodity: Commodity::Ore, units: 50 });
+        let cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 50 });
         let f = fleet(&[(ShipKind::Convoy, 3)], cargo);
         let expected = 3.0 * ShipKind::Convoy.hull_mass() + 50.0 * CARGO_MASS_PER_UNIT;
         assert!((f.mass() - expected).abs() < 1e-9, "mass = Σ hull×count + cargo");
