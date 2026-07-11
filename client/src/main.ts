@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AssignmentView, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize } from "./icons";
@@ -1012,10 +1012,15 @@ function buildSysviewManage(): void {
   // ONE delegated listener on the static panel shell (only #svm-body's innerHTML
   // is ever rewritten), so build clicks can never lose their handler.
   $("sysview-manage").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-build],[data-action]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-build],[data-action],[data-crew]") as HTMLElement | null;
     if (!el) return;
     const sid = viewedSystemId();
     if (!sid || !net) return;
+    if (el.dataset.crew) {
+      sendCrew(sid, el.dataset.crew);
+      updateSysviewManage();
+      return;
+    }
     if (el.dataset.build) {
       dispatchBuildKey(el.dataset.build, sid);
       return;
@@ -2052,7 +2057,58 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + upkeep + refinery;
+    }).join("") + upkeep + refinery + colonyPanel(dyn);
+}
+
+// §economy Part 6: the COLONY PRODUCTION PANEL — workforce, one row per line
+// with the server-resolved factor chain (shown math: throughput × staffing ×
+// skill × food), crew ± controls (data-crew), suspension causes. Functional,
+// not pretty: this is the alpha's management surface.
+const PRODUCER_SLUGS = new Set([
+  "mining_complex", "volatile_harvester", "bioharvester", "smelter",
+  "electronics_fabricator", "chemical_works", "fuel_refinery", "agroplex",
+  "machine_works", "armaments_complex", "shipyard",
+]);
+const SUSPEND_HINT: Record<string, string> = {
+  no_food: "out of Provisions — ship food",
+  no_inputs: "input basket dry — ship raws in or staff extraction",
+  storage_full: "storage full — ship goods out or build a Depot",
+};
+function colonyPanel(dyn: SystemStateView | undefined): string {
+  const wf = dyn?.workforce;
+  if (!wf) return "";
+  const lines = dyn?.assignments ?? [];
+  const posted = new Set(lines.map((a) => a.structure));
+  const short = wf.posted > wf.units;
+  const head = `<div class="deps-head" style="margin-top:8px">${icon("habitat", "sm")} Colony · workforce ` +
+    `<b>${Math.min(wf.posted, wf.units)}/${wf.posted}</b> crews` +
+    (short ? ` ${badgeChip("unfed", "short-staffed", "warn", `Only ${wf.units} of ${wf.posted} posted crews are filled — every line runs at ${((wf.units / Math.max(1, wf.posted)) * 100).toFixed(0)}%. Population growth adds crews.`)}` : "") +
+    `</div>`;
+  const rowFor = (a: AssignmentView): string => {
+    const chain = `×${a.throughput.toFixed(1)} tier · ×${a.staffing.toFixed(2)} staffing · ×${a.skill.toFixed(2)} skill · ×${a.food.toFixed(2)} food`;
+    const out = a.outputs.filter(([, r]) => r > 0.001).map(([c, r]) => `+${r.toFixed(2)} ${esc(c)}/s`).join(" ");
+    const spec = Object.entries(a.specialists).map(([k, n]) => `${n as number}× ${esc(k.replace(/_/g, " "))}`).join(", ");
+    const susp = a.suspended
+      ? ` ${badgeChip("unfed", esc(a.suspended.replace(/_/g, " ")), "warn", SUSPEND_HINT[a.suspended] ?? "suspended — nothing is lost")}`
+      : "";
+    return `<div class="sys-prod" title="${esc(a.title)} ×${a.tier} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
+      `<span>${esc(a.title)} ×${a.tier}</span>` +
+      `<span class="sp-stock">${a.workers}👷${spec ? ` +${Object.values(a.specialists).reduce((s: number, n) => s + (n as number), 0)}🎓` : ""}</span>` +
+      `<span class="sp-rate">${out || "—"}</span>${susp}` +
+      `<button class="act" data-crew="${a.structure}:${a.workers + 1}" title="post another crew">+</button>` +
+      `<button class="act" data-crew="${a.structure}:${Math.max(0, a.workers - 1)}" title="withdraw a crew">−</button>` +
+      `</div>`;
+  };
+  const idle = Object.entries(dyn?.structures ?? {})
+    .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !posted.has(slug))
+    .map(([slug, t]) =>
+      `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted">` +
+      `<span>${esc(slug.replace(/_/g, " "))} ×${t}</span><span class="sp-none">unstaffed</span>` +
+      `<button class="act" data-crew="${slug}:1" title="post a crew">+ crew</button></div>`)
+    .join("");
+  const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(k.replace(/_/g, " "))}`).join(", ");
+  const poolLine = pool ? `<div class="mhint" style="margin-top:2px">${icon("habitat", "sm")} resident specialists: ${pool}</div>` : "";
+  return head + lines.map(rowFor).join("") + idle + poolLine;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
@@ -2062,6 +2118,17 @@ function productionReadout(dyn: SystemStateView | undefined): string {
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
 const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
+
+// §economy Part 6: crew ± control → SetAssignment. `spec` is "slug:workers";
+// posted specialists are preserved server-side only if re-sent, so we send the
+// current line's specialists along (read from the live view).
+function sendCrew(systemId: EntityId, spec: string): void {
+  if (!net) return;
+  const [slug, n] = spec.split(":");
+  const dyn = state.systems.find((s) => s.id === systemId);
+  const line = dyn?.assignments?.find((a) => a.structure === slug);
+  net.send({ type: "SetAssignment", system_id: systemId, structure: slug, workers: Math.max(0, Number(n) || 0), specialists: line?.specialists ?? {} });
+}
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
@@ -2222,11 +2289,49 @@ function buildPanel(sid: string, dyn: SystemStateView | undefined): string {
   // pending upgrades already count against slots); the old "one job at a time"
   // was only this panel hiding itself.
   const queue = buildQueueRows(sid, dyn);
-  const rows = opts.map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
-  const full = slotsFull
-    ? `<div class="mhint">${badgeChip("slots", "slots full", "warn", "Every development slot here is used — develop another system (specialize!).")}</div>`
-    : "";
-  return queue + head + `<div class="build-grid">${rows}</div>` + full;
+  // §economy Part 6: the menu groups by SLOT POOL with per-pool used/total —
+  // derived from owner-only data exactly as the sim derives it (slots bound
+  // BREADTH: one per distinct built structure; tier-ups are never gated).
+  const pools = poolUsage(dyn);
+  const shipRows = opts.filter((o) => SHIP_KEYS.has(o.key)).map((o) => buildOptionRow(o, dyn, slotsFull)).join("");
+  const sections = (["resource", "industrial", "infrastructure"] as const).map((pool) => {
+    const inPool = opts.filter((o) => !SHIP_KEYS.has(o.key) && POOL_OF[o.key] === pool);
+    if (!inPool.length) return "";
+    const u = pools[pool];
+    const poolFull = u.used >= u.total;
+    return `<div class="mhint" style="margin-top:6px" title="Slots bound BREADTH — one per distinct structure; deepening a built structure's tier never needs a slot.">` +
+      `${pool} pool · ${u.used}/${u.total}${poolFull ? " · full (tier-ups still allowed)" : ""}</div>` +
+      `<div class="build-grid">${inPool.map((o) => buildOptionRow(o, dyn, poolFull && !((dyn?.structures ?? {})[o.key] > 0))).join("")}</div>`;
+  }).join("");
+  return queue + head + `<div class="build-grid">${shipRows}</div>` + sections;
+}
+
+// Slug → pool + derived pool budgets — MIRRORS the sim (build.rs slot_pool /
+// galaxy.rs *_slots): Resource = deposits.clamp(1,4); Industrial = 1+pop_tier;
+// Infrastructure = 2+(pop_tier≥1); pop tiers at 3.0M / 8.0M.
+const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure"> = {
+  mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource",
+  smelter: "industrial", electronics_fabricator: "industrial", chemical_works: "industrial",
+  fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial", shipyard: "industrial",
+  agroplex: "infrastructure", habitat: "infrastructure", depot: "infrastructure",
+  sensor_array: "infrastructure", defense_platform: "infrastructure", academy: "infrastructure",
+};
+function poolUsage(dyn: SystemStateView | undefined): Record<"resource" | "industrial" | "infrastructure", { used: number; total: number }> {
+  const popTier = (dyn?.population ?? 0) >= 8.0 ? 2 : (dyn?.population ?? 0) >= 3.0 ? 1 : 0;
+  const totals = {
+    resource: Math.min(4, Math.max(1, (dyn?.deposits ?? []).length)),
+    industrial: 1 + popTier,
+    infrastructure: 2 + (popTier >= 1 ? 1 : 0),
+  };
+  const used = { resource: 0, industrial: 0, infrastructure: 0 };
+  for (const [slug, t] of Object.entries(dyn?.structures ?? {})) {
+    if (t > 0 && POOL_OF[slug]) used[POOL_OF[slug]] += 1;
+  }
+  return {
+    resource: { used: used.resource, total: totals.resource },
+    industrial: { used: used.industrial, total: totals.industrial },
+    infrastructure: { used: used.infrastructure, total: totals.infrastructure },
+  };
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
@@ -2250,7 +2355,7 @@ function buildSystemTab(): void {
   if (systemTabBuilt) return;
   systemTabBuilt = true;
   $("tab-system").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-action],[data-sys],[data-build]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-action],[data-sys],[data-build],[data-crew]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.sys) {
       state.selectedSystemId = el.dataset.sys; // re-selects; map highlights it too
@@ -2259,6 +2364,10 @@ function buildSystemTab(): void {
     }
     const sid = state.selectedSystemId;
     if (!sid || !net) return;
+    if (el.dataset.crew) {
+      sendCrew(sid, el.dataset.crew);
+      return;
+    }
     if (el.dataset.build) {
       dispatchBuildKey(el.dataset.build, sid);
       return;
@@ -2649,6 +2758,17 @@ function buildMarketPanel(): void {
   marketBuilt = true;
   // Board row click = select commodity (master→detail drives the composer).
   $("market-board").addEventListener("click", (e) => {
+    // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
+    const h = (e.target as HTMLElement).closest("[data-hire]") as HTMLElement | null;
+    if (h && net) {
+      // Ships to the first owned system (the home — always held).
+      const dest = state.systems.find((s) => s.owner === state.playerId)?.id;
+      if (dest) {
+        net.send({ type: "HireSpecialist", specialist: h.dataset.hire!, dest_system: dest });
+        $("mk-feedback").textContent = `Contract signed — a ${h.dataset.hire!.replace(/_/g, " ")} ships out from Sol.`;
+      }
+      return;
+    }
     const b = (e.target as HTMLElement).closest("[data-resource]") as HTMLElement | null;
     if (!b?.dataset.resource) return;
     composer.commodity = b.dataset.resource as Commodity;
@@ -2701,7 +2821,28 @@ function renderMarketBoard(): void {
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
       `<span class="b-held">${heldOf.get(c) ?? 0}</span></button>`;
-  }).join("");
+  }).join("") + hirePanel();
+}
+
+// §economy Part 6: SOL SPECIALIST CONTRACTS — five professions at the standing
+// price; the contractor ships to the player's HOME on a normal raidable
+// personnel convoy (price-certain, delivery-risky).
+const SPECIALIST_SLUGS: [string, string][] = [
+  ["geologist", "Geologist — mineral extraction"],
+  ["petrochemical_engineer", "Petrochemical Engineer — volatiles, fuel, chemicals"],
+  ["xenobiologist", "Xenobiologist — biomass + agroplex"],
+  ["industrial_engineer", "Industrial Engineer — heavy industry"],
+  ["naval_architect", "Naval Architect — shipyards + armaments"],
+];
+function hirePanel(): string {
+  const cost = state.galaxy?.specialist_hire_cost ?? 800;
+  const credits = state.wallet?.credits ?? 0;
+  return `<div class="deps-head" style="margin-top:10px">${icon("habitat", "sm")} Specialists · Sol contracts (${cost.toFixed(0)} cr, ships to your home)</div>` +
+    SPECIALIST_SLUGS.map(([slug, label]) =>
+      `<button class="board__row" data-hire="${slug}" ${credits >= cost ? "" : "disabled"} ` +
+      `title="Hire — a specialist multiplies affine production lines ×1.75 when posted. The personnel convoy from Sol is sub-light and raidable.">` +
+      `<span class="b-name">${esc(label)}</span><span class="b-price">${cost.toFixed(0)} cr</span></button>`
+    ).join("");
 }
 
 // The composer preview surfaces the buy/sell asymmetry in plain language — the

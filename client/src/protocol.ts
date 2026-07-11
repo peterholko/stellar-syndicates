@@ -55,6 +55,24 @@ export interface BuildState {
   complete_time: number;
 }
 
+
+/// §economy Part 6: one production line with its resolved factor chain
+/// (output = base · throughput · staffing · skill · food — shown math).
+export interface AssignmentView {
+  structure: string;
+  title: string;
+  tier: number;
+  workers: number;
+  specialists: Record<string, number>;
+  suspended: string | null;
+  throughput: number;
+  staffing: number;
+  skill: number;
+  food: number;
+  /// (commodity, units/s) at the factors above.
+  outputs: [Commodity, number][];
+}
+
 export interface SystemStateView {
   id: EntityId;
   owner: PlayerId | null;
@@ -98,6 +116,12 @@ export interface SystemStateView {
   population: number;
   /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
   specialists: Record<string, number>;
+  /// Built structures (slug -> tier) — owner-only; rivals see {}.
+  structures: Record<string, number>;
+  /// Workforce numbers — owner-only; null for rivals.
+  workforce: { units: number; posted: number } | null;
+  /// Production lines with resolved factor chains — owner-only; rivals see [].
+  assignments: AssignmentView[];
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -197,6 +221,8 @@ export interface GalaxyInfo {
   provisions_per_million_per_s: number;
   pop_cap_per_habitat_tier: number;
   pop_growth_per_s: number;
+  /// Sol's standing specialist contract price (credits) — the hire panel.
+  specialist_hire_cost: number;
   /// §economy Part 3: Fuel Refinery converter rate — Fuel/s at tier-throughput
   /// 1.0, full staffing (1 Volatile per Fuel). For the refining hint.
   fuel_refinery_rate: number;

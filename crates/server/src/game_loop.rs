@@ -224,6 +224,7 @@ impl GameLoop {
                             provisions_per_million_per_s: sim::colony::PROVISIONS_PER_MILLION_PER_S,
                             pop_cap_per_habitat_tier: sim::colony::POP_CAP_PER_HABITAT_TIER,
                             pop_growth_per_s: sim::colony::POP_GROWTH_PER_S,
+                            specialist_hire_cost: sim::specialist::SPECIALIST_HIRE_COST,
                             // §economy Part 3: the refinery hint rate (full converter table on the wire in Part 6).
                             fuel_refinery_rate: sim::production::converter_for(sim::StructureKind::FuelRefinery).expect("refinery converts").rate,
                             // §contestable-territory Part 2: the siege duration.

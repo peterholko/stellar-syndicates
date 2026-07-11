@@ -410,6 +410,9 @@ pub struct GalaxyInfo {
     pub provisions_per_million_per_s: f64,
     pub pop_cap_per_habitat_tier: f64,
     pub pop_growth_per_s: f64,
+    /// §economy Part 6: Sol's standing specialist contract price (credits) —
+    /// for the hire panel.
+    pub specialist_hire_cost: f64,
     /// §economy Part 3: the Fuel Refinery's converter rate — units of Fuel/s
     /// at tier-throughput 1.0 with full staffing (the basket is 1 Volatile per
     /// Fuel). For the owner-only refining hint until the Part-6 colony panel.
@@ -558,6 +561,16 @@ pub struct SystemStateView {
     /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
     /// always see an empty map (your talent is private intel).
     pub specialists: BTreeMap<sim::SpecialistKind, u32>,
+    /// §economy Part 6: every built STRUCTURE (slug → tier) — owner-only;
+    /// rivals always see an empty map (the legacy per-kind tier fields above
+    /// stay for the map's visual anchors).
+    pub structures: BTreeMap<String, u32>,
+    /// §economy Part 6: the colony's WORKFORCE — owner-only; None for rivals.
+    pub workforce: Option<WorkforceView>,
+    /// §economy Part 6: every production line with its RESOLVED factor chain
+    /// (the shown-math law: output = base · throughput · staffing · skill ·
+    /// food) — owner-only; rivals always see an empty list.
+    pub assignments: Vec<AssignmentView>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under
@@ -666,6 +679,39 @@ pub struct SyndicateMember {
 pub struct SyndicateInviteView {
     pub id: SyndicateId,
     pub name: String,
+}
+
+/// §economy Part 6: a colony's workforce numbers — owner-only.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WorkforceView {
+    /// Workforce units the population fields (`floor(pop / 0.8M)`).
+    pub units: u32,
+    /// Crews posted across all assignments (may exceed `units` — every line
+    /// then dilutes by the same share).
+    pub posted: u32,
+}
+
+/// §economy Part 6: one production line, with the RESOLVED factor chain the
+/// client shows verbatim (no hidden math). Owner-only.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssignmentView {
+    /// Structure slug (matches build keys / icons).
+    pub structure: String,
+    pub title: String,
+    pub tier: u32,
+    pub workers: u32,
+    /// Specialists posted to this line (kind → n).
+    pub specialists: BTreeMap<sim::SpecialistKind, u32>,
+    /// Why the line is stopped (`no_food` / `no_inputs` / `storage_full`), if it is.
+    pub suspended: Option<String>,
+    /// The factor chain, resolved this tick.
+    pub throughput: f64,
+    pub staffing: f64,
+    pub skill: f64,
+    pub food: f64,
+    /// Net output lines at those factors (commodity, units/s) — extraction
+    /// lists each deposit's commodity; a converter lists its output.
+    pub outputs: Vec<(Commodity, f64)>,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within

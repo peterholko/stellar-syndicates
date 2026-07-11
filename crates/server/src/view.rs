@@ -676,6 +676,18 @@ pub fn filter_systems(
                 population: if own { sys.population } else { 0.0 },
                 // §economy Part 4: your talent is private intel.
                 specialists: if own { sys.specialists.clone() } else { Default::default() },
+                structures: if own {
+                    sys.structures.iter().map(|(k, t)| (k.slug().to_string(), *t)).collect()
+                } else {
+                    Default::default()
+                },
+                workforce: own.then(|| crate::protocol::WorkforceView {
+                    units: sim::colony::workforce_units(sys.population),
+                    posted: sys.workforce_posted(),
+                }),
+                // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
+                // owner-only (rivals: empty — production is private intel).
+                assignments: if own { assignment_views(sys) } else { Vec::new() },
                 refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
@@ -762,6 +774,47 @@ pub fn filter_systems(
                     }
                     _ => t.slug().to_string(),
                 }),
+            }
+        })
+        .collect()
+}
+
+/// §economy Part 6: resolve every production line's factor chain for the
+/// OWNER's view — the shown-math law: the client renders exactly these
+/// numbers; nothing is recomputed or hidden client-side. Pure read.
+fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentView> {
+    let line_spec = sys.effective_specialists();
+    sys.assignments
+        .iter()
+        .map(|(kind, asg)| {
+            let tier = sys.tier(*kind);
+            let throughput = sim::production::tier_throughput(tier);
+            let staffing = sys.staffing_factor(*kind);
+            let skill = sys.skill_factor(*kind);
+            let food = sim::production::food_factor(*kind, sys.food_state);
+            let (_, _matched) = line_spec.get(kind).copied().unwrap_or((0, 0));
+            let mut outputs: Vec<(Commodity, f64)> = Vec::new();
+            if let Some(conv) = sim::production::converter_for(*kind) {
+                outputs.push((conv.output, conv.rate * throughput * staffing * skill * food));
+            } else {
+                for d in &sys.deposits {
+                    if sim::production::extraction_structure(d.resource) == Some(*kind) {
+                        outputs.push((d.resource, d.richness * throughput * staffing * skill * food));
+                    }
+                }
+            }
+            crate::protocol::AssignmentView {
+                structure: kind.slug().to_string(),
+                title: kind.title().to_string(),
+                tier,
+                workers: asg.workers,
+                specialists: asg.specialists.clone(),
+                suspended: asg.suspended.map(|r| r.slug().to_string()),
+                throughput,
+                staffing,
+                skill,
+                food,
+                outputs,
             }
         })
         .collect()
@@ -1166,6 +1219,10 @@ mod tests {
         assert_eq!((v10[0].food_state.as_str(), v10[0].population), ("well_supplied", 2.5), "owner sees their own colony's rung + population");
         assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/supply never leaks");
         assert_eq!((v10[1].food_state.as_str(), v10[1].population), ("well_supplied", 0.0), "a rival's STARVATION and population never leak (vacuous rung, zero pop)");
+        // §economy Part 6: the whole colony readout obeys the same fog rule.
+        assert!(!v10[0].structures.is_empty() && v10[0].workforce.is_some(), "owner sees their structures + workforce");
+        assert!(v10[1].structures.is_empty() && v10[1].workforce.is_none() && v10[1].assignments.is_empty() && v10[1].specialists.is_empty(),
+            "a rival's structures/workforce/assignments/specialists never leak");
         // Refinery tier (§buildings step 3b) — owner-only on the same rule.
         assert_eq!(v10[0].refinery_tier, systems[0].tier(sim::StructureKind::FuelRefinery), "owner sees their refinery tier");
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
