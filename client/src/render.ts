@@ -9,6 +9,7 @@
 // The command center is your vantage — the origin of everything you can see.
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import { label } from "./icons";
 import type { Deposit, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetExactCount } from "./protocol";
 import type { ViewState } from "./state";
@@ -695,7 +696,7 @@ export class Renderer {
       let txt = sys.name;
       if (mine && dyn?.stockpile && dyn.stockpile.length) {
         const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
-        txt = `${sys.name}  ◆${top.units} ${top.commodity}`;
+        txt = `${sys.name}  ◆${top.units} ${label(top.commodity)}`;
       }
       const col = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : 0x55657f;
       const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
@@ -1702,13 +1703,13 @@ export class Renderer {
       // Own ships are light-delayed too now — always surface staleness so the fog
       // reads as "reporting from Xs ago," not a glitch. Convoys also show cargo.
       const cargo = ghost.kind === "convoy"
-        ? (ghost.cargo ? `${ghost.cargo.commodity} ×${ghost.cargo.units}  ` : "")
+        ? (ghost.cargo ? `${label(ghost.cargo.commodity)} ×${ghost.cargo.units}  ` : "")
         : "";
       txt = `${cargo}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
     } else if (ghost.kind === "convoy") {
-      const cargo = ghost.cargo ? `${ghost.cargo.commodity} ×${ghost.cargo.units}` : "cargo ?";
+      const cargo = ghost.cargo ? `${label(ghost.cargo.commodity)} ×${ghost.cargo.units}` : "cargo ?";
       txt = `${cargo}  ${stale}`;
       col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
       lalpha = 0.9;

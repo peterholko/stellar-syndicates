@@ -6,7 +6,7 @@ import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type AssignmentView, type BattleView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import type { DevTiers, SystemBodyDetail } from "./systemview";
-import { badgeChip, chip, icon, type IconKey, type IconSize } from "./icons";
+import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 
 const state: ViewState = initialState();
 
@@ -199,8 +199,8 @@ const COMMODITY_GLYPH: Record<Commodity, string> = {
 const commodityIcon = (c: Commodity, _size: IconSize = "md") => {
   const art = COMMODITY_ART[c];
   return art
-    ? `<img class="icon icon--resource" src="/art/ui_icons/resource/${art}.png" alt="" title="${c.replace("_", " ")}" />`
-    : `<span class="icon icon--resource icon--glyph" title="${c.replace("_", " ")}">${COMMODITY_GLYPH[c]}</span>`;
+    ? `<img class="icon icon--resource" src="/art/ui_icons/resource/${art}.png" alt="" title="${label(c)}" />`
+    : `<span class="icon icon--resource icon--glyph" title="${label(c)}">${COMMODITY_GLYPH[c]}</span>`;
 };
 
 // Status icon by timeline severity (the native Status set).
@@ -566,7 +566,7 @@ function ownBody(g: GhostView): string {
 
   if (g.kind === "convoy") {
     const cargo = g.cargo
-      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(g.cargo.commodity)}</div>`
+      ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(label(g.cargo.commodity))}</div>`
       : `<span class="dim">empty hold</span>`;
     parts.push(`<div class="sp-sec">Cargo</div>${cargo}`);
     if (g.route && g.route.length) {
@@ -654,7 +654,7 @@ function rivalBody(g: GhostView): string {
     }
     // Cargo ONLY when in sensor range (cargo present). NEVER shown otherwise.
     parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Cargo</div>` + (g.cargo
-      ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(g.cargo.commodity)}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
+      ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(label(g.cargo.commodity))}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
       : `<div class="sp-line dim">${icon("unknown", "sm", "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
   } else {
     const tip = g.kind === "scout"
@@ -720,7 +720,7 @@ function updateShipPanel(): void {
 function openMarket(): void {
   $("market").classList.add("is-open");
   $("nav-market").classList.add("is-active");
-  updateMarket();
+  setMarketTab(marketTab); // §market-ux: reopen on the last tab (also updates)
 }
 function closeMarket(): void {
   $("market").classList.remove("is-open");
@@ -1084,7 +1084,7 @@ function updateSysviewManage(): void {
   // Developments at a glance — building ICONS ×tier (names live in tooltips).
   const habTag = (dyn.habitat_tier ?? 0) > 0
     ? (dyn.habitat_fed ? ` ${badgeChip("fed", "fed", "positive", "The colony is well supplied — full workforce, population growing.")}`
-                       : ` ${badgeChip("unfed", (dyn.food_state ?? "rationing").replace("_", " "), "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`)
+                       : ` ${badgeChip("unfed", label(dyn.food_state ?? "rationing"), "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`)
     : "";
   const DEV_ROW: [string, IconKey, number, string][] = [
     ["Mining Complex", "extractor", dyn.extractor_tier ?? 0, ""],
@@ -1483,7 +1483,7 @@ function openCapturePanel(id: number): void {
   saveBattleMarks();
   const now = liveSimTime();
   const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
-  const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ") : "an empty stockpile";
+  const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(label(s.commodity))}`).join(", ") : "an empty stockpile";
   const verdict = r.captor
     ? badgeChip("captured", "captured — yours", "positive", "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination.")
     : badgeChip("lost", "lost — taken", "negative", "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship.");
@@ -1987,7 +1987,7 @@ function systemFlavor(sys: SystemInfo, deps: Deposit[] | null): string {
   if (!deps.length) return "barren system";
   const dom = deps.reduce((a, b) =>
     a.richness * COMMODITY_VALUE[a.resource] >= b.richness * COMMODITY_VALUE[b.resource] ? a : b);
-  return `${dom.resource}-rich ${tier}`;
+  return `${label(dom.resource)}-rich ${tier}`;
 }
 
 function depositRow(d: Deposit): string {
@@ -1997,7 +1997,7 @@ function depositRow(d: Deposit): string {
     : d.reserves < 50 ? `<span class="is-warn">${fmt(d.reserves)} left</span>`
       : `${fmt(d.reserves)} left`;
   return `<div class="dep-row"><span class="dep-ico">${commodityIcon(d.resource, "md")}</span>` +
-    `<span class="dep-name">${d.resource}</span>${bar(pct)}` +
+    `<span class="dep-name">${label(d.resource)}</span>${bar(pct)}` +
     `<span class="dep-r">~${d.richness.toFixed(2)}/s · ${reserves}</span></div>`;
 }
 
@@ -2032,7 +2032,7 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   if (!rows.length) return "";
   const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
   const habTag = habTier > 0 && !habFed
-    ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${(dyn?.food_state ?? "rationing").replace("_", " ").toUpperCase()}</span>`
+    ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${label(dyn?.food_state ?? "rationing").toUpperCase()}</span>`
     : "";
   // Standing upkeep line (the game's first continuous consumption): the
   // POPULATION eats, `provisions_per_million_per_s · millions` (§economy Part 2).
@@ -2056,7 +2056,7 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
-        `<span>${c}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
+        `<span>${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("") + upkeep + refinery + colonyPanel(dyn);
 }
 
@@ -2086,10 +2086,10 @@ function colonyPanel(dyn: SystemStateView | undefined): string {
     `</div>`;
   const rowFor = (a: AssignmentView): string => {
     const chain = `×${a.throughput.toFixed(1)} tier · ×${a.staffing.toFixed(2)} staffing · ×${a.skill.toFixed(2)} skill · ×${a.food.toFixed(2)} food`;
-    const out = a.outputs.filter(([, r]) => r > 0.001).map(([c, r]) => `+${r.toFixed(2)} ${esc(c)}/s`).join(" ");
-    const spec = Object.entries(a.specialists).map(([k, n]) => `${n as number}× ${esc(k.replace(/_/g, " "))}`).join(", ");
+    const out = a.outputs.filter(([, r]) => r > 0.001).map(([c, r]) => `+${r.toFixed(2)} ${esc(label(c))}/s`).join(" ");
+    const spec = Object.entries(a.specialists).map(([k, n]) => `${n as number}× ${esc(label(k))}`).join(", ");
     const susp = a.suspended
-      ? ` ${badgeChip("unfed", esc(a.suspended.replace(/_/g, " ")), "warn", SUSPEND_HINT[a.suspended] ?? "suspended — nothing is lost")}`
+      ? ` ${badgeChip("unfed", esc(label(a.suspended)), "warn", SUSPEND_HINT[a.suspended] ?? "suspended — nothing is lost")}`
       : "";
     return `<div class="sys-prod" title="${esc(a.title)} ×${a.tier} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
       `<span>${esc(a.title)} ×${a.tier}</span>` +
@@ -2103,10 +2103,10 @@ function colonyPanel(dyn: SystemStateView | undefined): string {
     .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !posted.has(slug))
     .map(([slug, t]) =>
       `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted">` +
-      `<span>${esc(slug.replace(/_/g, " "))} ×${t}</span><span class="sp-none">unstaffed</span>` +
+      `<span>${esc(label(slug))} ×${t}</span><span class="sp-none">unstaffed</span>` +
       `<button class="act" data-crew="${slug}:1" title="post a crew">+ crew</button></div>`)
     .join("");
-  const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(k.replace(/_/g, " "))}`).join(", ");
+  const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(label(k))}`).join(", ");
   const poolLine = pool ? `<div class="mhint" style="margin-top:2px">${icon("habitat", "sm")} resident specialists: ${pool}</div>` : "";
   return head + lines.map(rowFor).join("") + idle + poolLine;
 }
@@ -2240,7 +2240,7 @@ function buildOptionRow(o: { key: string; label: string; costs: { commodity: str
 function traitLine(slug: string): { title: string; desc: string; warn: boolean } {
   if (slug.startsWith("bonus_vein:")) {
     const c = slug.split(":")[1];
-    return { title: "Bonus Vein", desc: `Its ${c} deposit runs ×1.5 richer — always on.`, warn: false };
+    return { title: "Bonus Vein", desc: `Its ${label(c)} deposit runs ×1.5 richer — always on.`, warn: false };
   }
   switch (slug) {
     case "deep_deposits":
@@ -2252,7 +2252,7 @@ function traitLine(slug: string): { title: string; desc: string; warn: boolean }
     case "precursor_cache":
       return { title: "Precursor Cache", desc: "A one-time 40 Alloys was deposited to the stockpile at claim.", warn: false };
     default:
-      return { title: slug, desc: "", warn: false };
+      return { title: label(slug), desc: "", warn: false };
   }
 }
 
@@ -2390,7 +2390,7 @@ function buildSystemTab(): void {
         }
         net.send({ type: "ShipProduction", system_id: sid });
         readout().innerHTML =
-          `Shipping <b>${manifest.map((s) => `${s.units} ${esc(s.commodity)}`).join(", ")}</b> → hub — ` +
+          `Shipping <b>${manifest.map((s) => `${s.units} ${esc(label(s.commodity))}`).join(", ")}</b> → hub — ` +
           `one raidable convoy per commodity, selling on arrival. ` +
           `<span class="dim">Fuel stays as the reserve; a fuel-short convoy is held (see the Log).</span>`;
         break;
@@ -2542,7 +2542,7 @@ function updateSystemTab(): void {
   if (mine) {
     if (dyn?.blockade) cues.push(`${badge("negative", "blockaded")} logistics cut — convoys held in &amp; out`);
     if (storageFull) cues.push(`${badge("warn", "storage full")} production idling`);
-    if ((dyn?.population ?? 0) > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", (dyn?.food_state ?? "rationing").replace("_", " "))} workforce slowed — ship provisions`);
+    if ((dyn?.population ?? 0) > 0 && !dyn?.habitat_fed) cues.push(`${badge("warn", label(dyn?.food_state ?? "rationing"))} workforce slowed — ship provisions`);
     if (dyn?.node?.awakened && !dyn.node.fed) cues.push(`${badge("warn", "node unfed")} bonus suspended — ship its upkeep`);
     // §build-progress: the compact construction line — a glance from the map
     // says work is running (and when the next job lands) without opening the view.
@@ -2753,22 +2753,38 @@ function recordPriceHistory(): void {
 }
 
 let marketBuilt = false;
+// §market-ux: which Market tab is showing — survives close/reopen within the
+// session (M reopens on the last tab).
+let marketTab: "exchange" | "specialists" = "exchange";
+function setMarketTab(tab: "exchange" | "specialists"): void {
+  marketTab = tab;
+  ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
+  ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
+  document.querySelectorAll<HTMLElement>("#market-tabs button").forEach((b) =>
+    b.classList.toggle("is-active", b.dataset.mtab === tab));
+  updateMarket();
+}
 function buildMarketPanel(): void {
   if (marketBuilt) return;
   marketBuilt = true;
+  // §market-ux: Exchange / Specialists tabs.
+  $("market-tabs").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-mtab]") as HTMLElement | null;
+    if (b?.dataset.mtab) setMarketTab(b.dataset.mtab as "exchange" | "specialists");
+  });
+  // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
+  // Lives on the Specialists pane; feedback lands where the player is looking.
+  $("market-pane-specialists").addEventListener("click", (e) => {
+    const h = (e.target as HTMLElement).closest("[data-hire]") as HTMLElement | null;
+    if (!h || !net) return;
+    // Ships to the first owned system (the home — always held).
+    const dest = state.systems.find((s) => s.owner === state.playerId)?.id;
+    if (!dest) return;
+    net.send({ type: "HireSpecialist", specialist: h.dataset.hire!, dest_system: dest });
+    $("sp-feedback").textContent = `Contract signed — a ${label(h.dataset.hire!)} ships out from Sol.`;
+  });
   // Board row click = select commodity (master→detail drives the composer).
   $("market-board").addEventListener("click", (e) => {
-    // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
-    const h = (e.target as HTMLElement).closest("[data-hire]") as HTMLElement | null;
-    if (h && net) {
-      // Ships to the first owned system (the home — always held).
-      const dest = state.systems.find((s) => s.owner === state.playerId)?.id;
-      if (dest) {
-        net.send({ type: "HireSpecialist", specialist: h.dataset.hire!, dest_system: dest });
-        $("mk-feedback").textContent = `Contract signed — a ${h.dataset.hire!.replace(/_/g, " ")} ships out from Sol.`;
-      }
-      return;
-    }
     const b = (e.target as HTMLElement).closest("[data-resource]") as HTMLElement | null;
     if (!b?.dataset.resource) return;
     composer.commodity = b.dataset.resource as Commodity;
@@ -2798,7 +2814,7 @@ function buildMarketPanel(): void {
     } else {
       net.send(composer.side === "buy" ? { type: "MarketBuy", commodity: c, units: qty } : { type: "MarketSell", commodity: c, units: qty });
     }
-    $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${c}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
+    $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${label(c)}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
   });
 }
 
@@ -2815,34 +2831,42 @@ function renderMarketBoard(): void {
     const tr = trend(hist);
     const active = composer.commodity === c ? "is-active" : "";
     const priceTxt = p === undefined ? `<span class="is-stale">—</span>` : `${stale ? "~" : ""}${p.toFixed(2)}`;
-    return `<button class="board__row ${active}" data-resource="${c}" title="observed from your own price history — not a market forecast">` +
+    return `<button class="board__row ${active}" data-resource="${c}" title="your observed price history">` +
       `<span class="dep-ico">${commodityIcon(c, "md")}</span>` +
-      `<span class="b-name">${c}</span>` +
+      `<span class="b-name">${label(c)}</span>` +
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
       `<span class="b-held">${heldOf.get(c) ?? 0}</span></button>`;
-  }).join("") + hirePanel();
+  }).join("");
 }
 
-// §economy Part 6: SOL SPECIALIST CONTRACTS — five professions at the standing
-// price; the contractor ships to the player's HOME on a normal raidable
-// personnel convoy (price-certain, delivery-risky).
-const SPECIALIST_SLUGS: [string, string][] = [
-  ["geologist", "Geologist — mineral extraction"],
-  ["petrochemical_engineer", "Petrochemical Engineer — volatiles, fuel, chemicals"],
-  ["xenobiologist", "Xenobiologist — biomass + agroplex"],
-  ["industrial_engineer", "Industrial Engineer — heavy industry"],
-  ["naval_architect", "Naval Architect — shipyards + armaments"],
+// §economy Part 6 → §market-ux: SOL SPECIALIST CONTRACTS, now a Market TAB of
+// their own — five professions at the standing price; the contractor ships to
+// the player's HOME on a normal raidable personnel convoy (price-certain,
+// delivery-risky). Wire slugs stay raw in data-hire; names come from label().
+const SPECIALISTS: { slug: string; icon: IconKey; blurb: string }[] = [
+  { slug: "geologist", icon: "extractor", blurb: "mineral extraction" },
+  { slug: "petrochemical_engineer", icon: "refinery", blurb: "volatiles, fuel, chemicals" },
+  { slug: "xenobiologist", icon: "provisions", blurb: "biomass + agroplex" },
+  { slug: "industrial_engineer", icon: "build", blurb: "heavy industry" },
+  { slug: "naval_architect", icon: "shipyard", blurb: "shipyards + armaments" },
 ];
-function hirePanel(): string {
+function renderSpecialistsPane(): void {
   const cost = state.galaxy?.specialist_hire_cost ?? 800;
   const credits = state.wallet?.credits ?? 0;
-  return `<div class="deps-head" style="margin-top:10px">${icon("habitat", "sm")} Specialists · Sol contracts (${cost.toFixed(0)} cr, ships to your home)</div>` +
-    SPECIALIST_SLUGS.map(([slug, label]) =>
-      `<button class="board__row" data-hire="${slug}" ${credits >= cost ? "" : "disabled"} ` +
-      `title="Hire — a specialist multiplies affine production lines ×1.75 when posted. The personnel convoy from Sol is sub-light and raidable.">` +
-      `<span class="b-name">${esc(label)}</span><span class="b-price">${cost.toFixed(0)} cr</span></button>`
-    ).join("");
+  const rows = SPECIALISTS.map((s) =>
+    `<div class="board__row" title="A specialist multiplies affine production lines ×1.75 when posted. The personnel convoy from Sol is sub-light and raidable.">` +
+    `<span class="dep-ico">${icon(s.icon, "sm")}</span>` +
+    `<span class="b-name">${esc(label(s.slug))}</span>` +
+    `<span class="dim">${esc(s.blurb)}</span>` +
+    `<span class="b-price">${cost.toFixed(0)} cr</span>` +
+    `<button class="act" data-hire="${s.slug}" ${credits >= cost ? "" : "disabled"}>Hire</button>` +
+    `</div>`).join("");
+  // Rows only — #sp-feedback is a STATIC sibling so the 10 Hz view refresh
+  // never wipes a just-shown hire confirmation.
+  $("sp-rows").innerHTML =
+    `<div class="mhint" style="margin-bottom:6px">Standing Sol contracts — the specialist ships to your <b>home system</b>; post them to a matching line from the colony panel.</div>` +
+    rows;
 }
 
 // The composer preview surfaces the buy/sell asymmetry in plain language — the
@@ -2853,21 +2877,21 @@ function renderComposer(): void {
   const price = state.market.prices.find((p) => p.commodity === c)?.price;
   const stale = state.market.staleness > 0.5;
   const px = price !== undefined ? `${stale ? "~" : ""}${price.toFixed(2)}` : "?";
-  $("mk-sel").textContent = c;
+  $("mk-sel").textContent = label(c);
   document.querySelectorAll<HTMLElement>("#mk-side button").forEach((b) => b.classList.toggle("is-active", b.dataset.side === composer.side));
   const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
   const limitOn = ($("mk-limit-on") as HTMLInputElement).checked;
   const submit = $("mk-submit");
   if (limitOn) {
-    $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${c}</b> → rests, clears in the <span class="accent">batch</span></span>`;
+    $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${label(c)}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
     $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} <b>raidable</b> delivery</span>`;
-    submit.textContent = `Buy ${qty} ${c}`;
+    submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
     $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
-    submit.textContent = `Sell ${qty} ${c}`;
+    submit.textContent = `Sell ${qty} ${label(c)}`;
   }
 }
 
@@ -2875,7 +2899,7 @@ function renderRestingOrders(): void {
   const orders = state.wallet?.orders ?? [];
   $("market-orders").innerHTML = orders.length
     ? `<div class="deps-head">Resting limit orders</div>` +
-      orders.map((o) => `<div class="ord">${badge(o.side === "buy" ? "positive" : "warn", `${o.side} ${o.units} ${o.commodity} @ ${o.limit_price.toFixed(1)}`)}</div>`).join("")
+      orders.map((o) => `<div class="ord">${badge(o.side === "buy" ? "positive" : "warn", `${o.side} ${o.units} ${label(o.commodity)} @ ${o.limit_price.toFixed(1)}`)}</div>`).join("")
     : "";
 }
 
@@ -2886,6 +2910,7 @@ function updateMarket(): void {
   const fresh = $("market-fresh");
   fresh.className = "badge " + (stale > 0.5 ? "badge--warn" : "badge--positive");
   fresh.textContent = stale > 0.5 ? `~${stale.toFixed(0)}s stale` : "live";
+  fresh.title = "Last-synced ticker — light-delayed";
   $("market-wallet").innerHTML = statStrip([
     stat("Credits", `${fmt(state.wallet.credits)} Cr`, "is-accent"),
     stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
@@ -2893,28 +2918,29 @@ function updateMarket(): void {
   renderMarketBoard();
   renderComposer();
   renderRestingOrders();
+  renderSpecialistsPane();
 }
 
 function addTradeNews(t: TradeEvent): void {
   const log = $("reports-log");
   let text = "";
   switch (t.event) {
-    case "Bought": text = `Bought ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
-    case "Delivered": text = `Delivery arrived: +${t.units} ${t.commodity} (stored at destination).`; break;
-    case "SellDispatched": text = `Sell convoy away: ${t.units} ${t.commodity} crossing to the hub.`; break;
-    case "Sold": text = `Sold ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
-    case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${t.commodity} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
-    case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${t.commodity} @ ${t.unit_price.toFixed(2)}.`; break;
-    case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${t.commodity} (auto, raidable).`; break;
+    case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
+    case "Delivered": text = `Delivery arrived: +${t.units} ${label(t.commodity)} (stored at destination).`; break;
+    case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
+    case "Sold": text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
+    case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
+    case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`; break;
+    case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${label(t.commodity)} (auto, raidable).`; break;
     case "SupplyDiverted": {
       const what = t.action === "lost" ? "lost (cargo dropped)"
         : t.action === "returned_home" ? "re-routed home (raidable)"
         : "re-routed to sell at the hub (raidable)";
-      text = `⚠ Supply to ${systemName(t.system)} undeliverable — you no longer hold it: ${t.units} ${t.commodity} ${what}.`;
+      text = `⚠ Supply to ${systemName(t.system)} undeliverable — you no longer hold it: ${t.units} ${label(t.commodity)} ${what}.`;
       break;
     }
     case "StorageOverflow":
-      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${t.commodity} couldn't be stored — convoy carries it on to sell at the hub (raidable).`;
+      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — convoy carries it on to sell at the hub (raidable).`;
       break;
   }
   const el = document.createElement("div");
@@ -3022,7 +3048,7 @@ function updateStandingPanel(): void {
     if (prevDest) destSel.value = prevDest;
   }
   const comSel = $("so-commodity") as HTMLSelectElement;
-  if (!comSel.options.length) comSel.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${c}</option>`).join("");
+  if (!comSel.options.length) comSel.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
 
   const list = $("standing-list");
   const orders = state.standingOrders;
@@ -3035,7 +3061,7 @@ function updateStandingPanel(): void {
       const flight = o.in_flight ? `<span class="run">● convoy en route</span>` : `<span class="dim">idle</span>`;
       const paused = o.status === "paused" ? " · paused" : "";
       return `<div class="so"><span class="x" data-clear="${o.id}" title="remove">✕</span>` +
-        `<b>#${o.id}</b> ${commodityIcon(o.commodity, "sm")} ${o.commodity}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
+        `<b>#${o.id}</b> ${commodityIcon(o.commodity, "sm")} ${label(o.commodity)}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
         `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
     })
     .join("");
@@ -3329,7 +3355,7 @@ function computeInbox(): InboxItem[] {
     if (s.population > 0 && !s.habitat_fed) {
       const key = `habitat:${s.id}`;
       push({ key, weight: INBOX_W.unfedHabitat, tone: "warn", icon: "habitat",
-        headline: `${systemName(s.id)} — food ${(s.food_state ?? "rationing").replace("_", " ").toUpperCase()}`,
+        headline: `${systemName(s.id)} — food ${label(s.food_state ?? "rationing").toUpperCase()}`,
         stakes: "Workforce slowed, growth paused. Ship Provisions here or set a standing order (nothing is lost, nobody dies).",
         actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Focus", run: () => inboxFocusSystem(s.id) }, dismissAct(key)] });
     }
@@ -3402,7 +3428,7 @@ function computeInbox(): InboxItem[] {
     const info = galaxy.systems.find((x) => x.id === sid);
     if (!dyn?.deposits || !info) continue;
     const summary = dyn.deposits
-      .map((d) => `${d.resource} ~${d.richness.toFixed(1)}/s`)
+      .map((d) => `${label(d.resource)} ~${d.richness.toFixed(1)}/s`)
       .join(" · ");
     const unowned = dyn.owner === null;
     push({ key, weight: INBOX_W.surveyReport, tone: "info", icon: "intel",

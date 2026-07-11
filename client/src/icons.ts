@@ -31,6 +31,13 @@ export type IconKey =
   // syndicates (§syndicates)
   | "syndicate" | "ally" | "garrison";
 
+/** Wire slug → display label: "metallic_ore" → "Metallic Ore". Display-only —
+ * never feed the result back into commands; attributes that round-trip to
+ * `net.send` (data-resource / data-hire / option values …) stay raw. */
+export function label(slug: string): string {
+  return slug.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
 interface IconDef {
   /** Downscaled RASTER (PNG) variant name under /art/ui_icons/resource/ —
    *  highest precedence (the resource icons). Small, retina-crisp. */
