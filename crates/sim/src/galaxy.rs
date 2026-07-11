@@ -145,6 +145,12 @@ pub struct StarSystem {
     /// growth/consumption. Owner-only in the View.
     #[serde(default)]
     pub population: f64,
+    /// §economy Part 3: standing PRODUCTION ASSIGNMENTS — workforce crews
+    /// posted per structure kind (extraction, converters, Shipyard boost).
+    /// Nothing produces unstaffed. Owner-only in the View; `default` empty is
+    /// right for old snapshots (Part 7's migration seeds sensible defaults).
+    #[serde(default)]
+    pub assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment>,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -236,14 +242,47 @@ impl StarSystem {
         }
     }
 
-    /// Slots of one pool already CONSUMED by built tiers (in-progress jobs also
-    /// hold a slot — the World's `pool_slots_pending` adds those).
+    /// Slots of one pool already CONSUMED — one per DISTINCT built structure
+    /// (§economy Part 3): a slot is a FOOTPRINT, and tiers go DEEP on the same
+    /// slot (that's the throughput ladder's whole job). Slots bound BREADTH —
+    /// how many kinds a colony runs — never depth; otherwise a 2-deposit home
+    /// could never upgrade its mine at all. In-progress jobs founding a NEW
+    /// structure also hold a slot (the World's `pool_slots_pending`).
     pub fn pool_slots_built(&self, pool: crate::build::SlotPool) -> u32 {
         self.structures
             .iter()
-            .filter(|(k, _)| k.slot_pool() == pool)
-            .map(|(_, t)| *t)
-            .sum()
+            .filter(|(k, t)| k.slot_pool() == pool && **t >= 1)
+            .count() as u32
+    }
+
+    /// §economy Part 3: total workforce crews POSTED across all assignments.
+    pub fn workforce_posted(&self) -> u32 {
+        self.assignments.values().map(|a| a.workers).sum()
+    }
+
+    /// §economy Part 3: the colony-wide STAFFING SHARE — when the posting
+    /// exceeds what the population fields, every line dilutes by the same
+    /// fraction (fair, legible, and deadlock-free: no line ever starves
+    /// another outright). 1.0 when fully covered or nothing is posted.
+    pub fn staffing_share(&self) -> f64 {
+        let posted = self.workforce_posted();
+        if posted == 0 {
+            return 1.0;
+        }
+        (crate::colony::workforce_units(self.population) as f64 / posted as f64).min(1.0)
+    }
+
+    /// §economy Part 3: the STAFFING factor of one structure's line —
+    /// `(workers/tier) · share`: a tier-N plant wants N crews for full
+    /// throughput; posting fewer under-crews it, over-posting the colony
+    /// dilutes everyone. 0.0 when nothing is posted (unstaffed = idle).
+    pub fn staffing_factor(&self, kind: crate::build::StructureKind) -> f64 {
+        let tier = self.tier(kind);
+        if tier == 0 {
+            return 0.0;
+        }
+        let workers = self.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+        (workers.min(tier) as f64 / tier as f64) * self.staffing_share()
     }
 
     /// LEGACY single-budget readouts, now sums over the three pools — keeps the
@@ -253,9 +292,10 @@ impl StarSystem {
         self.resource_slots() + self.industrial_slots() + self.infrastructure_slots()
     }
 
-    /// Development slots already CONSUMED by completed tiers here (all pools).
+    /// Development slots already CONSUMED here (all pools) — one per distinct
+    /// built structure (see `pool_slots_built`).
     pub fn dev_slots_built(&self) -> u32 {
-        self.structures.values().sum()
+        self.structures.values().filter(|t| **t >= 1).count() as u32
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
@@ -367,6 +407,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             cache_claimed: false,
             structures: BTreeMap::new(),
             population: 0.0,
+            assignments: BTreeMap::new(),
         });
     }
     systems
@@ -473,7 +514,11 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         claim_cost,
         owner: None,
         claimed_at: None,
-        stockpile: BTreeMap::new(),
+        // A standing Provisions buffer so the food ladder starts Well Supplied
+        // while the seeded farm chain spins up (§economy Part 3 bootstrap).
+        stockpile: [(Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED)]
+            .into_iter()
+            .collect(),
         legacy_extractor_tier: 0,
         legacy_depot_tier: 0,
         legacy_shipyard_tier: 0,
@@ -486,14 +531,31 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         blockade: None,
         trait_: None,
         cache_claimed: false,
-        // HOME BOOTSTRAP (§buildings step 3 → §economy): every home starts with
-        // Shipyard tier 1 already built, so a new player can build convoys turn
-        // one. Written straight into the structures map (the live store); the
-        // legacy flat fields above are parse-only carriers.
-        structures: [(crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER)]
-            .into_iter()
-            .collect(),
-        population: 0.0,
+        // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3): a home is born
+        // a WORKING developed colony — Shipyard (convoys turn one), the two
+        // extraction structures its geology calls for, the Agroplex that turns
+        // Biomass into food, and the Habitat housing 2.0M colonists. Every
+        // slot pool is born exactly FULL (Resource 2/2, Industrial 1/1, Infra
+        // 2/2): all expansion runs through population growth, by design.
+        structures: [
+            (crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER),
+            (crate::build::StructureKind::Bioharvester, 1),
+            (crate::build::StructureKind::MiningComplex, 1),
+            (crate::build::StructureKind::Agroplex, 1),
+            (crate::build::StructureKind::Habitat, 1),
+        ]
+        .into_iter()
+        .collect(),
+        population: crate::colony::HOME_FOUNDING_POP,
+        // Pre-staffed: the food chain + the mine (the Shipyard boost crew is
+        // the player's first staffing decision once population grows).
+        assignments: [
+            (crate::build::StructureKind::Bioharvester, crate::production::Assignment { workers: 1, suspended: None }),
+            (crate::build::StructureKind::MiningComplex, crate::production::Assignment { workers: 1, suspended: None }),
+            (crate::build::StructureKind::Agroplex, crate::production::Assignment { workers: 1, suspended: None }),
+        ]
+        .into_iter()
+        .collect(),
     }
 }
 

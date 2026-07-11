@@ -90,6 +90,11 @@ pub enum ClientMsg {
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem { system_id: EntityId, upgrade: StructureKind },
 
+    /// §economy Part 3: post workforce crews to a structure at one of the
+    /// player's owned systems (0 clears the line). Instant local administration;
+    /// `workers` clamps to the structure's tier server-side.
+    SetAssignment { system_id: EntityId, structure: StructureKind, workers: u32 },
+
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
     /// light-delayed break-off order.
     Withdraw { fleet_id: EntityId },
@@ -388,10 +393,10 @@ pub struct GalaxyInfo {
     pub provisions_per_million_per_s: f64,
     pub pop_cap_per_habitat_tier: f64,
     pub pop_growth_per_s: f64,
-    /// Refinery tunables (§buildings step 3b): `rate·tier` Volatiles/s in,
-    /// `yield` Fuel out per Volatile — for the owner-only refining readout.
-    pub refinery_rate_per_tier: f64,
-    pub refinery_yield: f64,
+    /// §economy Part 3: the Fuel Refinery's converter rate — units of Fuel/s
+    /// at tier-throughput 1.0 with full staffing (the basket is 1 Volatile per
+    /// Fuel). For the owner-only refining hint until the Part-6 colony panel.
+    pub fuel_refinery_rate: f64,
     /// §contestable-territory Part 2: how long (sim seconds) an unbroken,
     /// defense-suppressed siege must run before a colony ship can capture — the
     /// client renders siege progress against it.

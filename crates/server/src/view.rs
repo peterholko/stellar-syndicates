@@ -1062,7 +1062,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1120,9 +1120,10 @@ mod tests {
         assert_eq!(v10[0].extractor_tier, 2, "owner sees their own development tier");
         assert_eq!(v10[1].extractor_tier, 0, "a rival's tier must never leak (not even faster-than-light)");
         // Development SLOTS follow the same owner-only rule (§buildings step 1):
-        // used counts built tiers (2) — the queued job at MINE is a SHIP, which
-        // holds no slot — and rivals see 0/0, never the budget or usage.
-        assert_eq!(v10[0].slots_used, 7, "owner sees slots used (all built tiers; ships hold none)");
+        // used counts DISTINCT built structures (§economy: slots bound breadth,
+        // tiers deepen in place) — MINE has 6 footprints; the queued job is a
+        // SHIP, which holds no slot — and rivals see 0/0, never the budget.
+        assert_eq!(v10[0].slots_used, 6, "owner sees slots used (distinct structures; ships hold none)");
         assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
         assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
         assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
@@ -1186,7 +1187,7 @@ mod tests {
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
             trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
-            structures: Default::default(), population: 0.0,
+            structures: Default::default(), population: 0.0, assignments: Default::default(),
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
@@ -1241,7 +1242,7 @@ mod tests {
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1297,7 +1298,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1346,7 +1347,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0, assignments: Default::default(),
         }]
     }
 

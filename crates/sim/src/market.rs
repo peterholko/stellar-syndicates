@@ -229,30 +229,26 @@ mod economy_price_tests {
     /// §economy BALANCE INVARIANT: every PROCESSED/ADVANCED good's base price
     /// clears its per-unit input basket at base prices — industry is worth doing
     /// (without making raw-selling worthless, which the raw ladder itself keeps).
-    /// Baskets mirror the Part-3 converter table; when the data-driven converter
-    /// lands (Part 4) this test re-points at it so the two can never drift.
+    /// Reads the LIVE converter table (`production::CONVERTERS`) — one source of
+    /// truth, so recipes and prices can never drift apart.
     #[test]
     fn processed_prices_clear_their_input_baskets() {
-        use Commodity::*;
-        // (output, inputs per 1.0 OUTPUT unit) — the converter table's "Inputs
-        // /unit" column reads per unit of output; the output column is the RATE
-        // (units/s at tier throughput 1) and doesn't enter the basket math.
-        let chains: &[(Commodity, &[(Commodity, f64)])] = &[
-            (Alloys, &[(MetallicOre, 1.5), (Fuel, 0.3)]),
-            (Electronics, &[(RareElements, 0.8), (Silicates, 0.8)]),
-            (Polymers, &[(Volatiles, 1.0), (Biomass, 0.8)]),
-            (Fuel, &[(Volatiles, 1.0)]),
-            (Provisions, &[(Biomass, 1.0)]),
-            (Machinery, &[(Alloys, 1.2), (Electronics, 0.6), (Fuel, 0.4)]),
-            (Armaments, &[(Alloys, 1.0), (Electronics, 0.5), (Polymers, 0.5)]),
-        ];
-        for (out, basket) in chains {
-            let input_cost: f64 = basket.iter().map(|(c, per_unit)| base_price(*c) * per_unit).sum();
+        let mut covered = std::collections::BTreeSet::new();
+        for conv in &crate::production::CONVERTERS {
+            let input_cost: f64 = conv.inputs.iter().map(|(c, per_unit)| base_price(*c) * per_unit).sum();
             assert!(
-                base_price(*out) > input_cost,
-                "{out:?} base {} must clear its input basket {input_cost:.2}",
-                base_price(*out)
+                base_price(conv.output) > input_cost,
+                "{:?} base {} must clear its input basket {input_cost:.2}",
+                conv.output,
+                base_price(conv.output)
             );
+            covered.insert(conv.output);
+        }
+        // Every non-raw commodity must be REACHABLE by some converter.
+        for c in Commodity::ALL {
+            if !Commodity::RAW.contains(&c) {
+                assert!(covered.contains(&c), "{c:?} has no converter producing it");
+            }
         }
     }
 }

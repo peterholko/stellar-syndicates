@@ -195,10 +195,9 @@ export interface GalaxyInfo {
   provisions_per_million_per_s: number;
   pop_cap_per_habitat_tier: number;
   pop_growth_per_s: number;
-  /// Refinery tunables (§buildings step 3b): rate·tier Volatiles/s in, yield
-  /// Fuel out per Volatile — for the owner-only refining readout.
-  refinery_rate_per_tier: number;
-  refinery_yield: number;
+  /// §economy Part 3: Fuel Refinery converter rate — Fuel/s at tier-throughput
+  /// 1.0, full staffing (1 Volatile per Fuel). For the refining hint.
+  fuel_refinery_rate: number;
   /// §contestable-territory Part 2: siege duration (sim s) — the client renders
   /// siege progress = (now − blockade.siege_since) / siege_secs.
   siege_secs: number;
@@ -452,6 +451,7 @@ export type ClientMsg =
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string }
+  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number }
   // §battles-take-time — withdraw an engaged fleet (light-delayed).
   | { type: "Withdraw"; fleet_id: EntityId }
   // §Part 4 — set a fleet's transit throttle (Full/Stealth).

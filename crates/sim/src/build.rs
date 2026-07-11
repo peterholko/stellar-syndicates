@@ -120,11 +120,17 @@ impl StructureKind {
             | StructureKind::ElectronicsFabricator
             | StructureKind::ChemicalWorks
             | StructureKind::FuelRefinery
-            | StructureKind::Agroplex
             | StructureKind::MachineWorks
             | StructureKind::ArmamentsComplex
             | StructureKind::Shipyard => SlotPool::Industrial,
-            StructureKind::Habitat
+            // §economy Part 3: the AGROPLEX is CIVIC — food security lives in
+            // the Infrastructure pool (Habitat + Agroplex = a self-feeding
+            // outpost on the base 2 slots, no industrial investment needed),
+            // and the home's single starting Industrial slot stays the
+            // Shipyard's — preserving the designed gate: Shipyard 2 (raiders)
+            // needs the SECOND industrial slot, i.e. a DEVELOPED colony.
+            StructureKind::Agroplex
+            | StructureKind::Habitat
             | StructureKind::Depot
             | StructureKind::SensorArray
             | StructureKind::DefensePlatform
@@ -278,16 +284,10 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     }
 }
 
-// --- FUEL REFINERY (§buildings step 3b) -----------------------------------------
-
-/// Volatiles consumed per second PER Refinery tier (input-side rate). Tunable.
-pub const REFINERY_RATE_PER_TIER: f64 = 0.5;
-/// Fuel produced per Volatile consumed. Slightly LOSSY (< 1) so raw Volatiles
-/// trade keeps a niche — refine for logistics, sell for margin. Because the
-/// yield is < 1, conversion always SHRINKS the stockpile total, so it can never
-/// violate the Depot storage cap (a guard still bounds it for yield ≥ 1
-/// tunings). Tunable.
-pub const REFINERY_YIELD: f64 = 0.8;
+// --- FUEL REFINERY (§buildings step 3b → §economy Part 3) -------------------------
+// The old REFINERY_RATE/YIELD pair is RETIRED: the Fuel Refinery is one row of
+// the data-driven converter table now (`production::CONVERTERS` — 1.0 Volatiles
+// per Fuel at 0.40/s), staffed and factor-chained like all industry.
 
 // --- HABITAT (§buildings step 3a → §economy Part 2) ------------------------------
 // The old per-tier upkeep + fed-boost pair is RETIRED: a Habitat now houses
@@ -377,9 +377,9 @@ pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
 /// slot) — the bootstrap that avoids a convoy chicken-and-egg stall on turn one.
 pub const HOME_SHIPYARD_TIER: u32 = 1;
 
-/// Multiplier applied to every deposit's richness PER Extractor tier (compounding):
-/// `richness · MULT^tier`. The upgrade payoff. Tunable.
-pub const EXTRACTOR_RICHNESS_MULT: f64 = 1.5;
+// §economy Part 3: EXTRACTOR_RICHNESS_MULT is RETIRED — extraction runs the
+// same factor chain as all industry (`production::tier_throughput` on the
+// structure tier, × staffing × skill × food), not a compounding multiplier.
 
 // --- DEVELOPMENT SLOTS (§buildings step 1) ----------------------------------
 // Every development BUILT (each Extractor/Depot/Shipyard tier) consumes ONE slot

@@ -99,6 +99,18 @@ pub const POP_GROWTH_PER_S: f64 = 0.002;
 /// instant workforce. Tunable.
 pub const COLONY_FOUNDING_POP: f64 = 0.5;
 
+/// The population (millions) every HOME system starts with (§economy Part 3
+/// bootstrap). Fields 2 workforce crews against the home's 3 seeded
+/// assignments — the home is born SHORT-STAFFED at 2/3 share, and the very
+/// first growth milestone (2.4M, ~3 min fed) fully staffs it: the opening
+/// arc teaches staffing before slots. Tunable.
+pub const HOME_FOUNDING_POP: f64 = 2.0;
+
+/// Provisions seeded in the HOME stockpile at generation — a standing buffer
+/// (~8 min of demand) that keeps the food ladder at Well Supplied while the
+/// seeded Bioharvester→Agroplex chain spins up. Tunable.
+pub const HOME_PROVISIONS_SEED: f64 = 60.0;
+
 // --- WORKFORCE ---------------------------------------------------------------
 
 /// Millions of population per WORKFORCE UNIT (the staffing currency Part 3's

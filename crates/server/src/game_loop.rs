@@ -224,9 +224,8 @@ impl GameLoop {
                             provisions_per_million_per_s: sim::colony::PROVISIONS_PER_MILLION_PER_S,
                             pop_cap_per_habitat_tier: sim::colony::POP_CAP_PER_HABITAT_TIER,
                             pop_growth_per_s: sim::colony::POP_GROWTH_PER_S,
-                            // Refinery tunables (§buildings step 3b).
-                            refinery_rate_per_tier: sim::build::REFINERY_RATE_PER_TIER,
-                            refinery_yield: sim::build::REFINERY_YIELD,
+                            // §economy Part 3: the refinery hint rate (full converter table on the wire in Part 6).
+                            fuel_refinery_rate: sim::production::converter_for(sim::StructureKind::FuelRefinery).expect("refinery converts").rate,
                             // §contestable-territory Part 2: the siege duration.
                             siege_secs: self.world.siege_duration_secs(),
                             pirate_id: sim::PlayerId::PIRATE,
@@ -423,6 +422,11 @@ impl GameLoop {
                 ClientMsg::DevelopSystem { system_id, upgrade } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade });
+                    }
+                }
+                ClientMsg::SetAssignment { system_id, structure, workers } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers });
                     }
                 }
                 ClientMsg::Withdraw { fleet_id } => {

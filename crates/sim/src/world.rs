@@ -3452,6 +3452,32 @@ impl World {
             Command::DevelopSystem { player_id, system_id, upgrade } => {
                 self.apply_build(*player_id, *system_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, events);
             }
+            Command::SetAssignment { player_id, system_id, structure, workers } => {
+                // §economy Part 3: INSTANT local administration (standing-order
+                // precedent). Owner + built structure required; `workers` clamps
+                // to the tier (a tier-N plant fields at most N crews); 0 clears
+                // the line. Over-posting the workforce is legal — the uniform
+                // staffing share dilutes every line fairly, no reject edge.
+                let Some(sys) = self.systems.iter_mut().find(|s| s.id == *system_id && s.owner == Some(*player_id)) else {
+                    return;
+                };
+                let tier = sys.tier(*structure);
+                if tier == 0 {
+                    return; // nothing built to staff — soft-reject
+                }
+                let workers = (*workers).min(tier);
+                if workers == 0 {
+                    sys.assignments.remove(structure);
+                } else {
+                    // A fresh posting starts un-suspended; the engine re-latches
+                    // real outages next tick (no stale banner on a re-post).
+                    sys.assignments.insert(*structure, crate::production::Assignment { workers, suspended: None });
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::AssignmentSet { owner: *player_id, system: *system_id, structure: *structure, workers },
+                ));
+            }
             Command::MergeFleets { player_id, into, from } => {
                 self.apply_merge_fleets(*player_id, *into, *from, events);
             }
@@ -3696,15 +3722,22 @@ impl World {
     }
 
     /// §economy: in-progress structure jobs at `system` holding a slot of `pool`
-    /// (the per-pool generalization of `dev_slots_pending`).
+    /// — only jobs FOUNDING a new structure (the kind isn't built yet) hold a
+    /// slot; tier-up jobs deepen an existing footprint (see
+    /// `pool_slots_built`). Distinct kinds, so double-queueing can't hold two.
     pub fn pool_slots_pending(&self, system: EntityId, pool: crate::build::SlotPool) -> u32 {
-        self.build_queue
-            .iter()
-            .filter(|j| {
-                j.system == system
-                    && matches!(j.what, crate::build::BuildKind::Upgrade { upgrade } if upgrade.slot_pool() == pool)
-            })
-            .count() as u32
+        let Some(sys) = self.systems.iter().find(|s| s.id == system) else { return 0 };
+        let mut kinds = std::collections::BTreeSet::new();
+        for j in &self.build_queue {
+            if j.system == system
+                && let crate::build::BuildKind::Upgrade { upgrade } = j.what
+                && upgrade.slot_pool() == pool
+                && sys.tier(upgrade) == 0
+            {
+                kinds.insert(upgrade);
+            }
+        }
+        kinds.len() as u32
     }
 
     /// Validate + start a construction job (§step1 growth sink): the player must own
@@ -3728,7 +3761,10 @@ impl World {
         // §economy: check the POOL of the requested kind, not one shared budget —
         // resource slots come from geology, industrial/infrastructure from
         // population. In-progress jobs hold a slot of their own pool, as before.
+        // §economy Part 3: only FOUNDING a new structure claims a slot — a
+        // tier-up deepens the footprint it already holds (never slot-gated).
         if let crate::build::BuildKind::Upgrade { upgrade } = what
+            && sys.tier(upgrade) == 0
             && {
                 let pool = upgrade.slot_pool();
                 sys.pool_slots_built(pool) + self.pool_slots_pending(system_id, pool) >= sys.pool_slots(pool)
@@ -3787,7 +3823,17 @@ impl World {
             *sys.stockpile.entry(*c).or_insert(0.0) -= *need * cost_mult;
         }
         self.next_build_id += 1;
-        let complete_tick = self.tick + recipe.build_ticks;
+        // §economy Part 3 SHIPYARD BOOST: a staffed yard turns SHIP jobs out
+        // faster — ticks / (1 + BOOST · staffing · skill). Locked in at enqueue
+        // (deterministic — no mid-flight retiming when crews move); structures
+        // are unaffected. skill = 1.0 until specialists (Part 4).
+        let ticks = if matches!(what, crate::build::BuildKind::Ship { .. }) {
+            let boost = 1.0 + crate::production::SHIPYARD_BOOST * sys.staffing_factor(crate::build::StructureKind::Shipyard) * 1.0;
+            (recipe.build_ticks as f64 / boost).round() as u64
+        } else {
+            recipe.build_ticks
+        };
+        let complete_tick = self.tick + ticks;
         self.build_queue.push(crate::build::BuildJob {
             id: self.next_build_id,
             owner: player_id,
@@ -4298,16 +4344,18 @@ impl World {
         }
     }
 
-    /// Accrue production at every claimed system: each deposit adds `richness·DT`
-    /// units of its resource to the system's stockpile, drawing down finite
-    /// reserves (renewable deposits never deplete). Deterministic.
+    /// §economy Part 3: run every owned system's COLONY LIFE + PRODUCTION for
+    /// one tick. Deposits no longer produce by themselves — extraction needs
+    /// its structure built AND staffed; converters additionally need their
+    /// input basket in the local stockpile. Deterministic throughout.
     ///
-    /// STORAGE CAP (§buildings step 2): a full system accrues NOTHING further —
+    /// STORAGE CAP (§buildings step 2): a full system EXTRACTS nothing further —
     /// production simply IDLES at the cap until goods ship out (async-fair: an
     /// offline player's depot fills and waits; nothing is destroyed, and a
     /// grandfathered over-cap stockpile is untouched — the cap blocks NEW inflow
     /// only). Reserves are drawn down only by what actually accrues, so a full
-    /// depot never wastes a finite deposit.
+    /// depot never wastes a finite deposit. Converters keep running at the cap
+    /// (their ≥1:1 baskets always SHRINK the total).
     ///
     /// COLONY LIFE (§economy Part 2) — ordering rule, per owned system each
     /// tick, BEFORE accrual (a colony eats from its standing stock; this
@@ -4359,80 +4407,147 @@ impl World {
                 sys.food_state = crate::colony::FoodState::WellSupplied;
             }
 
-            // Accrual idles at a FULL depot (nothing destroyed, nothing drawn) —
-            // but the refinery below still runs: its lossy conversion SHRINKS the
-            // total, so it works (and frees space) even at the cap.
+            // --- §economy Part 3: THE ASSIGNMENT ENGINE ------------------------
+            // NOTHING produces unstaffed. Every line's output is the legible
+            // factor chain  base · tier_throughput · staffing · skill · food
+            // (skill = 1.0 until specialists land in Part 4). Order within the
+            // tick: EXTRACTION first (fresh raws), then CONVERTERS in enum
+            // order (they can eat this tick's raws; chained converters see
+            // upstream output next tick — deterministic either way). A full
+            // depot idles extraction (nothing destroyed); converters never
+            // net-add units (baskets ≥ 1:1) so the cap can't bind on them
+            // (a guard still bounds retunings).
+            let share = sys.staffing_share();
+            let skill = 1.0; // §economy Part 4: specialists plug in here (×SPECIALIST_SKILL_MULT)
+            let deep = sys.trait_ == Some(crate::explore::SystemTrait::DeepDeposits);
+            let vein = match sys.trait_ {
+                Some(crate::explore::SystemTrait::BonusVein { commodity }) => Some(commodity),
+                _ => None,
+            };
+
+            // -- EXTRACTION: each deposit worked by its (staffed) structure. --
             let mut headroom = sys.storage_headroom();
-            if headroom > 0.0 {
-                // Extractor upgrades (§step1 structure sink) multiply every
-                // deposit's output: richness · MULT^tier; a FED Habitat multiplies
-                // the system's ENTIRE output on top (compounding, deterministic).
-                // §explore Part 3 (always-on ground truth, learned or not):
-                //   Deep Deposits — base ×DEEP_DEPOSITS_BASE_MULT, but the
-                //   Extractor multiplier applies as ^(tier−1): tier 1 is WASTED
-                //   breaking through (the survey can't see this; the claim does).
-                let deep = sys.trait_ == Some(crate::explore::SystemTrait::DeepDeposits);
-                let ext = sys.tier(crate::build::StructureKind::MiningComplex);
-                let ext_exp = if deep { ext.saturating_sub(1) } else { ext };
-                let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(ext_exp as i32);
-                if deep {
-                    mult *= crate::explore::DEEP_DEPOSITS_BASE_MULT;
+            let mut extracted_any = false;
+            for i in 0..sys.deposits.len() {
+                let (resource, richness) = (sys.deposits[i].resource, sys.deposits[i].richness);
+                let Some(kind) = crate::production::extraction_structure(resource) else { continue };
+                let tier = sys.tier(kind);
+                let workers = sys.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+                if tier == 0 || workers == 0 {
+                    continue; // unbuilt/unposted = idle by choice, not "suspended"
                 }
-                // (§economy Part 2: the fed-Habitat output boost is RETIRED —
-                // population's production leverage returns in Part 3 as the
-                // staffing/food factors of the assignment engine.)
-                // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
-                let vein = match sys.trait_ {
-                    Some(crate::explore::SystemTrait::BonusVein { commodity }) => Some(commodity),
-                    _ => None,
+                // §explore Part 3 Deep Deposits (always-on ground truth): the
+                // throughput ladder runs ONE TIER BEHIND — a tier of progress
+                // is wasted breaking through (a tier-1 complex still manages
+                // base throughput) — while the base runs ×DEEP_DEPOSITS_BASE_MULT.
+                let throughput = if deep {
+                    crate::production::tier_throughput(tier.saturating_sub(1).max(1))
+                        * crate::explore::DEEP_DEPOSITS_BASE_MULT
+                } else {
+                    crate::production::tier_throughput(tier)
                 };
-                for dep in &mut sys.deposits {
-                    let vein_mult = if vein == Some(dep.resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
-                    let mut amount = (dep.richness * mult * vein_mult * DT).min(headroom);
-                    if let Some(reserves) = dep.reserves.as_mut() {
-                        amount = amount.min(*reserves);
-                        *reserves -= amount;
+                let staffing = (workers.min(tier) as f64 / tier as f64) * share;
+                let food = crate::production::food_factor(kind, sys.food_state);
+                // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
+                let vein_mult = if vein == Some(resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
+                let mut amount =
+                    (richness * throughput * staffing * skill * food * vein_mult * DT).min(headroom.max(0.0));
+                if let Some(reserves) = sys.deposits[i].reserves.as_mut() {
+                    amount = amount.min(*reserves);
+                    *reserves -= amount;
+                }
+                if amount > 0.0 {
+                    *sys.stockpile.entry(resource).or_insert(0.0) += amount;
+                    headroom -= amount;
+                    extracted_any = true;
+                }
+            }
+            // Extraction suspension latch (per staffed extraction structure):
+            // the food floor keeps it above zero, so the only outage is a FULL
+            // depot — one latched notice, resumed the tick space frees up.
+            let storage_starved = !extracted_any && sys.storage_headroom() <= 1e-12;
+            for kind in [
+                crate::build::StructureKind::MiningComplex,
+                crate::build::StructureKind::VolatileHarvester,
+                crate::build::StructureKind::Bioharvester,
+            ] {
+                let tier = sys.tier(kind);
+                let Some(asg) = sys.assignments.get_mut(&kind) else { continue };
+                if tier == 0 || asg.workers == 0 {
+                    continue;
+                }
+                let works_here = sys.deposits.iter().any(|d| crate::production::extraction_structure(d.resource) == Some(kind));
+                if !works_here {
+                    continue; // staffed against no matching geology — the UI's problem, not an outage
+                }
+                let now_suspended = storage_starved.then_some(crate::production::SuspendReason::StorageFull);
+                if asg.suspended != now_suspended {
+                    match now_suspended {
+                        Some(reason) => events.push(Event::new(self.time, EventPayload::ProductionSuspended { owner, system: sys.id, structure: kind, reason })),
+                        None => events.push(Event::new(self.time, EventPayload::ProductionResumed { owner, system: sys.id, structure: kind })),
                     }
-                    if amount > 0.0 {
-                        *sys.stockpile.entry(dep.resource).or_insert(0.0) += amount;
-                        headroom -= amount;
-                    }
+                    asg.suspended = now_suspended;
                 }
             }
 
-            // --- FUEL REFINERY (§buildings step 3b) — conversion LAST, after
-            // upkeep + accrual, so it can refine this tick's fresh Volatiles.
-            // Bounded by rate, available Volatiles, and the storage cap on the
-            // Fuel side (with the lossy yield the total always SHRINKS, so the
-            // cap can't actually bind — the guard protects yield ≥ 1 tunings).
-            // Dry = idle (soft; nothing destroyed, nothing conjured).
-            if sys.tier(crate::build::StructureKind::FuelRefinery) >= 1 {
-                let have = sys
-                    .stockpile
-                    .get(&crate::cargo::Commodity::Volatiles)
-                    .copied()
-                    .unwrap_or(0.0);
-                let mut take = (crate::build::REFINERY_RATE_PER_TIER * sys.tier(crate::build::StructureKind::FuelRefinery) as f64 * DT).min(have);
-                if take > 0.0 {
-                    // Cap guard: post-conversion total must stay ≤ cap
-                    // (net change = take·(yield − 1) ≤ 0 for yield < 1).
-                    let net = take * (crate::build::REFINERY_YIELD - 1.0);
-                    let room = sys.storage_headroom();
-                    if net > room {
-                        take = (room / (crate::build::REFINERY_YIELD - 1.0)).max(0.0);
+            // -- CONVERTERS: staffed industry draws its input basket from the
+            // local stockpile and emits output, all bounded and deterministic.
+            for conv in &crate::production::CONVERTERS {
+                let kind = conv.structure;
+                let tier = sys.tier(kind);
+                let workers = sys.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+                if tier == 0 || workers == 0 {
+                    continue; // unbuilt/unposted = idle by choice
+                }
+                let food = crate::production::food_factor(kind, sys.food_state);
+                let staffing = (workers.min(tier) as f64 / tier as f64) * share;
+                // §explore Part 3 Volatile Pockets: richer feedstock — the Fuel
+                // Refinery's OUTPUT runs ×VOLATILE_REFINERY_MULT here (always-on).
+                let pocket = if kind == crate::build::StructureKind::FuelRefinery
+                    && sys.trait_ == Some(crate::explore::SystemTrait::VolatilePockets)
+                {
+                    crate::explore::VOLATILE_REFINERY_MULT
+                } else {
+                    1.0
+                };
+                // (`pocket` multiplies the OUTPUT of the same input draw — the
+                // old refinery's exact semantics — so it does NOT enter max_out.)
+                let max_out = conv.rate * crate::production::tier_throughput(tier) * staffing * skill * food * DT;
+                // Bound by the scarcest input (units of OUTPUT the basket affords).
+                let input_bound = conv
+                    .inputs
+                    .iter()
+                    .map(|(c, per)| sys.stockpile.get(c).copied().unwrap_or(0.0) / per)
+                    .fold(f64::INFINITY, f64::min);
+                let mut out = max_out.min(input_bound);
+                // Cap guard (inactive at ≥1:1 baskets, protects retunings):
+                // net stockpile change = out − Σ inputs drawn must fit headroom.
+                let drawn_per_out: f64 = conv.inputs.iter().map(|(_, per)| per).sum();
+                let net_per_out = 1.0 - drawn_per_out;
+                if net_per_out > 0.0 {
+                    out = out.min((sys.storage_headroom() / net_per_out).max(0.0));
+                }
+                // The latched outage, by fix-first priority: food > inputs.
+                let now_suspended = if food <= 0.0 {
+                    Some(crate::production::SuspendReason::NoFood)
+                } else if out <= 1e-12 && input_bound <= 1e-12 {
+                    Some(crate::production::SuspendReason::NoInputs)
+                } else {
+                    None
+                };
+                if now_suspended.is_none() && out > 0.0 {
+                    for (c, per) in conv.inputs {
+                        *sys.stockpile.get_mut(c).expect("bounded by stock") -= out * per;
                     }
-                    if take > 0.0 {
-                        // §explore Part 3 Volatile Pockets: richer feedstock —
-                        // Refinery OUTPUT ×VOLATILE_REFINERY_MULT here (always-on).
-                        let pocket = if sys.trait_ == Some(crate::explore::SystemTrait::VolatilePockets) {
-                            crate::explore::VOLATILE_REFINERY_MULT
-                        } else {
-                            1.0
-                        };
-                        *sys.stockpile.entry(crate::cargo::Commodity::Volatiles).or_insert(0.0) -= take;
-                        *sys.stockpile.entry(crate::cargo::Commodity::Fuel).or_insert(0.0) +=
-                            take * crate::build::REFINERY_YIELD * pocket;
+                    *sys.stockpile.entry(conv.output).or_insert(0.0) += out * pocket;
+                }
+                let asg = sys.assignments.get_mut(&kind).expect("workers > 0 ⇒ posted");
+                if asg.suspended != now_suspended {
+                    match now_suspended {
+                        Some(reason) => events.push(Event::new(self.time, EventPayload::ProductionSuspended { owner, system: sys.id, structure: kind, reason })),
+                        None => events.push(Event::new(self.time, EventPayload::ProductionResumed { owner, system: sys.id, structure: kind })),
                     }
+                    asg.suspended = now_suspended;
                 }
             }
         }
@@ -5508,15 +5623,26 @@ mod tests {
     }
 
     // --- §step1 PART 1: build sink ------------------------------------------
-    use crate::build::{StructureKind, CONVOY_RECIPE, EXTRACTOR_RICHNESS_MULT};
+    use crate::build::{StructureKind, CONVOY_RECIPE};
     use crate::cargo::Commodity;
 
     /// Grant `owner` a system directly (test SETUP — the game path is now a
     /// colony-ship arrival, tested separately in §fleets part 3).
+    /// Grant + make a WORKING colony of it (§economy Part 3: nothing produces
+    /// unstaffed): tier-1 extraction structures matching its geology, one crew
+    /// each, a fed population large enough that every factor reads 1.0.
     fn grant_system(w: &mut World, owner: PlayerId, sys: EntityId) {
         let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
         s.owner = Some(owner);
         s.claimed_at = Some(w.time);
+        let kinds: std::collections::BTreeSet<_> =
+            s.deposits.iter().filter_map(|d| crate::production::extraction_structure(d.resource)).collect();
+        for k in kinds {
+            s.set_tier(k, s.tier(k).max(1));
+            s.assignments.insert(k, crate::production::Assignment { workers: 1, suspended: None });
+        }
+        s.population = 4.0; // 5 workforce units — ample for ≤3 posted crews
+        s.stockpile.insert(Commodity::Provisions, 100.0); // ~7 min of food at 4M
     }
 
     /// Park a fresh COLONY ship of `owner` at `pos` (already arrived, Idle).
@@ -5589,14 +5715,27 @@ mod tests {
         assert!(w.build_queue.is_empty(), "no job enqueued on a short stockpile");
     }
 
+    /// §economy Part 3: developing the home's Mining Complex 1 → 2 and posting
+    /// a full crew climbs the throughput ladder — ore output = richness × 2.2
+    /// with every other factor pinned at 1.0.
     #[test]
-    fn develop_system_raises_extractor_tier_and_richness() {
+    fn develop_system_climbs_the_throughput_ladder() {
         let mut w = test_world();
         let id = PlayerId(4);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
-        let rate0: f64 = w.systems.iter().find(|s| s.id == home).unwrap().deposits.iter().map(|d| d.richness).sum();
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 65.0)]); // the recipe's 60, under the cap
+        // Slot room for the second Mining tier (Resource pool is born full) +
+        // an ample, well-fed workforce so staffing/food read exactly 1.0.
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            sys.deposits.push(crate::galaxy::Deposit { resource: Commodity::Silicates, richness: 0.0, reserves: None, accessibility: 0.5 });
+            sys.population = 8.0;
+            // (the home's seeded 60 Provisions cover these few ticks; more
+            // would overflow the 500-unit cap on top of the 300-Fuel seed)
+        }
+        let ore_rate: f64 = w.systems.iter().find(|s| s.id == home).unwrap()
+            .deposits.iter().filter(|d| d.resource == Commodity::MetallicOre).map(|d| d.richness).sum();
 
         w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
         let dur = crate::build::MINING_COMPLEX_RECIPE.build_ticks;
@@ -5604,14 +5743,14 @@ mod tests {
             w.step(&[]);
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 1, "extractor tier applied on completion");
-        // One tick's accrual should now reflect the ×MULT richness.
-        let stock_before: f64 = sys.stockpile.values().sum();
+        assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 2, "the home's seeded tier-1 mine upgraded to 2");
+        // Post the full crew the bigger plant wants, then measure one tick.
+        w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: StructureKind::MiningComplex, workers: 2 }]);
+        let ore_before = system_stock(&w, home, Commodity::MetallicOre);
         w.step(&[]);
-        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        let gained: f64 = sys.stockpile.values().sum::<f64>() - stock_before;
-        let expect = rate0 * EXTRACTOR_RICHNESS_MULT * crate::config::DT;
-        assert!((gained - expect).abs() < 1e-6, "production scaled by the extractor (got {gained}, want {expect})");
+        let gained = system_stock(&w, home, Commodity::MetallicOre) - ore_before;
+        let expect = ore_rate * crate::production::tier_throughput(2) * crate::config::DT;
+        assert!((gained - expect).abs() < 1e-6, "ore = richness × tier-2 throughput (got {gained}, want {expect})");
     }
 
     #[test]
@@ -5650,7 +5789,7 @@ mod tests {
             w.step(&[]);
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 0, "can't upgrade a system you no longer own (resources already spent)");
+        assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 1, "the dropped upgrade never lands — the tier stays at the home's bootstrap 1 (resources already spent)");
     }
 
     // --- §buildings step 1 PART 1: development slots -------------------------
@@ -5663,24 +5802,23 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 10_000.0)]);
 
-        // §economy: fill the RESOURCE pool (the MiningComplex's pool) — each
-        // enqueue holds a slot of ITS pool; the other pools are irrelevant here.
+        // §economy: slots bound BREADTH, not depth. The home's Resource pool is
+        // BORN FULL (Bioharvester + MiningComplex on its 2 deposits), so:
+        // a TIER-UP of an existing structure is never slot-gated…
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
         let pool = crate::build::SlotPool::Resource;
-        let free = sys.pool_slots(pool) - sys.pool_slots_built(pool);
-        assert!(free >= 1, "the home must start with at least one free resource slot");
-        for _ in 0..free {
-            let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
-            assert!(
-                ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
-                "a development starts while slots remain"
-            );
-        }
+        assert_eq!(sys.pool_slots_built(pool), sys.pool_slots(pool), "the home's resource footprints fill its geology");
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
+            "deepening an existing footprint needs no free slot"
+        );
 
-        // One more: SOFT reject — no debit, no job, an owner-only NoSlot notice.
+        // …but FOUNDING a new kind in the full pool SOFT rejects — no debit,
+        // no job, an owner-only NoSlot notice.
         let ore_before = system_stock(&w, home, Commodity::MetallicOre);
         let jobs_before = w.build_queue.len();
-        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::VolatileHarvester }]);
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
@@ -5766,14 +5904,17 @@ mod tests {
         let id = PlayerId(23);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        // Simulate a pre-cap snapshot: stockpile far over the cap.
+        // Simulate a pre-cap snapshot: stockpile far over the cap. Use a good
+        // NOBODY at the home consumes (§economy: the colony EATS Provisions and
+        // converters draw raws — real consumers, not cap destruction), so the
+        // only thing that could shrink it is the cap. It must not.
         let cap = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
-        seed_stock(&mut w, home, &[(Commodity::Provisions, cap * 3.0)]);
-        let over: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        seed_stock(&mut w, home, &[(Commodity::Silicates, cap * 3.0)]);
+        let over: f64 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Silicates];
         for _ in 0..30 {
             w.step(&[]);
         }
-        let after: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
+        let after: f64 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Silicates];
         assert!((after - over).abs() < 1e-9, "over-cap stock is kept (cap blocks NEW accrual only)");
     }
 
@@ -5784,6 +5925,10 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0)]);
+        // §economy: the home's Infrastructure pool is BORN FULL (Habitat +
+        // Agroplex on 2 slots) — a Depot needs the third slot, i.e. a
+        // DEVELOPED colony. That's the designed progression, so grow first.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().population = crate::build::POP_DEVELOPED;
         let cap0 = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
         let slots0 = w.systems.iter().find(|s| s.id == home).unwrap().dev_slots_built();
 
@@ -6149,57 +6294,308 @@ mod tests {
     // and its tests. Population leverage over output returns there too, as the
     // staffing/food factors of the assignment engine.
 
+    // --- §economy Part 3: the assignment engine --------------------------------
+
+    /// THE SELF-SUSTAINING-HOME GUARANTEE, re-established: the bootstrap home
+    /// (Bioharvester + MiningComplex + Agroplex pre-staffed, pop 2.0M, a food
+    /// buffer) feeds itself from tick one — food stays WellSupplied, the
+    /// population GROWS, and ore accumulates for building. Turn one works
+    /// without opening a menu, exactly like before the industrial web.
+    #[test]
+    fn bootstrap_home_feeds_itself_and_grows() {
+        let mut w = test_world();
+        let id = PlayerId(50);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        for _ in 0..(120.0 / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.food_state, crate::colony::FoodState::WellSupplied, "the seeded farm chain keeps the home fed");
+        assert!(sys.population > crate::colony::HOME_FOUNDING_POP, "a fed home GROWS (got {})", sys.population);
+        assert!(system_stock(&w, home, Commodity::MetallicOre) > 20.0, "the staffed mine banks ore for building");
+        assert!(system_stock(&w, home, Commodity::Provisions) > 0.0, "provisions production outruns the population");
+        // Born short-staffed BY DESIGN: 2 crews against 3 posted lines — the
+        // first growth milestone (2.4M) fully staffs it. The opening arc.
+        assert!(sys.staffing_share() > 2.0 / 3.0 - 1e-9, "share only ever rises from the bootstrap 2/3");
+    }
+
+    /// Variant B core math: an UNSTAFFED line produces nothing (structure built
+    /// or not), and over-posting the workforce dilutes every line by the SAME
+    /// share — fair, legible, deadlock-free.
+    #[test]
+    fn unstaffed_produces_nothing_and_overposting_dilutes_fairly() {
+        let mut w = test_world();
+        let id = PlayerId(51);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.deposits = vec![
+            crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 1.0, reserves: None, accessibility: 0.5 },
+            crate::galaxy::Deposit { resource: Commodity::Biomass, richness: 1.0, reserves: None, accessibility: 0.5 },
+        ];
+        sys.population = 0.9; // exactly ONE workforce crew
+        sys.stockpile.insert(Commodity::Provisions, 100.0);
+        sys.set_tier(crate::build::StructureKind::MiningComplex, 1);
+        sys.set_tier(crate::build::StructureKind::Bioharvester, 1);
+        let sid = sys.id;
+
+        // Built but UNSTAFFED: nothing moves.
+        w.step(&[]);
+        assert_eq!(system_stock(&w, sid, Commodity::MetallicOre), 0.0, "unstaffed extraction = 0");
+        assert_eq!(system_stock(&w, sid, Commodity::Biomass), 0.0);
+
+        // Post BOTH lines against the single crew: each runs at share 1/2.
+        w.step(&[
+            Command::SetAssignment { player_id: id, system_id: sid, structure: crate::build::StructureKind::MiningComplex, workers: 1 },
+            Command::SetAssignment { player_id: id, system_id: sid, structure: crate::build::StructureKind::Bioharvester, workers: 1 },
+        ]);
+        let ore0 = system_stock(&w, sid, Commodity::MetallicOre);
+        let bio0 = system_stock(&w, sid, Commodity::Biomass);
+        w.step(&[]);
+        let ore_gain = system_stock(&w, sid, Commodity::MetallicOre) - ore0;
+        let bio_gain = system_stock(&w, sid, Commodity::Biomass) - bio0;
+        let expect = 1.0 * crate::production::tier_throughput(1) * 0.5 * crate::config::DT;
+        assert!((ore_gain - expect).abs() < 1e-9, "one crew across two lines: HALF rate each (got {ore_gain})");
+        assert!((bio_gain - expect).abs() < 1e-9, "…the same share for both (got {bio_gain})");
+    }
+
+    /// SetAssignment is instant local admin with hard edges: rivals bounce,
+    /// unbuilt structures bounce, `workers` clamps to the tier, 0 clears the
+    /// line, and every accepted change is announced (AssignmentSet).
+    #[test]
+    fn set_assignment_validates_clamps_and_announces() {
+        let mut w = test_world();
+        let (id, rival) = (PlayerId(52), PlayerId(53));
+        w.step(&[
+            Command::AddPlayer { id, name: "Acme".into() },
+            Command::AddPlayer { id: rival, name: "Rival".into() },
+        ]);
+        let home = w.players[&id].home_system.unwrap();
+
+        // A rival's posting bounces (no state change, no event).
+        let ev = w.step(&[Command::SetAssignment { player_id: rival, system_id: home, structure: crate::build::StructureKind::MiningComplex, workers: 1 }]);
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::AssignmentSet { .. })), "a rival can't staff your colony");
+
+        // An UNBUILT structure bounces.
+        let ev = w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Smelter, workers: 1 }]);
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::AssignmentSet { .. })), "nothing built to staff");
+
+        // Over-posting a tier-1 structure clamps to 1 crew (announced as such).
+        let ev = w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Shipyard, workers: 5 }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::AssignmentSet { owner, structure: crate::build::StructureKind::Shipyard, workers: 1, .. } if owner == id)),
+            "workers clamp to the structure tier"
+        );
+        // Zero clears the line.
+        w.step(&[Command::SetAssignment { player_id: id, system_id: home, structure: crate::build::StructureKind::Shipyard, workers: 0 }]);
+        assert!(!w.systems.iter().find(|s| s.id == home).unwrap().assignments.contains_key(&crate::build::StructureKind::Shipyard));
+    }
+
+    /// CHAIN INTEGRATION (§economy Part 8 test 5): seeded raws → Smelter →
+    /// MachineWorks produces Machinery end-to-end, offline; cutting the ore
+    /// feed stalls the chain within the buffer window (latched NoInputs up the
+    /// chain) — and NOTHING is destroyed.
+    #[test]
+    fn industrial_chain_produces_machinery_and_stalls_when_the_feed_is_cut() {
+        let mut w = test_world();
+        let id = PlayerId(54);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.deposits.clear(); // a pure FORGE WORLD — all inputs imported
+        sys.population = 8.0;
+        sys.stockpile.insert(Commodity::Provisions, 150.0);
+        sys.stockpile.insert(Commodity::MetallicOre, 60.0);
+        sys.stockpile.insert(Commodity::Fuel, 60.0);
+        sys.stockpile.insert(Commodity::Electronics, 30.0);
+        sys.set_tier(crate::build::StructureKind::Smelter, 1);
+        sys.set_tier(crate::build::StructureKind::MachineWorks, 1);
+        sys.assignments.insert(crate::build::StructureKind::Smelter, crate::production::Assignment { workers: 1, suspended: None });
+        sys.assignments.insert(crate::build::StructureKind::MachineWorks, crate::production::Assignment { workers: 1, suspended: None });
+        let sid = sys.id;
+
+        for _ in 0..(20.0 / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        let mach = system_stock(&w, sid, Commodity::Machinery);
+        assert!(mach > 1.0, "ore → Alloys → Machinery end-to-end offline (got {mach})");
+
+        // CUT THE FEED (a blockade in miniature): drain the ore. Alloys buffer
+        // for a while, then the Smelter latches NoInputs, then MachineWorks.
+        w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.remove(&Commodity::MetallicOre);
+        let (mut smelter_down, mut works_down) = (false, false);
+        for _ in 0..(60.0 / crate::config::DT) as usize {
+            for e in w.step(&[]) {
+                if let EventPayload::ProductionSuspended { system, structure, reason: crate::production::SuspendReason::NoInputs, .. } = e.payload {
+                    if system == sid && structure == crate::build::StructureKind::Smelter { smelter_down = true; }
+                    if system == sid && structure == crate::build::StructureKind::MachineWorks { works_down = true; }
+                }
+            }
+        }
+        assert!(smelter_down, "the dry Smelter announces NO INPUTS");
+        assert!(works_down, "the stall propagates up the chain once the Alloys buffer drains");
+        let s = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert_eq!(s.tier(crate::build::StructureKind::Smelter), 1, "nothing destroyed");
+        assert!(s.assignments[&crate::build::StructureKind::Smelter].workers == 1, "assignments survive the stall");
+        assert!(system_stock(&w, sid, Commodity::Machinery) >= mach, "made Machinery is never clawed back");
+    }
+
+    /// ADVANCED INDUSTRY stops at Critical (precision work halts before the
+    /// mills do) and resumes with the food state — the Part-2 ladder's teeth.
+    #[test]
+    fn advanced_industry_suspends_at_critical_and_recovers() {
+        let mut w = test_world();
+        let id = PlayerId(55);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+        sys.owner = Some(id);
+        sys.claimed_at = Some(0.0);
+        sys.deposits.clear();
+        sys.population = 2.0;
+        sys.stockpile.insert(Commodity::Alloys, 200.0);
+        sys.stockpile.insert(Commodity::Electronics, 100.0);
+        sys.stockpile.insert(Commodity::Fuel, 100.0);
+        sys.set_tier(crate::build::StructureKind::MachineWorks, 1);
+        sys.assignments.insert(crate::build::StructureKind::MachineWorks, crate::production::Assignment { workers: 1, suspended: None });
+        sys.food_state = crate::colony::FoodState::Critical; // starving in
+        let sid = sys.id;
+
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::ProductionSuspended { system, structure: crate::build::StructureKind::MachineWorks, reason: crate::production::SuspendReason::NoFood, .. } if system == sid)),
+            "advanced industry suspends at Critical"
+        );
+        assert_eq!(system_stock(&w, sid, Commodity::Machinery), 0.0, "no output while suspended");
+
+        // A food shipment lifts the ladder → the line resumes and produces.
+        seed_stock(&mut w, sid, &[(Commodity::Provisions, 50.0)]);
+        let mut resumed = false;
+        for _ in 0..10 {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::ProductionResumed { system, structure: crate::build::StructureKind::MachineWorks, .. } if system == sid) {
+                    resumed = true;
+                }
+            }
+        }
+        assert!(resumed, "the line announces its recovery");
+        assert!(system_stock(&w, sid, Commodity::Machinery) > 0.0, "…and produces again");
+    }
+
+    /// A STAFFED Shipyard turns ship jobs out faster — build_ticks divided by
+    /// (1 + 0.25·staffing), locked at enqueue. Structures are unaffected.
+    #[test]
+    fn staffed_shipyard_speeds_ship_builds() {
+        let ticks_for = |staff: bool| {
+            let mut w = test_world();
+            let id = PlayerId(56);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let home = w.players[&id].home_system.unwrap();
+            {
+                let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+                sys.population = 8.0; // covers the extra crew without diluting
+                if staff {
+                    sys.assignments.insert(crate::build::StructureKind::Shipyard, crate::production::Assignment { workers: 1, suspended: None });
+                }
+            }
+            seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]);
+            let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+            ev.iter()
+                .find_map(|e| match e.payload {
+                    EventPayload::BuildStarted { complete_tick, .. } => Some(complete_tick),
+                    _ => None,
+                })
+                .expect("build starts")
+        };
+        let (plain, boosted) = (ticks_for(false), ticks_for(true));
+        assert!(boosted < plain, "a staffed yard is faster ({boosted} vs {plain})");
+        // Same enqueue tick in both worlds, so the difference is pure boost.
+        let expect = CONVOY_RECIPE.build_ticks - (CONVOY_RECIPE.build_ticks as f64 / (1.0 + crate::production::SHIPYARD_BOOST)).round() as u64;
+        assert_eq!(plain - boosted, expect, "ticks / (1 + BOOST·staffing), locked at enqueue");
+    }
+
     // --- §buildings step 3b: Fuel Refinery ------------------------------------
 
-    /// The Refinery converts stockpiled Volatiles → Fuel at exactly
-    /// rate·tier·DT input and yield·input output, measured over one tick.
+    /// §economy Part 3: a staffed tier-2 Fuel Refinery converts at exactly
+    /// rate × tier_throughput(2) × DT units of OUTPUT, drawing its per-unit
+    /// input basket (1.0 Volatiles per Fuel) — one tick, all factors 1.0.
     #[test]
     fn refinery_converts_at_rate_and_ratio() {
         let mut w = test_world();
         let id = PlayerId(34);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 2);
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            sys.population = 8.0; // ample workforce → staffing share 1.0
+            // (the home's seeded 60 Provisions cover these few ticks; more
+            // would overflow the 500-unit cap on top of the 300-Fuel seed)
+            sys.set_tier(crate::build::StructureKind::FuelRefinery, 2);
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 2, suspended: None });
+        }
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
 
         let vol0 = system_stock(&w, home, Commodity::Volatiles);
         let fuel0 = system_stock(&w, home, Commodity::Fuel);
         w.step(&[]);
-        let dt = crate::config::DT;
-        let take = crate::build::REFINERY_RATE_PER_TIER * 2.0 * dt;
+        let conv = crate::production::converter_for(crate::build::StructureKind::FuelRefinery).unwrap();
+        let out = conv.rate * crate::production::tier_throughput(2) * crate::config::DT;
+        let per_vol = conv.inputs.iter().find(|(c, _)| *c == Commodity::Volatiles).unwrap().1;
         let vol_delta = system_stock(&w, home, Commodity::Volatiles) - vol0;
         let fuel_delta = system_stock(&w, home, Commodity::Fuel) - fuel0;
-        assert!((vol_delta + take).abs() < 1e-9, "consumes rate·tier·DT volatiles (got {vol_delta})");
-        assert!(
-            (fuel_delta - take * crate::build::REFINERY_YIELD).abs() < 1e-9,
-            "produces yield·input fuel (got {fuel_delta})"
-        );
+        assert!((fuel_delta - out).abs() < 1e-9, "produces rate·throughput·DT fuel (got {fuel_delta}, want {out})");
+        assert!((vol_delta + out * per_vol).abs() < 1e-9, "draws the per-unit basket (got {vol_delta})");
     }
 
-    /// A dry Refinery IDLES (soft): no Volatiles → no conversion, no fuel from
-    /// nowhere, nothing destroyed. And a bounded stock converts only what exists.
+    /// A dry staffed Refinery SUSPENDS (latched NoInputs notice, once): no
+    /// Volatiles → no conversion, no fuel from nowhere, nothing destroyed. A
+    /// sliver of input converts exactly that sliver (never negative) and the
+    /// resumption is announced.
     #[test]
-    fn refinery_idles_dry_and_never_overdraws() {
+    fn refinery_suspends_dry_and_never_overdraws() {
         let mut w = test_world();
         let id = PlayerId(35);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 3);
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            sys.population = 8.0;
+            // (the home's seeded 60 Provisions cover these few ticks; more
+            // would overflow the 500-unit cap on top of the 300-Fuel seed)
+            sys.set_tier(crate::build::StructureKind::FuelRefinery, 3);
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 3, suspended: None });
+        }
 
-        // Dry: fuel unchanged (home produces no fuel; only the seed sits there).
+        // Dry: fuel unchanged, ONE latched suspension notice (no per-tick spam).
         let fuel0 = system_stock(&w, home, Commodity::Fuel);
-        w.step(&[]);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::ProductionSuspended { system, structure: crate::build::StructureKind::FuelRefinery, reason: crate::production::SuspendReason::NoInputs, .. } if system == home)),
+            "the dry line announces NO INPUTS"
+        );
+        let ev = w.step(&[]);
+        let spurious: Vec<_> = ev.iter().filter(|e| matches!(e.payload, EventPayload::ProductionSuspended { system, .. } if system == home)).collect();
+        assert!(spurious.is_empty(), "latched — no second notice while still dry: {spurious:?}");
         assert!((system_stock(&w, home, Commodity::Fuel) - fuel0).abs() < 1e-9, "dry refinery = idle");
 
-        // A sliver of Volatiles smaller than one tick's rate: converts exactly
-        // that sliver, never negative.
+        // A sliver of Volatiles smaller than one tick's basket: converts
+        // exactly sliver/per_unit output, drains to zero (never below), and
+        // the line announces its RESUMPTION.
         let sliver = 0.001;
         seed_stock(&mut w, home, &[(Commodity::Volatiles, sliver)]);
         let fuel1 = system_stock(&w, home, Commodity::Fuel);
-        w.step(&[]);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::ProductionResumed { system, structure: crate::build::StructureKind::FuelRefinery, .. } if system == home)),
+            "recovery is announced"
+        );
         assert!((system_stock(&w, home, Commodity::Volatiles)).abs() < 1e-9, "drains to zero, not below");
+        let conv = crate::production::converter_for(crate::build::StructureKind::FuelRefinery).unwrap();
+        let per_vol = conv.inputs.iter().find(|(c, _)| *c == Commodity::Volatiles).unwrap().1;
         let gained = system_stock(&w, home, Commodity::Fuel) - fuel1;
-        assert!((gained - sliver * crate::build::REFINERY_YIELD).abs() < 1e-9, "converts only what exists");
+        assert!((gained - sliver / per_vol).abs() < 1e-9, "converts only what the basket affords");
     }
 
     /// The storage cap never blocks conversion with the LOSSY yield (< 1): at a
@@ -6211,7 +6607,12 @@ mod tests {
         let id = PlayerId(36);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 1);
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            sys.population = 8.0;
+            sys.set_tier(crate::build::StructureKind::FuelRefinery, 1);
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 1, suspended: None });
+        }
         // Fill exactly to the cap, with volatiles included in the fill.
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
         let headroom = sys.storage_headroom();
@@ -6224,7 +6625,7 @@ mod tests {
         assert!(s.storage_used() <= cap + 1e-9, "total never exceeds the cap");
         assert!(
             system_stock(&w, home, Commodity::Fuel) > fuel0,
-            "the lossy conversion proceeds even at a full depot (it frees space)"
+            "the ≥1:1 conversion proceeds even at a full depot (it never adds units)"
         );
     }
 
@@ -6237,7 +6638,14 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         drain_fuel(&mut w, id); // no seed fuel anywhere
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 2);
+        {
+            let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            sys.population = 8.0;
+            // (the home's seeded 60 Provisions cover these few ticks; more
+            // would overflow the 500-unit cap on top of the 300-Fuel seed)
+            sys.set_tier(crate::build::StructureKind::FuelRefinery, 2);
+            sys.assignments.insert(crate::build::StructureKind::FuelRefinery, crate::production::Assignment { workers: 2, suspended: None });
+        }
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
         // Refine for a while → a real fuel reserve appears from Volatiles.
         for _ in 0..(20 * crate::config::TICK_HZ) {
@@ -7820,7 +8228,7 @@ mod tests {
             let convoy_pos = w.fleets[&convoy].pos;
             let sys = grant_platform(&mut w, def, convoy_pos, 3);
             let tier0 = w.systems.iter().find(|s| s.id == sys).unwrap().tier(crate::build::StructureKind::DefensePlatform);
-            assert!(w.systems.iter().find(|s| s.id == sys).unwrap().dev_slots_built() >= 3, "platform tiers consume slots");
+            assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().tier(crate::build::StructureKind::DefensePlatform), 3, "three platform tiers stand on one footprint (slots bound breadth, not depth)");
 
             w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
             let mut lost_reported = None;
@@ -8231,7 +8639,12 @@ mod tests {
         // The dynamic paths actually ran (so the comparison is meaningful).
         let sys_a = a.systems.iter().find(|s| s.id == sysid).unwrap();
         assert_eq!(sys_a.owner, Some(PlayerId(1)), "the colony settle path must have executed");
-        assert!(sys_a.stockpile.values().sum::<f64>() > 0.0, "accrual path must have executed");
+        // §economy: a fresh outpost is unstaffed (produces nothing) — the
+        // production path is proven on the bootstrap HOME, which works from
+        // tick one (staffed extraction + Agroplex).
+        let home_a = a.players[&PlayerId(1)].home_system.unwrap();
+        let home_sys = a.systems.iter().find(|s| s.id == home_a).unwrap();
+        assert!(home_sys.stockpile.get(&Commodity::MetallicOre).copied().unwrap_or(0.0) > 0.0, "the staffed home accrual path must have executed");
         assert_eq!(
             serde_json::to_string(&a).unwrap(),
             serde_json::to_string(&b).unwrap()
@@ -8718,16 +9131,26 @@ mod tests {
         assert!(w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.is_empty(),
             "an unclaimed system must not produce");
 
-        grant_system(&mut w, id, sysid);
+        grant_system(&mut w, id, sysid); // staffed tier-1 extraction, all factors 1.0
         let secs = 20u32;
         for _ in 0..(secs * crate::config::TICK_HZ) { w.step(&[]); }
 
+        // Per-commodity: stock ≈ Σ richness × time at factor-1 staffing. (The
+        // grant's Provisions food seed and the colony's eating stay out of the
+        // math by asserting deposit commodities only — none are Provisions.)
         let sys = w.systems.iter().find(|s| s.id == sysid).unwrap();
-        let total: f64 = sys.stockpile.values().sum();
-        let expected: f64 = sys.deposits.iter().map(|d| d.richness).sum::<f64>() * secs as f64;
-        assert!(total > 0.0, "a claimed system must accrue production");
-        assert!((total - expected).abs() < expected * 0.02 + 1e-6,
-            "stockpile {total:.2} ≈ Σrichness × time {expected:.2}");
+        let mut by_res: BTreeMap<Commodity, f64> = BTreeMap::new();
+        for d in &sys.deposits {
+            assert_ne!(d.resource, Commodity::Provisions, "deposits are raws");
+            *by_res.entry(d.resource).or_insert(0.0) += d.richness;
+        }
+        for (c, rate) in by_res {
+            let got = sys.stockpile.get(&c).copied().unwrap_or(0.0);
+            let expected = rate * secs as f64;
+            assert!(got > 0.0, "a claimed, staffed system must accrue {c:?}");
+            assert!((got - expected).abs() < expected * 0.02 + 1e-6,
+                "{c:?} stock {got:.2} ≈ richness × time {expected:.2}");
+        }
     }
 
     #[test]
@@ -8752,9 +9175,13 @@ mod tests {
         assert_eq!(convoy.flagship_kind(), ShipKind::Convoy, "production fleets in raidable convoys");
         assert!(convoy.cargo.is_some());
         assert!(convoy.pos.distance(sys_pos) < 5.0, "production convoy departs from the system");
-        // The system's whole-unit stockpile was emptied into the convoy(s).
-        let remaining: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap().stockpile.values().sum();
-        assert!(remaining < 1.0, "shipping should empty the whole-unit stockpile");
+        // The system's whole-unit stockpile was emptied into the convoy(s) —
+        // measured on the extracted raws (the grant's Provisions food seed is
+        // colony supply and ships out with everything else; eating between
+        // ticks makes its exact remainder noisy, so exclude it).
+        let remaining: f64 = w.systems.iter().find(|s| s.id == sysid).unwrap()
+            .stockpile.iter().filter(|(c, _)| **c != Commodity::Provisions).map(|(_, v)| v).sum();
+        assert!(remaining < 1.0, "shipping should empty the whole-unit stockpile (left {remaining})");
 
         // The full loop pays out: run until the convoy reaches the hub and sells.
         let credits_before = w.players[&id].credits;
@@ -10134,7 +10561,9 @@ mod tests {
         w.fleets.insert(cid, convoy);
         w.step(&[]); // resolve_trade_arrivals deposits into the ALLY's stockpile
         let got = w.systems.iter().find(|s| s.id == asys).unwrap().stockpile.get(&Commodity::Provisions).copied().unwrap_or(0.0);
-        assert!(got >= 20.0, "aid credits the ALLY's stockpile (got {got})");
+        // (§economy: the ally's home population eats a crumb of the delivery in
+        // the very same tick — that's the colony working, not a delivery loss.)
+        assert!(got >= 20.0 - 0.05, "aid credits the ALLY's stockpile (got {got})");
         assert!(!w.fleets.contains_key(&cid), "the aid convoy delivered and was consumed");
     }
 
@@ -11108,7 +11537,24 @@ mod tests {
             reserves: None,
             accessibility: 0.5,
         }];
+        // §economy Part 3: production is STAFFED now — a big, well-fed
+        // population so every posted line runs at factor 1.0 and the trait
+        // multipliers are measured clean.
+        sys.population = 8.0;
+        sys.stockpile.insert(Commodity::Provisions, 300.0); // ample food, safely under the storage cap
         sys.id
+    }
+
+    /// §economy Part 3 test shorthand: build `kind` at `tier` and post a full
+    /// crew (workers = tier), so staffing = 1.0 under an ample workforce.
+    fn staff(w: &mut World, sid: EntityId, kind: crate::build::StructureKind, tier: u32) {
+        let sys = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
+        sys.set_tier(kind, tier);
+        if tier > 0 {
+            sys.assignments.insert(kind, crate::production::Assignment { workers: tier, suspended: None });
+        } else {
+            sys.assignments.remove(&kind);
+        }
     }
 
     /// Trait assignment is deterministic from the seed, hits ~TRAIT_FRACTION, and
@@ -11151,38 +11597,44 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "A".into() }]);
         let sid = trait_system(&mut w, id, Some(SystemTrait::BonusVein { commodity: Commodity::MetallicOre }));
-        // Add a second, non-vein deposit for the control.
+        // Add a second, non-vein deposit for the control (Silicates: worked by
+        // the SAME Mining Complex, so the only difference is the vein).
         w.systems.iter_mut().find(|s| s.id == sid).unwrap().deposits.push(crate::galaxy::Deposit {
-            resource: Commodity::Provisions,
+            resource: Commodity::Silicates,
             richness: 1.0,
             reserves: None,
             accessibility: 0.5,
         });
+        staff(&mut w, sid, crate::build::StructureKind::MiningComplex, 1);
         w.step(&[]);
         let ore = system_stock(&w, sid, Commodity::MetallicOre);
-        let prov = system_stock(&w, sid, Commodity::Provisions);
+        let sil = system_stock(&w, sid, Commodity::Silicates);
         assert!((ore - crate::explore::BONUS_VEIN_MULT * DT).abs() < 1e-9, "the vein commodity runs ×{} (got {ore})", crate::explore::BONUS_VEIN_MULT);
-        assert!((prov - DT).abs() < 1e-9, "other commodities are untouched (got {prov})");
+        assert!((sil - DT).abs() < 1e-9, "other commodities are untouched (got {sil})");
     }
 
-    /// DEEP DEPOSITS: base ×1.5, and the FIRST Extractor tier is WASTED —
-    /// tier 0 and tier 1 produce identically; tier 2 applies one multiplier.
+    /// DEEP DEPOSITS (§economy Part 3 port): base ×1.5 and the THROUGHPUT
+    /// LADDER runs one tier behind — a tier of progress is wasted breaking
+    /// through: tier 1 and tier 2 produce identically (base throughput);
+    /// tier 3 gets the tier-2 rung. (Under the assignment engine tier 0 is
+    /// simply no structure = no extraction, so the waste shows at tier 2.)
     #[test]
-    fn deep_deposits_waste_the_first_extractor_tier() {
+    fn deep_deposits_waste_a_tier_of_the_throughput_ladder() {
         let gain_at_tier = |tier: u32| {
             let mut w = test_world();
             let id = PlayerId(1);
             w.step(&[Command::AddPlayer { id, name: "A".into() }]);
             let sid = trait_system(&mut w, id, Some(SystemTrait::DeepDeposits));
-            w.systems.iter_mut().find(|s| s.id == sid).unwrap().set_tier(crate::build::StructureKind::MiningComplex, tier);
+            staff(&mut w, sid, crate::build::StructureKind::MiningComplex, tier);
             w.step(&[]);
             system_stock(&w, sid, Commodity::MetallicOre)
         };
         let base = crate::explore::DEEP_DEPOSITS_BASE_MULT;
-        let mult = crate::build::EXTRACTOR_RICHNESS_MULT;
-        assert!((gain_at_tier(0) - base * DT).abs() < 1e-9, "tier 0: base ×{base}");
-        assert!((gain_at_tier(1) - base * DT).abs() < 1e-9, "tier 1: IDENTICAL — the first tier is wasted");
-        assert!((gain_at_tier(2) - base * mult * DT).abs() < 1e-9, "tier 2: one multiplier applies");
+        let ladder = crate::production::tier_throughput;
+        assert!((gain_at_tier(0) - 0.0).abs() < 1e-12, "tier 0: no structure, no extraction");
+        assert!((gain_at_tier(1) - base * ladder(1) * DT).abs() < 1e-9, "tier 1: base throughput ×{base}");
+        assert!((gain_at_tier(2) - base * ladder(1) * DT).abs() < 1e-9, "tier 2: IDENTICAL — a tier is wasted breaking through");
+        assert!((gain_at_tier(3) - base * ladder(2) * DT).abs() < 1e-9, "tier 3: the tier-2 rung applies");
     }
 
     /// UNSTABLE GEOLOGY: development costs ×UNSTABLE_COST_MULT at BOTH the
@@ -11228,11 +11680,8 @@ mod tests {
             let id = PlayerId(1);
             w.step(&[Command::AddPlayer { id, name: "A".into() }]);
             let sid = trait_system(&mut w, id, t);
-            {
-                let s = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
-                s.deposits.clear(); // no accrual noise
-                s.set_tier(crate::build::StructureKind::FuelRefinery, 1);
-            }
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().deposits.clear(); // no accrual noise
+            staff(&mut w, sid, crate::build::StructureKind::FuelRefinery, 1);
             seed_stock(&mut w, sid, &[(Commodity::Volatiles, 100.0)]);
             w.step(&[]);
             system_stock(&w, sid, Commodity::Fuel)

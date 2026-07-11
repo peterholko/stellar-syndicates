@@ -2038,12 +2038,13 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const refTier = dyn?.refinery_tier ?? 0;
   let refinery = "";
   if (refTier > 0) {
-    const rate = (state.galaxy?.refinery_rate_per_tier ?? 0.5) * refTier;
-    const yieldK = state.galaxy?.refinery_yield ?? 0.8;
+    // §economy: the refinery is a STAFFED converter line now — this hint shows
+    // its base rate; the Part-7 colony panel carries the live factor chain.
+    const rate = state.galaxy?.fuel_refinery_rate ?? 0.8;
     const vol = stockOf.get("volatiles") ?? 0;
     refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px" title="Fuel refinery: converting ${rate.toFixed(1)} Volatiles/s into ${(rate * yieldK).toFixed(1)} Fuel/s (slightly lossy).">${icon("refinery", "sm")} ${rate.toFixed(1)} ${icon("volatiles", "sm")}/s → +${(rate * yieldK).toFixed(1)} ${icon("fuel", "sm")}/s</div>`
-      : `<div class="mhint" style="margin-top:4px" title="Fuel refinery idle — no Volatiles to convert. Haul some in (${yieldK} Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
+      ? `<div class="mhint" style="margin-top:4px" title="Fuel Refinery ×${refTier}: converts Volatiles → Fuel (1:1) up to ${rate.toFixed(1)}/s per throughput tier when staffed.">${icon("refinery", "sm")} ${icon("volatiles", "sm")} → ${icon("fuel", "sm")} up to ${rate.toFixed(1)}/s · staffed line</div>`
+      : `<div class="mhint" style="margin-top:4px" title="Fuel Refinery idle — no Volatiles to convert. Haul some in (1 Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
   return `<div class="deps-head" style="margin-top:8px">${icon("storage", "sm")} Stockpile · production${tierTag}${habTag}</div>` +
     rows.map((c) => {

@@ -192,6 +192,29 @@ impl Timeline {
                         ));
                     }
                 }
+                // §economy Part 3: a production line STOPPED or RECOVERED —
+                // OWNER-ONLY, own clock, transitions only (latched in the sim, so
+                // it can never spam). The named cause is the fix-first pointer.
+                EventPayload::ProductionSuspended { owner, system, structure, reason } => {
+                    let name = system_name(world, *system);
+                    use sim::SuspendReason as R;
+                    let cause = match reason {
+                        R::NoFood => "the colony is out of Provisions — ship food",
+                        R::NoInputs => "its input basket ran dry — ship raws in or staff extraction",
+                        R::StorageFull => "storage is FULL — ship goods out or build a Depot",
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
+                        "{} at {name} SUSPENDED — {cause} (nothing is lost).",
+                        structure.title()
+                    ));
+                }
+                EventPayload::ProductionResumed { owner, system, structure } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "{} at {name} is producing again.",
+                        structure.title()
+                    ));
+                }
                 // §economy Part 2: a colony moved on the FOOD LADDER — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
                 // and FuelShortfall). Transitions only, so it never spams.

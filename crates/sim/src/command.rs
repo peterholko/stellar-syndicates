@@ -193,6 +193,20 @@ pub enum Command {
         upgrade: crate::build::StructureKind,
     },
 
+    /// §economy Part 3: post `workers` workforce crews to a structure at one of
+    /// the player's OWNED systems (0 withdraws the line). INSTANT local
+    /// administration, like a standing order: validated against ownership and
+    /// the structure being BUILT; `workers` clamps to the structure's tier (a
+    /// tier-N plant fields at most N crews). Over-posting the colony's
+    /// workforce is legal — every line dilutes by the same staffing share
+    /// (legible, deadlock-free), so no rejection edge exists there.
+    SetAssignment {
+        player_id: PlayerId,
+        system_id: EntityId,
+        structure: crate::build::StructureKind,
+        workers: u32,
+    },
+
     /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the
     /// player's fleets to take station on a rival-owned system and strangle its
     /// logistics. The fleet must CONTAIN ≥1 raider (strike capability — corvettes

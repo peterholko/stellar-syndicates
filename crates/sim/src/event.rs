@@ -184,6 +184,16 @@ pub enum EventPayload {
         /// The scout's position at capture — the report's light source.
         pos: crate::math::Vec2,
     },
+    /// §economy Part 3: an assignment was (re)posted — `workers` crews to
+    /// `structure` at `system`. OWNER-ONLY, own clock (instant local admin,
+    /// like standing orders). The UI's confirmation signal.
+    AssignmentSet { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind, workers: u32 },
+    /// §economy Part 3: a production line STOPPED producing — latched, so it
+    /// fires once per outage, with the binding cause (food > inputs > storage).
+    /// OWNER-ONLY, own clock. Nothing is destroyed; fixing the cause resumes it.
+    ProductionSuspended { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind, reason: crate::production::SuspendReason },
+    /// §economy Part 3: a suspended line PRODUCED again (the recovery notice).
+    ProductionResumed { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind },
     /// §economy Part 2: a colony's FOOD STATE moved on the 4-rung ladder
     /// (replaces the old binary HabitatSupplyChanged). OWNER-ONLY news, on the
     /// owner's own clock (own-economy precedent). Down-rungs are warnings
