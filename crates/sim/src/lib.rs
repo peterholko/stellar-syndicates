@@ -11,6 +11,7 @@
 //! the per-player lightspeed view filter's delivery scheduling, rendering —
 //! lives in the `server` crate and the client, never here.
 
+pub mod body;
 pub mod build;
 pub mod cargo;
 pub mod colony;
@@ -38,6 +39,7 @@ pub mod standing;
 pub mod syndicate;
 pub mod world;
 
+pub use body::{Body, BodyKind};
 pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
 pub use colony::FoodState;
