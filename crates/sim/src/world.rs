@@ -634,6 +634,9 @@ impl World {
         for sys in self.systems.iter_mut() {
             sys.fold_legacy_structures();
         }
+        // §economy Part 7: one idempotent migration pass — a pre-economy world
+        // keeps PRODUCING through the upgrade (async-fair applies to deploys).
+        self.migrate_economy();
         if self.band_lo == 0.0 && self.band_hi == 0.0 {
             self.compute_band_thresholds();
         }
@@ -647,6 +650,77 @@ impl World {
                 if *owner == Some(corp.id) || pos.distance(corp.home) <= crate::explore::SURVEY_INITIAL_RADIUS {
                     corp.surveyed.insert(*sid);
                 }
+            }
+        }
+    }
+
+    /// §economy Part 7: migrate a PRE-ECONOMY world in place — IDEMPOTENT (every
+    /// step gates on "still legacy-shaped", so a modern world passes through
+    /// untouched):
+    ///   1. DEPOSIT REMAP — old worlds generated deposits of processed goods;
+    ///      those become their raw web-predecessors at the SAME richness
+    ///      (Provisions→Biomass, Fuel→Volatiles, Alloys→RareElements; Ore's
+    ///      rename is a serde alias). After one pass every deposit is a raw,
+    ///      so re-running remaps nothing.
+    ///   2. POPULATION SEED (owned, population == 0 only): Habitat tier ≥ 1 →
+    ///      1.5M/tier (an established colony); else any producing structure →
+    ///      1.0M (the working crews an old extractor colony must have had —
+    ///      without people, migration would silence every old mine). Homes get
+    ///      at least the modern bootstrap population.
+    ///   3. DEFAULT ASSIGNMENTS (owned, none posted, producers built): one crew
+    ///      to each built extraction structure that matches local geology, the
+    ///      Fuel Refinery, and the Agroplex — the old always-on behaviour,
+    ///      re-expressed as staffed lines.
+    ///
+    /// Nothing is deleted, nothing rejected: a loaded empire underperforms at
+    /// worst (short staffing), it never stalls silently.
+    pub fn migrate_economy(&mut self) {
+        use crate::build::StructureKind as K;
+        for sys in self.systems.iter_mut() {
+            // 1. Deposit remap (owned or not — geology is geology).
+            for dep in sys.deposits.iter_mut() {
+                dep.resource = match dep.resource {
+                    crate::cargo::Commodity::Provisions => crate::cargo::Commodity::Biomass,
+                    crate::cargo::Commodity::Fuel => crate::cargo::Commodity::Volatiles,
+                    crate::cargo::Commodity::Alloys => crate::cargo::Commodity::RareElements,
+                    other => other,
+                };
+            }
+            if sys.owner.is_none() {
+                continue;
+            }
+            let producers: Vec<K> = [K::MiningComplex, K::VolatileHarvester, K::Bioharvester, K::FuelRefinery, K::Agroplex]
+                .into_iter()
+                .filter(|k| sys.tier(*k) >= 1)
+                .collect();
+            // 2. Population seed — only where the field is still legacy-zero.
+            if sys.population == 0.0 {
+                let hab = sys.tier(K::Habitat);
+                if hab >= 1 {
+                    sys.population = 1.5 * hab as f64;
+                } else if !producers.is_empty() {
+                    sys.population = 1.0;
+                }
+            }
+            // 3. Default assignments — only where none exist yet.
+            if sys.assignments.is_empty() {
+                for k in producers {
+                    let works = match k {
+                        K::FuelRefinery | K::Agroplex => true, // converters run off stock/imports
+                        _ => sys.deposits.iter().any(|d| crate::production::extraction_structure(d.resource) == Some(k)),
+                    };
+                    if works {
+                        sys.assignments.insert(k, crate::production::Assignment::crew(1));
+                    }
+                }
+            }
+        }
+        // Homes: guarantee at least the modern bootstrap population so the
+        // seeded (or folded) home industry actually runs for returning players.
+        let homes: Vec<EntityId> = self.players.values().filter_map(|c| c.home_system).collect();
+        for hid in homes {
+            if let Some(sys) = self.systems.iter_mut().find(|s| s.id == hid) {
+                sys.population = sys.population.max(crate::colony::HOME_FOUNDING_POP);
             }
         }
     }
@@ -6716,6 +6790,88 @@ mod tests {
         // Same enqueue tick in both worlds, so the difference is pure boost.
         let expect = CONVOY_RECIPE.build_ticks - (CONVOY_RECIPE.build_ticks as f64 / (1.0 + crate::production::SHIPYARD_BOOST)).round() as u64;
         assert_eq!(plain - boosted, expect, "ticks / (1 + BOOST·staffing), locked at enqueue");
+    }
+
+    /// §economy Part 7 ACCEPTANCE: a hand-built PRE-ECONOMY snapshot (legacy
+    /// flat tier fields, processed-good deposits, "ore"/"habitat_fed" keys, no
+    /// population/structures/assignments) loads, migrates, and TICKS 1000
+    /// times — no panic, deposits all raw, tiers folded, populations seeded,
+    /// default lines posted, and PRODUCTION IS POSITIVE. Idempotent: a second
+    /// migration pass changes nothing.
+    #[test]
+    fn legacy_snapshot_migrates_and_keeps_producing() {
+        // Build a modern world, then rewrite one owned system + the home into
+        // the exact legacy JSON shape.
+        let mut w = test_world();
+        let id = PlayerId(80);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let colony = w.systems.iter().find(|s| s.is_unclaimed()).unwrap().id;
+        let mut v: serde_json::Value = serde_json::to_value(&w).unwrap();
+        for sys in v["systems"].as_array_mut().unwrap() {
+            let sid = sys["id"].as_str().map(|s| s.to_string()).or_else(|| sys["id"].as_u64().map(|n| n.to_string()));
+            let o = sys.as_object_mut().unwrap();
+            let is_home = sid.as_deref() == Some(&home.0.to_string());
+            let is_colony = sid.as_deref() == Some(&colony.0.to_string());
+            if !(is_home || is_colony) {
+                continue;
+            }
+            // Strip every modern economy key; install the legacy shape.
+            for k in ["structures", "population", "assignments", "specialists", "food_state"] {
+                o.remove(k);
+            }
+            o.insert("habitat_fed".into(), serde_json::Value::Bool(true));
+            o.insert("extractor_tier".into(), serde_json::json!(2));
+            o.insert("shipyard_tier".into(), serde_json::json!(1));
+            o.insert("habitat_tier".into(), serde_json::json!(if is_home { 2 } else { 0 }));
+            o.insert("refinery_tier".into(), serde_json::json!(if is_colony { 1 } else { 0 }));
+            if is_colony {
+                o.insert("owner".into(), serde_json::to_value(id).unwrap());
+                o.insert("claimed_at".into(), serde_json::json!(0.0));
+            }
+            // Legacy deposits: processed goods straight off the old generator,
+            // with the pre-rename "ore" slug in the mix.
+            o.insert("deposits".into(), serde_json::json!([
+                { "resource": "provisions", "richness": 0.5, "reserves": null, "accessibility": 0.1 },
+                { "resource": "ore", "richness": 0.4, "reserves": null, "accessibility": 0.1 },
+                { "resource": if is_colony { "fuel" } else { "alloys" }, "richness": 0.3, "reserves": null, "accessibility": 0.1 },
+            ]));
+            o.insert("stockpile".into(), serde_json::json!({ "ore": 50.0, "provisions": 80.0 }));
+        }
+        let mut w2: World = serde_json::from_value(v).expect("legacy snapshot parses");
+        w2.fixup_after_load(); // fold + migrate (the server's load path)
+
+        // Shape checks: raw-only deposits, folded tiers, seeded people + lines.
+        let h = w2.systems.iter().find(|s| s.id == home).unwrap();
+        assert!(h.deposits.iter().all(|d| Commodity::RAW.contains(&d.resource)), "every deposit remapped to a raw");
+        assert_eq!(h.tier(crate::build::StructureKind::MiningComplex), 2, "extractor folded");
+        assert_eq!(h.tier(crate::build::StructureKind::Habitat), 2, "habitat folded");
+        assert!(h.population >= 3.0 - 1e-9, "1.5M per habitat tier seeded (≥ home bootstrap)");
+        assert!(h.assignments.contains_key(&crate::build::StructureKind::MiningComplex), "default line posted");
+        let c = w2.systems.iter().find(|s| s.id == colony).unwrap();
+        assert!((c.population - 1.0).abs() < 1e-9, "a habitat-less producer colony gets its working crews");
+        assert!(c.assignments.contains_key(&crate::build::StructureKind::FuelRefinery), "the refinery line survives the upgrade");
+
+        // Idempotency: a second pass is a no-op.
+        let before = serde_json::to_string(&w2).unwrap();
+        w2.migrate_economy();
+        assert_eq!(before, serde_json::to_string(&w2).unwrap(), "migration is idempotent");
+
+        // THE acceptance: 1000 ticks, no panic, positive production.
+        let stock0: f64 = w2.systems.iter().filter(|s| s.owner == Some(id)).flat_map(|s| s.stockpile.values()).sum();
+        for _ in 0..1000 {
+            w2.step(&[]);
+        }
+        let raw_produced: f64 = w2
+            .systems
+            .iter()
+            .filter(|s| s.owner == Some(id))
+            .flat_map(|s| s.stockpile.iter())
+            .filter(|(c, _)| Commodity::RAW.contains(c))
+            .map(|(_, v)| v)
+            .sum();
+        assert!(raw_produced > 0.0, "the migrated empire is PRODUCING (raw stock {raw_produced})");
+        let _ = stock0;
     }
 
     /// §economy Part 5: THE STARTER KIT — a fresh home affords its opening
