@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sim::{
     Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
-    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, SyndicateId, SystemUpgrade, TradeEvent,
+    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, StructureKind, SyndicateId, TradeEvent,
     TransitMode, Vec2,
 };
 
@@ -88,7 +88,7 @@ pub enum ClientMsg {
 
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
     /// Extractor tier that raises its output — costs a recipe, completes over time.
-    DevelopSystem { system_id: EntityId, upgrade: SystemUpgrade },
+    DevelopSystem { system_id: EntityId, upgrade: StructureKind },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
     /// light-delayed break-off order.

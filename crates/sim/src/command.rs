@@ -190,7 +190,7 @@ pub enum Command {
     DevelopSystem {
         player_id: PlayerId,
         system_id: EntityId,
-        upgrade: crate::build::SystemUpgrade,
+        upgrade: crate::build::StructureKind,
     },
 
     /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the

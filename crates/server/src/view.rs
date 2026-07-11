@@ -649,17 +649,17 @@ pub fn filter_systems(
                 // private intel. Gating it also avoids leaking an upgrade to a rival
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
-                extractor_tier: if own { sys.extractor_tier } else { 0 },
-                depot_tier: if own { sys.depot_tier } else { 0 },
-                shipyard_tier: if own { sys.shipyard_tier } else { 0 },
-                sensor_tier: if own { sys.sensor_tier } else { 0 },
+                extractor_tier: if own { sys.tier(sim::StructureKind::MiningComplex) } else { 0 },
+                depot_tier: if own { sys.tier(sim::StructureKind::Depot) } else { 0 },
+                shipyard_tier: if own { sys.tier(sim::StructureKind::Shipyard) } else { 0 },
+                sensor_tier: if own { sys.tier(sim::StructureKind::SensorArray) } else { 0 },
                 // A rival NEVER sees a platform in the View — it reveals itself
                 // only through engagement outcomes (delayed battle reports).
-                defense_tier: if own { sys.defense_tier } else { 0 },
-                habitat_tier: if own { sys.habitat_tier } else { 0 },
+                defense_tier: if own { sys.tier(sim::StructureKind::DefensePlatform) } else { 0 },
+                habitat_tier: if own { sys.tier(sim::StructureKind::Habitat) } else { 0 },
                 // A rival must never learn whether your colonies are starving.
                 habitat_fed: own && sys.habitat_fed,
-                refinery_tier: if own { sys.refinery_tier } else { 0 },
+                refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
                 // Storage (§buildings step 2) — owner-only like everything above.
@@ -758,13 +758,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "extractor",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "depot",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "shipyard",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "sensor_array",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "defense_platform",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "habitat",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Refinery } => "refinery",
+        sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
     }
 }
 
@@ -1055,16 +1049,16 @@ mod tests {
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0,
-            sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0,
-            habitat_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0,
+            legacy_habitat_tier: 0,
             habitat_fed: false,
-            refinery_tier: 0,
+            legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
@@ -1072,20 +1066,20 @@ mod tests {
             mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::MetallicOre, 99.0)]),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
-        systems[0].extractor_tier = 2; // mine — developed
-        systems[0].shipyard_tier = 1; // mine — a shipyard (visible to me only)
-        systems[0].sensor_tier = 1; // mine — an array (visible to me only)
-        systems[0].defense_tier = 1; // mine — a platform (visible to me only)
-        systems[1].extractor_tier = 3; // rival — must stay hidden
-        systems[1].shipyard_tier = 2; // rival — their military industry must stay hidden
-        systems[1].sensor_tier = 2; // rival — their intel infrastructure must stay hidden
-        systems[1].defense_tier = 3; // rival — their fortification must stay hidden
-        systems[0].habitat_tier = 1; // mine — a colony (visible to me only)
+        systems[0].set_tier(sim::StructureKind::MiningComplex, 2); // mine — developed
+        systems[0].set_tier(sim::StructureKind::Shipyard, 1); // mine — a shipyard (visible to me only)
+        systems[0].set_tier(sim::StructureKind::SensorArray, 1); // mine — an array (visible to me only)
+        systems[0].set_tier(sim::StructureKind::DefensePlatform, 1); // mine — a platform (visible to me only)
+        systems[1].set_tier(sim::StructureKind::MiningComplex, 3); // rival — must stay hidden
+        systems[1].set_tier(sim::StructureKind::Shipyard, 2); // rival — their military industry must stay hidden
+        systems[1].set_tier(sim::StructureKind::SensorArray, 2); // rival — their intel infrastructure must stay hidden
+        systems[1].set_tier(sim::StructureKind::DefensePlatform, 3); // rival — their fortification must stay hidden
+        systems[0].set_tier(sim::StructureKind::Habitat, 1); // mine — a colony (visible to me only)
         systems[0].habitat_fed = true;
-        systems[1].habitat_tier = 2; // rival — their colonies must stay hidden
+        systems[1].set_tier(sim::StructureKind::Habitat, 2); // rival — their colonies must stay hidden
         systems[1].habitat_fed = true; // …and whether they're starving, doubly so
-        systems[0].refinery_tier = 1; // mine — a refinery (visible to me only)
-        systems[1].refinery_tier = 2; // rival — their fuel industry must stay hidden
+        systems[0].set_tier(sim::StructureKind::FuelRefinery, 1); // mine — a refinery (visible to me only)
+        systems[1].set_tier(sim::StructureKind::FuelRefinery, 2); // rival — their fuel industry must stay hidden
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
@@ -1133,23 +1127,23 @@ mod tests {
         assert_eq!(v10[0].depot_tier, 0);
         assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].depot_tier), (0, 0, 0), "a rival's storage never leaks");
         // Shipyard tier (§buildings step 3) — owner-only on the same rule.
-        assert_eq!(v10[0].shipyard_tier, systems[0].shipyard_tier, "owner sees their shipyard tier");
+        assert_eq!(v10[0].shipyard_tier, systems[0].tier(sim::StructureKind::Shipyard), "owner sees their shipyard tier");
         assert_eq!(v10[1].shipyard_tier, 0, "a rival's shipyard tier never leaks");
         // Sensor Array tier (§buildings step 2b) — owner-only on the same rule:
         // a rival must never learn where you can see.
-        assert_eq!(v10[0].sensor_tier, systems[0].sensor_tier, "owner sees their sensor tier");
+        assert_eq!(v10[0].sensor_tier, systems[0].tier(sim::StructureKind::SensorArray), "owner sees their sensor tier");
         assert_eq!(v10[1].sensor_tier, 0, "a rival's sensor tier never leaks");
         // Defense Platform tier (§buildings step 2c) — owner-only: a rival
         // weighing a raid learns fortification ONLY the hard way (via the
         // engagement outcome), never from the View.
-        assert_eq!(v10[0].defense_tier, systems[0].defense_tier, "owner sees their platform tier");
+        assert_eq!(v10[0].defense_tier, systems[0].tier(sim::StructureKind::DefensePlatform), "owner sees their platform tier");
         assert_eq!(v10[1].defense_tier, 0, "a rival's platform never leaks — deterrence is discovered by engagement");
         // Habitat tier + FED state (§buildings step 3a) — owner-only: a rival
         // must never learn you have colonies, let alone whether they're starving.
         assert_eq!((v10[0].habitat_tier, v10[0].habitat_fed), (1, true), "owner sees their habitat + supply state");
         assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/starvation never leaks");
         // Refinery tier (§buildings step 3b) — owner-only on the same rule.
-        assert_eq!(v10[0].refinery_tier, systems[0].refinery_tier, "owner sees their refinery tier");
+        assert_eq!(v10[0].refinery_tier, systems[0].tier(sim::StructureKind::FuelRefinery), "owner sees their refinery tier");
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
@@ -1178,13 +1172,14 @@ mod tests {
             deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
             claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
-            extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
-            refinery_tier: 0,
+            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, habitat_fed: false,
+            legacy_refinery_tier: 0,
             blockade: None,
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
             trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
+            structures: Default::default(), population: 0.0,
         };
         let systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
@@ -1235,11 +1230,11 @@ mod tests {
         let mk = |id, pos, o| StarSystem {
             id: EntityId(id), pos, name: "S".into(), deposits: vec![], claim_cost: 0.0,
             owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
-            extractor_tier: 0, depot_tier: 0, shipyard_tier: 0, sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0, habitat_tier: 0, habitat_fed: false,
-            refinery_tier: 0,
+            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, habitat_fed: false,
+            legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -1286,16 +1281,16 @@ mod tests {
             owner: Some(rival),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0,
-            sensor_tier: 0,
-            defense_tier: 0, defense_pool: 0.0,
-            habitat_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0,
+            legacy_habitat_tier: 0,
             habitat_fed: false,
-            refinery_tier: 0,
+            legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -1334,17 +1329,17 @@ mod tests {
             owner: Some(rival),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0,
-            sensor_tier: 0,
-            defense_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
             defense_pool: 0.0,
-            habitat_tier: 0,
+            legacy_habitat_tier: 0,
             habitat_fed: false,
-            refinery_tier: 0,
+            legacy_refinery_tier: 0,
             blockade: None,
-            trait_: None, cache_claimed: false,
+            trait_: None, cache_claimed: false, structures: Default::default(), population: 0.0,
         }]
     }
 

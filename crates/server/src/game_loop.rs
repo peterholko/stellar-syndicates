@@ -917,22 +917,19 @@ impl GameLoop {
 /// The buildable options + their recipes (§step1), built from the sim's const
 /// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
 fn build_options() -> Vec<BuildOptionView> {
-    use sim::{BuildKind, ShipKind, SystemUpgrade};
-    [
+    use sim::{BuildKind, ShipKind, StructureKind};
+    // §economy: the 5 ships + ALL 16 structures, data-driven (keys = slugs; a
+    // legacy client sending an old slug still parses via the serde aliases).
+    let ships = [
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
         ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
         ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
         ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
-        ("extractor", "Extractor", BuildKind::Upgrade { upgrade: SystemUpgrade::Extractor }),
-        ("depot", "Depot", BuildKind::Upgrade { upgrade: SystemUpgrade::Depot }),
-        ("shipyard", "Shipyard", BuildKind::Upgrade { upgrade: SystemUpgrade::Shipyard }),
-        ("sensor_array", "Sensor Array", BuildKind::Upgrade { upgrade: SystemUpgrade::SensorArray }),
-        ("defense_platform", "Defense Platform", BuildKind::Upgrade { upgrade: SystemUpgrade::DefensePlatform }),
-        ("habitat", "Habitat", BuildKind::Upgrade { upgrade: SystemUpgrade::Habitat }),
-        ("refinery", "Fuel Refinery", BuildKind::Upgrade { upgrade: SystemUpgrade::Refinery }),
-    ]
+    ];
+    ships
     .into_iter()
+    .chain(StructureKind::ALL.into_iter().map(|k| (k.slug(), k.title(), BuildKind::Upgrade { upgrade: k })))
     .map(|(key, label, what)| {
         let r = sim::build::recipe_for(what);
         BuildOptionView {

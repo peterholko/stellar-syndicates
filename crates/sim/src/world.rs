@@ -629,6 +629,11 @@ impl World {
     ///   within `SURVEY_INITIAL_RADIUS` of home as surveyed, so live playtest
     ///   corps don't wake up amnesiac about their own holdings.
     pub fn fixup_after_load(&mut self) {
+        // §economy: fold the legacy flat tier fields into the structures map
+        // (Extractor→MiningComplex, Refinery→FuelRefinery, rest 1:1). Idempotent.
+        for sys in self.systems.iter_mut() {
+            sys.fold_legacy_structures();
+        }
         if self.band_lo == 0.0 && self.band_hi == 0.0 {
             self.compute_band_thresholds();
         }
@@ -695,7 +700,7 @@ impl World {
         for &sid in cands.iter().take(pirate::PIRATE_ENCLAVE_COUNT) {
             // Base defense on the host system (owner stays None — dark until scouted).
             if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
-                sys.defense_tier = pirate::base_defense_tiers(1);
+                sys.set_tier(crate::build::StructureKind::DefensePlatform, pirate::base_defense_tiers(1));
                 sys.defense_pool = 0.0;
             }
             self.enclaves.insert(
@@ -1670,7 +1675,7 @@ impl World {
     fn covering_platform(&self, owner: PlayerId, pos: Vec2) -> Option<EntityId> {
         self.systems
             .iter()
-            .filter(|s| s.owner == Some(owner) && s.defense_tier >= 1 && s.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS)
+            .filter(|s| s.owner == Some(owner) && s.tier(crate::build::StructureKind::DefensePlatform) >= 1 && s.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS)
             .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)))
             .map(|s| s.id)
     }
@@ -1911,7 +1916,7 @@ impl World {
             let d_comp = self.side_comp(&defenders);
             let (ptiers, _ppool) = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
-                .map(|s| (s.defense_tier, s.defense_pool))
+                .map(|s| (s.tier(crate::build::StructureKind::DefensePlatform), s.defense_pool))
                 .unwrap_or((0, 0.0));
             let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
             let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(ptiers, 0.0).strength();
@@ -2077,7 +2082,7 @@ impl World {
             let d_comp = self.side_comp(&defenders);
             let (ptiers, ppool) = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
-                .map(|s| (s.defense_tier, s.defense_pool))
+                .map(|s| (s.tier(crate::build::StructureKind::DefensePlatform), s.defense_pool))
                 .unwrap_or((0, 0.0));
             // A side with nothing left → the battle has ended (flush handles it).
             if a_comp.is_empty() || (d_comp.is_empty() && ptiers == 0) {
@@ -2137,7 +2142,7 @@ impl World {
             if let Some(sid) = platform_system
                 && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
             {
-                s.defense_tier = d_side.platform_tiers;
+                s.set_tier(crate::build::StructureKind::DefensePlatform, d_side.platform_tiers);
                 s.defense_pool = d_side.platform_pool;
             }
             let mut atk = attackers.clone();
@@ -2157,7 +2162,7 @@ impl World {
             let d_now = self.side_comp(&self.engagements[eid].defenders);
             let d_ptiers = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
-                .map(|s| s.defense_tier)
+                .map(|s| s.tier(crate::build::StructureKind::DefensePlatform))
                 .unwrap_or(0);
             let a_alive = !a_now.is_empty();
             let d_alive = !d_now.is_empty() || d_ptiers > 0;
@@ -2196,7 +2201,7 @@ impl World {
         let Some(e) = self.engagements.remove(&eid) else { return };
         let a_now = self.side_comp(&e.attackers);
         let d_now = self.side_comp(&e.defenders);
-        let d_ptiers = e.platform_system.and_then(|sid| self.systems.iter().find(|s| s.id == sid)).map(|s| s.defense_tier).unwrap_or(0);
+        let d_ptiers = e.platform_system.and_then(|sid| self.systems.iter().find(|s| s.id == sid)).map(|s| s.tier(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
         // A side is ALIVE if it still has ships, a live platform, OR a fleet that
         // FLED (withdrew/avoid-disengaged) and survives — an emptied side is a
         // withdrawal, not a wipe.
@@ -2368,7 +2373,7 @@ impl World {
         let platforms: Vec<(Vec2, f64)> = self
             .systems
             .iter()
-            .filter(|s| s.owner.is_some() && s.defense_tier >= 1)
+            .filter(|s| s.owner.is_some() && s.tier(crate::build::StructureKind::DefensePlatform) >= 1)
             .map(|s| (s.pos, crate::build::DEFENSE_PLATFORM_RADIUS))
             .collect();
         let covered = |p: Vec2| platforms.iter().any(|(c, r)| p.distance(*c) <= *r);
@@ -2391,7 +2396,7 @@ impl World {
         for sid in ids {
             let Some(&base_pos) = epos.get(&sid) else { continue };
             let (tier, active) = { let e = &self.enclaves[&sid]; (e.tier, e.active(now)) };
-            let base_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.defense_tier).unwrap_or(0);
+            let base_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.tier(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
 
             // --- SUPPRESSION: the base defense hit 0 (assault won). ---
             if active && base_tiers == 0 {
@@ -2420,7 +2425,7 @@ impl World {
                 e.next_launch_at = e.dormant_until + 20.0;
                 e.next_grow_at = e.dormant_until + pirate::PIRATE_GROW_PERIOD;
                 if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
-                    sys.defense_tier = pirate::base_defense_tiers(1);
+                    sys.set_tier(crate::build::StructureKind::DefensePlatform, pirate::base_defense_tiers(1));
                     sys.defense_pool = 0.0;
                 }
                 continue;
@@ -2458,7 +2463,7 @@ impl World {
             if now >= self.enclaves[&sid].next_grow_at && tier < pirate::PIRATE_MAX_TIER {
                 let nt = tier + 1;
                 if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) {
-                    sys.defense_tier = pirate::base_defense_tiers(nt);
+                    sys.set_tier(crate::build::StructureKind::DefensePlatform, pirate::base_defense_tiers(nt));
                 }
                 let e = self.enclaves.get_mut(&sid).unwrap();
                 e.tier = nt;
@@ -2877,7 +2882,7 @@ impl World {
                 continue;
             }
             let sys = self.systems.iter().find(|s| s.id == *sys_id).unwrap();
-            let (d_owner, pos, ptiers) = (sys.owner.unwrap(), sys.pos, sys.defense_tier);
+            let (d_owner, pos, ptiers) = (sys.owner.unwrap(), sys.pos, sys.tier(crate::build::StructureKind::DefensePlatform));
             let aid = *blockaders.iter().min().unwrap();
             let garrison: Vec<EntityId> = self
                 .fleets
@@ -2967,7 +2972,7 @@ impl World {
         for sys in &mut self.systems {
             let is_blocked = blocked.contains(&sys.id);
             // Siege can PROGRESS only with defenses suppressed AND the prereqs met.
-            let siege_ok = is_blocked && sys.defense_tier == 0 && *siege_prereq.get(&sys.id).unwrap_or(&false);
+            let siege_ok = is_blocked && sys.tier(crate::build::StructureKind::DefensePlatform) == 0 && *siege_prereq.get(&sys.id).unwrap_or(&false);
             match (sys.blockade.is_some(), is_blocked) {
                 (false, true) => {
                     let by = blocked_by[&sys.id];
@@ -3132,7 +3137,7 @@ impl World {
                     // even on a pre-shipyard snapshot (freshly-generated homes
                     // already carry it), so a joining player can always build
                     // convoys turn one. max() never removes an earned higher tier.
-                    sys.shipyard_tier = sys.shipyard_tier.max(crate::build::HOME_SHIPYARD_TIER);
+                    sys.set_tier(crate::build::StructureKind::Shipyard, sys.tier(crate::build::StructureKind::Shipyard).max(crate::build::HOME_SHIPYARD_TIER));
                 }
                 // Starting inventory: a stock of the ORIGINAL five goods to sell,
                 // plus a treasury to buy with. §economy: deliberately NOT all 12 —
@@ -3609,7 +3614,7 @@ impl World {
     pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
         self.systems
             .iter()
-            .filter(|s| s.owner == Some(owner) && s.sensor_tier >= 1)
+            .filter(|s| s.owner == Some(owner) && s.tier(crate::build::StructureKind::SensorArray) >= 1)
             .map(|s| (s.pos, s.sensor_bubble()))
             .collect()
     }
@@ -3642,12 +3647,12 @@ impl World {
                     // (like fortifications). Its `defense_tier` is the base defense.
                     None => {
                         if let Some(e) = self.enclaves.get(&sys.id) {
-                            captures.push((ship.owner, sys.id, sys.defense_tier, 0, e.tier, ship.pos));
+                            captures.push((ship.owner, sys.id, sys.tier(crate::build::StructureKind::DefensePlatform), 0, e.tier, ship.pos));
                         }
                     }
                     // A RIVAL's fortifications (never your own or a syndicate ally's).
                     Some(o) if o != ship.owner && !self.are_allied(ship.owner, o) => {
-                        captures.push((ship.owner, sys.id, sys.defense_tier, sys.shipyard_tier, 0, ship.pos));
+                        captures.push((ship.owner, sys.id, sys.tier(crate::build::StructureKind::DefensePlatform), sys.tier(crate::build::StructureKind::Shipyard), 0, ship.pos));
                     }
                     _ => {}
                 }
@@ -3690,6 +3695,18 @@ impl World {
             .count() as u32
     }
 
+    /// §economy: in-progress structure jobs at `system` holding a slot of `pool`
+    /// (the per-pool generalization of `dev_slots_pending`).
+    pub fn pool_slots_pending(&self, system: EntityId, pool: crate::build::SlotPool) -> u32 {
+        self.build_queue
+            .iter()
+            .filter(|j| {
+                j.system == system
+                    && matches!(j.what, crate::build::BuildKind::Upgrade { upgrade } if upgrade.slot_pool() == pool)
+            })
+            .count() as u32
+    }
+
     /// Validate + start a construction job (§step1 growth sink): the player must own
     /// the system and its stockpile must cover the WHOLE recipe (no partial debit —
     /// a soft reject). A DEVELOPMENT additionally needs a free development slot
@@ -3708,8 +3725,14 @@ impl World {
         // Developments consume a SLOT of the system's budget (built tiers + jobs
         // already in progress). No free slot → soft reject (no debit, no job), with
         // an owner-only notice. Ships are units, not developments — never slot-gated.
-        if matches!(what, crate::build::BuildKind::Upgrade { .. })
-            && sys.dev_slots_built() + self.dev_slots_pending(system_id) >= sys.dev_slots()
+        // §economy: check the POOL of the requested kind, not one shared budget —
+        // resource slots come from geology, industrial/infrastructure from
+        // population. In-progress jobs hold a slot of their own pool, as before.
+        if let crate::build::BuildKind::Upgrade { upgrade } = what
+            && {
+                let pool = upgrade.slot_pool();
+                sys.pool_slots_built(pool) + self.pool_slots_pending(system_id, pool) >= sys.pool_slots(pool)
+            }
         {
             events.push(Event::new(
                 self.time,
@@ -3728,7 +3751,7 @@ impl World {
         // until the industry exists. This is what makes shipbuilding GEOGRAPHY.
         if let crate::build::BuildKind::Ship { ship } = what {
             let required = crate::build::required_shipyard_tier(ship);
-            if sys.shipyard_tier < required {
+            if sys.tier(crate::build::StructureKind::Shipyard) < required {
                 events.push(Event::new(
                     self.time,
                     EventPayload::BuildRejected {
@@ -3917,39 +3940,14 @@ impl World {
                     // Apply only if the owner still holds the system (can't upgrade a
                     // system you lost; the resources were already spent — frontier risk).
                     if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
-                        let tier = match upgrade {
-                            crate::build::SystemUpgrade::Extractor => {
-                                sys.extractor_tier += 1;
-                                sys.extractor_tier
-                            }
-                            crate::build::SystemUpgrade::Depot => {
-                                sys.depot_tier += 1;
-                                sys.depot_tier
-                            }
-                            crate::build::SystemUpgrade::Shipyard => {
-                                sys.shipyard_tier += 1;
-                                sys.shipyard_tier
-                            }
-                            crate::build::SystemUpgrade::SensorArray => {
-                                sys.sensor_tier += 1;
-                                sys.sensor_tier
-                            }
-                            crate::build::SystemUpgrade::DefensePlatform => {
-                                sys.defense_tier += 1;
-                                sys.defense_tier
-                            }
-                            crate::build::SystemUpgrade::Habitat => {
-                                sys.habitat_tier += 1;
-                                // A fresh habitat is presumed FED, so its FIRST
-                                // shortfall emits the unfed transition notice.
-                                sys.habitat_fed = true;
-                                sys.habitat_tier
-                            }
-                            crate::build::SystemUpgrade::Refinery => {
-                                sys.refinery_tier += 1;
-                                sys.refinery_tier
-                            }
-                        };
+                        // §economy: ONE keyed increment replaces the per-field match.
+                        let tier = sys.tier(upgrade) + 1;
+                        sys.set_tier(upgrade, tier);
+                        if upgrade == crate::build::StructureKind::Habitat {
+                            // A fresh habitat is presumed FED, so its FIRST
+                            // shortfall emits the unfed transition notice.
+                            sys.habitat_fed = true;
+                        }
                         events.push(Event::new(self.time, EventPayload::SystemUpgraded { system: job.system, owner: job.owner, upgrade, tier }));
                     }
                 }
@@ -4191,13 +4189,13 @@ impl World {
             sys.owner = Some(new_owner);
             sys.claimed_at = Some(now);
             // Half tiers (rounded down) — a captured base is a damaged one.
-            sys.extractor_tier /= 2;
-            sys.depot_tier /= 2;
-            sys.shipyard_tier /= 2;
-            sys.sensor_tier /= 2;
-            sys.defense_tier /= 2; // 0 already (siege prerequisite), stays 0
-            sys.habitat_tier /= 2;
-            sys.refinery_tier /= 2;
+            // §economy: halve EVERY structure tier (rounded down; zeroed entries
+            // drop from the map). DefensePlatform is 0 already (siege prereq).
+            let halved: Vec<(crate::build::StructureKind, u32)> =
+                sys.structures.iter().map(|(k, t)| (*k, *t / 2)).collect();
+            for (k, t) in halved {
+                sys.set_tier(k, t);
+            }
             sys.defense_pool = 0.0;
             sys.habitat_fed = false; // recomputed next tick
             sys.blockade = None; // it's the captor's now — no longer besieged
@@ -4320,8 +4318,8 @@ impl World {
                 continue;
             };
             // --- Habitat upkeep (before accrual; atomic per tick) ---
-            if sys.habitat_tier >= 1 {
-                let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER * sys.habitat_tier as f64 * DT;
+            if sys.tier(crate::build::StructureKind::Habitat) >= 1 {
+                let upkeep = crate::build::HABITAT_UPKEEP_PER_TIER * sys.tier(crate::build::StructureKind::Habitat) as f64 * DT;
                 let have = sys.stockpile.get(&crate::cargo::Commodity::Provisions).copied().unwrap_or(0.0);
                 let fed = have + 1e-12 >= upkeep;
                 if fed {
@@ -4351,13 +4349,14 @@ impl World {
                 //   Extractor multiplier applies as ^(tier−1): tier 1 is WASTED
                 //   breaking through (the survey can't see this; the claim does).
                 let deep = sys.trait_ == Some(crate::explore::SystemTrait::DeepDeposits);
-                let ext_exp = if deep { sys.extractor_tier.saturating_sub(1) } else { sys.extractor_tier };
+                let ext = sys.tier(crate::build::StructureKind::MiningComplex);
+                let ext_exp = if deep { ext.saturating_sub(1) } else { ext };
                 let mut mult = crate::build::EXTRACTOR_RICHNESS_MULT.powi(ext_exp as i32);
                 if deep {
                     mult *= crate::explore::DEEP_DEPOSITS_BASE_MULT;
                 }
-                if sys.habitat_tier >= 1 && sys.habitat_fed {
-                    mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.habitat_tier as i32);
+                if sys.tier(crate::build::StructureKind::Habitat) >= 1 && sys.habitat_fed {
+                    mult *= crate::build::HABITAT_OUTPUT_MULT.powi(sys.tier(crate::build::StructureKind::Habitat) as i32);
                 }
                 // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
                 let vein = match sys.trait_ {
@@ -4384,13 +4383,13 @@ impl World {
             // Fuel side (with the lossy yield the total always SHRINKS, so the
             // cap can't actually bind — the guard protects yield ≥ 1 tunings).
             // Dry = idle (soft; nothing destroyed, nothing conjured).
-            if sys.refinery_tier >= 1 {
+            if sys.tier(crate::build::StructureKind::FuelRefinery) >= 1 {
                 let have = sys
                     .stockpile
                     .get(&crate::cargo::Commodity::Volatiles)
                     .copied()
                     .unwrap_or(0.0);
-                let mut take = (crate::build::REFINERY_RATE_PER_TIER * sys.refinery_tier as f64 * DT).min(have);
+                let mut take = (crate::build::REFINERY_RATE_PER_TIER * sys.tier(crate::build::StructureKind::FuelRefinery) as f64 * DT).min(have);
                 if take > 0.0 {
                     // Cap guard: post-conversion total must stay ≤ cap
                     // (net change = take·(yield − 1) ≤ 0 for yield < 1).
@@ -5486,7 +5485,7 @@ mod tests {
     }
 
     // --- §step1 PART 1: build sink ------------------------------------------
-    use crate::build::{SystemUpgrade, CONVOY_RECIPE, EXTRACTOR_RICHNESS_MULT};
+    use crate::build::{StructureKind, CONVOY_RECIPE, EXTRACTOR_RICHNESS_MULT};
     use crate::cargo::Commodity;
 
     /// Grant `owner` a system directly (test SETUP — the game path is now a
@@ -5576,13 +5575,13 @@ mod tests {
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
         let rate0: f64 = w.systems.iter().find(|s| s.id == home).unwrap().deposits.iter().map(|d| d.richness).sum();
 
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
-        let dur = crate::build::EXTRACTOR_RECIPE.build_ticks;
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
+        let dur = crate::build::MINING_COMPLEX_RECIPE.build_ticks;
         for _ in 0..(dur + 3) {
             w.step(&[]);
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.extractor_tier, 1, "extractor tier applied on completion");
+        assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 1, "extractor tier applied on completion");
         // One tick's accrual should now reflect the ×MULT richness.
         let stock_before: f64 = sys.stockpile.values().sum();
         w.step(&[]);
@@ -5622,13 +5621,13 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
         w.systems.iter_mut().find(|s| s.id == home).unwrap().owner = Some(PlayerId(999));
-        for _ in 0..(crate::build::EXTRACTOR_RECIPE.build_ticks + 4) {
+        for _ in 0..(crate::build::MINING_COMPLEX_RECIPE.build_ticks + 4) {
             w.step(&[]);
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.extractor_tier, 0, "can't upgrade a system you no longer own (resources already spent)");
+        assert_eq!(sys.tier(crate::build::StructureKind::MiningComplex), 0, "can't upgrade a system you no longer own (resources already spent)");
     }
 
     // --- §buildings step 1 PART 1: development slots -------------------------
@@ -5641,13 +5640,14 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 10_000.0)]);
 
-        // Fill every FREE slot (budget − whatever the home starts with, e.g. a
-        // seeded Shipyard) with Extractor developments — each enqueue holds a slot.
+        // §economy: fill the RESOURCE pool (the MiningComplex's pool) — each
+        // enqueue holds a slot of ITS pool; the other pools are irrelevant here.
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        let free = sys.dev_slots() - sys.dev_slots_built();
-        assert!(free >= 1, "the home must start with at least one free slot");
+        let pool = crate::build::SlotPool::Resource;
+        let free = sys.pool_slots(pool) - sys.pool_slots_built(pool);
+        assert!(free >= 1, "the home must start with at least one free resource slot");
         for _ in 0..free {
-            let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+            let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
             assert!(
                 ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
                 "a development starts while slots remain"
@@ -5657,7 +5657,7 @@ mod tests {
         // One more: SOFT reject — no debit, no job, an owner-only NoSlot notice.
         let ore_before = system_stock(&w, home, Commodity::MetallicOre);
         let jobs_before = w.build_queue.len();
-        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Extractor }]);
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex }]);
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
@@ -5678,15 +5678,29 @@ mod tests {
         );
     }
 
+    /// §economy: the THREE derived slot pools — Resource from geology (one per
+    /// deposit, clamped 1..=4), Industrial/Infrastructure from population
+    /// (1/2/3 and 2/3/3 by pop tier). Derived, never stored — migration-free.
     #[test]
     fn dev_slot_budget_derives_from_geology() {
         let w = test_world();
         for sys in &w.systems {
-            let want = (crate::build::DEV_SLOTS_BASE + (sys.deposits.len() as u32).saturating_sub(1))
-                .min(crate::build::DEV_SLOTS_MAX);
-            assert_eq!(sys.dev_slots(), want);
-            assert!((3..=5).contains(&sys.dev_slots()), "budgets stay in the tunable 3–5 band");
+            assert_eq!(sys.resource_slots(), (sys.deposits.len() as u32).clamp(1, 4));
+            // Population is dormant (0) pre-Part-3: small-colony pools everywhere.
+            assert_eq!(sys.industrial_slots(), 1, "pop tier 0 → 1 industrial slot");
+            assert_eq!(sys.infrastructure_slots(), 2, "pop tier 0 → 2 infrastructure slots");
+            assert_eq!(
+                sys.dev_slots(),
+                sys.resource_slots() + sys.industrial_slots() + sys.infrastructure_slots(),
+                "the legacy single readout sums the pools"
+            );
         }
+        // Population growth widens the pools (the road to industrial capacity).
+        let mut sys = w.systems[0].clone();
+        sys.population = crate::build::POP_DEVELOPED;
+        assert_eq!((sys.industrial_slots(), sys.infrastructure_slots()), (2, 3), "developed 2/3");
+        sys.population = crate::build::POP_MAJOR;
+        assert_eq!((sys.industrial_slots(), sys.infrastructure_slots()), (3, 3), "major 3/3");
     }
 
     // --- §buildings step 2: Depot storage caps --------------------------------
@@ -5750,12 +5764,12 @@ mod tests {
         let cap0 = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
         let slots0 = w.systems.iter().find(|s| s.id == home).unwrap().dev_slots_built();
 
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Depot }]);
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::Depot }]);
         for _ in 0..(crate::build::DEPOT_RECIPE.build_ticks + 3) {
             w.step(&[]);
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.depot_tier, 1, "depot tier applied on completion");
+        assert_eq!(sys.tier(crate::build::StructureKind::Depot), 1, "depot tier applied on completion");
         assert!(
             (sys.storage_cap() - cap0 - crate::build::STORAGE_PER_DEPOT_TIER).abs() < 1e-9,
             "each depot tier adds STORAGE_PER_DEPOT_TIER capacity"
@@ -5819,7 +5833,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.shipyard_tier, crate::build::HOME_SHIPYARD_TIER, "home bootstraps at Shipyard 1");
+        assert_eq!(sys.tier(crate::build::StructureKind::Shipyard), crate::build::HOME_SHIPYARD_TIER, "home bootstraps at Shipyard 1");
         assert!(sys.dev_slots_built() >= 1, "the seeded shipyard consumes a development slot");
 
         // Convoy (needs tier 1) builds turn one — no chicken-and-egg stall.
@@ -5849,12 +5863,15 @@ mod tests {
         assert!(w.build_queue.is_empty(), "no job on a shipyard-short system");
         assert!((system_stock(&w, home, Commodity::Alloys) - alloys0).abs() < 1e-9, "recipe never eaten");
 
-        // Build Shipyard tier 2 → the raider now starts.
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: SystemUpgrade::Shipyard }]);
+        // §economy: Shipyard tier 2 = a SECOND Industrial slot — gated behind a
+        // DEVELOPED colony (pop tier 1). Grow the population past the threshold
+        // (the designed road to industrial capacity), then build tier 2.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().population = crate::build::POP_DEVELOPED;
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::Shipyard }]);
         for _ in 0..(crate::build::SHIPYARD_RECIPE.build_ticks + 3) {
             w.step(&[]);
         }
-        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().shipyard_tier, 2);
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().tier(crate::build::StructureKind::Shipyard), 2);
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "raider builds at Shipyard 2");
     }
@@ -5890,9 +5907,9 @@ mod tests {
         // Give the home distinctive development + storage state.
         {
             let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
-            sys.extractor_tier = 2;
-            sys.depot_tier = 1;
-            sys.habitat_tier = 1;
+            sys.set_tier(crate::build::StructureKind::MiningComplex, 2);
+            sys.set_tier(crate::build::StructureKind::Depot, 1);
+            sys.set_tier(crate::build::StructureKind::Habitat, 1);
             sys.habitat_fed = true;
             sys.stockpile.insert(Commodity::MetallicOre, 123.5);
         }
@@ -5909,8 +5926,8 @@ mod tests {
         );
         let a = w.systems.iter().find(|s| s.id == home).unwrap();
         let b = w2.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!((a.extractor_tier, a.depot_tier, a.shipyard_tier), (b.extractor_tier, b.depot_tier, b.shipyard_tier));
-        assert_eq!((a.habitat_tier, a.habitat_fed), (b.habitat_tier, b.habitat_fed), "habitat tier + fed state round-trip");
+        assert_eq!((a.tier(crate::build::StructureKind::MiningComplex), a.tier(crate::build::StructureKind::Depot), a.tier(crate::build::StructureKind::Shipyard)), (b.tier(crate::build::StructureKind::MiningComplex), b.tier(crate::build::StructureKind::Depot), b.tier(crate::build::StructureKind::Shipyard)));
+        assert_eq!((a.tier(crate::build::StructureKind::Habitat), a.habitat_fed), (b.tier(crate::build::StructureKind::Habitat), b.habitat_fed), "habitat tier + fed state round-trip");
         assert_eq!(a.dev_slots(), b.dev_slots(), "derived slot budget identical after reload");
         assert!((a.storage_cap() - b.storage_cap()).abs() < 1e-12);
         // Stockpiles match commodity-for-commodity (tolerating the last-ulp
@@ -5944,7 +5961,7 @@ mod tests {
         let id = PlayerId(31);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().habitat_tier = 1;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::Habitat, 1);
         seed_stock(&mut w, home, &[(Commodity::Provisions, 50.0)]);
 
         let ore_rate = deposit_rate(&w, home, Commodity::MetallicOre);
@@ -5976,7 +5993,7 @@ mod tests {
         let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
         sys.owner = Some(id);
         sys.claimed_at = Some(0.0);
-        sys.habitat_tier = 1;
+        sys.set_tier(crate::build::StructureKind::Habitat, 1);
         sys.habitat_fed = true; // as a fresh build leaves it (presumed fed)
         sys.deposits = vec![crate::galaxy::Deposit {
             resource: Commodity::MetallicOre,
@@ -5997,7 +6014,7 @@ mod tests {
         let gain = system_stock(&w, sid, Commodity::MetallicOre) - ore0;
         assert!((gain - 1.0 * dt).abs() < 1e-9, "unfed = plain un-boosted output (got {gain})");
         let s = w.systems.iter().find(|s| s.id == sid).unwrap();
-        assert_eq!(s.habitat_tier, 1, "nothing is destroyed, no tier lost");
+        assert_eq!(s.tier(crate::build::StructureKind::Habitat), 1, "nothing is destroyed, no tier lost");
         assert!(!s.habitat_fed);
 
         // Resupply (a hauled delivery) → FED again next tick, boost restored.
@@ -6030,7 +6047,7 @@ mod tests {
         let id = PlayerId(34);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 2;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 2);
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
 
         let vol0 = system_stock(&w, home, Commodity::Volatiles);
@@ -6055,7 +6072,7 @@ mod tests {
         let id = PlayerId(35);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 3;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 3);
 
         // Dry: fuel unchanged (home produces no fuel; only the seed sits there).
         let fuel0 = system_stock(&w, home, Commodity::Fuel);
@@ -6082,7 +6099,7 @@ mod tests {
         let id = PlayerId(36);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 1;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 1);
         // Fill exactly to the cap, with volatiles included in the fill.
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
         let headroom = sys.storage_headroom();
@@ -6108,7 +6125,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         drain_fuel(&mut w, id); // no seed fuel anywhere
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().refinery_tier = 2;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::FuelRefinery, 2);
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
         // Refine for a while → a real fuel reserve appears from Volatiles.
         for _ in 0..(20 * crate::config::TICK_HZ) {
@@ -6232,8 +6249,8 @@ mod tests {
             let sys = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
             sys.owner = Some(def);
             sys.claimed_at = Some(0.0);
-            sys.defense_tier = 2;
-            sys.shipyard_tier = 1;
+            sys.set_tier(crate::build::StructureKind::DefensePlatform, 2);
+            sys.set_tier(crate::build::StructureKind::Shipyard, 1);
             (sys.id, sys.pos)
         };
         let (sid_sys, sys_pos) = sys_id;
@@ -6263,7 +6280,7 @@ mod tests {
         assert!(snap1.observed_at > snap0.observed_at, "parked scout keeps the snapshot fresh");
 
         // The rival builds (tier changes) → a NEW notice fires.
-        w.systems.iter_mut().find(|s| s.id == sid_sys).unwrap().defense_tier = 3;
+        w.systems.iter_mut().find(|s| s.id == sid_sys).unwrap().set_tier(crate::build::StructureKind::DefensePlatform, 3);
         let ev = w.step(&[]);
         assert!(
             ev.iter().any(|e| matches!(e.payload, EventPayload::IntelGathered { defense_tier: 3, .. })),
@@ -6697,7 +6714,7 @@ mod tests {
             let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
             s.owner = Some(def);
             s.claimed_at = Some(0.0);
-            s.defense_tier = 2;
+            s.set_tier(crate::build::StructureKind::DefensePlatform, 2);
             s.pos = cpos; // co-located so it covers the contact
             s.id
         };
@@ -6709,12 +6726,12 @@ mod tests {
                     saw_platform = true;
                 }
             }
-            let tier = w.systems.iter().find(|s| s.id == sid).map(|s| s.defense_tier).unwrap_or(0);
+            let tier = w.systems.iter().find(|s| s.id == sid).map(|s| s.tier(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
             if tier < 2 || !w.fleets.contains_key(&raider) {
                 break;
             }
         }
-        let final_tier = w.systems.iter().find(|s| s.id == sid).unwrap().defense_tier;
+        let final_tier = w.systems.iter().find(|s| s.id == sid).unwrap().tier(crate::build::StructureKind::DefensePlatform);
         assert!(final_tier < 2 || saw_platform, "the platform's pool attrits a tier under sustained attack");
     }
 
@@ -7520,7 +7537,7 @@ mod tests {
             sys.owner = Some(d);
             sys.claimed_at = Some(0.0);
             sys.pos = hostile_pos + Vec2::new(500.0, 0.0); // bubble (2200) covers it
-            sys.sensor_tier = 1;
+            sys.set_tier(crate::build::StructureKind::SensorArray, 1);
         }
         let mut engaged = false;
         for _ in 0..(5 * crate::config::TICK_HZ) {
@@ -7567,7 +7584,7 @@ mod tests {
         sys.owner = Some(owner);
         sys.claimed_at = Some(0.0);
         sys.pos = pos;
-        sys.defense_tier = tier;
+        sys.set_tier(crate::build::StructureKind::DefensePlatform, tier);
         sys.id
     }
 
@@ -7690,7 +7707,7 @@ mod tests {
             let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
             let convoy_pos = w.fleets[&convoy].pos;
             let sys = grant_platform(&mut w, def, convoy_pos, 3);
-            let tier0 = w.systems.iter().find(|s| s.id == sys).unwrap().defense_tier;
+            let tier0 = w.systems.iter().find(|s| s.id == sys).unwrap().tier(crate::build::StructureKind::DefensePlatform);
             assert!(w.systems.iter().find(|s| s.id == sys).unwrap().dev_slots_built() >= 3, "platform tiers consume slots");
 
             w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
@@ -7706,7 +7723,7 @@ mod tests {
                 }
             }
             let lost = lost_reported.expect("platform engaged");
-            let tier1 = w.systems.iter().find(|s| s.id == sys).unwrap().defense_tier;
+            let tier1 = w.systems.iter().find(|s| s.id == sys).unwrap().tier(crate::build::StructureKind::DefensePlatform);
             assert_eq!(tier0 - tier1, lost, "reported damage matches the tier drop");
             (lost, tier1)
         };
@@ -7822,7 +7839,7 @@ mod tests {
         assert!(done, "the garrison + platform stop the raid");
         assert!(w.fleets.contains_key(&convoy), "behind the garrison + platform, the convoy survives");
         assert!(
-            w.systems.iter().find(|s| s.id == sys).unwrap().defense_tier <= 6,
+            w.systems.iter().find(|s| s.id == sys).unwrap().tier(crate::build::StructureKind::DefensePlatform) <= 6,
             "platform intact or attrited, never grown"
         );
     }
@@ -7843,7 +7860,7 @@ mod tests {
             )),
             "home tier 1 can't build corvettes"
         );
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().shipyard_tier = 2;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::Shipyard, 2);
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "tier 2 builds them");
     }
@@ -8800,7 +8817,7 @@ mod tests {
         // Give the depot ample headroom so the supply always has room to land —
         // otherwise the dest's OWN production can fill the base cap before the
         // (sub-light) convoy arrives, a race unrelated to what this test checks.
-        w.systems.iter_mut().find(|s| s.id == dest).unwrap().depot_tier = 5;
+        w.systems.iter_mut().find(|s| s.id == dest).unwrap().set_tier(crate::build::StructureKind::Depot, 5);
         w.step(&[]);
 
         w.step(&[Command::SetStandingOrder {
@@ -9293,7 +9310,7 @@ mod tests {
         sys.owner = Some(owner);
         sys.claimed_at = Some(0.0);
         sys.pos = pos;
-        sys.defense_tier = tier;
+        sys.set_tier(crate::build::StructureKind::DefensePlatform, tier);
         sys.id
     }
 
@@ -9383,7 +9400,7 @@ mod tests {
         for _ in 0..(200 * crate::config::TICK_HZ) {
             w.step(&[]);
             let s = w.systems.iter().find(|s| s.id == sys).unwrap();
-            if s.defense_tier == 0 && s.blockade.is_some() && w.fleets.contains_key(&blk) {
+            if s.tier(crate::build::StructureKind::DefensePlatform) == 0 && s.blockade.is_some() && w.fleets.contains_key(&blk) {
                 blockaded = true;
                 break;
             }
@@ -9470,7 +9487,7 @@ mod tests {
         for _ in 0..(300 * crate::config::TICK_HZ) {
             w.step(&[]);
             let s = w.systems.iter().find(|s| s.id == sys).unwrap();
-            if s.blockade.is_some() && s.defense_tier == 0 { break; }
+            if s.blockade.is_some() && s.tier(crate::build::StructureKind::DefensePlatform) == 0 { break; }
         }
         // Backdate the (already-running, undefended) siege clock past the duration.
         let dur = w.siege_duration_secs();
@@ -9502,9 +9519,9 @@ mod tests {
         let sys = ripe_siege(&mut w, atk, def, pos, 0);
         {
             let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
-            s.extractor_tier = 4;
-            s.shipyard_tier = 2;
-            s.habitat_tier = 3;
+            s.set_tier(crate::build::StructureKind::MiningComplex, 4);
+            s.set_tier(crate::build::StructureKind::Shipyard, 2);
+            s.set_tier(crate::build::StructureKind::Habitat, 3);
             *s.stockpile.entry(Commodity::MetallicOre).or_insert(0.0) += 100.0;
         }
         let colony = colony_at(&mut w, atk, pos);
@@ -9526,9 +9543,9 @@ mod tests {
         assert_eq!(cap, Some((atk, sys)), "a colony delivered to a ripe siege captures");
         let s = w.systems.iter().find(|s| s.id == sys).unwrap();
         assert_eq!(s.owner, Some(atk), "ownership flipped to the captor");
-        assert_eq!(s.extractor_tier, 2, "developments transfer at HALF tiers (4→2)");
-        assert_eq!(s.shipyard_tier, 1, "2→1");
-        assert_eq!(s.habitat_tier, 1, "3→1 (rounded down)");
+        assert_eq!(s.tier(crate::build::StructureKind::MiningComplex), 2, "developments transfer at HALF tiers (4→2)");
+        assert_eq!(s.tier(crate::build::StructureKind::Shipyard), 1, "2→1");
+        assert_eq!(s.tier(crate::build::StructureKind::Habitat), 1, "3→1 (rounded down)");
         assert!(s.blockade.is_none(), "the captured system is no longer besieged");
         assert_eq!(plunder.unwrap().get(&Commodity::MetallicOre).copied(), Some(100), "the stockpile is plundered (itemized)");
         assert!(!w.fleets.contains_key(&colony), "the lone colony ship was consumed (occupation)");
@@ -9548,7 +9565,7 @@ mod tests {
             blockader_on_station(&mut w, atk, sys, 1);
             for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
             let s = w.systems.iter().find(|s| s.id == sys).unwrap();
-            assert!(s.defense_tier > 0 && s.blockade.as_ref().and_then(|b| b.siege_since).is_none(), "defenses up → no siege clock");
+            assert!(s.tier(crate::build::StructureKind::DefensePlatform) > 0 && s.blockade.as_ref().and_then(|b| b.siege_since).is_none(), "defenses up → no siege clock");
         }
         // (b) GARRISON present: siege clock can't run while a defender combatant holds.
         {
@@ -9599,7 +9616,7 @@ mod tests {
         let home = w.players[&def].home_system.unwrap();
         let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
         // Suppress its bootstrap shipyard-tier defenses irrelevant; ensure defense 0.
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().defense_tier = 0;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::DefensePlatform, 0);
         blockader_on_station(&mut w, atk, home, 1);
         w.step(&[]); // blockades — but a home NEVER starts a siege clock
         // Force-backdate anyway; resolve_blockades must RESET it (home protection).
@@ -10076,7 +10093,7 @@ mod tests {
         for (sid, e) in &w.enclaves {
             let sys = w.systems.iter().find(|s| s.id == *sid).unwrap();
             assert!(sys.owner.is_none(), "an enclave sits at an UNCLAIMED system (dark until scouted)");
-            assert_eq!(sys.defense_tier, crate::pirate::base_defense_tiers(1), "base defense on the host system");
+            assert_eq!(sys.tier(crate::build::StructureKind::DefensePlatform), crate::pirate::base_defense_tiers(1), "base defense on the host system");
             assert_eq!(e.tier, 1, "seeds at tier 1");
             let r = sys.pos.length();
             assert!(r >= radius * 0.30 && r <= radius * 0.80, "mid-ring placement");
@@ -10154,7 +10171,7 @@ mod tests {
         w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // isolate escalation
         w.step(&[]);
         assert_eq!(w.enclaves[&sid].tier, 2, "an unsuppressed enclave grows a tier");
-        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().defense_tier, crate::pirate::base_defense_tiers(2), "the base defense grows with it");
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().tier(crate::build::StructureKind::DefensePlatform), crate::pirate::base_defense_tiers(2), "the base defense grows with it");
     }
 
     #[test]
@@ -10473,7 +10490,7 @@ mod tests {
             ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0 })),
-            ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::SystemUpgrade::Depot, tier: 1 }),
+            ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::StructureKind::Depot, tier: 1 }),
             ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
         ]);
         {
@@ -11045,7 +11062,7 @@ mod tests {
             let id = PlayerId(1);
             w.step(&[Command::AddPlayer { id, name: "A".into() }]);
             let sid = trait_system(&mut w, id, Some(SystemTrait::DeepDeposits));
-            w.systems.iter_mut().find(|s| s.id == sid).unwrap().extractor_tier = tier;
+            w.systems.iter_mut().find(|s| s.id == sid).unwrap().set_tier(crate::build::StructureKind::MiningComplex, tier);
             w.step(&[]);
             system_stock(&w, sid, Commodity::MetallicOre)
         };
@@ -11064,19 +11081,19 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "A".into() }]);
         let sid = trait_system(&mut w, id, Some(SystemTrait::UnstableGeology));
-        let recipe = crate::build::recipe_for(crate::build::BuildKind::Upgrade { upgrade: crate::build::SystemUpgrade::Extractor });
+        let recipe = crate::build::recipe_for(crate::build::BuildKind::Upgrade { upgrade: crate::build::StructureKind::MiningComplex });
         // Stock EXACTLY the plain cost → must be REJECTED (needs ×1.25).
         for (c, need) in recipe.costs {
             seed_stock(&mut w, sid, &[(*c, *need)]);
         }
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::SystemUpgrade::Extractor }]);
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::StructureKind::MiningComplex }]);
         assert!(w.build_queue.is_empty(), "plain-cost stock can't afford the unstable premium");
         // Top up to ×UNSTABLE_COST_MULT → accepted, and debited at the premium.
         for (c, need) in recipe.costs {
             seed_stock(&mut w, sid, &[(*c, *need * (crate::explore::UNSTABLE_COST_MULT - 1.0) + 0.001)]);
         }
         let before: Vec<f64> = recipe.costs.iter().map(|(c, _)| system_stock(&w, sid, *c)).collect();
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::SystemUpgrade::Extractor }]);
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: sid, upgrade: crate::build::StructureKind::MiningComplex }]);
         assert_eq!(w.build_queue.len(), 1, "the premium stock affords it");
         for ((c, need), b4) in recipe.costs.iter().zip(before) {
             let now_units = system_stock(&w, sid, *c);
@@ -11102,7 +11119,7 @@ mod tests {
             {
                 let s = w.systems.iter_mut().find(|s| s.id == sid).unwrap();
                 s.deposits.clear(); // no accrual noise
-                s.refinery_tier = 1;
+                s.set_tier(crate::build::StructureKind::FuelRefinery, 1);
             }
             seed_stock(&mut w, sid, &[(Commodity::Volatiles, 100.0)]);
             w.step(&[]);
@@ -11160,6 +11177,43 @@ mod tests {
         let after = system_stock(&w, sid, Commodity::Alloys);
         assert!(after < stock_before + 0.01, "the cache never re-pays (latch survives the flip)");
         assert!(w.systems.iter().find(|s| s.id == sid).unwrap().cache_claimed, "latch intact across capture");
+    }
+
+    /// §economy: the LEGACY tier fold — a pre-economy snapshot (flat tier fields,
+    /// no structures map) loads, and `fixup_after_load` folds every built tier
+    /// into `structures` (Extractor→MiningComplex, Refinery→FuelRefinery, rest
+    /// 1:1), zeroing the carriers. Idempotent.
+    #[test]
+    fn legacy_tiers_fold_into_structures_on_load() {
+        use crate::build::StructureKind as K;
+        let w = test_world();
+        let json = serde_json::to_string(&w).unwrap();
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Simulate a pre-economy snapshot: legacy flat tiers, no structures map.
+        let sys0 = &mut val["systems"][0];
+        sys0.as_object_mut().unwrap().remove("structures");
+        sys0["extractor_tier"] = 2.into();
+        sys0["refinery_tier"] = 1.into();
+        sys0["depot_tier"] = 3.into();
+        let mut w2: World = serde_json::from_value(val).unwrap();
+        assert_eq!(w2.systems[0].legacy_extractor_tier, 2, "legacy fields parse (serde rename)");
+        w2.fixup_after_load();
+        let s0 = &w2.systems[0];
+        assert_eq!(s0.tier(K::MiningComplex), 2, "Extractor folds to MiningComplex");
+        assert_eq!(s0.tier(K::FuelRefinery), 1, "Refinery folds to FuelRefinery");
+        assert_eq!(s0.tier(K::Depot), 3, "Depot folds 1:1");
+        assert_eq!(s0.legacy_extractor_tier, 0, "carriers zeroed after the fold");
+        // Idempotent: folding again changes nothing.
+        let before = s0.structures.clone();
+        w2.fixup_after_load();
+        assert_eq!(w2.systems[0].structures, before, "the fold is idempotent");
+        // In-flight legacy build jobs parse to the mapped kind via serde alias.
+        let job: crate::build::BuildKind =
+            serde_json::from_str(r#"{"kind":"upgrade","upgrade":"extractor"}"#).unwrap();
+        assert_eq!(job, crate::build::BuildKind::Upgrade { upgrade: K::MiningComplex });
+        let job2: crate::build::BuildKind =
+            serde_json::from_str(r#"{"kind":"upgrade","upgrade":"refinery"}"#).unwrap();
+        assert_eq!(job2, crate::build::BuildKind::Upgrade { upgrade: K::FuelRefinery });
     }
 
     /// Traits + latches ride a snapshot; a PRE-feature snapshot (fields absent)

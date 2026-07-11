@@ -65,25 +65,25 @@ pub struct StarSystem {
     pub stockpile: BTreeMap<Commodity, f64>,
     /// Number of Extractor upgrades built here (§step1 structure sink). Scales
     /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
-    #[serde(default)]
-    pub extractor_tier: u32,
+    #[serde(default, rename = "extractor_tier")]
+    pub legacy_extractor_tier: u32,
     /// Number of Depot upgrades built here (§buildings step 2). Each tier raises
     /// the system's storage cap by `STORAGE_PER_DEPOT_TIER`. `default` = 0 on old
     /// snapshots (they get the base cap; oversize stockpiles are grandfathered —
     /// the cap blocks NEW inflow only, it never destroys what's stored).
-    #[serde(default)]
-    pub depot_tier: u32,
+    #[serde(default, rename = "depot_tier")]
+    pub legacy_depot_tier: u32,
     /// Number of Shipyard upgrades built here (§buildings step 3). Gates ship
     /// construction: Convoy needs tier ≥ 1, Raider ≥ 2 (`required_shipyard_tier`).
     /// HOME systems generate at tier 1 (the turn-one convoy bootstrap).
-    #[serde(default)]
-    pub shipyard_tier: u32,
+    #[serde(default, rename = "shipyard_tier")]
+    pub legacy_shipyard_tier: u32,
     /// Number of Sensor Array upgrades built here (§buildings step 2b). An owned
     /// system with tier ≥ 1 projects a standing sensor bubble for its OWNER
     /// (radius `sensor_array_radius(tier)`), feeding the same coverage model as
     /// ship bubbles. Owner-only in the View, like every tier.
-    #[serde(default)]
-    pub sensor_tier: u32,
+    #[serde(default, rename = "sensor_tier")]
+    pub legacy_sensor_tier: u32,
     /// Number of Defense Platform tiers standing here (§buildings step 2c). A
     /// hostile raider making contact with one of the owner's convoys within
     /// `DEFENSE_PLATFORM_RADIUS` must fight through `tier` stationary defender
@@ -91,8 +91,8 @@ pub struct StarSystem {
     /// (damage), so this can go down as well as up; the system itself is never
     /// destroyed. Owner-only in the View — a rival learns a platform exists only
     /// through engagement outcomes (delayed battle reports).
-    #[serde(default)]
-    pub defense_tier: u32,
+    #[serde(default, rename = "defense_tier")]
+    pub legacy_defense_tier: u32,
     /// The platform's accumulated DAMAGE POOL (§FLEETS Part 2 Lanchester): a tier
     /// dies when this fills a `PLATFORM_TIER_HULL`, carrying the remainder. serde
     /// default keeps pre-Lanchester snapshots loading (a fresh, undamaged pool).
@@ -101,8 +101,8 @@ pub struct StarSystem {
     /// Number of Habitat tiers here (§buildings step 3a). When FED, boosts the
     /// system's total output ×`HABITAT_OUTPUT_MULT^tier`; consumes
     /// `HABITAT_UPKEEP_PER_TIER`/s of Provisions from this stockpile. Owner-only.
-    #[serde(default)]
-    pub habitat_tier: u32,
+    #[serde(default, rename = "habitat_tier")]
+    pub legacy_habitat_tier: u32,
     /// Whether the Habitat's upkeep was covered last tick (§buildings step 3a).
     /// UNFED merely SUSPENDS the boost — nothing is destroyed, no tier is lost;
     /// it recovers the tick food is available again (async-fair: an offline
@@ -114,8 +114,8 @@ pub struct StarSystem {
     /// Number of Fuel Refinery tiers here (§buildings step 3b). Converts
     /// stockpiled Volatiles → Fuel at `REFINERY_RATE_PER_TIER · tier`/s
     /// (`REFINERY_YIELD` Fuel per Volatile); idles dry. Owner-only in the View.
-    #[serde(default)]
-    pub refinery_tier: u32,
+    #[serde(default, rename = "refinery_tier")]
+    pub legacy_refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1): `Some` while ≥1 hostile
     /// fleet holds station here. Recomputed every tick by `resolve_blockades`
     /// from on-station fleet presence — persisted so a mid-blockade snapshot
@@ -132,6 +132,18 @@ pub struct StarSystem {
     /// ever; deliberately NOT reset on capture, so a flip can't re-mint it).
     #[serde(default)]
     pub cache_claimed: bool,
+    /// §economy: the system's STRUCTURES (kind → built tier) — the ONE keyed map
+    /// that replaces the flat per-building tier fields above. Those legacy fields
+    /// stay as deprecated parse-only carriers and are folded in by
+    /// [`StarSystem::fold_legacy_structures`] on load. Owner-only in the View.
+    #[serde(default)]
+    pub structures: BTreeMap<crate::build::StructureKind, u32>,
+    /// §economy Part 2: colony POPULATION in millions. Grows toward Habitat
+    /// capacity when well-supplied; NEVER decreases. Drives the Industrial /
+    /// Infrastructure slot pools via `pop_tier`. Dormant (0) until Part 3 wires
+    /// growth/consumption. Owner-only in the View.
+    #[serde(default)]
+    pub population: f64,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -157,43 +169,105 @@ impl StarSystem {
         self.owner.is_none()
     }
 
-    /// This system's DEVELOPMENT SLOT budget (§buildings step 1) — how many
-    /// developments (Extractor/Depot/Shipyard tiers) it can hold in total. The
-    /// scarcity that forces specialization: you can't build everything everywhere.
-    ///
-    /// DERIVED from static geology (deposit count), not stored: deterministic,
-    /// identical for every player, and migration-free (old snapshots pick it up
-    /// automatically). 1 deposit → 3 slots … 3 deposits → 5 slots; a HOME system
-    /// (2 deposits) gets the standard 4. Tunable via the consts in `build.rs`.
-    pub fn dev_slots(&self) -> u32 {
-        (crate::build::DEV_SLOTS_BASE + (self.deposits.len() as u32).saturating_sub(1))
-            .min(crate::build::DEV_SLOTS_MAX)
+    /// §economy: the built tier of a structure kind (0 = none). THE tier read —
+    /// every consumer goes through this (the legacy flat fields are parse-only).
+    pub fn tier(&self, kind: crate::build::StructureKind) -> u32 {
+        self.structures.get(&kind).copied().unwrap_or(0)
     }
 
-    /// Development slots already CONSUMED by completed tiers here. (In-progress
-    /// upgrade jobs also hold a slot; those live on the World's build queue —
-    /// see `World::dev_slots_pending` — so the full "used" count is
-    /// `dev_slots_built() + pending`.)
+    /// §economy: set a structure's tier (0 removes the entry — the map stays
+    /// minimal and deterministic).
+    pub fn set_tier(&mut self, kind: crate::build::StructureKind, tier: u32) {
+        if tier == 0 {
+            self.structures.remove(&kind);
+        } else {
+            self.structures.insert(kind, tier);
+        }
+    }
+
+    /// §economy: fold the LEGACY flat tier fields into `structures` (Extractor →
+    /// MiningComplex, Refinery → FuelRefinery, the rest 1:1), zeroing the legacy
+    /// carriers. Idempotent (zeroed fields fold nothing); called on snapshot load
+    /// so a pre-economy world keeps every built tier. `defense_pool` and the
+    /// combat semantics ride along untouched.
+    pub fn fold_legacy_structures(&mut self) {
+        use crate::build::StructureKind as K;
+        let folds = [
+            (std::mem::take(&mut self.legacy_extractor_tier), K::MiningComplex),
+            (std::mem::take(&mut self.legacy_depot_tier), K::Depot),
+            (std::mem::take(&mut self.legacy_shipyard_tier), K::Shipyard),
+            (std::mem::take(&mut self.legacy_sensor_tier), K::SensorArray),
+            (std::mem::take(&mut self.legacy_defense_tier), K::DefensePlatform),
+            (std::mem::take(&mut self.legacy_habitat_tier), K::Habitat),
+            (std::mem::take(&mut self.legacy_refinery_tier), K::FuelRefinery),
+        ];
+        for (legacy, kind) in folds {
+            if legacy > 0 {
+                let cur = self.tier(kind);
+                self.set_tier(kind, cur + legacy);
+            }
+        }
+    }
+
+    /// §economy: the three DERIVED slot pools (never stored — the old
+    /// `dev_slots()` philosophy; migration-free by construction).
+    /// RESOURCE slots come from geology: one per deposit, clamped 1..=4.
+    pub fn resource_slots(&self) -> u32 {
+        (self.deposits.len() as u32).clamp(1, 4)
+    }
+
+    /// INDUSTRIAL slots come from population: 1 / 2 / 3 by `pop_tier`.
+    pub fn industrial_slots(&self) -> u32 {
+        1 + crate::build::pop_tier(self.population)
+    }
+
+    /// INFRASTRUCTURE slots: 2 / 3 / 3 by `pop_tier`.
+    pub fn infrastructure_slots(&self) -> u32 {
+        2 + (crate::build::pop_tier(self.population) >= 1) as u32
+    }
+
+    /// The slot budget of one pool.
+    pub fn pool_slots(&self, pool: crate::build::SlotPool) -> u32 {
+        match pool {
+            crate::build::SlotPool::Resource => self.resource_slots(),
+            crate::build::SlotPool::Industrial => self.industrial_slots(),
+            crate::build::SlotPool::Infrastructure => self.infrastructure_slots(),
+        }
+    }
+
+    /// Slots of one pool already CONSUMED by built tiers (in-progress jobs also
+    /// hold a slot — the World's `pool_slots_pending` adds those).
+    pub fn pool_slots_built(&self, pool: crate::build::SlotPool) -> u32 {
+        self.structures
+            .iter()
+            .filter(|(k, _)| k.slot_pool() == pool)
+            .map(|(_, t)| *t)
+            .sum()
+    }
+
+    /// LEGACY single-budget readouts, now sums over the three pools — keeps the
+    /// existing wire fields (`slots_used`/`slots_total`) meaningful until the
+    /// per-pool client panel lands (Part 6/7).
+    pub fn dev_slots(&self) -> u32 {
+        self.resource_slots() + self.industrial_slots() + self.infrastructure_slots()
+    }
+
+    /// Development slots already CONSUMED by completed tiers here (all pools).
     pub fn dev_slots_built(&self) -> u32 {
-        self.extractor_tier
-            + self.depot_tier
-            + self.shipyard_tier
-            + self.sensor_tier
-            + self.defense_tier
-            + self.habitat_tier
-            + self.refinery_tier
+        self.structures.values().sum()
     }
 
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
     pub fn sensor_bubble(&self) -> f64 {
-        crate::build::sensor_array_radius(self.sensor_tier)
+        crate::build::sensor_array_radius(self.tier(crate::build::StructureKind::SensorArray))
     }
 
     /// This system's TOTAL storage capacity (§buildings step 2): a base every
     /// system has, plus a chunk per Depot tier. New inflow is capped at this;
     /// what's already stored is never destroyed.
     pub fn storage_cap(&self) -> f64 {
-        crate::build::STORAGE_BASE_CAP + crate::build::STORAGE_PER_DEPOT_TIER * self.depot_tier as f64
+        crate::build::STORAGE_BASE_CAP
+            + crate::build::STORAGE_PER_DEPOT_TIER * self.tier(crate::build::StructureKind::Depot) as f64
     }
 
     /// Total units currently stored (summed across commodities) — what the cap
@@ -278,18 +352,20 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             owner: None,
             claimed_at: None,
             stockpile: BTreeMap::new(),
-            extractor_tier: 0,
-            depot_tier: 0,
-            shipyard_tier: 0, // frontier systems must EARN their shipyards
-            sensor_tier: 0,
-            defense_tier: 0,
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0, // frontier systems must EARN their shipyards
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
             defense_pool: 0.0,
-            habitat_tier: 0,
+            legacy_habitat_tier: 0,
             habitat_fed: false,
-            refinery_tier: 0,
+            legacy_refinery_tier: 0,
             blockade: None,
             trait_: None,
             cache_claimed: false,
+            structures: BTreeMap::new(),
+            population: 0.0,
         });
     }
     systems
@@ -397,22 +473,26 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         owner: None,
         claimed_at: None,
         stockpile: BTreeMap::new(),
-        extractor_tier: 0,
-        depot_tier: 0,
-        // HOME BOOTSTRAP (§buildings step 3): every home starts with Shipyard
-        // tier 1 already built (consuming one development slot), so a new player
-        // can build convoys turn one. Raiders (tier 2) and frontier shipbuilding
-        // must be EARNED.
-        shipyard_tier: crate::build::HOME_SHIPYARD_TIER,
-        sensor_tier: 0,
-        defense_tier: 0,
+        legacy_extractor_tier: 0,
+        legacy_depot_tier: 0,
+        legacy_shipyard_tier: 0,
+        legacy_sensor_tier: 0,
+        legacy_defense_tier: 0,
         defense_pool: 0.0,
-        habitat_tier: 0,
+        legacy_habitat_tier: 0,
         habitat_fed: false,
-        refinery_tier: 0,
-            blockade: None,
-            trait_: None,
-            cache_claimed: false,
+        legacy_refinery_tier: 0,
+        blockade: None,
+        trait_: None,
+        cache_claimed: false,
+        // HOME BOOTSTRAP (§buildings step 3 → §economy): every home starts with
+        // Shipyard tier 1 already built, so a new player can build convoys turn
+        // one. Written straight into the structures map (the live store); the
+        // legacy flat fields above are parse-only carriers.
+        structures: [(crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER)]
+            .into_iter()
+            .collect(),
+        population: 0.0,
     }
 }
 

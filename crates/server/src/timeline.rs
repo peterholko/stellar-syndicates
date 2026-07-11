@@ -102,15 +102,8 @@ impl Timeline {
                 }
                 EventPayload::SystemUpgraded { owner, system, upgrade, tier } => {
                     let name = system_name(world, *system);
-                    let what = match upgrade {
-                        sim::SystemUpgrade::Extractor => format!("Extractor tier {tier} (more output)"),
-                        sim::SystemUpgrade::Depot => format!("Depot tier {tier} (more storage)"),
-                        sim::SystemUpgrade::Shipyard => format!("Shipyard tier {tier} (builds ships)"),
-                        sim::SystemUpgrade::SensorArray => format!("Sensor Array tier {tier} (standing vision)"),
-                        sim::SystemUpgrade::DefensePlatform => format!("Defense Platform tier {tier} (static defense)"),
-                        sim::SystemUpgrade::Habitat => format!("Habitat tier {tier} (boosts output; consumes Provisions)"),
-                        sim::SystemUpgrade::Refinery => format!("Fuel Refinery tier {tier} (Volatiles → Fuel)"),
-                    };
+                    // §economy: one title-driven line for all 16 structure kinds.
+                    let what = format!("{} tier {tier}", upgrade.title());
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
                 }
                 // A soft-rejected build (§buildings step 1) — owner-only, instant
@@ -478,13 +471,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Extractor } => "an Extractor",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Depot } => "a Depot",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Shipyard } => "a Shipyard",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::SensorArray } => "a Sensor Array",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::DefensePlatform } => "a Defense Platform",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Habitat } => "a Habitat",
-        sim::BuildKind::Upgrade { upgrade: sim::SystemUpgrade::Refinery } => "a Fuel Refinery",
+        sim::BuildKind::Upgrade { upgrade } => upgrade.title(),
     }
 }
 

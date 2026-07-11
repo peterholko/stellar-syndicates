@@ -35,7 +35,7 @@ pub mod standing;
 pub mod syndicate;
 pub mod world;
 
-pub use build::{BuildJob, BuildKind, SystemUpgrade};
+pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
 pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Losses};
 pub use command::Command;

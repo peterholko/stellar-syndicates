@@ -153,7 +153,7 @@ pub enum EventPayload {
         system: EntityId,
         owner: PlayerId,
         /// Which development completed (Extractor/Depot/…).
-        upgrade: crate::build::SystemUpgrade,
+        upgrade: crate::build::StructureKind,
         /// The new tier of that development.
         tier: u32,
     },

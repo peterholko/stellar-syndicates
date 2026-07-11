@@ -1082,13 +1082,13 @@ function updateSysviewManage(): void {
                        : ` ${badgeChip("unfed", "unfed", "warn", "Habitat upkeep NOT met — the boost is suspended until Provisions arrive. Nothing is destroyed; it recovers automatically.")}`)
     : "";
   const DEV_ROW: [string, IconKey, number, string][] = [
-    ["Extractor", "extractor", dyn.extractor_tier ?? 0, ""],
+    ["Mining Complex", "extractor", dyn.extractor_tier ?? 0, ""],
     ["Depot", "depot", dyn.depot_tier ?? 0, ""],
     ["Shipyard", "shipyard", dyn.shipyard_tier ?? 0, ""],
     ["Sensor array", "sensor", dyn.sensor_tier ?? 0, ""],
     ["Defense platform", "defense", dyn.defense_tier ?? 0, ""],
     ["Habitat", "habitat", dyn.habitat_tier ?? 0, habTag],
-    ["Fuel refinery", "refinery", dyn.refinery_tier ?? 0, ""],
+    ["Fuel Refinery", "refinery", dyn.refinery_tier ?? 0, ""],
   ];
   const devs = `<div class="devs-row" title="System developments — the map markers show where each one anchors (not separate colonies). Click a body to see what would anchor there.">` +
     DEV_ROW.map(([name, key, t, tag]) => `<span class="dev ${t ? "" : "dev--none"}" title="${esc(name)} ×${t}">${icon(key, "sm", `${name} ×${t}`)}<b>×${t}</b>${tag}</span>`).join(`<span class="dev-sep">·</span>`) +
@@ -2305,7 +2305,7 @@ function buildSystemTab(): void {
 function dispatchBuildKey(k: string, sid: string): void {
   if (!net) return;
   if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
-  else if (k === "extractor" || k === "depot" || k === "shipyard" || k === "sensor_array" || k === "defense_platform" || k === "habitat" || k === "refinery") net.send({ type: "DevelopSystem", system_id: sid, upgrade: k });
+  else net.send({ type: "DevelopSystem", system_id: sid, upgrade: k }); // §economy: any structure slug
 }
 
 // What "Ship production → hub" will ACTUALLY dispatch: the system's NON-FUEL

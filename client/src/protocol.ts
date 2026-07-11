@@ -441,7 +441,8 @@ export type ClientMsg =
   // `join` (optional): a fleet docked at that system for the finished ship to
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery" }
+  // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: string }
   // §battles-take-time — withdraw an engaged fleet (light-delayed).
   | { type: "Withdraw"; fleet_id: EntityId }
   // §Part 4 — set a fleet's transit throttle (Full/Stealth).

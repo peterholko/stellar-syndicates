@@ -112,6 +112,21 @@ export interface SystemBodyDetail {
 //   defense    → a battle-station marker in close STAR orbit (bodyId null)
 //   (interdictor: no such development exists yet — add its row when it does)
 export type DevKey = "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
+/// §economy: wire build keys → the visual anchor family (new structures reuse
+/// the nearest existing icon family until the Part-7 icon pass).
+export function devKeyForBuildKey(key: string): DevKey | null {
+  switch (key) {
+    case "mining_complex": case "volatile_harvester": case "bioharvester": case "extractor": return "extractor";
+    case "fuel_refinery": case "refinery": case "smelter": case "chemical_works": case "agroplex":
+    case "electronics_fabricator": case "machine_works": case "armaments_complex": return "refinery";
+    case "depot": return "depot";
+    case "shipyard": return "shipyard";
+    case "sensor_array": return "sensor_array";
+    case "defense_platform": return "defense_platform";
+    case "habitat": case "academy": return "habitat";
+    default: return null;
+  }
+}
 /// The owner's built tiers, passed from the SAME owner-only view fields the rail
 /// used (state.systems) — rivals' views carry 0s, so markers can never leak.
 export interface DevTiers {
@@ -796,7 +811,11 @@ export class SystemViewScene {
     const sites = new Set<DevKey>();
     for (const k of this.devTiers.inProgress) {
       if (SHIP_BUILD_KEYS.has(k)) sites.add("shipyard");
-      else if (k in anchors) sites.add(k as DevKey);
+      else {
+        // §economy: map the 16 structure slugs onto the visual anchor families.
+        const dk = devKeyForBuildKey(k);
+        if (dk) sites.add(dk);
+      }
     }
     for (const key of sites) {
       const bodyId = anchors[key];
