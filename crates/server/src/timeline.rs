@@ -540,6 +540,14 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             sim::SpecialistKind::IndustrialEngineer => "an Industrial Engineer (training)",
             sim::SpecialistKind::NavalArchitect => "a Naval Architect (training)",
         },
+        // §modules Part B3: a module in manufacture.
+        sim::BuildKind::Module { module } => match module {
+            sim::ModuleKind::MassDriver => "a Mass Driver",
+            sim::ModuleKind::TorpedoRack => "a Torpedo Rack",
+            sim::ModuleKind::PointDefenseScreen => "a Point-Defense Screen",
+            sim::ModuleKind::ReflectivePlating => "Reflective Plating",
+            sim::ModuleKind::WhippleArmor => "Whipple Armor",
+        },
     }
 }
 

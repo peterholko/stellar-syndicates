@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cargo::Commodity;
+use crate::module::ModuleKind;
 use crate::ids::{EntityId, PlayerId};
 use crate::ship::ShipKind;
 
@@ -28,6 +29,10 @@ pub enum BuildKind {
     /// resident specialist of `kind` (if the system is still held). Rides the
     /// same build queue; holds no slot, needs no shipyard.
     Train { specialist: crate::specialist::SpecialistKind },
+    /// §modules Part B3: manufacture one MODULE — completes into the system's
+    /// module ledger (if still held). Needs an Armaments Complex ≥ 1; holds no
+    /// slot; rides the same build queue.
+    Module { module: ModuleKind },
 }
 
 /// §economy: which SLOT POOL a structure consumes. Slot budgets are DERIVED,
@@ -272,6 +277,28 @@ pub const ACADEMY_TRAIN_RECIPE: Recipe = Recipe {
     build_ticks: crate::specialist::ACADEMY_TRAIN_TICKS,
 };
 
+// --- §modules Part B3: MODULE RECIPES (manufactured items) --------------------
+// Built from Armaments + Electronics, with a real Silicates sink for the glass
+// mirrors (Reflective) and a Machinery draw for the heavy spaced armor (Whipple).
+// Quicker than a structure — a module is a crate, not a colony. All Tunable.
+const MODULE_BUILD_TICKS: u64 = 10 * HZ;
+pub const MASS_DRIVER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 8.0), (Commodity::Electronics, 4.0)], build_ticks: MODULE_BUILD_TICKS };
+pub const TORPEDO_RACK_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 10.0), (Commodity::Electronics, 6.0)], build_ticks: MODULE_BUILD_TICKS };
+pub const POINT_DEFENSE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 6.0), (Commodity::Electronics, 8.0)], build_ticks: MODULE_BUILD_TICKS };
+pub const REFLECTIVE_PLATING_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 6.0), (Commodity::Silicates, 6.0), (Commodity::Electronics, 2.0)], build_ticks: MODULE_BUILD_TICKS };
+pub const WHIPPLE_ARMOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 12.0), (Commodity::Machinery, 2.0)], build_ticks: MODULE_BUILD_TICKS };
+
+/// The recipe for one module of `kind`.
+pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
+    match kind {
+        ModuleKind::MassDriver => &MASS_DRIVER_RECIPE,
+        ModuleKind::TorpedoRack => &TORPEDO_RACK_RECIPE,
+        ModuleKind::PointDefenseScreen => &POINT_DEFENSE_RECIPE,
+        ModuleKind::ReflectivePlating => &REFLECTIVE_PLATING_RECIPE,
+        ModuleKind::WhippleArmor => &WHIPPLE_ARMOR_RECIPE,
+    }
+}
+
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
         BuildKind::Ship { ship: ShipKind::Convoy } => &CONVOY_RECIPE,
@@ -280,6 +307,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Corvette } => &CORVETTE_RECIPE,
         BuildKind::Ship { ship: ShipKind::Colony } => &COLONY_RECIPE,
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
+        BuildKind::Module { module } => module_recipe(module),
         BuildKind::Upgrade { upgrade } => match upgrade {
             StructureKind::MiningComplex => &MINING_COMPLEX_RECIPE,
             StructureKind::VolatileHarvester => &VOLATILE_HARVESTER_RECIPE,

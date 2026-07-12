@@ -989,6 +989,8 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
         // §economy Part 4: Academy courses key by profession slug.
         sim::BuildKind::Train { specialist } => specialist.slug(),
+        // §modules Part B3: module manufacture keys by module slug.
+        sim::BuildKind::Module { module } => module.slug(),
     }
 }
 

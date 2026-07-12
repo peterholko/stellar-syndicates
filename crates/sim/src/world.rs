@@ -3737,6 +3737,9 @@ impl World {
             Command::BuildShip { player_id, system_id, ship_kind, join } => {
                 self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, events);
             }
+            Command::BuildModule { player_id, system_id, module } => {
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, events);
+            }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
                 self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, events);
             }
@@ -4187,7 +4190,31 @@ impl World {
                 .max_by_key(|b| b.tier(crate::build::StructureKind::Academy))
                 .map(|b| b.id)
                 .unwrap_or(0),
+            // §modules: a module displays at the best Armaments Complex's body.
+            crate::build::BuildKind::Module { .. } => sys
+                .bodies
+                .iter()
+                .max_by_key(|b| b.tier(crate::build::StructureKind::ArmamentsComplex))
+                .map(|b| b.id)
+                .unwrap_or(0),
         };
+        // §modules: manufacturing needs an ARMAMENTS COMPLEX ≥ 1 — soft reject
+        // below it (the recipe is never eaten; the ask just holds), the same
+        // "industry is geography" gate a Shipyard puts on ships.
+        if let crate::build::BuildKind::Module { .. } = what
+            && sys.tier(crate::build::StructureKind::ArmamentsComplex) < 1
+        {
+            events.push(Event::new(
+                self.time,
+                EventPayload::BuildRejected {
+                    owner: player_id,
+                    system: system_id,
+                    what,
+                    reason: crate::event::BuildRejectReason::NoSlot,
+                },
+            ));
+            return;
+        }
         // §bodies: per-BODY validation for structures — the body must exist,
         // an EXTRACTION structure needs a MATCHING DEPOSIT on that body (real
         // now, not visual), and only FOUNDING a new structure claims a slot of
@@ -4454,6 +4481,14 @@ impl World {
                     if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
                         *sys.specialists.entry(specialist).or_insert(0) += 1;
                         events.push(Event::new(self.time, EventPayload::SpecialistTrained { owner: job.owner, system: job.system, kind: specialist }));
+                    }
+                }
+                crate::build::BuildKind::Module { module } => {
+                    // §modules: the crate lands in the system's module ledger —
+                    // only if the owner still holds it (resources already spent).
+                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
+                        *sys.modules.entry(module).or_insert(0) += 1;
+                        events.push(Event::new(self.time, EventPayload::ModuleBuilt { owner: job.owner, system: job.system, kind: module }));
                     }
                 }
                 crate::build::BuildKind::Upgrade { upgrade } => {
@@ -8665,6 +8700,51 @@ mod tests {
         assert_eq!(new_fleet.count(ShipKind::Raider), 1);
         assert_eq!(new_fleet.fitted_count(ShipKind::Raider), 1, "the split takes a fitted ship first");
         assert_eq!(src_fits + new_fleet.fitted_count(ShipKind::Raider), 2, "no fit lost across the split");
+    }
+
+    #[test]
+    fn manufacture_a_module_debits_goods_and_credits_the_ledger() {
+        use crate::module::ModuleKind;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.set_tier(crate::build::StructureKind::ArmamentsComplex, 1); // the manufacture gate
+            s.id
+        };
+        seed_stock(&mut w, sid, &[(Commodity::Armaments, 100.0), (Commodity::Electronics, 100.0)]);
+        let arm = |w: &World| w.systems.iter().find(|s| s.id == sid).unwrap().stockpile.get(&Commodity::Armaments).copied().unwrap_or(0.0);
+        let before = arm(&w);
+        let ev = w.step(&[Command::BuildModule { player_id: id, system_id: sid, module: ModuleKind::MassDriver }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "manufacture starts");
+        assert!((before - arm(&w) - 8.0).abs() < 1e-6, "8 Armaments debited (the Mass Driver recipe)");
+        // Run to completion → the crate lands in the ledger.
+        let landed = run_until(&mut w, 30, |w| {
+            w.systems.iter().find(|s| s.id == sid).map(|s| s.modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0)).unwrap_or(0) >= 1
+        });
+        assert!(landed, "the finished module joins the system's module ledger");
+    }
+
+    #[test]
+    fn manufacture_soft_rejects_without_an_armaments_complex() {
+        use crate::module::ModuleKind;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.id
+        };
+        seed_stock(&mut w, sid, &[(Commodity::Armaments, 100.0), (Commodity::Electronics, 100.0)]);
+        let ev = w.step(&[Command::BuildModule { player_id: id, system_id: sid, module: ModuleKind::MassDriver }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. })), "no Armaments Complex → soft reject");
+        assert!(w.build_queue.is_empty(), "nothing queued");
+        assert!((w.systems.iter().find(|s| s.id == sid).unwrap().stockpile.get(&Commodity::Armaments).copied().unwrap() - 100.0).abs() < 1e-9, "recipe never eaten on a reject");
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),

@@ -143,6 +143,14 @@ pub enum Command {
         join: Option<EntityId>,
     },
 
+    /// §modules Part B3: MANUFACTURE one module into the system's ledger. Needs
+    /// an Armaments Complex ≥ 1; costs goods; completes after the build queue.
+    BuildModule {
+        player_id: PlayerId,
+        system_id: EntityId,
+        module: crate::module::ModuleKind,
+    },
+
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time). A coarse,
     /// LIGHT-DELAYED mid-battle verb: it schedules a break-off-and-flee-home order
     /// (physical disengagement at formation speed — the speed table decides who

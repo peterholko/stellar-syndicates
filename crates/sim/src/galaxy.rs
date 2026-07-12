@@ -70,6 +70,12 @@ pub struct StarSystem {
     /// Production accumulated at the system, awaiting a convoy to the hub.
     #[serde(default)]
     pub stockpile: BTreeMap<Commodity, f64>,
+    /// §modules Part B3: the MODULE ledger — manufactured modules pooled at this
+    /// system (crates in the yard's warehouse, not per-body). Fitted onto ships
+    /// at build/refit, shipped by convoy, traded at Sol. `#[serde(default)]` so
+    /// pre-module snapshots load with an empty ledger.
+    #[serde(default)]
+    pub modules: BTreeMap<crate::module::ModuleKind, u32>,
     /// Number of Extractor upgrades built here (§step1 structure sink). Scales
     /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
     #[serde(default, rename = "extractor_tier")]
@@ -676,6 +682,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn 
             owner: None,
             claimed_at: None,
             stockpile: BTreeMap::new(),
+            modules: BTreeMap::new(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0, // frontier systems must EARN their shipyards
@@ -816,6 +823,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
         ]
         .into_iter()
         .collect(),
+        modules: BTreeMap::new(),
         legacy_extractor_tier: 0,
         legacy_depot_tier: 0,
         legacy_shipyard_tier: 0,

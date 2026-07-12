@@ -191,6 +191,9 @@ pub enum EventPayload {
     /// §economy Part 4: an Academy finished a training course — one specialist
     /// joined the system's resident pool. OWNER-ONLY, own clock.
     SpecialistTrained { owner: PlayerId, system: EntityId, kind: crate::specialist::SpecialistKind },
+    /// §modules Part B3: a module finished manufacture — one crate joined the
+    /// system's module ledger. OWNER-ONLY, own clock.
+    ModuleBuilt { owner: PlayerId, system: EntityId, kind: crate::module::ModuleKind },
     /// §economy Part 4: a personnel convoy LANDED its passengers into a
     /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
     SpecialistsDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> },
