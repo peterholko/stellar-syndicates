@@ -50,10 +50,15 @@ violate one.
    and the deeper the dark. There are **no zones and no boundaries** — every property varies smoothly
    and continuously with distance, read directly from how the map renders.
 
-4. **Decisions are front-loaded. Doctrine over micro.** Because you can't control distant assets in
-   real time, the meaningful decisions happen *before* contact: where to commit, what route, what
-   pre-authorized behavior ("engage only if I outgun them," "burn evasive if pursued"). Your ships
-   act on standing orders when you're out of reach. The skill is in the preparation, not the reflexes.
+4. **Decisions are front-loaded. Doctrine over micro — across the void.** Because you can't control
+   distant assets in real time, the meaningful decisions for everything LIGHT-DELAYED and
+   interstellar — fleets, logistics, combat — happen *before* contact: where to commit, what route,
+   what pre-authorized behavior ("engage only if I outgun them," "burn evasive if pursued"). Your
+   ships act on standing orders when you're out of reach. The skill is in the preparation, not the
+   reflexes. **The deliberate carve-out: colony development is hands-on and per-planet.** Inside
+   your own gravity well there is no light lag and no doctrine — planets and moons are real, owned
+   places: you site each structure on a body, staff its lines, and grow its population, planet by
+   planet. Doctrine governs the void; you govern your worlds.
 
 5. **Coherent physics: one speculative leap, rigorously followed.** The universe rests on exactly
    one impossible thing (the wormhole lattice). Everything else is real physics — special relativity
