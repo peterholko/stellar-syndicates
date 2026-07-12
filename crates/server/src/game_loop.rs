@@ -859,6 +859,19 @@ impl GameLoop {
                     .sum(),
             };
 
+            // §battle-records A2: the viewer's CURRENT sensor coverage (command
+            // center + standing arrays + their own fleets' bubbles) gates a
+            // third party's bucket access to a battle site.
+            let mut coverage: Vec<(sim::Vec2, f64)> = vec![(cc, self.world.config.sensor_range)];
+            coverage.extend_from_slice(&arrays);
+            for f in self.world.fleets.values() {
+                if f.owner == player_id {
+                    coverage.push((f.pos, self.world.config.sensor_range * f.sensor_mult()));
+                }
+            }
+            let battle_records =
+                view::battle_record_views(&self.world.battle_records, player_id, cc, c, now, &coverage);
+
             views.insert(
                 player_id,
                 ServerMsg::View {
@@ -891,6 +904,7 @@ impl GameLoop {
                     battles,
                     battle_reports,
                     capture_reports,
+                    battle_records,
                     syndicate,
                     syndicate_invites,
                     // §rankings: the published leaderboard — public, identical for

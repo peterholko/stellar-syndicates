@@ -14,9 +14,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sim::{
-    Commodity, CountClass, EngagementPosture, EntityId, FleetDoctrine, OrderKind, PlayerId,
-    RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, StructureKind, SyndicateId, TradeEvent,
-    TransitMode, Vec2,
+    Commodity, CountClass, EngagementPolicy, EngagementPosture, EntityId, FleetDoctrine, OrderKind,
+    PlayerId, RaidOutcome, RankingRow, ShipKind, Side, StandingOrder, StructureKind, SyndicateId,
+    TradeEvent, TransitMode, Vec2,
 };
 
 /// The client↔server wire protocol version. BUMPED to 3 by the §SYNDICATES
@@ -26,7 +26,9 @@ use sim::{
 /// `ClientMsg`s were added. (v2 = §FLEETS: `count_class` + `composition`.)
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 3;
+/// (v4 = §battle-records: the per-player view gained `battle_records` — the
+/// light-gated, fidelity-tiered replay timeline for each observable battle.)
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -798,6 +800,92 @@ pub struct BattleView {
     pub participants: Vec<EntityId>,
 }
 
+// --- §battle-records Part A2: the light-gated, fidelity-tiered replay ---------
+//
+// Every observable battle carries a per-viewer replay: the ARRIVED-round prefix
+// (round `i` unlocks when `round.tick·DT + |pos−cc|/c ≤ now`, the same light
+// gate as the battle-news event) at the viewer's fidelity. A PARTICIPANT sees
+// everything (their own posture only, never the opponent's); a THIRD PARTY who
+// currently covers the site sees a BUCKETED spine (CountClass only, no dealt, no
+// notes beyond joins/mutual-disengage); anyone else gets no record at all (just
+// the existing news + wreck marker). Nothing beyond the light frontier ships.
+
+/// A viewer's fidelity on a battle record.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BattleFidelity {
+    /// A participant corp: exact counts, kills, damage dealt, and every beat.
+    Participant,
+    /// A third party covering the site: the bucketed spine only.
+    Bucket,
+}
+
+/// One `(kind, strength)` entry of a recorded side. `exact` is present ONLY at
+/// participant fidelity; `class` (the [`CountClass`] bucket) is ALWAYS present —
+/// so a third party learns "4–7 Corvettes", never the true count (leak-safe).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct RecordCount {
+    pub kind: ShipKind,
+    pub exact: Option<u32>,
+    pub class: CountClass,
+}
+
+/// One side of a recorded battle as a viewer sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct SideRecordView {
+    pub corp: PlayerId,
+    /// The corp's engagement doctrine — OWNER-ONLY: `Some` iff this is the
+    /// viewer's own side. A rival never learns your posture from the replay.
+    pub posture: Option<EngagementPolicy>,
+    pub platform_tiers: u32,
+    pub initial: Vec<RecordCount>,
+}
+
+/// A recorded beat, viewer-filtered. `kind` is the snake_case note tag; `side`
+/// and `comp` accompany the beats that carry them (`joined`).
+#[derive(Debug, Clone, Serialize)]
+pub struct RoundNoteView {
+    pub kind: String,
+    pub side: Option<u8>,
+    pub comp: Option<Vec<RecordCount>>,
+}
+
+/// One recorded round as a viewer sees it. Indexing is by side (0 = attackers,
+/// 1 = defenders): `counts[s]` survivors of `s`, `kills[s]` losses of `s`.
+#[derive(Debug, Clone, Serialize)]
+pub struct RoundRecordView {
+    pub tick: u64,
+    pub counts: [Vec<RecordCount>; 2],
+    pub kills: [Vec<RecordCount>; 2],
+    /// Damage each side dealt — PARTICIPANT ONLY (`None` at bucket fidelity).
+    pub dealt: Option<[f64; 2]>,
+    pub notes: Vec<RoundNoteView>,
+}
+
+/// A battle's replay as one viewer perceives it — light-gated + fidelity-tiered.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleRecordView {
+    pub id: EntityId,
+    pub pos: Vec2,
+    pub system: Option<EntityId>,
+    /// Sim-time the battle began (`started_tick × DT`) — the "as of N ago" line.
+    pub started_at: f64,
+    pub raid: bool,
+    pub fidelity: BattleFidelity,
+    /// Which side (0/1) is the viewer's own, if any — drives the owner-only
+    /// posture display and the "you" framing.
+    pub own_side: Option<u8>,
+    pub sides: [SideRecordView; 2],
+    /// The ARRIVED round prefix at the viewer's fidelity (light-gated per round).
+    pub rounds: Vec<RoundRecordView>,
+    /// Newest arrived round tick — the client's light frontier (rounds beyond it
+    /// draw as the hatched "beyond your light cone" zone).
+    pub light_frontier_tick: u64,
+    /// The outcome, once the FINAL round's light has arrived — `None` while the
+    /// battle is still (as far as this viewer's light shows) running.
+    pub outcome: Option<RaidOutcome>,
+}
+
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
 /// is light-gated by the view filter — it is `None` to a player until the light
 /// of the claim event has reached their command center (a rival's presence must
@@ -975,6 +1063,12 @@ pub enum ServerMsg {
         /// participant in and has LEARNED of (per-participant, light-delayed) —
         /// the capture aftermath markers + results. Retained (reconnect-safe).
         capture_reports: Vec<CaptureReportView>,
+        /// §battle-records Part A2: the light-gated, fidelity-tiered REPLAY of
+        /// every battle this viewer can observe — running and recent. Each
+        /// carries only its arrived-round prefix at the viewer's fidelity
+        /// (participant = full, third-party-covering-the-site = bucket spine).
+        /// A viewer with no access to a battle simply gets no entry for it.
+        battle_records: Vec<BattleRecordView>,
         /// §syndicates Part 1: the viewer's OWN syndicate roster (fresh private
         /// state, like the wallet), or `None` if unaffiliated. Never a rival's.
         /// Boxed so this (already the largest) View variant stays lean; serde is

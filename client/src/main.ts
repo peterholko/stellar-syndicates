@@ -12,8 +12,8 @@ const state: ViewState = initialState();
 
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
-// PROTOCOL_VERSION (§bodies = 3).
-const EXPECTED_PROTOCOL_VERSION = 3;
+// PROTOCOL_VERSION (§battle-records = 4).
+const EXPECTED_PROTOCOL_VERSION = 4;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -3805,6 +3805,7 @@ function join(): void {
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
           state.captureReports = msg.capture_reports;
+          state.battleRecords = msg.battle_records ?? []; // §battle-records: replay timelines
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];

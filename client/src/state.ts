@@ -69,6 +69,9 @@ export interface ViewState {
   battleReports: import("./protocol").BattleReportView[];
   /// §contestable-territory Part 2: retained captures this player participated in.
   captureReports: import("./protocol").CaptureReportView[];
+  /// §battle-records Part A: the light-gated replay of every observable battle
+  /// (running + recent), at the viewer's fidelity. Keyed use is by id.
+  battleRecords: import("./protocol").BattleRecordView[];
   /// §syndicates Part 1: the viewer's OWN syndicate roster (null if unaffiliated).
   syndicate: import("./protocol").SyndicateView | null;
   /// §syndicates Part 1: pending invitations the viewer may accept.
@@ -133,6 +136,7 @@ export function initialState(): ViewState {
     pendingOrders: new Map(),
     battles: [],
     battleReports: [],
+    battleRecords: [],
     captureReports: [],
     syndicate: null,
     syndicateInvites: [],

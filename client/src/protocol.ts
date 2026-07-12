@@ -637,6 +637,51 @@ export interface BattleView {
   participants: EntityId[]; // fleet ids in the fight (already revealed as ghosts)
 }
 
+// §battle-records Part A: the light-gated, fidelity-tiered REPLAY of a battle.
+// Round `i` arrives when its light reaches the command center; `fidelity` is
+// "participant" (full detail, own posture only) or "bucket" (a third party who
+// covers the site — CountClass only, no dealt, joins/mutual-disengage beats).
+// A viewer with no access to a battle simply receives no entry for it.
+export type BattleFidelity = "participant" | "bucket";
+// One (kind, strength) entry. `exact` is present only at participant fidelity;
+// `class` (the CountClass bucket) is always present.
+export interface RecordCount {
+  kind: ShipKind;
+  exact: number | null;
+  class: CountClass;
+}
+export interface SideRecordView {
+  corp: PlayerId;
+  posture: EngagementPolicy | null; // owner-only: set only on the viewer's own side
+  platform_tiers: number;
+  initial: RecordCount[];
+}
+export interface RoundNoteView {
+  kind: string; // "joined" | "retreat_tripped" | "withdraw_ordered" | "disengage_exposure" | "platform_destroyed" | "mutual_disengage"
+  side: number | null; // 0 = attackers, 1 = defenders
+  comp: RecordCount[] | null; // reinforcement composition (on "joined")
+}
+export interface RoundRecordView {
+  tick: number;
+  counts: [RecordCount[], RecordCount[]]; // survivors of [attackers, defenders]
+  kills: [RecordCount[], RecordCount[]]; // losses of [attackers, defenders]
+  dealt: [number, number] | null; // damage dealt — participant only
+  notes: RoundNoteView[];
+}
+export interface BattleRecordView {
+  id: EntityId;
+  pos: Vec2;
+  system: EntityId | null;
+  started_at: number; // sim-time the battle began ("as of N ago")
+  raid: boolean;
+  fidelity: BattleFidelity;
+  own_side: number | null; // which side (0/1) is the viewer's own, if any
+  sides: [SideRecordView, SideRecordView];
+  rounds: RoundRecordView[]; // the ARRIVED prefix at the viewer's fidelity
+  light_frontier_tick: number; // newest arrived round tick (the light frontier)
+  outcome: RaidOutcome | null; // present once the final round's light arrived
+}
+
 // §battle-aftermath: a RETAINED concluded battle this player PARTICIPATED in —
 // present only once their conclusion light arrived (`learned_at`). Powers the
 // aftermath map marker + battle-results panel; survives reconnects (server
@@ -715,6 +760,10 @@ export type ServerMsg =
       battle_reports: BattleReportView[];
       /// §contestable-territory Part 2: retained capture reports (per-participant).
       capture_reports: CaptureReportView[];
+      /// §battle-records Part A: the light-gated, fidelity-tiered replay of every
+      /// battle this viewer can observe (running + recent). Arrived-round prefix
+      /// only; a viewer with no access to a battle gets no entry.
+      battle_records: BattleRecordView[];
       /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
       syndicate?: SyndicateView | null;
       /// §syndicates Part 1: pending invitations the viewer may accept.

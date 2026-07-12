@@ -34,8 +34,9 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView,
-    IntelView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordView, BlockadeStateView, BuildStateView, CargoView,
+    CompCount, DepositView, GhostView, IntelView, RecordCount, RoundNoteView, RoundRecordView,
+    SideRecordView, StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -852,6 +853,129 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
             }
         })
         .collect()
+}
+
+// --- §battle-records Part A2: light-gated, fidelity-tiered replay views -------
+
+/// Per-kind counts → wire form. `exact` is filled ONLY at participant fidelity;
+/// the [`CountClass`] bucket is always present, so a third party never learns a
+/// true count (the leak-safe fidelity spine).
+fn record_counts(m: &std::collections::BTreeMap<ShipKind, u32>, participant: bool) -> Vec<RecordCount> {
+    m.iter()
+        .filter(|(_, n)| **n > 0)
+        .map(|(k, n)| RecordCount { kind: *k, exact: participant.then_some(*n), class: CountClass::from_count(*n) })
+        .collect()
+}
+
+/// A recorded beat → wire form, viewer-filtered. Bucket fidelity keeps only
+/// `joined` and `mutual_disengage` (a distant observer never learns doctrine
+/// beats — retreat trips, withdraw orders, exposure, platform kills).
+fn record_note(n: &sim::RoundNote, participant: bool) -> Option<RoundNoteView> {
+    use sim::RoundNote as N;
+    let mk = |kind: &str, side: Option<u8>, comp: Option<Vec<RecordCount>>| RoundNoteView {
+        kind: kind.to_string(),
+        side,
+        comp,
+    };
+    Some(match n {
+        N::Joined { side, comp } => mk("joined", Some(*side), Some(record_counts(comp, participant))),
+        N::MutualDisengage => mk("mutual_disengage", None, None),
+        N::RetreatTripped { side } if participant => mk("retreat_tripped", Some(*side), None),
+        N::WithdrawOrdered { side } if participant => mk("withdraw_ordered", Some(*side), None),
+        N::DisengageExposure { side } if participant => mk("disengage_exposure", Some(*side), None),
+        N::PlatformDestroyed if participant => mk("platform_destroyed", None, None),
+        _ => return None, // bucket fidelity drops the participant-only beats
+    })
+}
+
+fn record_round(rr: &sim::RoundRecord, participant: bool) -> RoundRecordView {
+    RoundRecordView {
+        tick: rr.tick,
+        counts: [record_counts(&rr.counts[0], participant), record_counts(&rr.counts[1], participant)],
+        kills: [record_counts(&rr.kills[0], participant), record_counts(&rr.kills[1], participant)],
+        dealt: participant.then_some(rr.dealt),
+        notes: rr.notes.iter().filter_map(|n| record_note(n, participant)).collect(),
+    }
+}
+
+/// Build a viewer's REPLAY of every battle they can observe (§battle-records A2).
+///
+/// Light gate (identical to the battle-news event): round `i` is readable when
+/// `round.tick·DT + |pos − cc|/c ≤ now`. A record appears only once its START
+/// light arrived. Fidelity: a PARTICIPANT sees full detail (their own posture
+/// only); a THIRD PARTY who currently covers the site sees a BUCKETED spine
+/// (CountClass only, no dealt, joins/mutual-disengage beats only); anyone else
+/// gets no entry (the existing news + wreck marker still reach them separately).
+/// Nothing beyond the light frontier is ever shipped.
+pub fn battle_record_views(
+    records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+    coverage: &[(Vec2, f64)],
+) -> Vec<BattleRecordView> {
+    let mut out = Vec::new();
+    for r in records.values() {
+        let delay = r.pos.distance(cc) / c;
+        let arrived = |tick: u64| (tick as f64) * sim::DT + delay <= now;
+        // The battle only exists to a viewer once its opening light arrived.
+        if !arrived(r.started_tick) {
+            continue;
+        }
+        // Fidelity tier: participant > covering third party > none.
+        let own_side = if r.sides[0].corp == viewer {
+            Some(0u8)
+        } else if r.sides[1].corp == viewer {
+            Some(1u8)
+        } else {
+            None
+        };
+        let fidelity = if own_side.is_some() {
+            BattleFidelity::Participant
+        } else if within_coverage(coverage, r.pos) {
+            BattleFidelity::Bucket
+        } else {
+            continue; // no access — nothing beyond the news/wreck they already get
+        };
+        let participant = matches!(fidelity, BattleFidelity::Participant);
+        let side_view = |s: usize| SideRecordView {
+            corp: r.sides[s].corp,
+            // Owner-only law: posture rides ONLY the viewer's own side.
+            posture: (own_side == Some(s as u8)).then_some(r.sides[s].posture),
+            platform_tiers: r.sides[s].platform_tiers,
+            initial: record_counts(&r.sides[s].initial, participant),
+        };
+        // The ARRIVED round prefix (rounds are tick-ascending → stop at the frontier).
+        let mut rounds = Vec::new();
+        let mut frontier = r.started_tick;
+        for rr in &r.rounds {
+            if !arrived(rr.tick) {
+                break;
+            }
+            frontier = rr.tick;
+            rounds.push(record_round(rr, participant));
+        }
+        // The outcome is known only once the FINAL round's light has arrived.
+        let outcome = r
+            .ended_tick
+            .filter(|t| arrived(*t))
+            .and_then(|_| r.outcome.as_ref().map(|o| o.outcome));
+        out.push(BattleRecordView {
+            id: r.id,
+            pos: r.pos,
+            system: r.system,
+            started_at: r.started_tick as f64 * sim::DT,
+            raid: r.raid,
+            fidelity,
+            own_side,
+            sides: [side_view(0), side_view(1)],
+            rounds,
+            light_frontier_tick: frontier,
+            outcome,
+        });
+    }
+    out
 }
 
 /// Stable key string for a buildable thing (matches the client's build commands).
@@ -2270,5 +2394,123 @@ mod tests {
                 "a never-detected dead raider must never appear (existence leak at t={now:.1})");
             now += 0.25;
         }
+    }
+
+    // --- §battle-records A2: light-gated + fidelity-tiered replay fog --------
+
+    fn kinds(pairs: &[(ShipKind, u32)]) -> BTreeMap<ShipKind, u32> {
+        pairs.iter().copied().collect()
+    }
+
+    /// A resolved 3-round record: attacker=`a` (2 raiders), defender=`d` (2
+    /// corvettes), a Joined beat + a RetreatTripped beat, ended at tick 45.
+    /// Geometry: `pos` at distance 3.0 from a cc-at-origin with c = 1.0, so the
+    /// light delay is 3.0 s (round tick T unlocks at `T/30 + 3.0`).
+    fn mk_record(id: EntityId, a: PlayerId, d: PlayerId, pos: Vec2) -> sim::BattleRecord {
+        let sides = [
+            sim::SideRecord { corp: a, initial: kinds(&[(ShipKind::Raider, 2)]), posture: sim::EngagementPolicy::EngageAny, platform_tiers: 0 },
+            sim::SideRecord { corp: d, initial: kinds(&[(ShipKind::Corvette, 2)]), posture: sim::EngagementPolicy::Avoid, platform_tiers: 0 },
+        ];
+        let mut r = sim::BattleRecord::open(id, pos, None, false, 0, 20.0, sides);
+        // Round at tick 15 with a reinforcement join (attacker side).
+        r.accumulate(2.0, 1.0, &sim::Losses::default(), &sim::Losses::default());
+        r.note(sim::RoundNote::Joined { side: 0, comp: kinds(&[(ShipKind::Raider, 1)]) });
+        r.flush_if_due(15, [kinds(&[(ShipKind::Raider, 3)]), kinds(&[(ShipKind::Corvette, 2)])]);
+        // Round at tick 30 with a defender retreat beat.
+        r.accumulate(2.0, 0.5, &sim::Losses::default(), &sim::Losses::default());
+        r.note(sim::RoundNote::RetreatTripped { side: 1 });
+        r.flush_if_due(30, [kinds(&[(ShipKind::Raider, 3)]), kinds(&[(ShipKind::Corvette, 1)])]);
+        // Tail round at finalize (tick 45).
+        r.accumulate(1.0, 0.0, &sim::Losses::default(), &sim::Losses::default());
+        r.finalize(45, sim::RaidOutcome::TargetDestroyed, [kinds(&[]), kinds(&[(ShipKind::Corvette, 2)])], [kinds(&[(ShipKind::Raider, 3)]), kinds(&[])]);
+        r
+    }
+
+    fn one_record(id: EntityId, a: PlayerId, d: PlayerId, pos: Vec2) -> BTreeMap<EntityId, sim::BattleRecord> {
+        let mut m = BTreeMap::new();
+        m.insert(id, mk_record(id, a, d, pos));
+        m
+    }
+
+    #[test]
+    fn record_unlocks_round_by_round_at_light_arrival() {
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        let cc = Vec2::ZERO;
+        let pos = Vec2::new(3.0, 0.0); // delay = 3.0 s at c = 1.0
+        let recs = one_record(EntityId(1), a, d, pos);
+        let view = |now: f64| battle_record_views(&recs, a, cc, 1.0, now, &[]);
+        // Before the START light (tick 0 → 3.0 s): no record at all.
+        assert!(view(2.9).is_empty(), "the battle is unknown before its opening light");
+        // Start arrived, no rounds yet (tick 15 → 3.5 s).
+        let v = view(3.2);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rounds.len(), 0, "no round has arrived yet");
+        assert_eq!(v[0].light_frontier_tick, 0);
+        assert!(v[0].outcome.is_none());
+        // Round 1 arrived (3.5 s), not round 2 (tick 30 → 4.0 s).
+        assert_eq!(view(3.7)[0].rounds.len(), 1, "exactly the first round has arrived");
+        assert_eq!(view(3.7)[0].light_frontier_tick, 15);
+        // Rounds 1+2 arrived, outcome (tick 45 → 4.5 s) not yet.
+        let v = view(4.2);
+        assert_eq!(v[0].rounds.len(), 2, "unarrived rounds are withheld");
+        assert!(v[0].outcome.is_none(), "the outcome waits for the final round's light");
+        // Everything arrived.
+        let v = view(5.0);
+        assert_eq!(v[0].rounds.len(), 3, "the full timeline arrives");
+        assert_eq!(v[0].outcome, Some(sim::RaidOutcome::TargetDestroyed), "the outcome unlocks with the end light");
+    }
+
+    #[test]
+    fn participant_sees_full_fidelity_but_only_their_own_posture() {
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        let cc = Vec2::ZERO;
+        let pos = Vec2::new(3.0, 0.0);
+        let recs = one_record(EntityId(1), a, d, pos);
+        // Attacker's view, everything arrived, no coverage needed.
+        let v = &battle_record_views(&recs, a, cc, 1.0, 100.0, &[])[0];
+        assert!(matches!(v.fidelity, BattleFidelity::Participant));
+        assert_eq!(v.own_side, Some(0));
+        // Own posture present, opponent's hidden (the owner-only law).
+        assert_eq!(v.sides[0].posture, Some(sim::EngagementPolicy::EngageAny));
+        assert_eq!(v.sides[1].posture, None, "a participant never sees the OTHER side's posture");
+        // Exact counts + damage dealt + every beat are present.
+        assert_eq!(v.sides[0].initial[0].exact, Some(2));
+        assert!(v.rounds[0].dealt.is_some(), "participants see damage dealt");
+        let all_notes: Vec<&str> = v.rounds.iter().flat_map(|r| r.notes.iter()).map(|n| n.kind.as_str()).collect();
+        assert!(all_notes.contains(&"joined") && all_notes.contains(&"retreat_tripped"), "all beats present");
+    }
+
+    #[test]
+    fn covering_third_party_sees_only_a_bucketed_spine() {
+        let (a, d, x) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        let cc = Vec2::new(50.0, 0.0); // the third party sits elsewhere
+        let pos = Vec2::new(3.0, 0.0);
+        let recs = one_record(EntityId(1), a, d, pos);
+        // Coverage that includes the battle site → bucket access.
+        let coverage = [(pos, 100.0)];
+        // Far enough that light has fully arrived (|pos-cc| = 47, delay = 47 s).
+        let v = &battle_record_views(&recs, x, cc, 1.0, 1000.0, &coverage)[0];
+        assert!(matches!(v.fidelity, BattleFidelity::Bucket));
+        assert_eq!(v.own_side, None);
+        // No exact counts, no damage dealt, no posture leak.
+        assert_eq!(v.sides[0].initial[0].exact, None, "bucket fidelity hides exact counts");
+        assert_eq!(v.sides[0].initial[0].class, CountClass::from_count(2));
+        assert!(v.sides.iter().all(|s| s.posture.is_none()), "no doctrine leaks to a third party");
+        assert!(v.rounds.iter().all(|r| r.dealt.is_none()), "no damage-dealt leaks to a third party");
+        // Only join / mutual-disengage beats survive; the retreat beat is dropped.
+        let notes: Vec<&str> = v.rounds.iter().flat_map(|r| r.notes.iter()).map(|n| n.kind.as_str()).collect();
+        assert!(notes.contains(&"joined"), "the join beat survives bucketing");
+        assert!(!notes.contains(&"retreat_tripped"), "doctrine beats are stripped at bucket fidelity");
+    }
+
+    #[test]
+    fn a_blind_third_party_gets_no_record() {
+        let (a, d, x) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        let cc = Vec2::new(50.0, 0.0);
+        let pos = Vec2::new(3.0, 0.0);
+        let recs = one_record(EntityId(1), a, d, pos);
+        // No coverage of the site → no access (only the news/wreck reach them).
+        let out = battle_record_views(&recs, x, cc, 1.0, 1000.0, &[]);
+        assert!(out.is_empty(), "a third party who can't sense the site gets no replay");
     }
 }
