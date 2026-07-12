@@ -680,6 +680,79 @@
       }
       #market.is-open { display: block; }
       #market #market-close { margin-left: 2px; }
+
+      /* ---- §battle-records: the BATTLE VIEWER overlay (the light-cone replay) ----
+             House width, centered like the Market, stacked above it (z 9). ---- */
+      #battle-viewer {
+        position: fixed; top: 62px; left: 50%; transform: translateX(-50%);
+        display: none;
+        width: min(760px, 94vw); max-height: 82vh; overflow-y: auto;
+        padding: 12px 16px 14px;
+        background: var(--panel-bg);
+        border: 1px solid var(--border); border-top: 2px solid #d08a5a; border-radius: 8px;
+        box-shadow: var(--panel-shadow); backdrop-filter: blur(4px);
+        /* Above the check-in modal + market (both z 9/8): the replay is a
+           focused overlay the player explicitly opened. */
+        font-size: 12px; z-index: 11;
+      }
+      #battle-viewer.is-open { display: block; }
+      #battle-viewer .pp-close { cursor: pointer; color: var(--dim); font-size: 14px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
+      #battle-viewer .pp-close:hover { color: var(--ink); }
+      .bv-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; color: var(--dim); }
+      .bv-sub .bv-vs { color: var(--ink); font-weight: 600; }
+      .bv-sub .bv-vs .you { color: var(--accent); }
+      .bv-sub .bv-vs .foe { color: #e88a8a; }
+      .bv-sub .bv-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+      /* Arena: two facing sides + a central salvo gutter. */
+      .bv-arena { display: grid; grid-template-columns: 1fr 92px 1fr; gap: 6px; align-items: stretch; margin: 4px 0 8px;
+        background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 7px; padding: 10px 10px; }
+      .bv-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+      .bv-side.right { align-items: stretch; }
+      .bv-side__hd { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 5px; }
+      .bv-side.mine .bv-side__hd { color: var(--accent); }
+      .bv-side.right .bv-side__hd { flex-direction: row-reverse; text-align: right; }
+      .bv-krow { display: grid; grid-template-columns: var(--icon-resource, 18px) 1fr auto; align-items: center; gap: 6px; }
+      .bv-side.right .bv-krow { direction: rtl; }
+      .bv-side.right .bv-krow > * { direction: ltr; }
+      .bv-krow__bar { position: relative; height: 9px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; min-width: 24px; }
+      .bv-krow__fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; transition: width 0.12s linear; }
+      .bv-side.right .bv-krow__fill { inset: 0 0 0 auto; background: #e0897f; }
+      .bv-krow__fill.gone { background: #556; }
+      .bv-krow__n { font-variant-numeric: tabular-nums; color: var(--ink); font-size: 11px; min-width: 30px; text-align: right; white-space: nowrap; }
+      .bv-side.right .bv-krow__n { text-align: left; }
+      .bv-krow__kill { color: var(--negative); font-weight: 600; }
+      .bv-plat { margin-top: 2px; font-size: 10px; color: var(--dim); border: 1px dashed var(--border); border-radius: 4px; padding: 2px 5px; align-self: flex-start; }
+      .bv-side.right .bv-plat { align-self: flex-end; }
+      .bv-plat.gone { color: var(--negative); text-decoration: line-through; border-color: var(--negative); }
+      /* Salvo gutter: two stacked arrows scaled by damage dealt (participant). */
+      .bv-salvos { display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+      .bv-arrow { height: 6px; border-radius: 3px; position: relative; opacity: 0.85; min-width: 6px; }
+      .bv-arrow.r { background: linear-gradient(90deg, rgba(79,195,255,0.25), var(--accent)); margin-right: 6px; }
+      .bv-arrow.l { background: linear-gradient(270deg, rgba(224,137,127,0.25), #e0897f); margin-left: 6px; }
+      .bv-arrow.r::after { content: ""; position: absolute; right: -5px; top: -2px; border: 5px solid transparent; border-left-color: var(--accent); }
+      .bv-arrow.l::after { content: ""; position: absolute; left: -5px; top: -2px; border: 5px solid transparent; border-right-color: #e0897f; }
+      .bv-arrow.mute { opacity: 0.18; }
+      /* Round-note banners. */
+      .bv-notes { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 8px; }
+      .bv-note { font-size: 11px; color: var(--ink); background: rgba(208,138,90,0.10); border-left: 2px solid #d08a5a; border-radius: 3px; padding: 3px 8px; display: flex; align-items: center; gap: 6px; }
+      .bv-note.retreat { background: rgba(255,180,84,0.10); border-left-color: var(--warn); }
+      .bv-note.join { background: rgba(95,208,138,0.10); border-left-color: var(--positive); }
+      /* Transport: play/pause, speeds, and the round scrubber with a light frontier. */
+      .bv-transport { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+      .bv-btn { cursor: pointer; background: var(--btn-bg, #141d30); color: var(--ink); border: 1px solid var(--field-bd, #243049); border-radius: 5px; font: inherit; font-size: 11px; padding: 3px 8px; }
+      .bv-btn:hover { border-color: var(--accent); }
+      .bv-btn.on { background: #1d2b44; border-color: var(--accent); color: var(--accent); }
+      .bv-speeds { display: inline-flex; gap: 3px; }
+      .bv-scrub { flex: 1; min-width: 120px; display: flex; align-items: stretch; height: 16px; gap: 1px; }
+      .bv-tick { flex: 1; min-width: 2px; background: rgba(255,255,255,0.10); border-radius: 1px; cursor: pointer; }
+      .bv-tick:hover { background: rgba(255,255,255,0.25); }
+      .bv-tick.seen { background: rgba(79,195,255,0.35); }
+      .bv-tick.cur { background: var(--accent); }
+      .bv-hatch { flex: 0 0 42px; border-radius: 1px; cursor: default;
+        background: repeating-linear-gradient(45deg, rgba(255,255,255,0.04) 0 4px, rgba(255,255,255,0.11) 4px 8px);
+        border: 1px dashed var(--border); }
+      .bv-agoline { color: var(--dim); font-size: 10px; margin-top: 4px; }
+      .bv-empty { color: var(--dim); text-align: center; padding: 18px 0; font-style: italic; }
     </style>
   </head>
   <body>
@@ -723,6 +796,11 @@
          striped). Opened by an aftermath map marker or a battle log entry;
          strictly owner-only content (the View only carries YOUR reports). -->
     <div id="battle-panel"></div>
+
+    <!-- §battle-records: the BATTLE VIEWER — the light-cone replay overlay. A
+         centered house-width panel (above the market) built by main.ts; opened
+         from a battle panel / inbox "View battle" affordance. -->
+    <div id="battle-viewer"></div>
 
     <!-- Wormhole Hub detail — portrait + blurb + Open Market shortcut when the
          hub landmark is clicked on the galaxy map. Public geography; info only. -->

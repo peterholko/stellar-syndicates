@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AssignmentView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
@@ -84,7 +84,7 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer };
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -1370,6 +1370,8 @@ function buildBattlePanel(): void {
       openOngoingBattleId = null;
       $("battle-panel").classList.remove("is-open");
       openRail("doctrine");
+    } else if (el.dataset.act === "viewbattle" && el.dataset.record) {
+      openBattleViewer(el.dataset.record); // §battle-records: the light-cone replay
     }
   });
 }
@@ -1421,6 +1423,11 @@ function openBattlePanel(id: number): void {
     `<div class="sp-sec" title="Outcomes are as of the light that reached your command center — the site may look different by now.">Losses</div>` +
     `<div class="sp-line">You lost: <b>${esc(lossStr(yourLoss))}</b></div>` +
     `<div class="sp-line">They lost: <b>${esc(lossStr(theirLoss))}</b></div>` +
+    // §battle-records: watch the round-by-round replay (if its record is retained).
+    ((): string => {
+      const rec = recordForReport(r);
+      return rec ? `<button class="act" data-act="viewbattle" data-record="${rec.id}" title="Watch the round-by-round replay of this battle.">${uiIcon("concept-fleet", "sm")} View battle replay</button>` : "";
+    })() +
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
   $("battle-panel").classList.add("is-open");
@@ -1570,16 +1577,280 @@ function updateOngoingBattlePanel(): void {
     `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
   const ragingLine = `<div class="sp-line dim">Raging <b style="color:var(--ink)">${fmtCountdown(observed)}</b> · forces remaining by your light</div>`;
+  // §battle-records: watch the round-by-round replay of this live fight (if a
+  // record for it has reached us — participants always have one, an observer
+  // only when their sensors cover the site).
+  const viewBtn = state.battleRecords.some((r) => r.id === b.id)
+    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${uiIcon("concept-fleet", "sm")} View battle replay</button>`
+    : "";
   const body =
     ragingLine +
     (b.own
       ? `<div class="force-strip">${forceSide("You", "you", ownChips)}${forceSide("Enemy", "foe", rivalChips)}</div>` +
         withdrawRow +
         cmdDelayLine +
+        viewBtn +
         `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", "sm")} Doctrine ▸</button>`
       : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
-        `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>`);
+        `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>` +
+        viewBtn);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
+}
+
+// --- §battle-records Part A3: the BATTLE VIEWER (the light-cone replay) --------
+// A centered overlay (#battle-viewer) that plays a battle round-by-round from
+// `state.battleRecords`. Because nothing outruns light, the replay IS the battle
+// as far as the viewer is concerned: only the ARRIVED round prefix exists (up to
+// `light_frontier_tick`); rounds beyond it draw as a hatched "beyond your light
+// cone" zone, and a still-running fight pins playback LIGHT-LIVE to the frontier,
+// flipping to the outcome chip when the end light lands. Participant fidelity
+// shows exact bars + damage-dealt salvo arrows + shown-math; a bucket-fidelity
+// third party sees CountClass labels only (no dealt, no tooltip) — the fog law.
+let openBattleViewerId: string | null = null;
+let bvRound = 0; // the round index currently shown
+let bvPlaying = false;
+let bvSpeed = 4; // 1× | 4× | 16×
+let bvLive = false; // pinned to the arriving light frontier (a running battle)
+let bvAccum = 0; // fractional-round playback accumulator
+let bvLastTs = 0;
+let bvLoopRunning = false;
+const BV_ROUND_SECS = 0.55; // wall-seconds per round at 1× playback
+
+const bvRecordFor = (id: string): BattleRecordView | undefined => state.battleRecords.find((r) => r.id === id);
+/// §battle-records: a concluded aftermath report has a DIFFERENT id space than
+/// the record (its id is a report counter, the record's is the engagement id),
+/// so join by the shared engagement-anchor position.
+function recordForReport(r: BattleReportView): BattleRecordView | undefined {
+  return state.battleRecords.find((rec) => rec.pos.x === r.pos.x && rec.pos.y === r.pos.y);
+}
+
+let battleViewerBuilt = false;
+function buildBattleViewer(): void {
+  if (battleViewerBuilt) return;
+  battleViewerBuilt = true;
+  $("battle-viewer").addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+    if (!el) return;
+    const rec = openBattleViewerId ? bvRecordFor(openBattleViewerId) : undefined;
+    const frontier = rec ? rec.rounds.length - 1 : -1;
+    switch (el.dataset.act) {
+      case "close":
+        closeBattleViewer();
+        break;
+      case "play":
+        // Replaying a finished battle from its end → restart from the top.
+        if (!bvPlaying && rec && rec.outcome !== null && bvRound >= frontier) { bvRound = 0; bvLive = false; }
+        bvPlaying = !bvPlaying;
+        bvAccum = 0;
+        renderBattleViewer();
+        break;
+      case "speed":
+        bvSpeed = Number(el.dataset.speed) || 1;
+        renderBattleViewer();
+        break;
+      case "round": {
+        bvRound = Number(el.dataset.round) || 0;
+        bvLive = rec !== undefined && rec.outcome === null && bvRound >= frontier;
+        bvPlaying = false;
+        renderBattleViewer();
+        break;
+      }
+    }
+  });
+}
+
+function openBattleViewer(id: string): void {
+  const rec = bvRecordFor(id);
+  if (!rec) return; // no access → no viewer (fog); the affordance is guarded too
+  buildBattleViewer();
+  openBattleViewerId = id;
+  const running = rec.outcome === null;
+  const frontier = rec.rounds.length - 1;
+  bvLive = running;
+  bvRound = running ? Math.max(0, frontier) : 0;
+  bvPlaying = !running && frontier > 0; // auto-play a concluded replay from the top
+  bvAccum = 0;
+  bvLastTs = 0;
+  renderBattleViewer();
+  if (!bvLoopRunning) {
+    bvLoopRunning = true;
+    requestAnimationFrame(bvTick);
+  }
+}
+
+function closeBattleViewer(): void {
+  openBattleViewerId = null;
+  bvPlaying = false;
+  $("battle-viewer").classList.remove("is-open");
+}
+
+/// The playback clock — advances the shown round while playing, clamped to the
+/// arrived light frontier. Self-stops when the viewer closes.
+function bvTick(ts: number): void {
+  if (openBattleViewerId === null) { bvLoopRunning = false; return; }
+  const rec = bvRecordFor(openBattleViewerId);
+  if (!rec) { closeBattleViewer(); bvLoopRunning = false; return; }
+  const frontier = rec.rounds.length - 1;
+  if (bvPlaying && frontier >= 0) {
+    const dt = bvLastTs ? Math.min(0.25, (ts - bvLastTs) / 1000) : 0;
+    bvAccum += (dt * bvSpeed) / BV_ROUND_SECS;
+    let changed = false;
+    while (bvAccum >= 1 && bvRound < frontier) { bvRound++; bvAccum -= 1; changed = true; }
+    if (bvRound >= frontier) {
+      bvAccum = 0;
+      if (rec.outcome !== null) { bvPlaying = false; changed = true; } // end of a finished replay
+      else { bvLive = true; } // caught up to a running fight's light frontier
+    }
+    if (changed) renderBattleViewer();
+  }
+  bvLastTs = ts;
+  requestAnimationFrame(bvTick);
+}
+
+/// Keep an open viewer live as new light arrives (called from the View handler).
+function refreshOpenBattleViewer(): void {
+  if (openBattleViewerId === null || !$("battle-viewer").classList.contains("is-open")) return;
+  renderBattleViewer();
+}
+
+const bvRC = (arr: RecordCount[], k: ShipKind): RecordCount | undefined => arr.find((rc) => rc.kind === k);
+
+/// One side's column: a per-kind survivor bar (participant: exact; bucket:
+/// CountClass label), a kill flash, and the defender's platform block.
+function bvSideHtml(rec: BattleRecordView, rd: RoundRecordView, s: 0 | 1, participant: boolean, platGone: boolean): string {
+  const mine = rec.own_side === s;
+  const cls = `bv-side ${s === 1 ? "right " : ""}${mine ? "mine" : ""}`;
+  const role = s === 0 ? "Attackers" : "Defenders";
+  const hd = `<div class="bv-side__hd">${mine ? badge("neutral", "you") : ""}${esc(role)}</div>`;
+  const rows = rec.sides[s].initial.map((op) => {
+    const k = op.kind;
+    const surv = bvRC(rd.counts[s], k);
+    const kill = bvRC(rd.kills[s], k);
+    const gone = surv === undefined;
+    let pct: number;
+    let nlabel: string;
+    if (participant) {
+      const openN = op.exact ?? 0;
+      const survN = surv?.exact ?? 0;
+      pct = openN > 0 ? (survN / openN) * 100 : 0;
+      nlabel = `×${survN}`;
+    } else {
+      const ord = surv ? COUNT_CLASS_ORD[surv.class] : -1;
+      pct = ord >= 0 ? ((ord + 1) / 6) * 100 : 0;
+      nlabel = surv ? countClassLabel(surv.class) : "—";
+    }
+    const killTag = participant
+      ? (kill?.exact ? ` <span class="bv-krow__kill">−${kill.exact}</span>` : "")
+      : (kill ? ` <span class="bv-krow__kill">▾</span>` : "");
+    const nStyle = gone ? ' style="text-decoration:line-through;color:var(--dim)"' : "";
+    return `<div class="bv-krow" title="${esc(shipKindLabel(k))}">${uiIcon(SHIP_ICON[k], "sm")}` +
+      `<div class="bv-krow__bar"><div class="bv-krow__fill${gone ? " gone" : ""}" style="width:${gone ? 100 : Math.max(5, pct)}%"></div></div>` +
+      `<span class="bv-krow__n"${nStyle}>${esc(nlabel)}${killTag}</span></div>`;
+  }).join("");
+  const plat = s === 1 && rec.sides[1].platform_tiers > 0
+    ? `<div class="bv-plat${platGone ? " gone" : ""}">${icon("defense", "sm")} Platform ×${rec.sides[1].platform_tiers}</div>`
+    : "";
+  return `<div class="${cls}">${hd}${rows}${plat}</div>`;
+}
+
+const BV_NOTE_META: Record<string, { cls: string; icon: IconKey; text: (side: string) => string }> = {
+  joined: { cls: "join", icon: "reinforce", text: (s) => `Reinforcements join the ${s.toLowerCase()}` },
+  retreat_tripped: { cls: "retreat", icon: "withdraw", text: (s) => `The ${s.toLowerCase()} trip their retreat threshold — withdrawing` },
+  withdraw_ordered: { cls: "retreat", icon: "withdraw", text: (s) => `A withdraw order reaches the ${s.toLowerCase()}` },
+  disengage_exposure: { cls: "retreat", icon: "withdraw", text: (s) => `The ${s.toLowerCase()} break off — parting-shot exposure` },
+  platform_destroyed: { cls: "", icon: "defense", text: () => `The Defense Platform is destroyed` },
+  mutual_disengage: { cls: "", icon: "withdraw", text: () => `Mutual disengage — the grind breaks off` },
+};
+function bvNoteBanner(n: RoundNoteView): string {
+  const meta = BV_NOTE_META[n.kind] ?? { cls: "", icon: "battle" as IconKey, text: () => n.kind };
+  const side = n.side === 0 ? "Attackers" : n.side === 1 ? "Defenders" : "";
+  return `<div class="bv-note ${meta.cls}">${icon(meta.icon, "sm")} ${esc(meta.text(side))}</div>`;
+}
+
+/// The battle's outcome as a verdict chip. From the viewer's own side when a
+/// participant; a neutral factual label for a bucket-fidelity third party.
+function bvOutcomeChip(rec: BattleRecordView, outcome: RaidOutcome): string {
+  const atkDied = outcome === "attacker_destroyed" || outcome === "both_destroyed";
+  const defDied = outcome === "target_destroyed" || outcome === "both_destroyed";
+  if (rec.own_side === null) {
+    const label = outcome === "both_destroyed" ? "mutual destruction"
+      : atkDied ? "attackers destroyed"
+        : defDied ? "defenders destroyed"
+          : "both withdrew";
+    return badge("neutral", label);
+  }
+  const youDied = rec.own_side === 0 ? atkDied : defDied;
+  const themDied = rec.own_side === 0 ? defDied : atkDied;
+  if (youDied && themDied) return badge("negative", "mutual destruction");
+  if (youDied) return badge("negative", "defeat — your force destroyed");
+  if (themDied) return badge("positive", "victory — their force destroyed");
+  return badge("neutral", "both withdrew");
+}
+
+function renderBattleViewer(): void {
+  if (openBattleViewerId === null) return;
+  if (renderDeferred("battle-viewer", renderBattleViewer)) return; // §single-click guard
+  const rec = bvRecordFor(openBattleViewerId);
+  if (!rec) { closeBattleViewer(); return; }
+  const participant = rec.fidelity === "participant";
+  const running = rec.outcome === null;
+  const frontier = rec.rounds.length - 1;
+  if (bvLive && frontier >= 0) bvRound = frontier;
+  bvRound = Math.max(0, Math.min(bvRound, Math.max(0, frontier)));
+
+  const head =
+    `<div class="pp-head"><div class="panel-title"><div>` +
+    `<div class="eyebrow">${uiIcon("concept-fleet", "sm")} battle replay${rec.raid ? " · raid" : ""}${participant ? "" : " · sensor estimate"}</div>` +
+    `<h2>Engagement ${esc(nearestSystemName(rec.pos))}</h2></div></div>` +
+    `<button class="pp-close" data-act="close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
+
+  const label0 = rec.own_side === 0 ? "You" : "Attackers";
+  const label1 = rec.own_side === 1 ? "You" : "Defenders";
+  const statusChip = rec.outcome ? bvOutcomeChip(rec, rec.outcome) : badge("warn", "◉ LIGHT-LIVE");
+  const counter = frontier < 0 ? "no rounds yet" : `round ${bvRound + 1} / ${rec.rounds.length}${running ? " +" : ""}`;
+  const sub = `<div class="bv-sub"><span class="bv-vs"><span class="${rec.own_side === 0 ? "you" : "foe"}">${esc(label0)}</span> vs <span class="${rec.own_side === 1 ? "you" : "foe"}">${esc(label1)}</span></span> ${statusChip}<span class="bv-count">${esc(counter)}</span></div>`;
+
+  let arena = `<div class="bv-empty">Awaiting the first round's light…</div>`;
+  let notes = "";
+  let agoline = "";
+  if (frontier >= 0) {
+    const rd = rec.rounds[bvRound];
+    const platGone = rec.rounds.slice(0, bvRound + 1).some((r) => r.notes.some((n) => n.kind === "platform_destroyed"));
+    // Salvo gutter: arrows scaled by damage dealt (participant); a glyph for bucket.
+    let salvos: string;
+    if (participant && rd.dealt) {
+      const maxDealt = Math.max(1e-6, ...rec.rounds.flatMap((r) => (r.dealt ? [r.dealt[0], r.dealt[1]] : [0])));
+      const w = (d: number) => Math.max(8, (d / maxDealt) * 88);
+      const mute = (d: number) => (d < maxDealt * 0.03 ? " mute" : "");
+      salvos = `<div class="bv-salvos">` +
+        `<div class="bv-arrow r${mute(rd.dealt[0])}" style="width:${w(rd.dealt[0])}%" title="attackers dealt ${rd.dealt[0].toFixed(2)} this round"></div>` +
+        `<div class="bv-arrow l${mute(rd.dealt[1])}" style="width:${w(rd.dealt[1])}%; margin-left:auto" title="defenders dealt ${rd.dealt[1].toFixed(2)} this round"></div>` +
+        `</div>`;
+    } else {
+      salvos = `<div class="bv-salvos" style="align-items:center;color:var(--dim)" title="exact fire strength is fogged — you see only the size buckets">⚔</div>`;
+    }
+    arena = `<div class="bv-arena">${bvSideHtml(rec, rd, 0, participant, false)}${salvos}${bvSideHtml(rec, rd, 1, participant, platGone)}</div>`;
+    notes = rd.notes.length ? `<div class="bv-notes">${rd.notes.map(bvNoteBanner).join("")}</div>` : "";
+    const intoFight = Math.max(0, rd.tick / state.tickHz - rec.started_at);
+    const delay = state.commandCenter && state.galaxy
+      ? Math.hypot(rec.pos.x - state.commandCenter.x, rec.pos.y - state.commandCenter.y) / state.galaxy.c
+      : 0;
+    const seenAgo = Math.max(0, liveSimTime() - (rd.tick / state.tickHz + delay));
+    agoline = `<div class="bv-agoline">at +${fmtCountdown(intoFight)} into the fight · this round's light reached you ${fmtCountdown(seenAgo)} ago${participant ? "" : " · size estimates only"}</div>`;
+  }
+
+  const playIcon = bvPlaying ? "❚❚ Pause" : "▶ Play";
+  const speeds = [1, 4, 16].map((sp) => `<button class="bv-btn${bvSpeed === sp ? " on" : ""}" data-act="speed" data-speed="${sp}">${sp}×</button>`).join("");
+  const ticks = rec.rounds.map((_r, i) => `<div class="bv-tick${i < bvRound ? " seen" : ""}${i === bvRound ? " cur" : ""}" data-act="round" data-round="${i}" title="round ${i + 1}"></div>`).join("");
+  const hatch = running ? `<div class="bv-hatch" title="beyond your light cone — later rounds haven't reached you yet"></div>` : "";
+  const transport = frontier < 0 ? "" :
+    `<div class="bv-transport">` +
+    `<button class="bv-btn" data-act="play">${playIcon}</button>` +
+    `<span class="bv-speeds">${speeds}</span>` +
+    `<div class="bv-scrub">${ticks || `<div class="bv-tick cur"></div>`}${hatch}</div></div>${agoline}`;
+
+  $("battle-viewer").innerHTML = head + sub + arena + notes + transport;
+  $("battle-viewer").classList.add("is-open");
 }
 
 // §contestable-territory Part 2: the CAPTURE results panel — a system changed
@@ -2052,8 +2323,10 @@ function installInteraction(): void {
     } else if (e.key === "y" || e.key === "Y") {
       toggleSyndicate(); // §syndicates: alliance panel
     } else if (e.key === "Escape") {
-      // In the System View, Escape steps out one level: planet panel → system → galaxy.
-      if ($("planet-panel").classList.contains("is-open")) {
+      // §battle-records: the replay overlay is topmost — Escape closes it first.
+      if ($("battle-viewer").classList.contains("is-open")) {
+        closeBattleViewer();
+      } else if ($("planet-panel").classList.contains("is-open")) {
         closePlanetPanel();
       } else if (renderer.viewMode.type === "system") {
         exitSystem();
@@ -3835,6 +4108,9 @@ function join(): void {
           // §one-battle-one-icon: keep an open ongoing-battle panel live (elapsed,
           // echo countdowns, running composition; auto-closes when it concludes).
           if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
+          // §battle-records: keep an open replay viewer live — rounds grow, the
+          // light frontier advances, the outcome may arrive (guards itself).
+          refreshOpenBattleViewer();
           // The Market is a navbar overlay now — refresh it when open.
           if ($("market").classList.contains("is-open")) updateMarket();
           updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
