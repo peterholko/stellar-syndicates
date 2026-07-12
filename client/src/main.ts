@@ -919,16 +919,19 @@ function toggleCheckin(): void {
 // All state lives in the renderer (viewMode); this layer only wires the UX.
 const hex6 = (n: number) => "#" + (n >>> 0).toString(16).padStart(6, "0").slice(-6);
 
-// The nearest star system within a screen-space radius of a point (for
-// double-click / deep-zoom enter). Mirrors handleMapClick's system hit-test.
-function systemUnderCursor(sx: number, sy: number, radius = 22): SystemInfo | null {
+// The star system under a screen point (for double-click / deep-zoom enter).
+// Each star counts within its OWN rendered disk (so a deep-zoom giant's rim is
+// enterable) or within `slack` of its center (so small stars stay easy to hit);
+// the NEAREST CENTER wins among qualifiers — aiming at a small star always
+// beats a visually larger neighbor whose disk merely blankets the same pixel.
+function systemUnderCursor(sx: number, sy: number, slack = 22): SystemInfo | null {
   if (!state.galaxy) return null;
   let best: SystemInfo | null = null;
-  let bestD = radius;
+  let bestD = Infinity;
   for (const sys of state.galaxy.systems) {
     const s = renderer.worldToScreen(sys.pos);
     const d = Math.hypot(s.x - sx, s.y - sy);
-    if (d < bestD) { bestD = d; best = sys; }
+    if (d < Math.max(slack, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; best = sys; }
   }
   return best;
 }

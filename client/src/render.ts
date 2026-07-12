@@ -615,7 +615,12 @@ export class Renderer {
     this.systemsLayer.removeChildren();
     if (!this.galaxy) return;
     const dynById = new Map(state.systems.map((s) => [s.id, s]));
-    for (const sys of this.galaxy.systems) {
+    // BIG stars first, SMALL stars last (on top): when two systems sit close, a
+    // visually larger neighbor must never bury a small star — its home ring and
+    // disk stay visible and aimable (nearest-center picking then just works).
+    const ordered = [...this.galaxy.systems]
+      .sort((a, b) => this.starDiameters(b).rendered - this.starDiameters(a).rendered);
+    for (const sys of ordered) {
       const s = this.worldToScreen(sys.pos);
       const dyn = dynById.get(sys.id);
       const owner = dyn?.owner ?? null;
