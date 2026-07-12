@@ -12,4 +12,7 @@ authors = ["Stellar Syndicates"]
 # time via `cargo add` (never trusted from memory) and recorded below.
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `float_roundtrip`: parse f64 back to the EXACT bits serde_json's serializer
+# emitted, so snapshots never perturb a float (battle records + engagement
+# damage pools survive a save/load bit-for-bit — the determinism law).
+serde_json = { version = "1", features = ["float_roundtrip"] }

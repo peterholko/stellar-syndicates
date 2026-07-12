@@ -17,6 +17,11 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::{DT, TICK_HZ};
+use crate::doctrine::EngagementPolicy;
+use crate::event::RaidOutcome;
+use crate::ids::{EntityId, PlayerId};
+use crate::math::Vec2;
 use crate::ship::ShipKind;
 
 // --- TUNABLE COMBAT BLOCK (the Lanchester knobs) --------------------------
@@ -313,6 +318,283 @@ fn merge_losses(into: &mut Losses, add: &Losses) {
     into.platform_tiers += add.platform_tiers;
 }
 
+// --- BATTLE RECORDS (§battle-records Part A) ---------------------------------
+//
+// Every engagement produces a recorded, watchable timeline. The recorder is a
+// pure OBSERVER of the engagement lifecycle: it reads round-by-round state and
+// never feeds back into resolution, so `same seed + commands → identical
+// records` (the determinism law). Balance patches must never rewrite an old
+// record — a `BattleRecord` is history captured at resolution time, replayed
+// verbatim.
+//
+// Because nothing outruns light, the record IS the battle as far as any viewer
+// is concerned: A2 unlocks round `i` per viewer exactly when its light arrives.
+// This module owns the storage shape; `world.rs` owns the lifecycle hooks and
+// `view.rs` the per-round fog gate.
+
+/// How long a resolved record is retained before pruning (7 days of sim time),
+/// UNLESS it is inside a participant corp's most-recent set. Tunable.
+pub const RECORD_RETENTION_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
+/// Per participating corp, this many most-recent records survive pruning
+/// regardless of age (so a quiet corp keeps its last battles). Tunable.
+pub const RECORD_PER_CORP_FLOOR: usize = 25;
+/// Absolute cap on stored records; the oldest RESOLVED ones evict past it (a
+/// runaway-battle backstop). Tunable.
+pub const MAX_BATTLE_RECORDS: usize = 2000;
+/// The target number of ROUNDS a full-length battle records — the timeline is
+/// down-sampled to about this many flushes (plus one per event beat), so a
+/// 45-minute battle and a 45-second one both read as a legible ~40-step replay.
+/// Tunable.
+pub const RECORD_TARGET_ROUNDS: u64 = 40;
+
+/// One side of a recorded battle at the moment it OPENED. Part B adds the
+/// per-loadout initial breakdown; for now the composition is per-kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SideRecord {
+    pub corp: PlayerId,
+    /// Opening composition (per-kind survivors are tracked round-by-round).
+    pub initial: BTreeMap<ShipKind, u32>,
+    /// The corp's engagement doctrine at the open. OWNER-ONLY in the view (A2):
+    /// a rival never learns your posture from watching the fight.
+    pub posture: EngagementPolicy,
+    /// Defense-platform tiers folded into this side at the open (0 = none).
+    pub platform_tiers: u32,
+}
+
+/// A discrete beat worth flushing a round on and annotating in the replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoundNote {
+    /// Reinforcements joined `side` (0 = attackers, 1 = defenders) with `comp`.
+    Joined { side: u8, comp: BTreeMap<ShipKind, u32> },
+    /// `side` fell below its doctrine retreat threshold and is withdrawing.
+    RetreatTripped { side: u8 },
+    /// A player Withdraw order reached a fleet on `side` mid-battle.
+    WithdrawOrdered { side: u8 },
+    /// `side` began its parting-shot exposure (Avoid doctrine — not accepting).
+    DisengageExposure { side: u8 },
+    /// The defender's Defense Platform lost its last tier this round.
+    PlatformDestroyed,
+    /// The safety valve tripped — a no-retreat grind ends in mutual disengage.
+    MutualDisengage,
+    // Part B adds `SalvoDetail { side, family, kills }` (participant fidelity).
+}
+
+/// One recorded ROUND: the survivors after it, the damage each side dealt, the
+/// ships each side LOST, and any beats. Indexing is by SIDE throughout: index 0
+/// = attackers, 1 = defenders. `counts[s]`/`kills[s]` are ABOUT side `s` (its
+/// survivors / its losses); `dealt[s]` is the damage OUTPUT by side `s`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoundRecord {
+    pub tick: u64,
+    pub counts: [BTreeMap<ShipKind, u32>; 2],
+    pub dealt: [f64; 2],
+    pub kills: [BTreeMap<ShipKind, u32>; 2],
+    pub notes: Vec<RoundNote>,
+}
+
+/// The resolved outcome: who won (as a [`RaidOutcome`]) + each side's total
+/// losses. The wreck marker is the existing `RaidResolved` event; the record id
+/// ties the replay to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BattleOutcomeSummary {
+    pub outcome: RaidOutcome,
+    /// Total ships lost per side (attacker, defender) over the whole battle.
+    pub total_losses: [BTreeMap<ShipKind, u32>; 2],
+}
+
+/// Recorder bookkeeping accumulated BETWEEN round flushes (not part of the
+/// observable timeline, but persisted so a mid-battle snapshot resumes exactly).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct PendingRound {
+    /// Damage dealt by [attackers, defenders] since the last flush.
+    dealt: [f64; 2],
+    /// Ships lost by [attackers, defenders] since the last flush.
+    kills: [BTreeMap<ShipKind, u32>; 2],
+    /// Beats since the last flush (each forces a flush next round tick).
+    notes: Vec<RoundNote>,
+    /// Sim tick of the last flush (round cadence is measured from here).
+    last_flush_tick: u64,
+    /// Flush cadence in ticks (computed at open from the expected duration).
+    round_every: u64,
+}
+
+/// One recorded battle: its sides' opening state, a per-round timeline captured
+/// at resolution time, and (once resolved) an outcome summary. Keyed by the
+/// engagement's own id, so the record, the map icon, and the news event share
+/// one identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BattleRecord {
+    pub id: EntityId,
+    pub pos: Vec2,
+    /// The defended system, if the battle stood at one (else open space).
+    pub system: Option<EntityId>,
+    pub started_tick: u64,
+    /// `None` while the battle is still running.
+    pub ended_tick: Option<u64>,
+    /// A cargo raid (short, few rounds) vs a decisive battle.
+    pub raid: bool,
+    pub sides: [SideRecord; 2],
+    pub rounds: Vec<RoundRecord>,
+    pub outcome: Option<BattleOutcomeSummary>,
+    /// Recorder accumulator between flushes (persisted; opaque to the view).
+    #[serde(default)]
+    pending: PendingRound,
+}
+
+/// Fold a side's `Losses` (scouts already merged in by the caller) into a
+/// running per-kind loss map. Platform tiers are tracked via a note, not here.
+fn add_losses_into(map: &mut BTreeMap<ShipKind, u32>, l: &Losses) {
+    for (k, n) in &l.per_kind {
+        if *n > 0 {
+            *map.entry(*k).or_insert(0) += *n;
+        }
+    }
+}
+
+impl BattleRecord {
+    /// The round-flush cadence (ticks) for a battle of this timescale: the
+    /// expected duration down-sampled to ≈[`RECORD_TARGET_ROUNDS`] flushes, floor
+    /// 1. Raids expect only a short slice, so they record a handful of rounds.
+    pub fn round_every_for(battle_target_secs: f64, raid: bool) -> u64 {
+        let frac = if raid { RAID_CAP_FRAC } else { 1.0 };
+        let expected_ticks = (frac * battle_target_secs.max(1.0) * TICK_HZ as f64).max(1.0);
+        ((expected_ticks / RECORD_TARGET_ROUNDS as f64).floor() as u64).max(1)
+    }
+
+    /// Open a record for a battle whose sides and geometry are known.
+    pub fn open(
+        id: EntityId,
+        pos: Vec2,
+        system: Option<EntityId>,
+        raid: bool,
+        started_tick: u64,
+        battle_target_secs: f64,
+        sides: [SideRecord; 2],
+    ) -> Self {
+        BattleRecord {
+            id,
+            pos,
+            system,
+            started_tick,
+            ended_tick: None,
+            raid,
+            sides,
+            rounds: Vec::new(),
+            outcome: None,
+            pending: PendingRound {
+                round_every: Self::round_every_for(battle_target_secs, raid),
+                last_flush_tick: started_tick,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Accumulate one attrition tick: damage dealt by each side and the ships
+    /// each side lost. `la`/`lb` are the attacker/defender losses this tick.
+    pub fn accumulate(&mut self, dealt_by_a: f64, dealt_by_b: f64, la: &Losses, lb: &Losses) {
+        self.pending.dealt[0] += dealt_by_a;
+        self.pending.dealt[1] += dealt_by_b;
+        add_losses_into(&mut self.pending.kills[0], la);
+        add_losses_into(&mut self.pending.kills[1], lb);
+    }
+
+    /// Note a beat (forces a round flush on the next `flush_if_due`).
+    pub fn note(&mut self, note: RoundNote) {
+        self.pending.notes.push(note);
+    }
+
+    /// Flush a round if the cadence elapsed OR a beat is pending, snapshotting
+    /// the survivors `counts`. No-op otherwise.
+    pub fn flush_if_due(&mut self, tick: u64, counts: [BTreeMap<ShipKind, u32>; 2]) {
+        let due = tick.saturating_sub(self.pending.last_flush_tick) >= self.pending.round_every;
+        if due || !self.pending.notes.is_empty() {
+            self.flush_round(tick, counts);
+        }
+    }
+
+    fn flush_round(&mut self, tick: u64, counts: [BTreeMap<ShipKind, u32>; 2]) {
+        let dealt = self.pending.dealt;
+        let kills = std::mem::take(&mut self.pending.kills);
+        let notes = std::mem::take(&mut self.pending.notes);
+        self.pending.dealt = [0.0, 0.0];
+        self.pending.last_flush_tick = tick;
+        self.rounds.push(RoundRecord { tick, counts, dealt, kills, notes });
+    }
+
+    fn pending_has_content(&self) -> bool {
+        !self.pending.notes.is_empty()
+            || self.pending.dealt != [0.0, 0.0]
+            || self.pending.kills.iter().any(|m| m.values().any(|n| *n > 0))
+    }
+
+    /// Finalize: flush any tail round, then stamp the ending tick + outcome. A
+    /// resolved record is frozen — never mutated again.
+    pub fn finalize(
+        &mut self,
+        tick: u64,
+        outcome: RaidOutcome,
+        total_losses: [BTreeMap<ShipKind, u32>; 2],
+        final_counts: [BTreeMap<ShipKind, u32>; 2],
+    ) {
+        if self.pending_has_content() {
+            self.flush_round(tick, final_counts);
+        }
+        self.ended_tick = Some(tick);
+        self.outcome = Some(BattleOutcomeSummary { outcome, total_losses });
+    }
+
+    /// Sim seconds since this record ended (`0` while still running).
+    pub fn ended_secs_ago(&self, now: f64) -> f64 {
+        match self.ended_tick {
+            None => 0.0,
+            Some(t) => (now - t as f64 * DT).max(0.0),
+        }
+    }
+}
+
+/// Prune resolved records: drop those older than [`RECORD_RETENTION_SECS`] that
+/// are NOT in any participant corp's most-recent-[`RECORD_PER_CORP_FLOOR`] set,
+/// then hard-cap the total at [`MAX_BATTLE_RECORDS`] by evicting the oldest.
+/// Running battles (no `ended_tick`) are always kept. Deterministic (ties break
+/// on id). Runs off the hot path — on record open, not per tick.
+pub fn prune_records(records: &mut BTreeMap<EntityId, BattleRecord>, now: f64) {
+    // Each corp's most-recent ids (by ended tick; running = newest) are protected.
+    let mut by_corp: BTreeMap<PlayerId, Vec<(u64, EntityId)>> = BTreeMap::new();
+    for (id, r) in records.iter() {
+        let recency = r.ended_tick.unwrap_or(u64::MAX);
+        for s in &r.sides {
+            by_corp.entry(s.corp).or_default().push((recency, *id));
+        }
+    }
+    let mut protected: std::collections::BTreeSet<EntityId> = Default::default();
+    for (_corp, mut v) in by_corp {
+        v.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1))); // newest first, id tiebreak
+        for (_, id) in v.into_iter().take(RECORD_PER_CORP_FLOOR) {
+            protected.insert(id);
+        }
+    }
+    records.retain(|id, r| {
+        if protected.contains(id) || r.ended_tick.is_none() {
+            return true;
+        }
+        r.ended_secs_ago(now) < RECORD_RETENTION_SECS
+    });
+    // Hard cap: evict the oldest RESOLVED records past the ceiling (running
+    // battles sort last via u64::MAX, so they are never evicted).
+    if records.len() > MAX_BATTLE_RECORDS {
+        let mut order: Vec<(u64, EntityId)> = records
+            .iter()
+            .map(|(id, r)| (r.ended_tick.unwrap_or(u64::MAX), *id))
+            .collect();
+        order.sort(); // oldest first
+        let excess = records.len() - MAX_BATTLE_RECORDS;
+        for (_, id) in order.into_iter().take(excess) {
+            records.remove(&id);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +782,182 @@ mod tests {
         let r2 = project_engagement(&a, &b, dmg_rate(3.0), Some(0.5), None, 10_000);
         assert_eq!(r1.2, r2.2, "same inputs → same losses (seed-free)");
         assert_eq!(r1.3, r2.3);
+    }
+
+    // --- §battle-records: recorder unit behaviour --------------------------
+
+    fn comp(pairs: &[(ShipKind, u32)]) -> BTreeMap<ShipKind, u32> {
+        pairs.iter().copied().collect()
+    }
+
+    fn losses(pairs: &[(ShipKind, u32)]) -> Losses {
+        let mut l = Losses::default();
+        for (k, n) in pairs {
+            l.add_kind(*k, *n);
+        }
+        l
+    }
+
+    /// A finished record for pruning tests: one corp per side, ended at `tick`.
+    fn finished_record(id: EntityId, corp: PlayerId, tick: u64) -> BattleRecord {
+        let sides = [
+            SideRecord { corp, initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(9_999), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+        ];
+        let mut r = BattleRecord::open(id, Vec2::ZERO, None, false, tick, 45.0, sides);
+        r.finalize(tick, RaidOutcome::BothSurvive, [BTreeMap::new(), BTreeMap::new()], [BTreeMap::new(), BTreeMap::new()]);
+        r
+    }
+
+    #[test]
+    fn round_cadence_targets_forty_flushes_under_both_presets() {
+        // A full-length battle records ≈ RECORD_TARGET_ROUNDS flushes under BOTH
+        // the playtest and production battle timescales — the timeline stays a
+        // legible ~40-step replay whether the fight lasts 45 s or 45 min.
+        for target in [45.0, 2700.0] {
+            let re = BattleRecord::round_every_for(target, false);
+            let full_ticks = target * TICK_HZ as f64;
+            let flushes = full_ticks / re as f64;
+            assert!(
+                (flushes - RECORD_TARGET_ROUNDS as f64).abs() <= 2.0,
+                "target {target}s → {flushes:.1} flushes (want ≈ {})",
+                RECORD_TARGET_ROUNDS
+            );
+        }
+        // A raid records only a handful of rounds (short cap slice).
+        assert!(BattleRecord::round_every_for(45.0, true) >= 1);
+    }
+
+    #[test]
+    fn accumulate_flushes_on_cadence_and_records_dealt_and_kills() {
+        let sides = [
+            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 5)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 5)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
+        ];
+        // round_every for a 20 s battle = floor(20*30/40) = 15 ticks.
+        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 20.0, sides);
+        // Fourteen quiet ticks: no flush yet (under the cadence, no beat).
+        for t in 1..=14 {
+            r.accumulate(1.0, 0.5, &Losses::default(), &losses(&[(ShipKind::Raider, 0)]));
+            r.flush_if_due(t, [comp(&[(ShipKind::Raider, 5)]), comp(&[(ShipKind::Raider, 5)])]);
+        }
+        assert!(r.rounds.is_empty(), "no flush before the cadence elapses");
+        // Tick 15 hits the cadence and one enemy raider died: a round flushes.
+        r.accumulate(1.0, 0.5, &Losses::default(), &losses(&[(ShipKind::Raider, 1)]));
+        r.flush_if_due(15, [comp(&[(ShipKind::Raider, 5)]), comp(&[(ShipKind::Raider, 4)])]);
+        assert_eq!(r.rounds.len(), 1, "the cadence tick flushes exactly one round");
+        let round = &r.rounds[0];
+        assert_eq!(round.tick, 15);
+        assert!((round.dealt[0] - 15.0).abs() < 1e-9, "accumulated attacker damage");
+        assert!((round.dealt[1] - 7.5).abs() < 1e-9, "accumulated defender damage");
+        assert_eq!(round.kills[1].get(&ShipKind::Raider).copied(), Some(1), "defender's loss recorded");
+        assert_eq!(round.counts[1].get(&ShipKind::Raider).copied(), Some(4), "survivors snapshotted");
+    }
+
+    #[test]
+    fn a_beat_forces_a_flush_off_cadence() {
+        let sides = [
+            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+        ];
+        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
+        // A single early tick with a beat — nowhere near the (huge) cadence.
+        r.note(RoundNote::Joined { side: 1, comp: comp(&[(ShipKind::Corvette, 3)]) });
+        r.accumulate(2.0, 0.0, &Losses::default(), &Losses::default());
+        r.flush_if_due(3, [BTreeMap::new(), comp(&[(ShipKind::Corvette, 3)])]);
+        assert_eq!(r.rounds.len(), 1, "the join beat forced a flush off-cadence");
+        assert!(matches!(r.rounds[0].notes[0], RoundNote::Joined { side: 1, .. }));
+    }
+
+    #[test]
+    fn finalize_flushes_the_tail_and_stamps_the_outcome() {
+        let sides = [
+            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 3)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 2)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
+        ];
+        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
+        r.accumulate(5.0, 1.0, &Losses::default(), &losses(&[(ShipKind::Raider, 2)]));
+        assert!(r.rounds.is_empty(), "no cadence flush yet");
+        r.finalize(
+            7,
+            RaidOutcome::TargetDestroyed,
+            [comp(&[]), comp(&[(ShipKind::Raider, 2)])],
+            [comp(&[(ShipKind::Raider, 3)]), comp(&[])],
+        );
+        assert_eq!(r.rounds.len(), 1, "the tail round flushed at finalize");
+        assert_eq!(r.ended_tick, Some(7));
+        let o = r.outcome.as_ref().expect("outcome stamped");
+        assert_eq!(o.outcome, RaidOutcome::TargetDestroyed);
+        assert_eq!(o.total_losses[1].get(&ShipKind::Raider).copied(), Some(2));
+    }
+
+    #[test]
+    fn pruning_keeps_the_per_corp_floor_past_retention() {
+        // 30 records for one corp, all ended LONG past retention. The per-corp
+        // floor keeps the 25 most recent regardless of age; the 5 oldest prune.
+        let corp = PlayerId(7);
+        let now = 10_000_000.0; // well beyond 7 days of sim seconds
+        let mut recs: BTreeMap<EntityId, BattleRecord> = BTreeMap::new();
+        for i in 0..30u64 {
+            let id = EntityId(i + 1);
+            recs.insert(id, finished_record(id, corp, i * 10)); // all old vs `now`
+        }
+        prune_records(&mut recs, now);
+        assert_eq!(recs.len(), RECORD_PER_CORP_FLOOR, "old records prune to the per-corp floor");
+        // The survivors are the newest 25 (ended ticks 50..290), oldest 5 dropped.
+        assert!(!recs.contains_key(&EntityId(1)), "the oldest record pruned");
+        assert!(recs.contains_key(&EntityId(30)), "the newest record kept");
+    }
+
+    #[test]
+    fn pruning_hard_caps_the_total_evicting_oldest() {
+        // One corp, MAX+100 RECENT records: the floor protects 25, retention keeps
+        // the rest (recent), so the hard cap trims to MAX by evicting the oldest.
+        let corp = PlayerId(3);
+        let mut recs: BTreeMap<EntityId, BattleRecord> = BTreeMap::new();
+        let extra = 100u64;
+        for i in 0..(MAX_BATTLE_RECORDS as u64 + extra) {
+            let id = EntityId(i + 1);
+            recs.insert(id, finished_record(id, corp, i)); // ended tick = i (recent vs now=0)
+        }
+        prune_records(&mut recs, 0.0);
+        assert_eq!(recs.len(), MAX_BATTLE_RECORDS, "hard cap trims to the ceiling");
+        assert!(!recs.contains_key(&EntityId(1)), "the oldest was evicted by the cap");
+        assert!(recs.contains_key(&EntityId(MAX_BATTLE_RECORDS as u64 + extra)), "the newest survived");
+    }
+
+    #[test]
+    fn running_battles_are_never_pruned() {
+        let mut recs: BTreeMap<EntityId, BattleRecord> = BTreeMap::new();
+        let sides = [
+            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+        ];
+        // A still-running record (no ended_tick), plus 30 ancient finished ones
+        // for a DIFFERENT corp so the floor can't protect the runner incidentally.
+        recs.insert(EntityId(1), BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 45.0, sides));
+        for i in 0..30u64 {
+            let id = EntityId(1000 + i);
+            recs.insert(id, finished_record(id, PlayerId(42), i));
+        }
+        prune_records(&mut recs, 10_000_000.0);
+        assert!(recs.contains_key(&EntityId(1)), "a running battle is always kept");
+    }
+
+    #[test]
+    fn record_serde_round_trips_including_pending() {
+        // A record mid-battle (pending accumulation live) round-trips exactly.
+        let sides = [
+            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 4)]), posture: EngagementPolicy::EngageAny, platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Corvette, 3)]), posture: EngagementPolicy::Avoid, platform_tiers: 2 },
+        ];
+        let mut r = BattleRecord::open(EntityId(0xE000_0000_0000_0001), Vec2::new(1.0, -2.0), Some(EntityId(5)), false, 3, 2700.0, sides);
+        r.accumulate(3.25, 0.75, &losses(&[(ShipKind::Raider, 1)]), &Losses::default());
+        r.note(RoundNote::PlatformDestroyed);
+        r.flush_if_due(4, [comp(&[(ShipKind::Raider, 3)]), comp(&[(ShipKind::Corvette, 3)])]);
+        r.accumulate(1.0, 0.0, &Losses::default(), &Losses::default()); // live pending
+        let json = serde_json::to_string(&r).unwrap();
+        let r2: BattleRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, r2, "the record round-trips byte-for-byte through JSON");
     }
 }

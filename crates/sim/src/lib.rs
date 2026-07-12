@@ -45,7 +45,10 @@ pub use cargo::{Cargo, Commodity};
 pub use colony::FoodState;
 pub use production::{Assignment, SuspendReason};
 pub use specialist::SpecialistKind;
-pub use combat::{attrition_tick, project_engagement, typical_forces, Forces, Losses};
+pub use combat::{
+    attrition_tick, project_engagement, typical_forces, BattleOutcomeSummary, BattleRecord, Forces,
+    Losses, RoundNote, RoundRecord, SideRecord,
+};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{

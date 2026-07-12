@@ -338,6 +338,14 @@ pub struct World {
     pub engagements: BTreeMap<EntityId, Engagement>,
     #[serde(default)]
     next_engagement_id: u64,
+    /// BATTLE RECORDS (§battle-records Part A) — a watchable, light-gated replay
+    /// per engagement, keyed by the engagement's own id. The recorder OBSERVES
+    /// the lifecycle (open → per-round flush → finalize) and never feeds back
+    /// into resolution, so records are deterministic and balance-patch-stable.
+    /// Pruned on open (retention + per-corp floor + hard cap). `#[serde(default)]`
+    /// so pre-feature snapshots load with no records.
+    #[serde(default)]
+    pub battle_records: BTreeMap<EntityId, crate::combat::BattleRecord>,
     /// SYNDICATES (§syndicates) — alliance rosters keyed by id. Membership is also
     /// denormalized on each [`Corporation`] for O(1) `are_allied`. `BTreeMap` keeps
     /// iteration deterministic; `#[serde(default)]` so pre-feature snapshots load.
@@ -549,6 +557,7 @@ impl World {
             next_build_id: 0,
             rng,
             engagements: BTreeMap::new(),
+            battle_records: BTreeMap::new(),
             next_engagement_id: 0,
             syndicates: BTreeMap::new(),
             next_syndicate_id: 0,
@@ -896,6 +905,60 @@ impl World {
         self.next_engagement_id += 1;
         // High-bit tag keeps engagement ids visibly distinct from entity ids.
         EntityId(0xE000_0000_0000_0000 | self.next_engagement_id)
+    }
+
+    // --- §battle-records: recorder hooks (pure observers, never feed back) -----
+
+    /// Ensure a [`crate::combat::BattleRecord`] exists for this engagement,
+    /// capturing its opening sides. Lazy + idempotent, so it fires the first
+    /// tick a battle of ANY kind (raid, battle, blockade, pirate) is processed —
+    /// they all flow through the same resolve loop. Prunes on insert.
+    fn record_ensure_open(&mut self, eid: EntityId) {
+        if self.battle_records.contains_key(&eid) {
+            return;
+        }
+        let Some(e) = self.engagements.get(&eid) else { return };
+        let (pos, system, raid, a_owner, d_owner, ptiers) =
+            (e.pos, e.platform_system, e.raid, e.a_owner, e.d_owner, e.platform_start_tiers);
+        let a_start = e.a_start.clone();
+        let d_start = e.d_start.clone();
+        let a_posture = self.players.get(&a_owner).map(|c| c.doctrine.engagement).unwrap_or_default();
+        let d_posture = self.players.get(&d_owner).map(|c| c.doctrine.engagement).unwrap_or_default();
+        let sides = [
+            crate::combat::SideRecord { corp: a_owner, initial: a_start, posture: a_posture, platform_tiers: 0 },
+            crate::combat::SideRecord { corp: d_owner, initial: d_start, posture: d_posture, platform_tiers: ptiers },
+        ];
+        let rec = crate::combat::BattleRecord::open(
+            eid, pos, system, raid, self.tick, self.config.battle_target_secs, sides,
+        );
+        self.battle_records.insert(eid, rec);
+        crate::combat::prune_records(&mut self.battle_records, self.time);
+    }
+
+    /// Annotate the record with a beat (forces a flush on the next round tick).
+    fn record_note(&mut self, eid: EntityId, note: crate::combat::RoundNote) {
+        if let Some(rec) = self.battle_records.get_mut(&eid) {
+            rec.note(note);
+        }
+    }
+
+    /// Feed one attrition tick to the record: the damage each side dealt, the
+    /// ships each side lost, and the survivor counts (used only when a round
+    /// actually flushes).
+    fn record_round(
+        &mut self,
+        eid: EntityId,
+        dealt_a: f64,
+        dealt_b: f64,
+        la: &crate::combat::Losses,
+        lb: &crate::combat::Losses,
+        counts: [BTreeMap<ShipKind, u32>; 2],
+        tick: u64,
+    ) {
+        if let Some(rec) = self.battle_records.get_mut(&eid) {
+            rec.accumulate(dealt_a, dealt_b, la, lb);
+            rec.flush_if_due(tick, counts);
+        }
     }
 
     /// Allocate a fresh, deterministic entity id.
@@ -2071,6 +2134,11 @@ impl World {
         // joins its side's pool (relief shifts the Lanchester ratio). Convoys/
         // colonies don't auto-join a fight they didn't have to.
         let eids: Vec<EntityId> = self.engagements.keys().copied().collect();
+        // §battle-records: OPEN a record for every live engagement first, so
+        // reinforcement joins this tick land as `Joined` beats on it.
+        for eid in &eids {
+            self.record_ensure_open(*eid);
+        }
         for eid in &eids {
             let (pos, a_owner, d_owner) = {
                 let e = &self.engagements[eid];
@@ -2104,6 +2172,23 @@ impl World {
                 .map(|(fid, f)| (*fid, f.owner == a_owner))
                 .collect();
             if !joiners.is_empty() {
+                // §battle-records: note the relief as a `Joined` beat per side.
+                let mut atk_join: BTreeMap<ShipKind, u32> = BTreeMap::new();
+                let mut def_join: BTreeMap<ShipKind, u32> = BTreeMap::new();
+                for (fid, atk) in &joiners {
+                    if let Some(f) = self.fleets.get(fid) {
+                        let dst = if *atk { &mut atk_join } else { &mut def_join };
+                        for (k, n) in &f.composition {
+                            *dst.entry(*k).or_insert(0) += *n;
+                        }
+                    }
+                }
+                if !atk_join.is_empty() {
+                    self.record_note(*eid, crate::combat::RoundNote::Joined { side: 0, comp: atk_join });
+                }
+                if !def_join.is_empty() {
+                    self.record_note(*eid, crate::combat::RoundNote::Joined { side: 1, comp: def_join });
+                }
                 let e = self.engagements.get_mut(eid).unwrap();
                 for (fid, atk) in joiners {
                     if atk {
@@ -2169,6 +2254,9 @@ impl World {
                         _ => {}
                     }
                 }
+                // §battle-records: which side(s) BEGAN disengaging this tick.
+                let dis_atk = set_dis.iter().any(|(fid, _)| atkers.contains(fid));
+                let dis_def = set_dis.iter().any(|(fid, _)| defers.contains(fid));
                 let e = self.engagements.get_mut(eid).unwrap();
                 for (fid, t) in set_dis {
                     e.disengaging.insert(fid, t);
@@ -2192,6 +2280,12 @@ impl World {
                     if let Some(owner) = owner {
                         self.send_ship_home(fid, owner); // clean escape at formation speed
                     }
+                }
+                if dis_atk {
+                    self.record_note(*eid, crate::combat::RoundNote::DisengageExposure { side: 0 });
+                }
+                if dis_def {
+                    self.record_note(*eid, crate::combat::RoundNote::DisengageExposure { side: 1 });
                 }
             }
 
@@ -2222,7 +2316,13 @@ impl World {
             // Raids run at the FIXED quick RAID_RATE (a smash-and-grab is not
             // slowed by the config battle timescale); battles run config-scaled.
             let rate = if raid { crate::combat::RAID_RATE } else { base_rate };
+            // §battle-records: each side deals `rate × attack_power` evaluated
+            // PRE-tick — the same value `attrition_tick` applies internally.
+            let dealt_a = rate * a_side.attack_power();
+            let dealt_b = rate * d_side.attack_power();
             let (mut la, mut lb) = crate::combat::attrition_tick(&mut a_side, &mut d_side, rate);
+            // The defender's Defense Platform lost its LAST tier this tick.
+            let platform_destroyed = ptiers > 0 && d_side.platform_tiers == 0;
             if a_scouts > 0 {
                 *la.per_kind.entry(ShipKind::Scout).or_insert(0) += a_scouts;
             }
@@ -2299,6 +2399,23 @@ impl World {
             let safety = elapsed >= crate::combat::MAX_BATTLE_MULT * target;
             let defender_withdraws = d_retreats || safety;
 
+            // §battle-records: push this tick's beats, then feed the round — the
+            // pending beats force a flush, so beats + this tick's damage/kills +
+            // the post-tick survivor counts all land on one recorded round.
+            if platform_destroyed {
+                self.record_note(*eid, crate::combat::RoundNote::PlatformDestroyed);
+            }
+            if a_retreats {
+                self.record_note(*eid, crate::combat::RoundNote::RetreatTripped { side: 0 });
+            }
+            if d_retreats {
+                self.record_note(*eid, crate::combat::RoundNote::RetreatTripped { side: 1 });
+            }
+            if safety {
+                self.record_note(*eid, crate::combat::RoundNote::MutualDisengage);
+            }
+            self.record_round(*eid, dealt_a, dealt_b, &la, &lb, [a_now.clone(), d_now.clone()], self.tick);
+
             if !a_alive || !d_alive || a_retreats || raid_cap || safety || d_retreats {
                 self.end_battle(*eid, defender_withdraws, events);
             }
@@ -2334,6 +2451,19 @@ impl World {
             (true, false) => RaidOutcome::TargetDestroyed,
             (true, true) => RaidOutcome::BothSurvive,
         };
+        let attacker_losses = diff_comp(&e.a_start, &a_now);
+        let target_losses = diff_comp(&e.d_start, &d_now);
+        // §battle-records: FREEZE the replay — flush any tail round + stamp the
+        // ending tick and outcome. The engagement is already removed, so the
+        // record (keyed by the same id) outlives it as pure history.
+        if let Some(rec) = self.battle_records.get_mut(&eid) {
+            rec.finalize(
+                self.tick,
+                outcome,
+                [attacker_losses.clone(), target_losses.clone()],
+                [a_now.clone(), d_now.clone()],
+            );
+        }
         events.push(Event::new(now, EventPayload::RaidResolved {
             attacker: e.a_owner,
             defender: e.d_owner,
@@ -2343,8 +2473,8 @@ impl World {
             target_kind: flagship_of(&e.d_start),
             outcome,
             pos: e.pos,
-            attacker_losses: diff_comp(&e.a_start, &a_now),
-            target_losses: diff_comp(&e.d_start, &d_now),
+            attacker_losses,
+            target_losses,
         }));
         if let Some(sid) = e.platform_system {
             let tiers_lost = e.platform_start_tiers.saturating_sub(d_ptiers);
@@ -3182,15 +3312,22 @@ impl World {
                 // formation speed; a faster pursuer re-contacts for parting shots).
                 if po.kind == crate::event::OrderKind::Withdraw {
                     let fid = po.ship_id;
-                    for e in self.engagements.values_mut() {
+                    // §battle-records: note WHICH side the withdrawing fleet left.
+                    let mut withdrew: Vec<(EntityId, u8)> = Vec::new();
+                    for (eid, e) in self.engagements.iter_mut() {
                         if e.attackers.contains(&fid) {
                             e.a_fled = true;
+                            withdrew.push((*eid, 0));
                         }
                         if e.defenders.contains(&fid) {
                             e.d_fled = true;
+                            withdrew.push((*eid, 1));
                         }
                         e.attackers.retain(|f| *f != fid);
                         e.defenders.retain(|f| *f != fid);
+                    }
+                    for (eid, side) in withdrew {
+                        self.record_note(eid, crate::combat::RoundNote::WithdrawOrdered { side });
                     }
                 }
                 // §order-lifecycle: the order is DELIVERED. A newer order for the
@@ -8268,6 +8405,155 @@ mod tests {
         }
         assert!(matches!(w.fleets[&corvettes].order, FleetOrder::Idle), "no raider → no attack, order untouched");
         assert!(w.engagements.is_empty(), "no engagement from a soft-rejected attack");
+    }
+
+    // ===================================================================
+    // §battle-records Part A — the recorder observes the lifecycle
+    // ===================================================================
+
+    /// Stage a decisive attacker-wins battle (6 raiders vs 3), run it to
+    /// resolution, and return the recorded engagement id. `atk`/`def` exist.
+    fn run_recorded_battle(w: &mut World, atk: PlayerId, def: PlayerId) -> EntityId {
+        let cc = w.players[&atk].command_center;
+        let striker = squad(w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        assert!(run_until(w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        eid
+    }
+
+    #[test]
+    fn a_battle_opens_and_finalizes_a_record_with_a_timeline() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+        let eid = run_recorded_battle(&mut w, atk, def);
+        let rec = w.battle_records.get(&eid).expect("the engagement was recorded");
+        assert_eq!(rec.id, eid, "the record is keyed by the engagement id");
+        assert!(rec.started_tick > 0, "opening tick captured");
+        assert!(rec.ended_tick.is_some(), "resolution stamped the ending tick");
+        assert!(!rec.rounds.is_empty(), "a timeline of rounds was recorded");
+        let o = rec.outcome.as_ref().expect("outcome summary present");
+        assert_eq!(o.outcome, crate::event::RaidOutcome::TargetDestroyed, "the attacker won");
+        assert_eq!(rec.sides[0].corp, atk, "side 0 is the attacker corp");
+        assert_eq!(rec.sides[1].corp, def, "side 1 is the defender corp");
+        assert_eq!(rec.sides[0].initial.get(&ShipKind::Raider).copied(), Some(6), "opening attacker composition");
+        // Every round's survivor snapshot is internally consistent (≤ opening).
+        for r in &rec.rounds {
+            assert!(r.counts[1].get(&ShipKind::Raider).copied().unwrap_or(0) <= 3, "defender survivors never exceed the opening");
+        }
+    }
+
+    #[test]
+    fn records_note_a_reinforcement_join() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+        let cc = w.players[&atk].command_center;
+        let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        // A second attacker wing sits at the contact point, Idle — relief that the
+        // reinforce loop folds into the attacker side once the fight forms.
+        let _relief = squad(&mut w, atk, cc + Vec2::new(180.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let joined = rec.rounds.iter().flat_map(|r| &r.notes)
+            .any(|n| matches!(n, crate::combat::RoundNote::Joined { side: 0, .. }));
+        assert!(joined, "the reinforcement join is a recorded beat");
+    }
+
+    #[test]
+    fn records_note_a_defender_retreat() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+        // Defender withdraws once half its strength is gone (doctrine Half).
+        w.players.get_mut(&def).unwrap().doctrine.retreat = crate::doctrine::RetreatThreshold::Half;
+        let cc = w.players[&atk].command_center;
+        let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Raider, 4, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let retreated = rec.rounds.iter().flat_map(|r| &r.notes)
+            .any(|n| matches!(n, crate::combat::RoundNote::RetreatTripped { side: 1 }));
+        assert!(retreated, "the defender's retreat threshold trip is a recorded beat");
+    }
+
+    #[test]
+    fn records_note_a_withdraw_order() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+        let cc = w.players[&atk].command_center;
+        // An even, grinding fight so the withdraw order arrives mid-battle.
+        let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        // Order the defender to withdraw; its light-delayed arrival pulls it out.
+        w.step(&[Command::Withdraw { player_id: def, fleet_id: target }]);
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let withdrew = rec.rounds.iter().flat_map(|r| &r.notes)
+            .any(|n| matches!(n, crate::combat::RoundNote::WithdrawOrdered { side: 1 }));
+        assert!(withdrew, "the defender's withdraw order is a recorded beat");
+    }
+
+    #[test]
+    fn records_downsample_to_the_cadence() {
+        let mut w = test_world(); // battle_target_secs = 20 → round_every = 15 ticks
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+        let eid = run_recorded_battle(&mut w, atk, def);
+        let rec = &w.battle_records[&eid];
+        let re = crate::combat::BattleRecord::round_every_for(w.config.battle_target_secs, false);
+        assert_eq!(re, 15, "cadence math for the test preset");
+        assert!(rec.rounds.len() >= 3, "a real battle records several rounds");
+        // Flushes are at MOST one cadence apart (beats only ever flush sooner).
+        for pair in rec.rounds.windows(2) {
+            assert!(pair[1].tick - pair[0].tick <= re, "no gap wider than the cadence");
+        }
+        // The tail never runs longer than a cadence past the last flush.
+        let ended = rec.ended_tick.unwrap();
+        assert!(ended - rec.rounds.last().unwrap().tick <= re, "the final round is within one cadence of the end");
+    }
+
+    #[test]
+    fn battle_records_are_deterministic() {
+        // Same seed + same script → byte-identical records (the recorder never
+        // feeds back into resolution).
+        let run = || {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+            let eid = run_recorded_battle(&mut w, atk, def);
+            (eid, w.battle_records.clone())
+        };
+        let (e1, r1) = run();
+        let (e2, r2) = run();
+        assert_eq!(e1, e2, "the engagement id is deterministic");
+        assert_eq!(r1, r2, "the full record set is identical across identical runs");
+    }
+
+    #[test]
+    fn world_serde_round_trip_preserves_records() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "Atk".into() }, Command::AddPlayer { id: def, name: "Def".into() }]);
+        let eid = run_recorded_battle(&mut w, atk, def);
+        assert!(w.battle_records.contains_key(&eid));
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w.battle_records, w2.battle_records, "records survive a snapshot round-trip");
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),
