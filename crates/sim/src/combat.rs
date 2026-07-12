@@ -30,6 +30,13 @@ use crate::ship::ShipKind;
 /// [`Forces::from_side`] and the fleet partition ([`crate::ship::Fleet`]).
 pub type LoadoutMap = std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>;
 
+/// A per-STACK damage pool (§modules): `kind → loadout key → pool`. Persisted on
+/// the engagement between ticks so each `(kind, loadout)` stack keeps its OWN
+/// accumulated absorption (armored stacks that took less genuinely die less). A
+/// nested map with STRING inner keys, so it round-trips through JSON (a tuple
+/// `(kind, loadout)` map key would not).
+pub type StackPoolMap = std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, f64>>;
+
 /// A TYPED damage 3-vector (§modules Part B) flowing through the pooled
 /// Lanchester pipeline. Unfitted fleets deal pure `beam`, so the whole module
 /// layer collapses to the pre-module scalar model when nothing is fitted — the
@@ -192,13 +199,17 @@ impl Forces {
 
     /// A side from a summed composition + its LOADOUT partition (§modules): each
     /// kind splits into its fitted stacks + an implicit unfitted remainder. The
-    /// per-kind damage pool is distributed pro-rata by count across that kind's
-    /// stacks (equal hull per kind → equal-per-ship). Clamps Σ stacks == comp,
-    /// so an inconsistent loadout map self-heals on read.
+    /// carried damage pool is assigned PER STACK from `stack_pool` (keyed by
+    /// kind → loadout key) so an armored stack's accumulated absorption survives
+    /// between ticks — the fix for the pool being re-averaged across a kind's
+    /// stacks each tick (which erased/inverted the armor advantage). Clamps
+    /// Σ stacks == comp, so an inconsistent loadout map self-heals on read. A
+    /// pool entry for a stack that no longer exists is simply dropped; a new
+    /// stack (reinforcement) starts at 0.
     pub fn from_side(
         comp: &BTreeMap<ShipKind, u32>,
         loadouts: &LoadoutMap,
-        damage: &BTreeMap<ShipKind, f64>,
+        stack_pool: &StackPoolMap,
     ) -> Self {
         let mut stacks: BTreeMap<StackKey, u32> = BTreeMap::new();
         for (kind, total) in comp {
@@ -224,18 +235,13 @@ impl Forces {
                 *stacks.entry((*kind, Loadout::default())).or_insert(0) += remaining;
             }
         }
-        // Distribute each kind's carried pool across its stacks by count.
-        let mut kind_count: BTreeMap<ShipKind, u32> = BTreeMap::new();
-        for ((k, _), n) in &stacks {
-            *kind_count.entry(*k).or_insert(0) += *n;
-        }
+        // Assign each stack its OWN carried pool (persisted per stack) — no
+        // re-averaging across a kind's stacks, so absorbed-damage memory survives.
         let mut dmg: BTreeMap<StackKey, f64> = BTreeMap::new();
-        for ((k, lo), n) in &stacks {
-            let pool = damage.get(k).copied().unwrap_or(0.0);
-            let kc = kind_count.get(k).copied().unwrap_or(0);
-            let share = if kc > 0 { pool * (*n as f64 / kc as f64) } else { 0.0 };
-            if share != 0.0 {
-                dmg.insert((*k, lo.clone()), share);
+        for (k, lo) in stacks.keys() {
+            let p = stack_pool.get(k).and_then(|m| m.get(&lo.key())).copied().unwrap_or(0.0);
+            if p != 0.0 {
+                dmg.insert((*k, lo.clone()), p);
             }
         }
         Forces { stacks, damage: dmg, platform_tiers: 0, platform_pool: 0.0 }
@@ -265,15 +271,18 @@ impl Forces {
         c
     }
 
-    /// The per-KIND damage pool (summed over stacks) — persisted back onto the
-    /// engagement between ticks (the pool is per-kind; the loadout split is
-    /// re-derived from the live fleets each tick).
-    pub fn damage_by_kind(&self) -> BTreeMap<ShipKind, f64> {
-        let mut d = BTreeMap::new();
-        for ((k, _), v) in &self.damage {
-            *d.entry(*k).or_insert(0.0) += *v;
+    /// The PER-STACK damage pool (kind → loadout key → pool) — persisted back
+    /// onto the engagement between ticks so each stack keeps its own absorbed
+    /// damage (the armor-fidelity fix). A JSON-safe nested map (string inner
+    /// keys), unlike a `(kind, loadout)`-keyed map.
+    pub fn damage_by_stack(&self) -> StackPoolMap {
+        let mut out: StackPoolMap = BTreeMap::new();
+        for ((k, lo), v) in &self.damage {
+            if *v != 0.0 {
+                out.entry(*k).or_default().insert(lo.key(), *v);
+            }
         }
-        d
+        out
     }
 
     pub fn ship_count(&self) -> u32 {

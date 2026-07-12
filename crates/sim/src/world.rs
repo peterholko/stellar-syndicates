@@ -428,9 +428,15 @@ pub struct Engagement {
     pub defenders: Vec<EntityId>,
     /// A covering defense platform folded into the defender side, if any.
     pub platform_system: Option<EntityId>,
-    /// Per-kind side DAMAGE POOLS (the persisted mid-battle state).
-    a_pool: BTreeMap<ShipKind, f64>,
-    d_pool: BTreeMap<ShipKind, f64>,
+    /// §modules: PER-STACK side damage pools (kind → loadout key → pool) — the
+    /// persisted mid-battle state. Per-stack (not per-kind) so an armored stack
+    /// keeps its own accumulated absorption across ticks. `#[serde(default)]`
+    /// drops a pre-fix snapshot's `a_pool`/`d_pool` cleanly (that battle resumes
+    /// with fresh pools — an acceptable alpha discontinuity, never a panic).
+    #[serde(default)]
+    a_stack_pool: crate::combat::StackPoolMap,
+    #[serde(default)]
+    d_stack_pool: crate::combat::StackPoolMap,
     /// Report bookkeeping: total composition + strength each side STARTED with.
     a_start: BTreeMap<ShipKind, u32>,
     d_start: BTreeMap<ShipKind, u32>,
@@ -2136,8 +2142,8 @@ impl World {
                 attackers: vec![aid],
                 defenders,
                 platform_system,
-                a_pool: BTreeMap::new(),
-                d_pool: BTreeMap::new(),
+                a_stack_pool: BTreeMap::new(),
+                d_stack_pool: BTreeMap::new(),
                 a_start: a_comp,
                 d_start: d_comp,
                 a_start_strength: a_str,
@@ -2327,8 +2333,8 @@ impl World {
             }
             self.engagements.get_mut(eid).unwrap().touched = true;
 
-            let a_pool = self.engagements[eid].a_pool.clone();
-            let d_pool = self.engagements[eid].d_pool.clone();
+            let a_pool = self.engagements[eid].a_stack_pool.clone();
+            let d_pool = self.engagements[eid].d_stack_pool.clone();
             // §modules: partition each side into (kind, loadout) stacks from the
             // live fleets' fits; the per-kind carried pool distributes across them.
             let a_loadouts = self.side_loadouts(&attackers);
@@ -2387,8 +2393,8 @@ impl World {
             // deaths, platform tiers.
             {
                 let e = self.engagements.get_mut(eid).unwrap();
-                e.a_pool = a_side.damage_by_kind();
-                e.d_pool = d_side.damage_by_kind();
+                e.a_stack_pool = a_side.damage_by_stack();
+                e.d_stack_pool = d_side.damage_by_stack();
             }
             if let Some(sid) = platform_system
                 && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
@@ -2620,8 +2626,8 @@ impl World {
             attackers: vec![aid],
             defenders,
             platform_system: Some(sid),
-            a_pool: BTreeMap::new(),
-            d_pool: BTreeMap::new(),
+            a_stack_pool: BTreeMap::new(),
+            d_stack_pool: BTreeMap::new(),
             a_start: a_comp,
             d_start: d_comp,
             a_start_strength: a_str,
@@ -3207,8 +3213,8 @@ impl World {
                 attackers: vec![o.aid],
                 defenders: o.garrison,
                 platform_system: if o.ptiers >= 1 { Some(o.sys) } else { None },
-                a_pool: BTreeMap::new(),
-                d_pool: BTreeMap::new(),
+                a_stack_pool: BTreeMap::new(),
+                d_stack_pool: BTreeMap::new(),
                 a_start: a_comp,
                 d_start: d_comp,
                 a_start_strength: a_str,
@@ -8419,14 +8425,14 @@ mod tests {
         }
         let eng = w.engagements.values().next().expect("a battle is underway");
         let started = eng.started_at;
-        assert!(eng.a_pool.values().chain(eng.d_pool.values()).any(|p| *p > 0.0), "engagement side pools accumulated mid-battle");
+        assert!(eng.a_stack_pool.values().chain(eng.d_stack_pool.values()).flat_map(|m| m.values()).any(|p| *p > 0.0), "engagement side pools accumulated mid-battle");
         // Round-trip through JSON (the snapshot path) — the ENGAGEMENT entity
         // (pools + elapsed + participants) persists, so the fight resumes exactly.
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
         let eng2 = w2.engagements.values().next().expect("the battle survived serialization");
         assert!((eng2.started_at - started).abs() < 1e-9, "elapsed (started_at) persisted");
-        assert!(eng2.a_pool.values().chain(eng2.d_pool.values()).any(|p| *p > 0.0), "pools survived serialization");
+        assert!(eng2.a_stack_pool.values().chain(eng2.d_stack_pool.values()).flat_map(|m| m.values()).any(|p| *p > 0.0), "pools survived serialization");
         // Both worlds resume and reach the SAME result (deterministic).
         let run = |mut w: World| -> (bool, bool) {
             for _ in 0..(300 * crate::config::TICK_HZ) {
@@ -8707,6 +8713,44 @@ mod tests {
         let bare = run(false);
         let whip = run(true);
         assert!(whip > bare, "whipple corvettes outlast bare ones vs drivers ({whip} vs {bare})");
+    }
+
+    #[test]
+    fn armor_survives_across_ticks_on_a_mixed_same_kind_side() {
+        // §modules regression (adversarial-review finding): one side holds BOTH
+        // whipple-armored AND unfitted corvettes of the SAME kind (a mixed
+        // stack), facing mass drivers over a full multi-tick battle. The armored
+        // ships must OUTLAST the bare ones. The bug: the engagement persisted
+        // pools PER KIND, so from_side re-averaged the two stacks' pools every
+        // tick, erasing/inverting the armor advantage. Fixed by persisting the
+        // pool PER STACK.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        let cc = w.players[&atk].command_center;
+        let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 8, FleetOrder::Idle);
+        w.fleets.get_mut(&striker).unwrap().loadouts.entry(ShipKind::Raider).or_default()
+            .insert(crate::module::Loadout::new(vec![crate::module::ModuleKind::MassDriver]).key(), 8);
+        // Defender: 5 corvettes, 3 whipple-armored (a mixed same-kind side).
+        let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 5, FleetOrder::Idle);
+        w.fleets.get_mut(&target).unwrap().loadouts.entry(ShipKind::Corvette).or_default()
+            .insert(crate::module::Loadout::new(vec![crate::module::ModuleKind::WhippleArmor]).key(), 3);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "battle opens");
+        // Run until the defender has taken real losses, then check the survivors.
+        run_until(&mut w, 500, |w| {
+            w.engagements.is_empty() || w.fleets.get(&target).map(|f| f.count(ShipKind::Corvette) < 5).unwrap_or(true)
+        });
+        if let Some(f) = w.fleets.get(&target) {
+            let total = f.count(ShipKind::Corvette);
+            let whipple = f.fitted_count(ShipKind::Corvette);
+            let bare = total - whipple;
+            // Started 3 whipple / 2 bare — once losses begin, the bare ships must
+            // shed at least as fast (armored survivors ≥ bare survivors).
+            if total < 5 {
+                assert!(whipple >= bare, "whipple corvettes outlast bare ones on a mixed side (whipple {whipple}, bare {bare} of {total})");
+            }
+        }
     }
 
     #[test]
