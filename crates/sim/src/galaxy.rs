@@ -583,8 +583,10 @@ impl StarSystem {
     /// system has, plus a chunk per Depot tier. New inflow is capped at this;
     /// what's already stored is never destroyed.
     pub fn storage_cap(&self) -> f64 {
+        // §bodies: depots STACK — every warehouse tier on every body raises
+        // the one pooled cap (tier_sum, not the best single depot).
         crate::build::STORAGE_BASE_CAP
-            + crate::build::STORAGE_PER_DEPOT_TIER * self.tier(crate::build::StructureKind::Depot) as f64
+            + crate::build::STORAGE_PER_DEPOT_TIER * self.tier_sum(crate::build::StructureKind::Depot) as f64
     }
 
     /// Total units currently stored (summed across commodities) — what the cap

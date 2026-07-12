@@ -33,7 +33,7 @@
 // ============================================================================
 
 import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
-import type { Commodity, Deposit, PlayerId, SystemInfo } from "./protocol";
+import type { Commodity, Deposit, PlayerId, SystemInfo, BodyView } from "./protocol";
 import { starAnchor, starTypeFor, starVisualRatio, type StarType } from "./stars";
 
 // ---- Public presentation data model (client-side, non-authoritative) --------
@@ -54,6 +54,8 @@ export interface VisualMoon {
   radius: number;
   angle: number;
   deposits: Deposit[];
+  /// §bodies: structures ON this moon (owner-only upstream; {} for rivals).
+  structures: Record<string, number>;
 }
 
 export interface VisualPlanet {
@@ -66,6 +68,8 @@ export interface VisualPlanet {
   moons: VisualMoon[];
   deposits: Deposit[];
   habitable: boolean;
+  /// §bodies: structures ON this body (owner-only upstream; {} for rivals).
+  structures: Record<string, number>;
 }
 
 export interface VisualSystem {
@@ -93,143 +97,29 @@ export interface SystemBodyDetail {
   icon: string | null;
 }
 
-// ---- Development → body VISUAL ANCHORS (§management-home) --------------------
-// Each SYSTEM-level development draws its structure marker at a natural body —
-// the same pattern as deposits getting a visual home. STILL PRESENTATION ONLY
-// (the hard boundary above holds): the building belongs to the SYSTEM, consumes
-// SYSTEM dev slots, and has no per-planet existence — the anchor merely decides
-// WHERE its decorative marker renders. Anchors are DETERMINISTIC (same body
-// every visit) because they derive from the deterministic visual system:
-//   extractor  → the body carrying the system's RICHEST deposit (tie → the
-//                first such body in inner→outer walk order)
-//   refinery   → the first volatiles body (the icy-moon motif) → else the first
-//                gas giant → else the outermost planet
-//   habitat    → the first habitable (provisions) world → else the first
-//                terrestrial/ocean world → else the innermost planet
-//   shipyard   → an orbital yard over the PRIMARY (innermost) planet
-//   depot      → an orbital warehouse, also at the primary planet
-//   sensor     → a relay dish at the OUTERMOST planet (the far vantage)
-//   defense    → a battle-station marker in close STAR orbit (bodyId null)
-//   (interdictor: no such development exists yet — add its row when it does)
+// ---- §bodies: THE LAW CHANGED — bodies are AUTHORITATIVE sim entities. ------
+// A structure is BUILT ON a body, a deposit BELONGS to a body, population
+// lives on bodies, and the panels manage each body directly. The old anchor
+// layer ("presentation only … the building belongs to the SYSTEM") is gone by
+// design decision: the wire roster (SystemStateView.bodies) carries the
+// truth, and this file derives only COSMETICS from it — orbit spacing, art
+// variants, colors, marker placement. Owner-only per-body data (structures,
+// population) is fogged SERVER-side: a rival's bodies arrive with empty maps,
+// so nothing rendered here can leak.
+
+/// The GLYPH families for structure markers (art only — placement comes from
+/// each body's actual structures).
 export type DevKey = "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
-/// §body-management: every structure anchors INDIVIDUALLY now (one marker per
-/// structure, several sharing a body is normal). Fixed order = deterministic
-/// stacking + a stable panel ordering.
-export type StructureKey =
-  | "mining_complex" | "volatile_harvester" | "bioharvester"
-  | "smelter" | "electronics_fabricator" | "chemical_works" | "fuel_refinery" | "agroplex"
-  | "machine_works" | "armaments_complex" | "shipyard"
-  | "habitat" | "depot" | "sensor_array" | "defense_platform" | "academy";
-export const STRUCTURE_KEYS: StructureKey[] = [
-  "mining_complex", "volatile_harvester", "bioharvester",
-  "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery", "agroplex",
-  "machine_works", "armaments_complex", "shipyard",
-  "habitat", "depot", "sensor_array", "defense_platform", "academy",
-];
-/// Wire build keys → the visual GLYPH family (marker art only — anchors are
-/// per-structure via `developmentAnchors`). Legacy slugs still parse.
-export function devKeyForBuildKey(key: string): DevKey | null {
-  switch (key) {
-    case "mining_complex": case "volatile_harvester": case "bioharvester": case "extractor": return "extractor";
-    case "fuel_refinery": case "refinery": case "smelter": case "chemical_works": case "agroplex":
-    case "electronics_fabricator": case "machine_works": case "armaments_complex": return "refinery";
+function glyphFamily(slug: string): DevKey {
+  switch (slug) {
+    case "mining_complex": case "volatile_harvester": case "bioharvester": return "extractor";
     case "depot": return "depot";
     case "shipyard": return "shipyard";
     case "sensor_array": return "sensor_array";
     case "defense_platform": return "defense_platform";
     case "habitat": case "academy": return "habitat";
-    default: return null;
+    default: return "refinery"; // the industry family (smelter, fabs, works, agroplex…)
   }
-}
-/// The owner's built tiers, passed from the SAME owner-only view fields the rail
-/// used (state.systems) — rivals' views carry 0s, so markers can never leak.
-export interface DevTiers {
-  /// §body-management: built tier per STRUCTURE slug — straight off the
-  /// owner-only `structures` view map (rivals get null upstream, fog holds).
-  structures: Record<string, number>;
-  habitat_fed: boolean;
-  /// §build-progress: build keys currently UNDER CONSTRUCTION here (owner-only,
-  /// straight from the view's queue). A structure key hangs a construction
-  /// glyph at that structure's OWN anchor; any SHIP key hangs it at the
-  /// shipyard anchor (Travian's hammer-on-the-plot). Decoration only.
-  inProgress: string[];
-}
-
-/// bodyId per development (null = anchors at the star). Walk order is the
-/// sorted (inner→outer) planet list, moons after their planet — fixed, so the
-/// choice is stable across visits.
-export function developmentAnchors(vis: VisualSystem): Record<StructureKey, string | null> {
-  interface Walk { id: string; kind: PlanetKind; habitable: boolean; deposits: Deposit[]; isMoon: boolean }
-  const walk: Walk[] = [];
-  for (const p of vis.planets) {
-    walk.push({ id: p.id, kind: p.kind, habitable: p.habitable, deposits: p.deposits, isMoon: false });
-    for (const mn of p.moons) walk.push({ id: mn.id, kind: "ice", habitable: false, deposits: mn.deposits, isMoon: true });
-  }
-  const first = (pred: (b: Walk) => boolean): string | null => walk.find(pred)?.id ?? null;
-  const primary = vis.planets[0]?.id ?? null; // planets are sorted inner→outer
-  const outermost = vis.planets[vis.planets.length - 1]?.id ?? null;
-
-  // Mining: the body carrying the richest MINERAL deposit (the mine sits on
-  // the ore), tie → first in walk order.
-  const MINERALS = new Set<Commodity>(["metallic_ore", "rare_elements", "silicates"]);
-  let mineBody: string | null = null;
-  let mineVal = -1;
-  for (const b of walk) {
-    for (const d of b.deposits) {
-      if (MINERALS.has(d.resource) && d.richness > mineVal) { mineVal = d.richness; mineBody = b.id; }
-    }
-  }
-  // Volatiles family: first volatiles body (the icy-moon motif) → first gas
-  // giant → outermost.
-  const volatilesBody =
-    first((b) => b.deposits.some((d) => d.resource === "volatiles"))
-    ?? first((b) => b.kind === "gas_giant") ?? outermost;
-  // Life family: first habitable world → first terrestrial/ocean → innermost.
-  const habitableBody =
-    first((b) => b.habitable)
-    ?? first((b) => !b.isMoon && (b.kind === "terrestrial" || b.kind === "ocean")) ?? primary;
-  // Heavy industry: the INDUSTRIAL WORLD — first non-habitable rocky planet
-  // (not a moon, not a giant, not ice) → else primary.
-  const industrialBody =
-    first((b) => !b.isMoon && !b.habitable && b.kind !== "gas_giant" && b.kind !== "ice")
-    ?? primary;
-
-  const anchors: Record<StructureKey, string | null> = {
-    mining_complex: mineBody ?? primary,
-    volatile_harvester: volatilesBody,
-    bioharvester: habitableBody,
-    agroplex: habitableBody,
-    academy: habitableBody,
-    habitat: habitableBody,
-    smelter: industrialBody,
-    electronics_fabricator: industrialBody,
-    machine_works: industrialBody,
-    armaments_complex: industrialBody,
-    fuel_refinery: volatilesBody,
-    chemical_works: volatilesBody,
-    shipyard: primary, // the orbital yard over the primary planet
-    depot: primary, // the orbital warehouse, same station
-    sensor_array: outermost, // the far vantage
-    defense_platform: null, // the star — guarding the system core
-  };
-  // §body-management edge cover (dev builds only): the fallback chains
-  // guarantee every structure lands on SOME body whenever the system has
-  // planets at all — a null here (defense aside) would orphan its marker,
-  // chips, and build rows.
-  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV && vis.planets.length > 0) {
-    for (const k of STRUCTURE_KEYS) {
-      console.assert(k === "defense_platform" || anchors[k] !== null, `anchor fallback failed for ${k}`, vis.systemId);
-    }
-  }
-  return anchors;
-}
-
-/// Which STRUCTURES anchor at a given body — the caller's contextual build
-/// sugar ("a Smelter would anchor here"). Same system-level build either way;
-/// this only picks a friendlier entry point. Order = STRUCTURE_KEYS (stable).
-export function anchorsAtBody(vis: VisualSystem, bodyId: string): StructureKey[] {
-  const a = developmentAnchors(vis);
-  return STRUCTURE_KEYS.filter((k) => a[k] === bodyId);
 }
 
 // ---- Per-kind presentation (color + flavor). Descriptions are flavor only. ---
@@ -272,35 +162,11 @@ const STAR_TINT: Record<string, number> = {
   black_hole: 0x40507a, magnetar: 0xc9a0ff,
 };
 
-// Deposit → the kinds of world it visually belongs on (VISUAL ASSOCIATION only —
-// the deposit remains a SYSTEM-level entity). Mirrors the spec's mapping:
-//   ore → rocky/barren · alloys → industrial (barren/desert) · fuel → gas giant
-//   provisions → habitable (ocean/terrestrial) · volatiles → icy body.
-// §economy: only RAWS occur as deposits post-migration; processed/advanced
-// entries are graceful fallbacks for any legacy deposit still in flight.
-const DEP_KINDS: Record<Commodity, PlanetKind[]> = {
-  metallic_ore: ["barren", "desert", "terrestrial"],
-  rare_elements: ["lava", "barren"],
-  silicates: ["desert", "barren"],
-  volatiles: ["ice"],
-  biomass: ["ocean", "terrestrial"],
-  alloys: ["barren", "desert"],
-  electronics: ["barren"],
-  polymers: ["barren"],
-  fuel: ["gas_giant"],
-  provisions: ["ocean", "terrestrial"],
-  machinery: ["barren"],
-  armaments: ["barren"],
-};
-const FILLER_KINDS: PlanetKind[] = ["terrestrial", "desert", "barren", "lava", "ice", "gas_giant", "ocean"];
-
 const COMMODITY_COLOR: Record<Commodity, number> = {
   metallic_ore: 0xb0894f, rare_elements: 0xffd76b, silicates: 0xd8c9a3, volatiles: 0x6bd0ff, biomass: 0x7fdc8a,
   alloys: 0xc99bff, electronics: 0x6be2d8, polymers: 0xe89ad1, fuel: 0xff9d5c, provisions: 0x9fe08a,
   machinery: 0x9fb0c8, armaments: 0xff7a6b,
 };
-
-const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
 
 // ---- Deterministic RNG (public geography — same for every player) ------------
 
@@ -321,7 +187,6 @@ function mulberry32(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const pick = <T>(rng: () => number, arr: T[]): T => arr[Math.floor(rng() * arr.length) % arr.length];
 
 function radiusForKind(kind: PlanetKind, rng: () => number): number {
   if (kind === "gas_giant") return 0.052 + rng() * 0.024; // giants read clearly larger
@@ -335,72 +200,74 @@ function radiusForKind(kind: PlanetKind, rng: () => number): number {
 // surveyed-or-owner, EMPTY when unsurveyed, in which case the schematic degrades
 // to filler bodies with no resource pips). Produces the schematic SHAPE only.
 // Ownership/dynamic state is added later by the scene — never here.
-export function buildVisualSystem(sys: SystemInfo, sysDeposits: Deposit[]): VisualSystem {
-  const rng = mulberry32(hashId(sys.id) ^ 0x5eed1a7); // salt: distinct from star assignment
+export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSystem {
+  // §bodies: the ROSTER comes from the wire (the sim owns it — kinds, names,
+  // habitability, deposit placement, moon structure). Only COSMETICS are
+  // derived here, per body, from a stable per-body seed: orbit spacing +
+  // jitter, angles, disc radii, and the visual sub-kind for rocky worlds.
   const st = starTypeFor(sys.id);
-
   const planets: VisualPlanet[] = [];
-  const mkPlanet = (kind: PlanetKind, habitable: boolean, deposits: Deposit[]): VisualPlanet => {
-    const p: VisualPlanet = { id: `${sys.id}:p${planets.length}`, name: "", kind, orbitRadius: 0, radius: 0, angle: 0, moons: [], deposits, habitable };
-    planets.push(p);
-    return p;
-  };
-
-  // 1. Give each KNOWN deposit a visual home body (association, not a new entity).
-  //    Volatiles prefer an icy MOON of a gas giant (the "icy moon" motif) when the
-  //    system also has a fuel/gas-giant body; otherwise an ice world.
-  let gasGiant: VisualPlanet | null = null;
-  const volatiles: Deposit[] = [];
-  for (const d of sysDeposits) {
-    if (d.resource === "volatiles") { volatiles.push(d); continue; }
-    const kind = pick(rng, DEP_KINDS[d.resource]);
-    const p = mkPlanet(kind, d.resource === "biomass" || d.resource === "provisions", [d]);
-    if (kind === "gas_giant") gasGiant = p;
-  }
-  for (const d of volatiles) {
-    if (gasGiant) {
-      gasGiant.moons.push({ id: `${gasGiant.id}:m${gasGiant.moons.length}`, name: "", orbitRadius: 0.03 + rng() * 0.02, radius: 0.008 + rng() * 0.004, angle: rng() * Math.PI * 2, deposits: [d] });
-    } else {
-      mkPlanet("ice", false, [d]);
-    }
-  }
-
-  // 2. Fill out to 3–8 decorative planets (no deposits — purely for a sense of place).
-  const target = Math.max(3, Math.min(8, sysDeposits.length + 1 + Math.floor(rng() * 3)));
-  while (planets.length < target) mkPlanet(pick(rng, FILLER_KINDS), false, []);
-
-  // 3. Deterministic shuffle, then lay planets on spaced orbits with slight jitter.
-  for (let i = planets.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [planets[i], planets[j]] = [planets[j], planets[i]];
-  }
-  const n = planets.length;
-  planets.forEach((p, i) => {
+  const byId = new Map<number, VisualPlanet>();
+  const topLevel = bodies.filter((b) => b.parent === null);
+  const n = Math.max(1, topLevel.length);
+  topLevel.forEach((b, i) => {
+    const rng = mulberry32(hashId(`${sys.id}:${b.id}`) ^ 0xc0511c);
+    const kind = visualKindFor(b, rng);
     const base = 0.2 + 0.75 * (n === 1 ? 0.5 : i / (n - 1));
-    p.orbitRadius = Math.min(0.96, base + (rng() - 0.5) * 0.03);
-    p.angle = rng() * Math.PI * 2;
-    p.radius = radiusForKind(p.kind, rng);
-    // Decorative moons (no deposits) — gas giants tend to have a couple.
-    const moonCount = p.kind === "gas_giant" ? 1 + Math.floor(rng() * 2) : rng() < 0.22 ? 1 : 0;
-    for (let m = 0; m < moonCount; m++) {
-      p.moons.push({ id: `${p.id}:m${p.moons.length}`, name: "", orbitRadius: 0.028 + rng() * 0.02 + m * 0.014, radius: 0.006 + rng() * 0.004, angle: rng() * Math.PI * 2, deposits: [] });
-    }
-    // Name: system name + roman numeral (sorted by orbit for a natural inner→outer read).
+    const p: VisualPlanet = {
+      id: String(b.id),
+      name: b.name,
+      kind,
+      orbitRadius: Math.min(0.96, base + (rng() - 0.5) * 0.03),
+      radius: radiusForKind(kind, rng),
+      angle: rng() * Math.PI * 2,
+      moons: [],
+      deposits: b.deposits ?? [],
+      habitable: b.habitable,
+      structures: b.structures,
+    };
+    planets.push(p);
+    byId.set(b.id, p);
   });
-  planets.sort((a, b) => a.orbitRadius - b.orbitRadius);
-  planets.forEach((p, i) => {
-    p.name = `${sys.name} ${ROMAN[i] ?? i + 1}`;
-    p.moons.forEach((mn, k) => (mn.name = `${p.name}${String.fromCharCode(97 + k)}`));
-  });
-
-  // 4. Asteroid belts — decorative rings placed in a gap (deposits stay on bodies).
-  const belts: { radius: number; width: number }[] = [];
-  const beltCount = rng() < 0.55 ? 1 : rng() < 0.2 ? 2 : 0;
-  for (let b = 0; b < beltCount; b++) {
-    belts.push({ radius: 0.3 + rng() * 0.55, width: 0.02 + rng() * 0.03 });
+  for (const b of bodies) {
+    if (b.parent === null) continue;
+    const parent = byId.get(b.parent);
+    if (!parent) continue;
+    const rng = mulberry32(hashId(`${sys.id}:${b.id}`) ^ 0xc0511c);
+    parent.moons.push({
+      id: String(b.id),
+      name: b.name,
+      orbitRadius: 0.028 + rng() * 0.02 + parent.moons.length * 0.014,
+      radius: 0.006 + rng() * 0.004,
+      angle: rng() * Math.PI * 2,
+      deposits: b.deposits ?? [],
+      structures: b.structures,
+    });
   }
 
+  // Asteroid belts stay a pure system-seeded decoration.
+  const brng = mulberry32(hashId(sys.id) ^ 0x5eed1a7);
+  const belts: { radius: number; width: number }[] = [];
+  const beltCount = brng() < 0.55 ? 1 : brng() < 0.2 ? 2 : 0;
+  for (let b = 0; b < beltCount; b++) {
+    belts.push({ radius: 0.3 + brng() * 0.55, width: 0.02 + brng() * 0.03 });
+  }
   return { systemId: sys.id, starType: st.slug, planets, asteroidBelts: belts };
+}
+
+/// The wire's collapsed kind → a stable VISUAL sub-kind (rocky worlds pick a
+/// barren/desert/lava look from their per-body seed; the rest map 1:1).
+function visualKindFor(b: BodyView, rng: () => number): PlanetKind {
+  switch (b.kind) {
+    case "terrestrial": return "terrestrial";
+    case "ocean": return "ocean";
+    case "ice": return "ice";
+    case "gas_giant": return "gas_giant";
+    default: {
+      const rocky: PlanetKind[] = ["barren", "desert", "lava"];
+      return rocky[Math.floor(rng() * rocky.length) % rocky.length];
+    }
+  }
 }
 
 // ---- The scene ---------------------------------------------------------------
@@ -476,8 +343,12 @@ export class SystemViewScene {
   // labels; rebuilt on layout and when the tiers change (build completion), never
   // per frame. These are markers, NOT entities — the hard boundary above holds.
   private markers = new Container();
-  private devTiers: DevTiers | null = null;
-  private devSig = ""; // last-rendered tier signature — skip rebuilds when unchanged
+  /// §bodies: the live per-body dynamic state — the wire bodies (owner data
+  /// server-fogged) + the build queue (key + body). Drives the markers.
+  private dynBodies: BodyView[] = [];
+  private dynBuilds: { key: string; body_id: number }[] = [];
+  private dynFed = true;
+  private devSig = ""; // last-rendered signature — skip rebuilds when unchanged
 
   // Planet/moon/chunk textures (lazy, same idiom as render.ts loadArt — the
   // KIND_META tint circle stays as the fallback until each resolves).
@@ -566,13 +437,30 @@ export class SystemViewScene {
   /// system always gets null and renders as pure scenery (fog holds). Cached:
   /// markers rebuild only when the signature changes (i.e. a build completed or
   /// the system/owner changed) or on layout.
-  setDevelopments(tiers: DevTiers | null): void {
-    const sig = tiers
-      ? `${this.vis?.systemId ?? ""}|${STRUCTURE_KEYS.map((k) => tiers.structures[k] ?? 0).join(",")},${tiers.habitat_fed}|${tiers.inProgress.join(",")}`
-      : "";
+  /// §bodies: feed the CURRENT wire bodies + queue. Structures/population on
+  /// rival bodies arrive empty (server fog), so markers can never leak. The
+  /// visual bodies' structure maps refresh too (a completed build appears).
+  setDynamic(bodies: BodyView[], builds: { key: string; body_id: number }[], fed: boolean): void {
+    const sig = `${this.vis?.systemId ?? ""}|` +
+      bodies.map((b) => `${b.id}:${Object.entries(b.structures).map(([k, t]) => `${k}${t}`).join("+")}`).join(",") +
+      `|${builds.map((j) => `${j.key}@${j.body_id}`).join(",")}|${fed}`;
     if (sig === this.devSig) return; // same picture — keep the cached markers
-    this.devTiers = tiers;
+    this.dynBodies = bodies;
+    this.dynBuilds = builds;
+    this.dynFed = fed;
     this.devSig = sig;
+    // Refresh the visual bodies' wire-backed fields in place.
+    if (this.vis) {
+      const byId = new Map(bodies.map((b) => [String(b.id), b]));
+      for (const p of this.vis.planets) {
+        const w = byId.get(p.id);
+        if (w) { p.structures = w.structures; p.deposits = w.deposits ?? []; }
+        for (const mn of p.moons) {
+          const wm = byId.get(mn.id);
+          if (wm) { mn.structures = wm.structures; mn.deposits = wm.deposits ?? []; }
+        }
+      }
+    }
     this.rebuildMarkers();
   }
 
@@ -801,90 +689,41 @@ export class SystemViewScene {
   private rebuildMarkers(): void {
     this.markers.removeChildren().forEach((c) => c.destroy());
     this.bodies = this.bodies.filter((b) => !b.isMarker);
-    if (!this.vis || !this.devTiers || !this.viewW) return;
-    const anchors = developmentAnchors(this.vis);
-    const cx = this.viewW / 2;
-    const cy = this.viewH / 2;
-    // Fixed draw order (STRUCTURE_KEYS) → stable stacking when anchors coincide.
-    // §body-management: one marker PER STRUCTURE — several on one body stack
-    // along the same arc; the glyph art reuses the visual families.
-    const perBody = new Map<string, number>(); // stack index per anchor body
+    if (!this.vis || !this.viewW) return;
+    const perBody = new Map<string, number>(); // stack index per body
     const tagStyle = () => new TextStyle({ fill: 0x9fb0c8, fontFamily: "ui-monospace, monospace", fontSize: 9 });
-    for (const key of STRUCTURE_KEYS) {
-      const tier = this.devTiers.structures[key] ?? 0;
-      if (!tier) continue;
-      const bodyId = anchors[key];
-      let mx: number;
-      let my: number;
-      let anchorDetail: SystemBodyDetail | null = null;
-      if (bodyId) {
-        const bs = this.bodyScreen.get(bodyId);
-        if (!bs) continue;
-        const slot = perBody.get(bodyId) ?? 0;
-        perBody.set(bodyId, slot + 1);
-        // Arc the markers around the body's upper rim, one slot per development.
-        const ang = -Math.PI * 0.42 + slot * 0.7;
-        mx = bs.sx + Math.cos(ang) * (bs.r + 11);
-        my = bs.sy + Math.sin(ang) * (bs.r + 11);
-        anchorDetail = bs.detail;
-      } else {
-        // Star anchor (defense platform): a station in close orbit.
-        const slot = perBody.get("star") ?? 0;
-        perBody.set("star", slot + 1);
-        const ang = -Math.PI / 5 + slot * 0.6;
-        const rr = 0.135 * this.sceneScale;
-        mx = cx + Math.cos(ang) * rr;
-        my = cy + Math.sin(ang) * rr;
-      }
-      const g = new Graphics();
-      this.drawDevGlyph(g, devKeyForBuildKey(key) ?? "extractor", this.devTiers);
-      g.position.set(mx, my);
-      this.markers.addChild(g);
-      const tag = new Text({ text: `×${tier}`, style: tagStyle() });
-      tag.anchor.set(0, 0.5);
-      tag.position.set(mx + 7, my);
-      this.markers.addChild(tag);
-      if (anchorDetail) {
-        // A marker click selects its anchor body (r ≈ glyph + tag extent).
-        this.bodies.push({ sx: mx, sy: my, r: 11, detail: anchorDetail, isMarker: true });
+    // §bodies: one marker per STRUCTURE per BODY, straight off the wire maps
+    // (rival bodies arrive empty — the server fogs, we just draw).
+    const place = (bodyId: string): { mx: number; my: number; detail: SystemBodyDetail | null } | null => {
+      const bs = this.bodyScreen.get(bodyId);
+      if (!bs) return null;
+      const slot = perBody.get(bodyId) ?? 0;
+      perBody.set(bodyId, slot + 1);
+      const ang = -Math.PI * 0.42 + slot * 0.7;
+      return { mx: bs.sx + Math.cos(ang) * (bs.r + 11), my: bs.sy + Math.sin(ang) * (bs.r + 11), detail: bs.detail };
+    };
+    for (const b of this.dynBodies) {
+      for (const [slug, tier] of Object.entries(b.structures)) {
+        if (!tier) continue;
+        const at = place(String(b.id));
+        if (!at) continue;
+        const g = new Graphics();
+        this.drawDevGlyph(g, glyphFamily(slug), this.dynFed);
+        g.position.set(at.mx, at.my);
+        this.markers.addChild(g);
+        const tag = new Text({ text: `×${tier}`, style: tagStyle() });
+        tag.anchor.set(0, 0.5);
+        tag.position.set(at.mx + 7, at.my);
+        this.markers.addChild(tag);
+        if (at.detail) {
+          this.bodies.push({ sx: at.mx, sy: at.my, r: 11, detail: at.detail, isMarker: true });
+        }
       }
     }
-
-    // §build-progress: CONSTRUCTION glyphs — Travian's hammer-on-the-plot. One
-    // scaffold at each anchor with work underway: a development key at its own
-    // anchor, any ship build at the shipyard anchor. Same stacking arc as the
-    // built markers (they continue the perBody slots, so nothing overlaps);
-    // cleared automatically when the job leaves the queue (tier-signature
-    // change → rebuild). Decoration on the cached scene — never per frame.
-    const SHIP_BUILD_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
-    const sites = new Set<StructureKey>();
-    for (const k of this.devTiers.inProgress) {
-      if (SHIP_BUILD_KEYS.has(k)) sites.add("shipyard");
-      else if ((STRUCTURE_KEYS as string[]).includes(k)) sites.add(k as StructureKey);
-      // (anything else — e.g. an Academy training course — glyphs nowhere)
-    }
-    for (const key of sites) {
-      const bodyId = anchors[key];
-      let mx: number;
-      let my: number;
-      if (bodyId) {
-        const bs = this.bodyScreen.get(bodyId);
-        if (!bs) continue;
-        const slot = perBody.get(bodyId) ?? 0;
-        perBody.set(bodyId, slot + 1);
-        const ang = -Math.PI * 0.42 + slot * 0.7;
-        mx = bs.sx + Math.cos(ang) * (bs.r + 11);
-        my = bs.sy + Math.sin(ang) * (bs.r + 11);
-      } else {
-        const slot = perBody.get("star") ?? 0;
-        perBody.set("star", slot + 1);
-        const ang = -Math.PI / 5 + slot * 0.6;
-        const rr = 0.135 * this.sceneScale;
-        mx = this.viewW / 2 + Math.cos(ang) * rr;
-        my = this.viewH / 2 + Math.sin(ang) * rr;
-      }
-      // The scaffold: an amber dashed frame + crane jib — reads "under
-      // construction" at a glance, distinct from every finished glyph.
+    // §build-progress: CONSTRUCTION scaffolds at each job's OWN body.
+    for (const j of this.dynBuilds) {
+      const at = place(String(j.body_id));
+      if (!at) continue;
       const g = new Graphics();
       const c = 0xffc46b;
       for (const [x1, y1, x2, y2] of [[-4, -4, -1, -4], [1, -4, 4, -4], [4, -4, 4, -1], [4, 1, 4, 4], [4, 4, 1, 4], [-1, 4, -4, 4], [-4, 4, -4, 1], [-4, -1, -4, -4]] as [number, number, number, number][]) {
@@ -892,7 +731,7 @@ export class SystemViewScene {
       }
       g.moveTo(-2, 3).lineTo(2, -3).stroke({ width: 1.3, color: c, alpha: 0.95 }); // the jib
       g.circle(2, -3, 1).fill({ color: c, alpha: 0.95 }); // the hook
-      g.position.set(mx, my);
+      g.position.set(at.mx, at.my);
       this.markers.addChild(g);
     }
   }
@@ -900,7 +739,7 @@ export class SystemViewScene {
   /// The per-development glyph — small distinct silhouettes in the schematic
   /// style (bundled SVG icons stay in the DOM panels where they render crisply;
   /// at ~7px these hand shapes read better than rasterized icons).
-  private drawDevGlyph(g: Graphics, key: DevKey, tiers: DevTiers): void {
+  private drawDevGlyph(g: Graphics, key: DevKey, fed: boolean): void {
     switch (key) {
       case "extractor": // amber mining rig: derrick triangle + drill line
         g.poly([-4, 2, 0, -5, 4, 2]).stroke({ width: 1.4, color: 0xd8a54a, alpha: 0.95 });
@@ -912,7 +751,7 @@ export class SystemViewScene {
         g.circle(2.5, -5.5, 1.1).fill({ color: 0xffc46b, alpha: 0.9 }); // the flare
         break;
       case "habitat": { // green dome on a base line (+ warn tint when unfed)
-        const col = tiers.habitat_fed ? 0x7fdc8a : 0xffc46b;
+        const col = fed ? 0x7fdc8a : 0xffc46b;
         g.arc(0, 2, 5, Math.PI, 0).stroke({ width: 1.4, color: col, alpha: 0.95 });
         g.moveTo(-5.5, 2).lineTo(5.5, 2).stroke({ width: 1.2, color: col, alpha: 0.8 });
         g.circle(0, -0.5, 1).fill({ color: col, alpha: 0.9 });

@@ -621,6 +621,7 @@ pub fn filter_systems(
                     .map(|j| BuildStateView {
                         key: build_key(j.what).to_string(),
                         complete_time: now + (j.complete_tick.saturating_sub(tick)) as f64 * dt,
+                        body_id: j.body_id,
                     })
                     .collect()
             } else {
@@ -676,9 +677,34 @@ pub fn filter_systems(
                 population: if own { sys.population() } else { 0.0 },
                 // §economy Part 4: your talent is private intel.
                 specialists: if own { sys.specialists.clone() } else { Default::default() },
+                // §bodies: the roster is PUBLIC geography (a star's worlds are
+                // visible from afar); deposits ride the survey ladder; the
+                // per-body owner block is owner-only — fog one level down.
+                bodies: sys
+                    .bodies
+                    .iter()
+                    .map(|b| crate::protocol::BodyView {
+                        id: b.id,
+                        name: b.name.clone(),
+                        kind: b.kind.slug().to_string(),
+                        parent: b.parent,
+                        habitable: b.habitable,
+                        deposits: (own || surveyed.contains(&sys.id)).then(|| {
+                            b.deposits
+                                .iter()
+                                .map(|d| DepositView { resource: d.resource, richness: d.richness, reserves: d.reserves })
+                                .collect()
+                        }),
+                        structures: if own {
+                            b.structures.iter().map(|(k, t)| (k.slug().to_string(), *t)).collect()
+                        } else {
+                            Default::default()
+                        },
+                        population: if own { b.population } else { 0.0 },
+                    })
+                    .collect(),
                 structures: if own {
-                    // §bodies: the wire keeps the summed map this commit; the
-                    // per-body roster ships in the bodies-4/5 view pass.
+                    // The summed map stays for the summary readouts.
                     let mut sums: std::collections::BTreeMap<String, u32> = Default::default();
                     for b in &sys.bodies {
                         for (k, t) in &b.structures {
@@ -811,6 +837,7 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
                 }
             }
             crate::protocol::AssignmentView {
+                body_id: body.id,
                 structure: kind.slug().to_string(),
                 title: kind.title().to_string(),
                 tier,
@@ -1234,6 +1261,18 @@ mod tests {
         assert!(!v10[0].structures.is_empty() && v10[0].workforce.is_some(), "owner sees their structures + workforce");
         assert!(v10[1].structures.is_empty() && v10[1].workforce.is_none() && v10[1].assignments.is_empty() && v10[1].specialists.is_empty(),
             "a rival's structures/workforce/assignments/specialists never leak");
+        // §bodies: the fog law ONE LEVEL DOWN — the rival's ROSTER is public
+        // geography (worlds are visible from afar), but every per-body owner
+        // field is scrubbed: no structures, no population, and (unsurveyed)
+        // no deposits. The owner's own bodies carry all of it.
+        assert!(!v10[1].bodies.is_empty(), "the rival's roster itself is public geography");
+        for b in &v10[1].bodies {
+            assert!(b.structures.is_empty(), "a rival body's structures never leak");
+            assert_eq!(b.population, 0.0, "a rival body's population never leaks");
+            assert!(b.deposits.is_none(), "unsurveyed per-body geology never leaks");
+        }
+        assert!(v10[0].bodies.iter().any(|b| !b.structures.is_empty()), "the owner sees their own bodies' structures");
+        assert!(v10[0].bodies.iter().all(|b| b.deposits.is_some()), "the owner knows their own geology, per body");
         // Refinery tier (§buildings step 3b) — owner-only on the same rule.
         assert_eq!(v10[0].refinery_tier, systems[0].tier(sim::StructureKind::FuelRefinery), "owner sees their refinery tier");
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");

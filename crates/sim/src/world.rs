@@ -1785,7 +1785,7 @@ impl World {
     fn covering_platform(&self, owner: PlayerId, pos: Vec2) -> Option<EntityId> {
         self.systems
             .iter()
-            .filter(|s| s.owner == Some(owner) && s.tier(crate::build::StructureKind::DefensePlatform) >= 1 && s.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS)
+            .filter(|s| s.owner == Some(owner) && s.tier_sum(crate::build::StructureKind::DefensePlatform) >= 1 && s.pos.distance(pos) <= crate::build::DEFENSE_PLATFORM_RADIUS)
             .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)))
             .map(|s| s.id)
     }
@@ -2037,7 +2037,7 @@ impl World {
             let d_comp = self.side_comp(&defenders);
             let (ptiers, _ppool) = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
-                .map(|s| (s.tier(crate::build::StructureKind::DefensePlatform), s.defense_pool))
+                .map(|s| (s.tier_sum(crate::build::StructureKind::DefensePlatform), s.defense_pool))
                 .unwrap_or((0, 0.0));
             let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
             let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(ptiers, 0.0).strength();
@@ -2203,7 +2203,7 @@ impl World {
             let d_comp = self.side_comp(&defenders);
             let (ptiers, ppool) = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
-                .map(|s| (s.tier(crate::build::StructureKind::DefensePlatform), s.defense_pool))
+                .map(|s| (s.tier_sum(crate::build::StructureKind::DefensePlatform), s.defense_pool))
                 .unwrap_or((0, 0.0));
             // A side with nothing left → the battle has ended (flush handles it).
             if a_comp.is_empty() || (d_comp.is_empty() && ptiers == 0) {
@@ -2283,7 +2283,7 @@ impl World {
             let d_now = self.side_comp(&self.engagements[eid].defenders);
             let d_ptiers = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
-                .map(|s| s.tier(crate::build::StructureKind::DefensePlatform))
+                .map(|s| s.tier_sum(crate::build::StructureKind::DefensePlatform))
                 .unwrap_or(0);
             let a_alive = !a_now.is_empty();
             let d_alive = !d_now.is_empty() || d_ptiers > 0;
@@ -2322,7 +2322,7 @@ impl World {
         let Some(e) = self.engagements.remove(&eid) else { return };
         let a_now = self.side_comp(&e.attackers);
         let d_now = self.side_comp(&e.defenders);
-        let d_ptiers = e.platform_system.and_then(|sid| self.systems.iter().find(|s| s.id == sid)).map(|s| s.tier(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
+        let d_ptiers = e.platform_system.and_then(|sid| self.systems.iter().find(|s| s.id == sid)).map(|s| s.tier_sum(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
         // A side is ALIVE if it still has ships, a live platform, OR a fleet that
         // FLED (withdrew/avoid-disengaged) and survives — an emptied side is a
         // withdrawal, not a wipe.
@@ -2494,7 +2494,7 @@ impl World {
         let platforms: Vec<(Vec2, f64)> = self
             .systems
             .iter()
-            .filter(|s| s.owner.is_some() && s.tier(crate::build::StructureKind::DefensePlatform) >= 1)
+            .filter(|s| s.owner.is_some() && s.tier_sum(crate::build::StructureKind::DefensePlatform) >= 1)
             .map(|s| (s.pos, crate::build::DEFENSE_PLATFORM_RADIUS))
             .collect();
         let covered = |p: Vec2| platforms.iter().any(|(c, r)| p.distance(*c) <= *r);
@@ -2517,7 +2517,7 @@ impl World {
         for sid in ids {
             let Some(&base_pos) = epos.get(&sid) else { continue };
             let (tier, active) = { let e = &self.enclaves[&sid]; (e.tier, e.active(now)) };
-            let base_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.tier(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
+            let base_tiers = self.systems.iter().find(|s| s.id == sid).map(|s| s.tier_sum(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
 
             // --- SUPPRESSION: the base defense hit 0 (assault won). ---
             if active && base_tiers == 0 {
@@ -3003,7 +3003,7 @@ impl World {
                 continue;
             }
             let sys = self.systems.iter().find(|s| s.id == *sys_id).unwrap();
-            let (d_owner, pos, ptiers) = (sys.owner.unwrap(), sys.pos, sys.tier(crate::build::StructureKind::DefensePlatform));
+            let (d_owner, pos, ptiers) = (sys.owner.unwrap(), sys.pos, sys.tier_sum(crate::build::StructureKind::DefensePlatform));
             let aid = *blockaders.iter().min().unwrap();
             let garrison: Vec<EntityId> = self
                 .fleets
@@ -3093,7 +3093,7 @@ impl World {
         for sys in &mut self.systems {
             let is_blocked = blocked.contains(&sys.id);
             // Siege can PROGRESS only with defenses suppressed AND the prereqs met.
-            let siege_ok = is_blocked && sys.tier(crate::build::StructureKind::DefensePlatform) == 0 && *siege_prereq.get(&sys.id).unwrap_or(&false);
+            let siege_ok = is_blocked && sys.tier_sum(crate::build::StructureKind::DefensePlatform) == 0 && *siege_prereq.get(&sys.id).unwrap_or(&false);
             match (sys.blockade.is_some(), is_blocked) {
                 (false, true) => {
                     let by = blocked_by[&sys.id];
@@ -3919,12 +3919,12 @@ impl World {
                     // (like fortifications). Its `defense_tier` is the base defense.
                     None => {
                         if let Some(e) = self.enclaves.get(&sys.id) {
-                            captures.push((ship.owner, sys.id, sys.tier(crate::build::StructureKind::DefensePlatform), 0, e.tier, ship.pos));
+                            captures.push((ship.owner, sys.id, sys.tier_sum(crate::build::StructureKind::DefensePlatform), 0, e.tier, ship.pos));
                         }
                     }
                     // A RIVAL's fortifications (never your own or a syndicate ally's).
                     Some(o) if o != ship.owner && !self.are_allied(ship.owner, o) => {
-                        captures.push((ship.owner, sys.id, sys.tier(crate::build::StructureKind::DefensePlatform), sys.tier(crate::build::StructureKind::Shipyard), 0, ship.pos));
+                        captures.push((ship.owner, sys.id, sys.tier_sum(crate::build::StructureKind::DefensePlatform), sys.tier(crate::build::StructureKind::Shipyard), 0, ship.pos));
                     }
                     _ => {}
                 }
@@ -8132,7 +8132,7 @@ mod tests {
                     saw_platform = true;
                 }
             }
-            let tier = w.systems.iter().find(|s| s.id == sid).map(|s| s.tier(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
+            let tier = w.systems.iter().find(|s| s.id == sid).map(|s| s.tier_sum(crate::build::StructureKind::DefensePlatform)).unwrap_or(0);
             if tier < 2 || !w.fleets.contains_key(&raider) {
                 break;
             }
@@ -10825,7 +10825,7 @@ mod tests {
         for _ in 0..(200 * crate::config::TICK_HZ) {
             w.step(&[]);
             let s = w.systems.iter().find(|s| s.id == sys).unwrap();
-            if s.tier(crate::build::StructureKind::DefensePlatform) == 0 && s.blockade.is_some() && w.fleets.contains_key(&blk) {
+            if s.tier_sum(crate::build::StructureKind::DefensePlatform) == 0 && s.blockade.is_some() && w.fleets.contains_key(&blk) {
                 blockaded = true;
                 break;
             }
@@ -10912,7 +10912,7 @@ mod tests {
         for _ in 0..(300 * crate::config::TICK_HZ) {
             w.step(&[]);
             let s = w.systems.iter().find(|s| s.id == sys).unwrap();
-            if s.blockade.is_some() && s.tier(crate::build::StructureKind::DefensePlatform) == 0 { break; }
+            if s.blockade.is_some() && s.tier_sum(crate::build::StructureKind::DefensePlatform) == 0 { break; }
         }
         // Backdate the (already-running, undefended) siege clock past the duration.
         let dur = w.siege_duration_secs();

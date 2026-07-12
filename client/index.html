@@ -263,7 +263,7 @@
              kit as the rail; mutually exclusive with it (view vs galaxy). ---- */
       #sysview-manage {
         position: fixed; top: 58px; right: 14px; bottom: 14px;
-        width: 320px;
+        width: min(760px, 94vw);
         display: none; flex-direction: column;
         background: var(--panel-bg);
         border: 1px solid var(--border);
@@ -452,6 +452,10 @@
       .storage-row .storage-warn { font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 6px; line-height: 1.4; }
       /* Developments-at-a-glance strip (Extractor ×N · Depot ×N · Shipyard ×N). */
       .devs-row { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; margin: 0 0 10px; font-size: 11px; }
+      /* §bodies: roster chips flow INLINE inside their body's row — undo the
+         full-width .act default (an ID rule, hence the ID prefixes here) so the
+         wide panel reads as a table, not a stack. */
+      #svm-body .devs-row .act, #planet-panel .devs-row .act { width: auto; margin-top: 0; padding: 3px 7px; font-size: 11px; }
       .devs-row .dev { color: var(--ink); display: inline-flex; align-items: center; gap: 3px; }
       .devs-row .dev--none { color: var(--dim); }
       .devs-row .dev-sep { color: var(--dim); }
@@ -530,10 +534,12 @@
 
       #planet-panel {
         position: fixed; top: 100px; left: 14px;
-        width: 340px; display: none; flex-direction: column;
+        width: min(760px, 94vw); display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid var(--accent); border-radius: 8px;
-        box-shadow: var(--panel-shadow); font-size: 12px; z-index: 7;
+        /* §bodies: the ACTION SURFACE sits above the summary column when both
+           wide panels overlap — Esc/✕ returns to the summary. */
+        box-shadow: var(--panel-shadow); font-size: 12px; z-index: 8;
         backdrop-filter: blur(4px); max-height: 70vh; overflow-y: auto;
       }
       #planet-panel.is-open { display: flex; }

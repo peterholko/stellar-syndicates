@@ -51,14 +51,33 @@ export interface StockSlot {
 // An owner-only in-progress build at a system (§step1). `key` = what's building
 // ("convoy"|"raider"|"extractor"); `complete_time` = sim-time of completion.
 export interface BuildState {
+  /// §bodies: the body this job builds on / displays at.
+  body_id: number;
   key: string;
   complete_time: number;
 }
 
 
+/// §bodies: one PLANET OR MOON on the wire. The roster is public geography;
+/// deposits ride the survey ladder (null when unsurveyed); structures and
+/// population are OWNER-ONLY (empty/0 for rivals).
+export interface BodyView {
+  id: number;
+  name: string;
+  /// rocky | terrestrial | ocean | ice | gas_giant
+  kind: string;
+  parent: number | null;
+  habitable: boolean;
+  deposits: Deposit[] | null;
+  structures: Record<string, number>;
+  population: number;
+}
+
 /// §economy Part 6: one production line with its resolved factor chain
 /// (output = base · throughput · staffing · skill · food — shown math).
 export interface AssignmentView {
+  /// §bodies: the body whose line this is.
+  body_id: number;
   structure: string;
   title: string;
   tier: number;
@@ -116,7 +135,9 @@ export interface SystemStateView {
   population: number;
   /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
   specialists: Record<string, number>;
-  /// Built structures (slug -> tier) — owner-only; rivals see {}.
+  /// §bodies: the roster — public geography; per-body owner data owner-only.
+  bodies: BodyView[];
+  /// Built structures SUMMED across bodies (slug -> tier) — owner-only.
   structures: Record<string, number>;
   /// Workforce numbers — owner-only; null for rivals.
   workforce: { units: number; posted: number } | null;
@@ -481,8 +502,8 @@ export type ClientMsg =
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
   | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
-  | { type: "DevelopSystem"; system_id: EntityId; upgrade: string }
-  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number> }
+  | { type: "DevelopSystem"; system_id: EntityId; upgrade: string; body_id?: number }
+  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number }
   | { type: "HireSpecialist"; specialist: string; dest_system: EntityId }
   | { type: "TrainSpecialist"; system_id: EntityId; specialist: string }
   | { type: "TransferSpecialists"; from: EntityId; to: EntityId; manifest: Record<string, number> }

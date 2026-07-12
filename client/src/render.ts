@@ -10,11 +10,11 @@
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
-import type { Deposit, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
+import type { BodyView, GalaxyInfo, GhostView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetExactCount } from "./protocol";
 import type { ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
-import { anchorsAtBody, buildVisualSystem, developmentAnchors, SystemViewScene, type DevTiers, type StructureKey, type SystemBodyDetail } from "./systemview";
+import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
 // The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
@@ -485,15 +485,14 @@ export class Renderer {
   /// Camera to restore when leaving the System View (the player's pre-enter view).
   private savedGalaxyCam: { cx: number; cy: number; scale: number } | null = null;
 
-  /// ENTER the schematic System View for a system: build its (deterministic)
-  /// visual schematic from the VIEWER'S known geology (§explore — the caller
-  /// passes `deposits` from the light-gated view; empty = unsurveyed, the scene
-  /// degrades to filler bodies with no resource pips), save the current galaxy
-  /// camera, and start the crossfade + camera-push toward the star.
-  enterSystemView(sys: SystemInfo, deposits: Deposit[]): void {
+  /// ENTER the schematic System View for a system: build its visual schematic
+  /// from the WIRE ROSTER (§bodies — public geography; deposits arrive
+  /// survey-gated, owner data server-fogged), save the current galaxy camera,
+  /// and start the crossfade + camera-push toward the star.
+  enterSystemView(sys: SystemInfo, bodies: BodyView[]): void {
     if (this.mode.type === "system" && this.mode.systemId === sys.id) return;
     const st = starTypeFor(sys.id);
-    this.systemScene.setSystem(buildVisualSystem(sys, deposits), this.starTex.get(st.slug) ?? null);
+    this.systemScene.setSystem(buildVisualSystem(sys, bodies), this.starTex.get(st.slug) ?? null);
     this.systemScene.layout(this.viewW, this.viewH);
     this.savedGalaxyCam = { cx: this.cx, cy: this.cy, scale: this.scale };
     const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
@@ -530,22 +529,14 @@ export class Renderer {
   /// decorative structure markers (null for rival/unclaimed systems — a rival's
   /// System View stays pure scenery; the caller sources tiers from the same
   /// light-gated view fields the management panel reads).
-  setSystemDevelopments(tiers: DevTiers | null): void {
-    this.systemScene.setDevelopments(tiers);
+  setSystemDynamic(bodies: BodyView[], builds: { key: string; body_id: number }[], fed: boolean): void {
+    this.systemScene.setDynamic(bodies, builds, fed);
   }
 
   /// The contextual-build helper: which developments would ANCHOR at this visual
   /// body in the CURRENT System View (presentation sugar for the panel).
   /// §explore: takes the viewer's known deposits (owner-only surface in practice).
-  systemAnchorsAtBody(sys: SystemInfo, deposits: Deposit[], bodyId: string): StructureKey[] {
-    return anchorsAtBody(buildVisualSystem(sys, deposits), bodyId);
-  }
-
-  /// §body-management: the full per-structure anchor map (structure → visual
-  /// body id, null = the star) for the summary's grouped inventory chips.
-  systemAnchors(sys: SystemInfo, deposits: Deposit[]): Record<StructureKey, string | null> {
-    return developmentAnchors(buildVisualSystem(sys, deposits));
-  }
+  // (§bodies: the anchor bridges are gone — panels read the wire roster.)
 
   /// §body-management: resolve a visual body id to its detail (chip → panel).
   systemBodyDetail(bodyId: string): SystemBodyDetail | null {

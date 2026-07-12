@@ -486,6 +486,8 @@ pub struct BlockadeStateView {
 pub struct BuildStateView {
     pub key: String,
     pub complete_time: f64,
+    /// §bodies: the body this job builds on / displays at.
+    pub body_id: u32,
 }
 
 /// A stored SCOUT-INTEL snapshot of a RIVAL system's fortifications (§scout
@@ -570,6 +572,9 @@ pub struct SystemStateView {
     /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
     /// always see an empty map (your talent is private intel).
     pub specialists: BTreeMap<sim::SpecialistKind, u32>,
+    /// §bodies: the system's PLANETS AND MOONS — roster public, deposits
+    /// survey-gated, per-body owner data owner-only (see [`BodyView`]).
+    pub bodies: Vec<BodyView>,
     /// §economy Part 6: every built STRUCTURE (slug → tier) — owner-only;
     /// rivals always see an empty map (the legacy per-kind tier fields above
     /// stay for the map's visual anchors).
@@ -690,6 +695,27 @@ pub struct SyndicateInviteView {
     pub name: String,
 }
 
+/// §bodies: one PLANET OR MOON on the wire. The roster (id/name/kind/parent/
+/// habitable) is public geography — a star's worlds are visible from afar;
+/// DEPOSITS ride the survey knowledge ladder (None when unsurveyed);
+/// structures/population are OWNER-ONLY (empty/zero for rivals — the fog law
+/// one level down, nothing new leaks).
+#[derive(Debug, Clone, Serialize)]
+pub struct BodyView {
+    pub id: u32,
+    pub name: String,
+    /// Kind slug: rocky | terrestrial | ocean | ice | gas_giant.
+    pub kind: String,
+    pub parent: Option<u32>,
+    pub habitable: bool,
+    /// This body's deposits — survey-gated like the system list.
+    pub deposits: Option<Vec<DepositView>>,
+    /// OWNER-ONLY: structures on this body (slug → tier); empty for rivals.
+    pub structures: BTreeMap<String, u32>,
+    /// OWNER-ONLY: population on this body (millions); 0 for rivals.
+    pub population: f64,
+}
+
 /// §economy Part 6: a colony's workforce numbers — owner-only.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct WorkforceView {
@@ -704,6 +730,8 @@ pub struct WorkforceView {
 /// client shows verbatim (no hidden math). Owner-only.
 #[derive(Debug, Clone, Serialize)]
 pub struct AssignmentView {
+    /// §bodies: the body whose line this is.
+    pub body_id: u32,
     /// Structure slug (matches build keys / icons).
     pub structure: String,
     pub title: String,
