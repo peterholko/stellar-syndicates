@@ -406,7 +406,7 @@ impl GameLoop {
                 }
                 ClientMsg::BuildShip { system_id, ship_kind, join } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join });
+                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join, loadout: Default::default() });
                     }
                 }
                 ClientMsg::DevelopSystem { system_id, upgrade, body_id } => {

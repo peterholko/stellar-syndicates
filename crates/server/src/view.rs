@@ -1282,6 +1282,7 @@ mod tests {
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
+            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -1321,11 +1322,11 @@ mod tests {
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
-            sim::BuildJob { id: 1, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None },
-            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None },
+            sim::BuildJob { id: 1, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None, loadout: Default::default() },
+            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None, loadout: Default::default() },
             // A second concurrent job of mine, finishing FIRST — the queue list
             // must come back completion-ordered (§build-progress).
-            sim::BuildJob { id: 3, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None },
+            sim::BuildJob { id: 3, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None, loadout: Default::default() },
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
@@ -1428,7 +1429,7 @@ mod tests {
             id: EntityId(id), pos, name: "S".into(),
             bodies: vec![], legacy_deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
             claim_cost: 0.0,
-            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
+            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
             legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
@@ -1490,7 +1491,7 @@ mod tests {
         let third = PlayerId(9);
         let mk = |id, pos, o| StarSystem {
             id: EntityId(id), pos, name: "S".into(), bodies: vec![], legacy_deposits: vec![], claim_cost: 0.0,
-            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(),
+            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
             legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
@@ -1541,7 +1542,7 @@ mod tests {
             claim_cost: 1000.0,
             owner: Some(rival),
             claimed_at: Some(0.0),
-            stockpile: BTreeMap::new(),
+            stockpile: BTreeMap::new(), modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -1589,7 +1590,7 @@ mod tests {
             claim_cost: 1000.0,
             owner: Some(rival),
             claimed_at: Some(0.0),
-            stockpile: BTreeMap::new(),
+            stockpile: BTreeMap::new(), modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,

@@ -141,6 +141,12 @@ pub enum Command {
         /// default so old clients omitting it still parse.
         #[serde(default)]
         join: Option<EntityId>,
+        /// §modules Part B4: the LOADOUT to fit the ship with at build — must be
+        /// ≤ the hull's module slots and covered by the system's module ledger
+        /// (both debited alongside the recipe). serde default = unfitted, so old
+        /// clients omitting it build the stock beam brawler exactly as before.
+        #[serde(default)]
+        loadout: crate::module::Loadout,
     },
 
     /// §modules Part B3: MANUFACTURE one module into the system's ledger. Needs

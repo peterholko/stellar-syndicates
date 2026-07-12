@@ -195,7 +195,7 @@ impl StructureKind {
 /// A queued construction job, resolved when `complete_tick` is reached. Lives on
 /// the `World` (not the system) so an ownership flip mid-build is unambiguous: the
 /// ship is delivered to whoever PAID (`owner`), even if the system is later lost.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuildJob {
     /// Monotonic id (from `World.next_build_id`) — stable iteration / determinism.
     pub id: u64,
@@ -217,6 +217,11 @@ pub struct BuildJob {
     /// serde default keeps pre-FLEETS build jobs loading.
     #[serde(default)]
     pub join: Option<EntityId>,
+    /// §modules Part B4: the loadout the built SHIP is fitted with on spawn
+    /// (modules already debited from the system ledger at enqueue). serde default
+    /// = unfitted, so pre-module build jobs complete as stock ships.
+    #[serde(default)]
+    pub loadout: crate::module::Loadout,
 }
 
 /// One recipe: commodity costs (whole units; the stockpile is f64) + duration in

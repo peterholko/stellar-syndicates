@@ -3734,14 +3734,14 @@ impl World {
                     corp.doctrine = *doctrine;
                 }
             }
-            Command::BuildShip { player_id, system_id, ship_kind, join } => {
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, events);
+            Command::BuildShip { player_id, system_id, ship_kind, join, loadout } => {
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, loadout.clone(), events);
             }
             Command::BuildModule { player_id, system_id, module } => {
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, crate::module::Loadout::default(), events);
             }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
-                self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, events);
+                self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), events);
             }
             Command::SetAssignment { player_id, system_id, structure, workers, specialists, body_id } => {
                 // §economy Part 3 → §bodies: INSTANT local administration on ONE
@@ -3844,7 +3844,7 @@ impl World {
                 if !has_academy {
                     return; // soft reject — no Academy standing there
                 }
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Train { specialist: *specialist }, None, events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Train { specialist: *specialist }, None, crate::module::Loadout::default(), events);
             }
             Command::TransferSpecialists { player_id, from, to, manifest } => {
                 // §economy Part 4: a dedicated personnel convoy between the
@@ -4165,7 +4165,7 @@ impl World {
     /// forcing the specialization choice. Deducts the recipe NOW and enqueues a job
     /// that resolves at `tick + build_ticks`. Determinism: pure, runs in command
     /// phase so the debit is visible to this tick's accrual + standing orders.
-    fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, events: &mut Vec<Event>) {
+    fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
         let recipe = crate::build::recipe_for(what);
         let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
             return;
@@ -4276,6 +4276,29 @@ impl World {
                 ));
                 return;
             }
+            // §modules Part B4: validate the loadout — ≤ the hull's slots and
+            // every module covered by the system's ledger (soft-reject else; the
+            // ledger + recipe are never eaten on a reject).
+            if !loadout.is_empty() {
+                let mut need: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
+                for m in loadout.modules() {
+                    *need.entry(*m).or_insert(0) += 1;
+                }
+                let fits = loadout.len() as u32 <= ship.module_slots()
+                    && need.iter().all(|(m, n)| sys.modules.get(m).copied().unwrap_or(0) >= *n);
+                if !fits {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::BuildRejected {
+                            owner: player_id,
+                            system: system_id,
+                            what,
+                            reason: crate::event::BuildRejectReason::NoSlot,
+                        },
+                    ));
+                    return;
+                }
+            }
         }
         // §explore Part 3 Unstable Geology: DEVELOPMENT (upgrade) recipe costs run
         // ×UNSTABLE_COST_MULT here — the lemon a survey can't see. ONE multiplier
@@ -4299,6 +4322,16 @@ impl World {
         for (c, need) in recipe.costs {
             *sys.stockpile.entry(*c).or_insert(0.0) -= *need * cost_mult;
         }
+        // §modules Part B4: a fitted ship also debits its modules from the ledger
+        // (validated above) — reserved at enqueue, fitted on the completed hull.
+        if matches!(what, crate::build::BuildKind::Ship { .. }) {
+            for m in loadout.modules() {
+                let n = sys.modules.get_mut(m).map(|c| { *c = c.saturating_sub(1); *c }).unwrap_or(0);
+                if n == 0 {
+                    sys.modules.remove(m);
+                }
+            }
+        }
         self.next_build_id += 1;
         // §economy Part 3 SHIPYARD BOOST: a staffed yard turns SHIP jobs out
         // faster — ticks / (1 + BOOST · staffing · skill). Locked in at enqueue
@@ -4321,6 +4354,8 @@ impl World {
             complete_tick,
             // Join only applies to ship builds; an upgrade always passes None.
             join: if matches!(what, crate::build::BuildKind::Ship { .. }) { join } else { None },
+            // §modules: carry the (validated, debited) loadout to spawn time.
+            loadout: if matches!(what, crate::build::BuildKind::Ship { .. }) { loadout } else { crate::module::Loadout::default() },
         });
         events.push(Event::new(
             self.time,
@@ -4443,7 +4478,7 @@ impl World {
             return;
         }
         let due: Vec<crate::build::BuildJob> =
-            self.build_queue.iter().filter(|j| j.complete_tick <= self.tick).copied().collect();
+            self.build_queue.iter().filter(|j| j.complete_tick <= self.tick).cloned().collect();
         self.build_queue.retain(|j| j.complete_tick > self.tick);
         for job in due {
             match job.what {
@@ -4466,11 +4501,20 @@ impl World {
                         })
                     });
                     if let Some(fid) = join_target {
-                        self.fleets.get_mut(&fid).unwrap().add(ship, 1);
+                        let f = self.fleets.get_mut(&fid).unwrap();
+                        f.add(ship, 1);
+                        // §modules: the built ship enters under its fitted loadout.
+                        if !job.loadout.is_empty() {
+                            *f.loadouts.entry(ship).or_default().entry(job.loadout.key()).or_insert(0) += 1;
+                        }
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id: fid, owner: job.owner, kind: ship }));
                     } else {
                         let id = self.alloc_entity_id();
-                        self.fleets.insert(id, Fleet::single(id, job.owner, ship, pos, FleetOrder::Idle, None));
+                        let mut f = Fleet::single(id, job.owner, ship, pos, FleetOrder::Idle, None);
+                        if !job.loadout.is_empty() {
+                            f.loadouts.entry(ship).or_default().insert(job.loadout.key(), 1);
+                        }
+                        self.fleets.insert(id, f);
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
                     }
                 }
@@ -6275,7 +6319,7 @@ mod tests {
         let alloys0 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
         let ships0 = w.fleets.len();
 
-        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
         let alloys1 = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
         assert!((alloys0 - alloys1 - 25.0).abs() < 1e-9, "alloys debited by the convoy recipe (got {})", alloys0 - alloys1);
         assert_eq!(w.build_queue.len(), 1, "a build job is enqueued");
@@ -6313,7 +6357,7 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
         // Home produces only Ore + Provisions → it has NO Alloys/Fuel, so a Raider
         // (Alloys + Fuel) is unaffordable: a soft reject (no debit, no job, no event).
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None , loadout: Default::default() }]);
         assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no build started");
         assert!(w.build_queue.is_empty(), "no job enqueued on a short stockpile");
     }
@@ -6363,7 +6407,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)]);
-        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
         // Lose the system mid-build (e.g. a future conquest).
         w.systems.iter_mut().find(|s| s.id == home).unwrap().owner = Some(PlayerId(999));
         let mut built = false;
@@ -6435,7 +6479,7 @@ mod tests {
         assert!(ore_after > ore_before - 1.0, "nothing was debited (accrual aside)");
 
         // Ships are UNITS, not developments — never slot-gated (only recipe-gated).
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
         assert!(
             ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
             "a ship still builds at a slot-full system"
@@ -6618,7 +6662,7 @@ mod tests {
 
         // Convoy (needs tier 1) builds turn one — no chicken-and-egg stall.
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0)]);
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "convoy builds at the home shipyard");
     }
 
@@ -6634,7 +6678,7 @@ mod tests {
 
         // Home is tier 1 → a Raider (needs 2) SOFT-rejects with the owner notice.
         let alloys0 = system_stock(&w, home, Commodity::Alloys);
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None , loadout: Default::default() }]);
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
@@ -6654,7 +6698,7 @@ mod tests {
             w.step(&[]);
         }
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().tier(crate::build::StructureKind::Shipyard), 2);
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Raider, join: None , loadout: Default::default() }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "raider builds at Shipyard 2");
     }
 
@@ -6669,7 +6713,7 @@ mod tests {
         assert_eq!(w.systems.iter().find(|s| s.id == claim).unwrap().owner, Some(id), "claimed");
         seed_stock(&mut w, claim, &[(Commodity::MetallicOre, 100.0)]);
 
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: claim, ship_kind: ShipKind::Convoy, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: claim, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
@@ -7126,7 +7170,7 @@ mod tests {
                 }
             }
             seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]);
-            let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+            let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
             ev.iter()
                 .find_map(|e| match e.payload {
                     EventPayload::BuildStarted { complete_tick, .. } => Some(complete_tick),
@@ -7270,7 +7314,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         let ev = w.step(&[
-            Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None },
+            Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() },
             Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex, body_id: None },
         ]);
         let started = ev.iter().filter(|e| matches!(e.payload, EventPayload::BuildStarted { .. })).count();
@@ -7775,7 +7819,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::Electronics, 10.0)]); // kit covers Alloys; fuel seed covers the 8 Fuel
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Scout, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Scout, join: None , loadout: Default::default() }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "a tier-1 shipyard builds scouts");
         let mut spawned = false;
         for _ in 0..(crate::build::SCOUT_RECIPE.build_ticks + 3) {
@@ -7941,7 +7985,7 @@ mod tests {
             w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
             let home = w.players[&id].home_system.unwrap();
             seed_stock(&mut w, home, &[(Commodity::MetallicOre, 200.0), (Commodity::Alloys, 100.0)]);
-            w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+            w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
             for _ in 0..400 {
                 w.step(&[]);
             }
@@ -8745,6 +8789,56 @@ mod tests {
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. })), "no Armaments Complex → soft reject");
         assert!(w.build_queue.is_empty(), "nothing queued");
         assert!((w.systems.iter().find(|s| s.id == sid).unwrap().stockpile.get(&Commodity::Armaments).copied().unwrap() - 100.0).abs() < 1e-9, "recipe never eaten on a reject");
+    }
+
+    #[test]
+    fn building_a_fitted_ship_debits_the_ledger_and_spawns_it_fitted() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.set_tier(crate::build::StructureKind::Shipyard, 2); // raiders need a tier-2 yard
+            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 1;
+            s.id
+        };
+        seed_stock(&mut w, sid, &[(Commodity::Alloys, 200.0), (Commodity::Electronics, 200.0), (Commodity::Armaments, 200.0), (Commodity::Fuel, 200.0)]);
+        let md = Loadout::new(vec![ModuleKind::MassDriver]);
+        let before: std::collections::BTreeSet<EntityId> = w.fleets.keys().copied().collect();
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: sid, ship_kind: ShipKind::Raider, join: None, loadout: md.clone() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the fitted build starts");
+        assert_eq!(w.systems.iter().find(|s| s.id == sid).unwrap().modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0), 0, "the module left the ledger");
+        assert!(run_until(&mut w, 30, |w| w.fleets.keys().any(|k| !before.contains(k))), "the raider spawns");
+        let new_id = *w.fleets.keys().find(|k| !before.contains(k)).unwrap();
+        let f = &w.fleets[&new_id];
+        assert_eq!(f.count(ShipKind::Raider), 1);
+        assert_eq!(f.fitted_count(ShipKind::Raider), 1, "the built raider carries its mass-driver loadout");
+        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&md.key())).copied().unwrap_or(0), 1);
+    }
+
+    #[test]
+    fn building_with_an_uncovered_loadout_soft_rejects_and_keeps_the_goods() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.set_tier(crate::build::StructureKind::Shipyard, 2);
+            s.id // NO modules in the ledger
+        };
+        seed_stock(&mut w, sid, &[(Commodity::Alloys, 200.0), (Commodity::Electronics, 200.0), (Commodity::Armaments, 200.0), (Commodity::Fuel, 200.0)]);
+        let alloys = |w: &World| w.systems.iter().find(|s| s.id == sid).unwrap().stockpile.get(&Commodity::Alloys).copied().unwrap();
+        let before = alloys(&w);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: sid, ship_kind: ShipKind::Raider, join: None, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. })), "loadout not covered by the ledger → reject");
+        assert!(w.build_queue.is_empty(), "nothing queued");
+        assert!((before - alloys(&w)).abs() < 1e-9, "the hull recipe is never eaten on a reject");
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),
@@ -9735,7 +9829,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::Electronics, 20.0), (Commodity::Armaments, 20.0)]); // kit covers Alloys
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None , loadout: Default::default() }]);
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
@@ -9744,7 +9838,7 @@ mod tests {
             "home tier 1 can't build corvettes"
         );
         w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::Shipyard, 2);
-        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None }]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None , loadout: Default::default() }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "tier 2 builds them");
     }
 
@@ -10226,7 +10320,7 @@ mod tests {
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 300.0)]);
         let dock = park_fleet(&mut w, id, hpos, ShipKind::Raider);
         let fleets_before = w.fleets.len();
-        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: Some(dock) }]);
+        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: Some(dock) , loadout: Default::default() }]);
         for _ in 0..CONVOY_RECIPE.build_ticks + 2 {
             w.step(&[]);
         }
@@ -10373,7 +10467,7 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 300.0)]);
         let fleets_before = w.fleets.len();
-        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None }]);
+        w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None , loadout: Default::default() }]);
         for _ in 0..CONVOY_RECIPE.build_ticks + 2 {
             w.step(&[]);
         }
