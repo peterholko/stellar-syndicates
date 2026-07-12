@@ -239,18 +239,7 @@ impl GameLoop {
                             // §explore: PUBLIC geography only — the exact deposits
                             // are corp knowledge now (SystemStateView.deposits,
                             // surveyed-or-owner); the free spectral read is the BAND.
-                            systems: self
-                                .world
-                                .systems
-                                .iter()
-                                .map(|s| SystemInfo {
-                                    id: s.id,
-                                    pos: s.pos,
-                                    name: s.name.clone(),
-                                    band: self.world.band_of(s).slug(),
-                                    claim_cost: s.claim_cost,
-                                })
-                                .collect(),
+                            systems: system_infos(&self.world),
                             // What can be built + each recipe's cost/time (§step1).
                             build_options: build_options(),
                         },
@@ -505,7 +494,20 @@ impl GameLoop {
             .into_iter()
             .map(|b| (b.id, b))
             .collect();
+        let systems_before = self.world.systems.len();
         let events = self.world.step(&commands);
+        // §over-capacity homes: a join past the pre-generated slot pool MINTS a
+        // new home system mid-run — public geography that every connected
+        // client's Welcome snapshot predates. Re-broadcast the star chart so
+        // the new star is drawable and selectable everywhere (not least by its
+        // own new owner, whose first click otherwise falls through to the
+        // command-center anchor).
+        if self.world.systems.len() != systems_before {
+            let update = ServerMsg::GalaxyUpdate { systems: system_infos(&self.world) };
+            for (_conn_id, info) in self.sessions.iter_conns() {
+                let _ = info.outbound.try_send(update.clone());
+            }
+        }
         // Every battle ends inside `resolve_raids`, which runs BEFORE the clock
         // advances in `step`; so a battle that concluded this tick ended at
         // `world.time - DT` — exactly the `RaidResolved` event time the aftermath
@@ -936,6 +938,23 @@ impl GameLoop {
 }
 
 /// The buildable options + their recipes (§step1), built from the sim's const
+/// The public star chart as SystemInfo rows — the Welcome galaxy's `systems`
+/// and every GalaxyUpdate re-broadcast share this one mapper, so the two can
+/// never drift.
+fn system_infos(world: &sim::World) -> Vec<SystemInfo> {
+    world
+        .systems
+        .iter()
+        .map(|s| SystemInfo {
+            id: s.id,
+            pos: s.pos,
+            name: s.name.clone(),
+            band: world.band_of(s).slug(),
+            claim_cost: s.claim_cost,
+        })
+        .collect()
+}
+
 /// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
 fn build_options() -> Vec<BuildOptionView> {
     use sim::{BuildKind, ShipKind, StructureKind};

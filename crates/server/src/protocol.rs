@@ -919,6 +919,14 @@ pub enum ServerMsg {
         galaxy: GalaxyInfo,
     },
 
+    /// The public star chart CHANGED after this client's Welcome: a join past
+    /// the pre-generated home-slot pool MINTS a brand-new home system mid-run,
+    /// and every connected client's galaxy snapshot predates it — without this
+    /// refresh the new star is invisible and unselectable (not least to its own
+    /// owner). Replaces the client's `galaxy.systems` wholesale; public
+    /// geography only, so there is nothing to fog.
+    GalaxyUpdate { systems: Vec<SystemInfo> },
+
     /// The player's per-tick delayed/fogged view of the world, computed from
     /// THEIR command center (§6). Every player receives a *different* one; none
     /// receives true positions, another player's view, or any presence

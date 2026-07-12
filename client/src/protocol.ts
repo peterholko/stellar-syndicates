@@ -679,6 +679,12 @@ export interface PendingOrderView {
 // Server → client.
 export type ServerMsg =
   | {
+      /// §over-capacity homes: the star chart grew after Welcome (a join past
+      /// the slot pool minted a new home system). Replaces galaxy.systems.
+      type: "GalaxyUpdate";
+      systems: SystemInfo[];
+    }
+  | {
       type: "Welcome";
       player_id: PlayerId;
       name: string;

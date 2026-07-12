@@ -3785,6 +3785,12 @@ function join(): void {
           openCheckin();
           void startRenderer();
           break;
+        case "GalaxyUpdate":
+          // §over-capacity homes: the star chart grew after our Welcome (a new
+          // corp's freshly-minted home). Fresh OBJECT identity on purpose — the
+          // renderer re-ingests the galaxy on the next frame by identity check.
+          if (state.galaxy) state.galaxy = { ...state.galaxy, systems: msg.systems };
+          break;
         case "View":
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
