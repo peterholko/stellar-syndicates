@@ -173,6 +173,17 @@ impl ShipKind {
     pub fn hull(self) -> f64 {
         (self.defense_weight() * crate::combat::HULL_PER_DEFENSE).max(crate::combat::HULL_MIN)
     }
+
+    /// §modules Part B: how many MODULE slots this hull carries. Warships fit
+    /// modules; logistics hulls (Convoy/Colony) carry none. Tunable.
+    pub fn module_slots(self) -> u32 {
+        match self {
+            ShipKind::Corvette => 2,
+            ShipKind::Raider => 2,
+            ShipKind::Scout => 1,
+            ShipKind::Convoy | ShipKind::Colony => 0,
+        }
+    }
 }
 
 /// The FLAGSHIP precedence (GDD §13.1): a fleet is DRAWN and named for its
@@ -478,6 +489,13 @@ pub struct Fleet {
     /// keeps old snapshots loading (never-fought).
     #[serde(default)]
     pub fought: bool,
+    /// §modules Part B: the LOADOUT partition — `kind → loadout key → count`,
+    /// storing ONLY non-default (fitted) stacks. The invariant `Σ loadouts[kind]
+    /// ≤ composition[kind]` holds; the remainder is implicitly UNFITTED (the
+    /// stock beam brawler). `#[serde(default)]` → every old snapshot loads with
+    /// no field → all-unfitted → zero migration.
+    #[serde(default)]
+    pub loadouts: crate::combat::LoadoutMap,
 }
 
 /// serde default for `Fleet::garrison_fed` (old snapshots load fed).
@@ -516,7 +534,120 @@ impl Fleet {
             posture: crate::doctrine::EngagementPosture::Passive,
             garrison_fed: true,
             fought: false,
+            loadouts: BTreeMap::new(),
         }
+    }
+
+    // --- §modules Part B: the LOADOUT partition (invariant: Σ ≤ composition) ---
+
+    /// Fitted ships of `kind` (Σ its loadout stacks); the rest are unfitted.
+    pub fn fitted_count(&self, kind: ShipKind) -> u32 {
+        self.loadouts.get(&kind).map(|m| m.values().sum()).unwrap_or(0)
+    }
+
+    /// Fold ANOTHER fleet's loadouts into this one (merge/relief: fits carry).
+    pub fn fold_loadouts(&mut self, other: &crate::combat::LoadoutMap) {
+        for (kind, m) in other {
+            for (key, n) in m {
+                if *n > 0 && !key.is_empty() {
+                    *self.loadouts.entry(*kind).or_default().entry(key.clone()).or_insert(0) += *n;
+                }
+            }
+        }
+    }
+
+    /// DETACH `n` ships of `kind` for a split: take from FITTED stacks first
+    /// (deterministic key order — a detached escort keeps its fits), returning
+    /// the fitted breakdown taken (the rest are unfitted on the new fleet). Only
+    /// touches loadouts; the caller adjusts `composition` separately.
+    pub fn detach_loadouts(&mut self, kind: ShipKind, n: u32) -> crate::combat::LoadoutMap {
+        let mut taken: crate::combat::LoadoutMap = BTreeMap::new();
+        let mut remaining = n;
+        if let Some(m) = self.loadouts.get_mut(&kind) {
+            let keys: Vec<String> = m.keys().cloned().collect();
+            for key in keys {
+                if remaining == 0 {
+                    break;
+                }
+                let have = m.get(&key).copied().unwrap_or(0);
+                let take = have.min(remaining);
+                if take > 0 {
+                    *taken.entry(kind).or_default().entry(key.clone()).or_insert(0) += take;
+                    let left = have - take;
+                    if left == 0 {
+                        m.remove(&key);
+                    } else {
+                        m.insert(key, left);
+                    }
+                    remaining -= take;
+                }
+            }
+            if m.is_empty() {
+                self.loadouts.remove(&kind);
+            }
+        }
+        taken
+    }
+
+    /// Remove `n` ships from the `(kind, loadout)` stack — decrements
+    /// `composition[kind]` and, for a fitted loadout, its stack count. Returns
+    /// how many were removed (clamped to what's in that stack).
+    pub fn remove_stack(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> u32 {
+        let key = loadout.key();
+        let available = if loadout.is_empty() {
+            // Unfitted ships = composition remainder not covered by fitted stacks.
+            self.count(kind).saturating_sub(self.fitted_count(kind))
+        } else {
+            self.loadouts.get(&kind).and_then(|m| m.get(&key)).copied().unwrap_or(0)
+        };
+        let take = available.min(n);
+        if take == 0 {
+            return 0;
+        }
+        self.remove(kind, take); // composition (+ zeroes the per-kind pool if emptied)
+        if !loadout.is_empty()
+            && let Some(m) = self.loadouts.get_mut(&kind)
+        {
+            let left = m.get(&key).copied().unwrap_or(0).saturating_sub(take);
+            if left == 0 {
+                m.remove(&key);
+            } else {
+                m.insert(key, left);
+            }
+            if m.is_empty() {
+                self.loadouts.remove(&kind);
+            }
+        }
+        take
+    }
+
+    /// Clamp the loadout partition back to the invariant (Σ ≤ composition per
+    /// kind) and drop empty entries — self-healing after any bare composition edit.
+    pub fn normalize_loadouts(&mut self) {
+        self.loadouts.retain(|kind, m| {
+            m.retain(|key, n| *n > 0 && !key.is_empty());
+            let cap = self.composition.get(kind).copied().unwrap_or(0);
+            let mut total: u32 = m.values().sum();
+            if total > cap {
+                // Trim excess from the last keys (deterministic).
+                let keys: Vec<String> = m.keys().cloned().collect();
+                for key in keys.into_iter().rev() {
+                    if total <= cap {
+                        break;
+                    }
+                    let have = m.get(&key).copied().unwrap_or(0);
+                    let drop = have.min(total - cap);
+                    let left = have - drop;
+                    if left == 0 {
+                        m.remove(&key);
+                    } else {
+                        m.insert(key, left);
+                    }
+                    total -= drop;
+                }
+            }
+            !m.is_empty()
+        });
     }
 
     /// How many ships of `kind` ride in this fleet (0 if none).
@@ -872,5 +1003,72 @@ mod tests {
         assert_eq!(f.defense_power(), 2.0 * 2.0 + 4.0); // raiders(2) + corvette(4)
         assert!(f.is_combatant());
         assert!(!fleet(&[(ShipKind::Convoy, 4)], None).is_combatant());
+    }
+
+    // --- §modules Part B: the loadout partition (invariant Σ ≤ composition) ---
+    use crate::module::{Loadout, ModuleKind};
+
+    fn total_fitted(f: &Fleet, k: ShipKind) -> u32 {
+        f.loadouts.get(&k).map(|m| m.values().sum()).unwrap_or(0)
+    }
+    fn invariant_holds(f: &Fleet) -> bool {
+        f.loadouts.iter().all(|(k, m)| m.values().sum::<u32>() <= f.count(*k))
+    }
+
+    #[test]
+    fn loadout_partition_holds_through_add_remove_detach_fold() {
+        let md = Loadout::new(vec![ModuleKind::MassDriver]);
+        let mut f = fleet(&[(ShipKind::Raider, 5)], None);
+        f.loadouts.entry(ShipKind::Raider).or_default().insert(md.key(), 3); // 3 fitted, 2 unfitted
+        assert!(invariant_holds(&f) && total_fitted(&f, ShipKind::Raider) == 3);
+
+        // Removing an UNFITTED ship leaves the fits intact.
+        assert_eq!(f.remove_stack(ShipKind::Raider, &Loadout::default(), 1), 1);
+        assert_eq!(f.count(ShipKind::Raider), 4);
+        assert_eq!(total_fitted(&f, ShipKind::Raider), 3);
+        // Removing a FITTED ship drops a fit too.
+        assert_eq!(f.remove_stack(ShipKind::Raider, &md, 1), 1);
+        assert_eq!(f.count(ShipKind::Raider), 3);
+        assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
+        assert!(invariant_holds(&f));
+
+        // Detach 2 (fitted-first): takes both remaining fits onto the new fleet.
+        let taken = f.detach_loadouts(ShipKind::Raider, 2);
+        f.remove(ShipKind::Raider, 2);
+        assert_eq!(taken.get(&ShipKind::Raider).map(|m| m.values().sum::<u32>()).unwrap_or(0), 2, "escorts keep their fits");
+        assert_eq!(total_fitted(&f, ShipKind::Raider), 0);
+        assert!(invariant_holds(&f));
+
+        // Fold another fleet's fits back in (merge/relief).
+        let mut g = fleet(&[(ShipKind::Raider, 2)], None);
+        g.loadouts.entry(ShipKind::Raider).or_default().insert(Loadout::new(vec![ModuleKind::WhippleArmor]).key(), 2);
+        f.add(ShipKind::Raider, 2);
+        f.fold_loadouts(&g.loadouts);
+        assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
+        assert!(invariant_holds(&f));
+    }
+
+    #[test]
+    fn normalize_clamps_an_over_fit_partition() {
+        let mut f = fleet(&[(ShipKind::Raider, 2)], None);
+        // Corrupt the invariant (4 fits over 2 hulls) — normalize must clamp.
+        let m = f.loadouts.entry(ShipKind::Raider).or_default();
+        m.insert(Loadout::new(vec![ModuleKind::MassDriver]).key(), 3);
+        m.insert(Loadout::new(vec![ModuleKind::TorpedoRack]).key(), 1);
+        assert!(!invariant_holds(&f));
+        f.normalize_loadouts();
+        assert!(invariant_holds(&f), "normalize restores Σ ≤ composition");
+        assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
+    }
+
+    #[test]
+    fn old_snapshot_without_loadouts_loads_all_unfitted() {
+        let f = fleet(&[(ShipKind::Raider, 3)], None);
+        // Strip the loadouts key → a pre-module snapshot; serde default fills it.
+        let mut v: serde_json::Value = serde_json::to_value(&f).unwrap();
+        v.as_object_mut().unwrap().remove("loadouts");
+        let f2: Fleet = serde_json::from_value(v).unwrap();
+        assert!(f2.loadouts.is_empty(), "no field → all-unfitted, zero migration");
+        assert_eq!(f2.count(ShipKind::Raider), 3);
     }
 }

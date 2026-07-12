@@ -22,7 +22,40 @@ use crate::doctrine::EngagementPolicy;
 use crate::event::RaidOutcome;
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
+use crate::module::{DamageType, Loadout, PD_INTERCEPT, REFLECT_BLUNT, WHIPPLE_BLUNT};
 use crate::ship::ShipKind;
+
+/// A per-side per-fleet LOADOUT partition (§modules): `kind → loadout key →
+/// count`, storing only NON-default (fitted) stacks. The wire/type form used by
+/// [`Forces::from_side`] and the fleet partition ([`crate::ship::Fleet`]).
+pub type LoadoutMap = std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>;
+
+/// A TYPED damage 3-vector (§modules Part B) flowing through the pooled
+/// Lanchester pipeline. Unfitted fleets deal pure `beam`, so the whole module
+/// layer collapses to the pre-module scalar model when nothing is fitted — the
+/// calibration invariant is preserved by construction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct TypedDamage {
+    pub beam: f64,
+    pub driver: f64,
+    pub torpedo: f64,
+}
+
+impl TypedDamage {
+    pub fn total(&self) -> f64 {
+        self.beam + self.driver + self.torpedo
+    }
+    fn scaled(self, k: f64) -> Self {
+        TypedDamage { beam: self.beam * k, driver: self.driver * k, torpedo: self.torpedo * k }
+    }
+    fn add_typed(&mut self, ty: DamageType, amt: f64) {
+        match ty {
+            DamageType::Beam => self.beam += amt,
+            DamageType::Driver => self.driver += amt,
+            DamageType::Torpedo => self.torpedo += amt,
+        }
+    }
+}
 
 // --- TUNABLE COMBAT BLOCK (the Lanchester knobs) --------------------------
 /// The per-tick damage fraction is DERIVED from `Config.battle_target_secs`, not
@@ -90,10 +123,14 @@ pub const HULL_MIN: f64 = 2.0;
 pub const PLATFORM_TIER_HULL: f64 = 30.0;
 pub const PLATFORM_TIER_ATTACK: f64 = 3.0;
 
-/// Whole units of each kind lost in an attrition step (plus platform tiers).
+/// Whole units lost in an attrition step. `per_kind` is the summed view (for
+/// reports/records); `per_stack` keys by `(kind, loadout)` so the losing fleets
+/// can shed the RIGHT loadout stacks (§modules — an armored ship that absorbed
+/// less dies less). Both stay in step. Plus destroyed platform tiers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Losses {
     pub per_kind: BTreeMap<ShipKind, u32>,
+    pub per_stack: BTreeMap<(ShipKind, Loadout), u32>,
     pub platform_tiers: u32,
 }
 
@@ -104,33 +141,104 @@ impl Losses {
     pub fn total_ships(&self) -> u32 {
         self.per_kind.values().copied().sum()
     }
-    fn add_kind(&mut self, kind: ShipKind, n: u32) {
+    /// Record `n` ships of `(kind, loadout)` lost — updates BOTH views.
+    pub fn add_stack(&mut self, kind: ShipKind, loadout: Loadout, n: u32) {
         if n > 0 {
             *self.per_kind.entry(kind).or_insert(0) += n;
+            *self.per_stack.entry((kind, loadout)).or_insert(0) += n;
         }
+    }
+    /// Record `n` UNFITTED ships of `kind` lost (e.g. scouts stripped pre-tick).
+    pub fn add_kind(&mut self, kind: ShipKind, n: u32) {
+        self.add_stack(kind, Loadout::default(), n);
     }
 }
 
-/// One side of an engagement as a pooled force: a per-kind ship count + its
-/// damage pool, plus optional defense-platform tiers with their own pool. Both
-/// the authoritative fleets and the projection calculator use this shape.
+/// A combat STACK key: same kind + same [`Loadout`] fight and die together.
+pub type StackKey = (ShipKind, Loadout);
+
+/// One side of an engagement as a pooled force, partitioned into `(kind,
+/// loadout)` STACKS (§modules) — same hull, same offense type, same mitigation
+/// — each with its own damage pool, plus optional defense-platform tiers. The
+/// authoritative fleets build it via [`Forces::from_side`] (real loadouts); the
+/// projection calculator + strength-only reads via [`Forces::from_fleet`] (all
+/// UNFITTED), for which the whole typed pipeline collapses to the pre-module
+/// scalar model — so unfitted combat is byte-identical to before.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Forces {
-    pub comp: BTreeMap<ShipKind, u32>,
-    pub damage: BTreeMap<ShipKind, f64>,
+    pub stacks: BTreeMap<StackKey, u32>,
+    pub damage: BTreeMap<StackKey, f64>,
     pub platform_tiers: u32,
     pub platform_pool: f64,
 }
 
 impl Forces {
-    /// A side built from a fleet's composition + carried damage pools.
+    /// A side of ALL-UNFITTED ships from a per-kind composition + damage pools.
+    /// The projection calculator and every strength-only read use this (rivals
+    /// are fog — their loadouts are never known, so they project as unfitted).
     pub fn from_fleet(comp: &BTreeMap<ShipKind, u32>, damage: &BTreeMap<ShipKind, f64>) -> Self {
-        Forces {
-            comp: comp.clone(),
-            damage: damage.clone(),
-            platform_tiers: 0,
-            platform_pool: 0.0,
+        let stacks = comp
+            .iter()
+            .filter(|(_, n)| **n > 0)
+            .map(|(k, n)| ((*k, Loadout::default()), *n))
+            .collect();
+        let damage = damage
+            .iter()
+            .filter(|(_, d)| **d != 0.0)
+            .map(|(k, d)| ((*k, Loadout::default()), *d))
+            .collect();
+        Forces { stacks, damage, platform_tiers: 0, platform_pool: 0.0 }
+    }
+
+    /// A side from a summed composition + its LOADOUT partition (§modules): each
+    /// kind splits into its fitted stacks + an implicit unfitted remainder. The
+    /// per-kind damage pool is distributed pro-rata by count across that kind's
+    /// stacks (equal hull per kind → equal-per-ship). Clamps Σ stacks == comp,
+    /// so an inconsistent loadout map self-heals on read.
+    pub fn from_side(
+        comp: &BTreeMap<ShipKind, u32>,
+        loadouts: &LoadoutMap,
+        damage: &BTreeMap<ShipKind, f64>,
+    ) -> Self {
+        let mut stacks: BTreeMap<StackKey, u32> = BTreeMap::new();
+        for (kind, total) in comp {
+            if *total == 0 {
+                continue;
+            }
+            let mut remaining = *total;
+            if let Some(m) = loadouts.get(kind) {
+                for (key, n) in m {
+                    if *n == 0 || remaining == 0 {
+                        continue;
+                    }
+                    let lo = Loadout::from_key(key);
+                    if lo.is_empty() {
+                        continue; // the unfitted remainder is filled below
+                    }
+                    let take = (*n).min(remaining);
+                    *stacks.entry((*kind, lo)).or_insert(0) += take;
+                    remaining -= take;
+                }
+            }
+            if remaining > 0 {
+                *stacks.entry((*kind, Loadout::default())).or_insert(0) += remaining;
+            }
         }
+        // Distribute each kind's carried pool across its stacks by count.
+        let mut kind_count: BTreeMap<ShipKind, u32> = BTreeMap::new();
+        for ((k, _), n) in &stacks {
+            *kind_count.entry(*k).or_insert(0) += *n;
+        }
+        let mut dmg: BTreeMap<StackKey, f64> = BTreeMap::new();
+        for ((k, lo), n) in &stacks {
+            let pool = damage.get(k).copied().unwrap_or(0.0);
+            let kc = kind_count.get(k).copied().unwrap_or(0);
+            let share = if kc > 0 { pool * (*n as f64 / kc as f64) } else { 0.0 };
+            if share != 0.0 {
+                dmg.insert((*k, lo.clone()), share);
+            }
+        }
+        Forces { stacks, damage: dmg, platform_tiers: 0, platform_pool: 0.0 }
     }
 
     /// Fold defense-platform tiers into this side (defense of place).
@@ -140,8 +248,36 @@ impl Forces {
         self
     }
 
+    /// Add `n` UNFITTED ships of `kind` (test/relief helper).
+    pub fn add(&mut self, kind: ShipKind, n: u32) {
+        if n > 0 {
+            *self.stacks.entry((kind, Loadout::default())).or_insert(0) += n;
+        }
+    }
+
+    /// The per-KIND composition (summed over loadout stacks) — for strength,
+    /// reports, and re-siting. Never leaks loadouts to a fog reader.
+    pub fn comp(&self) -> BTreeMap<ShipKind, u32> {
+        let mut c = BTreeMap::new();
+        for ((k, _), n) in &self.stacks {
+            *c.entry(*k).or_insert(0) += *n;
+        }
+        c
+    }
+
+    /// The per-KIND damage pool (summed over stacks) — persisted back onto the
+    /// engagement between ticks (the pool is per-kind; the loadout split is
+    /// re-derived from the live fleets each tick).
+    pub fn damage_by_kind(&self) -> BTreeMap<ShipKind, f64> {
+        let mut d = BTreeMap::new();
+        for ((k, _), v) in &self.damage {
+            *d.entry(*k).or_insert(0.0) += *v;
+        }
+        d
+    }
+
     pub fn ship_count(&self) -> u32 {
-        self.comp.values().copied().sum()
+        self.stacks.values().copied().sum()
     }
 
     /// Remove all SCOUTS from this side, returning how many were lost. A scout
@@ -149,8 +285,16 @@ impl Forces {
     /// the moment it is in a battle it is destroyed, whether attacking or caught.
     /// Applied once at engagement time before attrition.
     pub fn strip_scouts(&mut self) -> u32 {
-        let n = self.comp.remove(&ShipKind::Scout).unwrap_or(0);
-        self.damage.remove(&ShipKind::Scout);
+        let mut n = 0;
+        self.stacks.retain(|(k, _), c| {
+            if *k == ShipKind::Scout {
+                n += *c;
+                false
+            } else {
+                true
+            }
+        });
+        self.damage.retain(|(k, _), _| *k != ShipKind::Scout);
         n
     }
 
@@ -158,83 +302,122 @@ impl Forces {
         self.ship_count() > 0 || self.platform_tiers > 0
     }
 
-    /// Total weighted ATTACK power = Σ attack_weight×count + platform return fire.
+    /// The TYPED attack (§modules): each stack fires its loadout's damage type at
+    /// its multiplier; the platform adds beam return-fire. Unfitted stacks are
+    /// pure beam at ×1, so an all-unfitted side yields `(beam = old scalar, 0, 0)`.
+    pub fn typed_attack(&self) -> TypedDamage {
+        let mut d = TypedDamage::default();
+        for ((kind, loadout), n) in &self.stacks {
+            let (ty, mult) = loadout.offense();
+            d.add_typed(ty, kind.attack_weight() * *n as f64 * mult);
+        }
+        d.beam += self.platform_tiers as f64 * PLATFORM_TIER_ATTACK;
+        d
+    }
+
+    /// Total weighted ATTACK power (all types summed) — the scalar used for the
+    /// battle-record "damage dealt" readout.
     pub fn attack_power(&self) -> f64 {
-        self.comp.iter().map(|(k, n)| k.attack_weight() * *n as f64).sum::<f64>()
-            + self.platform_tiers as f64 * PLATFORM_TIER_ATTACK
+        self.typed_attack().total()
     }
 
     /// Total weighted STRENGTH (attack + defense presence) — the retreat metric.
+    /// Loadout-agnostic (a fitted ship is still one ship of its kind).
     pub fn strength(&self) -> f64 {
-        self.comp.iter().map(|(k, n)| k.combat_weight() * *n as f64).sum::<f64>()
+        self.stacks.iter().map(|((k, _), n)| k.combat_weight() * *n as f64).sum::<f64>()
             + self.platform_tiers as f64 * (PLATFORM_TIER_ATTACK + PLATFORM_TIER_HULL / HULL_PER_DEFENSE)
     }
 
-    /// Absorb `incoming` total damage, spread across kinds (and platform tiers)
-    /// by `count × hull` share; convert filled pools into whole-ship deaths,
-    /// carrying the remainder. Deterministic. Returns the units lost.
-    pub fn absorb(&mut self, incoming: f64) -> Losses {
+    /// Absorb a TYPED salvo (§modules Part B). Order: (1) side torpedo
+    /// INTERCEPTION cuts the torpedo component by `PD_INTERCEPT × pd_share`
+    /// (the PD-fitted hull fraction of this side); (2) each component spreads
+    /// across absorbers (ship stacks + platform) by `count × hull` share; (3)
+    /// PER-STACK mitigation — Reflective blunts BEAM into the stack, Whipple
+    /// blunts DRIVER; torpedoes ignore armor; the platform takes the raw total.
+    /// Filled pools become whole-ship deaths, carrying the remainder.
+    /// Deterministic. UNFITTED input (pure beam, no PD/armor) reproduces the
+    /// old scalar absorb exactly — the calibration invariant.
+    pub fn absorb(&mut self, incoming: TypedDamage) -> Losses {
         let mut losses = Losses::default();
-        if incoming <= 0.0 || !self.alive() {
+        if incoming.total() <= 0.0 || !self.alive() {
             return losses;
         }
-        // Weight each kind by count × hull; platform tiers as their own weight.
-        let mut weights: Vec<(Option<ShipKind>, f64)> = Vec::new();
-        let mut total_w = 0.0;
-        for (k, n) in &self.comp {
-            if *n > 0 {
-                let w = *n as f64 * k.hull();
-                weights.push((Some(*k), w));
-                total_w += w;
+        // (1) Interception: PD-fitted hull fraction of the SIDE screens torpedoes.
+        let mut ship_hull = 0.0;
+        let mut pd_hull = 0.0;
+        for ((kind, lo), n) in &self.stacks {
+            let h = *n as f64 * kind.hull();
+            ship_hull += h;
+            if lo.has_pd() {
+                pd_hull += h;
             }
         }
+        let pd_share = if ship_hull > 0.0 { pd_hull / ship_hull } else { 0.0 };
+        let inc = TypedDamage {
+            beam: incoming.beam,
+            driver: incoming.driver,
+            torpedo: incoming.torpedo * (1.0 - PD_INTERCEPT * pd_share),
+        };
+        // (2) hull weights (ship stacks + platform).
+        let mut total_w = ship_hull;
         if self.platform_tiers > 0 {
-            let w = self.platform_tiers as f64 * PLATFORM_TIER_HULL;
-            weights.push((None, w));
-            total_w += w;
+            total_w += self.platform_tiers as f64 * PLATFORM_TIER_HULL;
         }
         if total_w <= 0.0 {
             return losses;
         }
-        for (slot, w) in weights {
-            let share = incoming * (w / total_w);
-            match slot {
-                Some(k) => {
-                    let pool = self.damage.entry(k).or_insert(0.0);
-                    *pool += share;
-                    let hull = k.hull();
-                    let have = self.comp.get(&k).copied().unwrap_or(0);
-                    let mut killed = 0u32;
-                    while killed < have && *pool + 1e-9 >= hull {
-                        *pool -= hull;
-                        killed += 1;
-                    }
-                    if killed > 0 {
-                        let remaining = have - killed;
-                        if remaining == 0 {
-                            self.comp.remove(&k);
-                            self.damage.remove(&k);
-                        } else {
-                            self.comp.insert(k, remaining);
-                        }
-                        losses.add_kind(k, killed);
-                    }
+        // (3) per-stack absorption with mitigation.
+        let keys: Vec<StackKey> = self.stacks.keys().cloned().collect();
+        for key in keys {
+            let (kind, lo) = key.clone();
+            let have = self.stacks.get(&key).copied().unwrap_or(0);
+            if have == 0 {
+                continue;
+            }
+            let frac = (have as f64 * kind.hull()) / total_w;
+            let mut beam = inc.beam * frac;
+            if lo.reflects() {
+                beam *= 1.0 - REFLECT_BLUNT;
+            }
+            let mut driver = inc.driver * frac;
+            if lo.whipples() {
+                driver *= 1.0 - WHIPPLE_BLUNT;
+            }
+            let torpedo = inc.torpedo * frac; // armor ignores torpedoes
+            let pool = self.damage.entry(key.clone()).or_insert(0.0);
+            *pool += beam + driver + torpedo;
+            let hull = kind.hull();
+            let mut killed = 0u32;
+            while killed < have && *pool + 1e-9 >= hull {
+                *pool -= hull;
+                killed += 1;
+            }
+            if killed > 0 {
+                let remaining = have - killed;
+                if remaining == 0 {
+                    self.stacks.remove(&key);
+                    self.damage.remove(&key);
+                } else {
+                    self.stacks.insert(key.clone(), remaining);
                 }
-                None => {
-                    self.platform_pool += share;
-                    let mut killed = 0u32;
-                    while killed < self.platform_tiers && self.platform_pool + 1e-9 >= PLATFORM_TIER_HULL {
-                        self.platform_pool -= PLATFORM_TIER_HULL;
-                        killed += 1;
-                    }
-                    if killed > 0 {
-                        self.platform_tiers -= killed;
-                        if self.platform_tiers == 0 {
-                            self.platform_pool = 0.0;
-                        }
-                        losses.platform_tiers += killed;
-                    }
+                losses.add_stack(kind, lo, killed);
+            }
+        }
+        // The platform absorbs its hull share of the RAW total (no mitigation).
+        if self.platform_tiers > 0 {
+            let frac = (self.platform_tiers as f64 * PLATFORM_TIER_HULL) / total_w;
+            self.platform_pool += inc.total() * frac;
+            let mut killed = 0u32;
+            while killed < self.platform_tiers && self.platform_pool + 1e-9 >= PLATFORM_TIER_HULL {
+                self.platform_pool -= PLATFORM_TIER_HULL;
+                killed += 1;
+            }
+            if killed > 0 {
+                self.platform_tiers -= killed;
+                if self.platform_tiers == 0 {
+                    self.platform_pool = 0.0;
                 }
+                losses.platform_tiers += killed;
             }
         }
         losses
@@ -257,7 +440,9 @@ pub fn typical_forces(class: crate::ship::CountClass) -> Forces {
     if corvettes > 0 {
         comp.insert(ShipKind::Corvette, corvettes);
     }
-    Forces { comp, ..Default::default() }
+    // A projected typical fleet is UNFITTED (a fog observer never knows a rival's
+    // loadouts — the leak invariant), so it fights as plain beam brawlers.
+    Forces::from_fleet(&comp, &BTreeMap::new())
 }
 
 /// One symmetric Lanchester attrition tick between two pooled sides. `rate` is
@@ -268,8 +453,8 @@ pub fn typical_forces(class: crate::ship::CountClass) -> Forces {
 /// Damage is computed from the pre-tick attack powers of BOTH sides (they fire
 /// simultaneously), then applied — so neither side gets a free first strike.
 pub fn attrition_tick(a: &mut Forces, b: &mut Forces, rate: f64) -> (Losses, Losses) {
-    let dmg_to_b = rate * a.attack_power();
-    let dmg_to_a = rate * b.attack_power();
+    let dmg_to_b = a.typed_attack().scaled(rate);
+    let dmg_to_a = b.typed_attack().scaled(rate);
     let lb = b.absorb(dmg_to_b);
     let la = a.absorb(dmg_to_a);
     (la, lb)
@@ -312,8 +497,10 @@ pub fn project_engagement(
 }
 
 fn merge_losses(into: &mut Losses, add: &Losses) {
-    for (k, n) in &add.per_kind {
-        into.add_kind(*k, *n);
+    // Merge by STACK (which also keeps the per-kind sum in step); preserves the
+    // loadout breakdown a plain per-kind merge would flatten.
+    for ((k, lo), n) in &add.per_stack {
+        into.add_stack(*k, lo.clone(), *n);
     }
     into.platform_tiers += add.platform_tiers;
 }
@@ -604,7 +791,14 @@ mod tests {
         for (k, n) in comp {
             c.insert(*k, *n);
         }
-        Forces { comp: c, ..Default::default() }
+        Forces::from_fleet(&c, &BTreeMap::new())
+    }
+
+    /// A single fitted stack of `n × (kind, loadout)` — for the counter-matrix tests.
+    fn fitted(kind: ShipKind, mods: &[crate::module::ModuleKind], n: u32) -> Forces {
+        let mut f = Forces::default();
+        f.stacks.insert((kind, Loadout::new(mods.to_vec())), n);
+        f
     }
 
     #[test]
@@ -674,8 +868,8 @@ mod tests {
         // `esc_after`/`bare_after` are the ATTACKER's survivors; compare convoy loss on the defender via a fresh run.
         let (_x, esc_def, _lx, _ly) = project_engagement(&attacker(), &escorted, dmg_rate(3.0), None, None, window);
         let (_p, bare_def, _lp, _lq) = project_engagement(&attacker(), &bare, dmg_rate(3.0), None, None, window);
-        let esc_convoys = esc_def.comp.get(&ShipKind::Convoy).copied().unwrap_or(0);
-        let bare_convoys = bare_def.comp.get(&ShipKind::Convoy).copied().unwrap_or(0);
+        let esc_convoys = esc_def.comp().get(&ShipKind::Convoy).copied().unwrap_or(0);
+        let bare_convoys = bare_def.comp().get(&ShipKind::Convoy).copied().unwrap_or(0);
         let _ = (esc_after, bare_after);
         assert!(esc_convoys >= bare_convoys, "escorted convoys outlast unescorted ({esc_convoys} vs {bare_convoys})");
     }
@@ -758,7 +952,7 @@ mod tests {
         for _ in 0..25 {
             attrition_tick(&mut a, &mut d, dmg_rate(3.0));
         }
-        *d.comp.entry(ShipKind::Raider).or_insert(0) += 7; // relief merges in
+        d.add(ShipKind::Raider, 7); // relief merges in
         let (a2, d2, _, _) = project_engagement(&a, &d, dmg_rate(3.0), None, None, 1_000_000);
         assert!(d2.ship_count() > 0 && a2.ship_count() == 0, "mid-battle relief flips the outcome");
     }
@@ -959,5 +1153,99 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let r2: BattleRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(r, r2, "the record round-trips byte-for-byte through JSON");
+    }
+
+    // --- §modules Part B: the counter-triangle (typed damage) ---------------
+    use crate::module::{ModuleKind, DRIVER_MULT, PD_ATTACK, PD_INTERCEPT, TORP_MULT};
+
+    /// The single-stack pool after one absorb of `salvo` — how much damage the
+    /// stack actually took (mitigation/interception folded in). Sized so no ship
+    /// dies (pool stays below a hull), isolating the mitigation math.
+    fn absorbed(kind: ShipKind, mods: &[ModuleKind], n: u32, salvo: TypedDamage) -> f64 {
+        let mut f = fitted(kind, mods, n);
+        f.absorb(salvo);
+        f.damage.values().sum::<f64>()
+    }
+
+    #[test]
+    fn reflective_blunts_beam_and_only_beam() {
+        let h = ShipKind::Corvette.hull();
+        let beam = TypedDamage { beam: h * 0.5, driver: 0.0, torpedo: 0.0 };
+        let driver = TypedDamage { beam: 0.0, driver: h * 0.5, torpedo: 0.0 };
+        let torp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: h * 0.5 };
+        // Beam is cut by REFLECT_BLUNT; driver + torpedo pass untouched.
+        assert!((absorbed(ShipKind::Corvette, &[], 1, beam) - h * 0.5).abs() < 1e-9);
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::ReflectivePlating], 1, beam) - h * 0.5 * (1.0 - REFLECT_BLUNT)).abs() < 1e-9);
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::ReflectivePlating], 1, driver) - h * 0.5).abs() < 1e-9, "reflective ignores drivers");
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::ReflectivePlating], 1, torp) - h * 0.5).abs() < 1e-9, "reflective ignores torpedoes");
+    }
+
+    #[test]
+    fn whipple_blunts_driver_and_only_driver() {
+        let h = ShipKind::Corvette.hull();
+        let beam = TypedDamage { beam: h * 0.5, driver: 0.0, torpedo: 0.0 };
+        let driver = TypedDamage { beam: 0.0, driver: h * 0.5, torpedo: 0.0 };
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::WhippleArmor], 1, driver) - h * 0.5 * (1.0 - WHIPPLE_BLUNT)).abs() < 1e-9);
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::WhippleArmor], 1, beam) - h * 0.5).abs() < 1e-9, "whipple ignores beams");
+    }
+
+    #[test]
+    fn point_defense_intercepts_torpedoes_only_at_the_side_level() {
+        // Salvo below one hull so no ship dies — isolate the interception math.
+        let h = ShipKind::Corvette.hull();
+        let torp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: h * 0.5 };
+        let beam = TypedDamage { beam: h * 0.5, driver: 0.0, torpedo: 0.0 };
+        // A fully PD-screened side (100% PD hull share) cuts torpedoes by the
+        // full PD_INTERCEPT; beams are untouched by PD.
+        assert!((absorbed(ShipKind::Corvette, &[], 4, torp) - h * 0.5).abs() < 1e-9);
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 4, torp) - h * 0.5 * (1.0 - PD_INTERCEPT)).abs() < 1e-6);
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 4, beam) - h * 0.5).abs() < 1e-6, "PD doesn't stop beams");
+    }
+
+    #[test]
+    fn torpedoes_ignore_both_armors() {
+        let h = ShipKind::Corvette.hull();
+        let torp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: h * 0.5 };
+        let bare = absorbed(ShipKind::Corvette, &[], 4, torp);
+        let refl = absorbed(ShipKind::Corvette, &[ModuleKind::ReflectivePlating], 4, torp);
+        let whip = absorbed(ShipKind::Corvette, &[ModuleKind::WhippleArmor], 4, torp);
+        assert!((bare - refl).abs() < 1e-9 && (bare - whip).abs() < 1e-9, "armor is no defense against torpedoes");
+    }
+
+    #[test]
+    fn typed_offense_matches_the_weapon_module() {
+        let d = fitted(ShipKind::Raider, &[ModuleKind::MassDriver], 3).typed_attack();
+        assert!(d.beam == 0.0 && d.torpedo == 0.0 && (d.driver - 3.0 * ShipKind::Raider.attack_weight() * DRIVER_MULT).abs() < 1e-9);
+        let t = fitted(ShipKind::Raider, &[ModuleKind::TorpedoRack], 3).typed_attack();
+        assert!((t.torpedo - 3.0 * ShipKind::Raider.attack_weight() * TORP_MULT).abs() < 1e-9);
+        let p = fitted(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 2).typed_attack();
+        assert!((p.beam - 2.0 * ShipKind::Corvette.attack_weight() * PD_ATTACK).abs() < 1e-9, "PD trades offense for screening");
+        // Unfitted = plain beam at ×1 (the pre-module scalar).
+        let u = fitted(ShipKind::Raider, &[], 3).typed_attack();
+        assert!((u.beam - 3.0 * ShipKind::Raider.attack_weight()).abs() < 1e-9 && u.driver == 0.0);
+    }
+
+    /// Defender survivors after `atk` grinds `def` to the finish. Higher =
+    /// the defender's fit held better against that attacker.
+    fn def_survivors(atk: Forces, def: Forces) -> u32 {
+        let (_, d, _, _) = project_engagement(&atk, &def, dmg_rate(3.0), None, None, 1_000_000);
+        d.ship_count()
+    }
+
+    #[test]
+    fn armor_helps_in_its_matchup_and_not_off_it_no_strict_upgrade() {
+        // A tanky defender that WINS but takes real losses, so the armor shows.
+        // Reflective defenders outlast bare ones against BEAM attackers (unfitted
+        // = beam), but give up that edge against DRIVER attackers (Whipple's job).
+        let beamers = || fitted(ShipKind::Raider, &[], 6);
+        let drivers = || fitted(ShipKind::Raider, &[ModuleKind::MassDriver], 6);
+        let bare_vs_beam = def_survivors(beamers(), fitted(ShipKind::Corvette, &[], 8));
+        let refl_vs_beam = def_survivors(beamers(), fitted(ShipKind::Corvette, &[ModuleKind::ReflectivePlating], 8));
+        assert!(refl_vs_beam > bare_vs_beam, "reflective beats beams ({refl_vs_beam} vs {bare_vs_beam})");
+        // Whipple is the driver counter; reflective is NOT — so vs drivers the
+        // reflective plating gives up its edge (no strict upgrade over bare).
+        let refl_vs_driver = def_survivors(drivers(), fitted(ShipKind::Corvette, &[ModuleKind::ReflectivePlating], 8));
+        let whip_vs_driver = def_survivors(drivers(), fitted(ShipKind::Corvette, &[ModuleKind::WhippleArmor], 8));
+        assert!(whip_vs_driver > refl_vs_driver, "whipple counters drivers where reflective can't ({whip_vs_driver} vs {refl_vs_driver})");
     }
 }

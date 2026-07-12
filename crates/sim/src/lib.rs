@@ -27,6 +27,7 @@ pub mod galaxy;
 pub mod ids;
 pub mod market;
 pub mod math;
+pub mod module;
 pub mod movement;
 pub mod node;
 pub mod rankings;
@@ -47,8 +48,9 @@ pub use production::{Assignment, SuspendReason};
 pub use specialist::SpecialistKind;
 pub use combat::{
     attrition_tick, project_engagement, typical_forces, BattleOutcomeSummary, BattleRecord, Forces,
-    Losses, RoundNote, RoundRecord, SideRecord,
+    Losses, RoundNote, RoundRecord, SideRecord, TypedDamage,
 };
+pub use module::{DamageType, Loadout, ModuleKind};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{

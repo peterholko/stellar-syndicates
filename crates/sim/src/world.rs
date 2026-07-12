@@ -1866,20 +1866,42 @@ impl World {
         c
     }
 
+    /// §modules: the side's aggregate LOADOUT partition (summed over its fleets)
+    /// — `kind → loadout key → count`, fitted stacks only. Feeds
+    /// [`crate::combat::Forces::from_side`] so combat fights the real fits.
+    fn side_loadouts(&self, members: &[EntityId]) -> crate::combat::LoadoutMap {
+        let mut out: crate::combat::LoadoutMap = BTreeMap::new();
+        for id in members {
+            if let Some(f) = self.fleets.get(id) {
+                for (k, m) in &f.loadouts {
+                    for (key, n) in m {
+                        if *n > 0 && !key.is_empty() {
+                            *out.entry(*k).or_default().entry(key.clone()).or_insert(0) += *n;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Apply a side's per-kind losses across its member fleets (lowest id first,
     /// deterministic), removing emptied fleets, and emit the delayed-disappearance
     /// `ShipDestroyed` ghosts from the battle site.
     fn apply_side_losses(&mut self, members: &mut Vec<EntityId>, losses: &crate::combat::Losses, pos: Vec2, events: &mut Vec<Event>) {
-        for (kind, n) in &losses.per_kind {
+        // §modules: shed losses PER STACK (kind, loadout), so a fleet loses the
+        // exact fitted/unfitted ships combat killed — an armored stack that
+        // absorbed less sheds fewer. `remove_stack` keeps composition + loadouts
+        // in step. Distributed across the side's fleets, lowest id first.
+        for ((kind, loadout), n) in &losses.per_stack {
             let mut remaining = *n;
             for id in members.iter() {
                 if remaining == 0 {
                     break;
                 }
                 let Some(f) = self.fleets.get_mut(id) else { continue };
-                let take = f.count(*kind).min(remaining);
+                let take = f.remove_stack(*kind, loadout, remaining);
                 if take > 0 {
-                    f.remove(*kind, take);
                     remaining -= take;
                     let owner = f.owner;
                     for _ in 0..take {
@@ -2307,8 +2329,12 @@ impl World {
 
             let a_pool = self.engagements[eid].a_pool.clone();
             let d_pool = self.engagements[eid].d_pool.clone();
-            let mut a_side = crate::combat::Forces { comp: a_comp, damage: a_pool, platform_tiers: 0, platform_pool: 0.0 };
-            let mut d_side = crate::combat::Forces { comp: d_comp, damage: d_pool, platform_tiers: ptiers, platform_pool: ppool };
+            // §modules: partition each side into (kind, loadout) stacks from the
+            // live fleets' fits; the per-kind carried pool distributes across them.
+            let a_loadouts = self.side_loadouts(&attackers);
+            let d_loadouts = self.side_loadouts(&defenders);
+            let mut a_side = crate::combat::Forces::from_side(&a_comp, &a_loadouts, &a_pool);
+            let mut d_side = crate::combat::Forces::from_side(&d_comp, &d_loadouts, &d_pool).with_platform(ptiers, ppool);
 
             // Scouts die the instant they are in a battle.
             let a_scouts = a_side.strip_scouts();
@@ -2323,11 +2349,13 @@ impl World {
             let (mut la, mut lb) = crate::combat::attrition_tick(&mut a_side, &mut d_side, rate);
             // The defender's Defense Platform lost its LAST tier this tick.
             let platform_destroyed = ptiers > 0 && d_side.platform_tiers == 0;
+            // Stripped scouts die as UNFITTED losses (both loss views, so the
+            // per-stack loss-application removes them from the fleets).
             if a_scouts > 0 {
-                *la.per_kind.entry(ShipKind::Scout).or_insert(0) += a_scouts;
+                la.add_kind(ShipKind::Scout, a_scouts);
             }
             if d_scouts > 0 {
-                *lb.per_kind.entry(ShipKind::Scout).or_insert(0) += d_scouts;
+                lb.add_kind(ShipKind::Scout, d_scouts);
             }
 
             // Cargo SEIZURE: on a raid, if a defender convoy is emptied this tick,
@@ -2354,11 +2382,13 @@ impl World {
                 }
             }
 
-            // Persist pools back onto the engagement, apply deaths, platform tiers.
+            // Persist pools back onto the engagement (re-summed PER KIND — the
+            // loadout split is re-derived from the live fleets next tick), apply
+            // deaths, platform tiers.
             {
                 let e = self.engagements.get_mut(eid).unwrap();
-                e.a_pool = a_side.damage.clone();
-                e.d_pool = d_side.damage.clone();
+                e.a_pool = a_side.damage_by_kind();
+                e.d_pool = d_side.damage_by_kind();
             }
             if let Some(sid) = platform_system
                 && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
@@ -4312,6 +4342,8 @@ impl World {
         for (k, n) in removed.composition {
             target.add(k, n);
         }
+        // §modules: the absorbed fleet's FITS carry across the gangway.
+        target.fold_loadouts(&removed.loadouts);
         if target.cargo.is_none() {
             target.cargo = removed.cargo;
         }
@@ -4348,20 +4380,27 @@ impl World {
             return;
         }
         let (pos, owner) = (src.pos, src.owner);
-        // Detach.
+        // Detach. §modules: the detached ships carry their FITS (fitted stacks
+        // taken first) — an escort split off keeps its loadout.
         let mut new_comp: BTreeMap<ShipKind, u32> = BTreeMap::new();
+        let mut new_loadouts: crate::combat::LoadoutMap = BTreeMap::new();
         {
             let src = self.fleets.get_mut(&fleet_id).unwrap();
             for (k, n) in counts {
                 if *n > 0 {
+                    let taken = src.detach_loadouts(*k, *n);
                     src.remove(*k, *n);
                     new_comp.insert(*k, *n);
+                    for (kind, m) in taken {
+                        new_loadouts.entry(kind).or_default().extend(m);
+                    }
                 }
             }
         }
         let id = self.alloc_entity_id();
         let mut fleet = Fleet::single(id, owner, ShipKind::Scout, pos, FleetOrder::Idle, None);
         fleet.composition = new_comp;
+        fleet.loadouts = new_loadouts;
         // Report the new fleet's flagship as a spawn (owner-only notice pathway).
         let flagship = fleet.flagship_kind();
         self.fleets.insert(id, fleet);
@@ -8554,6 +8593,78 @@ mod tests {
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
         assert_eq!(w.battle_records, w2.battle_records, "records survive a snapshot round-trip");
+    }
+
+    // ===================================================================
+    // §modules Part B — loadouts flow fleet → combat → losses end to end
+    // ===================================================================
+
+    #[test]
+    fn a_whipple_fit_survives_drivers_better_end_to_end() {
+        use crate::module::{Loadout, ModuleKind};
+        // The SAME fight twice — a mass-driver attacker vs a corvette defender
+        // that is UNFITTED in one run, WHIPPLE-armored (the driver counter) in
+        // the other. Whipple must leave more defenders alive: the loadout flows
+        // fleet → side_loadouts → Forces::from_side → typed combat → per-stack
+        // losses → fleet, all the way through the real engagement.
+        let run = |whipple: bool| -> u32 {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+            let cc = w.players[&atk].command_center;
+            let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+            w.fleets.get_mut(&striker).unwrap().loadouts.entry(ShipKind::Raider).or_default()
+                .insert(Loadout::new(vec![ModuleKind::MassDriver]).key(), 6);
+            let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 8, FleetOrder::Idle);
+            if whipple {
+                w.fleets.get_mut(&target).unwrap().loadouts.entry(ShipKind::Corvette).or_default()
+                    .insert(Loadout::new(vec![ModuleKind::WhippleArmor]).key(), 8);
+            }
+            w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+            assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "battle opens");
+            assert!(run_until(&mut w, 500, |w| w.engagements.is_empty()), "battle resolves");
+            w.fleets.get(&target).map(|f| f.count(ShipKind::Corvette)).unwrap_or(0)
+        };
+        let bare = run(false);
+        let whip = run(true);
+        assert!(whip > bare, "whipple corvettes outlast bare ones vs drivers ({whip} vs {bare})");
+    }
+
+    #[test]
+    fn merge_and_split_carry_loadouts() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(2);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // Fleet A: 2 raiders, one with a torpedo rack.
+        let a = w.alloc_entity_id();
+        let mut fa = Fleet::single(a, id, ShipKind::Raider, pos, FleetOrder::Idle, None);
+        fa.add(ShipKind::Raider, 1);
+        fa.loadouts.entry(ShipKind::Raider).or_default().insert(Loadout::new(vec![ModuleKind::TorpedoRack]).key(), 1);
+        w.fleets.insert(a, fa);
+        // Fleet B: 1 raider with reflective plating, co-located.
+        let b = w.alloc_entity_id();
+        let mut fb = Fleet::single(b, id, ShipKind::Raider, pos, FleetOrder::Idle, None);
+        fb.loadouts.entry(ShipKind::Raider).or_default().insert(Loadout::new(vec![ModuleKind::ReflectivePlating]).key(), 1);
+        w.fleets.insert(b, fb);
+        // Merge B into A → A carries BOTH fits.
+        w.step(&[Command::MergeFleets { player_id: id, into: a, from: b }]);
+        assert_eq!(w.fleets[&a].count(ShipKind::Raider), 3);
+        assert_eq!(w.fleets[&a].fitted_count(ShipKind::Raider), 2, "both fits carried across the merge");
+        // Split one raider back off → a fit goes with it (no fit lost). Identify
+        // the genuinely NEW fleet by id (the player already has a starting fleet).
+        let before: std::collections::BTreeSet<EntityId> = w.fleets.keys().copied().collect();
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert(ShipKind::Raider, 1);
+        w.step(&[Command::SplitFleet { player_id: id, fleet_id: a, counts }]);
+        let src_fits = w.fleets[&a].fitted_count(ShipKind::Raider);
+        let new_id = *w.fleets.keys().find(|k| !before.contains(k)).expect("a detached fleet");
+        let new_fleet = &w.fleets[&new_id];
+        assert_eq!(new_fleet.count(ShipKind::Raider), 1);
+        assert_eq!(new_fleet.fitted_count(ShipKind::Raider), 1, "the split takes a fitted ship first");
+        assert_eq!(src_fits + new_fleet.fitted_count(ShipKind::Raider), 2, "no fit lost across the split");
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),
