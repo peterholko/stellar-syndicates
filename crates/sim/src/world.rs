@@ -1294,8 +1294,11 @@ impl World {
         //        as construction; the hulls were out of combat while queued.
         self.resolve_refits(&mut events);
 
-        // 5b''''. §research: complete any fully-funded programme (the distributed
-        //         clock that funds it is wired in R2). Instant, galaxy-wide.
+        // 5b''''. §research R2: the DISTRIBUTED CLOCK — every staffed+funded
+        //         member Academy drips its basket and adds its rate to the active
+        //         programme; then complete anything fully funded (instant, galaxy-
+        //         wide). Runs after accrual so labs drip from fresh stockpiles.
+        self.tick_research(&mut events);
         self.resolve_research(&mut events);
 
         // 5b''. SCOUT INTEL (§scout part 2): scouts passing rival systems capture
@@ -4976,6 +4979,109 @@ impl World {
                         && s.food_state == crate::colony::FoodState::WellSupplied
                 })
                 .count() as f64,
+        }
+    }
+
+    /// §research R2: the DISTRIBUTED CLOCK. For each syndicate with an AVAILABLE
+    /// active programme, every staffed member Academy contributes
+    /// `rate = academy_tier_throughput × staffing × affine-specialist skill ×
+    /// food`, dripping `basket × rate × dt` from its OWN system stockpile; a lab
+    /// whose stockpile can't cover its drip suspends its contribution (soft). The
+    /// syndicate's progress grows by Σ funded rate × dt. No staffed Academy →
+    /// latched `ResearchStalled` (once), with `ResearchResumed` on recovery.
+    fn tick_research(&mut self, events: &mut Vec<Event>) {
+        if self.syndicates.is_empty() {
+            return;
+        }
+        let now = self.time;
+        let acad = crate::build::StructureKind::Academy;
+        let sids: Vec<SyndicateId> = self.syndicates.keys().copied().collect();
+        for sid in sids {
+            // Snapshot the active programme; idle syndicates clear any stall latch.
+            let active = self.syndicates[&sid].research.active.clone();
+            let Some(active_id) = active else {
+                if let Some(s) = self.syndicates.get_mut(&sid) {
+                    s.research.stalled = false;
+                }
+                continue;
+            };
+            let Some(prog) = crate::research::programme(&active_id) else { continue };
+            let (field, tier) = (prog.field, prog.tier);
+            // A GATED active accrues nothing but is NOT a stall (it's waiting).
+            let available = {
+                let metric = |m| self.syndicate_metric(sid, m);
+                crate::research::is_available(&active_id, &self.syndicates[&sid].research, &metric, now)
+            };
+            if !available {
+                continue;
+            }
+            let members: std::collections::BTreeSet<PlayerId> = self.syndicates[&sid].members.clone();
+            let basket = crate::research::basket(field, tier);
+            let mut funded_rate = 0.0;
+            let mut any_staffed = false;
+            for sys in self.systems.iter_mut().filter(|s| s.owner.is_some_and(|o| members.contains(&o))) {
+                let food = sys.food_state;
+                // Per-Academy rate (immutable reads), collected before we debit.
+                let labs: Vec<(u32, f64)> = sys
+                    .bodies
+                    .iter()
+                    .filter_map(|b| {
+                        let t = b.tier(acad);
+                        if t == 0 {
+                            return None;
+                        }
+                        let staffing = sys.staffing_factor(b.id, acad);
+                        if staffing <= 0.0 {
+                            return None; // an unstaffed Academy contributes nothing
+                        }
+                        // Skill from the RESEARCH FIELD's affine specialists posted here.
+                        let matched: u32 = crate::research::field_affinity(field)
+                            .iter()
+                            .map(|k| b.assignments.get(&acad).and_then(|a| a.specialists.get(k)).copied().unwrap_or(0))
+                            .sum();
+                        let skill = crate::production::skill_factor(matched, t);
+                        let foodf = crate::production::food_factor(acad, food);
+                        let rate = crate::production::tier_throughput(t) * staffing * skill * foodf;
+                        Some((t, rate))
+                    })
+                    .collect();
+                if labs.is_empty() {
+                    continue;
+                }
+                any_staffed = true;
+                // Fund each lab from THIS system's stockpile (all-or-nothing per lab).
+                for (_t, rate) in labs {
+                    if rate <= 0.0 {
+                        continue;
+                    }
+                    let covers = basket
+                        .iter()
+                        .all(|(c, per)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *per * rate * DT);
+                    if !covers {
+                        continue; // supply-starved lab suspends this tick (soft)
+                    }
+                    for (c, per) in &basket {
+                        let left = sys.stockpile.get(c).copied().unwrap_or(0.0) - *per * rate * DT;
+                        if left <= 1e-9 {
+                            sys.stockpile.remove(c);
+                        } else {
+                            sys.stockpile.insert(*c, left);
+                        }
+                    }
+                    funded_rate += rate;
+                }
+            }
+            let s = self.syndicates.get_mut(&sid).unwrap();
+            s.research.progress += funded_rate * DT;
+            if !any_staffed {
+                if !s.research.stalled {
+                    s.research.stalled = true;
+                    events.push(Event::new(now, EventPayload::ResearchStalled { syndicate: sid }));
+                }
+            } else if s.research.stalled {
+                s.research.stalled = false;
+                events.push(Event::new(now, EventPayload::ResearchResumed { syndicate: sid }));
+            }
         }
     }
 
@@ -13005,6 +13111,114 @@ mod tests {
         // A hidden id in the queue is dropped (can't research it).
         w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["hull_corsair_v_salvage_rigs".into(), "prop_bunkerage".into()] }]);
         assert_eq!(w.syndicates[&sid].research.active.as_deref(), Some("prop_bunkerage"), "hidden dropped, next promoted");
+    }
+
+    // §research R2 — the distributed clock. Helper: give `player` a CLEAN owned
+    // system hosting one Academy staffed with `workers`, seeded to stay supplied.
+    fn grant_research_lab(w: &mut World, player: PlayerId, workers: u32) -> EntityId {
+        use crate::build::StructureKind::Academy;
+        let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).expect("a free system");
+        s.owner = Some(player);
+        s.claimed_at = Some(0.0);
+        s.food_state = crate::colony::FoodState::WellSupplied;
+        let b = s.bodies.iter_mut().next().expect("a body");
+        b.set_tier(Academy, 1);
+        b.population = 10.0; // ample workforce so staffing_share ≈ 1
+        if workers > 0 {
+            b.assignments.insert(Academy, crate::production::Assignment { workers, specialists: Default::default(), suspended: None });
+        }
+        *s.stockpile.entry(Commodity::Electronics).or_insert(0.0) = 500.0; // T1 basket
+        *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 5000.0; // keep supplied
+        s.id
+    }
+
+    #[test]
+    fn r2_distributed_clock_accrues_and_debits_the_basket() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let lab = grant_research_lab(&mut w, id, 1);
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        let elec0 = w.systems.iter().find(|s| s.id == lab).unwrap().stockpile.get(&Commodity::Electronics).copied().unwrap();
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let prog = w.syndicates[&sid].research.progress;
+        let elec1 = w.systems.iter().find(|s| s.id == lab).unwrap().stockpile.get(&Commodity::Electronics).copied().unwrap_or(0.0);
+        assert!(prog > 0.0, "the clock accrues progress (got {prog})");
+        assert!(elec1 < elec0, "the basket drips from the LOCAL stockpile ({elec1} < {elec0})");
+        assert!(!w.syndicates[&sid].research.stalled, "a staffed+funded lab is not stalled");
+    }
+
+    #[test]
+    fn r2_unfunded_academy_suspends_its_contribution() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let lab = grant_research_lab(&mut w, id, 1);
+        // Strip the basket good → the lab can't drip → it suspends (no accrual).
+        w.systems.iter_mut().find(|s| s.id == lab).unwrap().stockpile.remove(&Commodity::Electronics);
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        for _ in 0..10 {
+            w.step(&[]);
+        }
+        assert_eq!(w.syndicates[&sid].research.progress, 0.0, "an unfunded lab accrues nothing");
+        assert!(!w.syndicates[&sid].research.stalled, "unfunded ≠ stalled (it's staffed, just supply-starved)");
+    }
+
+    #[test]
+    fn r2_no_staffed_academy_stalls_once_then_resumes() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        // A member system with an Academy tier but NO crew posted (unstaffed).
+        let lab = grant_research_lab(&mut w, id, 0);
+        // Setting the queue promotes an active programme; that same tick, with no
+        // staffed Academy, the stall latches and fires once.
+        let ev1 = w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        assert!(ev1.iter().any(|e| matches!(&e.payload, EventPayload::ResearchStalled { syndicate } if *syndicate == sid)), "stall fires once");
+        assert!(w.syndicates[&sid].research.stalled);
+        let ev2 = w.step(&[]);
+        assert!(!ev2.iter().any(|e| matches!(&e.payload, EventPayload::ResearchStalled { .. })), "no repeat stall");
+        // Staff the Academy → resume.
+        w.systems.iter_mut().find(|s| s.id == lab).unwrap().bodies.iter_mut().next().unwrap()
+            .assignments.insert(crate::build::StructureKind::Academy, crate::production::Assignment { workers: 1, specialists: Default::default(), suspended: None });
+        let ev3 = w.step(&[]);
+        assert!(ev3.iter().any(|e| matches!(&e.payload, EventPayload::ResearchResumed { syndicate } if *syndicate == sid)), "resume fires on recovery");
+        assert!(!w.syndicates[&sid].research.stalled);
+    }
+
+    #[test]
+    fn r2_two_staffed_academies_out_accrue_one() {
+        let run = |labs: u32| -> f64 {
+            let mut w = test_world();
+            w.enclaves.clear();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+            let sid = w.players[&id].syndicate.unwrap();
+            for _ in 0..labs {
+                grant_research_lab(&mut w, id, 1);
+            }
+            w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+            for _ in 0..20 {
+                w.step(&[]);
+            }
+            w.syndicates[&sid].research.progress
+        };
+        let one = run(1);
+        let two = run(2);
+        assert!(one > 0.0, "one lab makes progress");
+        assert!(two > 1.7 * one, "two labs ≈ double the science ({two} vs {one})");
     }
 
     #[test]

@@ -332,6 +332,11 @@ pub struct ResearchState {
     /// Capability designations (Crown Project body, Mass Stream pair, etc.).
     #[serde(default)]
     pub designations: BTreeMap<Cap, DesignationTarget>,
+    /// §research R2: latched STALL state — true while an available active
+    /// programme has no staffed Academy contributing. Drives the fire-once
+    /// `ResearchStalled`/`ResearchResumed` events. serde-default false.
+    #[serde(default)]
+    pub stalled: bool,
 }
 
 impl ResearchState {
