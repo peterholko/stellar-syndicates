@@ -1507,6 +1507,10 @@ impl World {
         // CHOICE stays picket-local (guarding is physical proximity, not intel).
         let arrays: BTreeMap<PlayerId, Vec<(Vec2, f64)>> =
             self.players.keys().map(|&p| (p, self.array_sensor_sources(p))).collect();
+        // §research R4a SensorRange widens each corp's PICKET bubble (its fleets'
+        // own sensing), precomputed per owner so the closure below stays borrow-free.
+        let range_mult: BTreeMap<PlayerId, f64> =
+            self.players.keys().map(|&p| (p, self.research_mod(p, crate::research::ModKey::SensorRange))).collect();
         // SYNDICATES (§syndicates): per-owner ally set, so autonomous pickets treat
         // syndicate members as FRIENDLY — never hunted, counted on the friendly side
         // of the force ratio. Precomputed here (the closures below can't borrow &self).
@@ -1520,7 +1524,7 @@ impl World {
         // target's SIGNATURE — the SAME shared `detection::detected` the View uses
         // (parity-tested), so sim-side awareness and the player's map agree.
         let sensed = |owner: PlayerId, ppos: Vec2, target: Vec2, sig: f64| -> bool {
-            let mut sources = vec![(ppos, sensor)];
+            let mut sources = vec![(ppos, sensor * range_mult.get(&owner).copied().unwrap_or(1.0))];
             if let Some(a) = arrays.get(&owner) {
                 sources.extend_from_slice(a);
             }
@@ -4289,10 +4293,12 @@ impl World {
     /// arrays consistently. Systems are static, so including them in the View's
     /// delayed composite frame is exactly as leak-free as ship bubbles.
     pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
+        // §research R4a SensorRadius widens every owned array's bubble.
+        let radius = self.research_mod(owner, crate::research::ModKey::SensorRadius);
         self.systems
             .iter()
             .filter(|s| s.owner == Some(owner) && s.tier(crate::build::StructureKind::SensorArray) >= 1)
-            .map(|s| (s.pos, s.sensor_bubble()))
+            .map(|s| (s.pos, s.sensor_bubble() * radius))
             .collect()
     }
 
@@ -4402,6 +4408,26 @@ impl World {
     /// phase so the debit is visible to this tick's accrual + standing orders.
     fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
         let recipe = crate::build::recipe_for(what);
+        // §research R4a: the build's COST + TIME tuners, by kind (neutral 1.0 until
+        // researched). Read here (before any `sys` borrow) so `self` is free.
+        use crate::research::ModKey;
+        let (research_cost_mult, research_time_mult) = match what {
+            crate::build::BuildKind::Ship { ship } if ship == ShipKind::Colony => (
+                self.research_mod(player_id, ModKey::ColonyCost),
+                self.research_mod(player_id, ModKey::ColonyBuildTime),
+            ),
+            crate::build::BuildKind::Ship { ship } if ship.is_combatant() => (
+                self.research_mod(player_id, ModKey::WarshipCost),
+                self.research_mod(player_id, ModKey::WarshipBuildTime),
+            ),
+            crate::build::BuildKind::Ship { .. } => (1.0, 1.0), // civilian hulls untuned
+            crate::build::BuildKind::Module { .. } => (
+                self.research_mod(player_id, ModKey::ModuleCost),
+                self.research_mod(player_id, ModKey::ModuleBuildTime),
+            ),
+            crate::build::BuildKind::Upgrade { .. } => (1.0, self.research_mod(player_id, ModKey::StructureBuildTime)),
+            crate::build::BuildKind::Train { .. } => (1.0, self.research_mod(player_id, ModKey::TrainingTime)),
+        };
         let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
             return;
         };
@@ -4538,13 +4564,16 @@ impl World {
         // §explore Part 3 Unstable Geology: DEVELOPMENT (upgrade) recipe costs run
         // ×UNSTABLE_COST_MULT here — the lemon a survey can't see. ONE multiplier
         // read shared by the affordability check AND the debit (they can't drift).
-        let cost_mult = if matches!(what, crate::build::BuildKind::Upgrade { .. })
-            && sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology)
-        {
-            crate::explore::UNSTABLE_COST_MULT
-        } else {
-            1.0
-        };
+        // §research R4a WarshipCost/ModuleCost/ColonyCost fold into the shared
+        // multiplier alongside the Unstable-Geology lemon.
+        let cost_mult = research_cost_mult
+            * if matches!(what, crate::build::BuildKind::Upgrade { .. })
+                && sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology)
+            {
+                crate::explore::UNSTABLE_COST_MULT
+            } else {
+                1.0
+            };
         let affordable = recipe
             .costs
             .iter()
@@ -4579,6 +4608,9 @@ impl World {
         } else {
             recipe.build_ticks
         };
+        // §research R4a WarshipBuildTime/ModuleBuildTime/StructureBuildTime/
+        // ColonyBuildTime/TrainingTime scale the enqueued duration (≥ 1 tick).
+        let ticks = ((ticks as f64 * research_time_mult).round() as u64).max(1);
         let complete_tick = self.tick + ticks;
         self.build_queue.push(crate::build::BuildJob {
             id: self.next_build_id,
@@ -5021,6 +5053,54 @@ impl World {
         }
     }
 
+    /// §research R4: the [`crate::research::ResearchState`] governing `owner` —
+    /// its syndicate's (research is a syndicate institution). None if the corp is
+    /// in no syndicate; every effect site then falls back to the neutral default.
+    fn research_of(&self, owner: PlayerId) -> Option<&crate::research::ResearchState> {
+        self.players
+            .get(&owner)
+            .and_then(|c| c.syndicate)
+            .and_then(|sid| self.syndicates.get(&sid))
+            .map(|s| &s.research)
+    }
+
+    /// §research R4a: a single tuner's value for `owner` (identity default: 1.0
+    /// multiplicative, 0.0 additive — so an un-researched corp is unaffected).
+    fn research_mod(&self, owner: PlayerId, key: crate::research::ModKey) -> f64 {
+        self.research_of(owner)
+            .map(|r| crate::research::mod_of(r, key))
+            .unwrap_or(if key.is_additive() { 0.0 } else { 1.0 })
+    }
+
+    /// §research R4c: has `owner`'s syndicate unlocked this capability flag?
+    /// (Enforcement points wired in the R4c flags pass.)
+    #[allow(dead_code)]
+    fn research_flag(&self, owner: PlayerId, cap: crate::research::Cap) -> bool {
+        self.research_of(owner).is_some_and(|r| crate::research::has_flag(r, cap))
+    }
+
+    /// §research R4b: the best research-granted tier for `kind` (0 = none), so a
+    /// build site can gate tier IV/V on `max(base_structure_tier, this)`. Applied
+    /// with the structure ceilings + new hulls/modules in R5 (they need the full
+    /// catalog + new content); kept here so the lookup layer is complete.
+    #[allow(dead_code)]
+    fn research_struct_tier(&self, owner: PlayerId, kind: crate::build::StructureKind) -> u32 {
+        self.research_of(owner)
+            .map(|r| crate::research::unlocked_structure_tier(r, kind))
+            .unwrap_or(0)
+    }
+
+    /// §research R4b: has `owner`'s syndicate unlocked this hull / module? (Wired
+    /// with the new hulls/utility modules in R5.)
+    #[allow(dead_code)]
+    fn research_hull(&self, owner: PlayerId, kind: ShipKind) -> bool {
+        self.research_of(owner).is_some_and(|r| crate::research::has_hull(r, kind))
+    }
+    #[allow(dead_code)]
+    fn research_module(&self, owner: PlayerId, kind: crate::module::ModuleKind) -> bool {
+        self.research_of(owner).is_some_and(|r| crate::research::has_module(r, kind))
+    }
+
     /// §research R3: add to a cumulative research VERB for `owner`'s syndicate
     /// (no-op if the owner isn't in one). The corp-wide biography that gates.
     fn add_research_verb(&mut self, owner: PlayerId, verb: crate::research::Verb, amount: f64) {
@@ -5089,11 +5169,13 @@ impl World {
         let mut hits: Vec<(PlayerId, EntityId)> = Vec::new();
         for obs in observers {
             let allies = self.allies_of(obs);
-            // Coverage sources: this corp's own fleet bubbles + its Sensor Arrays.
+            // Coverage sources: this corp's own fleet bubbles (× SensorRange) + its
+            // Sensor Arrays (already × SensorRadius in array_sensor_sources).
+            let range = sensor * self.research_mod(obs, crate::research::ModKey::SensorRange);
             let mut sources: Vec<(Vec2, f64)> = snap
                 .iter()
                 .filter(|(_, o, _, _)| *o == obs)
-                .map(|(_, _, pos, _)| (*pos, sensor))
+                .map(|(_, _, pos, _)| (*pos, range))
                 .collect();
             sources.extend(self.array_sensor_sources(obs));
             if sources.is_empty() {
@@ -5664,15 +5746,49 @@ impl World {
         // mutably, then folded into the syndicate biographies after the loop (an
         // `add_research_verb` call would re-borrow `self`). (owner, verb, amount).
         let mut research_deltas: Vec<(PlayerId, crate::research::Verb, f64)> = Vec::new();
+        // §research R4a: snapshot each owner's ECONOMY tuners once (the fold is
+        // cheap, but this is the per-tick hot path and `self` is about to be
+        // borrowed mutably by the systems loop). Neutral (all 1.0) for un-
+        // researched corps, so the whole block is inert until R5 grants effects.
+        use crate::research::ModKey;
+        #[derive(Clone, Copy)]
+        struct EconMods {
+            extraction: f64,
+            processing: f64,
+            pop_growth: f64,
+            habitat_cap: f64,
+            provisions_use: f64,
+            growth_below_half: f64,
+        }
+        let owners: std::collections::BTreeSet<PlayerId> =
+            self.systems.iter().filter_map(|s| s.owner).collect();
+        let econ: BTreeMap<PlayerId, EconMods> = owners
+            .iter()
+            .map(|&o| {
+                (o, EconMods {
+                    extraction: self.research_mod(o, ModKey::ExtractionRate),
+                    processing: self.research_mod(o, ModKey::ProcessingYield),
+                    pop_growth: self.research_mod(o, ModKey::PopGrowth),
+                    habitat_cap: self.research_mod(o, ModKey::HabitatCap),
+                    provisions_use: self.research_mod(o, ModKey::ProvisionsUse),
+                    growth_below_half: self.research_mod(o, ModKey::GrowthBelowHalf),
+                })
+            })
+            .collect();
         for sys in &mut self.systems {
             let Some(owner) = sys.owner else {
                 continue;
             };
+            let em = econ.get(&owner).copied().unwrap_or(EconMods {
+                extraction: 1.0, processing: 1.0, pop_growth: 1.0,
+                habitat_cap: 1.0, provisions_use: 1.0, growth_below_half: 1.0,
+            });
             // --- Colony life (eat → ladder → grow; before accrual) ---
             // §bodies: ONE pooled food state — demand is the SUM of every
             // body's population against the system stockpile; GROWTH is per
             // body, toward that body's OWN Habitat capacity. Never decreases.
-            let demand_per_s = sys.population() * crate::colony::PROVISIONS_PER_MILLION_PER_S;
+            // §research R4a ProvisionsUse tunes the per-capita ration draw.
+            let demand_per_s = sys.population() * crate::colony::PROVISIONS_PER_MILLION_PER_S * em.provisions_use;
             if demand_per_s > 0.0 {
                 let have = sys.stockpile.get(&crate::cargo::Commodity::Provisions).copied().unwrap_or(0.0);
                 let draw = (demand_per_s * DT).min(have);
@@ -5691,11 +5807,17 @@ impl World {
                 }
                 if state == crate::colony::FoodState::WellSupplied {
                     for b in sys.bodies.iter_mut() {
+                        // §research R4a HabitatCap raises the ceiling each tier buys.
                         let cap = crate::colony::POP_CAP_PER_HABITAT_TIER
-                            * b.tier(crate::build::StructureKind::Habitat) as f64;
+                            * b.tier(crate::build::StructureKind::Habitat) as f64
+                            * em.habitat_cap;
                         if b.population > 0.0 && b.population < cap {
                             let before = b.population;
-                            b.population = (b.population + crate::colony::POP_GROWTH_PER_S * DT).min(cap);
+                            // §research R4a PopGrowth scales the base rate; GrowthBelowHalf
+                            // adds an early-colony boost while under half the ceiling.
+                            let below_half = if b.population < cap * 0.5 { em.growth_below_half } else { 1.0 };
+                            let rate = crate::colony::POP_GROWTH_PER_S * em.pop_growth * below_half;
+                            b.population = (b.population + rate * DT).min(cap);
                             // §research R3: cumulative population grown (millions unit).
                             research_deltas.push((owner, crate::research::Verb::PopulationGrown, b.population - before));
                         }
@@ -5760,8 +5882,9 @@ impl World {
                     let food = crate::production::food_factor(kind, food_state);
                     // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
                     let vein_mult = if vein == Some(resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
+                    // §research R4a ExtractionRate tunes every mine's raw output.
                     let mut amount =
-                        (richness * throughput * staffing * skill * food * vein_mult * DT).min(headroom.max(0.0));
+                        (richness * throughput * staffing * skill * food * vein_mult * em.extraction * DT).min(headroom.max(0.0));
                     if let Some(reserves) = b.deposits[i].reserves.as_mut() {
                         amount = amount.min(*reserves);
                         *reserves -= amount;
@@ -5839,7 +5962,8 @@ impl World {
                     };
                     // (`pocket` multiplies the OUTPUT of the same input draw — it
                     // does NOT enter max_out.)
-                    let max_out = conv.rate * crate::production::tier_throughput(tier) * staffing * skill * food * DT;
+                    // §research R4a ProcessingYield tunes converter throughput.
+                    let max_out = conv.rate * crate::production::tier_throughput(tier) * staffing * skill * food * em.processing * DT;
                     // Bound by the scarcest input (units of OUTPUT the basket affords).
                     let input_bound = conv
                         .inputs
@@ -13537,6 +13661,66 @@ mod tests {
         // Re-running does not double-count (deduped by fleet id).
         w.observe_rivals_for_research();
         assert_eq!(w.syndicates[&sid].research.verb(Verb::RivalFleetsObserved), 2.0, "re-sightings never re-count");
+    }
+
+    // §research R4a — EFFECT MODS. A completed programme changes a real sim
+    // outcome instantly, galaxy-wide, via the lazy mods layer.
+    #[test]
+    fn r4_extraction_rate_mod_lifts_yield() {
+        let run = |researched: bool| -> f64 {
+            let mut w = test_world();
+            w.enclaves.clear();
+            let a = PlayerId(1);
+            w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+            let sid = w.players[&a].syndicate.unwrap();
+            grant_mining_system(&mut w, a);
+            if researched {
+                // Deep Bores (Materials I): ExtractionRate ×1.15.
+                w.syndicates.get_mut(&sid).unwrap().research.completed.insert("mat_deep_bores".into());
+            }
+            for _ in 0..20 {
+                w.step(&[]);
+            }
+            w.syndicates[&sid].research.verb(crate::research::Verb::UnitsExtracted)
+        };
+        let base = run(false);
+        let boosted = run(true);
+        assert!(base > 0.0, "the baseline mine produces ({base})");
+        assert!(boosted > base * 1.10, "ExtractionRate ×1.15 lifts yield ({boosted} vs {base})");
+    }
+
+    #[test]
+    fn r4_growth_below_half_mod_speeds_a_young_colony() {
+        let run = |researched: bool| -> f64 {
+            let mut w = test_world();
+            w.enclaves.clear();
+            let a = PlayerId(1);
+            w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+            let sid = w.players[&a].syndicate.unwrap();
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(a);
+            s.claimed_at = Some(0.0);
+            s.food_state = crate::colony::FoodState::WellSupplied;
+            let sysid = s.id;
+            let b = s.bodies.iter_mut().next().unwrap();
+            b.set_tier(crate::build::StructureKind::Habitat, 2); // ceiling 8.0M
+            b.population = 1.0; // well under half (4.0M) — the boost applies
+            *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 600.0;
+            if researched {
+                // Boom Charters (Life Growth III): GrowthBelowHalf ×1.20.
+                w.syndicates.get_mut(&sid).unwrap().research.completed.insert("life_growth_iii_boom_charters".into());
+            }
+            for _ in 0..200 {
+                w.step(&[]);
+            }
+            w.systems.iter().find(|s| s.id == sysid).unwrap().bodies.iter().next().unwrap().population
+        };
+        let base = run(false);
+        let boosted = run(true);
+        assert!(base > 1.0, "the colony grows ({base})");
+        assert!(boosted - 1.0 > (base - 1.0) * 1.15, "GrowthBelowHalf ×1.20 grows a young colony faster ({boosted} vs {base})");
     }
 
     #[test]
