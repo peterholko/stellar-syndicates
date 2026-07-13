@@ -2512,7 +2512,7 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
-        `<span>${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
+        `<span class="sp-name">${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("") + upkeep + refinery + colonyPanel(dyn);
 }
 
@@ -2554,7 +2554,7 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
     // The body lives in the hover title — the roster table already maps
     // what's where, and the row grid is tuned for short names.
     return `<div class="sys-prod" title="${esc(a.title)} ×${a.tier} on ${esc(nameOf.get(a.body_id) ?? "—")} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
-      `<span>${esc(a.title)} ×${a.tier}</span>` +
+      `<span class="sp-name sp-name--wide">${esc(a.title)} ×${a.tier}</span>` +
       `<span class="sp-stock">${a.workers}👷${spec ? ` +${Object.values(a.specialists).reduce((s: number, n) => s + (n as number), 0)}🎓` : ""}</span>` +
       `<span class="sp-rate">${out || "—"}</span>${susp}${controls}` +
       `</div>`;
@@ -2564,7 +2564,7 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
       .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !postedAt.has(`${b.id}:${slug}`))
       .map(([slug, t]) =>
         `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted${withControls ? "" : " (staff it from its body\u2019s panel)"}">` +
-        `<span>${esc(label(slug))} ×${t}</span><span class="sp-none">unstaffed</span>` +
+        `<span class="sp-name sp-name--wide">${esc(label(slug))} ×${t}</span><span class="sp-none">unstaffed</span>` +
         (withControls ? `<button class="act" data-crew="${b.id}:${slug}:1" title="post a crew">+ crew</button>` : "") +
         `</div>`))
     .join("");
