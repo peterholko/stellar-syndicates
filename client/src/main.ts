@@ -1342,7 +1342,9 @@ function openPlanetPanel(d: SystemBodyDetail): void {
         `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button></div>`;
     }
 
-    manage = blockChip + built + linesSec + buildSec + bodyQueue + yardSec + modulesSec + depotSec;
+    // The "Under construction" progress bars sit directly under Production Lines
+    // (a structure being built is production-in-progress), above the Build menu.
+    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + depotSec;
     // §bodies edge state: a body with nothing built and nothing buildable
     // stays a quiet piece of scenery.
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
