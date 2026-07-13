@@ -1006,14 +1006,26 @@ fn build_options() -> Vec<BuildOptionView> {
         ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
         ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
     ];
+    // §modules Part B3: the 5 modules, keyed `module:<slug>` so the client routes
+    // them to BuildModule (not BuildShip/DevelopSystem) while reusing the same
+    // recipe-cost channel. They hold no slot and gate on an Armaments Complex.
+    let modules = sim::module::MODULE_KINDS.map(|m| {
+        (
+            format!("module:{}", m.slug()),
+            m.label().to_string(),
+            BuildKind::Module { module: m },
+        )
+    });
     ships
     .into_iter()
-    .chain(StructureKind::ALL.into_iter().map(|k| (k.slug(), k.title(), BuildKind::Upgrade { upgrade: k })))
+    .map(|(k, l, w)| (k.to_string(), l.to_string(), w))
+    .chain(StructureKind::ALL.into_iter().map(|k| (k.slug().to_string(), k.title().to_string(), BuildKind::Upgrade { upgrade: k })))
+    .chain(modules)
     .map(|(key, label, what)| {
         let r = sim::build::recipe_for(what);
         BuildOptionView {
-            key: key.to_string(),
-            label: label.to_string(),
+            key,
+            label,
             costs: r.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
             build_secs: r.build_ticks as f64 / TICK_HZ as f64,
         }

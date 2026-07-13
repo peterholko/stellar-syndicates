@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
@@ -1146,9 +1146,18 @@ function buildPlanetPanel(): void {
   // anchor is a lens, not an address; nothing here is per-planet on the wire).
   $("planet-panel").addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest("[data-act='close']")) { closePlanetPanel(); return; }
-    const el = (e.target as HTMLElement).closest("[data-build],[data-crew],[data-action]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-build],[data-crew],[data-action],[data-fit]") as HTMLElement | null;
     const sid = viewedSystemId();
     if (!el || !sid || !net) return;
+    if (el.dataset.fit) {
+      // §modules Part B4: toggle a module into the composed fit (max 2 slots).
+      const m = el.dataset.fit as ModuleKind;
+      const i = pendingFit.indexOf(m);
+      if (i >= 0) pendingFit.splice(i, 1);
+      else if (pendingFit.length < 2) pendingFit.push(m);
+      refreshOpenBodyPanel();
+      return;
+    }
     if (el.dataset.crew) {
       sendCrew(sid, el.dataset.crew);
       refreshOpenBodyPanel();
@@ -1279,14 +1288,25 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     const bodyQueue = buildQueueRows(sid, dyn, { filter: (j) => j.body_id === body.id && !SHIP_KEYS.has(j.key), seenKey: `${sid}#b${body.id}` });
 
     // 5. SHIPYARD on this body: SHIP CONSTRUCTION — the orbital yard's menu + queue.
+    // §modules Part B4: the FIT PICKER rides above the warship buttons (fits the
+    // next warship built here from what's in the module ledger).
     let yardSec = "";
     if ((tiers["shipyard"] ?? 0) > 0) {
       const shipOpts = (state.galaxy?.build_options ?? []).filter((o) => SHIP_KEYS.has(o.key));
       const shipQueue = buildQueueRows(sid, dyn, { filter: (j) => SHIP_KEYS.has(j.key), seenKey: `${sid}#yard` });
       yardSec = shipOpts.length
         ? ppSec("Orbital yard — ship construction", "Ships build at this body's Shipyard (tier-gated exactly as before) and spawn here.") +
+          fitPicker(dyn) +
           `<div class="build-grid">${shipOpts.map((o) => buildOptionRow(o, dyn, false)).join("")}</div>` + shipQueue
         : "";
+    }
+
+    // 5b. ARMAMENTS COMPLEX on this body: MODULE MANUFACTURE + the system ledger
+    // (§modules Part B3). Modules pool in the ledger and fit ships at build/refit.
+    let modulesSec = "";
+    if ((tiers["armaments_complex"] ?? 0) > 0) {
+      modulesSec = ppSec("Armaments — module manufacture", "Modules are manufactured here into the system's module ledger, then fitted to warships at build (the yard's fit picker) or by refitting a docked fleet.") +
+        moduleForge(dyn);
     }
 
     // 6. DEPOT on this body: LOGISTICS — cargo leaves from the orbital warehouse.
@@ -1299,7 +1319,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
         `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button></div>`;
     }
 
-    manage = blockChip + built + linesSec + buildSec + bodyQueue + yardSec + depotSec;
+    manage = blockChip + built + linesSec + buildSec + bodyQueue + yardSec + modulesSec + depotSec;
     // §bodies edge state: a body with nothing built and nothing buildable
     // stays a quiet piece of scenery.
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
@@ -2629,6 +2649,67 @@ function buildQueueRows(
     `<div class="bq-list">${rows}${doneRows}</div>`;
 }
 
+// --- §modules Part B: the module catalog + client UI state -------------------
+// The 5 modules in a fixed order (mirrors sim MODULE_KINDS); labels + a compact
+// glyph for chips/ledger; and per-hull slot counts (mirrors ShipKind::module_slots).
+const MODULE_ALL: ModuleKind[] = ["mass_driver", "torpedo_rack", "point_defense_screen", "reflective_plating", "whipple_armor"];
+const MODULE_LABEL: Record<ModuleKind, string> = {
+  mass_driver: "Mass Driver", torpedo_rack: "Torpedo Rack", point_defense_screen: "Point-Defense",
+  reflective_plating: "Reflective Plating", whipple_armor: "Whipple Armor",
+};
+const MODULE_GLYPH: Record<ModuleKind, string> = {
+  mass_driver: "◎", torpedo_rack: "➹", point_defense_screen: "◈", reflective_plating: "◇", whipple_armor: "▤",
+};
+// What each module DOES, one line (for button/chip titles).
+const MODULE_TIP: Record<ModuleKind, string> = {
+  mass_driver: "Weapon: fires DRIVERS (harder hit) — countered by Whipple Armor.",
+  torpedo_rack: "Weapon: fires TORPEDOES (hardest hit, ignores armor) — countered by Point-Defense.",
+  point_defense_screen: "Weapon+defense: weak beam, but adds torpedo INTERCEPTION for the side.",
+  reflective_plating: "Armor: blunts incoming BEAM into this ship.",
+  whipple_armor: "Armor: blunts incoming DRIVER into this ship.",
+};
+const MODULE_SLOTS: Record<string, number> = { corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0 };
+// The FIT the player is composing for the next warship build (module slugs, ≤2).
+let pendingFit: ModuleKind[] = [];
+// The module ledger at a system (owner-only; {} if unseen).
+function moduleLedgerAt(sid: string): Record<string, number> {
+  return state.systems.find((s) => s.id === sid)?.modules ?? {};
+}
+// §modules Part B3: the module FORGE for a body with an Armaments Complex —
+// the system ledger line + one manufacture button per module (BuildModule),
+// costs/afford drawn from the shared build_options channel ("module:<slug>").
+function moduleForge(dyn: SystemStateView | undefined): string {
+  const ledger = dyn?.modules ?? {};
+  const onHand = MODULE_ALL.filter((m) => (ledger[m] ?? 0) > 0);
+  const ledgerLine = `<div class="mhint" style="margin-top:2px">${icon("cargo", "sm")} ledger: ${onHand.length ? onHand.map((m) => `${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])} ×${ledger[m]}`).join(" · ") : "empty"}</div>`;
+  const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const btns = MODULE_ALL.map((m) => {
+    const o = buildOption(`module:${m}`);
+    if (!o) return "";
+    const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+    const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, "sm")}${c.units}`).join(" ");
+    return `<button class="act build-opt" data-build="module:${m}" ${afford ? "" : "disabled"} title="${esc(MODULE_TIP[m])} — costs draw from this system's stockpile.">` +
+      `<span class="bo-name">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
+  }).join("");
+  return ledgerLine + `<div class="build-grid" style="margin-top:4px">${btns}</div>`;
+}
+// §modules Part B4: the FIT PICKER above a yard's warship builds — toggle chips
+// for modules IN THE LEDGER (only what you have can be fitted); the composed fit
+// (≤2) is clamped per-hull at dispatch. Empty ledger → no picker (nothing to fit).
+function fitPicker(dyn: SystemStateView | undefined): string {
+  const ledger = dyn?.modules ?? {};
+  const avail = MODULE_ALL.filter((m) => (ledger[m] ?? 0) > 0);
+  if (!avail.length) return "";
+  pendingFit = pendingFit.filter((m) => (ledger[m] ?? 0) > 0); // drop now-absent picks
+  const chips = avail.map((m) => {
+    const on = pendingFit.includes(m);
+    return `<button class="act fit-chip${on ? " is-on" : ""}" data-fit="${m}" title="${esc(MODULE_TIP[m])}">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
+  }).join("");
+  const cur = pendingFit.length ? pendingFit.map((m) => MODULE_GLYPH[m]).join(" ") : "stock (unfitted)";
+  return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${uiIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
+    `<div class="fit-row">${chips}</div>`;
+}
+
 // One build/develop option row — cost, afford state, and the two sim-mirroring
 // gates (dev slot / shipyard tier). Shared by the full build menu and the
 // System View's contextual per-body offers, so gating can never diverge.
@@ -2829,7 +2910,15 @@ function buildSystemTab(): void {
 // as always — no UI adds a new gameplay verb.
 function dispatchBuildKey(k: string, sid: string, bodyId?: number): void {
   if (!net) return;
-  if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") net.send({ type: "BuildShip", system_id: sid, ship_kind: k });
+  if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") {
+    // §modules Part B4: a warship build carries the composed FIT, clamped to this
+    // hull's module slots (so a 2-module fit on a 1-slot scout sends just 1, not a
+    // silent server reject). The ledger is debited server-side.
+    const fit = pendingFit.filter((m) => (moduleLedgerAt(sid)[m] ?? 0) > 0).slice(0, MODULE_SLOTS[k] ?? 0);
+    net.send({ type: "BuildShip", system_id: sid, ship_kind: k, loadout: fit.length ? fit : undefined });
+  }
+  // §modules Part B3: "module:<slug>" → manufacture into the system ledger.
+  else if (k.startsWith("module:")) net.send({ type: "BuildModule", system_id: sid, module: k.slice(7) as ModuleKind });
   // §bodies: the body panel names its body; omitted → the sim auto-sites.
   else net.send({ type: "DevelopSystem", system_id: sid, upgrade: k, body_id: bodyId }); // §economy: any structure slug
 }
