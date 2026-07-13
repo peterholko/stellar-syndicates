@@ -31,6 +31,7 @@ pub mod module;
 pub mod movement;
 pub mod node;
 pub mod rankings;
+pub mod research;
 pub mod rng;
 pub mod pirate;
 pub mod production;

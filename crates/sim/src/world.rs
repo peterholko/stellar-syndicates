@@ -1119,7 +1119,7 @@ impl World {
         let name = sanitize_name(&name);
         self.syndicates.insert(
             id,
-            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time },
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default() },
         );
         self.set_membership(founder, Some(id));
     }
@@ -1293,6 +1293,10 @@ impl World {
         // 5b'''. §modules Part B4: return refitted hulls from the yard — same clock
         //        as construction; the hulls were out of combat while queued.
         self.resolve_refits(&mut events);
+
+        // 5b''''. §research: complete any fully-funded programme (the distributed
+        //         clock that funds it is wired in R2). Instant, galaxy-wide.
+        self.resolve_research(&mut events);
 
         // 5b''. SCOUT INTEL (§scout part 2): scouts passing rival systems capture
         //       timestamped snapshots of their fortifications. After movement, so
@@ -3561,6 +3565,36 @@ impl World {
             Command::DissolveSyndicate { player_id } => {
                 self.apply_dissolve_syndicate(*player_id);
             }
+            Command::SetResearchQueue { player_id, queue } => {
+                // §research: research is a SYNDICATE institution — the player must
+                // be in one. Validate the queue against the catalog (drop unknown /
+                // hidden / already-completed ids), keeping NOT-YET-AVAILABLE ids
+                // (queue-ahead is the point). The front promotes to active if idle.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let valid: Vec<String> = queue
+                    .iter()
+                    .filter(|id| {
+                        crate::research::programme(id).is_some_and(|p| !p.hidden)
+                            && !s.research.completed.contains(*id)
+                    })
+                    .cloned()
+                    .collect();
+                s.research.set_queue(valid);
+            }
+            Command::SetDesignation { player_id, cap, target } => {
+                // §research: point a capability at a live target. Soft-reject
+                // unless the syndicate has unlocked the capability.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                if crate::research::has_flag(&s.research, *cap) {
+                    s.research.designations.insert(*cap, *target);
+                }
+            }
             Command::MoveShip {
                 player_id,
                 ship_id,
@@ -4919,6 +4953,72 @@ impl World {
                 self.time,
                 EventPayload::ShipsRefitted { owner: job.owner, system: job.system, ship: job.ship, loadout: job.to.clone(), n: job.n },
             ));
+        }
+    }
+
+    /// §research: a syndicate-wide STATE METRIC (summed over the members' held
+    /// systems) — feeds `State`/`Sustained` research gates.
+    fn syndicate_metric(&self, sid: SyndicateId, m: crate::research::Metric) -> f64 {
+        let Some(syn) = self.syndicates.get(&sid) else { return 0.0 };
+        let members = &syn.members;
+        match m {
+            crate::research::Metric::TotalPopulation => self
+                .systems
+                .iter()
+                .filter(|s| s.owner.is_some_and(|o| members.contains(&o)))
+                .map(|s| s.population())
+                .sum(),
+            crate::research::Metric::WellSuppliedSystems => self
+                .systems
+                .iter()
+                .filter(|s| {
+                    s.owner.is_some_and(|o| members.contains(&o))
+                        && s.food_state == crate::colony::FoodState::WellSupplied
+                })
+                .count() as f64,
+        }
+    }
+
+    /// §research: COMPLETE every fully-funded active programme (the distributed
+    /// clock funds `progress` in R2). Completion respects availability — carried
+    /// overflow can never skip a tier gate. The effect is realized lazily via
+    /// `research::mods`, so it applies instantly and galaxy-wide (decision #5).
+    fn resolve_research(&mut self, events: &mut Vec<Event>) {
+        if self.syndicates.is_empty() {
+            return;
+        }
+        let now = self.time;
+        let sids: Vec<SyndicateId> = self.syndicates.keys().copied().collect();
+        for sid in sids {
+            loop {
+                // Only complete when the active programme is currently available
+                // (gate met + ladder rule) — never on carried overflow alone.
+                let ready = {
+                    let Some(s) = self.syndicates.get(&sid) else { break };
+                    match s.research.active.as_deref() {
+                        None => false,
+                        Some(id) => {
+                            let metric = |m| self.syndicate_metric(sid, m);
+                            s.research.progress + 1e-6 >= crate::research::cost_of(id)
+                                && crate::research::is_available(id, &s.research, &metric, now)
+                        }
+                    }
+                };
+                if !ready {
+                    break;
+                }
+                let done = self
+                    .syndicates
+                    .get_mut(&sid)
+                    .and_then(|s| s.research.try_complete());
+                match done {
+                    Some(id) => events.push(Event::new(
+                        now,
+                        EventPayload::ResearchCompleted { syndicate: sid, programme: id },
+                    )),
+                    None => break,
+                }
+            }
         }
     }
 
@@ -12874,6 +12974,37 @@ mod tests {
         assert_eq!(crate::pirate::pack_size(1), 1, "tier-1 enclave launches a LONE bandit");
         assert_eq!(crate::pirate::pack_size(2), 2, "tier 2 → a pair");
         assert_eq!(crate::pirate::pack_size(3), 3, "tier 3 → a real pack");
+    }
+
+    // §research R1 — the command → resolve → event → instant-effect path.
+    #[test]
+    fn research_queue_completes_and_applies_its_effect_instantly() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        // Research is a SYNDICATE institution — form a solo syndicate.
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Solo".into() }]);
+        let sid = w.players[&id].syndicate.expect("in a syndicate");
+        // Queue a Tier-I programme (always available); the front promotes to active.
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        assert_eq!(w.syndicates[&sid].research.active.as_deref(), Some("prop_drive_tuning"));
+        w.step(&[]);
+        assert!(!w.syndicates[&sid].research.has("prop_drive_tuning"), "unfunded → not complete");
+        // Fund it directly (the distributed clock lands in R2) and step.
+        w.syndicates.get_mut(&sid).unwrap().research.progress = crate::research::tier_cost_secs(1);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::ResearchCompleted { syndicate, programme } if *syndicate == sid && programme == "prop_drive_tuning")),
+            "a completion event fires",
+        );
+        assert!(w.syndicates[&sid].research.has("prop_drive_tuning"), "recorded as completed");
+        assert!(w.syndicates[&sid].research.active.is_none(), "queue drained");
+        // The effect applies INSTANTLY, galaxy-wide, via the lazy mods layer.
+        let m = crate::research::mod_of(&w.syndicates[&sid].research, crate::research::ModKey::SpeedAll);
+        assert!((m - 1.10).abs() < 1e-9, "Drive Tuning's +10% speed is live");
+        // A hidden id in the queue is dropped (can't research it).
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["hull_corsair_v_salvage_rigs".into(), "prop_bunkerage".into()] }]);
+        assert_eq!(w.syndicates[&sid].research.active.as_deref(), Some("prop_bunkerage"), "hidden dropped, next promoted");
     }
 
     #[test]

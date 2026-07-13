@@ -401,4 +401,24 @@ pub enum Command {
     /// DISSOLVE the caller's syndicate (founder-only): every member becomes
     /// unaffiliated. Ignored unless the caller is the founder.
     DissolveSyndicate { player_id: PlayerId },
+
+    /// §research: set the syndicate's research QUEUE-AHEAD list (the primary
+    /// strategic verb). CC-local instant administration — no positional delay.
+    /// Ids are validated against the catalog (unknown/hidden dropped); the front
+    /// becomes `active` if the clock is idle. Ignored unless the caller is in a
+    /// syndicate. Only a syndicate's members may set its queue.
+    SetResearchQueue {
+        player_id: PlayerId,
+        queue: Vec<String>,
+    },
+
+    /// §research: designate a live TARGET for a capability that needs one (Crown
+    /// Project body, Mass Stream pair, Signature Mimicry fleet). CC-local instant
+    /// admin. Soft-reject if the syndicate hasn't unlocked the capability or the
+    /// target isn't the syndicate's to designate.
+    SetDesignation {
+        player_id: PlayerId,
+        cap: crate::research::Cap,
+        target: crate::research::DesignationTarget,
+    },
 }

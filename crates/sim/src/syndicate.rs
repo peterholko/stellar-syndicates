@@ -48,4 +48,10 @@ pub struct Syndicate {
     pub invites: BTreeSet<PlayerId>,
     /// Sim-time the syndicate was founded (informational / roster display).
     pub created_at: f64,
+    /// §research: the syndicate-wide Programme Boards state — active/queue,
+    /// progress, completed set, verb counters, designations. serde-default so
+    /// every old snapshot loads with empty research and ticks clean (no
+    /// migration). Owner-only in the view.
+    #[serde(default)]
+    pub research: crate::research::ResearchState,
 }
