@@ -194,6 +194,16 @@ pub enum EventPayload {
     /// §modules Part B3: a module finished manufacture — one crate joined the
     /// system's module ledger. OWNER-ONLY, own clock.
     ModuleBuilt { owner: PlayerId, system: EntityId, kind: crate::module::ModuleKind },
+    /// §modules Part B4: a REFIT completed — `n` hulls of `ship` rejoined fitted
+    /// to `loadout` at `system`. OWNER-ONLY, own clock (a yard job, like a build).
+    ShipsRefitted { owner: PlayerId, system: EntityId, ship: crate::ship::ShipKind, loadout: crate::module::Loadout, n: u32 },
+    /// §modules Part B3: a module convoy LANDED its crates into a system's ledger.
+    /// OWNER-ONLY, own clock (own-economy precedent, like SpecialistsDelivered).
+    ModulesDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32> },
+    /// §modules Part B3: a convoy DIED with modules aboard — the crates are lost
+    /// with the ship (the one true loss rule, like SpecialistsLost). OWNER-ONLY,
+    /// light-delayed from the wreck like any battle news.
+    ModulesLost { owner: PlayerId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>, pos: crate::math::Vec2 },
     /// §economy Part 4: a personnel convoy LANDED its passengers into a
     /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
     SpecialistsDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> },

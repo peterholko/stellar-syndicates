@@ -323,9 +323,17 @@ pub struct World {
     /// in id-push order for determinism. `#[serde(default)]` so old snapshots load.
     #[serde(default)]
     pub build_queue: Vec<crate::build::BuildJob>,
-    /// Monotonic allocator for build-job ids (0 ⇒ first id is 1).
+    /// Monotonic allocator for build-job ids (0 ⇒ first id is 1). Shared with the
+    /// refit queue so ids never collide across the two job spaces.
     #[serde(default)]
     next_build_id: u64,
+    /// §modules Part B4: pending REFIT jobs — hulls pulled from a fleet into the
+    /// yard, rejoining fitted when their completion tick arrives. Its own queue
+    /// (parallel to `build_queue`) so refits stay isolated from construction and
+    /// the hulls are cleanly out of combat meanwhile. `#[serde(default)]` empties
+    /// = zero migration.
+    #[serde(default)]
+    pub refit_queue: Vec<crate::build::RefitJob>,
     /// World RNG stream (continues past generation) for deterministic events.
     rng: crate::rng::Rng,
     /// Ongoing BATTLES (§battles-take-time) — persistent, observable engagement
@@ -561,6 +569,7 @@ impl World {
             next_entity_id,
             build_queue: Vec::new(),
             next_build_id: 0,
+            refit_queue: Vec::new(),
             rng,
             engagements: BTreeMap::new(),
             battle_records: BTreeMap::new(),
@@ -1269,6 +1278,10 @@ impl World {
         //      — a build started before logging off still completes on the clock.
         self.resolve_builds(&mut events);
 
+        // 5b'''. §modules Part B4: return refitted hulls from the yard — same clock
+        //        as construction; the hulls were out of combat while queued.
+        self.resolve_refits(&mut events);
+
         // 5b''. SCOUT INTEL (§scout part 2): scouts passing rival systems capture
         //       timestamped snapshots of their fortifications. After movement, so
         //       positions are this tick's truth; standing behavior (owner online
@@ -1927,6 +1940,13 @@ impl World {
                     lost.push(Event::new(
                         self.time,
                         EventPayload::SpecialistsLost { owner: f.owner, manifest: f.passengers.clone(), pos: f.pos },
+                    ));
+                }
+                // §modules Part B3: crates aboard go down with the ship, same rule.
+                if !f.modules.is_empty() {
+                    lost.push(Event::new(
+                        self.time,
+                        EventPayload::ModulesLost { owner: f.owner, manifest: f.modules.clone(), pos: f.pos },
                     ));
                 }
                 false
@@ -3746,6 +3766,57 @@ impl World {
             Command::BuildModule { player_id, system_id, module } => {
                 self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, crate::module::Loadout::default(), events);
             }
+            Command::RefitShips { player_id, fleet_id, ship, from, to, n } => {
+                self.apply_refit(*player_id, *fleet_id, *ship, from.clone(), to.clone(), *n, events);
+            }
+            Command::TransferModules { player_id, from, to, manifest } => {
+                // §modules Part B3: a dedicated module-crate convoy between the
+                // player's own ground (or an ally's — coalition resupply). Manifest
+                // clamps to the source ledger and one convoy's module berths; the
+                // ledger is debited at LOADING (crates aboard, not at home).
+                // Soft-reject if nothing valid remains.
+                let allies = self.allies_of(*player_id);
+                let Some(to_pos) = self
+                    .systems
+                    .iter()
+                    .find(|s| s.id == *to && s.owner.is_some_and(|o| o == *player_id || allies.contains(&o)))
+                    .map(|s| s.pos)
+                else {
+                    return;
+                };
+                let Some(src) = self.systems.iter_mut().find(|s| s.id == *from && s.owner == Some(*player_id)) else {
+                    return;
+                };
+                let mut berths = crate::module::MODULE_CONVOY_BERTHS;
+                let mut load: BTreeMap<crate::module::ModuleKind, u32> = Default::default();
+                for (&kind, &want) in manifest {
+                    if berths == 0 {
+                        break;
+                    }
+                    let stocked = src.modules.get(&kind).copied().unwrap_or(0);
+                    let take = want.min(stocked).min(berths);
+                    if take > 0 {
+                        load.insert(kind, take);
+                        berths -= take;
+                    }
+                }
+                if load.is_empty() {
+                    return; // nothing to carry — soft reject
+                }
+                for (kind, n) in &load {
+                    let r = src.modules.get_mut(kind).expect("clamped above");
+                    *r -= n;
+                    if *r == 0 {
+                        src.modules.remove(kind);
+                    }
+                }
+                let spawn = src.pos;
+                let cid = self.spawn_trade_convoy(*player_id, spawn, to_pos, Cargo { commodity: crate::cargo::Commodity::Provisions, units: 0 }, TradeMission::DeliverToSystem { system: *to });
+                if let Some(f) = self.fleets.get_mut(&cid) {
+                    f.cargo = None;
+                    f.modules = load;
+                }
+            }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
                 self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), events);
             }
@@ -4419,6 +4490,10 @@ impl World {
         for (k, n) in removed.passengers {
             *target.passengers.entry(k).or_insert(0) += n;
         }
+        // §modules Part B3: crates aboard transfer with the merge (never deleted).
+        for (k, n) in removed.modules {
+            *target.modules.entry(k).or_insert(0) += n;
+        }
     }
 
     /// SPLIT `counts` ships off `fleet_id` into a NEW idle fleet beside it
@@ -4563,6 +4638,175 @@ impl World {
                     }
                 }
             }
+        }
+    }
+
+    /// §modules Part B4: kick off a REFIT — pull `n` ships of `ship`/`from` out of
+    /// the player's docked fleet, reconcile the module delta against the yard's
+    /// ledger, and enqueue the hulls to rejoin fitted to `to`. Soft-reject (no
+    /// mutation) on any violation; the hulls are OUT of combat while in the yard.
+    fn apply_refit(
+        &mut self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        ship: ShipKind,
+        from: crate::module::Loadout,
+        to: crate::module::Loadout,
+        n: u32,
+        events: &mut Vec<Event>,
+    ) {
+        // The fleet must be the player's and IDLE (you refit in the yard, not mid-run).
+        let Some(fleet) = self.fleets.get(&fleet_id) else { return };
+        if fleet.owner != player_id || !matches!(fleet.order, FleetOrder::Idle) {
+            return;
+        }
+        // `to` must fit the hull, and be an actual CHANGE from `from`.
+        if to.len() as u32 > ship.module_slots() || from == to {
+            return;
+        }
+        let pos = fleet.pos;
+        // Docked at a Shipyard ≥ 1 the player OWNS or is ALLIED with (fits install
+        // at a yard; an ally may host the work — a coalition refit yard).
+        let allies = self.allies_of(player_id);
+        let Some(sys_id) = self
+            .systems
+            .iter()
+            .find(|s| {
+                s.owner.is_some_and(|o| o == player_id || allies.contains(&o))
+                    && s.tier(crate::build::StructureKind::Shipyard) >= 1
+                    && s.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS
+            })
+            .map(|s| s.id)
+        else {
+            return; // no hosting yard in reach — soft reject
+        };
+        // How many `(ship, from)` hulls the fleet actually holds (clamp `n`).
+        let available = if from.is_empty() {
+            fleet.count(ship).saturating_sub(fleet.fitted_count(ship))
+        } else {
+            fleet.loadouts.get(&ship).and_then(|m| m.get(&from.key())).copied().unwrap_or(0)
+        };
+        let n = n.min(available);
+        if n == 0 {
+            return; // nothing matching to refit — soft reject
+        }
+        // Per-ship module DELTA: added = to − from (debited), removed = from − to
+        // (returned). Counting handles multi-slot fits with repeats correctly.
+        let count = |lo: &crate::module::Loadout| -> BTreeMap<crate::module::ModuleKind, u32> {
+            let mut m: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
+            for k in lo.modules() {
+                *m.entry(*k).or_insert(0) += 1;
+            }
+            m
+        };
+        let from_ct = count(&from);
+        let to_ct = count(&to);
+        let mut added: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
+        let mut removed: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
+        for k in crate::module::MODULE_KINDS {
+            let f = from_ct.get(&k).copied().unwrap_or(0);
+            let t = to_ct.get(&k).copied().unwrap_or(0);
+            if t > f {
+                added.insert(k, t - f);
+            } else if f > t {
+                removed.insert(k, f - t);
+            }
+        }
+        // The ADDED modules (× n) must be covered by the yard's ledger.
+        let sys = self.systems.iter().find(|s| s.id == sys_id).expect("found above");
+        let covered = added.iter().all(|(m, c)| sys.modules.get(m).copied().unwrap_or(0) >= *c * n);
+        if !covered {
+            return; // ledger can't cover the new fit — soft reject (no debit)
+        }
+        // Commit: pull the hulls out of the fleet, then reconcile the ledger.
+        let fleet = self.fleets.get_mut(&fleet_id).expect("checked above");
+        let pulled = fleet.remove_stack(ship, &from, n);
+        debug_assert_eq!(pulled, n, "remove_stack clamps to `available`, which bounds n");
+        let empty = fleet.is_empty();
+        if empty {
+            self.fleets.remove(&fleet_id);
+        }
+        let sys = self.systems.iter_mut().find(|s| s.id == sys_id).expect("found above");
+        for (m, c) in &added {
+            let left = sys.modules.get(m).copied().unwrap_or(0).saturating_sub(*c * n);
+            if left == 0 {
+                sys.modules.remove(m);
+            } else {
+                sys.modules.insert(*m, left);
+            }
+        }
+        for (m, c) in &removed {
+            *sys.modules.entry(*m).or_insert(0) += *c * n;
+        }
+        self.next_build_id += 1;
+        let complete_tick = self.tick + crate::build::REFIT_TICKS_PER_SHIP * n as u64;
+        self.refit_queue.push(crate::build::RefitJob {
+            id: self.next_build_id,
+            owner: player_id,
+            system: sys_id,
+            fleet: fleet_id,
+            ship,
+            to,
+            n,
+            complete_tick,
+        });
+        events.push(Event::new(
+            self.time,
+            EventPayload::BuildStarted {
+                id: self.next_build_id,
+                owner: player_id,
+                system: sys_id,
+                what: crate::build::BuildKind::Ship { ship },
+                complete_tick,
+            },
+        ));
+    }
+
+    /// §modules Part B4: return refitted hulls from the yard. Rejoin the original
+    /// fleet if it's still the owner's, Idle, and docked here; else the hulls form
+    /// a fresh fleet-of-one at the yard. The hulls follow their OWNER, so a capture
+    /// mid-refit still hands them back (they were never the system's).
+    fn resolve_refits(&mut self, events: &mut Vec<Event>) {
+        if !self.refit_queue.iter().any(|j| j.complete_tick <= self.tick) {
+            return;
+        }
+        let due: Vec<crate::build::RefitJob> =
+            self.refit_queue.iter().filter(|j| j.complete_tick <= self.tick).cloned().collect();
+        self.refit_queue.retain(|j| j.complete_tick > self.tick);
+        for job in due {
+            let pos = self
+                .systems
+                .iter()
+                .find(|s| s.id == job.system)
+                .map(|s| s.pos)
+                .or_else(|| self.players.get(&job.owner).map(|c| c.home))
+                .unwrap_or(self.hub);
+            let rejoin = job.fleet;
+            let can_rejoin = self.fleets.get(&rejoin).is_some_and(|f| {
+                f.owner == job.owner
+                    && matches!(f.order, FleetOrder::Idle)
+                    && f.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS
+            });
+            if can_rejoin {
+                let f = self.fleets.get_mut(&rejoin).unwrap();
+                f.add(job.ship, job.n);
+                if !job.to.is_empty() {
+                    *f.loadouts.entry(job.ship).or_default().entry(job.to.key()).or_insert(0) += job.n;
+                }
+            } else {
+                let id = self.alloc_entity_id();
+                let mut f = Fleet::single(id, job.owner, job.ship, pos, FleetOrder::Idle, None);
+                // Fleet::single seeds one ship; add the rest and the fits.
+                f.add(job.ship, job.n - 1);
+                if !job.to.is_empty() {
+                    f.loadouts.entry(job.ship).or_default().insert(job.to.key(), job.n);
+                }
+                self.fleets.insert(id, f);
+            }
+            events.push(Event::new(
+                self.time,
+                EventPayload::ShipsRefitted { owner: job.owner, system: job.system, ship: job.ship, loadout: job.to.clone(), n: job.n },
+            ));
         }
     }
 
@@ -4721,6 +4965,9 @@ impl World {
                     if let Some(fl) = self.fleets.get_mut(&cid) {
                         fl.remove_one(ShipKind::Colony);
                         let landed = std::mem::take(&mut fl.passengers);
+                        // §modules Part B3: crates aboard land into the new colony's
+                        // ledger (founding materiel — never deleted).
+                        let landed_mods = std::mem::take(&mut fl.modules);
                         if fl.is_empty() {
                             self.fleets.remove(&cid);
                         } else {
@@ -4734,6 +4981,14 @@ impl World {
                                 *sy.specialists.entry(*k).or_insert(0) += n;
                             }
                             events.push(Event::new(now, EventPayload::SpecialistsDelivered { owner, system: sys_id, manifest: landed }));
+                        }
+                        if !landed_mods.is_empty()
+                            && let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id)
+                        {
+                            for (k, n) in &landed_mods {
+                                *sy.modules.entry(*k).or_insert(0) += n;
+                            }
+                            events.push(Event::new(now, EventPayload::ModulesDelivered { owner, system: sys_id, manifest: landed_mods }));
                         }
                     }
                     events.push(Event::new(
@@ -5696,6 +5951,43 @@ impl World {
                     && land_at != Some(home_sys)
                 {
                     // Turn for home, people (and any cargo) still aboard.
+                    ship.order = FleetOrder::MoveTo { dest: corp.home };
+                    ship.mission = Some(TradeMission::DeliverToSystem { system: home_sys });
+                    self.fleets.insert(id, ship);
+                    continue;
+                }
+            }
+            // §modules Part B3: MODULE CRATES land into the destination ledger under
+            // the same rule — held ground (owner or ally); a lost destination
+            // redirects the convoy home so crates are never silently deleted.
+            if !ship.modules.is_empty() {
+                let land_at = match ship.mission {
+                    Some(TradeMission::DeliverToSystem { system }) => Some(system),
+                    Some(TradeMission::DeliverHome) => self.players.get(&ship.owner).and_then(|c| c.home_system),
+                    _ => None,
+                };
+                let allies = self.allies_of(ship.owner);
+                let landed = land_at.is_some_and(|sid| {
+                    self.systems
+                        .iter_mut()
+                        .find(|s| s.id == sid && s.owner.is_some_and(|o| o == ship.owner || allies.contains(&o)))
+                        .map(|sys| {
+                            for (k, n) in &ship.modules {
+                                *sys.modules.entry(*k).or_insert(0) += n;
+                            }
+                        })
+                        .is_some()
+                });
+                if landed {
+                    let manifest = std::mem::take(&mut ship.modules);
+                    events.push(Event::new(
+                        now,
+                        EventPayload::ModulesDelivered { owner: ship.owner, system: land_at.unwrap(), manifest },
+                    ));
+                } else if let Some(corp) = self.players.get(&ship.owner)
+                    && let Some(home_sys) = corp.home_system
+                    && land_at != Some(home_sys)
+                {
                     ship.order = FleetOrder::MoveTo { dest: corp.home };
                     ship.mission = Some(TradeMission::DeliverToSystem { system: home_sys });
                     self.fleets.insert(id, ship);
@@ -8883,6 +9175,167 @@ mod tests {
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. })), "loadout not covered by the ledger → reject");
         assert!(w.build_queue.is_empty(), "nothing queued");
         assert!((before - alloys(&w)).abs() < 1e-9, "the hull recipe is never eaten on a reject");
+    }
+
+    // --- §modules Part B4: REFIT (swap fits at a yard, delta-reconciled) --------
+
+    /// Helper: a player owning their home (Shipyard 1), a wing of `n` `from`-fitted
+    /// raiders docked at it, and a ledger seeded with `stock`. Returns (home id, pos).
+    fn refit_home(w: &mut World, id: PlayerId, n: u32, from: &crate::module::Loadout, stock: &[(crate::module::ModuleKind, u32)]) -> (EntityId, Vec2, EntityId) {
+        w.enclaves.clear();
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            for (m, c) in stock {
+                *s.modules.entry(*m).or_insert(0) += *c;
+            }
+        }
+        let fleet = squad(w, id, hpos, ShipKind::Raider, n, FleetOrder::Idle);
+        if !from.is_empty() {
+            w.fleets.get_mut(&fleet).unwrap().loadouts.entry(ShipKind::Raider).or_default().insert(from.key(), n);
+        }
+        (home, hpos, fleet)
+    }
+
+    #[test]
+    fn refit_swaps_a_fit_via_the_ledger_delta_and_rejoins_after_the_yard() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let from = Loadout::new(vec![ModuleKind::MassDriver]);
+        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        let (home, _hpos, fleet) = refit_home(&mut w, id, 3, &from, &[(ModuleKind::WhippleArmor, 2)]);
+        // Refit 2 of the 3 raiders to ADD Whipple (delta = +1 Whipple each).
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: to.clone(), n: 2 }]);
+        assert_eq!(w.fleets[&fleet].count(ShipKind::Raider), 1, "the 2 refitting hulls leave the fleet — out of combat in the yard");
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::WhippleArmor).copied().unwrap_or(0), 0, "both Whipple crates debited from the ledger");
+        assert_eq!(w.refit_queue.len(), 1, "a refit job is queued");
+        assert!(run_until(&mut w, 30, |w| w.refit_queue.is_empty()), "the refit completes on the clock");
+        let f = &w.fleets[&fleet];
+        assert_eq!(f.count(ShipKind::Raider), 3, "all hulls return");
+        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&to.key())).copied().unwrap_or(0), 2, "2 hulls now carry the whipple fit");
+        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&from.key())).copied().unwrap_or(0), 1, "the un-refitted hull keeps its mass driver");
+    }
+
+    #[test]
+    fn refit_to_bare_returns_removed_modules_to_the_ledger() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let from = Loadout::new(vec![ModuleKind::MassDriver]);
+        let (home, _hpos, fleet) = refit_home(&mut w, id, 3, &from, &[]); // 3 fitted, empty ledger
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: Loadout::default(), n: 2 }]);
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0), 2, "stripping RETURNS both mass drivers to the ledger");
+        assert!(run_until(&mut w, 30, |w| w.refit_queue.is_empty()), "refit completes");
+        let f = &w.fleets[&fleet];
+        assert_eq!(f.count(ShipKind::Raider), 3, "all hulls back");
+        assert_eq!(f.fitted_count(ShipKind::Raider), 1, "2 stripped to stock; the 1 un-refitted keeps its driver");
+    }
+
+    #[test]
+    fn refit_soft_rejects_when_the_ledger_cannot_cover_the_new_fit() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let from = Loadout::new(vec![ModuleKind::MassDriver]);
+        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &from, &[]); // NO whipple stocked
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to, n: 2 }]);
+        assert!(w.refit_queue.is_empty(), "no ledger cover → nothing queued");
+        let f = &w.fleets[&fleet];
+        assert_eq!(f.count(ShipKind::Raider), 2, "no hull pulled");
+        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&from.key())).copied().unwrap_or(0), 2, "the fleet is untouched");
+    }
+
+    #[test]
+    fn refit_soft_rejects_over_slots_and_away_from_any_yard() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let from = Loadout::new(vec![ModuleKind::MassDriver]);
+        let (_home, hpos, fleet) = refit_home(&mut w, id, 2, &from, &[(ModuleKind::WhippleArmor, 4), (ModuleKind::ReflectivePlating, 4)]);
+        // Over slots: a Raider has 2 module slots; a 3-module `to` is rejected.
+        let over = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor, ModuleKind::ReflectivePlating]);
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: over, n: 1 }]);
+        assert!(w.refit_queue.is_empty(), "3 modules on a 2-slot hull → reject");
+        // Away from any owned/allied yard: a bare strip (needs no ledger) still rejects.
+        w.fleets.get_mut(&fleet).unwrap().pos = hpos + Vec2::new(50_000.0, 0.0);
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: Loadout::default(), n: 1 }]);
+        assert!(w.refit_queue.is_empty(), "no yard in reach → reject");
+        assert_eq!(w.fleets[&fleet].count(ShipKind::Raider), 2, "the fleet is untouched by either reject");
+    }
+
+    // --- §modules Part B3: module TRANSPORT (raidable crate convoy) -------------
+
+    #[test]
+    fn transfer_modules_debits_source_and_delivers_to_the_destination() {
+        use crate::module::ModuleKind;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Nearest unclaimed system, taken as the destination (short crossing).
+        let dest = {
+            let hp = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+            let s = w.systems.iter_mut().filter(|s| s.is_unclaimed())
+                .min_by(|a, b| a.pos.distance(hp).total_cmp(&b.pos.distance(hp)).then(a.id.cmp(&b.id))).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.id
+        };
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.modules.insert(ModuleKind::MassDriver, 3);
+            s.modules.insert(ModuleKind::WhippleArmor, 2);
+        }
+        w.step(&[Command::TransferModules { player_id: id, from: home, to: dest, manifest: [(ModuleKind::MassDriver, 2), (ModuleKind::WhippleArmor, 1)].into_iter().collect() }]);
+        // Source debited AT LOADING (crates aboard, not at home).
+        let hs = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(hs.modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0), 1);
+        assert_eq!(hs.modules.get(&ModuleKind::WhippleArmor).copied().unwrap_or(0), 1);
+        assert!(w.fleets.values().any(|f| f.owner == id && f.modules.values().sum::<u32>() == 3), "a crate convoy flies with the manifest");
+        // Fly to arrival → the destination ledger is credited.
+        let mut delivered = false;
+        for _ in 0..(600 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::ModulesDelivered { owner, system, .. } if owner == id && system == dest) {
+                    delivered = true;
+                }
+            }
+            if delivered { break; }
+        }
+        assert!(delivered, "the crates land in the destination ledger");
+        let ds = w.systems.iter().find(|s| s.id == dest).unwrap();
+        assert_eq!(ds.modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0), 2);
+        assert_eq!(ds.modules.get(&ModuleKind::WhippleArmor).copied().unwrap_or(0), 1);
+    }
+
+    #[test]
+    fn transfer_modules_clamps_to_the_ledger_and_the_convoy_berths() {
+        use crate::module::{ModuleKind, MODULE_CONVOY_BERTHS};
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let dest = {
+            let hp = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+            let s = w.systems.iter_mut().filter(|s| s.is_unclaimed())
+                .min_by(|a, b| a.pos.distance(hp).total_cmp(&b.pos.distance(hp)).then(a.id.cmp(&b.id))).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.id
+        };
+        // More stocked than one convoy can haul; ask for all of it.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().modules.insert(ModuleKind::MassDriver, MODULE_CONVOY_BERTHS + 8);
+        w.step(&[Command::TransferModules { player_id: id, from: home, to: dest, manifest: [(ModuleKind::MassDriver, MODULE_CONVOY_BERTHS + 8)].into_iter().collect() }]);
+        let carried: u32 = w.fleets.values().find(|f| f.owner == id && !f.modules.is_empty()).map(|f| f.modules.values().sum()).unwrap_or(0);
+        assert_eq!(carried, MODULE_CONVOY_BERTHS, "one convoy hauls at most its berths");
+        let left = w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0);
+        assert_eq!(left, 8, "the overflow stays in the source ledger for the next run");
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),

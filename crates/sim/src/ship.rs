@@ -471,6 +471,14 @@ pub struct Fleet {
     /// serde default keeps every old snapshot loading (nobody aboard).
     #[serde(default)]
     pub passengers: BTreeMap<crate::specialist::SpecialistKind, u32>,
+    /// §modules Part B3: MODULE CRATES aboard (kind → count) — cargo, not fits.
+    /// A `TransferModules` convoy hauls them between systems under the SAME
+    /// two-tier fog rule as `passengers`/`cargo` (broadcast hides them, sensor
+    /// coverage reveals the manifest). Deposited into the destination ledger on
+    /// arrival; lost with the fleet; folded in on merge. serde default = none
+    /// aboard, so every old snapshot loads unchanged.
+    #[serde(default)]
+    pub modules: BTreeMap<crate::module::ModuleKind, u32>,
     /// ENGAGEMENT POSTURE (§offensive-orders Part 2): standing per-fleet aggression
     /// — Passive (default), Defensive, or WeaponsFree. serde default = Passive so
     /// every old snapshot loads with today's behaviour (byte-preserving).
@@ -531,6 +539,7 @@ impl Fleet {
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
             passengers: BTreeMap::new(),
+            modules: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
             garrison_fed: true,
             fought: false,

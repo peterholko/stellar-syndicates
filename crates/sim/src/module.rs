@@ -44,6 +44,11 @@ pub const REFLECT_BLUNT: f64 = 0.35;
 /// beams. Tune both against the meta, not each other.
 pub const WHIPPLE_BLUNT: f64 = 0.45;
 
+/// §modules Part B3: how many module CRATES one convoy hauls in a `TransferModules`
+/// run. Crates are dense compared to people, so a hauler moves a healthy batch —
+/// enough to fit out a small squadron in one raidable crossing. Tunable.
+pub const MODULE_CONVOY_BERTHS: u32 = 12;
+
 /// The three damage TYPES a weapon deals. Each has exactly one counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

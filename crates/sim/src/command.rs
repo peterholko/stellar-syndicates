@@ -157,6 +157,38 @@ pub enum Command {
         module: crate::module::ModuleKind,
     },
 
+    /// §modules Part B4: REFIT `n` ships of `ship`/`from` in one of the player's
+    /// fleets to a new `to` loadout. The fleet must be Idle and DOCKED at a
+    /// Shipyard ≥ 1 the player OWNS or is ALLIED with (fits are installed at a
+    /// yard). `to` must be ≤ the hull's module slots; the module DELTA (`to`
+    /// minus `from`, per ship × n) must be covered by that system's ledger — it
+    /// is debited, and the modules REMOVED (`from` minus `to`) are returned to
+    /// the ledger. The hulls leave the fleet into the refit queue (safely OUT of
+    /// combat while in the yard) and rejoin fitted after `REFIT_TICKS_PER_SHIP`
+    /// × n. Soft-reject on any violation (no partial debit). INSTANT local
+    /// administration to KICK OFF (like a build); the completion is on the clock.
+    RefitShips {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        ship: crate::ship::ShipKind,
+        from: crate::module::Loadout,
+        to: crate::module::Loadout,
+        n: u32,
+    },
+
+    /// §modules Part B3: ship MODULES between systems by convoy — a crate hauler
+    /// (owned → owned or allied). Mirrors `TransferSpecialists`: the manifest
+    /// clamps to the source ledger and the convoy's module berths; the ledger is
+    /// debited at LOADING (the crates are aboard, not at home); the manifest is
+    /// fogged (broadcast hides it, sensor coverage reveals it) exactly like cargo.
+    /// Delivered into the destination ledger on arrival; lost with the convoy.
+    TransferModules {
+        player_id: PlayerId,
+        from: EntityId,
+        to: EntityId,
+        manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
+    },
+
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time). A coarse,
     /// LIGHT-DELAYED mid-battle verb: it schedules a break-off-and-flee-home order
     /// (physical disengagement at formation speed — the speed table decides who

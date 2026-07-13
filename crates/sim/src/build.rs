@@ -224,6 +224,35 @@ pub struct BuildJob {
     pub loadout: crate::module::Loadout,
 }
 
+/// §modules Part B4: a queued REFIT — `n` ships of `ship` were pulled OUT of a
+/// docked fleet (so they're safely out of combat while in the yard), their fit
+/// swapped to `to`, and they rejoin on completion. The module delta was already
+/// reconciled against the system ledger at ENQUEUE (added modules debited, removed
+/// modules returned), so completion is pure: re-add the fitted hulls. Rides its
+/// OWN small queue parallel to `build_queue`; `#[serde(default)]` empties on the
+/// World = zero migration. Ownership of the hulls follows the FLEET OWNER, never
+/// the yard's system — so a capture mid-refit still returns them to their owner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefitJob {
+    /// Monotonic id (shares `World.next_build_id`) — stable iteration.
+    pub id: u64,
+    /// Who owns the hulls (keeps them even if the yard's system is later lost).
+    pub owner: PlayerId,
+    /// The yard's system — where the refitted hulls reappear.
+    pub system: EntityId,
+    /// The fleet to REJOIN on completion, if it's still the owner's, Idle, and
+    /// docked here — otherwise the hulls form a fresh fleet-of-one at the yard.
+    pub fleet: EntityId,
+    /// The hull kind being refitted.
+    pub ship: ShipKind,
+    /// The loadout the hulls carry when they rejoin (empty = stripped to stock).
+    pub to: crate::module::Loadout,
+    /// How many hulls are in the yard.
+    pub n: u32,
+    /// Absolute sim tick of completion.
+    pub complete_tick: u64,
+}
+
 /// One recipe: commodity costs (whole units; the stockpile is f64) + duration in
 /// ticks. `'static` const so the whole sink is deterministic and allocation-free.
 pub struct Recipe {
@@ -287,6 +316,10 @@ pub const ACADEMY_TRAIN_RECIPE: Recipe = Recipe {
 // mirrors (Reflective) and a Machinery draw for the heavy spaced armor (Whipple).
 // Quicker than a structure — a module is a crate, not a colony. All Tunable.
 const MODULE_BUILD_TICKS: u64 = 10 * HZ;
+/// §modules Part B4: REFIT duration PER SHIP — a fit swap on an existing hull is
+/// quicker than manufacturing the crate, and scales with how many hulls go in the
+/// yard at once (n ships ⇒ n × this). Tunable.
+pub const REFIT_TICKS_PER_SHIP: u64 = 3 * HZ;
 pub const MASS_DRIVER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 8.0), (Commodity::Electronics, 4.0)], build_ticks: MODULE_BUILD_TICKS };
 pub const TORPEDO_RACK_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 10.0), (Commodity::Electronics, 6.0)], build_ticks: MODULE_BUILD_TICKS };
 pub const POINT_DEFENSE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 6.0), (Commodity::Electronics, 8.0)], build_ticks: MODULE_BUILD_TICKS };
