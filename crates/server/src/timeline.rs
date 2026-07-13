@@ -419,6 +419,34 @@ impl Timeline {
                     self.push(*owner, e.time, TimelineSeverity::Good,
                         format!("{name} confirmed its {} — you can see it complying now.", kind.label()));
                 }
+                // §research: syndicate-wide institution news — pushed to every
+                // member at once (their own private research, like the roster; no
+                // light delay). A completed programme's effect is already live.
+                EventPayload::ResearchCompleted { syndicate, programme } => {
+                    let name = sim::research::programme(programme).map(|p| p.name).unwrap_or("a programme");
+                    for &p in members_of(world, *syndicate).iter() {
+                        self.push(p, e.time, TimelineSeverity::Good, format!("Research complete: {name} — its effect is live galaxy-wide."));
+                    }
+                }
+                EventPayload::TierUnlocked { syndicate, field, school, tier } => {
+                    let where_ = match school {
+                        Some(s) => format!("{} · {}", field.title(), s.title()),
+                        None => field.title().to_string(),
+                    };
+                    for &p in members_of(world, *syndicate).iter() {
+                        self.push(p, e.time, TimelineSeverity::Info, format!("Tier {tier} unlocked on {where_}."));
+                    }
+                }
+                EventPayload::ResearchStalled { syndicate } => {
+                    for &p in members_of(world, *syndicate).iter() {
+                        self.push(p, e.time, TimelineSeverity::Warn, "Research stalled — no staffed Academy is contributing. Post crew to an Academy to resume.".to_string());
+                    }
+                }
+                EventPayload::ResearchResumed { syndicate } => {
+                    for &p in members_of(world, *syndicate).iter() {
+                        self.push(p, e.time, TimelineSeverity::Good, "Research resumed — a staffed Academy is contributing again.".to_string());
+                    }
+                }
                 _ => {}
             }
         }
@@ -498,6 +526,16 @@ fn system_name(world: &World, id: sim::EntityId) -> String {
         .find(|s| s.id == id)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| format!("{id}"))
+}
+
+/// §research: the members of a syndicate (for fanning institution news out to the
+/// whole roster). Empty if the syndicate is gone.
+fn members_of(world: &World, sid: sim::SyndicateId) -> Vec<PlayerId> {
+    world
+        .syndicates
+        .get(&sid)
+        .map(|s| s.members.iter().copied().collect())
+        .unwrap_or_default()
 }
 
 /// A short label for a fleet in the timeline — "your <flagship> fleet".

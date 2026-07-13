@@ -64,6 +64,31 @@ pub enum School {
     Talent,         // Life
 }
 
+impl Field {
+    /// snake_case slug (matches serde) — the client's board key.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Field::Propulsion => "propulsion",
+            Field::Materials => "materials",
+            Field::Computation => "computation",
+            Field::Weapons => "weapons",
+            Field::Hulls => "hulls",
+            Field::Life => "life",
+        }
+    }
+    /// Display title for the board header.
+    pub fn title(self) -> &'static str {
+        match self {
+            Field::Propulsion => "Propulsion & Logistics",
+            Field::Materials => "Materials & Fabrication",
+            Field::Computation => "Computation & Sensors",
+            Field::Weapons => "Weapons & Ordnance",
+            Field::Hulls => "Hulls",
+            Field::Life => "Life & Habitation",
+        }
+    }
+}
+
 impl School {
     /// The field this school belongs to (a school only opens within its field).
     pub fn field(self) -> Field {
@@ -74,6 +99,74 @@ impl School {
             School::Strike | School::Countermeasures => Field::Weapons,
             School::Line | School::Corsair => Field::Hulls,
             School::Growth | School::Talent => Field::Life,
+        }
+    }
+    /// snake_case slug (matches serde) — the client's school key.
+    pub fn slug(self) -> &'static str {
+        match self {
+            School::LineHaul => "line_haul",
+            School::Expedition => "expedition",
+            School::DeepCrust => "deep_crust",
+            School::Foundry => "foundry",
+            School::Watch => "watch",
+            School::Shadow => "shadow",
+            School::Strike => "strike",
+            School::Countermeasures => "countermeasures",
+            School::Line => "line",
+            School::Corsair => "corsair",
+            School::Growth => "growth",
+            School::Talent => "talent",
+        }
+    }
+    /// Display title for the school ladder header.
+    pub fn title(self) -> &'static str {
+        match self {
+            School::LineHaul => "Line Haul",
+            School::Expedition => "Expedition",
+            School::DeepCrust => "Deep Crust",
+            School::Foundry => "Foundry",
+            School::Watch => "Watch",
+            School::Shadow => "Shadow",
+            School::Strike => "Strike Systems",
+            School::Countermeasures => "Countermeasures",
+            School::Line => "Line",
+            School::Corsair => "Corsair",
+            School::Growth => "Growth",
+            School::Talent => "Talent",
+        }
+    }
+}
+
+impl Verb {
+    /// Human label for a gate progress bar ("battles won 5 / 8").
+    pub fn label(self) -> &'static str {
+        match self {
+            Verb::LyFlown => "light-years flown",
+            Verb::WarshipLyFlown => "warship light-years",
+            Verb::ConvoyDeliveries => "convoy deliveries",
+            Verb::UnitsExtracted => "raw units extracted",
+            Verb::UnitsProcessed => "units processed",
+            Verb::UnitsThroughIndustry => "units through industry",
+            Verb::SystemsScouted => "systems scouted",
+            Verb::RivalFleetsObserved => "rival fleets observed",
+            Verb::BattlesFought => "battles fought",
+            Verb::BattlesWon => "battles won",
+            Verb::HullMassDestroyed => "hull-mass destroyed",
+            Verb::DamageAbsorbed => "hull-mass absorbed",
+            Verb::SuccessfulRaids => "successful raids",
+            Verb::WarshipsCommissioned => "warships commissioned",
+            Verb::PopulationGrown => "population grown (M)",
+            Verb::SpecialistsTrained => "specialists trained",
+        }
+    }
+}
+
+impl Metric {
+    /// Human label for a state/sustained gate progress bar.
+    pub fn label(self) -> &'static str {
+        match self {
+            Metric::TotalPopulation => "total population (M)",
+            Metric::WellSuppliedSystems => "WellSupplied systems",
         }
     }
 }

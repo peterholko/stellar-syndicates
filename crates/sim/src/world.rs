@@ -203,6 +203,24 @@ pub struct PendingCommandView {
     pub kind: crate::event::OrderKind,
 }
 
+/// §research R6: one Academy's live contribution to its syndicate's ACTIVE
+/// programme — the SHOWN factor chain (design law 2: the panel's number IS the
+/// clock's number). `supplied` is false when the local stockpile can't cover
+/// this lab's drip THIS tick (the amber "unsupplied" tint in the UI).
+#[derive(Debug, Clone)]
+pub struct AcademyContribution {
+    pub system: EntityId,
+    pub system_name: String,
+    pub body_id: u32,
+    pub tier: u32,
+    pub throughput: f64,
+    pub staffing: f64,
+    pub skill: f64,
+    pub food: f64,
+    pub rate: f64,
+    pub supplied: bool,
+}
+
 /// Distance (sim units) at which a raider makes contact with its target.
 const CONTACT_RADIUS: f64 = 80.0;
 /// Distance (sim units) within which a friendly combatant fleet that has moved to
@@ -5032,7 +5050,7 @@ impl World {
 
     /// §research: a syndicate-wide STATE METRIC (summed over the members' held
     /// systems) — feeds `State`/`Sustained` research gates.
-    fn syndicate_metric(&self, sid: SyndicateId, m: crate::research::Metric) -> f64 {
+    pub fn syndicate_metric(&self, sid: SyndicateId, m: crate::research::Metric) -> f64 {
         let Some(syn) = self.syndicates.get(&sid) else { return 0.0 };
         let members = &syn.members;
         match m {
@@ -5099,6 +5117,66 @@ impl World {
     #[allow(dead_code)]
     fn research_module(&self, owner: PlayerId, kind: crate::module::ModuleKind) -> bool {
         self.research_of(owner).is_some_and(|r| crate::research::has_module(r, kind))
+    }
+
+    /// §research R6: the per-Academy CONTRIBUTION TABLE for `sid`'s ACTIVE
+    /// programme (empty if none, or if the active programme is currently gated).
+    /// A read-only mirror of [`Self::tick_research`]'s factor chain — the numbers
+    /// the panel shows are exactly the numbers the clock accrues (design law 2).
+    pub fn research_contributions(&self, sid: SyndicateId) -> Vec<AcademyContribution> {
+        let Some(syn) = self.syndicates.get(&sid) else { return Vec::new() };
+        let Some(active_id) = syn.research.active.as_deref() else { return Vec::new() };
+        let Some(prog) = crate::research::programme(active_id) else { return Vec::new() };
+        // A GATED active accrues nothing (it's waiting) — no contributions shown.
+        let metric = |m| self.syndicate_metric(sid, m);
+        if !crate::research::is_available(active_id, &syn.research, &metric, self.time) {
+            return Vec::new();
+        }
+        let acad = crate::build::StructureKind::Academy;
+        let field = prog.field;
+        let basket = crate::research::basket(field, prog.tier);
+        let members = &syn.members;
+        let mut out = Vec::new();
+        for sys in self.systems.iter().filter(|s| s.owner.is_some_and(|o| members.contains(&o))) {
+            let food_state = sys.food_state;
+            for b in &sys.bodies {
+                let t = b.tier(acad);
+                if t == 0 {
+                    continue;
+                }
+                let staffing = sys.staffing_factor(b.id, acad);
+                if staffing <= 0.0 {
+                    continue;
+                }
+                let matched: u32 = crate::research::field_affinity(field)
+                    .iter()
+                    .map(|k| b.assignments.get(&acad).and_then(|a| a.specialists.get(k)).copied().unwrap_or(0))
+                    .sum();
+                let skill = crate::production::skill_factor(matched, t);
+                let food = crate::production::food_factor(acad, food_state);
+                let throughput = crate::production::tier_throughput(t);
+                let rate = throughput * staffing * skill * food;
+                if rate <= 0.0 {
+                    continue;
+                }
+                let supplied = basket
+                    .iter()
+                    .all(|(c, per)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *per * rate * DT);
+                out.push(AcademyContribution {
+                    system: sys.id,
+                    system_name: sys.name.clone(),
+                    body_id: b.id,
+                    tier: t,
+                    throughput,
+                    staffing,
+                    skill,
+                    food,
+                    rate,
+                    supplied,
+                });
+            }
+        }
+        out
     }
 
     /// §research R3: add to a cumulative research VERB for `owner`'s syndicate
@@ -5353,10 +5431,37 @@ impl World {
                     .get_mut(&sid)
                     .and_then(|s| s.research.try_complete());
                 match done {
-                    Some(id) => events.push(Event::new(
-                        now,
-                        EventPayload::ResearchCompleted { syndicate: sid, programme: id },
-                    )),
+                    Some(id) => {
+                        // §research: emit TierUnlocked when this completion is the
+                        // FIRST on its ladder tier — that's the moment the next tier
+                        // opens (siblings after it don't re-open it). Ladder = the
+                        // field's SHARED line for tiers I/II, the SAME SCHOOL for III+.
+                        if let Some(p) = crate::research::programme(&id)
+                            && p.tier < 5
+                        {
+                            let shared = p.tier <= 2;
+                            let count = self.syndicates[&sid]
+                                .research
+                                .completed
+                                .iter()
+                                .filter_map(|c| crate::research::programme(c))
+                                .filter(|q| {
+                                    q.field == p.field
+                                        && q.tier == p.tier
+                                        && if shared { q.school.is_none() } else { q.school == p.school }
+                                })
+                                .count();
+                            if count == 1 {
+                                events.push(Event::new(now, EventPayload::TierUnlocked {
+                                    syndicate: sid,
+                                    field: p.field,
+                                    school: if shared { None } else { p.school },
+                                    tier: p.tier + 1,
+                                }));
+                            }
+                        }
+                        events.push(Event::new(now, EventPayload::ResearchCompleted { syndicate: sid, programme: id }));
+                    }
                     None => break,
                 }
             }

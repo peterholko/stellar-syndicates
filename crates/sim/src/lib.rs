@@ -78,5 +78,8 @@ pub use ship::{
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 pub use syndicate::{syndicate_cap, Syndicate, SYNDICATE_MAX_FRAC, SYNDICATE_MIN_CAP};
-pub use world::{BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView, World};
+pub use world::{
+    AcademyContribution, BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView,
+    World,
+};
 
