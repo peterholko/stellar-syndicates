@@ -28,7 +28,7 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +86,11 @@ pub enum ClientMsg {
         ship_kind: ShipKind,
         #[serde(default)]
         join: Option<EntityId>,
+        /// §modules Part B4: the loadout to fit the ship with at build — must be
+        /// ≤ the hull's slots and covered by the system's module ledger (both
+        /// debited). serde default = unfitted (old clients build stock hulls).
+        #[serde(default)]
+        loadout: sim::Loadout,
     },
 
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
@@ -122,6 +127,25 @@ pub enum ClientMsg {
     /// §economy Part 4: carry resident specialists between owned/allied systems
     /// on a dedicated personnel convoy.
     TransferSpecialists { from: EntityId, to: EntityId, manifest: BTreeMap<sim::SpecialistKind, u32> },
+
+    /// §modules Part B3: manufacture one module into the system's ledger (needs an
+    /// Armaments Complex ≥ 1). Costs goods; rides the build queue.
+    BuildModule { system_id: EntityId, module: sim::ModuleKind },
+
+    /// §modules Part B4: refit `n` ships of `ship`/`from` in a docked fleet to a
+    /// new `to` loadout at a Shipyard the player owns or is allied with.
+    RefitShips { fleet_id: EntityId, ship: ShipKind, from: sim::Loadout, to: sim::Loadout, n: u32 },
+
+    /// §modules Part B3: ship modules between owned/allied systems on a crate convoy.
+    TransferModules { from: EntityId, to: EntityId, manifest: BTreeMap<sim::ModuleKind, u32> },
+
+    /// §modules Part B3: buy `n` modules from Sol (price-certain, delivery-risky) —
+    /// a crate convoy carries them to the player's `dest_system`.
+    BuyModule { module: sim::ModuleKind, n: u32, dest_system: EntityId },
+
+    /// §modules Part B3: sell `n` modules from `from_system` to Sol — a convoy
+    /// carries them to the hub and the buy-back clears on arrival.
+    SellModule { module: sim::ModuleKind, n: u32, from_system: EntityId },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
     /// light-delayed break-off order.
@@ -574,6 +598,11 @@ pub struct SystemStateView {
     /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
     /// always see an empty map (your talent is private intel).
     pub specialists: BTreeMap<sim::SpecialistKind, u32>,
+    /// §modules Part B3: the system's MODULE LEDGER (kind → crates on hand) —
+    /// owner-only; rivals always see an empty map (your armory is private intel).
+    /// serde default keeps old clients parsing.
+    #[serde(default)]
+    pub modules: BTreeMap<sim::ModuleKind, u32>,
     /// §bodies: the system's PLANETS AND MOONS — roster public, deposits
     /// survey-gated, per-body owner data owner-only (see [`BodyView`]).
     pub bodies: Vec<BodyView>,
@@ -905,6 +934,16 @@ pub struct CompCount {
     pub count: u32,
 }
 
+/// §modules Part B: one FITTED stack of a fleet — `n` ships of `kind` all carrying
+/// `modules` (a canonical, sorted loadout; never empty — unfitted ships aren't
+/// stacks). Revealed under the same rule as [`CompCount`].
+#[derive(Debug, Clone, Serialize)]
+pub struct LoadoutStack {
+    pub kind: ShipKind,
+    pub modules: Vec<sim::ModuleKind>,
+    pub n: u32,
+}
+
 /// A FLEET as a player perceives it: a delayed "ghost" — the position the light
 /// now arriving at their command center shows, plus how stale that is and how
 /// much the object could have moved since (§6). This is the ONLY fleet
@@ -956,6 +995,15 @@ pub struct GhostView {
     /// fleets, or a rival fleet inside sensor coverage (Tier 2). `None` otherwise
     /// — you have the size bucket but not the makeup. Never leaks the true count.
     pub composition: Option<Vec<CompCount>>,
+    /// §modules Part B: the FITTED stacks (kind + modules + count). Present under
+    /// exactly the `composition` rule — seeing the makeup reveals the fits. Only
+    /// non-default stacks; the unfitted remainder = composition − Σ these.
+    #[serde(default)]
+    pub loadouts: Option<Vec<LoadoutStack>>,
+    /// §modules Part B3: module CRATES aboard a transport convoy — fogged like
+    /// `passengers` (empty = none visible). Part of the sensor-gated manifest.
+    #[serde(default)]
+    pub modules: BTreeMap<sim::ModuleKind, u32>,
     /// The dark fleet's DETECTION SIGNATURE (§Part 4) at the retarded moment — how
     /// LOUD it is (1.0 = a lone raider at full speed). Present only for DARK
     /// fleets; drives the client's flare/plume treatment. `None` for broadcasters.

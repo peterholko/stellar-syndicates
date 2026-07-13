@@ -35,7 +35,7 @@ use sim::{
 
 use crate::protocol::{
     AnchorView, BattleFidelity, BattleRecordView, BlockadeStateView, BuildStateView, CargoView,
-    CompCount, DepositView, GhostView, IntelView, RecordCount, RoundNoteView, RoundRecordView,
+    CompCount, DepositView, GhostView, IntelView, LoadoutStack, RecordCount, RoundNoteView, RoundRecordView,
     SideRecordView, StockSlot, SystemStateView,
 };
 
@@ -81,6 +81,14 @@ struct Track {
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// fogged exactly like cargo (same caveat about per-sample delay).
     passengers: std::collections::BTreeMap<sim::SpecialistKind, u32>,
+    /// §modules Part B: the fleet's LOADOUT partition (kind → loadout key → count)
+    /// — revealed like `composition` (own / in-coverage), so a rival who can see
+    /// the makeup can see the FITS. Only fitted stacks; the unfitted remainder is
+    /// derived client-side.
+    loadouts: std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
+    /// §modules Part B3: MODULE CRATES aboard (a transport convoy's manifest) —
+    /// fogged exactly like `passengers`/`cargo`.
+    modules: std::collections::BTreeMap<sim::ModuleKind, u32>,
     /// Current broadcast route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
@@ -149,6 +157,8 @@ impl PositionHistory {
                 last_seen: now,
                 cargo: None,
                 passengers: Default::default(),
+                loadouts: Default::default(),
+                modules: Default::default(),
                 route: None,
                 destroyed: None,
             });
@@ -162,6 +172,8 @@ impl PositionHistory {
             track.last_seen = now;
             track.cargo = ship.cargo;
             track.passengers = ship.passengers.clone();
+            track.loadouts = ship.loadouts.clone();
+            track.modules = ship.modules.clone();
             track.route = route_of(&ship.order);
             track.samples.push_back(Sample {
                 time: now,
@@ -259,9 +271,11 @@ impl PositionHistory {
             max_speed: f64,
             count_class: CountClass,
             composition: &'a BTreeMap<ShipKind, u32>,
+            loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
             sample: Sample,
             cargo: Option<Cargo>,
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
+            modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
@@ -309,9 +323,11 @@ impl PositionHistory {
                 max_speed: track.max_speed,
                 count_class: track.count_class,
                 composition: &track.composition,
+                loadouts: &track.loadouts,
                 sample,
                 cargo: track.cargo,
                 passengers: &track.passengers,
+                modules: &track.modules,
                 route: &track.route,
                 destroyed_detected,
             });
@@ -416,6 +432,28 @@ impl PositionHistory {
             } else {
                 None
             };
+            // §modules Part B: FITS ride with the composition reveal — if you can
+            // see the makeup, you can see what's fitted (fitted stacks only; the
+            // unfitted remainder is derived client-side).
+            let loadouts = if own || detected || deep {
+                Some(
+                    p.loadouts
+                        .iter()
+                        .flat_map(|(k, m)| {
+                            m.iter().map(move |(key, n)| LoadoutStack {
+                                kind: *k,
+                                modules: sim::Loadout::from_key(key).modules().to_vec(),
+                                n: *n,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
+            // §modules Part B3: crate MANIFEST obeys the tier-2 manifest rule (like
+            // passengers) — shown exactly when the rest of the manifest is.
+            let modules = if detected { p.modules.clone() } else { Default::default() };
 
             ghosts.push(GhostView {
                 id: p.id,
@@ -431,6 +469,8 @@ impl PositionHistory {
                 passengers,
                 count_class: p.count_class,
                 composition,
+                loadouts,
+                modules,
                 signature: if p.broadcasts { None } else { Some(signature) },
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
@@ -678,6 +718,8 @@ pub fn filter_systems(
                 population: if own { sys.population() } else { 0.0 },
                 // §economy Part 4: your talent is private intel.
                 specialists: if own { sys.specialists.clone() } else { Default::default() },
+                // §modules Part B3: your armory (module ledger) is private intel.
+                modules: if own { sys.modules.clone() } else { Default::default() },
                 // §bodies: the roster is PUBLIC geography (a star's worlds are
                 // visible from afar); deposits ride the survey ladder; the
                 // per-body owner block is owner-only — fog one level down.
@@ -1109,6 +1151,8 @@ mod tests {
             last_seen: last,
             cargo,
             passengers: Default::default(),
+            loadouts: Default::default(),
+            modules: Default::default(),
             route: None,
             destroyed: None,
         }
@@ -1972,6 +2016,8 @@ mod tests {
             last_seen: 100.0,
             cargo: None,
             passengers: Default::default(),
+            loadouts: Default::default(),
+            modules: Default::default(),
             route: None,
             destroyed: None,
         }

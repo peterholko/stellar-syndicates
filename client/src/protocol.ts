@@ -135,6 +135,9 @@ export interface SystemStateView {
   population: number;
   /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
   specialists: Record<string, number>;
+  /// §modules Part B3: the module LEDGER (slug -> crates on hand) — owner-only;
+  /// rivals see {} (your armory is private intel).
+  modules?: Record<string, number>;
   /// §bodies: the roster — public geography; per-body owner data owner-only.
   bodies: BodyView[];
   /// Built structures SUMMED across bodies (slug -> tier) — owner-only.
@@ -418,6 +421,22 @@ export interface CompCount {
   count: number;
 }
 
+// §modules Part B: one canonical MODULE kind slug.
+export type ModuleKind =
+  | "mass_driver"
+  | "torpedo_rack"
+  | "point_defense_screen"
+  | "reflective_plating"
+  | "whipple_armor";
+
+// §modules Part B: one FITTED stack of a fleet — `n` ships of `kind` all carrying
+// `modules` (sorted; never empty). Revealed under the same rule as CompCount.
+export interface LoadoutStack {
+  kind: ShipKind;
+  modules: ModuleKind[];
+  n: number;
+}
+
 // A FLEET as you perceive it (§13.1). `kind` is the flagship (what it's drawn
 // as). The two-tier intel ladder: `count_class` (size bucket) is ALWAYS present;
 // `composition` (exact kinds + counts) only for your own fleets or a rival fleet
@@ -442,6 +461,13 @@ export interface GhostView {
   count_class: CountClass;
   // Exact composition — present only in coverage or for your own fleet.
   composition: CompCount[] | null;
+  // §modules Part B: FITTED stacks — present under the same rule as composition
+  // (seeing the makeup reveals the fits). Only fitted stacks; the unfitted
+  // remainder = composition − Σ these. null when composition is null.
+  loadouts?: LoadoutStack[] | null;
+  // §modules Part B3: module CRATES aboard a transport convoy — fogged like
+  // passengers ({} = none visible / none aboard).
+  modules?: Record<string, number>;
   // §Part 4 detection signature (how LOUD a dark fleet is; 1.0 = a lone raider at
   // full speed). Present only for dark fleets — drives the flare treatment.
   signature: number | null;
@@ -500,7 +526,17 @@ export type ClientMsg =
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   // `join` (optional): a fleet docked at that system for the finished ship to
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
-  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null }
+  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null; loadout?: ModuleKind[] }
+  // §modules Part B3: manufacture one module into the system ledger (Armaments ≥ 1).
+  | { type: "BuildModule"; system_id: EntityId; module: ModuleKind }
+  // §modules Part B4: refit `n` ships of `ship`/`from` in a docked fleet to `to`.
+  | { type: "RefitShips"; fleet_id: EntityId; ship: ShipKind; from: ModuleKind[]; to: ModuleKind[]; n: number }
+  // §modules Part B3: ship modules between owned/allied systems on a crate convoy.
+  | { type: "TransferModules"; from: EntityId; to: EntityId; manifest: Record<string, number> }
+  // §modules Part B3: buy `n` modules from Sol (delivered to dest_system).
+  | { type: "BuyModule"; module: ModuleKind; n: number; dest_system: EntityId }
+  // §modules Part B3: sell `n` modules from from_system to Sol.
+  | { type: "SellModule"; module: ModuleKind; n: number; from_system: EntityId }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string; body_id?: number }
   | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number }

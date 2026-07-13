@@ -404,9 +404,34 @@ impl GameLoop {
                         self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
                     }
                 }
-                ClientMsg::BuildShip { system_id, ship_kind, join } => {
+                ClientMsg::BuildShip { system_id, ship_kind, join, loadout } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join, loadout: Default::default() });
+                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join, loadout });
+                    }
+                }
+                ClientMsg::BuildModule { system_id, module } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BuildModule { player_id, system_id, module });
+                    }
+                }
+                ClientMsg::RefitShips { fleet_id, ship, from, to, n } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::RefitShips { player_id, fleet_id, ship, from, to, n });
+                    }
+                }
+                ClientMsg::TransferModules { from, to, manifest } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::TransferModules { player_id, from, to, manifest });
+                    }
+                }
+                ClientMsg::BuyModule { module, n, dest_system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BuyModule { player_id, module, n, dest_system });
+                    }
+                }
+                ClientMsg::SellModule { module, n, from_system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SellModule { player_id, module, n, from_system });
                     }
                 }
                 ClientMsg::DevelopSystem { system_id, upgrade, body_id } => {

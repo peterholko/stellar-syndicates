@@ -13,7 +13,7 @@ const state: ViewState = initialState();
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION (§battle-records = 4).
-const EXPECTED_PROTOCOL_VERSION = 4;
+const EXPECTED_PROTOCOL_VERSION = 5;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
