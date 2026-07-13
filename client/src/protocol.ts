@@ -691,6 +691,9 @@ export interface SideRecordView {
   posture: EngagementPolicy | null; // owner-only: set only on the viewer's own side
   platform_tiers: number;
   initial: RecordCount[];
+  // §modules B5: the side's opening fitted stacks — PARTICIPANT fidelity only
+  // ([] at bucket/none). Labels the side + types its salvos by weapon family.
+  loadouts?: LoadoutStack[];
 }
 export interface RoundNoteView {
   kind: string; // "joined" | "retreat_tripped" | "withdraw_ordered" | "disengage_exposure" | "platform_destroyed" | "mutual_disengage"

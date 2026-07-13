@@ -448,6 +448,14 @@ pub struct Engagement {
     /// Report bookkeeping: total composition + strength each side STARTED with.
     a_start: BTreeMap<ShipKind, u32>,
     d_start: BTreeMap<ShipKind, u32>,
+    /// §modules B5: the LOADOUT partition each side started with — the record's
+    /// per-loadout intel (participant fidelity surfaces it; the client types the
+    /// replay's salvos by each side's dominant weapon family from this). serde
+    /// default = empty (old snapshots / all-unfitted), zero migration.
+    #[serde(default)]
+    a_start_loadouts: crate::combat::LoadoutMap,
+    #[serde(default)]
+    d_start_loadouts: crate::combat::LoadoutMap,
     a_start_strength: f64,
     d_start_strength: f64,
     platform_start_tiers: u32,
@@ -937,11 +945,13 @@ impl World {
             (e.pos, e.platform_system, e.raid, e.a_owner, e.d_owner, e.platform_start_tiers);
         let a_start = e.a_start.clone();
         let d_start = e.d_start.clone();
+        let a_loadouts = e.a_start_loadouts.clone();
+        let d_loadouts = e.d_start_loadouts.clone();
         let a_posture = self.players.get(&a_owner).map(|c| c.doctrine.engagement).unwrap_or_default();
         let d_posture = self.players.get(&d_owner).map(|c| c.doctrine.engagement).unwrap_or_default();
         let sides = [
-            crate::combat::SideRecord { corp: a_owner, initial: a_start, posture: a_posture, platform_tiers: 0 },
-            crate::combat::SideRecord { corp: d_owner, initial: d_start, posture: d_posture, platform_tiers: ptiers },
+            crate::combat::SideRecord { corp: a_owner, initial: a_start, initial_loadouts: a_loadouts, posture: a_posture, platform_tiers: 0 },
+            crate::combat::SideRecord { corp: d_owner, initial: d_start, initial_loadouts: d_loadouts, posture: d_posture, platform_tiers: ptiers },
         ];
         let rec = crate::combat::BattleRecord::open(
             eid, pos, system, raid, self.tick, self.config.battle_target_secs, sides,
@@ -2152,6 +2162,8 @@ impl World {
                 .unwrap_or((0, 0.0));
             let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
             let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(ptiers, 0.0).strength();
+            let a_start_loadouts = self.side_loadouts(&[aid]);
+            let d_start_loadouts = self.side_loadouts(&defenders);
             self.engagements.insert(id, Engagement {
                 id,
                 pos: t_pos,
@@ -2166,6 +2178,8 @@ impl World {
                 d_stack_pool: BTreeMap::new(),
                 a_start: a_comp,
                 d_start: d_comp,
+                a_start_loadouts,
+                d_start_loadouts,
                 a_start_strength: a_str,
                 d_start_strength: d_str,
                 platform_start_tiers: ptiers,
@@ -2636,6 +2650,8 @@ impl World {
         let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
         let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(base_tiers, 0.0).strength();
         let d_lead = defenders.first().copied().unwrap_or(aid);
+        let a_start_loadouts = self.side_loadouts(&[aid]);
+        let d_start_loadouts = self.side_loadouts(&defenders);
         self.engagements.insert(id, Engagement {
             id,
             pos: base_pos,
@@ -2650,6 +2666,8 @@ impl World {
             d_stack_pool: BTreeMap::new(),
             a_start: a_comp,
             d_start: d_comp,
+            a_start_loadouts,
+            d_start_loadouts,
             a_start_strength: a_str,
             d_start_strength: d_str,
             platform_start_tiers: base_tiers,
@@ -3223,6 +3241,8 @@ impl World {
             let a_str = crate::combat::Forces::from_fleet(&a_comp, &BTreeMap::new()).strength();
             let d_str = crate::combat::Forces::from_fleet(&d_comp, &BTreeMap::new()).with_platform(o.ptiers, 0.0).strength();
             let d_lead = o.garrison.first().copied().unwrap_or(o.aid);
+            let a_start_loadouts = self.side_loadouts(&[o.aid]);
+            let d_start_loadouts = self.side_loadouts(&o.garrison);
             self.engagements.insert(id, Engagement {
                 id,
                 pos: o.pos,
@@ -3237,6 +3257,8 @@ impl World {
                 d_stack_pool: BTreeMap::new(),
                 a_start: a_comp,
                 d_start: d_comp,
+                a_start_loadouts,
+                d_start_loadouts,
                 a_start_strength: a_str,
                 d_start_strength: d_str,
                 platform_start_tiers: o.ptiers,
@@ -9049,6 +9071,35 @@ mod tests {
         let (e2, r2) = run();
         assert_eq!(e1, e2, "the engagement id is deterministic");
         assert_eq!(r1, r2, "the full record set is identical across identical runs");
+    }
+
+    #[test]
+    fn battle_record_captures_each_sides_initial_loadouts() {
+        // §modules B5: the record opens with each side's opening FIT partition, so
+        // a participant-fidelity replay can label the sides and type their salvos.
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
+        let cc = w.players[&atk].command_center;
+        let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 4, FleetOrder::Idle);
+        let md = Loadout::new(vec![ModuleKind::MassDriver]);
+        w.fleets.get_mut(&striker).unwrap().loadouts.entry(ShipKind::Raider).or_default().insert(md.key(), 4);
+        let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 4, FleetOrder::Idle);
+        let wa = Loadout::new(vec![ModuleKind::WhippleArmor]);
+        w.fleets.get_mut(&target).unwrap().loadouts.entry(ShipKind::Corvette).or_default().insert(wa.key(), 4);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.battle_records.is_empty()), "a record opens on contact");
+        let rec = w.battle_records.values().next().unwrap();
+        // side 0 = attackers (mass drivers), side 1 = defenders (whipple).
+        assert_eq!(
+            rec.sides[0].initial_loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&md.key())).copied(),
+            Some(4), "the attacker's mass-driver fit is recorded",
+        );
+        assert_eq!(
+            rec.sides[1].initial_loadouts.get(&ShipKind::Corvette).and_then(|m| m.get(&wa.key())).copied(),
+            Some(4), "the defender's whipple fit is recorded",
+        );
     }
 
     #[test]

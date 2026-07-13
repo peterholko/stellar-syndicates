@@ -987,6 +987,19 @@ pub fn battle_record_views(
             posture: (own_side == Some(s as u8)).then_some(r.sides[s].posture),
             platform_tiers: r.sides[s].platform_tiers,
             initial: record_counts(&r.sides[s].initial, participant),
+            // §modules B5: fits ride PARTICIPANT fidelity only (fog-safe — a
+            // distant bucket observer never learns what a side was carrying).
+            loadouts: if participant {
+                r.sides[s].initial_loadouts.iter()
+                    .flat_map(|(k, m)| m.iter().map(move |(key, n)| LoadoutStack {
+                        kind: *k,
+                        modules: sim::Loadout::from_key(key).modules().to_vec(),
+                        n: *n,
+                    }))
+                    .collect()
+            } else {
+                Vec::new()
+            },
         };
         // The ARRIVED round prefix (rounds are tick-ascending → stop at the frontier).
         let mut rounds = Vec::new();
@@ -2457,8 +2470,8 @@ mod tests {
     /// light delay is 3.0 s (round tick T unlocks at `T/30 + 3.0`).
     fn mk_record(id: EntityId, a: PlayerId, d: PlayerId, pos: Vec2) -> sim::BattleRecord {
         let sides = [
-            sim::SideRecord { corp: a, initial: kinds(&[(ShipKind::Raider, 2)]), posture: sim::EngagementPolicy::EngageAny, platform_tiers: 0 },
-            sim::SideRecord { corp: d, initial: kinds(&[(ShipKind::Corvette, 2)]), posture: sim::EngagementPolicy::Avoid, platform_tiers: 0 },
+            sim::SideRecord { corp: a, initial: kinds(&[(ShipKind::Raider, 2)]), initial_loadouts: Default::default(), posture: sim::EngagementPolicy::EngageAny, platform_tiers: 0 },
+            sim::SideRecord { corp: d, initial: kinds(&[(ShipKind::Corvette, 2)]), initial_loadouts: Default::default(), posture: sim::EngagementPolicy::Avoid, platform_tiers: 0 },
         ];
         let mut r = sim::BattleRecord::open(id, pos, None, false, 0, 20.0, sides);
         // Round at tick 15 with a reinforcement join (attacker side).

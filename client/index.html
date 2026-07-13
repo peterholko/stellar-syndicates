@@ -715,6 +715,10 @@
       .bv-side__hd { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 5px; }
       .bv-side.mine .bv-side__hd { color: var(--accent); }
       .bv-side.right .bv-side__hd { flex-direction: row-reverse; text-align: right; }
+      /* §modules: the side's weapon-family pip + per-stack fit line in the replay. */
+      .bv-fampip { font-size: 9px; font-weight: 600; }
+      .bv-fits { font-size: 9px; color: var(--dim); margin-top: 2px; line-height: 1.45; }
+      .bv-side.right .bv-fits { text-align: right; }
       .bv-krow { display: grid; grid-template-columns: var(--icon-resource, 18px) 1fr auto; align-items: center; gap: 6px; }
       .bv-side.right .bv-krow { direction: rtl; }
       .bv-side.right .bv-krow > * { direction: ltr; }

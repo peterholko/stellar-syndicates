@@ -868,6 +868,11 @@ pub struct SideRecordView {
     pub posture: Option<EngagementPolicy>,
     pub platform_tiers: u32,
     pub initial: Vec<RecordCount>,
+    /// §modules B5: the side's opening FITTED stacks (kind + modules + count) —
+    /// PARTICIPANT ONLY (empty at bucket/none fidelity, a fog-safe leak guard).
+    /// The client labels the side and types its salvos by dominant weapon family.
+    #[serde(default)]
+    pub loadouts: Vec<LoadoutStack>,
 }
 
 /// A recorded beat, viewer-filtered. `kind` is the snake_case note tag; `side`

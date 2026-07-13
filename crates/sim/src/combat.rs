@@ -550,6 +550,13 @@ pub struct SideRecord {
     pub corp: PlayerId,
     /// Opening composition (per-kind survivors are tracked round-by-round).
     pub initial: BTreeMap<ShipKind, u32>,
+    /// §modules B5: the LOADOUT partition this side started with (fitted stacks
+    /// only; the unfitted remainder = `initial` − Σ these). The record's
+    /// per-loadout intel — participant fidelity surfaces it, and the client
+    /// labels the side and types its salvos by dominant weapon family. serde
+    /// default = empty (all-unfitted / pre-feature records), zero migration.
+    #[serde(default)]
+    pub initial_loadouts: LoadoutMap,
     /// The corp's engagement doctrine at the open. OWNER-ONLY in the view (A2):
     /// a rival never learns your posture from watching the fight.
     pub posture: EngagementPolicy,
@@ -1004,8 +1011,8 @@ mod tests {
     /// A finished record for pruning tests: one corp per side, ended at `tick`.
     fn finished_record(id: EntityId, corp: PlayerId, tick: u64) -> BattleRecord {
         let sides = [
-            SideRecord { corp, initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(9_999), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp, initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(9_999), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
         ];
         let mut r = BattleRecord::open(id, Vec2::ZERO, None, false, tick, 45.0, sides);
         r.finalize(tick, RaidOutcome::BothSurvive, [BTreeMap::new(), BTreeMap::new()], [BTreeMap::new(), BTreeMap::new()]);
@@ -1034,8 +1041,8 @@ mod tests {
     #[test]
     fn accumulate_flushes_on_cadence_and_records_dealt_and_kills() {
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 5)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 5)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 5)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 5)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
         ];
         // round_every for a 20 s battle = floor(20*30/40) = 15 ticks.
         let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 20.0, sides);
@@ -1060,8 +1067,8 @@ mod tests {
     #[test]
     fn a_beat_forces_a_flush_off_cadence() {
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
         ];
         let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
         // A single early tick with a beat — nowhere near the (huge) cadence.
@@ -1075,8 +1082,8 @@ mod tests {
     #[test]
     fn finalize_flushes_the_tail_and_stamps_the_outcome() {
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 3)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 2)]), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 3)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 2)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
         ];
         let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
         r.accumulate(5.0, 1.0, &Losses::default(), &losses(&[(ShipKind::Raider, 2)]));
@@ -1133,8 +1140,8 @@ mod tests {
     fn running_battles_are_never_pruned() {
         let mut recs: BTreeMap<EntityId, BattleRecord> = BTreeMap::new();
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
         ];
         // A still-running record (no ended_tick), plus 30 ancient finished ones
         // for a DIFFERENT corp so the floor can't protect the runner incidentally.
@@ -1151,8 +1158,8 @@ mod tests {
     fn record_serde_round_trips_including_pending() {
         // A record mid-battle (pending accumulation live) round-trips exactly.
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 4)]), posture: EngagementPolicy::EngageAny, platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Corvette, 3)]), posture: EngagementPolicy::Avoid, platform_tiers: 2 },
+            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 4)]), initial_loadouts: Default::default(), posture: EngagementPolicy::EngageAny, platform_tiers: 0 },
+            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Corvette, 3)]), initial_loadouts: Default::default(), posture: EngagementPolicy::Avoid, platform_tiers: 2 },
         ];
         let mut r = BattleRecord::open(EntityId(0xE000_0000_0000_0001), Vec2::new(1.0, -2.0), Some(EntityId(5)), false, 3, 2700.0, sides);
         r.accumulate(3.25, 0.75, &losses(&[(ShipKind::Raider, 1)]), &Losses::default());

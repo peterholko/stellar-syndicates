@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
@@ -1758,13 +1758,40 @@ function refreshOpenBattleViewer(): void {
 
 const bvRC = (arr: RecordCount[], k: ShipKind): RecordCount | undefined => arr.find((rc) => rc.kind === k);
 
+// §modules B5: the salvo FAMILY typing. A side's dominant weapon = the hardest
+// hitter it brought (torpedo > driver > beam), derived from its participant-only
+// initial loadouts; drives the replay's salvo arrow color + label. `beam` is the
+// stock default (unfitted brawlers / no weapon modules).
+type SalvoFamily = "beam" | "driver" | "torpedo";
+const FAMILY_COLOR: Record<SalvoFamily, string> = { beam: "var(--accent)", driver: "#e8a13a", torpedo: "#e0574b" };
+const FAMILY_LABEL: Record<SalvoFamily, string> = { beam: "beam", driver: "drivers", torpedo: "torpedoes" };
+function sideFamily(sv: SideRecordView): SalvoFamily {
+  const mods = (sv.loadouts ?? []).flatMap((st) => st.modules);
+  if (mods.includes("torpedo_rack")) return "torpedo";
+  if (mods.includes("mass_driver")) return "driver";
+  return "beam";
+}
+// A compact per-stack fit summary for a side header (participant only).
+function bvFitLine(sv: SideRecordView): string {
+  const fits = sv.loadouts ?? [];
+  if (!fits.length) return "";
+  const parts = fits.map((st) => `${st.n}× ${st.modules.map((m) => MODULE_GLYPH[m as ModuleKind]).join("")} ${esc(shipKindLabel(st.kind))}`);
+  return `<div class="bv-fits" title="What this side was fitted with — participant intel.">${parts.join(" · ")}</div>`;
+}
+
 /// One side's column: a per-kind survivor bar (participant: exact; bucket:
 /// CountClass label), a kill flash, and the defender's platform block.
 function bvSideHtml(rec: BattleRecordView, rd: RoundRecordView, s: 0 | 1, participant: boolean, platGone: boolean): string {
   const mine = rec.own_side === s;
   const cls = `bv-side ${s === 1 ? "right " : ""}${mine ? "mine" : ""}`;
   const role = s === 0 ? "Attackers" : "Defenders";
-  const hd = `<div class="bv-side__hd">${mine ? badge("neutral", "you") : ""}${esc(role)}</div>`;
+  // §modules B5: a weapon-family pip (participant only) + the per-stack fit line.
+  const fam = participant ? sideFamily(rec.sides[s]) : null;
+  const famPip = fam
+    ? ` <span class="bv-fampip" style="color:${FAMILY_COLOR[fam]}" title="This side's dominant weapon — its salvos are typed ${FAMILY_LABEL[fam]}.">● ${esc(FAMILY_LABEL[fam])}</span>`
+    : "";
+  const hd = `<div class="bv-side__hd">${mine ? badge("neutral", "you") : ""}${esc(role)}${famPip}</div>` +
+    (participant ? bvFitLine(rec.sides[s]) : "");
   const rows = rec.sides[s].initial.map((op) => {
     const k = op.kind;
     const surv = bvRC(rd.counts[s], k);
@@ -1865,9 +1892,11 @@ function renderBattleViewer(): void {
       const maxDealt = Math.max(1e-6, ...rec.rounds.flatMap((r) => (r.dealt ? [r.dealt[0], r.dealt[1]] : [0])));
       const w = (d: number) => Math.max(8, (d / maxDealt) * 88);
       const mute = (d: number) => (d < maxDealt * 0.03 ? " mute" : "");
+      // §modules B5: TYPE each salvo arrow by its firing side's weapon family.
+      const famA = sideFamily(rec.sides[0]), famD = sideFamily(rec.sides[1]);
       salvos = `<div class="bv-salvos">` +
-        `<div class="bv-arrow r${mute(rd.dealt[0])}" style="width:${w(rd.dealt[0])}%" title="attackers dealt ${rd.dealt[0].toFixed(2)} this round"></div>` +
-        `<div class="bv-arrow l${mute(rd.dealt[1])}" style="width:${w(rd.dealt[1])}%; margin-left:auto" title="defenders dealt ${rd.dealt[1].toFixed(2)} this round"></div>` +
+        `<div class="bv-arrow r${mute(rd.dealt[0])}" style="width:${w(rd.dealt[0])}%; background:${FAMILY_COLOR[famA]}" title="attackers' ${FAMILY_LABEL[famA]} dealt ${rd.dealt[0].toFixed(2)} this round"></div>` +
+        `<div class="bv-arrow l${mute(rd.dealt[1])}" style="width:${w(rd.dealt[1])}%; margin-left:auto; background:${FAMILY_COLOR[famD]}" title="defenders' ${FAMILY_LABEL[famD]} dealt ${rd.dealt[1].toFixed(2)} this round"></div>` +
         `</div>`;
     } else {
       salvos = `<div class="bv-salvos" style="align-items:center;color:var(--dim)" title="exact fire strength is fogged — you see only the size buckets">⚔</div>`;
