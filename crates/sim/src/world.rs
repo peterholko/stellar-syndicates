@@ -3817,6 +3817,64 @@ impl World {
                     f.modules = load;
                 }
             }
+            Command::BuyModule { player_id, module, n, dest_system } => {
+                // §modules Part B3 (Sol hub): price-certain purchase, delivery-risky
+                // — pay Sol now, a crate convoy carries it hub → the player's
+                // system. Mirrors HireSpecialist. Soft-reject on ownership / credits.
+                let n = *n;
+                if n == 0 {
+                    return;
+                }
+                let Some(dest) = self.systems.iter().find(|s| s.id == *dest_system && s.owner == Some(*player_id)).map(|s| s.pos) else {
+                    return;
+                };
+                let unit = self.module_buy_price(*module);
+                let cost = unit * n as f64;
+                let Some(corp) = self.players.get_mut(player_id) else { return };
+                if corp.credits + 1e-9 < cost {
+                    return; // can't pay — soft reject
+                }
+                corp.credits -= cost;
+                let hub = self.hub;
+                let cid = self.spawn_trade_convoy(*player_id, hub, dest, Cargo { commodity: crate::cargo::Commodity::Provisions, units: 0 }, TradeMission::DeliverToSystem { system: *dest_system });
+                if let Some(f) = self.fleets.get_mut(&cid) {
+                    f.cargo = None;
+                    f.modules.insert(*module, n);
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::ModulesPurchased { owner: *player_id, kind: *module, n, dest: *dest_system, unit_price: unit },
+                ));
+            }
+            Command::SellModule { player_id, module, n, from_system } => {
+                // §modules Part B3 (Sol hub): commit the crates to the crossing now
+                // (debit the ledger), a convoy carries them src → hub, and the
+                // buy-back clears on ARRIVAL (price-on-arrival, like MarketSell).
+                let n = *n;
+                if n == 0 {
+                    return;
+                }
+                let Some(src) = self.systems.iter_mut().find(|s| s.id == *from_system && s.owner == Some(*player_id)) else {
+                    return;
+                };
+                let stocked = src.modules.get(module).copied().unwrap_or(0);
+                let take = n.min(stocked);
+                if take == 0 {
+                    return; // ledger doesn't stock it — soft reject
+                }
+                let r = src.modules.get_mut(module).expect("stocked > 0");
+                *r -= take;
+                if *r == 0 {
+                    src.modules.remove(module);
+                }
+                let spawn = src.pos;
+                let hub = self.hub;
+                let cid = self.spawn_trade_convoy(*player_id, spawn, hub, Cargo { commodity: crate::cargo::Commodity::Provisions, units: 0 }, TradeMission::SellAtHub);
+                if let Some(f) = self.fleets.get_mut(&cid) {
+                    f.cargo = None;
+                    f.modules.insert(*module, take);
+                }
+            }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
                 self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), events);
             }
@@ -4639,6 +4697,25 @@ impl World {
                 }
             }
         }
+    }
+
+    /// §modules Part B3 (Sol hub): a module's GOODS VALUE — its recipe commodities
+    /// priced at Sol's standing market. The buy/sell prices scale off this, so
+    /// they TRACK the commodity market (a module is worth what its inputs cost).
+    fn module_recipe_value(&self, kind: crate::module::ModuleKind) -> f64 {
+        crate::build::module_recipe(kind)
+            .costs
+            .iter()
+            .map(|(c, n)| n * self.market.price(*c))
+            .sum()
+    }
+    /// Sol's SELL price to a player (buying from Sol): a premium over local build.
+    fn module_buy_price(&self, kind: crate::module::ModuleKind) -> f64 {
+        self.module_recipe_value(kind) * crate::module::MODULE_BUY_MULT
+    }
+    /// Sol's BUY-BACK price from a player (selling to Sol): a steep discount.
+    fn module_sell_price(&self, kind: crate::module::ModuleKind) -> f64 {
+        self.module_recipe_value(kind) * crate::module::MODULE_SELL_MULT
     }
 
     /// §modules Part B4: kick off a REFIT — pull `n` ships of `ship`/`from` out of
@@ -5956,6 +6033,20 @@ impl World {
                     self.fleets.insert(id, ship);
                     continue;
                 }
+            }
+            // §modules Part B3 (Sol hub): a SELL convoy clears its crates at Sol on
+            // arrival — the buy-back price is decided here (price-on-arrival).
+            if !ship.modules.is_empty() && matches!(ship.mission, Some(TradeMission::SellAtHub)) {
+                let manifest = std::mem::take(&mut ship.modules);
+                let priced: Vec<(crate::module::ModuleKind, u32, f64)> =
+                    manifest.into_iter().map(|(k, n)| (k, n, self.module_sell_price(k))).collect();
+                for (kind, n, unit) in priced {
+                    if let Some(corp) = self.players.get_mut(&ship.owner) {
+                        corp.credits += unit * n as f64;
+                    }
+                    events.push(Event::new(now, EventPayload::ModulesSold { owner: ship.owner, kind, n, unit_price: unit }));
+                }
+                continue; // the sell convoy's job is done — it vanishes at the hub.
             }
             // §modules Part B3: MODULE CRATES land into the destination ledger under
             // the same rule — held ground (owner or ally); a lost destination
@@ -9336,6 +9427,70 @@ mod tests {
         assert_eq!(carried, MODULE_CONVOY_BERTHS, "one convoy hauls at most its berths");
         let left = w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0);
         assert_eq!(left, 8, "the overflow stays in the source ledger for the next run");
+    }
+
+    // --- §modules Part B3: the SOL module market (buy at a premium, sell back low)
+
+    #[test]
+    fn buy_module_from_sol_debits_credits_now_and_delivers_the_crate() {
+        use crate::module::ModuleKind;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.players.get_mut(&id).unwrap().credits = 100_000.0;
+        let before = w.players[&id].credits;
+        let ev = w.step(&[Command::BuyModule { player_id: id, module: ModuleKind::MassDriver, n: 3, dest_system: home }]);
+        // Debit matches the reported purchase price (drift-proof: read the event).
+        let unit = ev.iter().find_map(|e| match e.payload {
+            EventPayload::ModulesPurchased { unit_price, n, .. } if n == 3 => Some(unit_price),
+            _ => None,
+        }).expect("a purchase settled");
+        assert!(unit > 0.0, "Sol charges a real price");
+        assert!((before - w.players[&id].credits - unit * 3.0).abs() < 1e-6, "credits debited unit×3 NOW");
+        assert!(w.fleets.values().any(|f| f.owner == id && f.modules.get(&ModuleKind::MassDriver) == Some(&3)), "a delivery convoy carries the crates from Sol");
+        let mut delivered = false;
+        for _ in 0..(600 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if matches!(e.payload, EventPayload::ModulesDelivered { owner, system, .. } if owner == id && system == home) {
+                    delivered = true;
+                }
+            }
+            if delivered { break; }
+        }
+        assert!(delivered, "the purchase lands in the home ledger");
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0), 3);
+    }
+
+    #[test]
+    fn sell_module_to_sol_commits_the_crate_then_credits_on_arrival() {
+        use crate::module::ModuleKind;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().modules.insert(ModuleKind::MassDriver, 2);
+        w.players.get_mut(&id).unwrap().credits = 0.0;
+        w.step(&[Command::SellModule { player_id: id, module: ModuleKind::MassDriver, n: 2, from_system: home }]);
+        // Ledger debited at commit; a convoy carries the crates to the hub.
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0), 0, "the crates leave the ledger at commit");
+        assert!(w.fleets.values().any(|f| f.owner == id && f.modules.get(&ModuleKind::MassDriver) == Some(&2)), "a sell convoy carries them to Sol");
+        // Fly to the hub → the buy-back credits on arrival (price-on-arrival).
+        let mut proceeds = 0.0;
+        for _ in 0..(600 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::ModulesSold { owner, n, unit_price, .. } = e.payload {
+                    if owner == id {
+                        proceeds += unit_price * n as f64;
+                    }
+                }
+            }
+            if proceeds > 0.0 { break; }
+        }
+        assert!(proceeds > 0.0, "Sol paid a buy-back");
+        assert!((w.players[&id].credits - proceeds).abs() < 1e-6, "credits == the reported buy-back proceeds");
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),

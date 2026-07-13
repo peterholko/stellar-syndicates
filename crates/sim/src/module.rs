@@ -49,6 +49,17 @@ pub const WHIPPLE_BLUNT: f64 = 0.45;
 /// enough to fit out a small squadron in one raidable crossing. Tunable.
 pub const MODULE_CONVOY_BERTHS: u32 = 12;
 
+/// §modules Part B3 (Sol hub): Sol SELLS modules to players at this multiple of
+/// the module's goods-recipe VALUE (its commodity cost priced at Sol's standing
+/// market). The 2× premium means local manufacture (an Armaments Complex) is
+/// always cheaper — Sol is the BOOTSTRAP / fallback, never the efficient path.
+/// Tunable.
+pub const MODULE_BUY_MULT: f64 = 2.0;
+/// §modules Part B3 (Sol hub): Sol BUYS modules back at this multiple of the same
+/// recipe value — a deliberately steep 4× round-trip spread (buy 2×, sell 0.5×)
+/// so modules are for FITTING, not arbitrage. Tunable.
+pub const MODULE_SELL_MULT: f64 = 0.5;
+
 /// The three damage TYPES a weapon deals. Each has exactly one counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

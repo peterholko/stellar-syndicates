@@ -189,6 +189,31 @@ pub enum Command {
         manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
     },
 
+    /// §modules Part B3 (Sol hub): BUY `n` modules from Sol — `MODULE_BUY_MULT` ×
+    /// the recipe's goods value, debited NOW (price-certain), then a delivery
+    /// convoy carries the crates hub → `dest_system` (delivery-risky, raidable,
+    /// manifest fogged). Mirrors `HireSpecialist`. Soft-reject unless the player
+    /// owns `dest_system` and can pay.
+    BuyModule {
+        player_id: PlayerId,
+        module: crate::module::ModuleKind,
+        n: u32,
+        dest_system: EntityId,
+    },
+
+    /// §modules Part B3 (Sol hub): SELL `n` modules to Sol — debit them from the
+    /// source ledger NOW (committed to the crossing), a convoy carries them
+    /// `from_system` → hub, and the buy-back price (`MODULE_SELL_MULT` × recipe
+    /// value on ARRIVAL) is credited when it lands. Mirrors `MarketSell`
+    /// (delivery-risky). Soft-reject unless the player owns `from_system` and the
+    /// ledger stocks the modules.
+    SellModule {
+        player_id: PlayerId,
+        module: crate::module::ModuleKind,
+        n: u32,
+        from_system: EntityId,
+    },
+
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time). A coarse,
     /// LIGHT-DELAYED mid-battle verb: it schedules a break-off-and-flee-home order
     /// (physical disengagement at formation speed — the speed table decides who

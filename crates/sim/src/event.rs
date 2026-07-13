@@ -200,6 +200,13 @@ pub enum EventPayload {
     /// §modules Part B3: a module convoy LANDED its crates into a system's ledger.
     /// OWNER-ONLY, own clock (own-economy precedent, like SpecialistsDelivered).
     ModulesDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32> },
+    /// §modules Part B3 (Sol hub): a module PURCHASE from Sol was settled — credits
+    /// debited now, a delivery convoy dispatched hub → `dest`. OWNER-ONLY, own clock
+    /// (price-certain; the delivery is the risky part, like SpecialistHired).
+    ModulesPurchased { owner: PlayerId, kind: crate::module::ModuleKind, n: u32, dest: EntityId, unit_price: f64 },
+    /// §modules Part B3 (Sol hub): a module SALE cleared at Sol on the convoy's
+    /// arrival — credits paid at the buy-back price. OWNER-ONLY, own clock.
+    ModulesSold { owner: PlayerId, kind: crate::module::ModuleKind, n: u32, unit_price: f64 },
     /// §modules Part B3: a convoy DIED with modules aboard — the crates are lost
     /// with the ship (the one true loss rule, like SpecialistsLost). OWNER-ONLY,
     /// light-delayed from the wreck like any battle news.
