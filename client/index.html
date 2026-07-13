@@ -427,11 +427,20 @@
       .sysrail__row .sysrail__chev { margin-left: auto; color: var(--dim); }
       .sys-prod { display: grid; grid-template-columns: var(--icon-resource) 1fr auto auto; align-items: center; gap: 8px; padding: 2px 0; min-height: calc(var(--icon-resource) + 4px); }
       /* Structure / commodity NAME cell: never wrap a building name mid-word;
-         truncate with an ellipsis only in the rare case it can't fit. `--wide`
-         spans the (icon + 1fr) tracks for rows that have no leading icon
-         (staffing / idle lines), so the name gets the whole left side. */
+         truncate with an ellipsis only in the rare case it can't fit. */
       .sys-prod .sp-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-      .sys-prod .sp-name--wide { grid-column: 1 / 3; }
+      /* Staffing / idle production rows have NO leading icon and a VARIABLE
+         number of trailing controls (crew ±, "unstaffed", "+ crew"), so the
+         4-column grid wrapped extras onto a 2nd row where one landed in the
+         1fr track and ballooned. Lay them out as a flex line instead: the name
+         grows/truncates, everything after it stays inline at content width. */
+      .sys-prod--flow { display: flex; align-items: center; gap: 8px; }
+      .sys-prod--flow .sp-name { flex: 1 1 auto; }
+      /* The crew ± / "+ crew" controls are the full-width stacked .act by
+         default (see the #planet-panel .act rule) — in this flex line they must
+         stay content-sized, or they grow and starve the name. Same override the
+         .devs-row .act buttons get. */
+      #svm-body .sys-prod--flow .act, #planet-panel .sys-prod--flow .act { flex: none; width: auto; margin-top: 0; padding: 3px 7px; font-size: 11px; justify-content: center; }
       .sys-prod .sp-stock { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
       .sys-prod .sp-rate { color: var(--positive); font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
       .sys-prod .sp-none { color: var(--dim); }

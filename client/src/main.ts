@@ -2553,8 +2553,8 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
       : "";
     // The body lives in the hover title — the roster table already maps
     // what's where, and the row grid is tuned for short names.
-    return `<div class="sys-prod" title="${esc(a.title)} ×${a.tier} on ${esc(nameOf.get(a.body_id) ?? "—")} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
-      `<span class="sp-name sp-name--wide">${esc(a.title)} ×${a.tier}</span>` +
+    return `<div class="sys-prod sys-prod--flow" title="${esc(a.title)} ×${a.tier} on ${esc(nameOf.get(a.body_id) ?? "—")} — ${chain}${spec ? ` · specialists: ${spec}` : ""}">` +
+      `<span class="sp-name">${esc(a.title)} ×${a.tier}</span>` +
       `<span class="sp-stock">${a.workers}👷${spec ? ` +${Object.values(a.specialists).reduce((s: number, n) => s + (n as number), 0)}🎓` : ""}</span>` +
       `<span class="sp-rate">${out || "—"}</span>${susp}${controls}` +
       `</div>`;
@@ -2563,8 +2563,8 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
     .flatMap((b) => Object.entries(b.structures ?? {})
       .filter(([slug, t]) => t > 0 && PRODUCER_SLUGS.has(slug) && !postedAt.has(`${b.id}:${slug}`))
       .map(([slug, t]) =>
-        `<div class="sys-prod dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted${withControls ? "" : " (staff it from its body\u2019s panel)"}">` +
-        `<span class="sp-name sp-name--wide">${esc(label(slug))} ×${t}</span><span class="sp-none">unstaffed</span>` +
+        `<div class="sys-prod sys-prod--flow dev--none" title="built but UNSTAFFED — it produces nothing until a crew is posted${withControls ? "" : " (staff it from its body\u2019s panel)"}">` +
+        `<span class="sp-name">${esc(label(slug))} ×${t}</span><span class="sp-none">unstaffed</span>` +
         (withControls ? `<button class="act" data-crew="${b.id}:${slug}:1" title="post a crew">+ crew</button>` : "") +
         `</div>`))
     .join("");
