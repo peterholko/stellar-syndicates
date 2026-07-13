@@ -337,6 +337,14 @@ pub struct ResearchState {
     /// `ResearchStalled`/`ResearchResumed` events. serde-default false.
     #[serde(default)]
     pub stalled: bool,
+    /// §research R3: DISTINCT rival/pirate fleet ids a member has ever detected
+    /// (the `RivalFleetsObserved` verb = this set's len; dedupes re-sightings).
+    #[serde(default)]
+    pub observed_fleets: BTreeSet<EntityId>,
+    /// §research R3: DISTINCT systems a member has first advanced the knowledge
+    /// ladder on (the `SystemsScouted` verb = this set's len; dedupes revisits).
+    #[serde(default)]
+    pub scouted_systems: BTreeSet<EntityId>,
 }
 
 impl ResearchState {
@@ -411,7 +419,9 @@ fn field_gate(field: Field) -> Gate {
         Field::Computation => Gate::Cumulative(Verb::SystemsScouted, 10.0),
         Field::Weapons => Gate::Cumulative(Verb::BattlesFought, 5.0),
         Field::Hulls => Gate::Cumulative(Verb::WarshipsCommissioned, 15.0),
-        Field::Life => Gate::Cumulative(Verb::PopulationGrown, 5_000_000.0),
+        // Population is carried in MILLIONS internally (`Body::population`), so the
+        // "5M grown" design target is 5.0 in that unit; ditto the 20M Growth gate.
+        Field::Life => Gate::Cumulative(Verb::PopulationGrown, 5.0),
     }
 }
 
@@ -428,7 +438,7 @@ fn school_gate(school: School) -> Gate {
         School::Countermeasures => Gate::Cumulative(Verb::DamageAbsorbed, 150.0),
         School::Line => Gate::Cumulative(Verb::BattlesWon, 8.0),
         School::Corsair => Gate::Cumulative(Verb::SuccessfulRaids, 8.0),
-        School::Growth => Gate::State(Metric::TotalPopulation, 20_000_000.0),
+        School::Growth => Gate::State(Metric::TotalPopulation, 20.0),
         School::Talent => Gate::Cumulative(Verb::SpecialistsTrained, 8.0),
     }
 }
@@ -438,6 +448,11 @@ fn school_gate(school: School) -> Gate {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HOUR: f64 = 3600.0;
+
+/// Sim-units per "light-year" for the distance verbs (`LyFlown`/`WarshipLyFlown`).
+/// One galaxy crossing (~8000 su) ≈ 200 ly, so the Propulsion II gate (200 ly) is
+/// about one empire's worth of cumulative travel. Tunable.
+pub const SU_PER_LY: f64 = 40.0;
 
 /// Cost of a programme of `tier` in THROUGHPUT-SECONDS (at reference rate 1.0):
 /// a steep curve so late convergence never happens inside a season (law 6/8).
@@ -766,8 +781,9 @@ mod tests {
     fn state_and_sustained_gates() {
         let mut st = ResearchState::default();
         st.completed.insert("mat_deep_bores".into()); // unrelated, just to have some state
-        // GROWTH school gate is a State(TotalPopulation ≥ 20M).
-        let pop20 = |m: Metric| if m == Metric::TotalPopulation { 20_000_000.0 } else { 0.0 };
+        // GROWTH school gate is a State(TotalPopulation ≥ 20M) — 20.0 in the
+        // internal millions unit.
+        let pop20 = |m: Metric| if m == Metric::TotalPopulation { 20.0 } else { 0.0 };
         // Need a Life Tier-II predecessor + the state gate; simulate the predecessor.
         st.completed.insert("life_shared_ii".into()); // not in catalog → no predecessor effect
         assert!(!is_available("life_growth_iii_boom_charters", &st, &pop20, 0.0), "no real Life-II predecessor yet");

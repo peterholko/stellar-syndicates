@@ -1300,6 +1300,11 @@ impl World {
         //         wide). Runs after accrual so labs drip from fresh stockpiles.
         self.tick_research(&mut events);
         self.resolve_research(&mut events);
+        // §research R3: the rival-observation scan (Shadow gate) on a coarse cadence
+        // — a snapshot of who each syndicate can currently sense, deduped over time.
+        if self.tick.is_multiple_of(EVAL_PERIOD) {
+            self.observe_rivals_for_research();
+        }
 
         // 5b''. SCOUT INTEL (§scout part 2): scouts passing rival systems capture
         //       timestamped snapshots of their fortifications. After movement, so
@@ -1335,6 +1340,9 @@ impl World {
         // PUBLISH the leaderboard snapshot (a copy, so it holds steady between
         // closes — no mid-interval live leak).
         self.accumulate_rankings(&events);
+        // §research R3: fold the same event stream into the syndicate verb biography
+        // (battles fought/won, hull destroyed/absorbed, convoy deliveries).
+        self.accrue_research_verbs(&events);
         if self.tick.is_multiple_of(VALUATION_TICKS) {
             self.snapshot_rankings();
         }
@@ -1404,6 +1412,24 @@ impl World {
                     ship.order = FleetOrder::MoveTo { dest: home };
                 }
             }
+        }
+        // §research R3: distance flown this tick → the Propulsion verbs. Each
+        // fleet's pre-move position (snapshot) vs its new position, converted to
+        // light-years; a combatant hull also credits the Expedition warship-ly gate.
+        let mut ly_deltas: Vec<(PlayerId, crate::research::Verb, f64)> = Vec::new();
+        for (id, (old_pos, _)) in &snapshot {
+            if let Some(ship) = self.fleets.get(id) {
+                let ly = old_pos.distance(ship.pos) / crate::research::SU_PER_LY;
+                if ly > 0.0 {
+                    ly_deltas.push((ship.owner, crate::research::Verb::LyFlown, ly));
+                    if ship.is_combatant() {
+                        ly_deltas.push((ship.owner, crate::research::Verb::WarshipLyFlown, ly));
+                    }
+                }
+            }
+        }
+        for (owner, verb, amount) in ly_deltas {
+            self.add_research_verb(owner, verb, amount);
         }
     }
 
@@ -2427,6 +2453,8 @@ impl World {
                     // §rankings CARGO CAPTURED: credit the raider the seized units.
                     if let Some(owner) = seizer {
                         self.bump_stats(owner, |s| s.cargo_captured += cargo.units as u64);
+                        // §research R3: a seized convoy IS a successful raid (Corsair gate).
+                        self.add_research_verb(owner, crate::research::Verb::SuccessfulRaids, 1.0);
                     }
                 }
             }
@@ -4728,14 +4756,25 @@ impl World {
                         self.fleets.insert(id, f);
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
                     }
+                    // §research R3: a commissioned WARSHIP is a Hulls-field verb.
+                    if ship.is_combatant() {
+                        self.add_research_verb(job.owner, crate::research::Verb::WarshipsCommissioned, 1.0);
+                    }
                 }
                 crate::build::BuildKind::Train { specialist } => {
                     // §economy Part 4: the cohort graduates into the RESIDENT
                     // pool — only if the owner still holds the system (like an
                     // upgrade: the resources were already spent, frontier risk).
-                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
+                    let trained = if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
                         *sys.specialists.entry(specialist).or_insert(0) += 1;
                         events.push(Event::new(self.time, EventPayload::SpecialistTrained { owner: job.owner, system: job.system, kind: specialist }));
+                        true
+                    } else {
+                        false
+                    };
+                    if trained {
+                        // §research R3: a graduated specialist is a Talent verb.
+                        self.add_research_verb(job.owner, crate::research::Verb::SpecialistsTrained, 1.0);
                     }
                 }
                 crate::build::BuildKind::Module { module } => {
@@ -4979,6 +5018,99 @@ impl World {
                         && s.food_state == crate::colony::FoodState::WellSupplied
                 })
                 .count() as f64,
+        }
+    }
+
+    /// §research R3: add to a cumulative research VERB for `owner`'s syndicate
+    /// (no-op if the owner isn't in one). The corp-wide biography that gates.
+    fn add_research_verb(&mut self, owner: PlayerId, verb: crate::research::Verb, amount: f64) {
+        if amount <= 0.0 {
+            return;
+        }
+        if let Some(sid) = self.players.get(&owner).and_then(|c| c.syndicate)
+            && let Some(s) = self.syndicates.get_mut(&sid)
+        {
+            s.research.add_verb(verb, amount);
+        }
+    }
+
+    /// §research R3: record a DISTINCT rival/pirate fleet observation for
+    /// `observer`'s syndicate — the `RivalFleetsObserved` verb tracks the
+    /// seen-set's len (dedupes re-sightings).
+    fn observe_rival_fleet(&mut self, observer: PlayerId, fleet: EntityId) {
+        if let Some(sid) = self.players.get(&observer).and_then(|c| c.syndicate)
+            && let Some(s) = self.syndicates.get_mut(&sid)
+            && s.research.observed_fleets.insert(fleet)
+        {
+            let n = s.research.observed_fleets.len() as f64;
+            s.research.verbs.insert(crate::research::Verb::RivalFleetsObserved, n);
+        }
+    }
+
+    /// §research R3: record a DISTINCT scouted system (first knowledge advance)
+    /// for `owner`'s syndicate — the `SystemsScouted` verb tracks the set len.
+    fn scout_system_for_research(&mut self, owner: PlayerId, system: EntityId) {
+        if let Some(sid) = self.players.get(&owner).and_then(|c| c.syndicate)
+            && let Some(s) = self.syndicates.get_mut(&sid)
+            && s.research.scouted_systems.insert(system)
+        {
+            let n = s.research.scouted_systems.len() as f64;
+            s.research.verbs.insert(crate::research::Verb::SystemsScouted, n);
+        }
+    }
+
+    /// §research R3: the periodic RIVAL-OBSERVATION scan (Shadow school gate). For
+    /// every corp in a syndicate, gather its detection coverage (own fleet bubbles
+    /// + owned Sensor Arrays) and record each DISTINCT rival/pirate fleet it can
+    /// currently sense — the SAME `detection::detected` the View uses, so the
+    /// counter only grows off contacts the player could actually see. Deduped per
+    /// syndicate by fleet id (re-sightings never re-count). Throttled by the
+    /// caller; O(corps × sources × fleets), read-only pass then a deferred apply.
+    fn observe_rivals_for_research(&mut self) {
+        let sensor = self.config.sensor_range;
+        // Read-only fleet snapshot (id, owner, pos, signature).
+        let snap: Vec<(EntityId, PlayerId, Vec2, f64)> = self
+            .fleets
+            .iter()
+            .map(|(id, s)| {
+                let sig = s.signature()
+                    * self.veil_factor(s.owner, s.pos)
+                    * if s.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 };
+                (*id, s.owner, s.pos, sig)
+            })
+            .collect();
+        // Only corps that are in a syndicate can bank the observation.
+        let observers: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, c)| c.syndicate.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        let mut hits: Vec<(PlayerId, EntityId)> = Vec::new();
+        for obs in observers {
+            let allies = self.allies_of(obs);
+            // Coverage sources: this corp's own fleet bubbles + its Sensor Arrays.
+            let mut sources: Vec<(Vec2, f64)> = snap
+                .iter()
+                .filter(|(_, o, _, _)| *o == obs)
+                .map(|(_, _, pos, _)| (*pos, sensor))
+                .collect();
+            sources.extend(self.array_sensor_sources(obs));
+            if sources.is_empty() {
+                continue;
+            }
+            for (fid, fowner, fpos, sig) in &snap {
+                // A rival = neither self nor a syndicate ally (pirates included).
+                if *fowner == obs || allies.contains(fowner) {
+                    continue;
+                }
+                if crate::detection::detected(*sig, &sources, *fpos) {
+                    hits.push((obs, *fid));
+                }
+            }
+        }
+        for (obs, fid) in hits {
+            self.observe_rival_fleet(obs, fid);
         }
     }
 
@@ -5528,6 +5660,10 @@ impl World {
     ///      assignment engine multiplies `food_state.efficiency()` into every
     ///      output instead (the legible factor chain).
     fn accrue_production(&mut self, events: &mut Vec<Event>) {
+        // §research R3: per-tick verb deltas gathered while the systems are borrowed
+        // mutably, then folded into the syndicate biographies after the loop (an
+        // `add_research_verb` call would re-borrow `self`). (owner, verb, amount).
+        let mut research_deltas: Vec<(PlayerId, crate::research::Verb, f64)> = Vec::new();
         for sys in &mut self.systems {
             let Some(owner) = sys.owner else {
                 continue;
@@ -5558,7 +5694,10 @@ impl World {
                         let cap = crate::colony::POP_CAP_PER_HABITAT_TIER
                             * b.tier(crate::build::StructureKind::Habitat) as f64;
                         if b.population > 0.0 && b.population < cap {
+                            let before = b.population;
                             b.population = (b.population + crate::colony::POP_GROWTH_PER_S * DT).min(cap);
+                            // §research R3: cumulative population grown (millions unit).
+                            research_deltas.push((owner, crate::research::Verb::PopulationGrown, b.population - before));
                         }
                     }
                 }
@@ -5633,6 +5772,13 @@ impl World {
                         extracted_any = true;
                     }
                 }
+            }
+            // §research R3: raw units mined this tick (DeepCrust school gate) — and
+            // the same units count toward the Materials-field industry throughput.
+            let extracted_total: f64 = stockpile_adds.iter().map(|(_, a)| *a).sum();
+            if extracted_total > 0.0 {
+                research_deltas.push((owner, crate::research::Verb::UnitsExtracted, extracted_total));
+                research_deltas.push((owner, crate::research::Verb::UnitsThroughIndustry, extracted_total));
             }
             for (c, amount) in stockpile_adds {
                 *sys.stockpile.entry(c).or_insert(0.0) += amount;
@@ -5719,7 +5865,12 @@ impl World {
                         for (c, per) in conv.inputs {
                             *sys.stockpile.get_mut(c).expect("bounded by stock") -= out * per;
                         }
-                        *sys.stockpile.entry(conv.output).or_insert(0.0) += out * pocket;
+                        let emitted = out * pocket;
+                        *sys.stockpile.entry(conv.output).or_insert(0.0) += emitted;
+                        // §research R3: processed units (Foundry school gate) + the
+                        // Materials-field aggregate industry throughput.
+                        research_deltas.push((owner, crate::research::Verb::UnitsProcessed, emitted));
+                        research_deltas.push((owner, crate::research::Verb::UnitsThroughIndustry, emitted));
                     }
                     let asg = sys.bodies[bi].assignments.get_mut(&kind).expect("crew > 0 ⇒ posted");
                     if asg.suspended != now_suspended {
@@ -5731,6 +5882,11 @@ impl World {
                     }
                 }
             }
+        }
+        // §research R3: fold this tick's extraction/processing/growth into the
+        // syndicate verb biographies (deferred out of the &mut systems loop).
+        for (owner, verb, amount) in research_deltas {
+            self.add_research_verb(owner, verb, amount);
         }
     }
 
@@ -5923,6 +6079,58 @@ impl World {
                     let loot: u64 = plunder.values().map(|&u| u as u64).sum();
                     self.bump_stats(*new_owner, |s| s.cargo_captured += loot);
                     self.bump_stats(*old_owner, |s| s.loss_pending = true);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// §research R3: fold THIS tick's events into the syndicate VERB biography —
+    /// the battle- and convoy-derived counters that gate the Weapons/Hulls schools
+    /// and the LineHaul haulage school. Runs alongside `accumulate_rankings` (same
+    /// O(events) sweep, same tick). Per-tick verbs that aren't events (movement ly,
+    /// units produced, population grown, systems scouted, rivals observed) are
+    /// accrued inline at their own phases. Pirates own no syndicate, so their events
+    /// no-op through `add_research_verb`.
+    fn accrue_research_verbs(&mut self, events: &[Event]) {
+        for e in events {
+            match &e.payload {
+                // A resolved BATTLE (a no-contact ESCAPE isn't a fight). Both sides
+                // fought; the survivor won; each credits the hull it destroyed and
+                // the hull it lost as "absorbed" (the Countermeasures gate proxy).
+                EventPayload::RaidResolved { attacker, defender, outcome, attacker_losses, target_losses, .. }
+                    if *outcome != RaidOutcome::Escaped =>
+                {
+                    let a_hull = crate::rankings::hull_sum(attacker_losses);
+                    let d_hull = crate::rankings::hull_sum(target_losses);
+                    let (attacker, defender) = (*attacker, *defender);
+                    self.add_research_verb(attacker, crate::research::Verb::BattlesFought, 1.0);
+                    self.add_research_verb(defender, crate::research::Verb::BattlesFought, 1.0);
+                    self.add_research_verb(attacker, crate::research::Verb::HullMassDestroyed, d_hull);
+                    self.add_research_verb(defender, crate::research::Verb::HullMassDestroyed, a_hull);
+                    self.add_research_verb(attacker, crate::research::Verb::DamageAbsorbed, a_hull);
+                    self.add_research_verb(defender, crate::research::Verb::DamageAbsorbed, d_hull);
+                    match outcome {
+                        RaidOutcome::TargetDestroyed => {
+                            self.add_research_verb(attacker, crate::research::Verb::BattlesWon, 1.0)
+                        }
+                        RaidOutcome::AttackerDestroyed => {
+                            self.add_research_verb(defender, crate::research::Verb::BattlesWon, 1.0)
+                        }
+                        _ => {}
+                    }
+                }
+                // A convoy that reached its destination — one completed haul (the
+                // LineHaul school gate).
+                EventPayload::Trade(TradeEvent::Delivered { player, .. }) => {
+                    self.add_research_verb(*player, crate::research::Verb::ConvoyDeliveries, 1.0);
+                }
+                // A completed SURVEY or a fresh rival-system intel snapshot is a
+                // scouted system (Computation field + Watch school gate). Deduped
+                // by system id, so re-scouting the same one never re-counts.
+                EventPayload::SurveyCompleted { owner, system, .. }
+                | EventPayload::IntelGathered { owner, system, .. } => {
+                    self.scout_system_for_research(*owner, *system);
                 }
                 _ => {}
             }
@@ -13219,6 +13427,116 @@ mod tests {
         let two = run(2);
         assert!(one > 0.0, "one lab makes progress");
         assert!(two > 1.7 * one, "two labs ≈ double the science ({two} vs {one})");
+    }
+
+    // §research R3 — VERB COUNTERS. Helper: give `player` an owned system whose
+    // one body works a rich MetallicOre deposit with a staffed Mining Complex,
+    // kept supplied and under the storage cap so extraction actually flows.
+    fn grant_mining_system(w: &mut World, player: PlayerId) -> EntityId {
+        use crate::build::StructureKind::MiningComplex;
+        let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).expect("a free system");
+        s.owner = Some(player);
+        s.claimed_at = Some(0.0);
+        s.food_state = crate::colony::FoodState::WellSupplied;
+        let b = s.bodies.iter_mut().next().expect("a body");
+        b.set_tier(MiningComplex, 1);
+        b.population = 10.0; // ample workforce; no Habitat ⇒ won't grow (own test)
+        b.deposits = vec![crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 3.0, reserves: None, accessibility: 0.1 }];
+        b.assignments.insert(MiningComplex, crate::production::Assignment { workers: 1, specialists: Default::default(), suspended: None });
+        // Under the 700 base cap: a little food, lots of headroom for fresh ore.
+        *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 200.0;
+        s.id
+    }
+
+    #[test]
+    fn r3_event_verbs_accrue_into_the_syndicate_biography() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        let mut a_loss = BTreeMap::new(); a_loss.insert(ShipKind::Raider, 1u32);
+        let mut d_loss = BTreeMap::new(); d_loss.insert(ShipKind::Convoy, 2u32);
+        let events = vec![
+            Event::new(0.0, EventPayload::RaidResolved {
+                attacker: a, defender: b, attacker_ship: EntityId(10), target_ship: EntityId(11),
+                attacker_kind: ShipKind::Raider, target_kind: ShipKind::Convoy,
+                outcome: RaidOutcome::TargetDestroyed, pos: Vec2::ZERO,
+                attacker_losses: a_loss, target_losses: d_loss,
+            }),
+            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5 })),
+            Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }),
+            Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }), // dup
+            Event::new(0.0, EventPayload::IntelGathered { owner: a, system: EntityId(4), defense_tier: 1, shipyard_tier: 0, pos: Vec2::ZERO }),
+        ];
+        w.accrue_research_verbs(&events);
+        let r = &w.syndicates[&sid].research;
+        assert_eq!(r.verb(Verb::BattlesFought), 1.0, "one resolved battle");
+        assert_eq!(r.verb(Verb::BattlesWon), 1.0, "the attacker destroyed the target");
+        assert!(r.verb(Verb::HullMassDestroyed) > 0.0, "credited the convoy hull it destroyed");
+        assert!(r.verb(Verb::DamageAbsorbed) > 0.0, "credited its own lost raider as absorbed");
+        assert_eq!(r.verb(Verb::ConvoyDeliveries), 1.0, "one completed haul");
+        assert_eq!(r.verb(Verb::SystemsScouted), 2.0, "two DISTINCT systems, dup ignored");
+    }
+
+    #[test]
+    fn r3_movement_accrues_propulsion_ly() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        let hpos = w.players[&a].home;
+        let _ = squad(&mut w, a, hpos, ShipKind::Raider, 1, FleetOrder::MoveTo { dest: hpos + Vec2::new(200_000.0, 0.0) });
+        for _ in 0..40 {
+            w.step(&[]);
+        }
+        let r = &w.syndicates[&sid].research;
+        assert!(r.verb(Verb::LyFlown) > 0.0, "a flying fleet accrues ly ({})", r.verb(Verb::LyFlown));
+        assert!(r.verb(Verb::WarshipLyFlown) > 0.0, "a combatant also credits warship-ly");
+        assert!(r.verb(Verb::WarshipLyFlown) <= r.verb(Verb::LyFlown) + 1e-9, "warship-ly ≤ total ly");
+    }
+
+    #[test]
+    fn r3_production_accrues_industry_verbs() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        grant_mining_system(&mut w, a);
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let r = &w.syndicates[&sid].research;
+        assert!(r.verb(Verb::UnitsExtracted) > 0.0, "a staffed mine accrues extracted units ({})", r.verb(Verb::UnitsExtracted));
+        assert!(r.verb(Verb::UnitsThroughIndustry) >= r.verb(Verb::UnitsExtracted), "extraction also counts as industry throughput");
+    }
+
+    #[test]
+    fn r3_rival_observation_scan_records_distinct_fleets() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        // A's picket sits right on top of two of B's fleets — well inside sensor range.
+        let hpos = w.players[&a].home;
+        let _obs = squad(&mut w, a, hpos, ShipKind::Corvette, 1, FleetOrder::Idle);
+        let _r1 = squad(&mut w, b, hpos + Vec2::new(50.0, 0.0), ShipKind::Raider, 2, FleetOrder::Idle);
+        let _r2 = squad(&mut w, b, hpos + Vec2::new(80.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.observe_rivals_for_research();
+        assert_eq!(w.syndicates[&sid].research.verb(Verb::RivalFleetsObserved), 2.0, "two distinct rival fleets sensed");
+        // Re-running does not double-count (deduped by fleet id).
+        w.observe_rivals_for_research();
+        assert_eq!(w.syndicates[&sid].research.verb(Verb::RivalFleetsObserved), 2.0, "re-sightings never re-count");
     }
 
     #[test]
