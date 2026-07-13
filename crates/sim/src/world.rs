@@ -5210,6 +5210,27 @@ impl World {
         let now = self.time;
         let acad = crate::build::StructureKind::Academy;
         let sids: Vec<SyndicateId> = self.syndicates.keys().copied().collect();
+        // §research: the one SUSTAINED metric (Life · Growth V endurance gate) —
+        // stamp when the WellSupplied count first reaches the threshold, clear the
+        // moment it drops so an interruption resets the 7-day clock. Tracked for
+        // EVERY syndicate each tick, independent of what's currently active.
+        if let crate::research::Gate::Sustained(metric, thresh, _) = crate::research::tier_gate(
+            crate::research::Field::Life,
+            Some(crate::research::School::Growth),
+            5,
+        ) {
+            let stamp = now.floor() as u64;
+            for &sid in &sids {
+                let val = self.syndicate_metric(sid, metric);
+                if let Some(s) = self.syndicates.get_mut(&sid) {
+                    if val + 1e-9 >= thresh {
+                        s.research.sustained_since.entry(metric).or_insert(stamp);
+                    } else {
+                        s.research.sustained_since.remove(&metric);
+                    }
+                }
+            }
+        }
         for sid in sids {
             // Snapshot the active programme; idle syndicates clear any stall latch.
             let active = self.syndicates[&sid].research.active.clone();
@@ -13721,6 +13742,37 @@ mod tests {
         let boosted = run(true);
         assert!(base > 1.0, "the colony grows ({base})");
         assert!(boosted - 1.0 > (base - 1.0) * 1.15, "GrowthBelowHalf ×1.20 grows a young colony faster ({boosted} vs {base})");
+    }
+
+    // §research R5 — the Life · Growth V endurance gate: tick_research stamps
+    // `sustained_since` when the WellSupplied count first reaches the threshold and
+    // clears it the moment the count drops (an interruption resets the 7-day clock).
+    #[test]
+    fn r5_growth_v_sustained_clock_stamps_and_resets() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        // Five owned, WellSupplied systems (empty rocks are vacuously supplied).
+        let free: Vec<EntityId> = w.systems.iter().filter(|s| s.is_unclaimed()).take(5).map(|s| s.id).collect();
+        assert_eq!(free.len(), 5, "need five free systems");
+        for id in &free {
+            let s = w.systems.iter_mut().find(|s| s.id == *id).unwrap();
+            s.owner = Some(a);
+            s.claimed_at = Some(0.0);
+            s.food_state = crate::colony::FoodState::WellSupplied;
+        }
+        w.step(&[]);
+        let m = crate::research::Metric::WellSuppliedSystems;
+        assert!(w.syndicates[&sid].research.sustained_since.contains_key(&m), "≥5 WellSupplied → the endurance clock starts");
+        // Surrender all five → the count collapses below the threshold → clock resets.
+        for id in &free {
+            w.systems.iter_mut().find(|s| s.id == *id).unwrap().owner = None;
+        }
+        w.step(&[]);
+        assert!(!w.syndicates[&sid].research.sustained_since.contains_key(&m), "below threshold → the clock is cleared");
     }
 
     #[test]
