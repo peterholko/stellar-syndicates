@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
@@ -269,9 +269,41 @@ function buildRail(): void {
   });
   // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate + Log.
   $("nav-market").addEventListener("click", toggleMarket);
+  $("nav-research").addEventListener("click", toggleResearch);
   $("nav-syndicate").addEventListener("click", toggleSyndicate);
   $("nav-log").addEventListener("click", toggleCheckin);
   $("market-close").addEventListener("click", closeMarket);
+  // §research R6: delegated actions inside the Programme Boards panel — close,
+  // add an open node to the queue, and reorder/remove queued programmes.
+  $("research-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    const closeBtn = t.closest("[data-rp='close']");
+    if (closeBtn) { closeResearch(); return; }
+    if (!net) return;
+    // Reorder / remove a queued programme.
+    const btn = t.closest("button") as HTMLButtonElement | null;
+    if (btn && (btn.dataset.qup || btn.dataset.qdown || btn.dataset.qrm)) {
+      const ids = researchQueueIds();
+      if (btn.dataset.qrm !== undefined) {
+        ids.splice(Number(btn.dataset.qrm), 1);
+      } else if (btn.dataset.qup !== undefined) {
+        const i = Number(btn.dataset.qup);
+        if (i > 0) [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+      } else if (btn.dataset.qdown !== undefined) {
+        const i = Number(btn.dataset.qdown);
+        if (i < ids.length - 1) [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
+      }
+      sendResearchQueue(ids);
+      return;
+    }
+    // Click an AVAILABLE node → append it to the queue.
+    const node = t.closest("[data-rid]") as HTMLElement | null;
+    if (node?.dataset.rid) {
+      const ids = researchQueueIds();
+      if (!ids.includes(node.dataset.rid)) ids.push(node.dataset.rid);
+      sendResearchQueue(ids);
+    }
+  });
   // §syndicates: delegated actions inside the alliance panel.
   $("syndicate-panel").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button");
@@ -817,6 +849,154 @@ function updateSyndicatePanel(): void {
     }
   }
   el.innerHTML = `<div class="pp-head"><b>SYNDICATE</b><button class="pp-close" data-sy="close" title="Close">✕</button></div><div class="pp-body">${body}</div>`;
+}
+
+// --- §research R6: the Programme Boards panel (top-navbar destination) ----------
+// Owner-only (the View carries research only for the viewer's own syndicate). The
+// whole 108-node tree as six Y-ladder boards; an active banner with the live rate
+// + ETA + per-Academy contribution table (shown math); a queue strip you reorder
+// (→ SetResearchQueue). Re-rendered only when something CHANGES (a coarse
+// signature that includes the progress bucket, so the bar animates ~1 Hz).
+const FIELD_ORDER = ["propulsion", "materials", "computation", "weapons", "hulls", "life"];
+const FIELD_TITLE: Record<string, string> = {
+  propulsion: "Propulsion", materials: "Materials", computation: "Computation",
+  weapons: "Weapons", hulls: "Hulls", life: "Life",
+};
+const SCHOOL_TITLE: Record<string, string> = {
+  line_haul: "Line Haul", expedition: "Expedition", deep_crust: "Deep Crust", foundry: "Foundry",
+  watch: "Watch", shadow: "Shadow", strike: "Strike", countermeasures: "Countermeasures",
+  line: "Line", corsair: "Corsair", growth: "Growth", talent: "Talent",
+};
+const ROMAN = ["", "I", "II", "III", "IV", "V"];
+let lastResearchSig = "";
+
+function fmtEta(secs: number): string {
+  if (!isFinite(secs) || secs <= 0) return "—";
+  const h = secs / 3600;
+  if (h < 1) return `${Math.max(1, Math.round(secs / 60))}m`;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
+
+function openResearch(): void {
+  $("research-panel").classList.add("is-open");
+  $("nav-research").classList.add("is-active");
+  lastResearchSig = "";
+  updateResearchPanel();
+}
+function closeResearch(): void {
+  $("research-panel").classList.remove("is-open");
+  $("nav-research").classList.remove("is-active");
+}
+function toggleResearch(): void {
+  if ($("research-panel").classList.contains("is-open")) closeResearch();
+  else openResearch();
+}
+
+// The full ordered queue the player controls = [active, ...queue-ahead]. Sending
+// it back as SetResearchQueue re-promotes the front to active (the sim's rule).
+function researchQueueIds(): string[] {
+  const r = state.research;
+  if (!r) return [];
+  return r.active ? [r.active.id, ...r.queue] : [...r.queue];
+}
+function sendResearchQueue(ids: string[]): void {
+  if (net) net.send({ type: "SetResearchQueue", queue: ids });
+}
+
+function researchNode(p: ProgrammeView, pos: number | null): string {
+  const num = pos !== null ? `<span class="n">${pos + 1}</span> ` : "";
+  const add = p.state === "available" ? ` data-rid="${esc(p.id)}"` : "";
+  return `<div class="rp-node is-${p.state}"${add} title="${esc(p.blurb)}">` +
+    `<div class="nm">${num}${esc(p.name)}</div><div class="bl">${esc(p.blurb)}</div></div>`;
+}
+
+function researchBoard(fieldSlug: string, progs: ProgrammeView[], queue: string[]): string {
+  const qpos = (id: string): number | null => {
+    const i = queue.indexOf(id);
+    return i >= 0 ? i : null;
+  };
+  const at = (school: string | null, tier: number) =>
+    progs.filter((p) => (p.school ?? null) === school && p.tier === tier);
+  // A tier-group: its Roman label, a gate bar if any node is sealed, then nodes.
+  const group = (school: string | null, tier: number): string => {
+    const nodes = at(school, tier);
+    if (!nodes.length) return "";
+    const sealed = nodes.find((n) => n.gate);
+    let gate = "";
+    if (sealed?.gate) {
+      const g = sealed.gate;
+      const pct = Math.max(0, Math.min(100, (g.current / Math.max(1e-9, g.threshold)) * 100));
+      gate = `<div class="rp-gate">${esc(g.label)} ${Math.floor(g.current)} / ${Math.round(g.threshold)}</div>` +
+        `<div class="rp-gatebar"><i style="width:${pct}%"></i></div>`;
+    }
+    const cards = nodes.map((n) => researchNode(n, qpos(n.id))).join("");
+    return `<div class="rp-tier"><div class="lbl">Tier ${ROMAN[tier]}</div>${gate}${cards}</div>`;
+  };
+  const schools = Array.from(new Set(progs.filter((p) => p.school).map((p) => p.school as string)));
+  let inner = group(null, 1) + group(null, 2);
+  for (const s of schools) {
+    inner += `<div class="lbl" style="color:#8fd3dd;margin-top:2px">⑂ ${esc(SCHOOL_TITLE[s] ?? s)}</div>`;
+    inner += group(s, 3) + group(s, 4) + group(s, 5);
+  }
+  return `<div class="rp-board"><h4>${esc(FIELD_TITLE[fieldSlug] ?? fieldSlug)}</h4>${inner}</div>`;
+}
+
+function updateResearchPanel(): void {
+  const el = $("research-panel");
+  if (!el.classList.contains("is-open")) return;
+  const r = state.research;
+  const sig = r
+    ? JSON.stringify([
+        r.programmes.map((p) => p.state),
+        r.queue, r.active?.id, r.stalled,
+        r.active ? Math.round((r.active.progress / Math.max(1, r.active.cost)) * 200) : 0,
+        Math.round(r.rate * 100),
+        r.academies.map((a) => [a.rate.toFixed(2), a.supplied]),
+        r.programmes.filter((p) => p.state === "locked" && p.gate).map((p) => Math.round((p.gate!.current / Math.max(1e-9, p.gate!.threshold)) * 40)),
+      ])
+    : "none";
+  if (sig === lastResearchSig && el.innerHTML) return;
+  lastResearchSig = sig;
+
+  let body = "";
+  if (!r) {
+    body = `<div class="rp-note">Research is a <b>syndicate</b> institution — found or join a syndicate (🤝 Syndicate) to open the Programme Boards. Every staffed <b>Academy</b> in the syndicate then powers one shared programme at a time.</div>`;
+  } else {
+    // Active banner.
+    if (r.active) {
+      const a = r.active;
+      const pct = Math.max(0, Math.min(100, (a.progress / Math.max(1e-9, a.cost)) * 100));
+      const eta = a.eta_secs != null ? `ETA ${fmtEta(a.eta_secs)}` : (r.stalled ? `<span class="rp-stalled">stalled</span>` : `no supply`);
+      const acadRows = r.academies.length
+        ? `<div class="rp-acad"><div class="hd">Academy</div><div class="hd">tier</div><div class="hd">rate/s</div>` +
+          r.academies.map((x: AcademyRow) =>
+            `<div class="${x.supplied ? "" : "amber"}">${esc(x.system)}${x.supplied ? "" : " ⚠"}</div>` +
+            `<div>T${x.tier}</div><div>${x.rate.toFixed(2)}</div>`).join("") +
+          `</div>`
+        : `<div class="rp-acad"><div class="amber">No staffed Academy is contributing — post crew to an Academy.</div></div>`;
+      body += `<div class="rp-active"><div class="rp-a-top"><span class="rp-a-name">${esc(a.name)}</span>` +
+        `<span class="rp-a-eta">${esc(String(Math.round(a.progress))) } / ${Math.round(a.cost)}·s · ${eta} · ${r.rate.toFixed(2)}/s</span></div>` +
+        `<div class="rp-bar"><i style="width:${pct}%"></i></div>${acadRows}</div>`;
+    } else {
+      body += `<div class="rp-idle">No active programme. Pick any open node below to queue it — the front of the queue starts accruing.</div>`;
+    }
+    // Queue strip.
+    const q = researchQueueIds();
+    const chips = q.map((id, i) => {
+      const p = r.programmes.find((x) => x.id === id);
+      const nm = p ? p.name : id;
+      return `<span class="rp-q-chip"><span class="n">${i + 1}</span> ${esc(nm)}` +
+        `<button data-qup="${i}" title="Earlier">▲</button><button data-qdown="${i}" title="Later">▼</button>` +
+        `<button data-qrm="${i}" title="Remove">✕</button></span>`;
+    }).join("");
+    body += `<div class="rp-queue"><span class="rp-q-label">Queue</span>${q.length ? chips : `<span class="rp-q-empty">empty — click an open programme to add it</span>`}</div>`;
+    // Six boards.
+    const boards = FIELD_ORDER.map((f) => researchBoard(f, r.programmes.filter((p) => p.field === f), q)).join("");
+    body += `<div class="rp-boards">${boards}</div>`;
+    body += `<div class="rp-note">Tech sheets are private — nothing here leaks to rivals. Completing a programme applies its effect instantly, galaxy-wide.</div>`;
+  }
+  el.innerHTML = `<div class="rp-head"><b>🔬 RESEARCH — PROGRAMME BOARDS</b><button class="rp-close" data-rp="close" title="Close">✕</button></div><div class="rp-body">${body}</div>`;
 }
 
 // --- §rankings: the published leaderboard (rail tab) ---------------------------
@@ -2382,6 +2562,8 @@ function installInteraction(): void {
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
+    } else if (e.key === "r" || e.key === "R") {
+      toggleResearch(); // §research: the Programme Boards (no own ship selected)
     } else if (e.key === "s" || e.key === "S") {
       toggleRail("system");
     } else if (e.key === "m" || e.key === "M") {
@@ -4331,6 +4513,7 @@ function join(): void {
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];
+          state.research = msg.research ?? null;
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
@@ -4351,6 +4534,9 @@ function join(): void {
           // §syndicates: refresh the alliance roster/invites if the panel is open
           // (guarded by a signature so a half-typed name survives).
           if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
+          // §research R6: refresh the Programme Boards if open (coarse signature —
+          // the progress bar animates ~1 Hz, node states update as they change).
+          if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
           // §management-home: inside the System View, refresh the management
           // column + the structure markers (a cached no-op unless tiers changed).
           updateSysviewDynamic();
