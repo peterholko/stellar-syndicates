@@ -851,8 +851,10 @@ impl World {
                     system: sid,
                     tier: 1,
                     plunder: BTreeMap::new(),
-                    // Stagger the schedules so packs don't all launch at t=0.
-                    next_launch_at: 20.0 + rng.range(0.0, pirate::PIRATE_LAUNCH_PERIOD),
+                    // The FIRST pack waits out the opening window (§pirates
+                    // onboarding) so founding corps trade unmolested early; the
+                    // per-enclave stagger keeps them from all launching at once.
+                    next_launch_at: pirate::PIRATE_FIRST_LAUNCH_SECS + rng.range(0.0, pirate::PIRATE_LAUNCH_PERIOD),
                     next_grow_at: pirate::PIRATE_GROW_PERIOD + rng.range(0.0, pirate::PIRATE_GROW_PERIOD),
                     dormant_until: 0.0,
                     pack: None,
@@ -2702,12 +2704,23 @@ impl World {
             .map(|s| (s.pos, crate::build::DEFENSE_PLATFORM_RADIUS))
             .collect();
         let covered = |p: Vec2| platforms.iter().any(|(c, r)| p.distance(*c) <= *r);
+        // §pirates onboarding: a corp is SHIELDED (its convoys invisible to pirate
+        // hunting) for `PIRATE_GRACE_SECS` after it JOINS — measured per-corp from
+        // `joined_tick`, so a LATECOMER dropping into an escalated galaxy gets the
+        // same undefended-onboarding window a founder got.
+        let shielded: std::collections::BTreeSet<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, c)| now - c.joined_tick as f64 * DT < pirate::PIRATE_GRACE_SECS)
+            .map(|(id, _)| *id)
+            .collect();
         // Broadcasting convoys outside platform cover (dark scouts don't broadcast →
-        // never targeted, satisfying "never target scouts").
+        // never targeted, satisfying "never target scouts"), owned by a corp past
+        // its grace window.
         let convoys: Vec<(EntityId, Vec2)> = self
             .fleets
             .iter()
-            .filter(|(_, f)| !f.owner.is_pirate() && f.flagship_kind() == ShipKind::Convoy && f.broadcasts() && !covered(f.pos))
+            .filter(|(_, f)| !f.owner.is_pirate() && f.flagship_kind() == ShipKind::Convoy && f.broadcasts() && !covered(f.pos) && !shielded.contains(&f.owner))
             .map(|(id, f)| (*id, f.pos))
             .collect();
         let epos: BTreeMap<EntityId, Vec2> =
@@ -12809,21 +12822,58 @@ mod tests {
         let mut w = test_world();
         let victim = PlayerId(1);
         w.step(&[Command::AddPlayer { id: victim, name: "V".into() }]);
+        // Advance past the NEW-PLAYER GRACE window so the victim's convoys are huntable.
+        for _ in 0..((crate::pirate::PIRATE_GRACE_SECS as u32 + 1) * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
         let (sid, epos) = an_enclave(&w);
-        w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0; // launch at once
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = w.time; // launch now (past the first-launch delay)
         // A lone broadcasting convoy with cargo, inside the tier-1 hunt radius (2600).
         let convoy = squad(&mut w, victim, epos + Vec2::new(1400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
         w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
         let mut pirate_raid = false;
-        for _ in 0..(90 * crate::config::TICK_HZ) {
+        for _ in 0..(120 * crate::config::TICK_HZ) {
             let ev = w.step(&[]);
             if ev.iter().any(|e| matches!(&e.payload, EventPayload::RaidResolved { attacker, .. } if attacker.is_pirate())) {
                 pirate_raid = true;
                 break;
             }
         }
-        assert!(pirate_raid, "an enclave launches a pack that RAIDS the unescorted broadcasting convoy");
+        assert!(pirate_raid, "past grace, an enclave launches a pack that RAIDS the unescorted broadcasting convoy");
         assert!(w.fleets.values().any(|f| f.owner.is_pirate()), "a pirate pack exists");
+    }
+
+    /// §pirates onboarding #1: a corp's convoys are INVISIBLE to pirate hunting for
+    /// the grace window after it joins — the latecomer/new-player shield.
+    #[test]
+    fn a_fresh_corps_convoys_are_shielded_during_the_grace_window() {
+        let mut w = test_world();
+        let victim = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: victim, name: "V".into() }]);
+        let (sid, epos) = an_enclave(&w);
+        w.enclaves.get_mut(&sid).unwrap().next_launch_at = 0.0; // pirates WOULD launch at once
+        let convoy = squad(&mut w, victim, epos + Vec2::new(1400.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
+        // Well inside the grace window (120s << PIRATE_GRACE_SECS): never targeted.
+        let mut targeted = false;
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if w.fleets.values().any(|f| f.owner.is_pirate() && matches!(f.order, FleetOrder::Intercept { target } if target == convoy)) {
+                targeted = true;
+                break;
+            }
+        }
+        assert!(!targeted, "a fresh corp's convoy is invisible to pirates during grace");
+        assert_eq!(w.fleets.get(&convoy).and_then(|f| f.cargo).map(|c| c.units), Some(20), "no cargo stolen during grace");
+    }
+
+    /// §pirates onboarding #3: a fresh enclave opens with a LONE bandit and only
+    /// grows into a real pack (2, then 3) as it escalates (Civ-barbarian ramp).
+    #[test]
+    fn a_pirate_pack_opens_as_a_lone_raider_and_grows_when_ignored() {
+        assert_eq!(crate::pirate::pack_size(1), 1, "tier-1 enclave launches a LONE bandit");
+        assert_eq!(crate::pirate::pack_size(2), 2, "tier 2 → a pair");
+        assert_eq!(crate::pirate::pack_size(3), 3, "tier 3 → a real pack");
     }
 
     #[test]

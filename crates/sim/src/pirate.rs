@@ -32,8 +32,24 @@ pub const PIRATE_MAX_TIER: u32 = 3;
 /// The base's platform-equivalent DEFENSE tiers = `tier × this` (grinding these to
 /// 0 in an assault destroys the base). Reuses the Defense-Platform combat model.
 pub const PIRATE_DEFENSE_PER_TIER: u32 = 2;
-/// Raiders in a launched pack = `tier × this` (bigger, bolder packs as it grows).
-pub const PIRATE_PACK_PER_TIER: u32 = 2;
+/// Raiders in a launched pack = `tier × this`. At `1`, a fresh enclave opens with
+/// a LONE bandit (tier 1 → 1 raider) and only grows into a real pack (2, then 3)
+/// if it's left to escalate — the Civ-barbarian ramp: weak first contact, a
+/// serious threat only when ignored. Keeps the raider's own combat stats (and the
+/// PvP counter-triangle) untouched — this scales the PIRATE pack, not the hull.
+pub const PIRATE_PACK_PER_TIER: u32 = 1;
+/// Seconds before an enclave launches its FIRST-EVER pack (seeded at generation).
+/// Deliberately long: nothing hunts the galaxy during the opening minutes, so a
+/// founding corp's first convoys reach the hub unmolested. The steady 90 s cadence
+/// (`PIRATE_LAUNCH_PERIOD`) only takes over after this initial delay.
+pub const PIRATE_FIRST_LAUNCH_SECS: f64 = 300.0;
+/// NEW-PLAYER GRACE: a corp's broadcasting convoys are INVISIBLE to pirate hunting
+/// for this long after the corp JOINS (keyed on `Corporation.joined_tick`, not
+/// wall-clock game time). This is what protects a LATECOMER who drops into an
+/// already-escalated galaxy — they get the same undefended-onboarding window a
+/// founder gets, measured from their own join. Established corps past the window
+/// are hunted normally.
+pub const PIRATE_GRACE_SECS: f64 = 240.0;
 /// Hunting radius = base + per-tier (wider reach as the enclave escalates).
 pub const PIRATE_HUNT_RADIUS_BASE: f64 = 2600.0;
 pub const PIRATE_HUNT_RADIUS_PER_TIER: f64 = 900.0;
