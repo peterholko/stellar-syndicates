@@ -2669,6 +2669,23 @@ const MODULE_TIP: Record<ModuleKind, string> = {
   whipple_armor: "Armor: blunts incoming DRIVER into this ship.",
 };
 const MODULE_SLOTS: Record<string, number> = { corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0 };
+// Sol's module spread (mirrors sim MODULE_BUY_MULT / MODULE_SELL_MULT) — DISPLAY
+// only; the server prices the real charge on execution (shown "~").
+const MODULE_BUY_MULT = 2.0, MODULE_SELL_MULT = 0.5;
+// A module's goods VALUE = its recipe commodities priced at the observed hub
+// market (the same basis the sim uses), or null if the price board isn't in yet.
+function moduleRecipeValue(m: ModuleKind): number | null {
+  const o = buildOption(`module:${m}`);
+  if (!o || !state.market) return null;
+  const price = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
+  let v = 0;
+  for (const c of o.costs) {
+    const p = price.get(c.commodity as Commodity);
+    if (p === undefined) return null;
+    v += c.units * p;
+  }
+  return v;
+}
 // The FIT the player is composing for the next warship build (module slugs, ≤2).
 let pendingFit: ModuleKind[] = [];
 // The module ledger at a system (owner-only; {} if unseen).
@@ -3261,11 +3278,13 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-let marketTab: "exchange" | "specialists" = "exchange";
-function setMarketTab(tab: "exchange" | "specialists"): void {
+type MarketTab = "exchange" | "specialists" | "modules";
+let marketTab: MarketTab = "exchange";
+function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
+  ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
   document.querySelectorAll<HTMLElement>("#market-tabs button").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.mtab === tab));
   updateMarket();
@@ -3276,7 +3295,22 @@ function buildMarketPanel(): void {
   // §market-ux: Exchange / Specialists tabs.
   $("market-tabs").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("[data-mtab]") as HTMLElement | null;
-    if (b?.dataset.mtab) setMarketTab(b.dataset.mtab as "exchange" | "specialists");
+    if (b?.dataset.mtab) setMarketTab(b.dataset.mtab as MarketTab);
+  });
+  // §modules Part B3: the Sol MODULE market — buy ships a crate to your home
+  // (price-certain, delivery-risky); sell dispatches from home, clears on arrival.
+  $("market-pane-modules").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-mbuy],[data-msell]") as HTMLElement | null;
+    if (!b || !net) return;
+    const home = state.systems.find((s) => s.owner === state.playerId)?.id;
+    if (!home) return;
+    if (b.dataset.mbuy) {
+      net.send({ type: "BuyModule", module: b.dataset.mbuy as ModuleKind, n: 1, dest_system: home });
+      $("mod-feedback").textContent = `Buying a ${MODULE_LABEL[b.dataset.mbuy as ModuleKind]} from Sol — crate convoy inbound to your home (raidable).`;
+    } else if (b.dataset.msell) {
+      net.send({ type: "SellModule", module: b.dataset.msell as ModuleKind, n: 1, from_system: home });
+      $("mod-feedback").textContent = `Selling a ${MODULE_LABEL[b.dataset.msell as ModuleKind]} to Sol — convoy away, clears on arrival.`;
+    }
   });
   // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
   // Lives on the Specialists pane; feedback lands where the player is looking.
@@ -3375,6 +3409,35 @@ function renderSpecialistsPane(): void {
     rows;
 }
 
+// §modules Part B3: the SOL MODULE MARKET tab — buy each module at a premium
+// (crate ships to your home, raidable) or sell it back low (convoy → hub, clears
+// on arrival). Prices are computed client-side from the recipe × observed hub
+// prices (the sim's own basis), shown "~" because the server prices on execution.
+// The home ledger count gates Sell (you can only sell what you hold at home).
+function renderModulesPane(): void {
+  const credits = state.wallet?.credits ?? 0;
+  const home = state.systems.find((s) => s.owner === state.playerId);
+  const ledger = home?.modules ?? {};
+  const rows = MODULE_ALL.map((m) => {
+    const v = moduleRecipeValue(m);
+    const buy = v === null ? null : v * MODULE_BUY_MULT;
+    const sell = v === null ? null : v * MODULE_SELL_MULT;
+    const held = ledger[m] ?? 0;
+    const buyTxt = buy === null ? "—" : `~${buy.toFixed(0)} cr`;
+    const sellTxt = sell === null ? "—" : `~${sell.toFixed(0)} cr`;
+    const canBuy = buy !== null && credits >= buy && !!home;
+    return `<div class="board__row" title="${esc(MODULE_TIP[m])}">` +
+      `<span class="dep-ico">${MODULE_GLYPH[m]}</span>` +
+      `<span class="b-name">${esc(MODULE_LABEL[m])}${held ? ` <span class="dim">·held ${held}</span>` : ""}</span>` +
+      `<button class="act" data-mbuy="${m}" ${canBuy ? "" : "disabled"} title="Buy one from Sol → ships a crate to your home (raidable).">Buy ${buyTxt}</button>` +
+      `<button class="act" data-msell="${m}" ${held > 0 ? "" : "disabled"} title="Sell one from your home ledger → convoy to Sol, clears on arrival.">Sell ${sellTxt}</button>` +
+      `</div>`;
+  }).join("");
+  $("mod-rows").innerHTML =
+    `<div class="mhint" style="margin-bottom:6px">Sol's off-map foundry — buy modules at a premium (a crate ships to your <b>home</b>, raidable) or sell your home ledger back at a discount. Prices track the commodity market; local manufacture at an Armaments Complex is always cheaper.</div>` +
+    rows;
+}
+
 // The composer preview surfaces the buy/sell asymmetry in plain language — the
 // honest-fog centerpiece (teaches the lightspeed economy, not shipping fees).
 function renderComposer(): void {
@@ -3425,6 +3488,7 @@ function updateMarket(): void {
   renderComposer();
   renderRestingOrders();
   renderSpecialistsPane();
+  renderModulesPane();
 }
 
 function addTradeNews(t: TradeEvent): void {
