@@ -345,6 +345,28 @@ function buildShipPanel(): void {
         net.send({ type: "SetFleetPosture", fleet_id: state.selectedShipId, posture });
         updateShipPanel();
       }
+    } else if (act === "refitmod") {
+      // §modules Part B4: toggle a module into the composed REFIT target (≤2).
+      const m = (b as HTMLElement).dataset.mod as ModuleKind | undefined;
+      if (m) {
+        const i = pendingRefit.indexOf(m);
+        if (i >= 0) pendingRefit.splice(i, 1);
+        else if (pendingRefit.length < 2) pendingRefit.push(m);
+        updateShipPanel();
+      }
+    } else if (act === "refit" && state.selectedShipId && net) {
+      // §modules Part B4: refit the named (kind, from) stack to the composed
+      // target (clamped to the hull's slots). The server enforces the docked-yard
+      // + ledger-delta gate; a soft reject leaves the fleet unchanged.
+      const el = b as HTMLElement;
+      const ship = el.dataset.kind as ShipKind | undefined;
+      const n = Number(el.dataset.n) || 0;
+      if (ship && n > 0) {
+        const from = el.dataset.from ? el.dataset.from.split(",").filter(Boolean) as ModuleKind[] : [];
+        const to = pendingRefit.slice(0, MODULE_SLOTS[ship] ?? 0);
+        net.send({ type: "RefitShips", fleet_id: state.selectedShipId, ship, from, to, n });
+        $("readout").innerHTML = `Refit ordered: <b>${n}× ${esc(shipKindLabel(ship))}</b> → ${to.length ? to.map((m) => MODULE_GLYPH[m]).join(" ") : "stock"} <span class="dim">(at a docked Shipyard; needs the added modules in the system ledger).</span>`;
+      }
     }
   });
 }
@@ -624,6 +646,7 @@ function ownBody(g: GhostView): string {
   parts.push(postureSection(g));
   parts.push(garrisonSection(g));
   parts.push(fleetManagementSection(g));
+  parts.push(refitSection(g));
   return parts.join("");
 }
 
@@ -2688,6 +2711,8 @@ function moduleRecipeValue(m: ModuleKind): number | null {
 }
 // The FIT the player is composing for the next warship build (module slugs, ≤2).
 let pendingFit: ModuleKind[] = [];
+// The target FIT the player is composing for a REFIT (own-fleet panel, ≤2).
+let pendingRefit: ModuleKind[] = [];
 // The module ledger at a system (owner-only; {} if unseen).
 function moduleLedgerAt(sid: string): Record<string, number> {
   return state.systems.find((s) => s.id === sid)?.modules ?? {};
@@ -2725,6 +2750,46 @@ function fitPicker(dyn: SystemStateView | undefined): string {
   const cur = pendingFit.length ? pendingFit.map((m) => MODULE_GLYPH[m]).join(" ") : "stock (unfitted)";
   return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${uiIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
     `<div class="fit-row">${chips}</div>`;
+}
+// §modules Part B4: the REFIT section on an OWN fleet — its warship STACKS
+// (kind × loadout, fitted + the unfitted remainder) each with a "Refit →"
+// button to the composed target fit. Offered whenever the fleet has warships;
+// the server enforces the docked-Shipyard + ledger-delta gate (a soft reject
+// leaves the fleet untouched). Empty for logistics-only fleets.
+function refitSection(g: GhostView): string {
+  if (!g.own) return "";
+  const comp = g.composition ?? [];
+  const warKinds = comp.filter((c) => (MODULE_SLOTS[c.kind] ?? 0) > 0 && c.count > 0);
+  if (!warKinds.length) return "";
+  const loadouts = g.loadouts ?? [];
+  // Build (kind, from, n) stacks: each fitted stack + the unfitted remainder.
+  const stacks: { kind: ShipKind; from: ModuleKind[]; n: number }[] = [];
+  for (const c of warKinds) {
+    let fittedTotal = 0;
+    for (const l of loadouts.filter((l) => l.kind === c.kind)) {
+      stacks.push({ kind: c.kind, from: l.modules, n: l.n });
+      fittedTotal += l.n;
+    }
+    const unfit = c.count - fittedTotal;
+    if (unfit > 0) stacks.push({ kind: c.kind, from: [], n: unfit });
+  }
+  const chips = MODULE_ALL.map((m) => {
+    const on = pendingRefit.includes(m);
+    return `<button class="act fit-chip${on ? " is-on" : ""}" data-act="refitmod" data-mod="${m}" title="${esc(MODULE_TIP[m])}">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
+  }).join("");
+  const targetTxt = pendingRefit.length ? pendingRefit.map((m) => `${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}`).join(" · ") : "stock (strip all fits)";
+  const rows = stacks.map((s) => {
+    const fromTxt = s.from.length ? s.from.map((m) => MODULE_GLYPH[m]).join("") : "stock";
+    const to = pendingRefit.slice(0, MODULE_SLOTS[s.kind] ?? 0);
+    const same = [...s.from].sort().join(",") === [...to].sort().join(",");
+    return `<div class="sp-line" style="justify-content:space-between;gap:6px">` +
+      `<span title="${s.n} ${esc(shipKindLabel(s.kind))} currently fitted: ${fromTxt}">${s.n}× ${esc(shipKindLabel(s.kind))} · ${fromTxt}</span>` +
+      `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same ? "disabled" : ""} title="Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.">Refit →</button>` +
+      `</div>`;
+  }).join("");
+  return `<div class="sp-sec">${uiIcon("action-build", "sm")} Refit</div>` +
+    `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> — at a docked Shipyard</div>` +
+    `<div class="fit-row">${chips}</div>${rows}`;
 }
 
 // One build/develop option row — cost, afford state, and the two sim-mirroring
