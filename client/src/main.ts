@@ -203,6 +203,10 @@ function uiIcon(category: "resource" | "research", slug: string | undefined, gly
 // their art lands.
 const COMMODITY_ART: Partial<Record<Commodity, string>> = {
   fuel: "fuel", metallic_ore: "ore", alloys: "alloys", provisions: "provisions", volatiles: "volatiles",
+  // The six industrial goods — the framed-tile set sliced from the extended sheet
+  // (file names match the wire slugs). Only BIOMASS is still on its glyph.
+  rare_elements: "rare_elements", silicates: "silicates", electronics: "electronics",
+  polymers: "polymers", machinery: "machinery", armaments: "armaments",
 };
 const COMMODITY_GLYPH: Record<Commodity, string> = {
   metallic_ore: "\u26cf", rare_elements: "\u2728", silicates: "\u25a6", volatiles: "\u2744", biomass: "\ud83c\udf3f",
