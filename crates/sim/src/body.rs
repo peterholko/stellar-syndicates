@@ -49,7 +49,8 @@ impl BodyKind {
 
 /// One planet or moon. `id` is stable within its system (assigned in the
 /// final inner→outer roster order, moons after all planets); the sim owns
-/// names now ("Veles II", moons "Veles IIa").
+/// names now — planets by Arabic orbital position ("Veles 2"), moons with a
+/// hyphenated letter ("Veles 2-a").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Body {
     pub id: u32,
@@ -239,8 +240,6 @@ const FILLER_KINDS: [VisualKind; 7] = [
     VisualKind::Ocean,
 ];
 
-const ROMAN: [&str; 10] = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
-
 /// Generate the authoritative body roster for a system — the ported client
 /// algorithm, drawing the SAME rng sequence in the SAME order (cosmetic draws
 /// included and discarded) so pre-migration layouts survive byte-for-byte:
@@ -332,11 +331,9 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
     let mut moon_queue: Vec<(u32, usize, Vec<Deposit>)> = Vec::new(); // (parent id, letter idx, deposits)
     for (i, p) in planets.iter_mut().enumerate() {
         let id = i as u32;
-        let name = format!(
-            "{} {}",
-            system_name,
-            ROMAN.get(i).copied().map(str::to_string).unwrap_or_else(|| (i + 1).to_string())
-        );
+        // Planets take ARABIC numerals by orbital position, inner→outer (the sort
+        // above): "Veles 1", "Veles 2", "Veles 3".
+        let name = format!("{} {}", system_name, i + 1);
         bodies.push(Body {
             id,
             name,
@@ -357,7 +354,8 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         let pname = bodies[parent as usize].name.clone();
         bodies.push(Body {
             id: next_id,
-            name: format!("{}{}", pname, (b'a' + (k as u8 % 26)) as char),
+            // Moons keep the letter suffix but gain a hyphen: "Veles 2-a", "Veles 2-b".
+            name: format!("{}-{}", pname, (b'a' + (k as u8 % 26)) as char),
             kind: BodyKind::Ice, // the walk forced moons to ice — kept
             parent: Some(parent),
             habitable: false,
@@ -411,13 +409,13 @@ mod tests {
                 }
             }
         }
-        // Names: planets carry roman numerals in id order; moons letter off
-        // their parent.
+        // Names: planets carry ARABIC numerals by orbital position (inner = 1);
+        // moons take a hyphenated letter off their parent ("… 2-a").
         let planets: Vec<&Body> = bodies.iter().filter(|b| b.parent.is_none()).collect();
-        assert!(planets[0].name.ends_with(" I"));
+        assert!(planets[0].name.ends_with(" 1"), "inner planet is 1, got {}", planets[0].name);
         for m in bodies.iter().filter(|b| b.parent.is_some()) {
             let p = &bodies[m.parent.unwrap() as usize];
-            assert!(m.name.starts_with(&p.name), "moon named off its parent");
+            assert!(m.name.starts_with(&format!("{}-", p.name)), "moon named off its parent with a hyphen: {}", m.name);
         }
     }
 

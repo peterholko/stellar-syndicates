@@ -5,7 +5,7 @@
 //! space, the hub fixed at the centre, homes distributed around a ring as
 //! bright spots. Resources/claims hang off systems in later milestones.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -654,16 +654,17 @@ const CLAIM_VALUE_K: f64 = 45.0;
 /// gets resource deposits whose richness and value rise toward the rim — the
 /// GDD's distance/value gradient: the best production is out in the dangerous,
 /// fog-blind frontier (§4).
-pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
+pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, names: &[String], alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
     let mut systems = Vec::with_capacity(count as usize);
-    for _ in 0..count {
+    for i in 0..count as usize {
         // Area-uniform radius in [0.12R, 0.96R].
         let u = rng.next_f64().sqrt();
         let r = radius * (0.12 + 0.84 * u);
         let theta = rng.range(0.0, std::f64::consts::TAU);
         let pos = Vec2::from_polar(theta, r);
         let id = alloc();
-        let name = system_name(rng);
+        // §naming: the caller supplies a galaxy-unique, seed-shuffled name list.
+        let name = names[i].clone();
         // Frontier factor in [0,1]: 0 at the inner margin, 1 at the rim.
         let frontier = u; // == (r/radius - 0.12) / 0.84, monotonic in distance
         let deposits = generate_deposits(rng, frontier);
@@ -793,11 +794,12 @@ fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
 /// geology keyed by home `index` (so it's reproducible and independent of the
 /// frontier stream). `owner`/`claimed_at` are left `None` — ownership is granted
 /// to the player on join (free; the command center sits here).
-pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) -> StarSystem {
+pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, name: String) -> StarSystem {
     let mut rng = Rng::new(seed ^ HOME_SYSTEM_MAGIC ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let deposits = generate_home_deposits(&mut rng);
     let claim_cost = claim_cost_for(&deposits);
-    let name = system_name(&mut rng);
+    // §naming: the caller supplies a galaxy-unique name; geology stays keyed to
+    // `index` (its own re-seeded stream), untouched by the naming change.
     // §bodies: the home is born with its roster; the bootstrap then SITES its
     // structures on the right bodies via the shared rules.
     let bodies = crate::body::generate_bodies(&id.0.to_string(), &name, &deposits);
@@ -878,19 +880,173 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2) ->
 /// One home star system per home slot, co-located with each slot — the developed
 /// home bases players begin owning. Ids drawn from the shared allocator so they
 /// stay unique; geology is deterministic per home index.
-pub fn generate_home_systems(seed: u64, slots: &[HomeSlot], alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
+pub fn generate_home_systems(seed: u64, slots: &[HomeSlot], names: &[String], alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
     slots
         .iter()
         .enumerate()
-        .map(|(i, slot)| generate_home_system(seed, i, alloc(), slot.pos))
+        .map(|(i, slot)| generate_home_system(seed, i, alloc(), slot.pos, names[i].clone()))
         .collect()
 }
 
-/// A short catalogue-style designation, e.g. "KX-417".
-fn system_name(rng: &mut Rng) -> String {
-    const LETTERS: &[u8] = b"ABCDEFGHJKLMNPQRSTVWXYZ";
-    let a = LETTERS[(rng.next_u64() as usize) % LETTERS.len()] as char;
-    let b = LETTERS[(rng.next_u64() as usize) % LETTERS.len()] as char;
-    let num = 100 + (rng.next_u64() % 900);
-    format!("{a}{b}-{num}")
+/// A curated pool of evocative, pronounceable ONE-WORD system names — real star /
+/// catalogue names, public-domain mythological figures (Slavic, Norse, Greek,
+/// Roman, Egyptian, Mesopotamian), and frontier/industrial words fitting a
+/// corporate-expansion setting. Short, unambiguous spoken aloud, and visually
+/// distinct at a glance. Drawn WITHOUT REPLACEMENT per galaxy so no two systems
+/// collide (see [`shuffled_system_names`]). No trademarked or invented names.
+pub const SYSTEM_NAMES: &[&str] = &[
+    // ── Stars & catalogue names ──
+    "Vega", "Altair", "Rigel", "Mizar", "Antares", "Deneb", "Fomalhaut", "Alcyone",
+    "Canopus", "Sirius", "Procyon", "Capella", "Arcturus", "Aldebaran", "Bellatrix",
+    "Betelgeuse", "Spica", "Regulus", "Pollux", "Castor", "Alnilam", "Alnitak",
+    "Saiph", "Mintaka", "Naos", "Adhara", "Wezen", "Alhena", "Elnath", "Menkar",
+    "Hamal", "Sheratan", "Mirach", "Almach", "Algol", "Merak", "Dubhe", "Phecda",
+    "Megrez", "Alioth", "Alkaid", "Kochab", "Polaris", "Thuban", "Etamin", "Rastaban",
+    "Zosma", "Denebola", "Alphard", "Gomeisa", "Markab", "Scheat", "Algenib", "Enif",
+    "Skat", "Diphda", "Achernar", "Acamar", "Alnair", "Peacock", "Atria", "Gacrux",
+    "Acrux", "Mimosa", "Hadar", "Shaula", "Sargas", "Nunki", "Ascella", "Albireo",
+    "Tarazed", "Alshain", "Rukbat", "Nashira", "Dabih", "Wasat", "Tejat", "Propus",
+    "Mebsuta", "Zaurak", "Cursa", "Keid", "Rana", "Sadr", "Gienah", "Ruchbah",
+    "Segin", "Caph", "Achird", "Sabik", "Izar", "Seginus", "Nekkar", "Alphecca",
+    // ── Slavic ──
+    "Veles", "Perun", "Morana", "Svarog", "Dazhbog", "Mokosh", "Stribog", "Chernobog",
+    "Belobog", "Lada", "Jarilo", "Zorya", "Simargl", "Radegast", "Triglav", "Vesna",
+    // ── Norse ──
+    "Njord", "Freya", "Freyr", "Odin", "Tyr", "Baldr", "Heimdall", "Loki", "Frigg",
+    "Idun", "Bragi", "Vidar", "Vali", "Forseti", "Ullr", "Skadi", "Nanna", "Sif",
+    "Hel", "Fenrir", "Aegir", "Nidhogg", "Ymir", "Mimir", "Kvasir", "Surtr",
+    "Sleipnir", "Bifrost", "Asgard", "Vanaheim",
+    // ── Greek ──
+    "Hyperion", "Nemesis", "Helios", "Selene", "Nyx", "Erebus", "Gaia", "Cronus",
+    "Rhea", "Themis", "Tethys", "Oceanus", "Iapetus", "Atlas", "Prometheus", "Pallas",
+    "Astraeus", "Leto", "Asteria", "Metis", "Dione", "Phoebe", "Theia", "Hecate",
+    "Kratos", "Styx", "Eris", "Thanatos", "Hypnos", "Cerberus",
+    // ── Roman ──
+    "Janus", "Vesta", "Ceres", "Juno", "Minerva", "Vulcan", "Bellona", "Fortuna",
+    "Quirinus", "Faunus", "Silvanus", "Pomona", "Concordia", "Aurora",
+    // ── Egyptian ──
+    "Anubis", "Horus", "Osiris", "Isis", "Thoth", "Sobek", "Sekhmet", "Bastet",
+    "Ptah", "Hathor", "Khonsu", "Amun", "Aten", "Maat", "Neith", "Wadjet", "Apophis",
+    "Wepwawet",
+    // ── Mesopotamian ──
+    "Ereshkigal", "Nergal", "Marduk", "Enlil", "Enki", "Inanna", "Ishtar", "Tiamat",
+    "Anshar", "Ninhursag", "Shamash", "Ninurta", "Nabu", "Dumuzi", "Pazuzu",
+    "Gilgamesh",
+    // ── Frontier & industrial ──
+    "Anvil", "Kiln", "Tally", "Bulwark", "Ember", "Lattice", "Quarry", "Reckoning",
+    "Forge", "Crucible", "Foundry", "Bellows", "Girder", "Rivet", "Gantry", "Derrick",
+    "Sluice", "Ballast", "Slag", "Cinder", "Ingot", "Tithe", "Ledger", "Sable",
+    "Cairn", "Beacon", "Palisade", "Rampart", "Bastion", "Redoubt", "Keystone",
+    "Millstone", "Whetstone", "Lodestone", "Flint", "Tinder", "Ashfall", "Cistern",
+    "Conduit", "Spindle", "Loom", "Hearth", "Furnace", "Temper", "Quench", "Pinion",
+    "Ratchet", "Flywheel", "Piston", "Prospect", "Placer", "Tailings",
+];
+
+/// Deterministic overflow suffixes for a galaxy larger than [`SYSTEM_NAMES`] — a
+/// second (third…) pass appends these so a bare name is never repeated.
+const NAME_OVERFLOW_SUFFIXES: &[&str] =
+    &["Reach", "Deep", "Verge", "Expanse", "Reef", "Drift", "Marches", "Hollow"];
+
+/// `needed` galaxy-unique system names: the curated [`SYSTEM_NAMES`] pool shuffled
+/// IN PLACE by the SEEDED `rng` (Fisher–Yates — no new RNG stream, no non-seeded
+/// randomness), then handed out in order. If the galaxy needs more names than the
+/// pool holds, deterministic suffixed passes ("Vega Reach", … then "Vega Deep", …)
+/// extend it so generation never repeats a bare name and never panics.
+pub fn shuffled_system_names(rng: &mut Rng, needed: usize) -> Vec<String> {
+    let mut base: Vec<&'static str> = SYSTEM_NAMES.to_vec();
+    for i in (1..base.len()).rev() {
+        // j ∈ [0, i] (next_f64 is [0,1); .min(i) guards the impossible 1.0).
+        let j = ((rng.next_f64() * (i as f64 + 1.0)).floor() as usize).min(i);
+        base.swap(i, j);
+    }
+    let mut out: Vec<String> = base.iter().map(|s| (*s).to_string()).collect();
+    let mut pass = 0usize;
+    while out.len() < needed {
+        let suffix = NAME_OVERFLOW_SUFFIXES[pass % NAME_OVERFLOW_SUFFIXES.len()];
+        let cycle = pass / NAME_OVERFLOW_SUFFIXES.len(); // 0 for the first pass round
+        for name in &base {
+            out.push(if cycle == 0 {
+                format!("{name} {suffix}")
+            } else {
+                // Beyond one full round of suffixes, disambiguate by cycle number.
+                format!("{name} {suffix} {}", cycle + 1)
+            });
+            if out.len() >= needed {
+                break;
+            }
+        }
+        pass += 1;
+    }
+    out
+}
+
+/// Pick a galaxy-unique name for a home system minted AT RUNTIME (an over-capacity
+/// or regenerated home), avoiding every name already `taken`. Deterministic:
+/// re-seeds the SAME shuffle from the world `seed` (exactly as home geology does)
+/// and returns the first free entry — never non-seeded, never a repeat, never a
+/// panic (the shuffle always yields more distinct names than the taken set).
+pub fn pick_unused_name(seed: u64, taken: &BTreeSet<String>) -> String {
+    let mut rng = Rng::new(seed);
+    let names = shuffled_system_names(&mut rng, taken.len() + SYSTEM_NAMES.len());
+    names
+        .into_iter()
+        .find(|n| !taken.contains(n))
+        .expect("a full pool beyond the taken set always leaves a free name")
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn system_name_pool_has_no_duplicates() {
+        let set: BTreeSet<&&str> = SYSTEM_NAMES.iter().collect();
+        assert_eq!(set.len(), SYSTEM_NAMES.len(), "the curated pool must be collision-free");
+        assert!(SYSTEM_NAMES.len() >= 200, "pool is ~250 names, got {}", SYSTEM_NAMES.len());
+        // Names are one word (no whitespace) so the overflow-suffix pass reads clean.
+        for n in SYSTEM_NAMES {
+            assert!(!n.contains(' '), "{n} should be one word");
+            assert!(!n.is_empty());
+        }
+    }
+
+    #[test]
+    fn shuffled_names_are_deterministic_unique_and_never_short() {
+        // Same seed → identical shuffle + hand-out order (determinism is law).
+        let a = shuffled_system_names(&mut Rng::new(777), 120);
+        let b = shuffled_system_names(&mut Rng::new(777), 120);
+        assert_eq!(a, b, "same seed reproduces the same names");
+        // A different seed generally reorders (not a hard guarantee, but expected).
+        let c = shuffled_system_names(&mut Rng::new(778), 120);
+        assert_ne!(a, c, "a different seed shuffles differently");
+        // No duplicates within a galaxy's names.
+        let set: BTreeSet<&String> = a.iter().collect();
+        assert_eq!(set.len(), a.len(), "no two systems share a name");
+    }
+
+    #[test]
+    fn overflow_past_the_pool_extends_without_repeats_or_panic() {
+        // Demand far more than the pool holds — several suffix passes.
+        let n = SYSTEM_NAMES.len() * 3 + 17;
+        let names = shuffled_system_names(&mut Rng::new(4242), n);
+        assert_eq!(names.len(), n);
+        let set: BTreeSet<&String> = names.iter().collect();
+        assert_eq!(set.len(), n, "overflow suffixes never repeat a name");
+        // The first pool-worth are bare names; the next are suffixed.
+        assert!(names[SYSTEM_NAMES.len()].contains(' '), "overflow names carry a suffix");
+    }
+
+    #[test]
+    fn pick_unused_name_avoids_taken_and_is_deterministic() {
+        let mut taken: BTreeSet<String> = shuffled_system_names(&mut Rng::new(9), 50).into_iter().collect();
+        let a = pick_unused_name(9, &taken);
+        let b = pick_unused_name(9, &taken);
+        assert_eq!(a, b, "deterministic for a fixed (seed, taken)");
+        assert!(!taken.contains(&a), "never collides with an in-use name");
+        // Adding it advances the pick to a new free name.
+        taken.insert(a.clone());
+        let next = pick_unused_name(9, &taken);
+        assert_ne!(next, a);
+        assert!(!taken.contains(&next));
+    }
 }

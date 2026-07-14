@@ -541,6 +541,16 @@ impl World {
         let mut rng = crate::rng::Rng::new(config.seed);
         let mut next_entity_id = 1u64;
 
+        // §naming: one galaxy-unique, seed-shuffled name list for EVERY system —
+        // frontier first, then the home ring — handed out in order so no two
+        // collide. Built from the seeded rng (determinism is law).
+        let home_count = config.max_players.max(1) as usize;
+        let names = crate::galaxy::shuffled_system_names(
+            &mut rng,
+            config.system_count as usize + home_count,
+        );
+        let (frontier_names, home_names) = names.split_at(config.system_count as usize);
+
         let mut systems = {
             let mut alloc = || {
                 let id = EntityId(next_entity_id);
@@ -551,6 +561,7 @@ impl World {
                 &mut rng,
                 config.galaxy_radius,
                 config.system_count,
+                frontier_names,
                 &mut alloc,
             )
         };
@@ -571,7 +582,7 @@ impl World {
                 next_entity_id += 1;
                 id
             };
-            crate::galaxy::generate_home_systems(config.seed, &home_slots, &mut alloc)
+            crate::galaxy::generate_home_systems(config.seed, &home_slots, home_names, &mut alloc)
         };
         for (slot, sys) in home_slots.iter_mut().zip(&home_systems) {
             slot.system = Some(sys.id);
@@ -7042,7 +7053,10 @@ impl World {
                 let angle = TAU * (n as f64) * 0.61803398875; // golden-angle scatter
                 let pos = Vec2::from_polar(angle, self.config.galaxy_radius * self.config.home_ring_frac);
                 let sys_id = self.alloc_entity_id();
-                let mut sys = crate::galaxy::generate_home_system(self.config.seed, n, sys_id, pos);
+                // §naming: a galaxy-unique name that avoids every system already present.
+                let taken: std::collections::BTreeSet<String> = self.systems.iter().map(|s| s.name.clone()).collect();
+                let name = crate::galaxy::pick_unused_name(self.config.seed, &taken);
+                let mut sys = crate::galaxy::generate_home_system(self.config.seed, n, sys_id, pos, name);
                 sys.owner = Some(id);
                 sys.claimed_at = Some(now);
                 self.systems.push(sys);
@@ -7073,7 +7087,10 @@ impl World {
             }
             None => {
                 let sys_id = self.alloc_entity_id();
-                let mut sys = crate::galaxy::generate_home_system(self.config.seed, idx, sys_id, pos);
+                // §naming: a galaxy-unique name that avoids every system already present.
+                let taken: std::collections::BTreeSet<String> = self.systems.iter().map(|s| s.name.clone()).collect();
+                let name = crate::galaxy::pick_unused_name(self.config.seed, &taken);
+                let mut sys = crate::galaxy::generate_home_system(self.config.seed, idx, sys_id, pos, name);
                 sys.owner = Some(id);
                 sys.claimed_at = Some(now);
                 self.systems.push(sys);
@@ -12183,10 +12200,19 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        // Own two systems: a producing source and a destination depot.
+        // Own two systems: a producing source and a destination depot. Pick the
+        // depot NEAREST the source so a sub-light convoy reliably reaches it within
+        // the run window (independent of the seeded galaxy's exact geometry).
         let source = richest_system(&w);
+        let source_pos = w.systems.iter().find(|s| s.id == source).unwrap().pos;
         let commodity = w.systems.iter().find(|s| s.id == source).unwrap().all_deposits().next().unwrap().resource;
-        let dest = w.systems.iter().find(|s| s.owner.is_none() && s.id != source).unwrap().id;
+        let dest = w
+            .systems
+            .iter()
+            .filter(|s| s.owner.is_none() && s.id != source)
+            .min_by(|a, b| a.pos.distance(source_pos).total_cmp(&b.pos.distance(source_pos)))
+            .unwrap()
+            .id;
         grant_system(&mut w, id, source);
         w.step(&[]);
         grant_system(&mut w, id, dest);
@@ -12229,6 +12255,42 @@ mod tests {
         }
         assert!(delivered_via_route, "a system→system supply convoy must deliver to the depot");
         assert!(dest_has(&w) >= 5.0, "MaintainAtDest must bring the depot up to the target");
+    }
+
+    /// §naming: a fresh galaxy gets pronounceable WORD names, drawn without
+    /// replacement (no collisions across frontier + home), deterministic per seed;
+    /// planets read inner→outer as 1,2,3 and moons hang off with a hyphen.
+    #[test]
+    fn galaxy_names_are_word_based_unique_and_deterministic() {
+        let build = || World::new(SimConfig::for_players(0x00C0_FFEE, 4));
+        let (w1, w2) = (build(), build());
+        // Determinism: same seed → identical system names in the same order.
+        let names1: Vec<&str> = w1.systems.iter().map(|s| s.name.as_str()).collect();
+        let names2: Vec<&str> = w2.systems.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names1, names2, "same seed reproduces the same galaxy names");
+        // No two systems (frontier OR home) share a name.
+        let uniq: std::collections::BTreeSet<&str> = names1.iter().copied().collect();
+        assert_eq!(uniq.len(), names1.len(), "no duplicate system names in a galaxy");
+        // Word names, not the old "XX-NNN" catalogue codes (no hyphen in a system name).
+        assert!(names1.iter().all(|n| !n.contains('-')), "system names are words, not codes");
+        assert!(names1.iter().all(|n| n.chars().next().unwrap().is_ascii_uppercase()));
+        // Planets read inner→outer as 1,2,3…; moons hang off with a hyphen.
+        let multi = w1
+            .systems
+            .iter()
+            .find(|s| s.bodies.iter().filter(|b| b.parent.is_none()).count() >= 2)
+            .expect("some system has multiple planets");
+        let planets: Vec<&crate::body::Body> = multi.bodies.iter().filter(|b| b.parent.is_none()).collect();
+        for (i, p) in planets.iter().enumerate() {
+            assert!(p.name.ends_with(&format!(" {}", i + 1)), "planet #{} named {}", i + 1, p.name);
+        }
+        for sys in &w1.systems {
+            // Body ids are per-system, so resolve a moon's parent WITHIN its system.
+            for m in sys.bodies.iter().filter(|b| b.parent.is_some()) {
+                let p = sys.bodies.iter().find(|b| b.id == m.parent.unwrap()).expect("moon's parent exists in-system");
+                assert!(m.name.starts_with(&format!("{}-", p.name)), "moon {} off parent {}", m.name, p.name);
+            }
+        }
     }
 
     /// Standing-order execution is deterministic: same seed + same commands ⇒ byte-
