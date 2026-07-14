@@ -12,8 +12,9 @@ const state: ViewState = initialState();
 
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
-// PROTOCOL_VERSION (§battle-records = 4).
-const EXPECTED_PROTOCOL_VERSION = 5;
+// PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
+// Boards research state; see crates/server/src/protocol.rs.)
+const EXPECTED_PROTOCOL_VERSION = 6;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
