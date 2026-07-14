@@ -12259,7 +12259,7 @@ mod tests {
 
     /// §naming: a fresh galaxy gets pronounceable WORD names, drawn without
     /// replacement (no collisions across frontier + home), deterministic per seed;
-    /// planets read inner→outer as 1,2,3 and moons hang off with a hyphen.
+    /// planets read inner→outer as I,II,III and moons hang off with a hyphen.
     #[test]
     fn galaxy_names_are_word_based_unique_and_deterministic() {
         let build = || World::new(SimConfig::for_players(0x00C0_FFEE, 4));
@@ -12274,7 +12274,7 @@ mod tests {
         // Word names, not the old "XX-NNN" catalogue codes (no hyphen in a system name).
         assert!(names1.iter().all(|n| !n.contains('-')), "system names are words, not codes");
         assert!(names1.iter().all(|n| n.chars().next().unwrap().is_ascii_uppercase()));
-        // Planets read inner→outer as 1,2,3…; moons hang off with a hyphen.
+        // Planets read inner→outer as I, II, III…; moons hang off with a hyphen.
         let multi = w1
             .systems
             .iter()
@@ -12282,7 +12282,8 @@ mod tests {
             .expect("some system has multiple planets");
         let planets: Vec<&crate::body::Body> = multi.bodies.iter().filter(|b| b.parent.is_none()).collect();
         for (i, p) in planets.iter().enumerate() {
-            assert!(p.name.ends_with(&format!(" {}", i + 1)), "planet #{} named {}", i + 1, p.name);
+            let want = format!(" {}", crate::body::planet_numeral(i));
+            assert!(p.name.ends_with(&want), "planet #{} named {}", i + 1, p.name);
         }
         for sys in &w1.systems {
             // Body ids are per-system, so resolve a moon's parent WITHIN its system.
