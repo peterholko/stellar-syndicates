@@ -1381,6 +1381,11 @@ function buildPlanetPanel(): void {
         // to the right — nothing is sent until "Queue build").
         if (openBodyDetail) openBuildPanel(openBodyDetail.id);
         break;
+      case "open-shipyard":
+        // §build-ship-panel: open the ship builder for this shipyard body (its
+        // sibling — opening it closes the structure builder, and vice-versa).
+        if (openBodyDetail) openShipPanel(openBodyDetail.id);
+        break;
       case "ship": {
         const manifest = shippableStock(state.systems.find((s) => s.id === sid));
         if (manifest.length) net.send({ type: "ShipProduction", system_id: sid });
@@ -1510,10 +1515,15 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     if ((tiers["shipyard"] ?? 0) > 0) {
       const shipOpts = (state.galaxy?.build_options ?? []).filter((o) => SHIP_KEYS.has(o.key));
       const shipQueue = buildQueueRows(sid, dyn, { filter: (j) => SHIP_KEYS.has(j.key), seenKey: `${sid}#yard` });
+      // The per-hull rows moved into the dedicated ship builder; the planet panel
+      // keeps the fit composer + the yard's queue (watch it here, choose there).
+      const yardTier = dyn.shipyard_tier ?? 0;
       yardSec = shipOpts.length
         ? ppSec("Orbital yard — ship construction", "Ships build at this body's Shipyard (tier-gated exactly as before) and spawn here.") +
+          `<div class="pp-yardline"><span class="pp-pool" title="The shipyard tier gates what can be built (Convoy/Scout/Colony I, Raider/Corvette II).">${icon("shipyard", "sm")} Shipyard ${romanTier(yardTier)}</span>` +
+          `<button class="act pp-build-open" data-action="open-shipyard" title="Open the ship builder — pick a hull, set a quantity, read its stats & recipe, then queue it.">${icon("shipyard", "sm")} Build ship…</button></div>` +
           fitPicker(dyn) +
-          `<div class="build-grid">${shipOpts.map((o) => buildOptionRow(o, dyn, false)).join("")}</div>` + shipQueue
+          shipQueue
         : "";
     }
 
@@ -2595,8 +2605,8 @@ function installInteraction(): void {
       // §battle-records: the replay overlay is topmost — Escape closes it first.
       if ($("battle-viewer").classList.contains("is-open")) {
         closeBattleViewer();
-      } else if ($("build-panel").classList.contains("is-open")) {
-        closeBuildPanel(); // back out of the builder before the planet panel
+      } else if ($("build-panel").classList.contains("is-open") || $("build-ship-panel").classList.contains("is-open")) {
+        closeBuildPanel(); // back out of either builder before the planet panel
       } else if ($("planet-panel").classList.contains("is-open")) {
         closePlanetPanel();
       } else if (renderer.viewMode.type === "system") {
@@ -3020,28 +3030,8 @@ function refitSection(g: GhostView): string {
     `<div class="fit-row">${chips}</div>${rows}`;
 }
 
-// One build/develop option row — cost, afford state, and the two sim-mirroring
-// gates (dev slot / shipyard tier). Shared by the full build menu and the
-// System View's contextual per-body offers, so gating can never diverge.
-function buildOptionRow(o: { key: string; label: string; costs: { commodity: string; units: number }[]; build_secs: number }, dyn: SystemStateView | undefined, slotsFull: boolean): string {
-  const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
-  const yard = dyn?.shipyard_tier ?? 0;
-  const isDev = !SHIP_KEYS.has(o.key);
-  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
-  const needYard = SHIP_KEYS.has(o.key) ? SHIP_REQ[o.key] ?? 1 : 0;
-  const yardShort = needYard > 0 && yard < needYard;
-  const blocked = (isDev && slotsFull) || yardShort;
-  const enabled = afford && !blocked;
-  const title = isDev && slotsFull ? "No free slot in this pool on THIS body — grow its population, or found it on another body."
-    : yardShort ? `Ships build only at a Shipyard system — this needs Shipyard tier ${needYard}.`
-      : afford ? "Costs draw from this system's stockpile."
-        : "Not enough resources stockpiled here.";
-  const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, "sm")}${c.units}`).join(" ");
-  const gate = isDev && slotsFull ? `<span class="bo-gate" title="No free slot in this pool on this body.">${icon("slots", "sm")}full</span>`
-    : yardShort ? `<span class="bo-gate" title="Requires Shipyard tier ${needYard}.">${icon("shipyard", "sm")}${needYard}</span>` : "";
-  return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${esc(title)}">` +
-    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
-}
+// (buildOptionRow removed — the inline structure/ship rows it drew are gone; the
+//  dedicated build panels now own that gating via structOption / shipOption.)
 
 // §explore Part 3: the trait line (name + one-line effect) for the OWNER's
 // system panel. Warn-tinted for the lemon. Slug "bonus_vein:<commodity>" carries
@@ -3214,9 +3204,23 @@ const romanTier = (n: number): string => ROMAN[n] ?? String(n);
 
 // Build-panel state: which body it targets + the currently-selected structure.
 let buildPanelBuilt = false;
-let buildTargetBodyId: string | null = null;
-let buildSelectedKey: string | null = null;
+let buildTargetBodyId: string | null = null; // the body BOTH builders target (shared)
+let buildSelectedKey: string | null = null; // struct builder selection
+let shipSelectedKind: string | null = null; // ship builder selection
+let shipQty = 1; // ship builder quantity
 
+// §build-panel: the shared SHELL for both builders (structures + ships) — same
+// chrome, dock, and dimensions (`.build-shell` in the CSS). The two panels are
+// siblings, never open together (opening one closes the other via closeBuildPanel).
+function panelShellHtml(el: HTMLElement, eyebrow: string, title: string, chips: string, listHtml: string, detailHtml: string, footHtml: string): void {
+  el.innerHTML =
+    `<div class="bp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2></div></div>` +
+    `<button class="pp-close" data-bp="close" title="Close" aria-label="Close">✕</button></div>` +
+    `<div class="bp-pools">${chips}</div>` +
+    `<div class="bp-body"><div class="bp-list">${listHtml}</div><div class="bp-detail">${detailHtml}</div></div>` +
+    footHtml;
+  el.classList.add("is-open");
+}
 function buildBuildPanel(): void {
   if (buildPanelBuilt) return;
   buildPanelBuilt = true;
@@ -3227,24 +3231,51 @@ function buildBuildPanel(): void {
     if (row) { buildSelectedKey = row.dataset.bpRow ?? null; renderBuildPanel(); return; }
     if (t.closest("[data-bp='queue']")) { queueSelectedBuild(); return; }
   });
+  $("build-ship-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-bp='close']")) { closeBuildPanel(); return; }
+    const qbtn = t.closest("[data-bp-qty]") as HTMLElement | null;
+    if (qbtn) { shipQty = Math.max(1, Number(qbtn.dataset.bpQty) || 1); renderShipPanel(); return; }
+    const row = t.closest("[data-bp-row]") as HTMLElement | null;
+    if (row) { shipSelectedKind = row.dataset.bpRow ?? null; renderShipPanel(); return; }
+    if (t.closest("[data-bp='queue']")) { queueSelectedShips(); return; }
+  });
 }
 function openBuildPanel(bodyId: string): void {
   buildBuildPanel();
   // Toggle: the same body's builder re-clicked closes it (the button is a switch).
-  if (buildTargetBodyId === bodyId && $("build-panel").classList.contains("is-open")) { closeBuildPanel(); return; }
+  const toggleOff = buildTargetBodyId === bodyId && $("build-panel").classList.contains("is-open");
+  closeBuildPanel(); // also closes the ship builder — the two never coexist
+  if (toggleOff) return;
   buildTargetBodyId = bodyId;
-  buildSelectedKey = null;
   renderBuildPanel();
+}
+function openShipPanel(bodyId: string): void {
+  buildBuildPanel();
+  const toggleOff = buildTargetBodyId === bodyId && $("build-ship-panel").classList.contains("is-open");
+  closeBuildPanel(); // also closes the structure builder
+  if (toggleOff) return;
+  buildTargetBodyId = bodyId;
+  shipQty = 1;
+  renderShipPanel();
 }
 function closeBuildPanel(): void {
   buildTargetBodyId = null;
   buildSelectedKey = null;
+  shipSelectedKind = null;
+  shipQty = 1;
   $("build-panel").classList.remove("is-open");
+  $("build-ship-panel").classList.remove("is-open");
 }
 function refreshBuildPanel(): void {
-  if (!buildTargetBodyId || !$("build-panel").classList.contains("is-open")) return;
-  if (renderDeferred("build-panel", refreshBuildPanel)) return; // §single-click
-  renderBuildPanel();
+  if (!buildTargetBodyId) return;
+  if ($("build-panel").classList.contains("is-open")) {
+    if (renderDeferred("build-panel", refreshBuildPanel)) return; // §single-click
+    renderBuildPanel();
+  } else if ($("build-ship-panel").classList.contains("is-open")) {
+    if (renderDeferred("build-ship-panel", refreshBuildPanel)) return;
+    renderShipPanel();
+  }
 }
 function queueSelectedBuild(): void {
   const sid = viewedSystemId();
@@ -3324,10 +3355,6 @@ function renderBuildPanel(): void {
     const p = pools[k];
     return `<span class="bp-pool${p.used >= p.total ? " is-full" : ""}" title="${POOL_LABEL[k]} slots used / total on this body">${POOL_LABEL[k]} ${p.used}/${p.total}</span>`;
   }).join("");
-  const head = `<div class="bp-head"><div class="panel-title"><div><div class="eyebrow">build</div>` +
-    `<h2>Build on ${esc(body.name)}</h2></div></div>` +
-    `<button class="pp-close" data-bp="close" title="Close" aria-label="Close">✕</button></div>` +
-    `<div class="bp-pools">${poolChips}</div>`;
   // LEFT: every non-ship structure buildable here, grouped by slot pool. Rows that
   // fail a gate still render, greyed, with the reason inline.
   const opts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => !SHIP_KEYS.has(o.key) && !!POOL_OF[o.key]);
@@ -3352,8 +3379,144 @@ function renderBuildPanel(): void {
     : "Nothing queued on this body yet.";
   const foot = `<div class="bp-foot"><button class="act bp-queue" data-bp="queue" ${canQueue ? "" : "disabled"} title="${esc(qTip)}">${icon("build", "sm")} Queue build</button>` +
     `<div class="bp-queued">${queuedNote}</div></div>`;
-  el.innerHTML = head + `<div class="bp-body"><div class="bp-list">${groups}</div><div class="bp-detail">${detail}</div></div>` + foot;
-  el.classList.add("is-open");
+  panelShellHtml(el, "build", `Build on ${body.name}`, poolChips, groups, detail, foot);
+}
+
+// ---- §build-ship-panel: the dedicated SHIP builder (mirrors the structure
+// builder; shares its shell/dock/breakpoint via `.build-shell`). Opened from the
+// shipyard body's "Build ship" button; a sibling of the structure builder — the
+// two never render together. Client-only over the SAME BuildShip command. ----
+const SHIP_ORDER = ["scout", "corvette", "raider", "convoy", "colony"];
+const SHIP_HULL_ICON: Record<string, IconKey> = { convoy: "convoy", raider: "raider", corvette: "corvette", colony: "colony", scout: "scout" };
+// Per-hull stats + one-line role, mirroring crates/sim/src/ship.rs (speed / hull
+// mass / attack+defense weights / module slots). Display only — the COSTS + gates
+// that matter for the command come from build_options + SHIP_REQ.
+const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; atk: number; def: number; slots: number; cap: string }> = {
+  scout: { role: "Eyes of the fleet — fastest hull, gathers intel; unarmed, dies if caught.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · widest sensor bubble" },
+  corvette: { role: "Armored escort/garrison — built to be shot at; too slow to chase raiders.", speed: 65, hull: 800, atk: 1, def: 4, slots: 2, cap: "No cargo · screens convoys" },
+  raider: { role: "The hunter — fast and hard-hitting; seizes a convoy's cargo on a won raid.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · takes prizes" },
+  convoy: { role: "Bulk hauler — carries goods to the hub; raidable, wants an escort.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 0, cap: "Hauls cargo (raidable)" },
+  colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
+};
+interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; }
+/// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
+/// shipyard tier — the same field the old inline rows read) + afford, plus the
+/// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
+function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const yardTier = dyn.shipyard_tier ?? 0;
+  const needTier = SHIP_REQ[o.key] ?? 1;
+  const yardShort = yardTier < needTier;
+  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+  const maxAff = o.costs.length
+    ? Math.max(0, Math.min(...o.costs.map((c) => Math.floor((have.get(c.commodity as Commodity) ?? 0) / c.units))))
+    : 0;
+  const buildable = !yardShort && afford;
+  const reason = yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, needTier, yardTier, yardShort, afford, maxAff, buildable, reason };
+}
+/// The staffed-shipyard build-time multiplier (mirrors the sim: build_ticks /
+/// (1 + SHIPYARD_BOOST·staffing·skill), SHIPYARD_BOOST = 0.25). 1.0 when the yard
+/// has no crew posted here (the AssignmentView carries the resolved factors).
+function shipyardBoost(dyn: SystemStateView, body: BodyView): number {
+  const a = (dyn.assignments ?? []).find((x) => x.body_id === body.id && x.structure === "shipyard");
+  return a ? 1 + 0.25 * a.staffing * a.skill : 1;
+}
+function shipRowHtml(st: ShipOpt): string {
+  const sel = st.o.key === shipSelectedKind ? " is-sel" : "";
+  const off = st.buildable ? "" : " is-off";
+  const info = SHIP_STATS[st.o.key];
+  const short = st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
+  const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
+  return `<button class="bp-row bp-ship-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(info?.role ?? st.o.label)}">` +
+    `<span class="bp-row-ic">${icon(SHIP_HULL_ICON[st.o.key] ?? "fleet", "sm")}</span>` +
+    `<span class="bp-ship-main"><span class="bp-ship-top"><span class="bp-row-name">${esc(st.o.label)}</span>` +
+    `<span class="bp-row-tier">${Math.round(st.o.build_secs)}s</span>${reason}</span>` +
+    `<span class="bp-ship-role">${esc(info?.role ?? "")}</span></span></button>`;
+}
+function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): string {
+  const st = shipOption(o, dyn);
+  const info = SHIP_STATS[o.key];
+  const q = Math.max(1, shipQty);
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  // QUANTITY stepper — 1 / 5 / 10 / max-affordable; the total cost + time track it.
+  const qbtn = (n: number, lbl: string) => `<button class="bp-qty-btn${q === n ? " is-on" : ""}" data-bp-qty="${n}" ${n < 1 ? "disabled" : ""}>${lbl}</button>`;
+  const stepper = `<div class="bp-qty"><span class="bp-qty-lbl">Quantity</span>${qbtn(1, "1")}${qbtn(5, "5")}${qbtn(10, "10")}${qbtn(st.maxAff, `Max ${st.maxAff}`)}<span class="bp-qty-cur">building <b>${q}</b></span></div>`;
+  // Cost table — the TOTAL (unit × q) reads largest; unit shown small alongside.
+  const costRows = o.costs.map((c) => {
+    const need = c.units * q;
+    const has = have.get(c.commodity as Commodity) ?? 0;
+    const short = has < need;
+    return `<div class="bp-cost-row${short ? " is-short" : ""}">` +
+      `<span class="bp-cost-c">${commodityIcon(c.commodity as Commodity, "sm")} ${esc(label(c.commodity))}</span>` +
+      `<span class="bp-cost-n"><b class="bp-cost-total">${need}</b>${q > 1 ? ` <span class="bp-cost-mul">${c.units}×${q}</span>` : ""} <span class="bp-cost-have">have ${has}</span></span></div>`;
+  }).join("");
+  const affordsQ = q <= st.maxAff;
+  // Build time — per-ship at this yard's current throughput (staffed-yard bonus
+  // shown; the shown-math law). N hulls build in PARALLEL, so the batch time == 1.
+  const boost = shipyardBoost(dyn, body);
+  const per = Math.max(1, Math.round(o.build_secs / boost));
+  const timeLine = boost > 1.001
+    ? `${icon("time", "sm")} <b>${per}s</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${Math.round(o.build_secs)}s).${q > 1 ? ` The ${q} build in parallel.` : ""}`
+    : `${icon("time", "sm")} <b>${per}s</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
+  const stat = (lbl: string, val: string) => `<div class="bp-stat"><span class="bp-stat-l">${lbl}</span><span class="bp-stat-v">${val}</span></div>`;
+  const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fuel", info.hull >= 1000 ? "heavy (∝ mass)" : "light (∝ mass)")}</div>` : "";
+  return `<div class="bp-d-head">${icon(SHIP_HULL_ICON[o.key] ?? "fleet", "md")} <b>${esc(o.label)}</b><span class="bp-d-tier">${st.yardShort ? `needs yard ${romanTier(st.needTier)}` : `${info?.slots ?? 0} slots`}</span></div>` +
+    `<div class="bp-d-desc">${esc(info?.role ?? "")}</div>` +
+    stepper +
+    `<div class="bp-d-sec">Recipe — total for ${q}, vs. this system's stock</div><div class="bp-costs">${costRows}</div>` +
+    (st.yardShort ? `<div class="bp-d-warn">Requires Shipyard tier ${romanTier(st.needTier)} here — this system's yard is tier ${romanTier(st.yardTier)}.</div>` : "") +
+    (!affordsQ ? `<div class="bp-d-warn">The stockpile covers ${st.maxAff} right now — queue that many, or wait for production.</div>` : "") +
+    `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${timeLine}</div>` +
+    `<div class="bp-d-sec">Stats</div>${stats}<div class="bp-d-line" style="margin-top:4px">${esc(info?.cap ?? "")}</div>`;
+}
+function queueSelectedShips(): void {
+  const sid = viewedSystemId();
+  if (!sid || !net || !buildTargetBodyId || !shipSelectedKind) return;
+  const dyn = state.systems.find((s) => s.id === sid);
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  const o = body ? buildOption(shipSelectedKind) : undefined;
+  if (!dyn || !body || !o) return;
+  const st = shipOption(o, dyn);
+  const q = Math.min(Math.max(1, shipQty), st.maxAff);
+  if (st.yardShort || q < 1) return; // the button is disabled, but never trust the DOM
+  // §byte-identical: N × the exact BuildShip the inline row sent (the loadout comes
+  // from the yard's fit picker via dispatchBuildKey, clamped per hull as before).
+  for (let i = 0; i < q; i++) dispatchBuildKey(shipSelectedKind, sid);
+  readout().innerHTML =
+    `Queued <b>${q}× ${esc(o.label)}</b> at ${esc(body.name)} — building at the orbital yard. ` +
+    `<span class="dim">Spawns here; a fuel-short or over-queued build shows in the Log.</span>`;
+  shipQty = 1; // reset for the next batch (mix a Corvette + two Convoys without reopening)
+  renderShipPanel();
+  refreshOpenBodyPanel();
+  updateSysviewManage();
+}
+function renderShipPanel(): void {
+  const el = $("build-ship-panel");
+  if (!buildTargetBodyId) { el.classList.remove("is-open"); return; }
+  const sid = viewedSystemId();
+  const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  if (!dyn || !body) { closeBuildPanel(); return; }
+  const yardTier = dyn.shipyard_tier ?? 0;
+  const chip = `<span class="bp-pool">${icon("shipyard", "sm")} Shipyard ${romanTier(yardTier)}</span>`;
+  const opts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => SHIP_KEYS.has(o.key));
+  const ordered = SHIP_ORDER.map((k) => opts.find((o) => o.key === k)).filter((o): o is BuildOpt => !!o);
+  const list = ordered.map((o) => shipRowHtml(shipOption(o, dyn))).join("");
+  const selOpt = shipSelectedKind ? buildOption(shipSelectedKind) : undefined;
+  const detail = selOpt
+    ? shipDetailHtml(selOpt as BuildOpt, dyn, body)
+    : `<div class="bp-detail-empty">Select a hull to see its recipe, stats, and build time. Set a quantity, then queue the batch.</div>`;
+  const selSt = selOpt ? shipOption(selOpt as BuildOpt, dyn) : null;
+  const q = Math.max(1, shipQty);
+  const canQueue = !!selSt && !selSt.yardShort && q >= 1 && q <= selSt.maxAff;
+  const qTip = !selSt ? "Select a hull first." : selSt.yardShort ? selSt.reason : q > selSt.maxAff ? `The stockpile covers ${selSt.maxAff} right now.` : "Queue this batch — draws from the system stockpile.";
+  // The yard's line: every ship job in the SYSTEM (ships build at the best yard).
+  const queued = (dyn.builds ?? []).filter((j) => SHIP_KEYS.has(j.key));
+  const queuedNote = queued.length ? `At the yard: <b>${queued.map((j) => esc(buildLabel(j.key))).join(", ")}</b>.` : "Nothing at the yard yet.";
+  const foot = `<div class="bp-foot"><button class="act bp-queue" data-bp="queue" ${canQueue ? "" : "disabled"} title="${esc(qTip)}">${icon("build", "sm")} Queue build${selSt && q > 1 ? ` ×${q}` : ""}</button>` +
+    `<div class="bp-queued">${queuedNote}</div></div>`;
+  panelShellHtml(el, "build ship", `Build at ${body.name}`, chip, list, detail, foot);
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
