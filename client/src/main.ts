@@ -179,8 +179,21 @@ const shipMass = (g: GhostView) =>
 // SUPERSEDES the earlier Stellar-Charters borrow. No loading="lazy" — these panels
 // re-render ~10 Hz, recreating the <img>; lazy would replace them before the
 // observer fires. Eager hits the browser cache instantly.
-const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
+const svgIcon = (slug: string, size: IconSize = "sm", cls = "") =>
   `<img class="icon icon--${size}${cls ? ` ${cls}` : ""}" src="/art/ui_icons/svg/${slug}.svg" alt="" />`;
+
+// The ONE raster-icon path helper: a downscaled PNG under /art/ui_icons/<category>/
+// (transparent-background art — the commodity resource icons and the research field
+// emblems), or the `glyph` fallback when `slug` is empty, so a missing/unknown icon
+// degrades to a legible symbol instead of a broken <img>. Both commodity and
+// research field icons go through here — no third copy of the path logic.
+function uiIcon(category: "resource" | "research", slug: string | undefined, glyph: string, title = "", cls = ""): string {
+  const klass = cls || `icon icon--${category}`;
+  const t = title ? ` title="${esc(title)}"` : "";
+  return slug
+    ? `<img class="${klass}" src="/art/ui_icons/${category}/${slug}.png" alt=""${t} />`
+    : `<span class="${klass} icon--glyph"${t}>${glyph}</span>`;
+}
 
 // A commodity icon is by definition a resource, so it always uses the dedicated
 // `--icon-resource` token + the downscaled PNG art (each commodity now has its own,
@@ -196,12 +209,24 @@ const COMMODITY_GLYPH: Record<Commodity, string> = {
   alloys: "\ud83d\udd29", electronics: "\ud83d\udda5", polymers: "\ud83e\uddea", fuel: "\u26fd", provisions: "\ud83c\udf5e",
   machinery: "\u2699", armaments: "\ud83d\udd2b",
 };
-const commodityIcon = (c: Commodity, _size: IconSize = "md") => {
-  const art = COMMODITY_ART[c];
-  return art
-    ? `<img class="icon icon--resource" src="/art/ui_icons/resource/${art}.png" alt="" title="${label(c)}" />`
-    : `<span class="icon icon--resource icon--glyph" title="${label(c)}">${COMMODITY_GLYPH[c]}</span>`;
+// A commodity icon is by definition a resource — the shared helper with the
+// `--icon-resource` token + a glyph fallback for goods whose art hasn't landed.
+const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
+  uiIcon("resource", COMMODITY_ART[c], COMMODITY_GLYPH[c], label(c));
+
+// §research R6: the six FIELD emblems (hexagonal art, 256px masters + 64px `-sm`
+// variants under /art/ui_icons/research/), used wherever a research field is named.
+// `size` picks the asset (sm → the light 64px variant) and the CSS token
+// (rf-ic--{sm|md|lg|xl} ≈ 26 / 44 / 60 / 72 px); glyph fallback degrades gracefully.
+const RESEARCH_FIELDS = new Set(["propulsion", "materials", "computation", "weapons", "hulls", "life"]);
+const RESEARCH_GLYPH: Record<string, string> = {
+  propulsion: "🚀", materials: "⚙️", computation: "📡", weapons: "🎯", hulls: "🛡️", life: "🌱",
 };
+function researchIcon(field: string, size: "sm" | "md" | "lg" | "xl" = "md"): string {
+  const has = RESEARCH_FIELDS.has(field);
+  const slug = has ? (size === "sm" ? `${field}-sm` : field) : undefined;
+  return uiIcon("research", slug, RESEARCH_GLYPH[field] ?? "◆", FIELD_TITLE[field] ?? field, `rf-ic rf-ic--${size}`);
+}
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
@@ -210,7 +235,7 @@ const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
   warn: "status-warning-threat",
   info: "status-info",
 };
-const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => uiIcon(STATUS_SLUG[sev], size);
+const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => svgIcon(STATUS_SLUG[sev], size);
 
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
@@ -749,7 +774,7 @@ function updateShipPanel(): void {
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${svgIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -939,7 +964,7 @@ function researchBoard(fieldSlug: string, progs: ProgrammeView[], queue: string[
     inner += `<div class="lbl" style="color:#8fd3dd;margin-top:2px">⑂ ${esc(SCHOOL_TITLE[s] ?? s)}</div>`;
     inner += group(s, 3) + group(s, 4) + group(s, 5);
   }
-  return `<div class="rp-board"><h4>${esc(FIELD_TITLE[fieldSlug] ?? fieldSlug)}</h4>${inner}</div>`;
+  return `<div class="rp-board"><h4>${researchIcon(fieldSlug, "lg")}<span>${esc(FIELD_TITLE[fieldSlug] ?? fieldSlug)}</span></h4>${inner}</div>`;
 }
 
 function updateResearchPanel(): void {
@@ -975,9 +1000,10 @@ function updateResearchPanel(): void {
             `<div>T${x.tier}</div><div>${x.rate.toFixed(2)}</div>`).join("") +
           `</div>`
         : `<div class="rp-acad"><div class="amber">No staffed Academy is contributing — post crew to an Academy.</div></div>`;
-      body += `<div class="rp-active"><div class="rp-a-top"><span class="rp-a-name">${esc(a.name)}</span>` +
+      const aField = r.programmes.find((p) => p.id === a.id)?.field ?? "";
+      body += `<div class="rp-active">${researchIcon(aField, "xl")}<div class="rp-a-main"><div class="rp-a-top"><span class="rp-a-name">${esc(a.name)}</span>` +
         `<span class="rp-a-eta">${esc(String(Math.round(a.progress))) } / ${Math.round(a.cost)}·s · ${eta} · ${r.rate.toFixed(2)}/s</span></div>` +
-        `<div class="rp-bar"><i style="width:${pct}%"></i></div>${acadRows}</div>`;
+        `<div class="rp-bar"><i style="width:${pct}%"></i></div>${acadRows}</div></div>`;
     } else {
       body += `<div class="rp-idle">No active programme. Pick any open node below to queue it — the front of the queue starts accruing.</div>`;
     }
@@ -986,7 +1012,7 @@ function updateResearchPanel(): void {
     const chips = q.map((id, i) => {
       const p = r.programmes.find((x) => x.id === id);
       const nm = p ? p.name : id;
-      return `<span class="rp-q-chip"><span class="n">${i + 1}</span> ${esc(nm)}` +
+      return `<span class="rp-q-chip"><span class="n">${i + 1}</span>${researchIcon(p?.field ?? "", "sm")}${esc(nm)}` +
         `<button data-qup="${i}" title="Earlier">▲</button><button data-qdown="${i}" title="Later">▼</button>` +
         `<button data-qrm="${i}" title="Remove">✕</button></span>`;
     }).join("");
@@ -1090,7 +1116,7 @@ function openHubPanel(): void {
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
     `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
-    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", "sm")} Open Market</button>` +
+    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open Market</button>` +
     `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
@@ -1674,7 +1700,7 @@ function openBattlePanel(id: number): void {
     // §battle-records: watch the round-by-round replay (if its record is retained).
     ((): string => {
       const rec = recordForReport(r);
-      return rec ? `<button class="act" data-act="viewbattle" data-record="${rec.id}" title="Watch the round-by-round replay of this battle.">${uiIcon("concept-fleet", "sm")} View battle replay</button>` : "";
+      return rec ? `<button class="act" data-act="viewbattle" data-record="${rec.id}" title="Watch the round-by-round replay of this battle.">${svgIcon("concept-fleet", "sm")} View battle replay</button>` : "";
     })() +
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
@@ -1738,7 +1764,7 @@ function shipChip(kind: ShipKind, count: number, opts: { lost?: number; est?: st
     ? `<span class="fs-fallen">−${opts.lost}</span>`
     : opts.shrunk ? `<span class="fs-fallen">▾</span>` : "";
   return `<span class="fs-chip${wiped ? " lost" : ""}" title="${esc(shipKindLabel(kind))}">` +
-    `${uiIcon(SHIP_ICON[kind], "md")}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
+    `${svgIcon(SHIP_ICON[kind], "md")}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
 }
 // A labelled side of the force strip. `chips` empty → a dim placeholder.
 function forceSide(label: string, cls: string, chips: string): string {
@@ -1808,7 +1834,7 @@ function updateOngoingBattlePanel(): void {
           echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
-          `↩ ${uiIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
+          `↩ ${svgIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
       }).join("") + `</div>`
     : "";
 
@@ -1816,7 +1842,7 @@ function updateOngoingBattlePanel(): void {
   // wall-clock an order issued now would land at — plus a terse reach verdict.
   const delay = battleCommandDelay(b);
   const cmdDelayLine = delay !== null
-    ? `<div class="sp-line dim">${uiIcon("action-standing-order", "sm")} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
+    ? `<div class="sp-line dim">${svgIcon("action-standing-order", "sm")} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
       (delay > 20 ? ` · <span style="color:#e88">too far to steer</span>` : ` · <span style="color:var(--accent)">still in reach</span>`) + `</div>`
     : "";
 
@@ -1829,7 +1855,7 @@ function updateOngoingBattlePanel(): void {
   // record for it has reached us — participants always have one, an observer
   // only when their sensors cover the site).
   const viewBtn = state.battleRecords.some((r) => r.id === b.id)
-    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${uiIcon("concept-fleet", "sm")} View battle replay</button>`
+    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${svgIcon("concept-fleet", "sm")} View battle replay</button>`
     : "";
   const body =
     ragingLine +
@@ -2018,7 +2044,7 @@ function bvSideHtml(rec: BattleRecordView, rd: RoundRecordView, s: 0 | 1, partic
       ? (kill?.exact ? ` <span class="bv-krow__kill">−${kill.exact}</span>` : "")
       : (kill ? ` <span class="bv-krow__kill">▾</span>` : "");
     const nStyle = gone ? ' style="text-decoration:line-through;color:var(--dim)"' : "";
-    return `<div class="bv-krow" title="${esc(shipKindLabel(k))}">${uiIcon(SHIP_ICON[k], "sm")}` +
+    return `<div class="bv-krow" title="${esc(shipKindLabel(k))}">${svgIcon(SHIP_ICON[k], "sm")}` +
       `<div class="bv-krow__bar"><div class="bv-krow__fill${gone ? " gone" : ""}" style="width:${gone ? 100 : Math.max(5, pct)}%"></div></div>` +
       `<span class="bv-krow__n"${nStyle}>${esc(nlabel)}${killTag}</span></div>`;
   }).join("");
@@ -2075,7 +2101,7 @@ function renderBattleViewer(): void {
 
   const head =
     `<div class="pp-head"><div class="panel-title"><div>` +
-    `<div class="eyebrow">${uiIcon("concept-fleet", "sm")} battle replay${rec.raid ? " · raid" : ""}${participant ? "" : " · sensor estimate"}</div>` +
+    `<div class="eyebrow">${svgIcon("concept-fleet", "sm")} battle replay${rec.raid ? " · raid" : ""}${participant ? "" : " · sensor estimate"}</div>` +
     `<h2>Engagement ${esc(nearestSystemName(rec.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
 
@@ -2899,14 +2925,14 @@ function buildQueueRows(
     // §bodies: a queue row NAVIGATES to its site body when the caller asks.
     const bodyId = opts?.nav ? String(j.body_id) : null;
     const nav = bodyId ? ` data-body="${bodyId}" style="cursor:pointer" title="under construction — click to open its body panel"` : "";
-    return `<div class="bq-row"${nav}><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
+    return `<div class="bq-row"${nav}><span class="bq-ic">${svgIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
       `<div class="bq-main"><div class="bq-head"><b>${esc(name)}</b>` +
       `<span class="bq-eta">${fmtCountdown(left)} · done ${doneAtLocal(j.complete_time)}</span></div>` +
       `${bar(pct)}</div></div>`;
   }).join("");
   const doneRows = flashes.map((f) =>
     `<div class="bq-row bq-done"><span class="bq-ic tone-up">✓</span><div class="bq-main"><b>${esc(f.label)}</b> <span class="dim">complete</span></div></div>`).join("");
-  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", "sm")} Under construction</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${svgIcon("action-build", "sm")} Under construction</div>` +
     `<div class="bq-list">${rows}${doneRows}</div>`;
 }
 
@@ -2986,7 +3012,7 @@ function fitPicker(dyn: SystemStateView | undefined): string {
     return `<button class="act fit-chip${on ? " is-on" : ""}" data-fit="${m}" title="${esc(MODULE_TIP[m])}">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
   }).join("");
   const cur = pendingFit.length ? pendingFit.map((m) => MODULE_GLYPH[m]).join(" ") : "stock (unfitted)";
-  return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${uiIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
+  return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${svgIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
     `<div class="fit-row">${chips}</div>`;
 }
 // §modules Part B4: the REFIT section on an OWN fleet — its warship STACKS
@@ -3025,7 +3051,7 @@ function refitSection(g: GhostView): string {
       `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same ? "disabled" : ""} title="Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.">Refit →</button>` +
       `</div>`;
   }).join("");
-  return `<div class="sp-sec">${uiIcon("action-build", "sm")} Refit</div>` +
+  return `<div class="sp-sec">${svgIcon("action-build", "sm")} Refit</div>` +
     `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> — at a docked Shipyard</div>` +
     `<div class="fit-row">${chips}</div>${rows}`;
 }
@@ -3742,9 +3768,9 @@ function updateSystemTab(): void {
     // says work is running (and when the next job lands) without opening the view.
     const jobs = dyn?.builds ?? [];
     if (jobs.length === 1) {
-      cues.push(`${uiIcon("action-build", "sm")} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${svgIcon("action-build", "sm")} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     } else if (jobs.length > 1) {
-      cues.push(`${uiIcon("action-build", "sm")} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${svgIcon("action-build", "sm")} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     }
   }
   const attention = cues.length ? `<div class="mhint" style="margin-top:6px">${cues.join(" · ")}</div>` : "";

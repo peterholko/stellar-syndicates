@@ -775,7 +775,8 @@
       #research-panel .rp-close:hover { color: var(--ink); }
       #research-panel .rp-body { padding: 10px 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
       /* Active banner + rate + academy table */
-      #research-panel .rp-active { border: 1px solid #2a5560; border-left: 3px solid #5ad1e0; border-radius: 6px; background: rgba(18,40,46,0.5); padding: 8px 10px; }
+      #research-panel .rp-active { display: flex; align-items: center; gap: 10px; border: 1px solid #2a5560; border-left: 3px solid #5ad1e0; border-radius: 6px; background: rgba(18,40,46,0.5); padding: 8px 10px; }
+      #research-panel .rp-active .rp-a-main { flex: 1 1 auto; min-width: 0; }
       #research-panel .rp-active .rp-a-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
       #research-panel .rp-active .rp-a-name { font-weight: 700; color: #bff0f6; font-size: 13px; }
       #research-panel .rp-active .rp-a-eta { color: var(--dim); font-size: 10px; white-space: nowrap; }
@@ -798,7 +799,19 @@
       #research-panel .rp-boards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
       @media (max-width: 620px) { #research-panel .rp-boards { grid-template-columns: repeat(2, 1fr); } }
       #research-panel .rp-board { border: 1px solid var(--border); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 5px; background: rgba(255,255,255,0.015); }
-      #research-panel .rp-board > h4 { margin: 0; font-size: 10px; letter-spacing: 0.5px; color: #bff0f6; text-transform: uppercase; }
+      #research-panel .rp-board > h4 { margin: 0 0 2px; display: flex; align-items: center; gap: 8px; color: #bff0f6; font-weight: 700; }
+      #research-panel .rp-board > h4 > span { font-size: 11.5px; letter-spacing: 0.5px; text-transform: uppercase; }
+      /* §research field emblems — the hexagonal art, sized per surface (rows 26 /
+         selector 44 / board header 56 / active banner 72). The glyph fallback
+         keeps the same box so a missing file never shifts layout. */
+      .rf-ic { flex: none; vertical-align: middle; object-fit: contain; }
+      .rf-ic--sm { width: 26px; height: 26px; }
+      .rf-ic--md { width: 44px; height: 44px; }
+      .rf-ic--lg { width: 56px; height: 56px; }
+      .rf-ic--xl { width: 72px; height: 72px; }
+      span.rf-ic { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+      span.rf-ic--sm { font-size: 17px; } span.rf-ic--md { font-size: 28px; }
+      span.rf-ic--lg { font-size: 36px; } span.rf-ic--xl { font-size: 46px; }
       #research-panel .rp-tier { display: flex; flex-direction: column; gap: 3px; }
       #research-panel .rp-tier > .lbl { font-size: 9px; color: var(--dim); letter-spacing: 0.5px; }
       #research-panel .rp-gate { font-size: 9px; color: #ffcf7a; }
