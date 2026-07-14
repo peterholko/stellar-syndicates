@@ -1209,6 +1209,8 @@ function updateSysviewDynamic(): void {
   // §body-management: the open body panel is live — crew counts, queue bars,
   // and afford states track the Views (single-click-guarded like every panel).
   refreshOpenBodyPanel();
+  // §build-panel: its rows/costs/queued-note track the same Views.
+  refreshBuildPanel();
 }
 function buildSysviewManage(): void {
   if (sysviewManageBuilt) return;
@@ -1374,6 +1376,11 @@ function buildPlanetPanel(): void {
       return;
     }
     switch (el.dataset.action) {
+      case "open-builder":
+        // §build-panel: open the dedicated builder for THIS body (a sibling panel
+        // to the right — nothing is sent until "Queue build").
+        if (openBodyDetail) openBuildPanel(openBodyDetail.id);
+        break;
       case "ship": {
         const manifest = shippableStock(state.systems.find((s) => s.id === sid));
         if (manifest.length) net.send({ type: "ShipProduction", system_id: sid });
@@ -1404,6 +1411,7 @@ function refreshOpenBodyPanel(): void {
 }
 function closePlanetPanel(): void {
   openBodyDetail = null;
+  closeBuildPanel(); // the builder is a child of the planet context
   $("planet-panel").classList.remove("is-open");
 }
 /// §body-management: a section header for the body panel.
@@ -1412,6 +1420,9 @@ const ppSec = (title: string, tip = ""): string =>
 
 function openPlanetPanel(d: SystemBodyDetail): void {
   buildPlanetPanel();
+  // §build-panel: retargeting to a DIFFERENT body closes a stale builder (it
+  // pointed at the old body); a live refresh of the SAME body keeps it open.
+  if (buildTargetBodyId && buildTargetBodyId !== d.id) closeBuildPanel();
   openBodyDetail = d;
   const eyebrow = d.isMoon ? "natural satellite" : d.habitable ? "habitable world" : "planet";
   const habitable = d.habitable ? " " + badge("positive", "habitable") : "";
@@ -1471,21 +1482,23 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     const lines = assignmentLines(dyn, true, body);
     const linesSec = lines ? ppSec("Production lines", "output = richness/rate × tier × staffing × skill × food — hover a row for its chain") + lines : "";
 
-    // 4. BUILD HERE — gated by THIS body's slot pools (founding claims a slot;
-    // tier-ups deepen in place). Extraction offers only where its deposit lies.
+    // 4. BUILD — the per-body slot pools at a glance + ONE button into the
+    // dedicated build panel (the per-structure grid moved there wholesale, so the
+    // geology/built-here above stay readable while you choose what to build).
     const pools = bodyPoolUsage(body, dyn);
-    const devOpts = (state.galaxy?.build_options ?? []).filter((o) =>
-      !SHIP_KEYS.has(o.key) &&
-      (!EXTRACTION_OF[o.key] || (body.deposits ?? []).some((dep) => EXTRACTION_OF[o.key].includes(dep.resource))));
-    const buildSec = devOpts.length
-      ? ppSec("Build here", "Founding a NEW structure claims one of this body's pool slots; tier-ups deepen in place. Costs draw from the system stockpile.") +
-        `<div class="build-grid">${devOpts.map((o) => {
-          const pool = POOL_OF[o.key];
-          const tierUp = (tiers[o.key] ?? 0) > 0;
-          const poolFull = pool && !tierUp ? pools[pool].used >= pools[pool].total : false;
-          return buildOptionRow(o, dyn, poolFull);
-        }).join("")}</div>`
-      : "";
+    const structOpts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => !SHIP_KEYS.has(o.key) && !!POOL_OF[o.key]);
+    // Openable if there's anything to DO here — a foundable structure (free slot +
+    // deposit) or an existing tier to deepen (goods aside; the panel shows afford).
+    const anyOpenable = structOpts.some((o) => {
+      const st = structOption(o, dyn, body, pools);
+      return st.tierUp || (!st.poolFull && !st.noDeposit);
+    });
+    const poolStrip = `<div class="pp-pools">` + (["resource", "industrial", "infrastructure"] as const)
+      .map((k) => `<span class="pp-pool${pools[k].used >= pools[k].total ? " is-full" : ""}" title="${POOL_LABEL[k]} slots used / total on this body — founding a new structure needs a free slot; deepening a tier never does.">${POOL_LABEL[k]} ${pools[k].used}/${pools[k].total}</span>`)
+      .join("") + `</div>`;
+    const buildSec = ppSec("Build", "The at-a-glance slot pools — the reason to open the builder. Founding a NEW structure claims one of this body's pool slots; tier-ups deepen in place.") +
+      poolStrip +
+      `<button class="act pp-build-open" data-action="open-builder" ${anyOpenable ? "" : "disabled"} title="${anyOpenable ? "Open the build panel — pick a structure, read its recipe & effect, then queue it." : "Nothing buildable here — every slot pool is full and there's nothing to deepen. Grow this body's population, or build on another body."}">${icon("build", "sm")} Build structure…</button>`;
 
     // Per-body construction queue (ship jobs render under the yard below).
     const bodyQueue = buildQueueRows(sid, dyn, { filter: (j) => j.body_id === body.id && !SHIP_KEYS.has(j.key), seenKey: `${sid}#b${body.id}` });
@@ -2582,6 +2595,8 @@ function installInteraction(): void {
       // §battle-records: the replay overlay is topmost — Escape closes it first.
       if ($("battle-viewer").classList.contains("is-open")) {
         closeBattleViewer();
+      } else if ($("build-panel").classList.contains("is-open")) {
+        closeBuildPanel(); // back out of the builder before the planet panel
       } else if ($("planet-panel").classList.contains("is-open")) {
         closePlanetPanel();
       } else if (renderer.viewMode.type === "system") {
@@ -3124,6 +3139,221 @@ function poolUsage(dyn: SystemStateView | undefined): PoolUse {
     }
   }
   return sum;
+}
+
+// ---- §build-panel: the dedicated structure builder ---------------------------
+// A client-only UI over the SAME DevelopSystem command — the per-structure grid
+// that used to live inline on the planet panel moved here wholesale, so the
+// planet panel stays a lens on the body while you choose what to build. All the
+// slot / afford / tier / deposit gating below is the ONE source of truth shared
+// by the row list, the detail, and the Queue button.
+type Pool = "resource" | "industrial" | "infrastructure";
+const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industrial: "Industrial", infrastructure: "Infrastructure" };
+// Structure → the closest registry icon (art only; mirrors systemview's family).
+const STRUCT_ICON: Record<string, IconKey> = {
+  mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
+  smelter: "refinery", electronics_fabricator: "refinery", chemical_works: "refinery",
+  fuel_refinery: "refinery", machine_works: "build", armaments_complex: "build", shipyard: "shipyard",
+  agroplex: "habitat", habitat: "habitat", depot: "depot",
+  sensor_array: "sensor", defense_platform: "defense", academy: "habitat",
+};
+// Producers scale output by the tier-throughput curve (mirrors sim TIER_THROUGHPUT).
+const TIER_THROUGHPUT = [0, 1.0, 2.2, 3.8, 6.0];
+const THROUGHPUT_STRUCTS = new Set(["mining_complex", "volatile_harvester", "bioharvester", "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery", "machine_works", "armaments_complex", "agroplex", "academy"]);
+// One-line "what it does" + "what it enables" per structure (client flavor, kept
+// consistent with the sim's recipes — production.rs CONVERTERS / build.rs).
+const STRUCT_INFO: Record<string, { desc: string; effect: string }> = {
+  mining_complex: { desc: "Mines the body's Metallic Ore, Silicates, or Rare-Element deposit.", effect: "Feeds raw ore into the system stockpile." },
+  volatile_harvester: { desc: "Draws Volatiles from the body's gas/ice deposit.", effect: "Feeds Volatiles — fuel & polymer feedstock." },
+  bioharvester: { desc: "Harvests Biomass from the body's living deposit.", effect: "Feeds Biomass — food & polymer feedstock." },
+  smelter: { desc: "Smelts Metallic Ore (+Fuel) into Alloys.", effect: "Unlocks Alloys production." },
+  electronics_fabricator: { desc: "Fabricates Electronics from Rare Elements + Silicates.", effect: "Unlocks Electronics production." },
+  chemical_works: { desc: "Processes Volatiles + Biomass into Polymers.", effect: "Unlocks Polymers production." },
+  fuel_refinery: { desc: "Refines Volatiles into Fuel.", effect: "Unlocks Fuel — powers movement + smelting." },
+  machine_works: { desc: "Builds Machinery from Alloys + Electronics + Fuel.", effect: "Unlocks Machinery — the build-cost backbone." },
+  armaments_complex: { desc: "Assembles Armaments from Alloys + Electronics + Polymers.", effect: "Unlocks Armaments + on-site module manufacture." },
+  shipyard: { desc: "An orbital yard that builds and fits warships here.", effect: "Gates ship construction (Convoy I, Raider/Corvette II)." },
+  agroplex: { desc: "Grows Provisions from Biomass.", effect: "Feeds the colony — keeps it Well Supplied." },
+  habitat: { desc: "Housing that lifts this body's population ceiling.", effect: "+population cap & workforce; boosts output when fed." },
+  depot: { desc: "An orbital warehouse that raises storage capacity.", effect: "+400 storage cap; ships cargo to the hub." },
+  sensor_array: { desc: "A standing sensor array over the system.", effect: "Projects a sensor bubble — see rivals sooner." },
+  defense_platform: { desc: "Static defenses that fight raiders at the system.", effect: "+1 defense tier vs. attackers (can be worn down)." },
+  academy: { desc: "Trains specialists and powers syndicate research.", effect: "Enables specialist training + a research contribution." },
+};
+
+type BuildOpt = { key: string; label: string; costs: { commodity: string; units: number }[]; build_secs: number };
+interface StructOpt {
+  o: BuildOpt; pool: Pool; currentTier: number; targetTier: number;
+  foundsNew: boolean; tierUp: boolean;
+  afford: boolean; poolFull: boolean; noDeposit: boolean;
+  buildable: boolean; reason: string;
+}
+/// The sim-mirroring state for building `o` on `body` — current/target tier,
+/// whether it founds a NEW slot vs. deepens in place, and every precondition
+/// (afford / pool-full / matching-deposit). `buildable` = all pass (Queue is
+/// live); `reason` is the first failing gate. Lifted out of the old inline build
+/// rows so the list, the detail, and the button can never disagree.
+function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, pools: PoolUse): StructOpt {
+  const pool = POOL_OF[o.key];
+  const currentTier = (body.structures ?? {})[o.key] ?? 0;
+  const pendingAhead = (dyn.builds ?? []).filter((j) => j.body_id === body.id && j.key === o.key).length;
+  const foundsNew = currentTier === 0 && pendingAhead === 0;
+  const targetTier = currentTier + pendingAhead + 1;
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+  const poolFull = foundsNew && !!pool && pools[pool].used >= pools[pool].total;
+  const extractsFrom = EXTRACTION_OF[o.key];
+  const noDeposit = foundsNew && !!extractsFrom && !(body.deposits ?? []).some((d) => extractsFrom.includes(d.resource as Commodity));
+  const buildable = !poolFull && !noDeposit && afford;
+  const reason = noDeposit ? "No matching deposit on this body — a mine only works its own rock."
+    : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
+      : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, pool, currentTier, targetTier, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, buildable, reason };
+}
+const romanTier = (n: number): string => ROMAN[n] ?? String(n);
+
+// Build-panel state: which body it targets + the currently-selected structure.
+let buildPanelBuilt = false;
+let buildTargetBodyId: string | null = null;
+let buildSelectedKey: string | null = null;
+
+function buildBuildPanel(): void {
+  if (buildPanelBuilt) return;
+  buildPanelBuilt = true;
+  $("build-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-bp='close']")) { closeBuildPanel(); return; }
+    const row = t.closest("[data-bp-row]") as HTMLElement | null;
+    if (row) { buildSelectedKey = row.dataset.bpRow ?? null; renderBuildPanel(); return; }
+    if (t.closest("[data-bp='queue']")) { queueSelectedBuild(); return; }
+  });
+}
+function openBuildPanel(bodyId: string): void {
+  buildBuildPanel();
+  // Toggle: the same body's builder re-clicked closes it (the button is a switch).
+  if (buildTargetBodyId === bodyId && $("build-panel").classList.contains("is-open")) { closeBuildPanel(); return; }
+  buildTargetBodyId = bodyId;
+  buildSelectedKey = null;
+  renderBuildPanel();
+}
+function closeBuildPanel(): void {
+  buildTargetBodyId = null;
+  buildSelectedKey = null;
+  $("build-panel").classList.remove("is-open");
+}
+function refreshBuildPanel(): void {
+  if (!buildTargetBodyId || !$("build-panel").classList.contains("is-open")) return;
+  if (renderDeferred("build-panel", refreshBuildPanel)) return; // §single-click
+  renderBuildPanel();
+}
+function queueSelectedBuild(): void {
+  const sid = viewedSystemId();
+  if (!sid || !net || !buildTargetBodyId || !buildSelectedKey) return;
+  const dyn = state.systems.find((s) => s.id === sid);
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  const o = body ? buildOption(buildSelectedKey) : undefined;
+  if (!dyn || !body || !o) return;
+  const st = structOption(o, dyn, body, bodyPoolUsage(body, dyn));
+  if (!st.buildable) return; // the button is disabled, but never trust the DOM
+  // §byte-identical: exactly the DevelopSystem the inline buttons sent — the body
+  // panel names its body, the sim soft-rejects on arrival as always.
+  dispatchBuildKey(buildSelectedKey, sid, Number(buildTargetBodyId));
+  readout().innerHTML =
+    `Queued <b>${esc(o.label)}${st.tierUp ? ` ×${st.targetTier}` : ""}</b> on ${esc(body.name)} — ` +
+    `it appears under construction. <span class="dim">A soft-reject (no slot / short on goods) shows in the Log.</span>`;
+  buildSelectedKey = null; // clear so several can be queued back-to-back
+  renderBuildPanel();
+  refreshOpenBodyPanel(); // the queue row lands on the next View push
+  updateSysviewManage();
+}
+function buildRowHtml(st: StructOpt): string {
+  const sel = st.o.key === buildSelectedKey ? " is-sel" : "";
+  const off = st.buildable ? "" : " is-off";
+  const badge = st.foundsNew ? `<span class="bp-row-tier">new</span>` : `<span class="bp-row-tier">▲ ×${st.targetTier}</span>`;
+  const short = st.noDeposit ? "no deposit" : st.poolFull ? "pool full" : !st.afford ? "short on goods" : "";
+  const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
+  return `<button class="bp-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(st.buildable ? st.o.label : st.reason)}">` +
+    `<span class="bp-row-ic">${icon(STRUCT_ICON[st.o.key] ?? "build", "sm")}</span>` +
+    `<span class="bp-row-name">${esc(st.o.label)}</span>${badge}${reason}</button>`;
+}
+function buildDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView, pools: PoolUse): string {
+  const st = structOption(o, dyn, body, pools);
+  const info = STRUCT_INFO[o.key] ?? { desc: "", effect: "" };
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const costRows = o.costs.map((c) => {
+    const has = have.get(c.commodity as Commodity) ?? 0;
+    const shortC = has < c.units;
+    return `<div class="bp-cost-row${shortC ? " is-short" : ""}">` +
+      `<span class="bp-cost-c">${commodityIcon(c.commodity as Commodity, "sm")} ${esc(label(c.commodity))}</span>` +
+      `<span class="bp-cost-n">${c.units} <span class="bp-cost-have">have ${has}</span></span></div>`;
+  }).join("");
+  const slotLine = st.foundsNew
+    ? `Claims a <b>${POOL_LABEL[st.pool]}</b> slot — ${pools[st.pool].used} → ${pools[st.pool].used + 1} / ${pools[st.pool].total}.`
+    : `Deepens in place — no new slot consumed.`;
+  const from = Math.min(4, st.targetTier - 1), to = Math.min(4, st.targetTier);
+  let framing: string;
+  if (st.tierUp) {
+    let delta = "";
+    if (THROUGHPUT_STRUCTS.has(o.key) && TIER_THROUGHPUT[from] && TIER_THROUGHPUT[to]) {
+      const pct = Math.round((TIER_THROUGHPUT[to] / TIER_THROUGHPUT[from] - 1) * 100);
+      delta = ` Throughput ×${TIER_THROUGHPUT[from]} → ×${TIER_THROUGHPUT[to]} <span class="tone-up">(+${pct}%)</span>.`;
+    }
+    framing = `<div class="bp-upgrade"><b>Upgrade</b> — Tier ${romanTier(st.targetTier - 1)} → ${romanTier(st.targetTier)}.${delta}</div>`;
+  } else {
+    framing = `<div class="bp-upgrade"><b>New structure</b> — founds Tier I.</div>`;
+  }
+  return `<div class="bp-d-head">${icon(STRUCT_ICON[o.key] ?? "build", "md")} <b>${esc(o.label)}</b>` +
+    `<span class="bp-d-tier">${st.foundsNew ? "new" : `→ ×${st.targetTier}`}</span></div>` +
+    `<div class="bp-d-desc">${esc(info.desc)}</div>${framing}` +
+    `<div class="bp-d-sec">Recipe — required vs. this system's stock</div><div class="bp-costs">${costRows}</div>` +
+    (st.afford ? "" : `<div class="bp-d-warn">Short on goods — it waits (or soft-rejects) until the stockpile covers it.</div>`) +
+    (st.noDeposit ? `<div class="bp-d-warn">No matching deposit on this body — found it on a body that has one.</div>` : "") +
+    `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${icon("time", "sm")} ${Math.round(o.build_secs)}s at this system.</div>` +
+    `<div class="bp-d-sec">Slot</div><div class="bp-d-line">${slotLine}</div>` +
+    `<div class="bp-d-sec">Enables</div><div class="bp-d-line">${esc(info.effect)}</div>`;
+}
+function renderBuildPanel(): void {
+  const el = $("build-panel");
+  if (!buildTargetBodyId) { el.classList.remove("is-open"); return; }
+  const sid = viewedSystemId();
+  const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  if (!dyn || !body) { closeBuildPanel(); return; }
+  const pools = bodyPoolUsage(body, dyn);
+  const poolChips = (["resource", "industrial", "infrastructure"] as Pool[]).map((k) => {
+    const p = pools[k];
+    return `<span class="bp-pool${p.used >= p.total ? " is-full" : ""}" title="${POOL_LABEL[k]} slots used / total on this body">${POOL_LABEL[k]} ${p.used}/${p.total}</span>`;
+  }).join("");
+  const head = `<div class="bp-head"><div class="panel-title"><div><div class="eyebrow">build</div>` +
+    `<h2>Build on ${esc(body.name)}</h2></div></div>` +
+    `<button class="pp-close" data-bp="close" title="Close" aria-label="Close">✕</button></div>` +
+    `<div class="bp-pools">${poolChips}</div>`;
+  // LEFT: every non-ship structure buildable here, grouped by slot pool. Rows that
+  // fail a gate still render, greyed, with the reason inline.
+  const opts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => !SHIP_KEYS.has(o.key) && !!POOL_OF[o.key]);
+  const byPool: Record<Pool, StructOpt[]> = { resource: [], industrial: [], infrastructure: [] };
+  for (const o of opts) byPool[POOL_OF[o.key]].push(structOption(o, dyn, body, pools));
+  const groups = (["resource", "industrial", "infrastructure"] as Pool[]).map((k) => {
+    if (!byPool[k].length) return "";
+    return `<div class="bp-group">${POOL_LABEL[k]} <span class="bp-group-n">${pools[k].used}/${pools[k].total}</span></div>` +
+      byPool[k].map(buildRowHtml).join("");
+  }).join("");
+  const selOpt = buildSelectedKey ? buildOption(buildSelectedKey) : undefined;
+  const detail = selOpt
+    ? buildDetailHtml(selOpt as BuildOpt, dyn, body, pools)
+    : `<div class="bp-detail-empty">Select a structure to see its recipe, build time, slot, and effect.</div>`;
+  // FOOTER: Queue + a live note of what's already queued on THIS body.
+  const selSt = selOpt ? structOption(selOpt as BuildOpt, dyn, body, pools) : null;
+  const canQueue = !!selSt && selSt.buildable;
+  const qTip = !selSt ? "Select a structure first." : selSt.buildable ? "Queue this build — draws from the system stockpile." : selSt.reason;
+  const queued = (dyn.builds ?? []).filter((j) => j.body_id === body.id && !SHIP_KEYS.has(j.key));
+  const queuedNote = queued.length
+    ? `Already queued here: <b>${queued.map((j) => esc(buildLabel(j.key))).join(", ")}</b>.`
+    : "Nothing queued on this body yet.";
+  const foot = `<div class="bp-foot"><button class="act bp-queue" data-bp="queue" ${canQueue ? "" : "disabled"} title="${esc(qTip)}">${icon("build", "sm")} Queue build</button>` +
+    `<div class="bp-queued">${queuedNote}</div></div>`;
+  el.innerHTML = head + `<div class="bp-body"><div class="bp-list">${groups}</div><div class="bp-detail">${detail}</div></div>` + foot;
+  el.classList.add("is-open");
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
