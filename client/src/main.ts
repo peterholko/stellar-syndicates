@@ -1306,7 +1306,7 @@ function updateSysviewManage(): void {
   const used = dyn.storage_used ?? 0;
   const storageFull = cap > 0 && used >= cap;
   const storageBar = cap > 0
-    ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile ${fmt(used)} / ${fmt(cap)}</div>` +
+    ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile Capacity ${fmt(used)} / ${fmt(cap)}</div>` +
       `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
       (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
@@ -1391,8 +1391,8 @@ function updateSysviewManage(): void {
   // separated by a divider (empty sections drop out, so no dangling rules).
   const sections = [
     blockadeBanner,
-    productionReadout(dyn) + storageBar, // Stockpile · production + the total bar
-    devs, // the planet roster
+    storageBar + productionReadout(dyn), // Stockpile Capacity + bar, then the commodity rows
+    `<div class="deps-head">Planets</div>` + devs, // the planet roster under its own header
     vitals + poolStrip, // colony vitals + slot pools
     garrisonHost,
     queue,
@@ -2740,11 +2740,6 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const tier = dyn?.extractor_tier ?? 0;
   const mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
-  // §economy Part 2: the colony EATS (Provisions ∝ population) and the old
-  // fed-Habitat output boost is retired — supply trouble shows as the food
-  // rung, not a multiplier. Owner-only, like every colony readout.
-  const habTier = dyn?.habitat_tier ?? 0;
-  const habFed = !!dyn?.habitat_fed; // legacy wire alias for "well supplied"
   const rateOf = new Map<Commodity, number>();
   // §explore: the readout is owner-only, and an owner always knows their own
   // geology (dyn.deposits present) — read from the light-gated view.
@@ -2752,10 +2747,6 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
-  const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
-  const habTag = habTier > 0 && !habFed
-    ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${label(dyn?.food_state ?? "rationing").toUpperCase()}</span>`
-    : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
   let refinery = "";
@@ -2768,8 +2759,7 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       ? `<div class="mhint" style="margin-top:4px" title="Fuel Refinery ×${refTier}: converts Volatiles → Fuel (1:1) up to ${rate.toFixed(1)}/s per throughput tier when staffed.">${icon("refinery", "sm")} ${icon("volatiles", "sm")} → ${icon("fuel", "sm")} up to ${rate.toFixed(1)}/s · staffed line</div>`
       : `<div class="mhint" style="margin-top:4px" title="Fuel Refinery idle — no Volatiles to convert. Haul some in (1 Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
-  return `<div class="deps-head" style="margin-top:8px">${icon("storage", "sm")} Stockpile · production${tierTag}${habTag}</div>` +
-    rows.map((c) => {
+  return rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
