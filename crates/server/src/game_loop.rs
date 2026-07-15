@@ -357,6 +357,11 @@ impl GameLoop {
                         self.pending.push(Command::DissolveSyndicate { player_id });
                     }
                 }
+                ClientMsg::SetResearchQueue { queue } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetResearchQueue { player_id, queue });
+                    }
+                }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);
@@ -836,6 +841,12 @@ impl GameLoop {
                 .filter(|s| s.invites.contains(&player_id))
                 .map(|s| crate::protocol::SyndicateInviteView { id: s.id, name: s.name.clone() })
                 .collect();
+            // §research R6: the viewer's OWN research picture (owner-only), present
+            // only while affiliated (research is a syndicate institution).
+            let research = corp
+                .syndicate
+                .filter(|sid| self.world.syndicates.contains_key(sid))
+                .map(|sid| Box::new(research_view(&self.world, sid)));
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
@@ -932,6 +943,7 @@ impl GameLoop {
                     battle_records,
                     syndicate,
                     syndicate_invites,
+                    research,
                     // §rankings: the published leaderboard — public, identical for
                     // every player, a verbatim copy of the sim's last ledger close.
                     rankings: self.world.rankings.clone(),
@@ -1031,6 +1043,118 @@ fn build_options() -> Vec<BuildOptionView> {
         }
     })
     .collect()
+}
+
+/// §research R6: the gate progress bar for a SEALED node — the verb/metric the
+/// tier waits on, current vs threshold. `None` when the tier carries no verb gate
+/// (Tier I, or a IV/V node gated only by its ladder predecessor).
+fn gate_progress(
+    p: &sim::research::Programme,
+    rs: &sim::research::ResearchState,
+    metric: &dyn Fn(sim::research::Metric) -> f64,
+    now: f64,
+) -> Option<crate::protocol::GateProgressView> {
+    use sim::research::Gate;
+    match sim::research::tier_gate(p.field, p.school, p.tier) {
+        Gate::None => None,
+        Gate::Cumulative(v, t) => Some(crate::protocol::GateProgressView {
+            label: v.label().to_string(),
+            current: rs.verb(v),
+            threshold: t,
+        }),
+        Gate::State(m, t) => Some(crate::protocol::GateProgressView {
+            label: m.label().to_string(),
+            current: metric(m),
+            threshold: t,
+        }),
+        Gate::Sustained(m, _t, secs) => {
+            // The endurance clock: days held continuously vs the required window.
+            let held = rs
+                .sustained_since
+                .get(&m)
+                .map(|since| (now - *since as f64).max(0.0) / 86_400.0)
+                .unwrap_or(0.0);
+            Some(crate::protocol::GateProgressView {
+                label: format!("days holding {}", m.label()),
+                current: held,
+                threshold: secs as f64 / 86_400.0,
+            })
+        }
+    }
+}
+
+/// §research R6: build the viewer's OWN syndicate research picture (owner-only).
+fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::ResearchView {
+    use crate::protocol::{AcademyRow, ActiveResearchView, ProgrammeView, ResearchView};
+    let syn = &world.syndicates[&sid];
+    let rs = &syn.research;
+    let now = world.time;
+    let metric = |m| world.syndicate_metric(sid, m);
+
+    // The per-Academy contribution table (the same factor chain the clock uses).
+    let contribs = world.research_contributions(sid);
+    let rate: f64 = contribs.iter().filter(|c| c.supplied).map(|c| c.rate).sum();
+    let academies = contribs
+        .iter()
+        .map(|c| AcademyRow {
+            system: c.system_name.clone(),
+            body_id: c.body_id,
+            tier: c.tier,
+            throughput: c.throughput,
+            staffing: c.staffing,
+            skill: c.skill,
+            food: c.food,
+            rate: c.rate,
+            supplied: c.supplied,
+        })
+        .collect();
+
+    // The active programme banner (with a live ETA at the current rate).
+    let active = rs.active.as_deref().and_then(|id| {
+        sim::research::programme(id).map(|p| {
+            let cost = sim::research::cost_of(id);
+            let eta_secs = if rate > 1e-9 { Some((cost - rs.progress).max(0.0) / rate) } else { None };
+            ActiveResearchView {
+                id: id.to_string(),
+                name: p.name.to_string(),
+                progress: rs.progress,
+                cost,
+                eta_secs,
+            }
+        })
+    });
+
+    // The whole visible tree, each node tagged with the viewer's state + gate.
+    let programmes = sim::research::visible_ids()
+        .filter_map(|id| {
+            let p = sim::research::programme(id)?;
+            let state = if rs.has(id) {
+                "completed"
+            } else if rs.active.as_deref() == Some(id) {
+                "active"
+            } else if rs.queue.iter().any(|q| q == id) {
+                "queued"
+            } else if sim::research::is_available(id, rs, &metric, now) {
+                "available"
+            } else {
+                "locked"
+            };
+            let gate = if state == "locked" { gate_progress(p, rs, &metric, now) } else { None };
+            Some(ProgrammeView {
+                id: id.to_string(),
+                field: p.field.slug().to_string(),
+                school: p.school.map(|s| s.slug().to_string()),
+                tier: p.tier,
+                name: p.name.to_string(),
+                blurb: p.blurb.to_string(),
+                state: state.to_string(),
+                cost: sim::research::cost_of(id),
+                gate,
+            })
+        })
+        .collect();
+
+    ResearchView { active, queue: rs.queue.clone(), rate, stalled: rs.stalled, academies, programmes }
 }
 
 /// Run the authoritative loop until all [`GameHandle`]s are dropped.

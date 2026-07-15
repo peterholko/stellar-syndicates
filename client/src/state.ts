@@ -78,6 +78,8 @@ export interface ViewState {
   syndicateInvites: import("./protocol").SyndicateInviteView[];
   /// §rankings: the PUBLISHED leaderboard (public snapshot on the ledger close).
   rankings: import("./protocol").RankingRow[];
+  /// §research R6: the viewer's OWN research picture (null if unaffiliated).
+  research: import("./protocol").ResearchView | null;
   /// §battle-aftermath: report ids the player has OPENED (viewed → static/dim
   /// marker) and DISMISSED (marker hidden; the report stays in the log).
   /// Client-local, persisted to localStorage across reloads.
@@ -141,6 +143,7 @@ export function initialState(): ViewState {
     syndicate: null,
     syndicateInvites: [],
     rankings: [],
+    research: null,
     battleViewed: new Set(),
     battleDismissed: new Set(),
     timeline: [],

@@ -28,7 +28,7 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -203,6 +203,12 @@ pub enum ClientMsg {
     LeaveSyndicate,
     /// DISSOLVE the caller's syndicate (founder-only).
     DissolveSyndicate,
+
+    // ---- RESEARCH (§research R6) --------------------------------------------
+    /// SET the caller's syndicate research QUEUE (ordered programme ids). The
+    /// front promotes to the active programme; the sim validates + soft-rejects
+    /// unknown/hidden/completed ids. CC-local, no positional delay.
+    SetResearchQueue { queue: Vec<String> },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -726,6 +732,80 @@ pub struct SyndicateInviteView {
     pub name: String,
 }
 
+/// §research R6: the viewer's SYNDICATE research picture — owner-only (design
+/// law 3: nothing leaks to rivals). The whole 108-programme tree with per-node
+/// state + gate progress, the active programme with its live rate and ETA, the
+/// queue, and the per-Academy contribution table (shown math, law 2).
+#[derive(Debug, Clone, Serialize)]
+pub struct ResearchView {
+    /// The programme the clock is accruing into, if any.
+    pub active: Option<ActiveResearchView>,
+    /// The queue-ahead ids (front is the active once promoted).
+    pub queue: Vec<String>,
+    /// Total live throughput rate (Σ supplied Academy rates); 0 if stalled/starved.
+    pub rate: f64,
+    /// True while an available active programme has no staffed Academy.
+    pub stalled: bool,
+    /// The per-Academy contribution rows (shown factor chains).
+    pub academies: Vec<AcademyRow>,
+    /// The whole visible catalog with per-node state + gate progress.
+    pub programmes: Vec<ProgrammeView>,
+}
+
+/// §research R6: the active programme banner data.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveResearchView {
+    pub id: String,
+    pub name: String,
+    /// Throughput-seconds accrued and the total cost.
+    pub progress: f64,
+    pub cost: f64,
+    /// Seconds remaining at the current rate; None when the rate is 0.
+    pub eta_secs: Option<f64>,
+}
+
+/// §research R6: one Academy's contribution row (the shown factor chain).
+#[derive(Debug, Clone, Serialize)]
+pub struct AcademyRow {
+    pub system: String,
+    pub body_id: u32,
+    pub tier: u32,
+    pub throughput: f64,
+    pub staffing: f64,
+    pub skill: f64,
+    pub food: f64,
+    pub rate: f64,
+    /// False → the lab can't cover its drip this tick (amber in the UI).
+    pub supplied: bool,
+}
+
+/// §research R6: one programme node on a board, at the viewer's state.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgrammeView {
+    pub id: String,
+    /// Field slug ("propulsion" …) — the board this node lives on.
+    pub field: String,
+    /// School slug ("line_haul" …); None for the shared Tier I/II rungs.
+    pub school: Option<String>,
+    pub tier: u8,
+    pub name: String,
+    pub blurb: String,
+    /// One of: "completed" | "active" | "queued" | "available" | "locked".
+    pub state: String,
+    /// Cost in throughput-seconds (the ETA denominator context).
+    pub cost: f64,
+    /// For a LOCKED node whose tier carries a verb/metric gate: the progress bar.
+    pub gate: Option<GateProgressView>,
+}
+
+/// §research R6: a gate progress bar for a sealed tier.
+#[derive(Debug, Clone, Serialize)]
+pub struct GateProgressView {
+    pub label: String,
+    pub current: f64,
+    pub threshold: f64,
+}
+
 /// §bodies: one PLANET OR MOON on the wire. The roster (id/name/kind/parent/
 /// habitable) is public geography — a star's worlds are visible from afar;
 /// DEPOSITS ride the survey knowledge ladder (None when unsurveyed);
@@ -1131,6 +1211,11 @@ pub enum ServerMsg {
         /// §syndicates Part 1: pending invitations the viewer may accept.
         #[serde(default)]
         syndicate_invites: Vec<SyndicateInviteView>,
+        /// §research R6: the viewer's OWN syndicate research picture (owner-only,
+        /// like the roster), or `None` if unaffiliated. Boxed to keep this variant
+        /// lean; serde is transparent through the `Box`.
+        #[serde(default)]
+        research: Option<Box<ResearchView>>,
         /// §rankings: the PUBLISHED leaderboard — the same snapshot for every player
         /// (public by design), taken on the ledger close. A verbatim copy of the
         /// sim's `world.rankings`; between closes it holds steady (no live leak).

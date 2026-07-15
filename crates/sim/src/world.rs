@@ -203,6 +203,24 @@ pub struct PendingCommandView {
     pub kind: crate::event::OrderKind,
 }
 
+/// §research R6: one Academy's live contribution to its syndicate's ACTIVE
+/// programme — the SHOWN factor chain (design law 2: the panel's number IS the
+/// clock's number). `supplied` is false when the local stockpile can't cover
+/// this lab's drip THIS tick (the amber "unsupplied" tint in the UI).
+#[derive(Debug, Clone)]
+pub struct AcademyContribution {
+    pub system: EntityId,
+    pub system_name: String,
+    pub body_id: u32,
+    pub tier: u32,
+    pub throughput: f64,
+    pub staffing: f64,
+    pub skill: f64,
+    pub food: f64,
+    pub rate: f64,
+    pub supplied: bool,
+}
+
 /// Distance (sim units) at which a raider makes contact with its target.
 const CONTACT_RADIUS: f64 = 80.0;
 /// Distance (sim units) within which a friendly combatant fleet that has moved to
@@ -523,6 +541,16 @@ impl World {
         let mut rng = crate::rng::Rng::new(config.seed);
         let mut next_entity_id = 1u64;
 
+        // §naming: one galaxy-unique, seed-shuffled name list for EVERY system —
+        // frontier first, then the home ring — handed out in order so no two
+        // collide. Built from the seeded rng (determinism is law).
+        let home_count = config.max_players.max(1) as usize;
+        let names = crate::galaxy::shuffled_system_names(
+            &mut rng,
+            config.system_count as usize + home_count,
+        );
+        let (frontier_names, home_names) = names.split_at(config.system_count as usize);
+
         let mut systems = {
             let mut alloc = || {
                 let id = EntityId(next_entity_id);
@@ -533,6 +561,7 @@ impl World {
                 &mut rng,
                 config.galaxy_radius,
                 config.system_count,
+                frontier_names,
                 &mut alloc,
             )
         };
@@ -553,7 +582,7 @@ impl World {
                 next_entity_id += 1;
                 id
             };
-            crate::galaxy::generate_home_systems(config.seed, &home_slots, &mut alloc)
+            crate::galaxy::generate_home_systems(config.seed, &home_slots, home_names, &mut alloc)
         };
         for (slot, sys) in home_slots.iter_mut().zip(&home_systems) {
             slot.system = Some(sys.id);
@@ -1119,7 +1148,7 @@ impl World {
         let name = sanitize_name(&name);
         self.syndicates.insert(
             id,
-            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time },
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default() },
         );
         self.set_membership(founder, Some(id));
     }
@@ -1294,6 +1323,18 @@ impl World {
         //        as construction; the hulls were out of combat while queued.
         self.resolve_refits(&mut events);
 
+        // 5b''''. §research R2: the DISTRIBUTED CLOCK — every staffed+funded
+        //         member Academy drips its basket and adds its rate to the active
+        //         programme; then complete anything fully funded (instant, galaxy-
+        //         wide). Runs after accrual so labs drip from fresh stockpiles.
+        self.tick_research(&mut events);
+        self.resolve_research(&mut events);
+        // §research R3: the rival-observation scan (Shadow gate) on a coarse cadence
+        // — a snapshot of who each syndicate can currently sense, deduped over time.
+        if self.tick.is_multiple_of(EVAL_PERIOD) {
+            self.observe_rivals_for_research();
+        }
+
         // 5b''. SCOUT INTEL (§scout part 2): scouts passing rival systems capture
         //       timestamped snapshots of their fortifications. After movement, so
         //       positions are this tick's truth; standing behavior (owner online
@@ -1328,6 +1369,9 @@ impl World {
         // PUBLISH the leaderboard snapshot (a copy, so it holds steady between
         // closes — no mid-interval live leak).
         self.accumulate_rankings(&events);
+        // §research R3: fold the same event stream into the syndicate verb biography
+        // (battles fought/won, hull destroyed/absorbed, convoy deliveries).
+        self.accrue_research_verbs(&events);
         if self.tick.is_multiple_of(VALUATION_TICKS) {
             self.snapshot_rankings();
         }
@@ -1397,6 +1441,24 @@ impl World {
                     ship.order = FleetOrder::MoveTo { dest: home };
                 }
             }
+        }
+        // §research R3: distance flown this tick → the Propulsion verbs. Each
+        // fleet's pre-move position (snapshot) vs its new position, converted to
+        // light-years; a combatant hull also credits the Expedition warship-ly gate.
+        let mut ly_deltas: Vec<(PlayerId, crate::research::Verb, f64)> = Vec::new();
+        for (id, (old_pos, _)) in &snapshot {
+            if let Some(ship) = self.fleets.get(id) {
+                let ly = old_pos.distance(ship.pos) / crate::research::SU_PER_LY;
+                if ly > 0.0 {
+                    ly_deltas.push((ship.owner, crate::research::Verb::LyFlown, ly));
+                    if ship.is_combatant() {
+                        ly_deltas.push((ship.owner, crate::research::Verb::WarshipLyFlown, ly));
+                    }
+                }
+            }
+        }
+        for (owner, verb, amount) in ly_deltas {
+            self.add_research_verb(owner, verb, amount);
         }
     }
 
@@ -1474,6 +1536,10 @@ impl World {
         // CHOICE stays picket-local (guarding is physical proximity, not intel).
         let arrays: BTreeMap<PlayerId, Vec<(Vec2, f64)>> =
             self.players.keys().map(|&p| (p, self.array_sensor_sources(p))).collect();
+        // §research R4a SensorRange widens each corp's PICKET bubble (its fleets'
+        // own sensing), precomputed per owner so the closure below stays borrow-free.
+        let range_mult: BTreeMap<PlayerId, f64> =
+            self.players.keys().map(|&p| (p, self.research_mod(p, crate::research::ModKey::SensorRange))).collect();
         // SYNDICATES (§syndicates): per-owner ally set, so autonomous pickets treat
         // syndicate members as FRIENDLY — never hunted, counted on the friendly side
         // of the force ratio. Precomputed here (the closures below can't borrow &self).
@@ -1487,7 +1553,7 @@ impl World {
         // target's SIGNATURE — the SAME shared `detection::detected` the View uses
         // (parity-tested), so sim-side awareness and the player's map agree.
         let sensed = |owner: PlayerId, ppos: Vec2, target: Vec2, sig: f64| -> bool {
-            let mut sources = vec![(ppos, sensor)];
+            let mut sources = vec![(ppos, sensor * range_mult.get(&owner).copied().unwrap_or(1.0))];
             if let Some(a) = arrays.get(&owner) {
                 sources.extend_from_slice(a);
             }
@@ -2420,6 +2486,8 @@ impl World {
                     // §rankings CARGO CAPTURED: credit the raider the seized units.
                     if let Some(owner) = seizer {
                         self.bump_stats(owner, |s| s.cargo_captured += cargo.units as u64);
+                        // §research R3: a seized convoy IS a successful raid (Corsair gate).
+                        self.add_research_verb(owner, crate::research::Verb::SuccessfulRaids, 1.0);
                     }
                 }
             }
@@ -3561,6 +3629,36 @@ impl World {
             Command::DissolveSyndicate { player_id } => {
                 self.apply_dissolve_syndicate(*player_id);
             }
+            Command::SetResearchQueue { player_id, queue } => {
+                // §research: research is a SYNDICATE institution — the player must
+                // be in one. Validate the queue against the catalog (drop unknown /
+                // hidden / already-completed ids), keeping NOT-YET-AVAILABLE ids
+                // (queue-ahead is the point). The front promotes to active if idle.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let valid: Vec<String> = queue
+                    .iter()
+                    .filter(|id| {
+                        crate::research::programme(id).is_some_and(|p| !p.hidden)
+                            && !s.research.completed.contains(*id)
+                    })
+                    .cloned()
+                    .collect();
+                s.research.set_queue(valid);
+            }
+            Command::SetDesignation { player_id, cap, target } => {
+                // §research: point a capability at a live target. Soft-reject
+                // unless the syndicate has unlocked the capability.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                if crate::research::has_flag(&s.research, *cap) {
+                    s.research.designations.insert(*cap, *target);
+                }
+            }
             Command::MoveShip {
                 player_id,
                 ship_id,
@@ -4224,10 +4322,12 @@ impl World {
     /// arrays consistently. Systems are static, so including them in the View's
     /// delayed composite frame is exactly as leak-free as ship bubbles.
     pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
+        // §research R4a SensorRadius widens every owned array's bubble.
+        let radius = self.research_mod(owner, crate::research::ModKey::SensorRadius);
         self.systems
             .iter()
             .filter(|s| s.owner == Some(owner) && s.tier(crate::build::StructureKind::SensorArray) >= 1)
-            .map(|s| (s.pos, s.sensor_bubble()))
+            .map(|s| (s.pos, s.sensor_bubble() * radius))
             .collect()
     }
 
@@ -4337,6 +4437,26 @@ impl World {
     /// phase so the debit is visible to this tick's accrual + standing orders.
     fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
         let recipe = crate::build::recipe_for(what);
+        // §research R4a: the build's COST + TIME tuners, by kind (neutral 1.0 until
+        // researched). Read here (before any `sys` borrow) so `self` is free.
+        use crate::research::ModKey;
+        let (research_cost_mult, research_time_mult) = match what {
+            crate::build::BuildKind::Ship { ship } if ship == ShipKind::Colony => (
+                self.research_mod(player_id, ModKey::ColonyCost),
+                self.research_mod(player_id, ModKey::ColonyBuildTime),
+            ),
+            crate::build::BuildKind::Ship { ship } if ship.is_combatant() => (
+                self.research_mod(player_id, ModKey::WarshipCost),
+                self.research_mod(player_id, ModKey::WarshipBuildTime),
+            ),
+            crate::build::BuildKind::Ship { .. } => (1.0, 1.0), // civilian hulls untuned
+            crate::build::BuildKind::Module { .. } => (
+                self.research_mod(player_id, ModKey::ModuleCost),
+                self.research_mod(player_id, ModKey::ModuleBuildTime),
+            ),
+            crate::build::BuildKind::Upgrade { .. } => (1.0, self.research_mod(player_id, ModKey::StructureBuildTime)),
+            crate::build::BuildKind::Train { .. } => (1.0, self.research_mod(player_id, ModKey::TrainingTime)),
+        };
         let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
             return;
         };
@@ -4411,6 +4531,34 @@ impl World {
                 ));
                 return;
             }
+            // §industrial-headroom: the TIER CEILING. Tiers 5–6 are the research
+            // prize — without the syndicate's Tier-IV/V unlock for THIS kind the
+            // cap is 4 (exactly today's effective ceiling). Count pending tier-ups
+            // for the same (body, kind) so a burst of queued upgrades can't slip
+            // the resulting tier past the cap. (Reuses NoSlot — a capacity limit
+            // — to stay sim-contained; a dedicated notice is a client follow-up.)
+            let cap = crate::build::max_buildable_tier(upgrade, self.research_struct_tier(player_id, upgrade));
+            let pending = self
+                .build_queue
+                .iter()
+                .filter(|j| {
+                    j.system == system_id
+                        && j.body_id == body_id
+                        && matches!(j.what, crate::build::BuildKind::Upgrade { upgrade: u } if u == upgrade)
+                })
+                .count() as u32;
+            if b.tier(upgrade) + pending + 1 > cap {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NoSlot,
+                    },
+                ));
+                return;
+            }
             if b.tier(upgrade) == 0 {
                 let pool = upgrade.slot_pool();
                 if b.pool_slots_built(pool) + self.pool_slots_pending(system_id, body_id, pool) >= b.pool_slots(pool) {
@@ -4473,13 +4621,16 @@ impl World {
         // §explore Part 3 Unstable Geology: DEVELOPMENT (upgrade) recipe costs run
         // ×UNSTABLE_COST_MULT here — the lemon a survey can't see. ONE multiplier
         // read shared by the affordability check AND the debit (they can't drift).
-        let cost_mult = if matches!(what, crate::build::BuildKind::Upgrade { .. })
-            && sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology)
-        {
-            crate::explore::UNSTABLE_COST_MULT
-        } else {
-            1.0
-        };
+        // §research R4a WarshipCost/ModuleCost/ColonyCost fold into the shared
+        // multiplier alongside the Unstable-Geology lemon.
+        let cost_mult = research_cost_mult
+            * if matches!(what, crate::build::BuildKind::Upgrade { .. })
+                && sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology)
+            {
+                crate::explore::UNSTABLE_COST_MULT
+            } else {
+                1.0
+            };
         let affordable = recipe
             .costs
             .iter()
@@ -4514,6 +4665,9 @@ impl World {
         } else {
             recipe.build_ticks
         };
+        // §research R4a WarshipBuildTime/ModuleBuildTime/StructureBuildTime/
+        // ColonyBuildTime/TrainingTime scale the enqueued duration (≥ 1 tick).
+        let ticks = ((ticks as f64 * research_time_mult).round() as u64).max(1);
         let complete_tick = self.tick + ticks;
         self.build_queue.push(crate::build::BuildJob {
             id: self.next_build_id,
@@ -4691,14 +4845,25 @@ impl World {
                         self.fleets.insert(id, f);
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
                     }
+                    // §research R3: a commissioned WARSHIP is a Hulls-field verb.
+                    if ship.is_combatant() {
+                        self.add_research_verb(job.owner, crate::research::Verb::WarshipsCommissioned, 1.0);
+                    }
                 }
                 crate::build::BuildKind::Train { specialist } => {
                     // §economy Part 4: the cohort graduates into the RESIDENT
                     // pool — only if the owner still holds the system (like an
                     // upgrade: the resources were already spent, frontier risk).
-                    if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
+                    let trained = if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system && s.owner == Some(job.owner)) {
                         *sys.specialists.entry(specialist).or_insert(0) += 1;
                         events.push(Event::new(self.time, EventPayload::SpecialistTrained { owner: job.owner, system: job.system, kind: specialist }));
+                        true
+                    } else {
+                        false
+                    };
+                    if trained {
+                        // §research R3: a graduated specialist is a Talent verb.
+                        self.add_research_verb(job.owner, crate::research::Verb::SpecialistsTrained, 1.0);
                     }
                 }
                 crate::build::BuildKind::Module { module } => {
@@ -4919,6 +5084,425 @@ impl World {
                 self.time,
                 EventPayload::ShipsRefitted { owner: job.owner, system: job.system, ship: job.ship, loadout: job.to.clone(), n: job.n },
             ));
+        }
+    }
+
+    /// §research: a syndicate-wide STATE METRIC (summed over the members' held
+    /// systems) — feeds `State`/`Sustained` research gates.
+    pub fn syndicate_metric(&self, sid: SyndicateId, m: crate::research::Metric) -> f64 {
+        let Some(syn) = self.syndicates.get(&sid) else { return 0.0 };
+        let members = &syn.members;
+        match m {
+            crate::research::Metric::TotalPopulation => self
+                .systems
+                .iter()
+                .filter(|s| s.owner.is_some_and(|o| members.contains(&o)))
+                .map(|s| s.population())
+                .sum(),
+            crate::research::Metric::WellSuppliedSystems => self
+                .systems
+                .iter()
+                .filter(|s| {
+                    s.owner.is_some_and(|o| members.contains(&o))
+                        && s.food_state == crate::colony::FoodState::WellSupplied
+                })
+                .count() as f64,
+        }
+    }
+
+    /// §research R4: the [`crate::research::ResearchState`] governing `owner` —
+    /// its syndicate's (research is a syndicate institution). None if the corp is
+    /// in no syndicate; every effect site then falls back to the neutral default.
+    fn research_of(&self, owner: PlayerId) -> Option<&crate::research::ResearchState> {
+        self.players
+            .get(&owner)
+            .and_then(|c| c.syndicate)
+            .and_then(|sid| self.syndicates.get(&sid))
+            .map(|s| &s.research)
+    }
+
+    /// §research R4a: a single tuner's value for `owner` (identity default: 1.0
+    /// multiplicative, 0.0 additive — so an un-researched corp is unaffected).
+    fn research_mod(&self, owner: PlayerId, key: crate::research::ModKey) -> f64 {
+        self.research_of(owner)
+            .map(|r| crate::research::mod_of(r, key))
+            .unwrap_or(if key.is_additive() { 0.0 } else { 1.0 })
+    }
+
+    /// §research R4c: has `owner`'s syndicate unlocked this capability flag?
+    /// (Enforcement points wired in the R4c flags pass.)
+    #[allow(dead_code)]
+    fn research_flag(&self, owner: PlayerId, cap: crate::research::Cap) -> bool {
+        self.research_of(owner).is_some_and(|r| crate::research::has_flag(r, cap))
+    }
+
+    /// §research R4b: the best research-granted tier for `kind` (0 = none). Wired
+    /// into the structure TIER CEILING (§industrial-headroom): a syndicate holding
+    /// this kind's Tier-IV/V unlock builds past the base cap of 4 up to 6 (see
+    /// [`crate::build::max_buildable_tier`], applied in `apply_build`).
+    fn research_struct_tier(&self, owner: PlayerId, kind: crate::build::StructureKind) -> u32 {
+        self.research_of(owner)
+            .map(|r| crate::research::unlocked_structure_tier(r, kind))
+            .unwrap_or(0)
+    }
+
+    /// §research R4b: has `owner`'s syndicate unlocked this hull / module? (Wired
+    /// with the new hulls/utility modules in R5.)
+    #[allow(dead_code)]
+    fn research_hull(&self, owner: PlayerId, kind: ShipKind) -> bool {
+        self.research_of(owner).is_some_and(|r| crate::research::has_hull(r, kind))
+    }
+    #[allow(dead_code)]
+    fn research_module(&self, owner: PlayerId, kind: crate::module::ModuleKind) -> bool {
+        self.research_of(owner).is_some_and(|r| crate::research::has_module(r, kind))
+    }
+
+    /// §research R6: the per-Academy CONTRIBUTION TABLE for `sid`'s ACTIVE
+    /// programme (empty if none, or if the active programme is currently gated).
+    /// A read-only mirror of [`Self::tick_research`]'s factor chain — the numbers
+    /// the panel shows are exactly the numbers the clock accrues (design law 2).
+    pub fn research_contributions(&self, sid: SyndicateId) -> Vec<AcademyContribution> {
+        let Some(syn) = self.syndicates.get(&sid) else { return Vec::new() };
+        let Some(active_id) = syn.research.active.as_deref() else { return Vec::new() };
+        let Some(prog) = crate::research::programme(active_id) else { return Vec::new() };
+        // A GATED active accrues nothing (it's waiting) — no contributions shown.
+        let metric = |m| self.syndicate_metric(sid, m);
+        if !crate::research::is_available(active_id, &syn.research, &metric, self.time) {
+            return Vec::new();
+        }
+        let acad = crate::build::StructureKind::Academy;
+        let field = prog.field;
+        let basket = crate::research::basket(field, prog.tier);
+        let members = &syn.members;
+        let mut out = Vec::new();
+        for sys in self.systems.iter().filter(|s| s.owner.is_some_and(|o| members.contains(&o))) {
+            let food_state = sys.food_state;
+            for b in &sys.bodies {
+                let t = b.tier(acad);
+                if t == 0 {
+                    continue;
+                }
+                let staffing = sys.staffing_factor(b.id, acad);
+                if staffing <= 0.0 {
+                    continue;
+                }
+                let matched: u32 = crate::research::field_affinity(field)
+                    .iter()
+                    .map(|k| b.assignments.get(&acad).and_then(|a| a.specialists.get(k)).copied().unwrap_or(0))
+                    .sum();
+                let skill = crate::production::skill_factor(matched, t);
+                let food = crate::production::food_factor(acad, food_state);
+                let throughput = crate::production::tier_throughput(t);
+                let rate = throughput * staffing * skill * food;
+                if rate <= 0.0 {
+                    continue;
+                }
+                let supplied = basket
+                    .iter()
+                    .all(|(c, per)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *per * rate * DT);
+                out.push(AcademyContribution {
+                    system: sys.id,
+                    system_name: sys.name.clone(),
+                    body_id: b.id,
+                    tier: t,
+                    throughput,
+                    staffing,
+                    skill,
+                    food,
+                    rate,
+                    supplied,
+                });
+            }
+        }
+        out
+    }
+
+    /// §research R3: add to a cumulative research VERB for `owner`'s syndicate
+    /// (no-op if the owner isn't in one). The corp-wide biography that gates.
+    fn add_research_verb(&mut self, owner: PlayerId, verb: crate::research::Verb, amount: f64) {
+        if amount <= 0.0 {
+            return;
+        }
+        if let Some(sid) = self.players.get(&owner).and_then(|c| c.syndicate)
+            && let Some(s) = self.syndicates.get_mut(&sid)
+        {
+            s.research.add_verb(verb, amount);
+        }
+    }
+
+    /// §research R3: record a DISTINCT rival/pirate fleet observation for
+    /// `observer`'s syndicate — the `RivalFleetsObserved` verb tracks the
+    /// seen-set's len (dedupes re-sightings).
+    fn observe_rival_fleet(&mut self, observer: PlayerId, fleet: EntityId) {
+        if let Some(sid) = self.players.get(&observer).and_then(|c| c.syndicate)
+            && let Some(s) = self.syndicates.get_mut(&sid)
+            && s.research.observed_fleets.insert(fleet)
+        {
+            let n = s.research.observed_fleets.len() as f64;
+            s.research.verbs.insert(crate::research::Verb::RivalFleetsObserved, n);
+        }
+    }
+
+    /// §research R3: record a DISTINCT scouted system (first knowledge advance)
+    /// for `owner`'s syndicate — the `SystemsScouted` verb tracks the set len.
+    fn scout_system_for_research(&mut self, owner: PlayerId, system: EntityId) {
+        if let Some(sid) = self.players.get(&owner).and_then(|c| c.syndicate)
+            && let Some(s) = self.syndicates.get_mut(&sid)
+            && s.research.scouted_systems.insert(system)
+        {
+            let n = s.research.scouted_systems.len() as f64;
+            s.research.verbs.insert(crate::research::Verb::SystemsScouted, n);
+        }
+    }
+
+    /// §research R3: the periodic RIVAL-OBSERVATION scan (Shadow school gate). For
+    /// every corp in a syndicate, gather its detection coverage (own fleet bubbles
+    /// + owned Sensor Arrays) and record each DISTINCT rival/pirate fleet it can
+    /// currently sense — the SAME `detection::detected` the View uses, so the
+    /// counter only grows off contacts the player could actually see. Deduped per
+    /// syndicate by fleet id (re-sightings never re-count). Throttled by the
+    /// caller; O(corps × sources × fleets), read-only pass then a deferred apply.
+    fn observe_rivals_for_research(&mut self) {
+        let sensor = self.config.sensor_range;
+        // Read-only fleet snapshot (id, owner, pos, signature).
+        let snap: Vec<(EntityId, PlayerId, Vec2, f64)> = self
+            .fleets
+            .iter()
+            .map(|(id, s)| {
+                let sig = s.signature()
+                    * self.veil_factor(s.owner, s.pos)
+                    * if s.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 };
+                (*id, s.owner, s.pos, sig)
+            })
+            .collect();
+        // Only corps that are in a syndicate can bank the observation.
+        let observers: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, c)| c.syndicate.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        let mut hits: Vec<(PlayerId, EntityId)> = Vec::new();
+        for obs in observers {
+            let allies = self.allies_of(obs);
+            // Coverage sources: this corp's own fleet bubbles (× SensorRange) + its
+            // Sensor Arrays (already × SensorRadius in array_sensor_sources).
+            let range = sensor * self.research_mod(obs, crate::research::ModKey::SensorRange);
+            let mut sources: Vec<(Vec2, f64)> = snap
+                .iter()
+                .filter(|(_, o, _, _)| *o == obs)
+                .map(|(_, _, pos, _)| (*pos, range))
+                .collect();
+            sources.extend(self.array_sensor_sources(obs));
+            if sources.is_empty() {
+                continue;
+            }
+            for (fid, fowner, fpos, sig) in &snap {
+                // A rival = neither self nor a syndicate ally (pirates included).
+                if *fowner == obs || allies.contains(fowner) {
+                    continue;
+                }
+                if crate::detection::detected(*sig, &sources, *fpos) {
+                    hits.push((obs, *fid));
+                }
+            }
+        }
+        for (obs, fid) in hits {
+            self.observe_rival_fleet(obs, fid);
+        }
+    }
+
+    /// §research R2: the DISTRIBUTED CLOCK. For each syndicate with an AVAILABLE
+    /// active programme, every staffed member Academy contributes
+    /// `rate = academy_tier_throughput × staffing × affine-specialist skill ×
+    /// food`, dripping `basket × rate × dt` from its OWN system stockpile; a lab
+    /// whose stockpile can't cover its drip suspends its contribution (soft). The
+    /// syndicate's progress grows by Σ funded rate × dt. No staffed Academy →
+    /// latched `ResearchStalled` (once), with `ResearchResumed` on recovery.
+    fn tick_research(&mut self, events: &mut Vec<Event>) {
+        if self.syndicates.is_empty() {
+            return;
+        }
+        let now = self.time;
+        let acad = crate::build::StructureKind::Academy;
+        let sids: Vec<SyndicateId> = self.syndicates.keys().copied().collect();
+        // §research: the one SUSTAINED metric (Life · Growth V endurance gate) —
+        // stamp when the WellSupplied count first reaches the threshold, clear the
+        // moment it drops so an interruption resets the 7-day clock. Tracked for
+        // EVERY syndicate each tick, independent of what's currently active.
+        if let crate::research::Gate::Sustained(metric, thresh, _) = crate::research::tier_gate(
+            crate::research::Field::Life,
+            Some(crate::research::School::Growth),
+            5,
+        ) {
+            let stamp = now.floor() as u64;
+            for &sid in &sids {
+                let val = self.syndicate_metric(sid, metric);
+                if let Some(s) = self.syndicates.get_mut(&sid) {
+                    if val + 1e-9 >= thresh {
+                        s.research.sustained_since.entry(metric).or_insert(stamp);
+                    } else {
+                        s.research.sustained_since.remove(&metric);
+                    }
+                }
+            }
+        }
+        for sid in sids {
+            // Snapshot the active programme; idle syndicates clear any stall latch.
+            let active = self.syndicates[&sid].research.active.clone();
+            let Some(active_id) = active else {
+                if let Some(s) = self.syndicates.get_mut(&sid) {
+                    s.research.stalled = false;
+                }
+                continue;
+            };
+            let Some(prog) = crate::research::programme(&active_id) else { continue };
+            let (field, tier) = (prog.field, prog.tier);
+            // A GATED active accrues nothing but is NOT a stall (it's waiting).
+            let available = {
+                let metric = |m| self.syndicate_metric(sid, m);
+                crate::research::is_available(&active_id, &self.syndicates[&sid].research, &metric, now)
+            };
+            if !available {
+                continue;
+            }
+            let members: std::collections::BTreeSet<PlayerId> = self.syndicates[&sid].members.clone();
+            let basket = crate::research::basket(field, tier);
+            let mut funded_rate = 0.0;
+            let mut any_staffed = false;
+            for sys in self.systems.iter_mut().filter(|s| s.owner.is_some_and(|o| members.contains(&o))) {
+                let food = sys.food_state;
+                // Per-Academy rate (immutable reads), collected before we debit.
+                let labs: Vec<(u32, f64)> = sys
+                    .bodies
+                    .iter()
+                    .filter_map(|b| {
+                        let t = b.tier(acad);
+                        if t == 0 {
+                            return None;
+                        }
+                        let staffing = sys.staffing_factor(b.id, acad);
+                        if staffing <= 0.0 {
+                            return None; // an unstaffed Academy contributes nothing
+                        }
+                        // Skill from the RESEARCH FIELD's affine specialists posted here.
+                        let matched: u32 = crate::research::field_affinity(field)
+                            .iter()
+                            .map(|k| b.assignments.get(&acad).and_then(|a| a.specialists.get(k)).copied().unwrap_or(0))
+                            .sum();
+                        let skill = crate::production::skill_factor(matched, t);
+                        let foodf = crate::production::food_factor(acad, food);
+                        let rate = crate::production::tier_throughput(t) * staffing * skill * foodf;
+                        Some((t, rate))
+                    })
+                    .collect();
+                if labs.is_empty() {
+                    continue;
+                }
+                any_staffed = true;
+                // Fund each lab from THIS system's stockpile (all-or-nothing per lab).
+                for (_t, rate) in labs {
+                    if rate <= 0.0 {
+                        continue;
+                    }
+                    let covers = basket
+                        .iter()
+                        .all(|(c, per)| sys.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *per * rate * DT);
+                    if !covers {
+                        continue; // supply-starved lab suspends this tick (soft)
+                    }
+                    for (c, per) in &basket {
+                        let left = sys.stockpile.get(c).copied().unwrap_or(0.0) - *per * rate * DT;
+                        if left <= 1e-9 {
+                            sys.stockpile.remove(c);
+                        } else {
+                            sys.stockpile.insert(*c, left);
+                        }
+                    }
+                    funded_rate += rate;
+                }
+            }
+            let s = self.syndicates.get_mut(&sid).unwrap();
+            s.research.progress += funded_rate * DT;
+            if !any_staffed {
+                if !s.research.stalled {
+                    s.research.stalled = true;
+                    events.push(Event::new(now, EventPayload::ResearchStalled { syndicate: sid }));
+                }
+            } else if s.research.stalled {
+                s.research.stalled = false;
+                events.push(Event::new(now, EventPayload::ResearchResumed { syndicate: sid }));
+            }
+        }
+    }
+
+    /// §research: COMPLETE every fully-funded active programme (the distributed
+    /// clock funds `progress` in R2). Completion respects availability — carried
+    /// overflow can never skip a tier gate. The effect is realized lazily via
+    /// `research::mods`, so it applies instantly and galaxy-wide (decision #5).
+    fn resolve_research(&mut self, events: &mut Vec<Event>) {
+        if self.syndicates.is_empty() {
+            return;
+        }
+        let now = self.time;
+        let sids: Vec<SyndicateId> = self.syndicates.keys().copied().collect();
+        for sid in sids {
+            loop {
+                // Only complete when the active programme is currently available
+                // (gate met + ladder rule) — never on carried overflow alone.
+                let ready = {
+                    let Some(s) = self.syndicates.get(&sid) else { break };
+                    match s.research.active.as_deref() {
+                        None => false,
+                        Some(id) => {
+                            let metric = |m| self.syndicate_metric(sid, m);
+                            s.research.progress + 1e-6 >= crate::research::cost_of(id)
+                                && crate::research::is_available(id, &s.research, &metric, now)
+                        }
+                    }
+                };
+                if !ready {
+                    break;
+                }
+                let done = self
+                    .syndicates
+                    .get_mut(&sid)
+                    .and_then(|s| s.research.try_complete());
+                match done {
+                    Some(id) => {
+                        // §research: emit TierUnlocked when this completion is the
+                        // FIRST on its ladder tier — that's the moment the next tier
+                        // opens (siblings after it don't re-open it). Ladder = the
+                        // field's SHARED line for tiers I/II, the SAME SCHOOL for III+.
+                        if let Some(p) = crate::research::programme(&id)
+                            && p.tier < 5
+                        {
+                            let shared = p.tier <= 2;
+                            let count = self.syndicates[&sid]
+                                .research
+                                .completed
+                                .iter()
+                                .filter_map(|c| crate::research::programme(c))
+                                .filter(|q| {
+                                    q.field == p.field
+                                        && q.tier == p.tier
+                                        && if shared { q.school.is_none() } else { q.school == p.school }
+                                })
+                                .count();
+                            if count == 1 {
+                                events.push(Event::new(now, EventPayload::TierUnlocked {
+                                    syndicate: sid,
+                                    field: p.field,
+                                    school: if shared { None } else { p.school },
+                                    tier: p.tier + 1,
+                                }));
+                            }
+                        }
+                        events.push(Event::new(now, EventPayload::ResearchCompleted { syndicate: sid, programme: id }));
+                    }
+                    None => break,
+                }
+            }
         }
     }
 
@@ -5322,15 +5906,53 @@ impl World {
     ///      assignment engine multiplies `food_state.efficiency()` into every
     ///      output instead (the legible factor chain).
     fn accrue_production(&mut self, events: &mut Vec<Event>) {
+        // §research R3: per-tick verb deltas gathered while the systems are borrowed
+        // mutably, then folded into the syndicate biographies after the loop (an
+        // `add_research_verb` call would re-borrow `self`). (owner, verb, amount).
+        let mut research_deltas: Vec<(PlayerId, crate::research::Verb, f64)> = Vec::new();
+        // §research R4a: snapshot each owner's ECONOMY tuners once (the fold is
+        // cheap, but this is the per-tick hot path and `self` is about to be
+        // borrowed mutably by the systems loop). Neutral (all 1.0) for un-
+        // researched corps, so the whole block is inert until R5 grants effects.
+        use crate::research::ModKey;
+        #[derive(Clone, Copy)]
+        struct EconMods {
+            extraction: f64,
+            processing: f64,
+            pop_growth: f64,
+            habitat_cap: f64,
+            provisions_use: f64,
+            growth_below_half: f64,
+        }
+        let owners: std::collections::BTreeSet<PlayerId> =
+            self.systems.iter().filter_map(|s| s.owner).collect();
+        let econ: BTreeMap<PlayerId, EconMods> = owners
+            .iter()
+            .map(|&o| {
+                (o, EconMods {
+                    extraction: self.research_mod(o, ModKey::ExtractionRate),
+                    processing: self.research_mod(o, ModKey::ProcessingYield),
+                    pop_growth: self.research_mod(o, ModKey::PopGrowth),
+                    habitat_cap: self.research_mod(o, ModKey::HabitatCap),
+                    provisions_use: self.research_mod(o, ModKey::ProvisionsUse),
+                    growth_below_half: self.research_mod(o, ModKey::GrowthBelowHalf),
+                })
+            })
+            .collect();
         for sys in &mut self.systems {
             let Some(owner) = sys.owner else {
                 continue;
             };
+            let em = econ.get(&owner).copied().unwrap_or(EconMods {
+                extraction: 1.0, processing: 1.0, pop_growth: 1.0,
+                habitat_cap: 1.0, provisions_use: 1.0, growth_below_half: 1.0,
+            });
             // --- Colony life (eat → ladder → grow; before accrual) ---
             // §bodies: ONE pooled food state — demand is the SUM of every
             // body's population against the system stockpile; GROWTH is per
             // body, toward that body's OWN Habitat capacity. Never decreases.
-            let demand_per_s = sys.population() * crate::colony::PROVISIONS_PER_MILLION_PER_S;
+            // §research R4a ProvisionsUse tunes the per-capita ration draw.
+            let demand_per_s = sys.population() * crate::colony::PROVISIONS_PER_MILLION_PER_S * em.provisions_use;
             if demand_per_s > 0.0 {
                 let have = sys.stockpile.get(&crate::cargo::Commodity::Provisions).copied().unwrap_or(0.0);
                 let draw = (demand_per_s * DT).min(have);
@@ -5349,10 +5971,19 @@ impl World {
                 }
                 if state == crate::colony::FoodState::WellSupplied {
                     for b in sys.bodies.iter_mut() {
+                        // §research R4a HabitatCap raises the ceiling each tier buys.
                         let cap = crate::colony::POP_CAP_PER_HABITAT_TIER
-                            * b.tier(crate::build::StructureKind::Habitat) as f64;
+                            * b.tier(crate::build::StructureKind::Habitat) as f64
+                            * em.habitat_cap;
                         if b.population > 0.0 && b.population < cap {
-                            b.population = (b.population + crate::colony::POP_GROWTH_PER_S * DT).min(cap);
+                            let before = b.population;
+                            // §research R4a PopGrowth scales the base rate; GrowthBelowHalf
+                            // adds an early-colony boost while under half the ceiling.
+                            let below_half = if b.population < cap * 0.5 { em.growth_below_half } else { 1.0 };
+                            let rate = crate::colony::POP_GROWTH_PER_S * em.pop_growth * below_half;
+                            b.population = (b.population + rate * DT).min(cap);
+                            // §research R3: cumulative population grown (millions unit).
+                            research_deltas.push((owner, crate::research::Verb::PopulationGrown, b.population - before));
                         }
                     }
                 }
@@ -5415,8 +6046,9 @@ impl World {
                     let food = crate::production::food_factor(kind, food_state);
                     // Bonus Vein — ONE commodity's richness runs ×BONUS_VEIN_MULT.
                     let vein_mult = if vein == Some(resource) { crate::explore::BONUS_VEIN_MULT } else { 1.0 };
+                    // §research R4a ExtractionRate tunes every mine's raw output.
                     let mut amount =
-                        (richness * throughput * staffing * skill * food * vein_mult * DT).min(headroom.max(0.0));
+                        (richness * throughput * staffing * skill * food * vein_mult * em.extraction * DT).min(headroom.max(0.0));
                     if let Some(reserves) = b.deposits[i].reserves.as_mut() {
                         amount = amount.min(*reserves);
                         *reserves -= amount;
@@ -5427,6 +6059,13 @@ impl World {
                         extracted_any = true;
                     }
                 }
+            }
+            // §research R3: raw units mined this tick (DeepCrust school gate) — and
+            // the same units count toward the Materials-field industry throughput.
+            let extracted_total: f64 = stockpile_adds.iter().map(|(_, a)| *a).sum();
+            if extracted_total > 0.0 {
+                research_deltas.push((owner, crate::research::Verb::UnitsExtracted, extracted_total));
+                research_deltas.push((owner, crate::research::Verb::UnitsThroughIndustry, extracted_total));
             }
             for (c, amount) in stockpile_adds {
                 *sys.stockpile.entry(c).or_insert(0.0) += amount;
@@ -5487,7 +6126,8 @@ impl World {
                     };
                     // (`pocket` multiplies the OUTPUT of the same input draw — it
                     // does NOT enter max_out.)
-                    let max_out = conv.rate * crate::production::tier_throughput(tier) * staffing * skill * food * DT;
+                    // §research R4a ProcessingYield tunes converter throughput.
+                    let max_out = conv.rate * crate::production::tier_throughput(tier) * staffing * skill * food * em.processing * DT;
                     // Bound by the scarcest input (units of OUTPUT the basket affords).
                     let input_bound = conv
                         .inputs
@@ -5513,7 +6153,12 @@ impl World {
                         for (c, per) in conv.inputs {
                             *sys.stockpile.get_mut(c).expect("bounded by stock") -= out * per;
                         }
-                        *sys.stockpile.entry(conv.output).or_insert(0.0) += out * pocket;
+                        let emitted = out * pocket;
+                        *sys.stockpile.entry(conv.output).or_insert(0.0) += emitted;
+                        // §research R3: processed units (Foundry school gate) + the
+                        // Materials-field aggregate industry throughput.
+                        research_deltas.push((owner, crate::research::Verb::UnitsProcessed, emitted));
+                        research_deltas.push((owner, crate::research::Verb::UnitsThroughIndustry, emitted));
                     }
                     let asg = sys.bodies[bi].assignments.get_mut(&kind).expect("crew > 0 ⇒ posted");
                     if asg.suspended != now_suspended {
@@ -5525,6 +6170,11 @@ impl World {
                     }
                 }
             }
+        }
+        // §research R3: fold this tick's extraction/processing/growth into the
+        // syndicate verb biographies (deferred out of the &mut systems loop).
+        for (owner, verb, amount) in research_deltas {
+            self.add_research_verb(owner, verb, amount);
         }
     }
 
@@ -5717,6 +6367,58 @@ impl World {
                     let loot: u64 = plunder.values().map(|&u| u as u64).sum();
                     self.bump_stats(*new_owner, |s| s.cargo_captured += loot);
                     self.bump_stats(*old_owner, |s| s.loss_pending = true);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// §research R3: fold THIS tick's events into the syndicate VERB biography —
+    /// the battle- and convoy-derived counters that gate the Weapons/Hulls schools
+    /// and the LineHaul haulage school. Runs alongside `accumulate_rankings` (same
+    /// O(events) sweep, same tick). Per-tick verbs that aren't events (movement ly,
+    /// units produced, population grown, systems scouted, rivals observed) are
+    /// accrued inline at their own phases. Pirates own no syndicate, so their events
+    /// no-op through `add_research_verb`.
+    fn accrue_research_verbs(&mut self, events: &[Event]) {
+        for e in events {
+            match &e.payload {
+                // A resolved BATTLE (a no-contact ESCAPE isn't a fight). Both sides
+                // fought; the survivor won; each credits the hull it destroyed and
+                // the hull it lost as "absorbed" (the Countermeasures gate proxy).
+                EventPayload::RaidResolved { attacker, defender, outcome, attacker_losses, target_losses, .. }
+                    if *outcome != RaidOutcome::Escaped =>
+                {
+                    let a_hull = crate::rankings::hull_sum(attacker_losses);
+                    let d_hull = crate::rankings::hull_sum(target_losses);
+                    let (attacker, defender) = (*attacker, *defender);
+                    self.add_research_verb(attacker, crate::research::Verb::BattlesFought, 1.0);
+                    self.add_research_verb(defender, crate::research::Verb::BattlesFought, 1.0);
+                    self.add_research_verb(attacker, crate::research::Verb::HullMassDestroyed, d_hull);
+                    self.add_research_verb(defender, crate::research::Verb::HullMassDestroyed, a_hull);
+                    self.add_research_verb(attacker, crate::research::Verb::DamageAbsorbed, a_hull);
+                    self.add_research_verb(defender, crate::research::Verb::DamageAbsorbed, d_hull);
+                    match outcome {
+                        RaidOutcome::TargetDestroyed => {
+                            self.add_research_verb(attacker, crate::research::Verb::BattlesWon, 1.0)
+                        }
+                        RaidOutcome::AttackerDestroyed => {
+                            self.add_research_verb(defender, crate::research::Verb::BattlesWon, 1.0)
+                        }
+                        _ => {}
+                    }
+                }
+                // A convoy that reached its destination — one completed haul (the
+                // LineHaul school gate).
+                EventPayload::Trade(TradeEvent::Delivered { player, .. }) => {
+                    self.add_research_verb(*player, crate::research::Verb::ConvoyDeliveries, 1.0);
+                }
+                // A completed SURVEY or a fresh rival-system intel snapshot is a
+                // scouted system (Computation field + Watch school gate). Deduped
+                // by system id, so re-scouting the same one never re-counts.
+                EventPayload::SurveyCompleted { owner, system, .. }
+                | EventPayload::IntelGathered { owner, system, .. } => {
+                    self.scout_system_for_research(*owner, *system);
                 }
                 _ => {}
             }
@@ -6378,7 +7080,10 @@ impl World {
                 let angle = TAU * (n as f64) * 0.61803398875; // golden-angle scatter
                 let pos = Vec2::from_polar(angle, self.config.galaxy_radius * self.config.home_ring_frac);
                 let sys_id = self.alloc_entity_id();
-                let mut sys = crate::galaxy::generate_home_system(self.config.seed, n, sys_id, pos);
+                // §naming: a galaxy-unique name that avoids every system already present.
+                let taken: std::collections::BTreeSet<String> = self.systems.iter().map(|s| s.name.clone()).collect();
+                let name = crate::galaxy::pick_unused_name(self.config.seed, &taken);
+                let mut sys = crate::galaxy::generate_home_system(self.config.seed, n, sys_id, pos, name);
                 sys.owner = Some(id);
                 sys.claimed_at = Some(now);
                 self.systems.push(sys);
@@ -6409,7 +7114,10 @@ impl World {
             }
             None => {
                 let sys_id = self.alloc_entity_id();
-                let mut sys = crate::galaxy::generate_home_system(self.config.seed, idx, sys_id, pos);
+                // §naming: a galaxy-unique name that avoids every system already present.
+                let taken: std::collections::BTreeSet<String> = self.systems.iter().map(|s| s.name.clone()).collect();
+                let name = crate::galaxy::pick_unused_name(self.config.seed, &taken);
+                let mut sys = crate::galaxy::generate_home_system(self.config.seed, idx, sys_id, pos, name);
                 sys.owner = Some(id);
                 sys.claimed_at = Some(now);
                 self.systems.push(sys);
@@ -6910,9 +7618,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tier_ceiling_gates_prize_tiers_behind_research() {
+        // §industrial-headroom: the two top structure tiers (5, 6) are the research
+        // prize. Without the syndicate's Tier-IV/V unlock a colony tops out at 4
+        // (exactly today); the unlock lifts the ceiling to 6.
+        let mut w = test_world();
+        let id = PlayerId(41);
+        w.step(&[Command::AddPlayer { id, name: "Deep".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Machinery, 1000.0), (Commodity::Alloys, 1000.0)]);
+        // Force the home's Mining Complex to the free ceiling (tier 4) on its site.
+        let site = w.systems.iter().find(|s| s.id == home).unwrap()
+            .site_for(StructureKind::MiningComplex).expect("the home mines ore");
+        w.systems.iter_mut().find(|s| s.id == home).unwrap()
+            .bodies.iter_mut().find(|b| b.id == site).unwrap()
+            .set_tier(StructureKind::MiningComplex, 4);
+        let site_tier = |w: &World| w.systems.iter().find(|s| s.id == home).unwrap()
+            .bodies.iter().find(|b| b.id == site).unwrap().tier(StructureKind::MiningComplex);
+
+        // UNRESEARCHED (solo, no syndicate): raising to tier 5 is over the cap → a
+        // soft reject, no job enqueued, the tier stays at 4.
+        let jobs_before = w.build_queue.len();
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex, body_id: None }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { owner, .. } if owner == id)),
+            "tier 5 is gated without the research unlock"
+        );
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no over-cap build starts");
+        assert_eq!(w.build_queue.len(), jobs_before, "no over-cap job enqueued");
+        assert_eq!(site_tier(&w), 4, "the structure holds at the free ceiling");
+
+        // RESEARCHED: the syndicate holds the Tier-IV Extraction unlock → the same
+        // build now STARTS (tier 5 ≤ the raised ceiling of 6).
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Guild".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("mat_deepcrust_iii_tier4_extraction".into());
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex, body_id: None }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
+            "with the Tier-IV/V unlock, tier 5 builds"
+        );
+    }
+
     /// §economy: the THREE derived slot pools — Resource from geology (one per
     /// deposit, clamped 1..=4), Industrial/Infrastructure from population
-    /// (1/2/3 and 2/3/3 by pop tier). Derived, never stored — migration-free.
+    /// (2/3/4 and 2/3/3 by pop tier; §industrial-headroom raised the industrial
+    /// base to 2). Derived, never stored — migration-free.
     #[test]
     fn dev_slot_budget_derives_from_geology() {
         let w = test_world();
@@ -6920,7 +7672,7 @@ mod tests {
             // §bodies: pools are PER BODY (derived, never stored)…
             for b in &sys.bodies {
                 assert_eq!(b.resource_slots(), (b.deposits.len() as u32).min(4));
-                let ind_base = if b.kind == crate::body::BodyKind::GasGiant { 0 } else { 1 };
+                let ind_base = if b.kind == crate::body::BodyKind::GasGiant { 0 } else { 2 };
                 assert_eq!(b.industrial_slots(), ind_base + crate::body::body_pop_tier(b.population), "industrial = kind base + body pop tier");
                 assert_eq!(
                     b.infrastructure_slots(),
@@ -11519,10 +12271,19 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        // Own two systems: a producing source and a destination depot.
+        // Own two systems: a producing source and a destination depot. Pick the
+        // depot NEAREST the source so a sub-light convoy reliably reaches it within
+        // the run window (independent of the seeded galaxy's exact geometry).
         let source = richest_system(&w);
+        let source_pos = w.systems.iter().find(|s| s.id == source).unwrap().pos;
         let commodity = w.systems.iter().find(|s| s.id == source).unwrap().all_deposits().next().unwrap().resource;
-        let dest = w.systems.iter().find(|s| s.owner.is_none() && s.id != source).unwrap().id;
+        let dest = w
+            .systems
+            .iter()
+            .filter(|s| s.owner.is_none() && s.id != source)
+            .min_by(|a, b| a.pos.distance(source_pos).total_cmp(&b.pos.distance(source_pos)))
+            .unwrap()
+            .id;
         grant_system(&mut w, id, source);
         w.step(&[]);
         grant_system(&mut w, id, dest);
@@ -11565,6 +12326,43 @@ mod tests {
         }
         assert!(delivered_via_route, "a system→system supply convoy must deliver to the depot");
         assert!(dest_has(&w) >= 5.0, "MaintainAtDest must bring the depot up to the target");
+    }
+
+    /// §naming: a fresh galaxy gets pronounceable WORD names, drawn without
+    /// replacement (no collisions across frontier + home), deterministic per seed;
+    /// planets read inner→outer as I,II,III and moons hang off with a hyphen.
+    #[test]
+    fn galaxy_names_are_word_based_unique_and_deterministic() {
+        let build = || World::new(SimConfig::for_players(0x00C0_FFEE, 4));
+        let (w1, w2) = (build(), build());
+        // Determinism: same seed → identical system names in the same order.
+        let names1: Vec<&str> = w1.systems.iter().map(|s| s.name.as_str()).collect();
+        let names2: Vec<&str> = w2.systems.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names1, names2, "same seed reproduces the same galaxy names");
+        // No two systems (frontier OR home) share a name.
+        let uniq: std::collections::BTreeSet<&str> = names1.iter().copied().collect();
+        assert_eq!(uniq.len(), names1.len(), "no duplicate system names in a galaxy");
+        // Word names, not the old "XX-NNN" catalogue codes (no hyphen in a system name).
+        assert!(names1.iter().all(|n| !n.contains('-')), "system names are words, not codes");
+        assert!(names1.iter().all(|n| n.chars().next().unwrap().is_ascii_uppercase()));
+        // Planets read inner→outer as I, II, III…; moons hang off with a hyphen.
+        let multi = w1
+            .systems
+            .iter()
+            .find(|s| s.bodies.iter().filter(|b| b.parent.is_none()).count() >= 2)
+            .expect("some system has multiple planets");
+        let planets: Vec<&crate::body::Body> = multi.bodies.iter().filter(|b| b.parent.is_none()).collect();
+        for (i, p) in planets.iter().enumerate() {
+            let want = format!(" {}", crate::body::planet_numeral(i));
+            assert!(p.name.ends_with(&want), "planet #{} named {}", i + 1, p.name);
+        }
+        for sys in &w1.systems {
+            // Body ids are per-system, so resolve a moon's parent WITHIN its system.
+            for m in sys.bodies.iter().filter(|b| b.parent.is_some()) {
+                let p = sys.bodies.iter().find(|b| b.id == m.parent.unwrap()).expect("moon's parent exists in-system");
+                assert!(m.name.starts_with(&format!("{}-", p.name)), "moon {} off parent {}", m.name, p.name);
+            }
+        }
     }
 
     /// Standing-order execution is deterministic: same seed + same commands ⇒ byte-
@@ -12874,6 +13672,346 @@ mod tests {
         assert_eq!(crate::pirate::pack_size(1), 1, "tier-1 enclave launches a LONE bandit");
         assert_eq!(crate::pirate::pack_size(2), 2, "tier 2 → a pair");
         assert_eq!(crate::pirate::pack_size(3), 3, "tier 3 → a real pack");
+    }
+
+    // §research R1 — the command → resolve → event → instant-effect path.
+    #[test]
+    fn research_queue_completes_and_applies_its_effect_instantly() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        // Research is a SYNDICATE institution — form a solo syndicate.
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Solo".into() }]);
+        let sid = w.players[&id].syndicate.expect("in a syndicate");
+        // Queue a Tier-I programme (always available); the front promotes to active.
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        assert_eq!(w.syndicates[&sid].research.active.as_deref(), Some("prop_drive_tuning"));
+        w.step(&[]);
+        assert!(!w.syndicates[&sid].research.has("prop_drive_tuning"), "unfunded → not complete");
+        // Fund it directly (the distributed clock lands in R2) and step.
+        w.syndicates.get_mut(&sid).unwrap().research.progress = crate::research::tier_cost_secs(1);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::ResearchCompleted { syndicate, programme } if *syndicate == sid && programme == "prop_drive_tuning")),
+            "a completion event fires",
+        );
+        assert!(w.syndicates[&sid].research.has("prop_drive_tuning"), "recorded as completed");
+        assert!(w.syndicates[&sid].research.active.is_none(), "queue drained");
+        // The effect applies INSTANTLY, galaxy-wide, via the lazy mods layer.
+        let m = crate::research::mod_of(&w.syndicates[&sid].research, crate::research::ModKey::SpeedAll);
+        assert!((m - 1.10).abs() < 1e-9, "Drive Tuning's +10% speed is live");
+        // A hidden id in the queue is dropped (can't research it).
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["hull_corsair_v_salvage_rigs".into(), "prop_bunkerage".into()] }]);
+        assert_eq!(w.syndicates[&sid].research.active.as_deref(), Some("prop_bunkerage"), "hidden dropped, next promoted");
+    }
+
+    // §research R2 — the distributed clock. Helper: give `player` a CLEAN owned
+    // system hosting one Academy staffed with `workers`, seeded to stay supplied.
+    fn grant_research_lab(w: &mut World, player: PlayerId, workers: u32) -> EntityId {
+        use crate::build::StructureKind::Academy;
+        let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).expect("a free system");
+        s.owner = Some(player);
+        s.claimed_at = Some(0.0);
+        s.food_state = crate::colony::FoodState::WellSupplied;
+        let b = s.bodies.iter_mut().next().expect("a body");
+        b.set_tier(Academy, 1);
+        b.population = 10.0; // ample workforce so staffing_share ≈ 1
+        if workers > 0 {
+            b.assignments.insert(Academy, crate::production::Assignment { workers, specialists: Default::default(), suspended: None });
+        }
+        *s.stockpile.entry(Commodity::Electronics).or_insert(0.0) = 500.0; // T1 basket
+        *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 5000.0; // keep supplied
+        s.id
+    }
+
+    #[test]
+    fn r2_distributed_clock_accrues_and_debits_the_basket() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let lab = grant_research_lab(&mut w, id, 1);
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        let elec0 = w.systems.iter().find(|s| s.id == lab).unwrap().stockpile.get(&Commodity::Electronics).copied().unwrap();
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let prog = w.syndicates[&sid].research.progress;
+        let elec1 = w.systems.iter().find(|s| s.id == lab).unwrap().stockpile.get(&Commodity::Electronics).copied().unwrap_or(0.0);
+        assert!(prog > 0.0, "the clock accrues progress (got {prog})");
+        assert!(elec1 < elec0, "the basket drips from the LOCAL stockpile ({elec1} < {elec0})");
+        assert!(!w.syndicates[&sid].research.stalled, "a staffed+funded lab is not stalled");
+    }
+
+    #[test]
+    fn r2_unfunded_academy_suspends_its_contribution() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let lab = grant_research_lab(&mut w, id, 1);
+        // Strip the basket good → the lab can't drip → it suspends (no accrual).
+        w.systems.iter_mut().find(|s| s.id == lab).unwrap().stockpile.remove(&Commodity::Electronics);
+        w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        for _ in 0..10 {
+            w.step(&[]);
+        }
+        assert_eq!(w.syndicates[&sid].research.progress, 0.0, "an unfunded lab accrues nothing");
+        assert!(!w.syndicates[&sid].research.stalled, "unfunded ≠ stalled (it's staffed, just supply-starved)");
+    }
+
+    #[test]
+    fn r2_no_staffed_academy_stalls_once_then_resumes() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        // A member system with an Academy tier but NO crew posted (unstaffed).
+        let lab = grant_research_lab(&mut w, id, 0);
+        // Setting the queue promotes an active programme; that same tick, with no
+        // staffed Academy, the stall latches and fires once.
+        let ev1 = w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+        assert!(ev1.iter().any(|e| matches!(&e.payload, EventPayload::ResearchStalled { syndicate } if *syndicate == sid)), "stall fires once");
+        assert!(w.syndicates[&sid].research.stalled);
+        let ev2 = w.step(&[]);
+        assert!(!ev2.iter().any(|e| matches!(&e.payload, EventPayload::ResearchStalled { .. })), "no repeat stall");
+        // Staff the Academy → resume.
+        w.systems.iter_mut().find(|s| s.id == lab).unwrap().bodies.iter_mut().next().unwrap()
+            .assignments.insert(crate::build::StructureKind::Academy, crate::production::Assignment { workers: 1, specialists: Default::default(), suspended: None });
+        let ev3 = w.step(&[]);
+        assert!(ev3.iter().any(|e| matches!(&e.payload, EventPayload::ResearchResumed { syndicate } if *syndicate == sid)), "resume fires on recovery");
+        assert!(!w.syndicates[&sid].research.stalled);
+    }
+
+    #[test]
+    fn r2_two_staffed_academies_out_accrue_one() {
+        let run = |labs: u32| -> f64 {
+            let mut w = test_world();
+            w.enclaves.clear();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: id, name: "S".into() }]);
+            let sid = w.players[&id].syndicate.unwrap();
+            for _ in 0..labs {
+                grant_research_lab(&mut w, id, 1);
+            }
+            w.step(&[Command::SetResearchQueue { player_id: id, queue: vec!["prop_drive_tuning".into()] }]);
+            for _ in 0..20 {
+                w.step(&[]);
+            }
+            w.syndicates[&sid].research.progress
+        };
+        let one = run(1);
+        let two = run(2);
+        assert!(one > 0.0, "one lab makes progress");
+        assert!(two > 1.7 * one, "two labs ≈ double the science ({two} vs {one})");
+    }
+
+    // §research R3 — VERB COUNTERS. Helper: give `player` an owned system whose
+    // one body works a rich MetallicOre deposit with a staffed Mining Complex,
+    // kept supplied and under the storage cap so extraction actually flows.
+    fn grant_mining_system(w: &mut World, player: PlayerId) -> EntityId {
+        use crate::build::StructureKind::MiningComplex;
+        let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).expect("a free system");
+        s.owner = Some(player);
+        s.claimed_at = Some(0.0);
+        s.food_state = crate::colony::FoodState::WellSupplied;
+        let b = s.bodies.iter_mut().next().expect("a body");
+        b.set_tier(MiningComplex, 1);
+        b.population = 10.0; // ample workforce; no Habitat ⇒ won't grow (own test)
+        b.deposits = vec![crate::galaxy::Deposit { resource: Commodity::MetallicOre, richness: 3.0, reserves: None, accessibility: 0.1 }];
+        b.assignments.insert(MiningComplex, crate::production::Assignment { workers: 1, specialists: Default::default(), suspended: None });
+        // Under the 700 base cap: a little food, lots of headroom for fresh ore.
+        *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 200.0;
+        s.id
+    }
+
+    #[test]
+    fn r3_event_verbs_accrue_into_the_syndicate_biography() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        let mut a_loss = BTreeMap::new(); a_loss.insert(ShipKind::Raider, 1u32);
+        let mut d_loss = BTreeMap::new(); d_loss.insert(ShipKind::Convoy, 2u32);
+        let events = vec![
+            Event::new(0.0, EventPayload::RaidResolved {
+                attacker: a, defender: b, attacker_ship: EntityId(10), target_ship: EntityId(11),
+                attacker_kind: ShipKind::Raider, target_kind: ShipKind::Convoy,
+                outcome: RaidOutcome::TargetDestroyed, pos: Vec2::ZERO,
+                attacker_losses: a_loss, target_losses: d_loss,
+            }),
+            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5 })),
+            Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }),
+            Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }), // dup
+            Event::new(0.0, EventPayload::IntelGathered { owner: a, system: EntityId(4), defense_tier: 1, shipyard_tier: 0, pos: Vec2::ZERO }),
+        ];
+        w.accrue_research_verbs(&events);
+        let r = &w.syndicates[&sid].research;
+        assert_eq!(r.verb(Verb::BattlesFought), 1.0, "one resolved battle");
+        assert_eq!(r.verb(Verb::BattlesWon), 1.0, "the attacker destroyed the target");
+        assert!(r.verb(Verb::HullMassDestroyed) > 0.0, "credited the convoy hull it destroyed");
+        assert!(r.verb(Verb::DamageAbsorbed) > 0.0, "credited its own lost raider as absorbed");
+        assert_eq!(r.verb(Verb::ConvoyDeliveries), 1.0, "one completed haul");
+        assert_eq!(r.verb(Verb::SystemsScouted), 2.0, "two DISTINCT systems, dup ignored");
+    }
+
+    #[test]
+    fn r3_movement_accrues_propulsion_ly() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        let hpos = w.players[&a].home;
+        let _ = squad(&mut w, a, hpos, ShipKind::Raider, 1, FleetOrder::MoveTo { dest: hpos + Vec2::new(200_000.0, 0.0) });
+        for _ in 0..40 {
+            w.step(&[]);
+        }
+        let r = &w.syndicates[&sid].research;
+        assert!(r.verb(Verb::LyFlown) > 0.0, "a flying fleet accrues ly ({})", r.verb(Verb::LyFlown));
+        assert!(r.verb(Verb::WarshipLyFlown) > 0.0, "a combatant also credits warship-ly");
+        assert!(r.verb(Verb::WarshipLyFlown) <= r.verb(Verb::LyFlown) + 1e-9, "warship-ly ≤ total ly");
+    }
+
+    #[test]
+    fn r3_production_accrues_industry_verbs() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        grant_mining_system(&mut w, a);
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let r = &w.syndicates[&sid].research;
+        assert!(r.verb(Verb::UnitsExtracted) > 0.0, "a staffed mine accrues extracted units ({})", r.verb(Verb::UnitsExtracted));
+        assert!(r.verb(Verb::UnitsThroughIndustry) >= r.verb(Verb::UnitsExtracted), "extraction also counts as industry throughput");
+    }
+
+    #[test]
+    fn r3_rival_observation_scan_records_distinct_fleets() {
+        use crate::research::Verb;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        // A's picket sits right on top of two of B's fleets — well inside sensor range.
+        let hpos = w.players[&a].home;
+        let _obs = squad(&mut w, a, hpos, ShipKind::Corvette, 1, FleetOrder::Idle);
+        let _r1 = squad(&mut w, b, hpos + Vec2::new(50.0, 0.0), ShipKind::Raider, 2, FleetOrder::Idle);
+        let _r2 = squad(&mut w, b, hpos + Vec2::new(80.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
+        w.observe_rivals_for_research();
+        assert_eq!(w.syndicates[&sid].research.verb(Verb::RivalFleetsObserved), 2.0, "two distinct rival fleets sensed");
+        // Re-running does not double-count (deduped by fleet id).
+        w.observe_rivals_for_research();
+        assert_eq!(w.syndicates[&sid].research.verb(Verb::RivalFleetsObserved), 2.0, "re-sightings never re-count");
+    }
+
+    // §research R4a — EFFECT MODS. A completed programme changes a real sim
+    // outcome instantly, galaxy-wide, via the lazy mods layer.
+    #[test]
+    fn r4_extraction_rate_mod_lifts_yield() {
+        let run = |researched: bool| -> f64 {
+            let mut w = test_world();
+            w.enclaves.clear();
+            let a = PlayerId(1);
+            w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+            let sid = w.players[&a].syndicate.unwrap();
+            grant_mining_system(&mut w, a);
+            if researched {
+                // Deep Bores (Materials I): ExtractionRate ×1.15.
+                w.syndicates.get_mut(&sid).unwrap().research.completed.insert("mat_deep_bores".into());
+            }
+            for _ in 0..20 {
+                w.step(&[]);
+            }
+            w.syndicates[&sid].research.verb(crate::research::Verb::UnitsExtracted)
+        };
+        let base = run(false);
+        let boosted = run(true);
+        assert!(base > 0.0, "the baseline mine produces ({base})");
+        assert!(boosted > base * 1.10, "ExtractionRate ×1.15 lifts yield ({boosted} vs {base})");
+    }
+
+    #[test]
+    fn r4_growth_below_half_mod_speeds_a_young_colony() {
+        let run = |researched: bool| -> f64 {
+            let mut w = test_world();
+            w.enclaves.clear();
+            let a = PlayerId(1);
+            w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+            let sid = w.players[&a].syndicate.unwrap();
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(a);
+            s.claimed_at = Some(0.0);
+            s.food_state = crate::colony::FoodState::WellSupplied;
+            let sysid = s.id;
+            let b = s.bodies.iter_mut().next().unwrap();
+            b.set_tier(crate::build::StructureKind::Habitat, 2); // ceiling 8.0M
+            b.population = 1.0; // well under half (4.0M) — the boost applies
+            *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 600.0;
+            if researched {
+                // Boom Charters (Life Growth III): GrowthBelowHalf ×1.20.
+                w.syndicates.get_mut(&sid).unwrap().research.completed.insert("life_growth_iii_boom_charters".into());
+            }
+            for _ in 0..200 {
+                w.step(&[]);
+            }
+            w.systems.iter().find(|s| s.id == sysid).unwrap().bodies.iter().next().unwrap().population
+        };
+        let base = run(false);
+        let boosted = run(true);
+        assert!(base > 1.0, "the colony grows ({base})");
+        assert!(boosted - 1.0 > (base - 1.0) * 1.15, "GrowthBelowHalf ×1.20 grows a young colony faster ({boosted} vs {base})");
+    }
+
+    // §research R5 — the Life · Growth V endurance gate: tick_research stamps
+    // `sustained_since` when the WellSupplied count first reaches the threshold and
+    // clears it the moment the count drops (an interruption resets the 7-day clock).
+    #[test]
+    fn r5_growth_v_sustained_clock_stamps_and_resets() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(1);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "S".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        // Five owned, WellSupplied systems (empty rocks are vacuously supplied).
+        let free: Vec<EntityId> = w.systems.iter().filter(|s| s.is_unclaimed()).take(5).map(|s| s.id).collect();
+        assert_eq!(free.len(), 5, "need five free systems");
+        for id in &free {
+            let s = w.systems.iter_mut().find(|s| s.id == *id).unwrap();
+            s.owner = Some(a);
+            s.claimed_at = Some(0.0);
+            s.food_state = crate::colony::FoodState::WellSupplied;
+        }
+        w.step(&[]);
+        let m = crate::research::Metric::WellSuppliedSystems;
+        assert!(w.syndicates[&sid].research.sustained_since.contains_key(&m), "≥5 WellSupplied → the endurance clock starts");
+        // Surrender all five → the count collapses below the threshold → clock resets.
+        for id in &free {
+            w.systems.iter_mut().find(|s| s.id == *id).unwrap().owner = None;
+        }
+        w.step(&[]);
+        assert!(!w.syndicates[&sid].research.sustained_since.contains_key(&m), "below threshold → the clock is cleared");
     }
 
     #[test]

@@ -20,8 +20,10 @@ use crate::cargo::Commodity;
 
 /// Output multiplier by STRUCTURE TIER (index 0 = not built = nothing).
 /// Deliberately super-linear: deep tiers out-produce spreading the same slots
-/// wide, so a focused colony reads differently from a sprawling one. Tunable.
-pub const TIER_THROUGHPUT: [f64; 5] = [0.0, 1.0, 2.2, 3.8, 6.0];
+/// wide, so a focused colony reads differently from a sprawling one. Tiers 5–6
+/// are the research-prize ceiling (freely buildable stops at tier 4 — the gate
+/// lives in build.rs) and stay on the same accelerating curve. Tunable.
+pub const TIER_THROUGHPUT: [f64; 7] = [0.0, 1.0, 2.2, 3.8, 6.0, 8.6, 11.5];
 
 /// The throughput of a built tier (clamped into the table).
 pub fn tier_throughput(tier: u32) -> f64 {
@@ -229,13 +231,20 @@ mod tests {
     fn throughput_ladder_is_superlinear_from_one() {
         assert_eq!(tier_throughput(0), 0.0);
         assert_eq!(tier_throughput(1), 1.0);
-        for t in 1..4u32 {
+        // The two research-prize tiers exist and keep climbing.
+        assert!(tier_throughput(5) > tier_throughput(4), "tier V out-produces IV");
+        assert!(tier_throughput(6) > tier_throughput(5), "tier VI out-produces V");
+        // Each step's MARGINAL gain grows — one deep tier (concentration) stays
+        // ahead of spreading the same investment across shallow ones
+        // (duplication), all the way to the top of the extended ladder.
+        for t in 1..6u32 {
             assert!(
                 tier_throughput(t + 1) > 2.0 * tier_throughput(t) - tier_throughput(t.saturating_sub(1)),
-                "the ladder accelerates"
+                "the ladder accelerates at tier {t}→{}",
+                t + 1
             );
         }
-        assert_eq!(tier_throughput(99), 6.0, "clamped past the table");
+        assert_eq!(tier_throughput(99), 11.5, "clamped past the (now longer) table");
     }
 
     #[test]

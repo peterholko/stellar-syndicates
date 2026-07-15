@@ -565,6 +565,8 @@ export type ClientMsg =
   | { type: "AcceptSyndicateInvite"; syndicate_id: SyndicateId }
   | { type: "LeaveSyndicate" }
   | { type: "DissolveSyndicate" }
+  // §research R6 — set the syndicate research queue (front promotes to active).
+  | { type: "SetResearchQueue"; queue: string[] }
   | { type: "Ping" };
 
 // §syndicates Part 1: an alliance id (opaque decimal string on the wire).
@@ -584,6 +586,51 @@ export interface SyndicateView {
 export interface SyndicateInviteView {
   id: SyndicateId;
   name: string;
+}
+
+// §research R6: the viewer's OWN syndicate research picture (owner-only).
+export interface ResearchView {
+  active: ActiveResearchView | null;
+  queue: string[];
+  rate: number;
+  stalled: boolean;
+  academies: AcademyRow[];
+  programmes: ProgrammeView[];
+}
+export interface ActiveResearchView {
+  id: string;
+  name: string;
+  progress: number;
+  cost: number;
+  eta_secs: number | null;
+}
+export interface AcademyRow {
+  system: string;
+  body_id: number;
+  tier: number;
+  throughput: number;
+  staffing: number;
+  skill: number;
+  food: number;
+  rate: number;
+  supplied: boolean;
+}
+export interface ProgrammeView {
+  id: string;
+  field: string;
+  school: string | null;
+  tier: number;
+  name: string;
+  blurb: string;
+  /// "completed" | "active" | "queued" | "available" | "locked"
+  state: string;
+  cost: number;
+  gate: GateProgressView | null;
+}
+export interface GateProgressView {
+  label: string;
+  current: number;
+  threshold: number;
 }
 
 /// §rankings: one corporation's row in the PUBLISHED leaderboard — a public
@@ -810,6 +857,9 @@ export type ServerMsg =
       /// §rankings: the PUBLISHED leaderboard — public, same for every player,
       /// snapshotted on the ledger close (holds steady between closes).
       rankings?: RankingRow[];
+      /// §research R6: the viewer's OWN research picture (owner-only; null if
+      /// unaffiliated — research is a syndicate institution).
+      research?: ResearchView | null;
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

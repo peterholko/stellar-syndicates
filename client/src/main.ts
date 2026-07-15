@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
@@ -12,8 +12,9 @@ const state: ViewState = initialState();
 
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
-// PROTOCOL_VERSION (§battle-records = 4).
-const EXPECTED_PROTOCOL_VERSION = 5;
+// PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
+// Boards research state; see crates/server/src/protocol.rs.)
+const EXPECTED_PROTOCOL_VERSION = 6;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -179,8 +180,21 @@ const shipMass = (g: GhostView) =>
 // SUPERSEDES the earlier Stellar-Charters borrow. No loading="lazy" — these panels
 // re-render ~10 Hz, recreating the <img>; lazy would replace them before the
 // observer fires. Eager hits the browser cache instantly.
-const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
+const svgIcon = (slug: string, size: IconSize = "sm", cls = "") =>
   `<img class="icon icon--${size}${cls ? ` ${cls}` : ""}" src="/art/ui_icons/svg/${slug}.svg" alt="" />`;
+
+// The ONE raster-icon path helper: a downscaled PNG under /art/ui_icons/<category>/
+// (transparent-background art — the commodity resource icons and the research field
+// emblems), or the `glyph` fallback when `slug` is empty, so a missing/unknown icon
+// degrades to a legible symbol instead of a broken <img>. Both commodity and
+// research field icons go through here — no third copy of the path logic.
+function uiIcon(category: "resource" | "research", slug: string | undefined, glyph: string, title = "", cls = ""): string {
+  const klass = cls || `icon icon--${category}`;
+  const t = title ? ` title="${esc(title)}"` : "";
+  return slug
+    ? `<img class="${klass}" src="/art/ui_icons/${category}/${slug}.png" alt=""${t} />`
+    : `<span class="${klass} icon--glyph"${t}>${glyph}</span>`;
+}
 
 // A commodity icon is by definition a resource, so it always uses the dedicated
 // `--icon-resource` token + the downscaled PNG art (each commodity now has its own,
@@ -190,18 +204,34 @@ const uiIcon = (slug: string, size: IconSize = "sm", cls = "") =>
 // their art lands.
 const COMMODITY_ART: Partial<Record<Commodity, string>> = {
   fuel: "fuel", metallic_ore: "ore", alloys: "alloys", provisions: "provisions", volatiles: "volatiles",
+  // The six industrial goods — the framed-tile set sliced from the extended sheet
+  // (file names match the wire slugs). Only BIOMASS is still on its glyph.
+  rare_elements: "rare_elements", silicates: "silicates", electronics: "electronics",
+  polymers: "polymers", machinery: "machinery", armaments: "armaments",
 };
 const COMMODITY_GLYPH: Record<Commodity, string> = {
   metallic_ore: "\u26cf", rare_elements: "\u2728", silicates: "\u25a6", volatiles: "\u2744", biomass: "\ud83c\udf3f",
   alloys: "\ud83d\udd29", electronics: "\ud83d\udda5", polymers: "\ud83e\uddea", fuel: "\u26fd", provisions: "\ud83c\udf5e",
   machinery: "\u2699", armaments: "\ud83d\udd2b",
 };
-const commodityIcon = (c: Commodity, _size: IconSize = "md") => {
-  const art = COMMODITY_ART[c];
-  return art
-    ? `<img class="icon icon--resource" src="/art/ui_icons/resource/${art}.png" alt="" title="${label(c)}" />`
-    : `<span class="icon icon--resource icon--glyph" title="${label(c)}">${COMMODITY_GLYPH[c]}</span>`;
+// A commodity icon is by definition a resource — the shared helper with the
+// `--icon-resource` token + a glyph fallback for goods whose art hasn't landed.
+const commodityIcon = (c: Commodity, _size: IconSize = "md") =>
+  uiIcon("resource", COMMODITY_ART[c], COMMODITY_GLYPH[c], label(c));
+
+// §research R6: the six FIELD emblems (hexagonal art, 256px masters + 64px `-sm`
+// variants under /art/ui_icons/research/), used wherever a research field is named.
+// `size` picks the asset (sm → the light 64px variant) and the CSS token
+// (rf-ic--{sm|md|lg|xl} ≈ 26 / 44 / 60 / 72 px); glyph fallback degrades gracefully.
+const RESEARCH_FIELDS = new Set(["propulsion", "materials", "computation", "weapons", "hulls", "life"]);
+const RESEARCH_GLYPH: Record<string, string> = {
+  propulsion: "🚀", materials: "⚙️", computation: "📡", weapons: "🎯", hulls: "🛡️", life: "🌱",
 };
+function researchIcon(field: string, size: "sm" | "md" | "lg" | "xl" = "md"): string {
+  const has = RESEARCH_FIELDS.has(field);
+  const slug = has ? (size === "sm" ? `${field}-sm` : field) : undefined;
+  return uiIcon("research", slug, RESEARCH_GLYPH[field] ?? "◆", FIELD_TITLE[field] ?? field, `rf-ic rf-ic--${size}`);
+}
 
 // Status icon by timeline severity (the native Status set).
 const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
@@ -210,7 +240,7 @@ const STATUS_SLUG: Record<TimelineEntry["severity"], string> = {
   warn: "status-warning-threat",
   info: "status-info",
 };
-const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => uiIcon(STATUS_SLUG[sev], size);
+const statusIcon = (sev: TimelineEntry["severity"], size: IconSize = "sm") => svgIcon(STATUS_SLUG[sev], size);
 
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
 // Doctrine as a tab stack. Opening any tab opens the rail; one tab shows at a
@@ -269,9 +299,41 @@ function buildRail(): void {
   });
   // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate + Log.
   $("nav-market").addEventListener("click", toggleMarket);
+  $("nav-research").addEventListener("click", toggleResearch);
   $("nav-syndicate").addEventListener("click", toggleSyndicate);
   $("nav-log").addEventListener("click", toggleCheckin);
   $("market-close").addEventListener("click", closeMarket);
+  // §research R6: delegated actions inside the Programme Boards panel — close,
+  // add an open node to the queue, and reorder/remove queued programmes.
+  $("research-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    const closeBtn = t.closest("[data-rp='close']");
+    if (closeBtn) { closeResearch(); return; }
+    if (!net) return;
+    // Reorder / remove a queued programme.
+    const btn = t.closest("button") as HTMLButtonElement | null;
+    if (btn && (btn.dataset.qup || btn.dataset.qdown || btn.dataset.qrm)) {
+      const ids = researchQueueIds();
+      if (btn.dataset.qrm !== undefined) {
+        ids.splice(Number(btn.dataset.qrm), 1);
+      } else if (btn.dataset.qup !== undefined) {
+        const i = Number(btn.dataset.qup);
+        if (i > 0) [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+      } else if (btn.dataset.qdown !== undefined) {
+        const i = Number(btn.dataset.qdown);
+        if (i < ids.length - 1) [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
+      }
+      sendResearchQueue(ids);
+      return;
+    }
+    // Click an AVAILABLE node → append it to the queue.
+    const node = t.closest("[data-rid]") as HTMLElement | null;
+    if (node?.dataset.rid) {
+      const ids = researchQueueIds();
+      if (!ids.includes(node.dataset.rid)) ids.push(node.dataset.rid);
+      sendResearchQueue(ids);
+    }
+  });
   // §syndicates: delegated actions inside the alliance panel.
   $("syndicate-panel").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button");
@@ -717,7 +779,7 @@ function updateShipPanel(): void {
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${uiIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${svgIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -819,6 +881,166 @@ function updateSyndicatePanel(): void {
   el.innerHTML = `<div class="pp-head"><b>SYNDICATE</b><button class="pp-close" data-sy="close" title="Close">✕</button></div><div class="pp-body">${body}</div>`;
 }
 
+// --- §research R6: the Programme Boards panel (top-navbar destination) ----------
+// Owner-only (the View carries research only for the viewer's own syndicate). The
+// whole 108-node tree as six Y-ladder boards; an active banner with the live rate
+// + ETA + per-Academy contribution table (shown math); a queue strip you reorder
+// (→ SetResearchQueue). Re-rendered only when something CHANGES (a coarse
+// signature that includes the progress bucket, so the bar animates ~1 Hz).
+const FIELD_ORDER = ["propulsion", "materials", "computation", "weapons", "hulls", "life"];
+const FIELD_TITLE: Record<string, string> = {
+  propulsion: "Propulsion", materials: "Materials", computation: "Computation",
+  weapons: "Weapons", hulls: "Hulls", life: "Life",
+};
+const SCHOOL_TITLE: Record<string, string> = {
+  line_haul: "Line Haul", expedition: "Expedition", deep_crust: "Deep Crust", foundry: "Foundry",
+  watch: "Watch", shadow: "Shadow", strike: "Strike", countermeasures: "Countermeasures",
+  line: "Line", corsair: "Corsair", growth: "Growth", talent: "Talent",
+};
+const ROMAN = ["", "I", "II", "III", "IV", "V"];
+let lastResearchSig = "";
+
+function fmtEta(secs: number): string {
+  if (!isFinite(secs) || secs <= 0) return "—";
+  const h = secs / 3600;
+  if (h < 1) return `${Math.max(1, Math.round(secs / 60))}m`;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
+
+function openResearch(): void {
+  $("research-panel").classList.add("is-open");
+  $("nav-research").classList.add("is-active");
+  lastResearchSig = "";
+  updateResearchPanel();
+}
+function closeResearch(): void {
+  $("research-panel").classList.remove("is-open");
+  $("nav-research").classList.remove("is-active");
+}
+function toggleResearch(): void {
+  if ($("research-panel").classList.contains("is-open")) closeResearch();
+  else openResearch();
+}
+
+// The full ordered queue the player controls = [active, ...queue-ahead]. Sending
+// it back as SetResearchQueue re-promotes the front to active (the sim's rule).
+function researchQueueIds(): string[] {
+  const r = state.research;
+  if (!r) return [];
+  return r.active ? [r.active.id, ...r.queue] : [...r.queue];
+}
+function sendResearchQueue(ids: string[]): void {
+  if (net) net.send({ type: "SetResearchQueue", queue: ids });
+}
+
+function researchNode(p: ProgrammeView, pos: number | null): string {
+  const num = pos !== null ? `<span class="n">${pos + 1}</span> ` : "";
+  const add = p.state === "available" ? ` data-rid="${esc(p.id)}"` : "";
+  return `<div class="rp-node is-${p.state}"${add} title="${esc(p.blurb)}">` +
+    `<div class="nm">${num}${esc(p.name)}</div><div class="bl">${esc(p.blurb)}</div></div>`;
+}
+
+function researchBoard(fieldSlug: string, progs: ProgrammeView[], queue: string[]): string {
+  const qpos = (id: string): number | null => {
+    const i = queue.indexOf(id);
+    return i >= 0 ? i : null;
+  };
+  const at = (school: string | null, tier: number) =>
+    progs.filter((p) => (p.school ?? null) === school && p.tier === tier);
+  // A tier-group: its Roman label, a gate bar if any node is sealed, then nodes.
+  const group = (school: string | null, tier: number): string => {
+    const nodes = at(school, tier);
+    if (!nodes.length) return "";
+    const sealed = nodes.find((n) => n.gate);
+    let gate = "";
+    if (sealed?.gate) {
+      const g = sealed.gate;
+      const pct = Math.max(0, Math.min(100, (g.current / Math.max(1e-9, g.threshold)) * 100));
+      gate = `<div class="rp-gate">${esc(g.label)} ${Math.floor(g.current)} / ${Math.round(g.threshold)}</div>` +
+        `<div class="rp-gatebar"><i style="width:${pct}%"></i></div>`;
+    }
+    const cards = nodes.map((n) => researchNode(n, qpos(n.id))).join("");
+    return `<div class="rp-tier"><div class="lbl">Tier ${ROMAN[tier]}</div>${gate}${cards}</div>`;
+  };
+  const schools = Array.from(new Set(progs.filter((p) => p.school).map((p) => p.school as string)));
+  let inner = group(null, 1) + group(null, 2);
+  for (const s of schools) {
+    inner += `<div class="lbl" style="color:#8fd3dd;margin-top:2px">⑂ ${esc(SCHOOL_TITLE[s] ?? s)}</div>`;
+    inner += group(s, 3) + group(s, 4) + group(s, 5);
+  }
+  return `<div class="rp-board"><h4>${researchIcon(fieldSlug, "lg")}<span>${esc(FIELD_TITLE[fieldSlug] ?? fieldSlug)}</span></h4>${inner}</div>`;
+}
+
+function updateResearchPanel(): void {
+  const el = $("research-panel");
+  if (!el.classList.contains("is-open")) return;
+  const r = state.research;
+  const sig = r
+    ? JSON.stringify([
+        r.programmes.map((p) => p.state),
+        r.queue, r.active?.id, r.stalled,
+        r.active ? Math.round((r.active.progress / Math.max(1, r.active.cost)) * 200) : 0,
+        Math.round(r.rate * 100),
+        r.academies.map((a) => [a.rate.toFixed(2), a.supplied]),
+        r.programmes.filter((p) => p.state === "locked" && p.gate).map((p) => Math.round((p.gate!.current / Math.max(1e-9, p.gate!.threshold)) * 40)),
+      ])
+    : "none";
+  if (sig === lastResearchSig && el.innerHTML) return;
+  lastResearchSig = sig;
+
+  let body = "";
+  if (!r) {
+    body = `<div class="rp-note">Research is a <b>syndicate</b> institution — found or join a syndicate (🤝 Syndicate) to open the Programme Boards. Every staffed <b>Academy</b> in the syndicate then powers one shared programme at a time.</div>`;
+  } else {
+    // Active banner.
+    if (r.active) {
+      const a = r.active;
+      const pct = Math.max(0, Math.min(100, (a.progress / Math.max(1e-9, a.cost)) * 100));
+      const eta = a.eta_secs != null ? `ETA ${fmtEta(a.eta_secs)}` : (r.stalled ? `<span class="rp-stalled">stalled</span>` : `no supply`);
+      const acadRows = r.academies.length
+        ? `<div class="rp-acad"><div class="hd">Academy</div><div class="hd">tier</div><div class="hd">rate/s</div>` +
+          r.academies.map((x: AcademyRow) =>
+            `<div class="${x.supplied ? "" : "amber"}">${esc(x.system)}${x.supplied ? "" : " ⚠"}</div>` +
+            `<div>T${x.tier}</div><div>${x.rate.toFixed(2)}</div>`).join("") +
+          `</div>`
+        : `<div class="rp-acad"><div class="amber">No staffed Academy is contributing — post crew to an Academy.</div></div>`;
+      const aField = r.programmes.find((p) => p.id === a.id)?.field ?? "";
+      body += `<div class="rp-active">${researchIcon(aField, "xl")}<div class="rp-a-main"><div class="rp-a-top"><span class="rp-a-name">${esc(a.name)}</span>` +
+        `<span class="rp-a-eta">${esc(String(Math.round(a.progress))) } / ${Math.round(a.cost)}·s · ${eta} · ${r.rate.toFixed(2)}/s</span></div>` +
+        `<div class="rp-bar"><i style="width:${pct}%"></i></div>${acadRows}</div></div>`;
+    } else {
+      body += `<div class="rp-idle">No active programme. Pick any open node below to queue it — the front of the queue starts accruing.</div>`;
+    }
+    // Queue strip.
+    const q = researchQueueIds();
+    const chips = q.map((id, i) => {
+      const p = r.programmes.find((x) => x.id === id);
+      const nm = p ? p.name : id;
+      return `<span class="rp-q-chip"><span class="n">${i + 1}</span>${researchIcon(p?.field ?? "", "sm")}${esc(nm)}` +
+        `<button data-qup="${i}" title="Earlier">▲</button><button data-qdown="${i}" title="Later">▼</button>` +
+        `<button data-qrm="${i}" title="Remove">✕</button></span>`;
+    }).join("");
+    body += `<div class="rp-queue"><span class="rp-q-label">Queue</span>${q.length ? chips : `<span class="rp-q-empty">empty — click an open programme to add it</span>`}</div>`;
+    // Six boards.
+    const boards = FIELD_ORDER.map((f) => researchBoard(f, r.programmes.filter((p) => p.field === f), q)).join("");
+    body += `<div class="rp-boards">${boards}</div>`;
+    body += `<div class="rp-note">Tech sheets are private — nothing here leaks to rivals. Completing a programme applies its effect instantly, galaxy-wide.</div>`;
+  }
+  // Refresh ONLY the scroll body, keeping the .rp-body element itself across
+  // ticks so its scrollTop survives. The active programme's progress bar
+  // advances the render signature almost every tick; replacing the whole panel
+  // recreated .rp-body each time and snapped the list back to the top. Building
+  // the head+body shell once and updating just the body's children keeps the
+  // scroll position put.
+  let bodyEl = el.querySelector<HTMLElement>(".rp-body");
+  if (!bodyEl) {
+    el.innerHTML = `<div class="rp-head"><b>🔬 RESEARCH — PROGRAMME BOARDS</b><button class="rp-close" data-rp="close" title="Close">✕</button></div><div class="rp-body"></div>`;
+    bodyEl = el.querySelector<HTMLElement>(".rp-body")!;
+  }
+  bodyEl.innerHTML = body;
+}
+
 // --- §rankings: the published leaderboard (rail tab) ---------------------------
 // A public ledger snapshot (same for everyone), sortable by category. One category
 // at a time keeps it legible in the narrow rail; the chips ARE the "sortable
@@ -910,7 +1132,7 @@ function openHubPanel(): void {
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
     `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
-    `<button class="act act--primary" data-act="market">${uiIcon("concept-market-exchange", "sm")} Open Market</button>` +
+    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open Market</button>` +
     `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
@@ -1029,6 +1251,8 @@ function updateSysviewDynamic(): void {
   // §body-management: the open body panel is live — crew counts, queue bars,
   // and afford states track the Views (single-click-guarded like every panel).
   refreshOpenBodyPanel();
+  // §build-panel: its rows/costs/queued-note track the same Views.
+  refreshBuildPanel();
 }
 function buildSysviewManage(): void {
   if (sysviewManageBuilt) return;
@@ -1069,7 +1293,7 @@ function updateSysviewManage(): void {
   }
   buildSysviewManage();
   panel.classList.add("is-open");
-  $("svm-title").textContent = sys.name;
+  $("svm-title").textContent = `${sys.name} System`;
   // SLOTS — the system's defining constraint, promoted to the header.
   const sUsed = dyn.slots_used ?? 0;
   const sTotal = dyn.slots_total ?? 0;
@@ -1082,22 +1306,26 @@ function updateSysviewManage(): void {
   const used = dyn.storage_used ?? 0;
   const storageFull = cap > 0 && used >= cap;
   const storageBar = cap > 0
-    ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile ${fmt(used)} / ${fmt(cap)}</div>` +
+    ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile Capacity ${fmt(used)} / ${fmt(cap)}</div>` +
       `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
       (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
     : "";
-  // §body-management: COLONY VITALS — population, food rung, workforce (the
-  // Part-7 owner-only fields as a stat strip; pure data).
+  // §body-management: COLONY VITALS — population, food rung, workforce, and the
+  // Provisions upkeep (§system-reorg: the upkeep moved up here from the
+  // production readout; the population eats provisions_per_million_per_s · pop).
   const wf = dyn.workforce;
   const foodState = label(dyn.food_state ?? "well_supplied");
-  const vitals = (dyn.population ?? 0) > 0 || wf
-    ? statStrip([
-        stat("Population", `${(dyn.population ?? 0).toFixed(1)}M`),
-        stat("Food", foodState, dyn.habitat_fed ? "" : "is-warn"),
-        stat("Workforce", wf ? `${Math.min(wf.posted, wf.units)}/${wf.posted}` : "—", wf && wf.posted > wf.units ? "is-warn" : ""),
-      ])
-    : "";
+  const popM = dyn.population ?? 0;
+  const upkeepRate = (state.galaxy?.provisions_per_million_per_s ?? 0.06) * popM;
+  const vitalCells = [
+    stat("Population", `${popM.toFixed(1)}M`),
+    stat("Food", foodState, dyn.habitat_fed ? "" : "is-warn"),
+    stat("Workforce", wf ? `${Math.min(wf.posted, wf.units)}/${wf.posted}` : "—", wf && wf.posted > wf.units ? "is-warn" : ""),
+  ];
+  if (popM > 0)
+    vitalCells.push(stat("Upkeep", `−${upkeepRate.toFixed(2)} ${commodityIcon("provisions", "sm")}/s`, dyn.habitat_fed ? "" : "is-warn"));
+  const vitals = popM > 0 || wf ? statStrip(vitalCells) : "";
   // §body-management: the three SLOT POOLS — a system fact, so it reads here
   // (the per-pool gating itself lives with the build rows on the body panels).
   const pools = poolUsage(dyn);
@@ -1105,29 +1333,29 @@ function updateSysviewManage(): void {
     (["resource", "industrial", "infrastructure"] as const)
       .map((k) => `${k} ${pools[k].used}/${pools[k].total}`)
       .join(" · ") + `</div>`;
-  // §bodies: the ROSTER — one row per body (public geography), the owner's
-  // structures as chips ON their body. Rows/chips are NAVIGATION, not actions:
-  // clicking opens that body's panel (the action surface).
-  const FAMILY_ICON: Record<string, IconKey> = {
-    mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
-    shipyard: "shipyard", depot: "depot", sensor_array: "sensor", defense_platform: "defense",
-    habitat: "habitat", academy: "habitat",
-  };
+  // §system-reorg: the ROSTER — one row per body (public geography). The row is a
+  // NAVIGATION button (opens that body's panel to build/staff/ship) followed by
+  // the planet's CONTRIBUTION: the net output of its staffed lines, per commodity
+  // (+x/s <icon>). Buildings no longer list here — they live on the body panel.
   const bodies = dyn.bodies ?? [];
-  const chipFor = (b: BodyView, slug: string, t: number): string => {
-    const fedTag = slug === "habitat" && !dyn.habitat_fed
-      ? ` ${badgeChip("unfed", foodState, "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`
-      : "";
-    return `<button class="dev act" data-body="${b.id}" title="${esc(label(slug))} ×${t} on ${esc(b.name)} — click to manage it there">${icon(FAMILY_ICON[slug] ?? "refinery", "sm")}${esc(label(slug))} <b>×${t}</b></button>${fedTag}`;
+  const outByBody = new Map<number, Map<Commodity, number>>();
+  for (const a of dyn.assignments ?? []) {
+    let m = outByBody.get(a.body_id);
+    if (!m) { m = new Map(); outByBody.set(a.body_id, m); }
+    for (const [c, r] of a.outputs) if (r > 0.001) m.set(c, (m.get(c) ?? 0) + r);
+  }
+  const contribFor = (b: BodyView): string => {
+    const m = outByBody.get(b.id);
+    if (!m || !m.size) return `<span class="dim">undeveloped</span>`;
+    return [...m.entries()]
+      .sort((x, y) => y[1] - x[1])
+      .map(([c, r]) => `<span class="dev-contrib" title="${esc(b.name)} contributes +${r.toFixed(2)} ${esc(label(c))}/s to the colony">+${r.toFixed(2)}/s ${commodityIcon(c, "sm")}</span>`)
+      .join(" ");
   };
   const devs = bodies.length
     ? bodies.map((b) => {
-        const builtHere = Object.entries(b.structures ?? {}).filter(([, t]) => t > 0);
         const pop = b.population > 0 ? ` <span class="dim">${b.population.toFixed(1)}M</span>` : "";
-        const chips = builtHere.length
-          ? builtHere.map(([slug, t]) => chipFor(b, slug, t)).join(" ")
-          : `<span class="dim">undeveloped</span>`;
-        return `<div class="devs-row"><button class="dev act" data-body="${b.id}" title="Open ${esc(b.name)} — build, staff, ship from its panel">${esc(b.name)}</button>${pop} ${chips}</div>`;
+        return `<div class="devs-row"><button class="dev act" data-body="${b.id}" title="Open ${esc(b.name)} — build, staff, ship from its panel">${esc(b.name)}</button>${pop} ${contribFor(b)}</div>`;
       }).join("")
     : `<div class="mhint">No bodies rostered yet.</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
@@ -1155,9 +1383,21 @@ function updateSysviewManage(): void {
         : badgeChip("garrison", "UNFED", "warn", "The allied garrison here is UNFED — this system is out of Provisions to cover its upkeep, so its defense is suspended. Ship Provisions here to restore it.")) +
       `</div>`
     : "";
-  $("svm-eyebrow").textContent = blockaded ? "colony summary · UNDER BLOCKADE" : "colony summary · click a body to manage it";
+  $("svm-eyebrow").textContent = blockaded ? "UNDER BLOCKADE" : "";
   const queue = buildQueueRows(sid, dyn, { nav: true });
-  $("svm-body").innerHTML = blockadeBanner + vitals + storageBar + poolStrip + devs + garrisonHost + productionReadout(dyn) + queue;
+  // §system-reorg: production + stockpile total up top, then the planet roster
+  // (with per-body contribution), then colony vitals (pop/food/workforce/upkeep),
+  // slot pools, garrison, and the build queue. Each is its own titled section,
+  // separated by a divider (empty sections drop out, so no dangling rules).
+  const sections = [
+    blockadeBanner,
+    storageBar + productionReadout(dyn), // Stockpile Capacity + bar, then the commodity rows
+    `<div class="deps-head">Planets</div>` + devs, // the planet roster under its own header
+    vitals + poolStrip, // colony vitals + slot pools
+    garrisonHost,
+    queue,
+  ].filter((s) => s.trim() !== "");
+  $("svm-body").innerHTML = sections.join(`<div class="svm-div"></div>`);
 }
 
 let planetPanelBuilt = false;
@@ -1194,6 +1434,16 @@ function buildPlanetPanel(): void {
       return;
     }
     switch (el.dataset.action) {
+      case "open-builder":
+        // §build-panel: open the dedicated builder for THIS body (a sibling panel
+        // to the right — nothing is sent until "Queue build").
+        if (openBodyDetail) openBuildPanel(openBodyDetail.id);
+        break;
+      case "open-shipyard":
+        // §build-ship-panel: open the ship builder for this shipyard body (its
+        // sibling — opening it closes the structure builder, and vice-versa).
+        if (openBodyDetail) openShipPanel(openBodyDetail.id);
+        break;
       case "ship": {
         const manifest = shippableStock(state.systems.find((s) => s.id === sid));
         if (manifest.length) net.send({ type: "ShipProduction", system_id: sid });
@@ -1224,6 +1474,7 @@ function refreshOpenBodyPanel(): void {
 }
 function closePlanetPanel(): void {
   openBodyDetail = null;
+  closeBuildPanel(); // the builder is a child of the planet context
   $("planet-panel").classList.remove("is-open");
 }
 /// §body-management: a section header for the body panel.
@@ -1232,6 +1483,9 @@ const ppSec = (title: string, tip = ""): string =>
 
 function openPlanetPanel(d: SystemBodyDetail): void {
   buildPlanetPanel();
+  // §build-panel: retargeting to a DIFFERENT body closes a stale builder (it
+  // pointed at the old body); a live refresh of the SAME body keeps it open.
+  if (buildTargetBodyId && buildTargetBodyId !== d.id) closeBuildPanel();
   openBodyDetail = d;
   const eyebrow = d.isMoon ? "natural satellite" : d.habitable ? "habitable world" : "planet";
   const habitable = d.habitable ? " " + badge("positive", "habitable") : "";
@@ -1291,21 +1545,23 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     const lines = assignmentLines(dyn, true, body);
     const linesSec = lines ? ppSec("Production lines", "output = richness/rate × tier × staffing × skill × food — hover a row for its chain") + lines : "";
 
-    // 4. BUILD HERE — gated by THIS body's slot pools (founding claims a slot;
-    // tier-ups deepen in place). Extraction offers only where its deposit lies.
+    // 4. BUILD — the per-body slot pools at a glance + ONE button into the
+    // dedicated build panel (the per-structure grid moved there wholesale, so the
+    // geology/built-here above stay readable while you choose what to build).
     const pools = bodyPoolUsage(body, dyn);
-    const devOpts = (state.galaxy?.build_options ?? []).filter((o) =>
-      !SHIP_KEYS.has(o.key) &&
-      (!EXTRACTION_OF[o.key] || (body.deposits ?? []).some((dep) => EXTRACTION_OF[o.key].includes(dep.resource))));
-    const buildSec = devOpts.length
-      ? ppSec("Build here", "Founding a NEW structure claims one of this body's pool slots; tier-ups deepen in place. Costs draw from the system stockpile.") +
-        `<div class="build-grid">${devOpts.map((o) => {
-          const pool = POOL_OF[o.key];
-          const tierUp = (tiers[o.key] ?? 0) > 0;
-          const poolFull = pool && !tierUp ? pools[pool].used >= pools[pool].total : false;
-          return buildOptionRow(o, dyn, poolFull);
-        }).join("")}</div>`
-      : "";
+    const structOpts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => !SHIP_KEYS.has(o.key) && !!POOL_OF[o.key]);
+    // Openable if there's anything to DO here — a foundable structure (free slot +
+    // deposit) or an existing tier to deepen (goods aside; the panel shows afford).
+    const anyOpenable = structOpts.some((o) => {
+      const st = structOption(o, dyn, body, pools);
+      return st.tierUp || (!st.poolFull && !st.noDeposit);
+    });
+    const poolStrip = `<div class="pp-pools">` + (["resource", "industrial", "infrastructure"] as const)
+      .map((k) => `<span class="pp-pool${pools[k].used >= pools[k].total ? " is-full" : ""}" title="${POOL_LABEL[k]} slots used / total on this body — founding a new structure needs a free slot; deepening a tier never does.">${POOL_LABEL[k]} ${pools[k].used}/${pools[k].total}</span>`)
+      .join("") + `</div>`;
+    const buildSec = ppSec("Build", "The at-a-glance slot pools — the reason to open the builder. Founding a NEW structure claims one of this body's pool slots; tier-ups deepen in place.") +
+      poolStrip +
+      `<button class="act pp-build-open" data-action="open-builder" ${anyOpenable ? "" : "disabled"} title="${anyOpenable ? "Open the build panel — pick a structure, read its recipe & effect, then queue it." : "Nothing buildable here — every slot pool is full and there's nothing to deepen. Grow this body's population, or build on another body."}">${icon("build", "sm")} Build structure…</button>`;
 
     // Per-body construction queue (ship jobs render under the yard below).
     const bodyQueue = buildQueueRows(sid, dyn, { filter: (j) => j.body_id === body.id && !SHIP_KEYS.has(j.key), seenKey: `${sid}#b${body.id}` });
@@ -1317,10 +1573,15 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     if ((tiers["shipyard"] ?? 0) > 0) {
       const shipOpts = (state.galaxy?.build_options ?? []).filter((o) => SHIP_KEYS.has(o.key));
       const shipQueue = buildQueueRows(sid, dyn, { filter: (j) => SHIP_KEYS.has(j.key), seenKey: `${sid}#yard` });
+      // The per-hull rows moved into the dedicated ship builder; the planet panel
+      // keeps the fit composer + the yard's queue (watch it here, choose there).
+      const yardTier = dyn.shipyard_tier ?? 0;
       yardSec = shipOpts.length
         ? ppSec("Orbital yard — ship construction", "Ships build at this body's Shipyard (tier-gated exactly as before) and spawn here.") +
+          `<div class="pp-yardline"><span class="pp-pool" title="The shipyard tier gates what can be built (Convoy/Scout/Colony I, Raider/Corvette II).">${icon("shipyard", "sm")} Shipyard ${romanTier(yardTier)}</span>` +
+          `<button class="act pp-build-open" data-action="open-shipyard" title="Open the ship builder — pick a hull, set a quantity, read its stats & recipe, then queue it.">${icon("shipyard", "sm")} Build ship…</button></div>` +
           fitPicker(dyn) +
-          `<div class="build-grid">${shipOpts.map((o) => buildOptionRow(o, dyn, false)).join("")}</div>` + shipQueue
+          shipQueue
         : "";
     }
 
@@ -1471,7 +1732,7 @@ function openBattlePanel(id: number): void {
     // §battle-records: watch the round-by-round replay (if its record is retained).
     ((): string => {
       const rec = recordForReport(r);
-      return rec ? `<button class="act" data-act="viewbattle" data-record="${rec.id}" title="Watch the round-by-round replay of this battle.">${uiIcon("concept-fleet", "sm")} View battle replay</button>` : "";
+      return rec ? `<button class="act" data-act="viewbattle" data-record="${rec.id}" title="Watch the round-by-round replay of this battle.">${svgIcon("concept-fleet", "sm")} View battle replay</button>` : "";
     })() +
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
@@ -1535,7 +1796,7 @@ function shipChip(kind: ShipKind, count: number, opts: { lost?: number; est?: st
     ? `<span class="fs-fallen">−${opts.lost}</span>`
     : opts.shrunk ? `<span class="fs-fallen">▾</span>` : "";
   return `<span class="fs-chip${wiped ? " lost" : ""}" title="${esc(shipKindLabel(kind))}">` +
-    `${uiIcon(SHIP_ICON[kind], "md")}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
+    `${svgIcon(SHIP_ICON[kind], "md")}<span class="fs-n">${esc(num)}</span>${tail}</span>`;
 }
 // A labelled side of the force strip. `chips` empty → a dim placeholder.
 function forceSide(label: string, cls: string, chips: string): string {
@@ -1605,7 +1866,7 @@ function updateOngoingBattlePanel(): void {
           echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
-          `↩ ${uiIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
+          `↩ ${svgIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
       }).join("") + `</div>`
     : "";
 
@@ -1613,7 +1874,7 @@ function updateOngoingBattlePanel(): void {
   // wall-clock an order issued now would land at — plus a terse reach verdict.
   const delay = battleCommandDelay(b);
   const cmdDelayLine = delay !== null
-    ? `<div class="sp-line dim">${uiIcon("action-standing-order", "sm")} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
+    ? `<div class="sp-line dim">${svgIcon("action-standing-order", "sm")} Order lag <b style="color:var(--ink)">${fmtCountdown(delay)}</b> → lands ~${esc(arrivalLocal(delay))}` +
       (delay > 20 ? ` · <span style="color:#e88">too far to steer</span>` : ` · <span style="color:var(--accent)">still in reach</span>`) + `</div>`
     : "";
 
@@ -1626,7 +1887,7 @@ function updateOngoingBattlePanel(): void {
   // record for it has reached us — participants always have one, an observer
   // only when their sensors cover the site).
   const viewBtn = state.battleRecords.some((r) => r.id === b.id)
-    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${uiIcon("concept-fleet", "sm")} View battle replay</button>`
+    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${svgIcon("concept-fleet", "sm")} View battle replay</button>`
     : "";
   const body =
     ragingLine +
@@ -1815,7 +2076,7 @@ function bvSideHtml(rec: BattleRecordView, rd: RoundRecordView, s: 0 | 1, partic
       ? (kill?.exact ? ` <span class="bv-krow__kill">−${kill.exact}</span>` : "")
       : (kill ? ` <span class="bv-krow__kill">▾</span>` : "");
     const nStyle = gone ? ' style="text-decoration:line-through;color:var(--dim)"' : "";
-    return `<div class="bv-krow" title="${esc(shipKindLabel(k))}">${uiIcon(SHIP_ICON[k], "sm")}` +
+    return `<div class="bv-krow" title="${esc(shipKindLabel(k))}">${svgIcon(SHIP_ICON[k], "sm")}` +
       `<div class="bv-krow__bar"><div class="bv-krow__fill${gone ? " gone" : ""}" style="width:${gone ? 100 : Math.max(5, pct)}%"></div></div>` +
       `<span class="bv-krow__n"${nStyle}>${esc(nlabel)}${killTag}</span></div>`;
   }).join("");
@@ -1872,7 +2133,7 @@ function renderBattleViewer(): void {
 
   const head =
     `<div class="pp-head"><div class="panel-title"><div>` +
-    `<div class="eyebrow">${uiIcon("concept-fleet", "sm")} battle replay${rec.raid ? " · raid" : ""}${participant ? "" : " · sensor estimate"}</div>` +
+    `<div class="eyebrow">${svgIcon("concept-fleet", "sm")} battle replay${rec.raid ? " · raid" : ""}${participant ? "" : " · sensor estimate"}</div>` +
     `<h2>Engagement ${esc(nearestSystemName(rec.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close (Esc)" aria-label="Close">✕</button></div>`;
 
@@ -2382,6 +2643,8 @@ function installInteraction(): void {
       readout().innerHTML =
         `Recall away to your raider — travels at light speed. ` +
         `<span class="dim">If it has already made contact, you're commanding into the past.</span>`;
+    } else if (e.key === "r" || e.key === "R") {
+      toggleResearch(); // §research: the Programme Boards (no own ship selected)
     } else if (e.key === "s" || e.key === "S") {
       toggleRail("system");
     } else if (e.key === "m" || e.key === "M") {
@@ -2400,6 +2663,8 @@ function installInteraction(): void {
       // §battle-records: the replay overlay is topmost — Escape closes it first.
       if ($("battle-viewer").classList.contains("is-open")) {
         closeBattleViewer();
+      } else if ($("build-panel").classList.contains("is-open") || $("build-ship-panel").classList.contains("is-open")) {
+        closeBuildPanel(); // back out of either builder before the planet panel
       } else if ($("planet-panel").classList.contains("is-open")) {
         closePlanetPanel();
       } else if (renderer.viewMode.type === "system") {
@@ -2475,12 +2740,6 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const stockOf = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const tier = dyn?.extractor_tier ?? 0;
   const mult = Math.pow(EXTRACTOR_RICHNESS_MULT, tier);
-  // §economy Part 2: the colony EATS (Provisions ∝ population) and the old
-  // fed-Habitat output boost is retired — supply trouble shows as the food
-  // rung, not a multiplier. Owner-only, like every colony readout.
-  const habTier = dyn?.habitat_tier ?? 0;
-  const habFed = !!dyn?.habitat_fed; // legacy wire alias for "well supplied"
-  const popM = dyn?.population ?? 0;
   const rateOf = new Map<Commodity, number>();
   // §explore: the readout is owner-only, and an owner always knows their own
   // geology (dyn.deposits present) — read from the light-gated view.
@@ -2488,15 +2747,6 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
-  const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
-  const habTag = habTier > 0 && !habFed
-    ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${label(dyn?.food_state ?? "rationing").toUpperCase()}</span>`
-    : "";
-  // Standing upkeep line (the game's first continuous consumption): the
-  // POPULATION eats, `provisions_per_million_per_s · millions` (§economy Part 2).
-  const upkeep = popM > 0
-    ? `<div class="mhint" style="margin-top:4px" title="The colony's population draws Provisions from the system stockpile each second; shortages slow the workforce and pause growth — nothing is lost, nobody dies.">${icon("habitat", "sm")} pop ${popM.toFixed(1)}M eats −${((state.galaxy?.provisions_per_million_per_s ?? 0.06) * popM).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "short", "warn", "Provisions running low — workforce slowed, growth paused (nothing is lost).")}`}</div>`
-    : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
   let refinery = "";
@@ -2509,19 +2759,18 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       ? `<div class="mhint" style="margin-top:4px" title="Fuel Refinery ×${refTier}: converts Volatiles → Fuel (1:1) up to ${rate.toFixed(1)}/s per throughput tier when staffed.">${icon("refinery", "sm")} ${icon("volatiles", "sm")} → ${icon("fuel", "sm")} up to ${rate.toFixed(1)}/s · staffed line</div>`
       : `<div class="mhint" style="margin-top:4px" title="Fuel Refinery idle — no Volatiles to convert. Haul some in (1 Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
   }
-  return `<div class="deps-head" style="margin-top:8px">${icon("storage", "sm")} Stockpile · production${tierTag}${habTag}</div>` +
-    rows.map((c) => {
+  return rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span class="sp-name">${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + upkeep + refinery + colonyPanel(dyn);
+    }).join("") + refinery;
 }
 
-// §economy Part 6: the COLONY PRODUCTION PANEL — workforce, one row per line
-// with the server-resolved factor chain (shown math: throughput × staffing ×
-// skill × food), crew ± controls (data-crew), suspension causes. Functional,
-// not pretty: this is the alpha's management surface.
+// §economy Part 6: the per-line PRODUCTION ROWS — one row per line with the
+// server-resolved factor chain (shown math: throughput × staffing × skill ×
+// food), crew ± controls (data-crew), suspension causes. Rendered on the BODY
+// panels now (§system-reorg dropped the system-screen workforce block).
 const PRODUCER_SLUGS = new Set([
   "mining_complex", "volatile_harvester", "bioharvester", "smelter",
   "electronics_fabricator", "chemical_works", "fuel_refinery", "agroplex",
@@ -2571,19 +2820,6 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
         `</div>`))
     .join("");
   return lines.map(rowFor).join("") + idle;
-}
-function colonyPanel(dyn: SystemStateView | undefined): string {
-  const wf = dyn?.workforce;
-  if (!wf) return "";
-  const short = wf.posted > wf.units;
-  const head = `<div class="deps-head" style="margin-top:8px">${icon("habitat", "sm")} Colony · workforce ` +
-    `<b>${Math.min(wf.posted, wf.units)}/${wf.posted}</b> crews` +
-    (short ? ` ${badgeChip("unfed", "short-staffed", "warn", `Only ${wf.units} of ${wf.posted} posted crews are filled — every line runs at ${((wf.units / Math.max(1, wf.posted)) * 100).toFixed(0)}%. Population growth adds crews.`)}` : "") +
-    `</div>`;
-  const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(label(k))}`).join(", ");
-  const poolLine = pool ? `<div class="mhint" style="margin-top:2px">${icon("habitat", "sm")} resident specialists: ${pool}</div>` : "";
-  // Pure DATA — the crew controls live on the body panels (§body-management).
-  return head + assignmentLines(dyn, false) + poolLine;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
@@ -2692,14 +2928,14 @@ function buildQueueRows(
     // §bodies: a queue row NAVIGATES to its site body when the caller asks.
     const bodyId = opts?.nav ? String(j.body_id) : null;
     const nav = bodyId ? ` data-body="${bodyId}" style="cursor:pointer" title="under construction — click to open its body panel"` : "";
-    return `<div class="bq-row"${nav}><span class="bq-ic">${uiIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
+    return `<div class="bq-row"${nav}><span class="bq-ic">${svgIcon(BUILD_ICON[j.key] ?? "action-build", "sm")}</span>` +
       `<div class="bq-main"><div class="bq-head"><b>${esc(name)}</b>` +
       `<span class="bq-eta">${fmtCountdown(left)} · done ${doneAtLocal(j.complete_time)}</span></div>` +
       `${bar(pct)}</div></div>`;
   }).join("");
   const doneRows = flashes.map((f) =>
     `<div class="bq-row bq-done"><span class="bq-ic tone-up">✓</span><div class="bq-main"><b>${esc(f.label)}</b> <span class="dim">complete</span></div></div>`).join("");
-  return `<div class="deps-head" style="margin-top:8px">${uiIcon("action-build", "sm")} Under construction</div>` +
+  return `<div class="deps-head" style="margin-top:8px">${svgIcon("action-build", "sm")} Under construction</div>` +
     `<div class="bq-list">${rows}${doneRows}</div>`;
 }
 
@@ -2779,7 +3015,7 @@ function fitPicker(dyn: SystemStateView | undefined): string {
     return `<button class="act fit-chip${on ? " is-on" : ""}" data-fit="${m}" title="${esc(MODULE_TIP[m])}">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
   }).join("");
   const cur = pendingFit.length ? pendingFit.map((m) => MODULE_GLYPH[m]).join(" ") : "stock (unfitted)";
-  return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${uiIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
+  return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${svgIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
     `<div class="fit-row">${chips}</div>`;
 }
 // §modules Part B4: the REFIT section on an OWN fleet — its warship STACKS
@@ -2818,33 +3054,13 @@ function refitSection(g: GhostView): string {
       `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same ? "disabled" : ""} title="Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.">Refit →</button>` +
       `</div>`;
   }).join("");
-  return `<div class="sp-sec">${uiIcon("action-build", "sm")} Refit</div>` +
+  return `<div class="sp-sec">${svgIcon("action-build", "sm")} Refit</div>` +
     `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> — at a docked Shipyard</div>` +
     `<div class="fit-row">${chips}</div>${rows}`;
 }
 
-// One build/develop option row — cost, afford state, and the two sim-mirroring
-// gates (dev slot / shipyard tier). Shared by the full build menu and the
-// System View's contextual per-body offers, so gating can never diverge.
-function buildOptionRow(o: { key: string; label: string; costs: { commodity: string; units: number }[]; build_secs: number }, dyn: SystemStateView | undefined, slotsFull: boolean): string {
-  const have = new Map((dyn?.stockpile ?? []).map((s) => [s.commodity, s.units]));
-  const yard = dyn?.shipyard_tier ?? 0;
-  const isDev = !SHIP_KEYS.has(o.key);
-  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
-  const needYard = SHIP_KEYS.has(o.key) ? SHIP_REQ[o.key] ?? 1 : 0;
-  const yardShort = needYard > 0 && yard < needYard;
-  const blocked = (isDev && slotsFull) || yardShort;
-  const enabled = afford && !blocked;
-  const title = isDev && slotsFull ? "No free slot in this pool on THIS body — grow its population, or found it on another body."
-    : yardShort ? `Ships build only at a Shipyard system — this needs Shipyard tier ${needYard}.`
-      : afford ? "Costs draw from this system's stockpile."
-        : "Not enough resources stockpiled here.";
-  const cost = o.costs.map((c) => `${commodityIcon(c.commodity as Commodity, "sm")}${c.units}`).join(" ");
-  const gate = isDev && slotsFull ? `<span class="bo-gate" title="No free slot in this pool on this body.">${icon("slots", "sm")}full</span>`
-    : yardShort ? `<span class="bo-gate" title="Requires Shipyard tier ${needYard}.">${icon("shipyard", "sm")}${needYard}</span>` : "";
-  return `<button class="act build-opt" data-build="${o.key}" ${enabled ? "" : "disabled"} title="${esc(title)}">` +
-    `<span class="bo-name">${esc(o.label)}${gate}</span><span class="bo-cost">${cost} · ${icon("time", "sm")}${o.build_secs}s</span></button>`;
-}
+// (buildOptionRow removed — the inline structure/ship rows it drew are gone; the
+//  dedicated build panels now own that gating via structOption / shipOption.)
 
 // §explore Part 3: the trait line (name + one-line effect) for the OWNER's
 // system panel. Warn-tinted for the lemon. Slug "bonus_vein:<commodity>" carries
@@ -2942,6 +3158,394 @@ function poolUsage(dyn: SystemStateView | undefined): PoolUse {
     }
   }
   return sum;
+}
+
+// ---- §build-panel: the dedicated structure builder ---------------------------
+// A client-only UI over the SAME DevelopSystem command — the per-structure grid
+// that used to live inline on the planet panel moved here wholesale, so the
+// planet panel stays a lens on the body while you choose what to build. All the
+// slot / afford / tier / deposit gating below is the ONE source of truth shared
+// by the row list, the detail, and the Queue button.
+type Pool = "resource" | "industrial" | "infrastructure";
+const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industrial: "Industrial", infrastructure: "Infrastructure" };
+// Structure → the closest registry icon (art only; mirrors systemview's family).
+const STRUCT_ICON: Record<string, IconKey> = {
+  mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
+  smelter: "refinery", electronics_fabricator: "refinery", chemical_works: "refinery",
+  fuel_refinery: "refinery", machine_works: "build", armaments_complex: "build", shipyard: "shipyard",
+  agroplex: "habitat", habitat: "habitat", depot: "depot",
+  sensor_array: "sensor", defense_platform: "defense", academy: "habitat",
+};
+// Producers scale output by the tier-throughput curve (mirrors sim TIER_THROUGHPUT).
+const TIER_THROUGHPUT = [0, 1.0, 2.2, 3.8, 6.0];
+const THROUGHPUT_STRUCTS = new Set(["mining_complex", "volatile_harvester", "bioharvester", "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery", "machine_works", "armaments_complex", "agroplex", "academy"]);
+// One-line "what it does" + "what it enables" per structure (client flavor, kept
+// consistent with the sim's recipes — production.rs CONVERTERS / build.rs).
+const STRUCT_INFO: Record<string, { desc: string; effect: string }> = {
+  mining_complex: { desc: "Mines the body's Metallic Ore, Silicates, or Rare-Element deposit.", effect: "Feeds raw ore into the system stockpile." },
+  volatile_harvester: { desc: "Draws Volatiles from the body's gas/ice deposit.", effect: "Feeds Volatiles — fuel & polymer feedstock." },
+  bioharvester: { desc: "Harvests Biomass from the body's living deposit.", effect: "Feeds Biomass — food & polymer feedstock." },
+  smelter: { desc: "Smelts Metallic Ore (+Fuel) into Alloys.", effect: "Unlocks Alloys production." },
+  electronics_fabricator: { desc: "Fabricates Electronics from Rare Elements + Silicates.", effect: "Unlocks Electronics production." },
+  chemical_works: { desc: "Processes Volatiles + Biomass into Polymers.", effect: "Unlocks Polymers production." },
+  fuel_refinery: { desc: "Refines Volatiles into Fuel.", effect: "Unlocks Fuel — powers movement + smelting." },
+  machine_works: { desc: "Builds Machinery from Alloys + Electronics + Fuel.", effect: "Unlocks Machinery — the build-cost backbone." },
+  armaments_complex: { desc: "Assembles Armaments from Alloys + Electronics + Polymers.", effect: "Unlocks Armaments + on-site module manufacture." },
+  shipyard: { desc: "An orbital yard that builds and fits warships here.", effect: "Gates ship construction (Convoy I, Raider/Corvette II)." },
+  agroplex: { desc: "Grows Provisions from Biomass.", effect: "Feeds the colony — keeps it Well Supplied." },
+  habitat: { desc: "Housing that lifts this body's population ceiling.", effect: "+population cap & workforce; boosts output when fed." },
+  depot: { desc: "An orbital warehouse that raises storage capacity.", effect: "+400 storage cap; ships cargo to the hub." },
+  sensor_array: { desc: "A standing sensor array over the system.", effect: "Projects a sensor bubble — see rivals sooner." },
+  defense_platform: { desc: "Static defenses that fight raiders at the system.", effect: "+1 defense tier vs. attackers (can be worn down)." },
+  academy: { desc: "Trains specialists and powers syndicate research.", effect: "Enables specialist training + a research contribution." },
+};
+
+type BuildOpt = { key: string; label: string; costs: { commodity: string; units: number }[]; build_secs: number };
+interface StructOpt {
+  o: BuildOpt; pool: Pool; currentTier: number; targetTier: number;
+  foundsNew: boolean; tierUp: boolean;
+  afford: boolean; poolFull: boolean; noDeposit: boolean;
+  buildable: boolean; reason: string;
+}
+/// The sim-mirroring state for building `o` on `body` — current/target tier,
+/// whether it founds a NEW slot vs. deepens in place, and every precondition
+/// (afford / pool-full / matching-deposit). `buildable` = all pass (Queue is
+/// live); `reason` is the first failing gate. Lifted out of the old inline build
+/// rows so the list, the detail, and the button can never disagree.
+function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, pools: PoolUse): StructOpt {
+  const pool = POOL_OF[o.key];
+  const currentTier = (body.structures ?? {})[o.key] ?? 0;
+  const pendingAhead = (dyn.builds ?? []).filter((j) => j.body_id === body.id && j.key === o.key).length;
+  const foundsNew = currentTier === 0 && pendingAhead === 0;
+  const targetTier = currentTier + pendingAhead + 1;
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+  const poolFull = foundsNew && !!pool && pools[pool].used >= pools[pool].total;
+  const extractsFrom = EXTRACTION_OF[o.key];
+  const noDeposit = foundsNew && !!extractsFrom && !(body.deposits ?? []).some((d) => extractsFrom.includes(d.resource as Commodity));
+  const buildable = !poolFull && !noDeposit && afford;
+  const reason = noDeposit ? "No matching deposit on this body — a mine only works its own rock."
+    : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
+      : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, pool, currentTier, targetTier, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, buildable, reason };
+}
+const romanTier = (n: number): string => ROMAN[n] ?? String(n);
+
+// Build-panel state: which body it targets + the currently-selected structure.
+let buildPanelBuilt = false;
+let buildTargetBodyId: string | null = null; // the body BOTH builders target (shared)
+let buildSelectedKey: string | null = null; // struct builder selection
+let shipSelectedKind: string | null = null; // ship builder selection
+let shipQty = 1; // ship builder quantity
+
+// §build-panel: the shared SHELL for both builders (structures + ships) — same
+// chrome, dock, and dimensions (`.build-shell` in the CSS). The two panels are
+// siblings, never open together (opening one closes the other via closeBuildPanel).
+function panelShellHtml(el: HTMLElement, eyebrow: string, title: string, chips: string, listHtml: string, detailHtml: string, footHtml: string): void {
+  el.innerHTML =
+    `<div class="bp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2></div></div>` +
+    `<button class="pp-close" data-bp="close" title="Close" aria-label="Close">✕</button></div>` +
+    `<div class="bp-pools">${chips}</div>` +
+    `<div class="bp-body"><div class="bp-list">${listHtml}</div><div class="bp-detail">${detailHtml}</div></div>` +
+    footHtml;
+  el.classList.add("is-open");
+}
+function buildBuildPanel(): void {
+  if (buildPanelBuilt) return;
+  buildPanelBuilt = true;
+  $("build-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-bp='close']")) { closeBuildPanel(); return; }
+    const row = t.closest("[data-bp-row]") as HTMLElement | null;
+    if (row) { buildSelectedKey = row.dataset.bpRow ?? null; renderBuildPanel(); return; }
+    if (t.closest("[data-bp='queue']")) { queueSelectedBuild(); return; }
+  });
+  $("build-ship-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-bp='close']")) { closeBuildPanel(); return; }
+    const qbtn = t.closest("[data-bp-qty]") as HTMLElement | null;
+    if (qbtn) { shipQty = Math.max(1, Number(qbtn.dataset.bpQty) || 1); renderShipPanel(); return; }
+    const row = t.closest("[data-bp-row]") as HTMLElement | null;
+    if (row) { shipSelectedKind = row.dataset.bpRow ?? null; renderShipPanel(); return; }
+    if (t.closest("[data-bp='queue']")) { queueSelectedShips(); return; }
+  });
+}
+function openBuildPanel(bodyId: string): void {
+  buildBuildPanel();
+  // Toggle: the same body's builder re-clicked closes it (the button is a switch).
+  const toggleOff = buildTargetBodyId === bodyId && $("build-panel").classList.contains("is-open");
+  closeBuildPanel(); // also closes the ship builder — the two never coexist
+  if (toggleOff) return;
+  buildTargetBodyId = bodyId;
+  renderBuildPanel();
+}
+function openShipPanel(bodyId: string): void {
+  buildBuildPanel();
+  const toggleOff = buildTargetBodyId === bodyId && $("build-ship-panel").classList.contains("is-open");
+  closeBuildPanel(); // also closes the structure builder
+  if (toggleOff) return;
+  buildTargetBodyId = bodyId;
+  shipQty = 1;
+  renderShipPanel();
+}
+function closeBuildPanel(): void {
+  buildTargetBodyId = null;
+  buildSelectedKey = null;
+  shipSelectedKind = null;
+  shipQty = 1;
+  $("build-panel").classList.remove("is-open");
+  $("build-ship-panel").classList.remove("is-open");
+}
+function refreshBuildPanel(): void {
+  if (!buildTargetBodyId) return;
+  if ($("build-panel").classList.contains("is-open")) {
+    if (renderDeferred("build-panel", refreshBuildPanel)) return; // §single-click
+    renderBuildPanel();
+  } else if ($("build-ship-panel").classList.contains("is-open")) {
+    if (renderDeferred("build-ship-panel", refreshBuildPanel)) return;
+    renderShipPanel();
+  }
+}
+function queueSelectedBuild(): void {
+  const sid = viewedSystemId();
+  if (!sid || !net || !buildTargetBodyId || !buildSelectedKey) return;
+  const dyn = state.systems.find((s) => s.id === sid);
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  const o = body ? buildOption(buildSelectedKey) : undefined;
+  if (!dyn || !body || !o) return;
+  const st = structOption(o, dyn, body, bodyPoolUsage(body, dyn));
+  if (!st.buildable) return; // the button is disabled, but never trust the DOM
+  // §byte-identical: exactly the DevelopSystem the inline buttons sent — the body
+  // panel names its body, the sim soft-rejects on arrival as always.
+  dispatchBuildKey(buildSelectedKey, sid, Number(buildTargetBodyId));
+  readout().innerHTML =
+    `Queued <b>${esc(o.label)}${st.tierUp ? ` ×${st.targetTier}` : ""}</b> on ${esc(body.name)} — ` +
+    `it appears under construction. <span class="dim">A soft-reject (no slot / short on goods) shows in the Log.</span>`;
+  buildSelectedKey = null; // clear so several can be queued back-to-back
+  renderBuildPanel();
+  refreshOpenBodyPanel(); // the queue row lands on the next View push
+  updateSysviewManage();
+}
+function buildRowHtml(st: StructOpt): string {
+  const sel = st.o.key === buildSelectedKey ? " is-sel" : "";
+  const off = st.buildable ? "" : " is-off";
+  const badge = st.foundsNew ? `<span class="bp-row-tier">new</span>` : `<span class="bp-row-tier">▲ ×${st.targetTier}</span>`;
+  const short = st.noDeposit ? "no deposit" : st.poolFull ? "pool full" : !st.afford ? "short on goods" : "";
+  const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
+  return `<button class="bp-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(st.buildable ? st.o.label : st.reason)}">` +
+    `<span class="bp-row-ic">${icon(STRUCT_ICON[st.o.key] ?? "build", "sm")}</span>` +
+    `<span class="bp-row-name">${esc(st.o.label)}</span>${badge}${reason}</button>`;
+}
+function buildDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView, pools: PoolUse): string {
+  const st = structOption(o, dyn, body, pools);
+  const info = STRUCT_INFO[o.key] ?? { desc: "", effect: "" };
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const costRows = o.costs.map((c) => {
+    const has = have.get(c.commodity as Commodity) ?? 0;
+    const shortC = has < c.units;
+    return `<div class="bp-cost-row${shortC ? " is-short" : ""}">` +
+      `<span class="bp-cost-c">${commodityIcon(c.commodity as Commodity, "sm")} ${esc(label(c.commodity))}</span>` +
+      `<span class="bp-cost-n">${c.units} <span class="bp-cost-have">have ${has}</span></span></div>`;
+  }).join("");
+  const slotLine = st.foundsNew
+    ? `Claims a <b>${POOL_LABEL[st.pool]}</b> slot — ${pools[st.pool].used} → ${pools[st.pool].used + 1} / ${pools[st.pool].total}.`
+    : `Deepens in place — no new slot consumed.`;
+  const from = Math.min(4, st.targetTier - 1), to = Math.min(4, st.targetTier);
+  let framing: string;
+  if (st.tierUp) {
+    let delta = "";
+    if (THROUGHPUT_STRUCTS.has(o.key) && TIER_THROUGHPUT[from] && TIER_THROUGHPUT[to]) {
+      const pct = Math.round((TIER_THROUGHPUT[to] / TIER_THROUGHPUT[from] - 1) * 100);
+      delta = ` Throughput ×${TIER_THROUGHPUT[from]} → ×${TIER_THROUGHPUT[to]} <span class="tone-up">(+${pct}%)</span>.`;
+    }
+    framing = `<div class="bp-upgrade"><b>Upgrade</b> — Tier ${romanTier(st.targetTier - 1)} → ${romanTier(st.targetTier)}.${delta}</div>`;
+  } else {
+    framing = `<div class="bp-upgrade"><b>New structure</b> — founds Tier I.</div>`;
+  }
+  return `<div class="bp-d-head">${icon(STRUCT_ICON[o.key] ?? "build", "md")} <b>${esc(o.label)}</b>` +
+    `<span class="bp-d-tier">${st.foundsNew ? "new" : `→ ×${st.targetTier}`}</span></div>` +
+    `<div class="bp-d-desc">${esc(info.desc)}</div>${framing}` +
+    `<div class="bp-d-sec">Recipe — required vs. this system's stock</div><div class="bp-costs">${costRows}</div>` +
+    (st.afford ? "" : `<div class="bp-d-warn">Short on goods — it waits (or soft-rejects) until the stockpile covers it.</div>`) +
+    (st.noDeposit ? `<div class="bp-d-warn">No matching deposit on this body — found it on a body that has one.</div>` : "") +
+    `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${icon("time", "sm")} ${Math.round(o.build_secs)}s at this system.</div>` +
+    `<div class="bp-d-sec">Slot</div><div class="bp-d-line">${slotLine}</div>` +
+    `<div class="bp-d-sec">Enables</div><div class="bp-d-line">${esc(info.effect)}</div>`;
+}
+function renderBuildPanel(): void {
+  const el = $("build-panel");
+  if (!buildTargetBodyId) { el.classList.remove("is-open"); return; }
+  const sid = viewedSystemId();
+  const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  if (!dyn || !body) { closeBuildPanel(); return; }
+  const pools = bodyPoolUsage(body, dyn);
+  const poolChips = (["resource", "industrial", "infrastructure"] as Pool[]).map((k) => {
+    const p = pools[k];
+    return `<span class="bp-pool${p.used >= p.total ? " is-full" : ""}" title="${POOL_LABEL[k]} slots used / total on this body">${POOL_LABEL[k]} ${p.used}/${p.total}</span>`;
+  }).join("");
+  // LEFT: every non-ship structure buildable here, grouped by slot pool. Rows that
+  // fail a gate still render, greyed, with the reason inline.
+  const opts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => !SHIP_KEYS.has(o.key) && !!POOL_OF[o.key]);
+  const byPool: Record<Pool, StructOpt[]> = { resource: [], industrial: [], infrastructure: [] };
+  for (const o of opts) byPool[POOL_OF[o.key]].push(structOption(o, dyn, body, pools));
+  const groups = (["resource", "industrial", "infrastructure"] as Pool[]).map((k) => {
+    if (!byPool[k].length) return "";
+    return `<div class="bp-group">${POOL_LABEL[k]} <span class="bp-group-n">${pools[k].used}/${pools[k].total}</span></div>` +
+      byPool[k].map(buildRowHtml).join("");
+  }).join("");
+  const selOpt = buildSelectedKey ? buildOption(buildSelectedKey) : undefined;
+  const detail = selOpt
+    ? buildDetailHtml(selOpt as BuildOpt, dyn, body, pools)
+    : `<div class="bp-detail-empty">Select a structure to see its recipe, build time, slot, and effect.</div>`;
+  // FOOTER: Queue + a live note of what's already queued on THIS body.
+  const selSt = selOpt ? structOption(selOpt as BuildOpt, dyn, body, pools) : null;
+  const canQueue = !!selSt && selSt.buildable;
+  const qTip = !selSt ? "Select a structure first." : selSt.buildable ? "Queue this build — draws from the system stockpile." : selSt.reason;
+  const queued = (dyn.builds ?? []).filter((j) => j.body_id === body.id && !SHIP_KEYS.has(j.key));
+  const queuedNote = queued.length
+    ? `Already queued here: <b>${queued.map((j) => esc(buildLabel(j.key))).join(", ")}</b>.`
+    : "Nothing queued on this body yet.";
+  const foot = `<div class="bp-foot"><button class="act bp-queue" data-bp="queue" ${canQueue ? "" : "disabled"} title="${esc(qTip)}">${icon("build", "sm")} Queue build</button>` +
+    `<div class="bp-queued">${queuedNote}</div></div>`;
+  panelShellHtml(el, "build", `Build on ${body.name}`, poolChips, groups, detail, foot);
+}
+
+// ---- §build-ship-panel: the dedicated SHIP builder (mirrors the structure
+// builder; shares its shell/dock/breakpoint via `.build-shell`). Opened from the
+// shipyard body's "Build ship" button; a sibling of the structure builder — the
+// two never render together. Client-only over the SAME BuildShip command. ----
+const SHIP_ORDER = ["scout", "corvette", "raider", "convoy", "colony"];
+const SHIP_HULL_ICON: Record<string, IconKey> = { convoy: "convoy", raider: "raider", corvette: "corvette", colony: "colony", scout: "scout" };
+// Per-hull stats + one-line role, mirroring crates/sim/src/ship.rs (speed / hull
+// mass / attack+defense weights / module slots). Display only — the COSTS + gates
+// that matter for the command come from build_options + SHIP_REQ.
+const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; atk: number; def: number; slots: number; cap: string }> = {
+  scout: { role: "Eyes of the fleet — fastest hull, gathers intel; unarmed, dies if caught.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · widest sensor bubble" },
+  corvette: { role: "Armored escort/garrison — built to be shot at; too slow to chase raiders.", speed: 65, hull: 800, atk: 1, def: 4, slots: 2, cap: "No cargo · screens convoys" },
+  raider: { role: "The hunter — fast and hard-hitting; seizes a convoy's cargo on a won raid.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · takes prizes" },
+  convoy: { role: "Bulk hauler — carries goods to the hub; raidable, wants an escort.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 0, cap: "Hauls cargo (raidable)" },
+  colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
+};
+interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; }
+/// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
+/// shipyard tier — the same field the old inline rows read) + afford, plus the
+/// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
+function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  const yardTier = dyn.shipyard_tier ?? 0;
+  const needTier = SHIP_REQ[o.key] ?? 1;
+  const yardShort = yardTier < needTier;
+  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
+  const maxAff = o.costs.length
+    ? Math.max(0, Math.min(...o.costs.map((c) => Math.floor((have.get(c.commodity as Commodity) ?? 0) / c.units))))
+    : 0;
+  const buildable = !yardShort && afford;
+  const reason = yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, needTier, yardTier, yardShort, afford, maxAff, buildable, reason };
+}
+/// The staffed-shipyard build-time multiplier (mirrors the sim: build_ticks /
+/// (1 + SHIPYARD_BOOST·staffing·skill), SHIPYARD_BOOST = 0.25). 1.0 when the yard
+/// has no crew posted here (the AssignmentView carries the resolved factors).
+function shipyardBoost(dyn: SystemStateView, body: BodyView): number {
+  const a = (dyn.assignments ?? []).find((x) => x.body_id === body.id && x.structure === "shipyard");
+  return a ? 1 + 0.25 * a.staffing * a.skill : 1;
+}
+function shipRowHtml(st: ShipOpt): string {
+  const sel = st.o.key === shipSelectedKind ? " is-sel" : "";
+  const off = st.buildable ? "" : " is-off";
+  const info = SHIP_STATS[st.o.key];
+  const short = st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
+  const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
+  return `<button class="bp-row bp-ship-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(info?.role ?? st.o.label)}">` +
+    `<span class="bp-row-ic">${icon(SHIP_HULL_ICON[st.o.key] ?? "fleet", "sm")}</span>` +
+    `<span class="bp-ship-main"><span class="bp-ship-top"><span class="bp-row-name">${esc(st.o.label)}</span>` +
+    `<span class="bp-row-tier">${Math.round(st.o.build_secs)}s</span>${reason}</span>` +
+    `<span class="bp-ship-role">${esc(info?.role ?? "")}</span></span></button>`;
+}
+function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): string {
+  const st = shipOption(o, dyn);
+  const info = SHIP_STATS[o.key];
+  const q = Math.max(1, shipQty);
+  const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
+  // QUANTITY stepper — 1 / 5 / 10 / max-affordable; the total cost + time track it.
+  const qbtn = (n: number, lbl: string) => `<button class="bp-qty-btn${q === n ? " is-on" : ""}" data-bp-qty="${n}" ${n < 1 ? "disabled" : ""}>${lbl}</button>`;
+  const stepper = `<div class="bp-qty"><span class="bp-qty-lbl">Quantity</span>${qbtn(1, "1")}${qbtn(5, "5")}${qbtn(10, "10")}${qbtn(st.maxAff, `Max ${st.maxAff}`)}<span class="bp-qty-cur">building <b>${q}</b></span></div>`;
+  // Cost table — the TOTAL (unit × q) reads largest; unit shown small alongside.
+  const costRows = o.costs.map((c) => {
+    const need = c.units * q;
+    const has = have.get(c.commodity as Commodity) ?? 0;
+    const short = has < need;
+    return `<div class="bp-cost-row${short ? " is-short" : ""}">` +
+      `<span class="bp-cost-c">${commodityIcon(c.commodity as Commodity, "sm")} ${esc(label(c.commodity))}</span>` +
+      `<span class="bp-cost-n"><b class="bp-cost-total">${need}</b>${q > 1 ? ` <span class="bp-cost-mul">${c.units}×${q}</span>` : ""} <span class="bp-cost-have">have ${has}</span></span></div>`;
+  }).join("");
+  const affordsQ = q <= st.maxAff;
+  // Build time — per-ship at this yard's current throughput (staffed-yard bonus
+  // shown; the shown-math law). N hulls build in PARALLEL, so the batch time == 1.
+  const boost = shipyardBoost(dyn, body);
+  const per = Math.max(1, Math.round(o.build_secs / boost));
+  const timeLine = boost > 1.001
+    ? `${icon("time", "sm")} <b>${per}s</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${Math.round(o.build_secs)}s).${q > 1 ? ` The ${q} build in parallel.` : ""}`
+    : `${icon("time", "sm")} <b>${per}s</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
+  const stat = (lbl: string, val: string) => `<div class="bp-stat"><span class="bp-stat-l">${lbl}</span><span class="bp-stat-v">${val}</span></div>`;
+  const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fuel", info.hull >= 1000 ? "heavy (∝ mass)" : "light (∝ mass)")}</div>` : "";
+  return `<div class="bp-d-head">${icon(SHIP_HULL_ICON[o.key] ?? "fleet", "md")} <b>${esc(o.label)}</b><span class="bp-d-tier">${st.yardShort ? `needs yard ${romanTier(st.needTier)}` : `${info?.slots ?? 0} slots`}</span></div>` +
+    `<div class="bp-d-desc">${esc(info?.role ?? "")}</div>` +
+    stepper +
+    `<div class="bp-d-sec">Recipe — total for ${q}, vs. this system's stock</div><div class="bp-costs">${costRows}</div>` +
+    (st.yardShort ? `<div class="bp-d-warn">Requires Shipyard tier ${romanTier(st.needTier)} here — this system's yard is tier ${romanTier(st.yardTier)}.</div>` : "") +
+    (!affordsQ ? `<div class="bp-d-warn">The stockpile covers ${st.maxAff} right now — queue that many, or wait for production.</div>` : "") +
+    `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${timeLine}</div>` +
+    `<div class="bp-d-sec">Stats</div>${stats}<div class="bp-d-line" style="margin-top:4px">${esc(info?.cap ?? "")}</div>`;
+}
+function queueSelectedShips(): void {
+  const sid = viewedSystemId();
+  if (!sid || !net || !buildTargetBodyId || !shipSelectedKind) return;
+  const dyn = state.systems.find((s) => s.id === sid);
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  const o = body ? buildOption(shipSelectedKind) : undefined;
+  if (!dyn || !body || !o) return;
+  const st = shipOption(o, dyn);
+  const q = Math.min(Math.max(1, shipQty), st.maxAff);
+  if (st.yardShort || q < 1) return; // the button is disabled, but never trust the DOM
+  // §byte-identical: N × the exact BuildShip the inline row sent (the loadout comes
+  // from the yard's fit picker via dispatchBuildKey, clamped per hull as before).
+  for (let i = 0; i < q; i++) dispatchBuildKey(shipSelectedKind, sid);
+  readout().innerHTML =
+    `Queued <b>${q}× ${esc(o.label)}</b> at ${esc(body.name)} — building at the orbital yard. ` +
+    `<span class="dim">Spawns here; a fuel-short or over-queued build shows in the Log.</span>`;
+  shipQty = 1; // reset for the next batch (mix a Corvette + two Convoys without reopening)
+  renderShipPanel();
+  refreshOpenBodyPanel();
+  updateSysviewManage();
+}
+function renderShipPanel(): void {
+  const el = $("build-ship-panel");
+  if (!buildTargetBodyId) { el.classList.remove("is-open"); return; }
+  const sid = viewedSystemId();
+  const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
+  const body = dyn?.bodies?.find((b) => String(b.id) === buildTargetBodyId);
+  if (!dyn || !body) { closeBuildPanel(); return; }
+  const yardTier = dyn.shipyard_tier ?? 0;
+  const chip = `<span class="bp-pool">${icon("shipyard", "sm")} Shipyard ${romanTier(yardTier)}</span>`;
+  const opts = ((state.galaxy?.build_options ?? []) as BuildOpt[]).filter((o) => SHIP_KEYS.has(o.key));
+  const ordered = SHIP_ORDER.map((k) => opts.find((o) => o.key === k)).filter((o): o is BuildOpt => !!o);
+  const list = ordered.map((o) => shipRowHtml(shipOption(o, dyn))).join("");
+  const selOpt = shipSelectedKind ? buildOption(shipSelectedKind) : undefined;
+  const detail = selOpt
+    ? shipDetailHtml(selOpt as BuildOpt, dyn, body)
+    : `<div class="bp-detail-empty">Select a hull to see its recipe, stats, and build time. Set a quantity, then queue the batch.</div>`;
+  const selSt = selOpt ? shipOption(selOpt as BuildOpt, dyn) : null;
+  const q = Math.max(1, shipQty);
+  const canQueue = !!selSt && !selSt.yardShort && q >= 1 && q <= selSt.maxAff;
+  const qTip = !selSt ? "Select a hull first." : selSt.yardShort ? selSt.reason : q > selSt.maxAff ? `The stockpile covers ${selSt.maxAff} right now.` : "Queue this batch — draws from the system stockpile.";
+  // The yard's line: every ship job in the SYSTEM (ships build at the best yard).
+  const queued = (dyn.builds ?? []).filter((j) => SHIP_KEYS.has(j.key));
+  const queuedNote = queued.length ? `At the yard: <b>${queued.map((j) => esc(buildLabel(j.key))).join(", ")}</b>.` : "Nothing at the yard yet.";
+  const foot = `<div class="bp-foot"><button class="act bp-queue" data-bp="queue" ${canQueue ? "" : "disabled"} title="${esc(qTip)}">${icon("build", "sm")} Queue build${selSt && q > 1 ? ` ×${q}` : ""}</button>` +
+    `<div class="bp-queued">${queuedNote}</div></div>`;
+  panelShellHtml(el, "build ship", `Build at ${body.name}`, chip, list, detail, foot);
 }
 
 // Master rail of your holdings (only when you own ≥2 — otherwise it's clutter).
@@ -3167,9 +3771,9 @@ function updateSystemTab(): void {
     // says work is running (and when the next job lands) without opening the view.
     const jobs = dyn?.builds ?? [];
     if (jobs.length === 1) {
-      cues.push(`${uiIcon("action-build", "sm")} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${svgIcon("action-build", "sm")} building: <b>${esc(buildLabel(jobs[0].key))}</b> — ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     } else if (jobs.length > 1) {
-      cues.push(`${uiIcon("action-build", "sm")} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
+      cues.push(`${svgIcon("action-build", "sm")} building ×${jobs.length} — next ${fmtCountdown(Math.max(0, jobs[0].complete_time - liveSimTime()))}`);
     }
   }
   const attention = cues.length ? `<div class="mhint" style="margin-top:6px">${cues.join(" · ")}</div>` : "";
@@ -4331,6 +4935,7 @@ function join(): void {
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];
+          state.research = msg.research ?? null;
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
@@ -4351,6 +4956,9 @@ function join(): void {
           // §syndicates: refresh the alliance roster/invites if the panel is open
           // (guarded by a signature so a half-typed name survives).
           if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
+          // §research R6: refresh the Programme Boards if open (coarse signature —
+          // the progress bar animates ~1 Hz, node states update as they change).
+          if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
           // §management-home: inside the System View, refresh the management
           // column + the structure markers (a cached no-op unless tiers changed).
           updateSysviewDynamic();

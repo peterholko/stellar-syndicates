@@ -211,6 +211,16 @@ pub enum EventPayload {
     /// with the ship (the one true loss rule, like SpecialistsLost). OWNER-ONLY,
     /// light-delayed from the wreck like any battle news.
     ModulesLost { owner: PlayerId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>, pos: crate::math::Vec2 },
+    /// §research: a syndicate COMPLETED a programme — its effect applies instantly
+    /// galaxy-wide (design decision #5). OWNER-ONLY to the syndicate's members.
+    ResearchCompleted { syndicate: crate::ids::SyndicateId, programme: String },
+    /// §research: a tier's verb GATE was first crossed for a syndicate (a new
+    /// row of programmes opened). OWNER-ONLY.
+    TierUnlocked { syndicate: crate::ids::SyndicateId, field: crate::research::Field, school: Option<crate::research::School>, tier: u8 },
+    /// §research: the syndicate's research CLOCK stalled (no staffed/funded
+    /// Academy) or resumed. OWNER-ONLY. Fires once per transition.
+    ResearchStalled { syndicate: crate::ids::SyndicateId },
+    ResearchResumed { syndicate: crate::ids::SyndicateId },
     /// §economy Part 4: a personnel convoy LANDED its passengers into a
     /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
     SpecialistsDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> },

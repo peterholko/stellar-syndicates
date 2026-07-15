@@ -49,7 +49,8 @@ impl BodyKind {
 
 /// One planet or moon. `id` is stable within its system (assigned in the
 /// final inner→outer roster order, moons after all planets); the sim owns
-/// names now ("Veles II", moons "Veles IIa").
+/// names now — planets by Roman orbital position ("Veles II"), moons with a
+/// hyphenated letter ("Veles II-a").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Body {
     pub id: u32,
@@ -125,9 +126,10 @@ impl Body {
     }
 
     /// INDUSTRIAL slots: gas giants host none (nowhere to stand); every other
-    /// body starts with 1 and grows with ITS population tier.
+    /// body starts with 2 and grows with ITS population tier — so even a fresh
+    /// colony has industrial breathing room (2) and a major world runs 4.
     pub fn industrial_slots(&self) -> u32 {
-        let base = if self.kind == BodyKind::GasGiant { 0 } else { 1 };
+        let base = if self.kind == BodyKind::GasGiant { 0 } else { 2 };
         base + body_pop_tier(self.population)
     }
 
@@ -239,7 +241,12 @@ const FILLER_KINDS: [VisualKind; 7] = [
     VisualKind::Ocean,
 ];
 
-const ROMAN: [&str; 10] = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+/// The display numeral for a planet at orbital position `i` (0-based, inner→outer):
+/// Roman I, II, III…, falling back to Arabic past X for a rare deep system.
+pub fn planet_numeral(i: usize) -> String {
+    const ROMAN: [&str; 10] = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+    ROMAN.get(i).map(|s| s.to_string()).unwrap_or_else(|| (i + 1).to_string())
+}
 
 /// Generate the authoritative body roster for a system — the ported client
 /// algorithm, drawing the SAME rng sequence in the SAME order (cosmetic draws
@@ -332,11 +339,9 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
     let mut moon_queue: Vec<(u32, usize, Vec<Deposit>)> = Vec::new(); // (parent id, letter idx, deposits)
     for (i, p) in planets.iter_mut().enumerate() {
         let id = i as u32;
-        let name = format!(
-            "{} {}",
-            system_name,
-            ROMAN.get(i).copied().map(str::to_string).unwrap_or_else(|| (i + 1).to_string())
-        );
+        // Planets take ROMAN numerals by orbital position, inner→outer (the sort
+        // above): "Veles I", "Veles II", "Veles III".
+        let name = format!("{} {}", system_name, planet_numeral(i));
         bodies.push(Body {
             id,
             name,
@@ -357,7 +362,8 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         let pname = bodies[parent as usize].name.clone();
         bodies.push(Body {
             id: next_id,
-            name: format!("{}{}", pname, (b'a' + (k as u8 % 26)) as char),
+            // Moons keep the letter suffix but gain a hyphen: "Veles 2-a", "Veles 2-b".
+            name: format!("{}-{}", pname, (b'a' + (k as u8 % 26)) as char),
             kind: BodyKind::Ice, // the walk forced moons to ice — kept
             parent: Some(parent),
             habitable: false,
@@ -411,13 +417,13 @@ mod tests {
                 }
             }
         }
-        // Names: planets carry roman numerals in id order; moons letter off
-        // their parent.
+        // Names: planets carry ROMAN numerals by orbital position (inner = I);
+        // moons take a hyphenated letter off their parent ("… II-a").
         let planets: Vec<&Body> = bodies.iter().filter(|b| b.parent.is_none()).collect();
-        assert!(planets[0].name.ends_with(" I"));
+        assert!(planets[0].name.ends_with(" I"), "inner planet is I, got {}", planets[0].name);
         for m in bodies.iter().filter(|b| b.parent.is_some()) {
             let p = &bodies[m.parent.unwrap() as usize];
-            assert!(m.name.starts_with(&p.name), "moon named off its parent");
+            assert!(m.name.starts_with(&format!("{}-", p.name)), "moon named off its parent with a hyphen: {}", m.name);
         }
     }
 
@@ -429,14 +435,36 @@ mod tests {
             structures: BTreeMap::new(), population: 0.0, assignments: BTreeMap::new(),
         };
         assert_eq!(b.resource_slots(), 1);
-        assert_eq!(b.industrial_slots(), 1);
+        assert_eq!(b.industrial_slots(), 2, "non-gas base is 2 (industrial headroom)");
         assert_eq!(b.infrastructure_slots(), 1, "not habitable, undeveloped");
         b.population = BODY_POP_DEVELOPED;
-        assert_eq!(b.industrial_slots(), 2);
+        assert_eq!(b.industrial_slots(), 3, "base 2 + one pop tier");
         assert_eq!(b.infrastructure_slots(), 2);
         b.kind = BodyKind::GasGiant;
-        assert_eq!(b.industrial_slots(), 1, "gas giants have no base industrial slot");
+        assert_eq!(b.industrial_slots(), 1, "gas giants have no base industrial slot (0 + one pop tier)");
         b.deposits.clear();
         assert_eq!(b.resource_slots(), 0, "a bare rock hosts no extraction");
+    }
+
+    #[test]
+    fn industrial_slots_have_headroom() {
+        // §industrial-headroom: base went 1 → 2 for non-gas bodies, so capacity
+        // only ever GROWS — a fresh colony already runs two industries, a major
+        // world runs four, and gas giants are unchanged (still 0 + pop tier).
+        let mut b = Body {
+            id: 0, name: "Head I".into(), kind: BodyKind::Terrestrial, parent: None, habitable: true,
+            deposits: vec![], structures: BTreeMap::new(), population: 0.0, assignments: BTreeMap::new(),
+        };
+        assert_eq!(b.industrial_slots(), 2, "a fresh non-gas colony starts with 2 industrial slots");
+        assert!(b.industrial_slots() >= 2);
+        b.population = BODY_POP_DEVELOPED; // pop tier 1
+        assert_eq!(b.industrial_slots(), 3);
+        b.population = BODY_POP_MAJOR; // pop tier 2 — max
+        assert_eq!(b.industrial_slots(), 4, "a max-pop world runs four industries");
+        // Gas giants keep a 0 base: nowhere to stand, only pop lifts them.
+        b.kind = BodyKind::GasGiant;
+        assert_eq!(b.industrial_slots(), 2, "gas giant = 0 base + 2 pop tiers");
+        b.population = 0.0;
+        assert_eq!(b.industrial_slots(), 0, "a fresh gas giant hosts no industry");
     }
 }
