@@ -134,10 +134,11 @@ impl StructureKind {
             | StructureKind::Shipyard => SlotPool::Industrial,
             // §economy Part 3: the AGROPLEX is CIVIC — food security lives in
             // the Infrastructure pool (Habitat + Agroplex = a self-feeding
-            // outpost on the base 2 slots, no industrial investment needed),
-            // and the home's single starting Industrial slot stays the
-            // Shipyard's — preserving the designed gate: Shipyard 2 (raiders)
-            // needs the SECOND industrial slot, i.e. a DEVELOPED colony.
+            // outpost on the base 2 slots, no industrial investment needed).
+            // §industrial-headroom: the industrial base is now 2, so a fresh home
+            // has a free industrial slot beyond the Shipyard's — a second industry
+            // no longer waits on a DEVELOPED colony. The raider gate is purely the
+            // Shipyard-tier-2 requirement now, not industrial-slot scarcity.
             StructureKind::Agroplex
             | StructureKind::Habitat
             | StructureKind::Depot
@@ -460,6 +461,34 @@ pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
 /// slot) — the bootstrap that avoids a convoy chicken-and-egg stall on turn one.
 pub const HOME_SHIPYARD_TIER: u32 = 1;
 
+// --- STRUCTURE TIER CEILING (§industrial-headroom) -------------------------------
+
+/// The highest tier ANY structure is freely buildable to (cost + slots
+/// permitting) with no research. This is where an unresearched colony tops out —
+/// exactly where every colony tops out today. Tunable.
+pub const BASE_MAX_STRUCTURE_TIER: u32 = 4;
+/// The ceiling once the owning syndicate has researched this structure's
+/// Tier-IV/V unlock (any `UnlockStructureTier` effect for the kind): the two
+/// superlinear prize tiers (5, 6 in `production::TIER_THROUGHPUT`) open up.
+/// Tunable.
+pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
+
+/// The highest tier a structure of `kind` may be raised to. One shared gate for
+/// every StructureKind (extraction / processing / habitat / shipyard / …):
+/// `research_unlocked_tier` is the best tier this owner's syndicate has unlocked
+/// for the kind (0 = none, from `research::unlocked_structure_tier`). Without
+/// that Tier-IV/V unlock the ceiling is [`BASE_MAX_STRUCTURE_TIER`]; with it,
+/// the prize tiers open to [`RESEARCHED_MAX_STRUCTURE_TIER`]. The `kind` arg is
+/// carried for future per-kind ceilings; today the gate is uniform.
+pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u32 {
+    let _ = kind; // uniform across kinds today — wired once, shared by all
+    if research_unlocked_tier >= BASE_MAX_STRUCTURE_TIER {
+        RESEARCHED_MAX_STRUCTURE_TIER
+    } else {
+        BASE_MAX_STRUCTURE_TIER
+    }
+}
+
 // §economy Part 3: EXTRACTOR_RICHNESS_MULT is RETIRED — extraction runs the
 // same factor chain as all industry (`production::tier_throughput` on the
 // structure tier, × staffing × skill × food), not a compounding multiplier.
@@ -489,3 +518,26 @@ pub const DEV_SLOTS_MAX: u32 = 5;
 pub const STORAGE_BASE_CAP: f64 = 700.0;
 /// Extra capacity per Depot tier. Tunable.
 pub const STORAGE_PER_DEPOT_TIER: f64 = 400.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tier_ceiling_gates_the_prize_tiers_behind_research() {
+        // No unlock (0) → the base cap of 4, exactly where colonies sit today.
+        assert_eq!(max_buildable_tier(StructureKind::MiningComplex, 0), BASE_MAX_STRUCTURE_TIER);
+        assert_eq!(max_buildable_tier(StructureKind::Smelter, 0), 4);
+        // A Tier-IV or Tier-V unlock lifts the ceiling to 6 (the two superlinear
+        // prize tiers) — for every kind, uniformly.
+        assert_eq!(max_buildable_tier(StructureKind::MiningComplex, 4), RESEARCHED_MAX_STRUCTURE_TIER);
+        assert_eq!(max_buildable_tier(StructureKind::Habitat, 5), 6);
+        assert_eq!(max_buildable_tier(StructureKind::Shipyard, 4), 6);
+        // The prize only ever RAISES the ceiling — never below the free base.
+        for kind in StructureKind::ALL {
+            for unlocked in 0..=5u32 {
+                assert!(max_buildable_tier(kind, unlocked) >= BASE_MAX_STRUCTURE_TIER);
+            }
+        }
+    }
+}

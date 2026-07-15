@@ -4531,6 +4531,34 @@ impl World {
                 ));
                 return;
             }
+            // §industrial-headroom: the TIER CEILING. Tiers 5–6 are the research
+            // prize — without the syndicate's Tier-IV/V unlock for THIS kind the
+            // cap is 4 (exactly today's effective ceiling). Count pending tier-ups
+            // for the same (body, kind) so a burst of queued upgrades can't slip
+            // the resulting tier past the cap. (Reuses NoSlot — a capacity limit
+            // — to stay sim-contained; a dedicated notice is a client follow-up.)
+            let cap = crate::build::max_buildable_tier(upgrade, self.research_struct_tier(player_id, upgrade));
+            let pending = self
+                .build_queue
+                .iter()
+                .filter(|j| {
+                    j.system == system_id
+                        && j.body_id == body_id
+                        && matches!(j.what, crate::build::BuildKind::Upgrade { upgrade: u } if u == upgrade)
+                })
+                .count() as u32;
+            if b.tier(upgrade) + pending + 1 > cap {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NoSlot,
+                    },
+                ));
+                return;
+            }
             if b.tier(upgrade) == 0 {
                 let pool = upgrade.slot_pool();
                 if b.pool_slots_built(pool) + self.pool_slots_pending(system_id, body_id, pool) >= b.pool_slots(pool) {
@@ -5108,11 +5136,10 @@ impl World {
         self.research_of(owner).is_some_and(|r| crate::research::has_flag(r, cap))
     }
 
-    /// §research R4b: the best research-granted tier for `kind` (0 = none), so a
-    /// build site can gate tier IV/V on `max(base_structure_tier, this)`. Applied
-    /// with the structure ceilings + new hulls/modules in R5 (they need the full
-    /// catalog + new content); kept here so the lookup layer is complete.
-    #[allow(dead_code)]
+    /// §research R4b: the best research-granted tier for `kind` (0 = none). Wired
+    /// into the structure TIER CEILING (§industrial-headroom): a syndicate holding
+    /// this kind's Tier-IV/V unlock builds past the base cap of 4 up to 6 (see
+    /// [`crate::build::max_buildable_tier`], applied in `apply_build`).
     fn research_struct_tier(&self, owner: PlayerId, kind: crate::build::StructureKind) -> u32 {
         self.research_of(owner)
             .map(|r| crate::research::unlocked_structure_tier(r, kind))
@@ -7591,9 +7618,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tier_ceiling_gates_prize_tiers_behind_research() {
+        // §industrial-headroom: the two top structure tiers (5, 6) are the research
+        // prize. Without the syndicate's Tier-IV/V unlock a colony tops out at 4
+        // (exactly today); the unlock lifts the ceiling to 6.
+        let mut w = test_world();
+        let id = PlayerId(41);
+        w.step(&[Command::AddPlayer { id, name: "Deep".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Machinery, 1000.0), (Commodity::Alloys, 1000.0)]);
+        // Force the home's Mining Complex to the free ceiling (tier 4) on its site.
+        let site = w.systems.iter().find(|s| s.id == home).unwrap()
+            .site_for(StructureKind::MiningComplex).expect("the home mines ore");
+        w.systems.iter_mut().find(|s| s.id == home).unwrap()
+            .bodies.iter_mut().find(|b| b.id == site).unwrap()
+            .set_tier(StructureKind::MiningComplex, 4);
+        let site_tier = |w: &World| w.systems.iter().find(|s| s.id == home).unwrap()
+            .bodies.iter().find(|b| b.id == site).unwrap().tier(StructureKind::MiningComplex);
+
+        // UNRESEARCHED (solo, no syndicate): raising to tier 5 is over the cap → a
+        // soft reject, no job enqueued, the tier stays at 4.
+        let jobs_before = w.build_queue.len();
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex, body_id: None }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { owner, .. } if owner == id)),
+            "tier 5 is gated without the research unlock"
+        );
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no over-cap build starts");
+        assert_eq!(w.build_queue.len(), jobs_before, "no over-cap job enqueued");
+        assert_eq!(site_tier(&w), 4, "the structure holds at the free ceiling");
+
+        // RESEARCHED: the syndicate holds the Tier-IV Extraction unlock → the same
+        // build now STARTS (tier 5 ≤ the raised ceiling of 6).
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Guild".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("mat_deepcrust_iii_tier4_extraction".into());
+        let ev = w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::MiningComplex, body_id: None }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
+            "with the Tier-IV/V unlock, tier 5 builds"
+        );
+    }
+
     /// §economy: the THREE derived slot pools — Resource from geology (one per
     /// deposit, clamped 1..=4), Industrial/Infrastructure from population
-    /// (1/2/3 and 2/3/3 by pop tier). Derived, never stored — migration-free.
+    /// (2/3/4 and 2/3/3 by pop tier; §industrial-headroom raised the industrial
+    /// base to 2). Derived, never stored — migration-free.
     #[test]
     fn dev_slot_budget_derives_from_geology() {
         let w = test_world();
@@ -7601,7 +7672,7 @@ mod tests {
             // §bodies: pools are PER BODY (derived, never stored)…
             for b in &sys.bodies {
                 assert_eq!(b.resource_slots(), (b.deposits.len() as u32).min(4));
-                let ind_base = if b.kind == crate::body::BodyKind::GasGiant { 0 } else { 1 };
+                let ind_base = if b.kind == crate::body::BodyKind::GasGiant { 0 } else { 2 };
                 assert_eq!(b.industrial_slots(), ind_base + crate::body::body_pop_tier(b.population), "industrial = kind base + body pop tier");
                 assert_eq!(
                     b.infrastructure_slots(),

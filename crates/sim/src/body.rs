@@ -126,9 +126,10 @@ impl Body {
     }
 
     /// INDUSTRIAL slots: gas giants host none (nowhere to stand); every other
-    /// body starts with 1 and grows with ITS population tier.
+    /// body starts with 2 and grows with ITS population tier — so even a fresh
+    /// colony has industrial breathing room (2) and a major world runs 4.
     pub fn industrial_slots(&self) -> u32 {
-        let base = if self.kind == BodyKind::GasGiant { 0 } else { 1 };
+        let base = if self.kind == BodyKind::GasGiant { 0 } else { 2 };
         base + body_pop_tier(self.population)
     }
 
@@ -434,14 +435,36 @@ mod tests {
             structures: BTreeMap::new(), population: 0.0, assignments: BTreeMap::new(),
         };
         assert_eq!(b.resource_slots(), 1);
-        assert_eq!(b.industrial_slots(), 1);
+        assert_eq!(b.industrial_slots(), 2, "non-gas base is 2 (industrial headroom)");
         assert_eq!(b.infrastructure_slots(), 1, "not habitable, undeveloped");
         b.population = BODY_POP_DEVELOPED;
-        assert_eq!(b.industrial_slots(), 2);
+        assert_eq!(b.industrial_slots(), 3, "base 2 + one pop tier");
         assert_eq!(b.infrastructure_slots(), 2);
         b.kind = BodyKind::GasGiant;
-        assert_eq!(b.industrial_slots(), 1, "gas giants have no base industrial slot");
+        assert_eq!(b.industrial_slots(), 1, "gas giants have no base industrial slot (0 + one pop tier)");
         b.deposits.clear();
         assert_eq!(b.resource_slots(), 0, "a bare rock hosts no extraction");
+    }
+
+    #[test]
+    fn industrial_slots_have_headroom() {
+        // §industrial-headroom: base went 1 → 2 for non-gas bodies, so capacity
+        // only ever GROWS — a fresh colony already runs two industries, a major
+        // world runs four, and gas giants are unchanged (still 0 + pop tier).
+        let mut b = Body {
+            id: 0, name: "Head I".into(), kind: BodyKind::Terrestrial, parent: None, habitable: true,
+            deposits: vec![], structures: BTreeMap::new(), population: 0.0, assignments: BTreeMap::new(),
+        };
+        assert_eq!(b.industrial_slots(), 2, "a fresh non-gas colony starts with 2 industrial slots");
+        assert!(b.industrial_slots() >= 2);
+        b.population = BODY_POP_DEVELOPED; // pop tier 1
+        assert_eq!(b.industrial_slots(), 3);
+        b.population = BODY_POP_MAJOR; // pop tier 2 — max
+        assert_eq!(b.industrial_slots(), 4, "a max-pop world runs four industries");
+        // Gas giants keep a 0 base: nowhere to stand, only pop lifts them.
+        b.kind = BodyKind::GasGiant;
+        assert_eq!(b.industrial_slots(), 2, "gas giant = 0 base + 2 pop tiers");
+        b.population = 0.0;
+        assert_eq!(b.industrial_slots(), 0, "a fresh gas giant hosts no industry");
     }
 }
