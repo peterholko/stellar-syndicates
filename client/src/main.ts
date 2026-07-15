@@ -1027,7 +1027,18 @@ function updateResearchPanel(): void {
     body += `<div class="rp-boards">${boards}</div>`;
     body += `<div class="rp-note">Tech sheets are private — nothing here leaks to rivals. Completing a programme applies its effect instantly, galaxy-wide.</div>`;
   }
-  el.innerHTML = `<div class="rp-head"><b>🔬 RESEARCH — PROGRAMME BOARDS</b><button class="rp-close" data-rp="close" title="Close">✕</button></div><div class="rp-body">${body}</div>`;
+  // Refresh ONLY the scroll body, keeping the .rp-body element itself across
+  // ticks so its scrollTop survives. The active programme's progress bar
+  // advances the render signature almost every tick; replacing the whole panel
+  // recreated .rp-body each time and snapped the list back to the top. Building
+  // the head+body shell once and updating just the body's children keeps the
+  // scroll position put.
+  let bodyEl = el.querySelector<HTMLElement>(".rp-body");
+  if (!bodyEl) {
+    el.innerHTML = `<div class="rp-head"><b>🔬 RESEARCH — PROGRAMME BOARDS</b><button class="rp-close" data-rp="close" title="Close">✕</button></div><div class="rp-body"></div>`;
+    bodyEl = el.querySelector<HTMLElement>(".rp-body")!;
+  }
+  bodyEl.innerHTML = body;
 }
 
 // --- §rankings: the published leaderboard (rail tab) ---------------------------
