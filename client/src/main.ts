@@ -1282,7 +1282,7 @@ function updateSysviewManage(): void {
   }
   buildSysviewManage();
   panel.classList.add("is-open");
-  $("svm-title").textContent = sys.name;
+  $("svm-title").textContent = `${sys.name} Summary`;
   // SLOTS — the system's defining constraint, promoted to the header.
   const sUsed = dyn.slots_used ?? 0;
   const sTotal = dyn.slots_total ?? 0;
@@ -1368,7 +1368,7 @@ function updateSysviewManage(): void {
         : badgeChip("garrison", "UNFED", "warn", "The allied garrison here is UNFED — this system is out of Provisions to cover its upkeep, so its defense is suspended. Ship Provisions here to restore it.")) +
       `</div>`
     : "";
-  $("svm-eyebrow").textContent = blockaded ? "colony summary · UNDER BLOCKADE" : "colony summary · click a body to manage it";
+  $("svm-eyebrow").textContent = blockaded ? "UNDER BLOCKADE" : "";
   const queue = buildQueueRows(sid, dyn, { nav: true });
   $("svm-body").innerHTML = blockadeBanner + vitals + storageBar + poolStrip + devs + garrisonHost + productionReadout(dyn) + queue;
 }
