@@ -1300,17 +1300,21 @@ function updateSysviewManage(): void {
       (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
     : "";
-  // §body-management: COLONY VITALS — population, food rung, workforce (the
-  // Part-7 owner-only fields as a stat strip; pure data).
+  // §body-management: COLONY VITALS — population, food rung, workforce, and the
+  // Provisions upkeep (§system-reorg: the upkeep moved up here from the
+  // production readout; the population eats provisions_per_million_per_s · pop).
   const wf = dyn.workforce;
   const foodState = label(dyn.food_state ?? "well_supplied");
-  const vitals = (dyn.population ?? 0) > 0 || wf
-    ? statStrip([
-        stat("Population", `${(dyn.population ?? 0).toFixed(1)}M`),
-        stat("Food", foodState, dyn.habitat_fed ? "" : "is-warn"),
-        stat("Workforce", wf ? `${Math.min(wf.posted, wf.units)}/${wf.posted}` : "—", wf && wf.posted > wf.units ? "is-warn" : ""),
-      ])
-    : "";
+  const popM = dyn.population ?? 0;
+  const upkeepRate = (state.galaxy?.provisions_per_million_per_s ?? 0.06) * popM;
+  const vitalCells = [
+    stat("Population", `${popM.toFixed(1)}M`),
+    stat("Food", foodState, dyn.habitat_fed ? "" : "is-warn"),
+    stat("Workforce", wf ? `${Math.min(wf.posted, wf.units)}/${wf.posted}` : "—", wf && wf.posted > wf.units ? "is-warn" : ""),
+  ];
+  if (popM > 0)
+    vitalCells.push(stat("Upkeep", `−${upkeepRate.toFixed(2)} ${commodityIcon("provisions", "sm")}/s`, dyn.habitat_fed ? "" : "is-warn"));
+  const vitals = popM > 0 || wf ? statStrip(vitalCells) : "";
   // §body-management: the three SLOT POOLS — a system fact, so it reads here
   // (the per-pool gating itself lives with the build rows on the body panels).
   const pools = poolUsage(dyn);
@@ -1318,29 +1322,29 @@ function updateSysviewManage(): void {
     (["resource", "industrial", "infrastructure"] as const)
       .map((k) => `${k} ${pools[k].used}/${pools[k].total}`)
       .join(" · ") + `</div>`;
-  // §bodies: the ROSTER — one row per body (public geography), the owner's
-  // structures as chips ON their body. Rows/chips are NAVIGATION, not actions:
-  // clicking opens that body's panel (the action surface).
-  const FAMILY_ICON: Record<string, IconKey> = {
-    mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
-    shipyard: "shipyard", depot: "depot", sensor_array: "sensor", defense_platform: "defense",
-    habitat: "habitat", academy: "habitat",
-  };
+  // §system-reorg: the ROSTER — one row per body (public geography). The row is a
+  // NAVIGATION button (opens that body's panel to build/staff/ship) followed by
+  // the planet's CONTRIBUTION: the net output of its staffed lines, per commodity
+  // (+x/s <icon>). Buildings no longer list here — they live on the body panel.
   const bodies = dyn.bodies ?? [];
-  const chipFor = (b: BodyView, slug: string, t: number): string => {
-    const fedTag = slug === "habitat" && !dyn.habitat_fed
-      ? ` ${badgeChip("unfed", foodState, "warn", "Provisions short — workforce slowed, growth paused. Nothing is destroyed; it recovers when food arrives.")}`
-      : "";
-    return `<button class="dev act" data-body="${b.id}" title="${esc(label(slug))} ×${t} on ${esc(b.name)} — click to manage it there">${icon(FAMILY_ICON[slug] ?? "refinery", "sm")}${esc(label(slug))} <b>×${t}</b></button>${fedTag}`;
+  const outByBody = new Map<number, Map<Commodity, number>>();
+  for (const a of dyn.assignments ?? []) {
+    let m = outByBody.get(a.body_id);
+    if (!m) { m = new Map(); outByBody.set(a.body_id, m); }
+    for (const [c, r] of a.outputs) if (r > 0.001) m.set(c, (m.get(c) ?? 0) + r);
+  }
+  const contribFor = (b: BodyView): string => {
+    const m = outByBody.get(b.id);
+    if (!m || !m.size) return `<span class="dim">undeveloped</span>`;
+    return [...m.entries()]
+      .sort((x, y) => y[1] - x[1])
+      .map(([c, r]) => `<span class="dev-contrib" title="${esc(b.name)} contributes +${r.toFixed(2)} ${esc(label(c))}/s to the colony">+${r.toFixed(2)}/s ${commodityIcon(c, "sm")}</span>`)
+      .join(" ");
   };
   const devs = bodies.length
     ? bodies.map((b) => {
-        const builtHere = Object.entries(b.structures ?? {}).filter(([, t]) => t > 0);
         const pop = b.population > 0 ? ` <span class="dim">${b.population.toFixed(1)}M</span>` : "";
-        const chips = builtHere.length
-          ? builtHere.map(([slug, t]) => chipFor(b, slug, t)).join(" ")
-          : `<span class="dim">undeveloped</span>`;
-        return `<div class="devs-row"><button class="dev act" data-body="${b.id}" title="Open ${esc(b.name)} — build, staff, ship from its panel">${esc(b.name)}</button>${pop} ${chips}</div>`;
+        return `<div class="devs-row"><button class="dev act" data-body="${b.id}" title="Open ${esc(b.name)} — build, staff, ship from its panel">${esc(b.name)}</button>${pop} ${contribFor(b)}</div>`;
       }).join("")
     : `<div class="mhint">No bodies rostered yet.</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
@@ -1370,7 +1374,10 @@ function updateSysviewManage(): void {
     : "";
   $("svm-eyebrow").textContent = blockaded ? "UNDER BLOCKADE" : "";
   const queue = buildQueueRows(sid, dyn, { nav: true });
-  $("svm-body").innerHTML = blockadeBanner + vitals + storageBar + poolStrip + devs + garrisonHost + productionReadout(dyn) + queue;
+  // §system-reorg: production + stockpile total up top, then the planet roster
+  // (with per-body contribution), then colony vitals (pop/food/workforce/upkeep),
+  // slot pools, garrison, and the build queue.
+  $("svm-body").innerHTML = blockadeBanner + productionReadout(dyn) + storageBar + devs + vitals + poolStrip + garrisonHost + queue;
 }
 
 let planetPanelBuilt = false;
@@ -2718,7 +2725,6 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   // rung, not a multiplier. Owner-only, like every colony readout.
   const habTier = dyn?.habitat_tier ?? 0;
   const habFed = !!dyn?.habitat_fed; // legacy wire alias for "well supplied"
-  const popM = dyn?.population ?? 0;
   const rateOf = new Map<Commodity, number>();
   // §explore: the readout is owner-only, and an owner always knows their own
   // geology (dyn.deposits present) — read from the light-gated view.
@@ -2729,11 +2735,6 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const tierTag = tier > 0 ? ` <span class="sp-tier" title="Extractor upgrades boost output ×${EXTRACTOR_RICHNESS_MULT} per tier">· Extractor ×${tier}</span>` : "";
   const habTag = habTier > 0 && !habFed
     ? ` <span class="sp-tier" style="color:var(--warn)" title="the colony is short on Provisions — workforce slowed, growth paused (nothing is lost)">· ${label(dyn?.food_state ?? "rationing").toUpperCase()}</span>`
-    : "";
-  // Standing upkeep line (the game's first continuous consumption): the
-  // POPULATION eats, `provisions_per_million_per_s · millions` (§economy Part 2).
-  const upkeep = popM > 0
-    ? `<div class="mhint" style="margin-top:4px" title="The colony's population draws Provisions from the system stockpile each second; shortages slow the workforce and pause growth — nothing is lost, nobody dies.">${icon("habitat", "sm")} pop ${popM.toFixed(1)}M eats −${((state.galaxy?.provisions_per_million_per_s ?? 0.06) * popM).toFixed(2)} ${icon("provisions", "sm")}/s${habFed ? "" : ` ${badgeChip("unfed", "short", "warn", "Provisions running low — workforce slowed, growth paused (nothing is lost).")}`}</div>`
     : "";
   // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
   const refTier = dyn?.refinery_tier ?? 0;
@@ -2753,13 +2754,13 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span class="sp-name">${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + upkeep + refinery + colonyPanel(dyn);
+    }).join("") + refinery;
 }
 
-// §economy Part 6: the COLONY PRODUCTION PANEL — workforce, one row per line
-// with the server-resolved factor chain (shown math: throughput × staffing ×
-// skill × food), crew ± controls (data-crew), suspension causes. Functional,
-// not pretty: this is the alpha's management surface.
+// §economy Part 6: the per-line PRODUCTION ROWS — one row per line with the
+// server-resolved factor chain (shown math: throughput × staffing × skill ×
+// food), crew ± controls (data-crew), suspension causes. Rendered on the BODY
+// panels now (§system-reorg dropped the system-screen workforce block).
 const PRODUCER_SLUGS = new Set([
   "mining_complex", "volatile_harvester", "bioharvester", "smelter",
   "electronics_fabricator", "chemical_works", "fuel_refinery", "agroplex",
@@ -2809,19 +2810,6 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
         `</div>`))
     .join("");
   return lines.map(rowFor).join("") + idle;
-}
-function colonyPanel(dyn: SystemStateView | undefined): string {
-  const wf = dyn?.workforce;
-  if (!wf) return "";
-  const short = wf.posted > wf.units;
-  const head = `<div class="deps-head" style="margin-top:8px">${icon("habitat", "sm")} Colony · workforce ` +
-    `<b>${Math.min(wf.posted, wf.units)}/${wf.posted}</b> crews` +
-    (short ? ` ${badgeChip("unfed", "short-staffed", "warn", `Only ${wf.units} of ${wf.posted} posted crews are filled — every line runs at ${((wf.units / Math.max(1, wf.posted)) * 100).toFixed(0)}%. Population growth adds crews.`)}` : "") +
-    `</div>`;
-  const pool = Object.entries(dyn?.specialists ?? {}).map(([k, n]) => `${n as number}× ${esc(label(k))}`).join(", ");
-  const poolLine = pool ? `<div class="mhint" style="margin-top:2px">${icon("habitat", "sm")} resident specialists: ${pool}</div>` : "";
-  // Pure DATA — the crew controls live on the body panels (§body-management).
-  return head + assignmentLines(dyn, false) + poolLine;
 }
 
 // Build / develop panel (§step1 growth + structure sinks) for an OWNED system:
