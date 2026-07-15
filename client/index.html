@@ -483,6 +483,9 @@
          icon override keeps the commodity art compact inline (roster + vitals). */
       .devs-row .dev-contrib { color: var(--positive); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
       #svm-body .devs-row .dev-contrib .icon, #svm-body .stat dd .icon { width: var(--icon-sm); height: var(--icon-sm); font-size: calc(var(--icon-sm) - 2px); }
+      /* Section divider between the System panel's info groups (stockpile /
+         planets / colony vitals / queue). */
+      #svm-body .svm-div { height: 0; border-top: 1px solid var(--border); margin: 2px 0 10px; }
 
       /* ---- Market board (MARKET tab) ---- */
       .board__row {

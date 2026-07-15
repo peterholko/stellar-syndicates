@@ -1293,7 +1293,7 @@ function updateSysviewManage(): void {
   }
   buildSysviewManage();
   panel.classList.add("is-open");
-  $("svm-title").textContent = `${sys.name} Summary`;
+  $("svm-title").textContent = `${sys.name} System`;
   // SLOTS — the system's defining constraint, promoted to the header.
   const sUsed = dyn.slots_used ?? 0;
   const sTotal = dyn.slots_total ?? 0;
@@ -1387,8 +1387,17 @@ function updateSysviewManage(): void {
   const queue = buildQueueRows(sid, dyn, { nav: true });
   // §system-reorg: production + stockpile total up top, then the planet roster
   // (with per-body contribution), then colony vitals (pop/food/workforce/upkeep),
-  // slot pools, garrison, and the build queue.
-  $("svm-body").innerHTML = blockadeBanner + productionReadout(dyn) + storageBar + devs + vitals + poolStrip + garrisonHost + queue;
+  // slot pools, garrison, and the build queue. Each is its own titled section,
+  // separated by a divider (empty sections drop out, so no dangling rules).
+  const sections = [
+    blockadeBanner,
+    productionReadout(dyn) + storageBar, // Stockpile · production + the total bar
+    devs, // the planet roster
+    vitals + poolStrip, // colony vitals + slot pools
+    garrisonHost,
+    queue,
+  ].filter((s) => s.trim() !== "");
+  $("svm-body").innerHTML = sections.join(`<div class="svm-div"></div>`);
 }
 
 let planetPanelBuilt = false;
