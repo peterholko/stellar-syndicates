@@ -210,6 +210,13 @@ pub enum ClientMsg {
     /// unknown/hidden/completed ids. CC-local, no positional delay.
     SetResearchQueue { queue: Vec<String> },
 
+    // ---- FITTING (§fitting Stage A) ------------------------------------------
+    /// SAVE a doctrine fit (named hull + loadout) on the caller's syndicate.
+    /// The sim validates slots + fitting budget; same-name replaces. CC-local.
+    SaveFit { name: String, ship: ShipKind, #[serde(default)] loadout: sim::Loadout },
+    /// DELETE a doctrine fit by name from the caller's syndicate. CC-local.
+    DeleteFit { name: String },
+
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
 }
@@ -716,6 +723,19 @@ pub struct SyndicateView {
     pub members: Vec<SyndicateMember>,
     /// Outstanding invites the founder has sent (names), for the roster panel.
     pub invited: Vec<String>,
+    /// §fitting: the syndicate's saved DOCTRINE FITS (named hull + loadout;
+    /// any member curates). Owner-only like the rest of the view.
+    #[serde(default)]
+    pub fits: Vec<FitView>,
+}
+
+/// §fitting: one saved doctrine fit on the wire (modules sorted, never empty —
+/// an all-stock "fit" isn't storable; stock is the absence of a fit).
+#[derive(Debug, Clone, Serialize)]
+pub struct FitView {
+    pub name: String,
+    pub kind: ShipKind,
+    pub modules: Vec<sim::ModuleKind>,
 }
 
 /// One member of a [`SyndicateView`] roster.

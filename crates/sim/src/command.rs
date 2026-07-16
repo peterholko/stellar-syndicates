@@ -421,4 +421,19 @@ pub enum Command {
         cap: crate::research::Cap,
         target: crate::research::DesignationTarget,
     },
+
+    /// §fitting: SAVE a doctrine fit (named hull + loadout) on the caller's
+    /// syndicate. CC-local instant admin. Validates the loadout against the
+    /// hull's slots + fitting budget; replaces a same-name fit; soft-rejects
+    /// past the fit cap or on an illegal/unnamed fit.
+    SaveFit {
+        player_id: PlayerId,
+        name: String,
+        ship: crate::ship::ShipKind,
+        loadout: crate::module::Loadout,
+    },
+
+    /// §fitting: DELETE a doctrine fit by name from the caller's syndicate.
+    /// CC-local instant admin; unknown names soft-reject (no-op).
+    DeleteFit { player_id: PlayerId, name: String },
 }

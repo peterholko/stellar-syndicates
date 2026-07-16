@@ -567,6 +567,8 @@ export type ClientMsg =
   | { type: "DissolveSyndicate" }
   // §research R6 — set the syndicate research queue (front promotes to active).
   | { type: "SetResearchQueue"; queue: string[] }
+  | { type: "SaveFit"; name: string; ship: ShipKind; loadout: ModuleKind[] }
+  | { type: "DeleteFit"; name: string }
   | { type: "Ping" };
 
 // §syndicates Part 1: an alliance id (opaque decimal string on the wire).
@@ -580,6 +582,16 @@ export interface SyndicateView {
   is_founder: boolean;
   members: { id: PlayerId; name: string }[];
   invited: string[];
+  // §fitting: the syndicate's saved doctrine fits (any member curates).
+  fits?: FitView[];
+}
+
+// §fitting: one saved doctrine fit — a named hull + loadout the whole
+// syndicate builds from / refits to (legal by construction at save).
+export interface FitView {
+  name: string;
+  kind: ShipKind;
+  modules: ModuleKind[];
 }
 
 // A pending invitation the viewer may accept.

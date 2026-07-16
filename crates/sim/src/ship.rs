@@ -186,6 +186,39 @@ impl ShipKind {
     }
 }
 
+/// §fitting: the hull's FITTING-POINT budget — the capacity it spends on module
+/// fitting costs (`ModuleKind::fitting_cost`). The SECOND constraint besides
+/// slots; both bind at build/refit/fit-save (`Loadout::validate`). Tunable, but
+/// preserve the relationships the Stage-A tests pin:
+/// - a torpedo Corvette can't take heavy armor (Torp 3 + Whipple 3 = 6 > 5);
+///   Driver 2 + Whipple 3 = 5 fits exactly — the classic brawler;
+/// - a torpedo Raider is a glass cannon (Torp 3 leaves 1 point — nothing else
+///   fits today; intended).
+pub fn fitting_points(kind: ShipKind) -> u32 {
+    match kind {
+        ShipKind::Scout => 2,
+        ShipKind::Convoy => 2,
+        ShipKind::Colony => 2,
+        ShipKind::Raider => 4,
+        ShipKind::Corvette => 5,
+    }
+}
+
+/// §fitting: hull AFFINITY — the % bonus a hull grants to a module FAMILY's
+/// effect. Depth without marks: a Raider is a torpedo boat, a Corvette is the
+/// screen. Scales MAGNITUDES only — no counter relationship ever changes (the
+/// matrix shape assertions stay untouched). Rendered as a named factor line
+/// wherever the family's effect shows (build detail, battle tooltips). Tunable.
+/// (A Scout utility affinity is parked until utility modules exist.)
+pub fn hull_affinity(kind: ShipKind, family: crate::module::Family) -> f64 {
+    use crate::module::Family;
+    match (kind, family) {
+        (ShipKind::Raider, Family::Torpedo) => 1.25,      // the torpedo boat
+        (ShipKind::Corvette, Family::Interception) => 1.25, // the screen
+        _ => 1.0,
+    }
+}
+
 /// The FLAGSHIP precedence (GDD §13.1): a fleet is DRAWN and named for its
 /// most-significant member — colony first (the point of the whole voyage),
 /// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A

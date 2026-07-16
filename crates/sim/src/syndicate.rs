@@ -32,6 +32,23 @@ pub fn syndicate_cap(active_corps: usize) -> usize {
     ((active_corps as f64 * SYNDICATE_MAX_FRAC).floor() as usize).max(SYNDICATE_MIN_CAP)
 }
 
+/// §fitting: how many DOCTRINE FITS a syndicate may hold (soft-reject beyond —
+/// replacing a same-name fit is always allowed). Tunable.
+pub const SYNDICATE_MAX_FITS: usize = 24;
+/// §fitting: fit names are capped at this many chars (trimmed; sim-side soft
+/// sanitize, same discipline as syndicate names).
+pub const FIT_NAME_MAX: usize = 24;
+
+/// §fitting: one saved DOCTRINE FIT — a named (hull, loadout) the whole
+/// syndicate can build from or refit to. Validated against the hull's slots +
+/// fitting budget at SAVE time, so every stored fit is legal by construction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DoctrineFit {
+    pub name: String,
+    pub kind: crate::ship::ShipKind,
+    pub loadout: crate::module::Loadout,
+}
+
 /// One alliance. Founder-managed in v1 (roles deferred): the founder invites,
 /// dissolves, and — should they leave — hands the seat to the next member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,4 +71,10 @@ pub struct Syndicate {
     /// migration). Owner-only in the view.
     #[serde(default)]
     pub research: crate::research::ResearchState,
+    /// §fitting: the syndicate's saved DOCTRINE FITS (any member saves /
+    /// deletes; cap [`SYNDICATE_MAX_FITS`]). serde-default — old snapshots
+    /// load with none. Owner-only in the view; fit NAMES never touch the sim
+    /// state hash-relevant paths (they are labels on build inputs).
+    #[serde(default)]
+    pub fits: Vec<DoctrineFit>,
 }

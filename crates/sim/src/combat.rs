@@ -312,13 +312,16 @@ impl Forces {
     }
 
     /// The TYPED attack (§modules): each stack fires its loadout's damage type at
-    /// its multiplier; the platform adds beam return-fire. Unfitted stacks are
-    /// pure beam at ×1, so an all-unfitted side yields `(beam = old scalar, 0, 0)`.
+    /// its multiplier — scaled by the hull's AFFINITY for that weapon family
+    /// (§fitting: a named factor, magnitude only; every Stage-A hull has Beam
+    /// affinity 1.0, so an all-unfitted side still yields `(beam = old scalar,
+    /// 0, 0)` — the calibration invariant). The platform adds beam return-fire.
     pub fn typed_attack(&self) -> TypedDamage {
         let mut d = TypedDamage::default();
         for ((kind, loadout), n) in &self.stacks {
             let (ty, mult) = loadout.offense();
-            d.add_typed(ty, kind.attack_weight() * *n as f64 * mult);
+            let affinity = crate::ship::hull_affinity(*kind, crate::module::weapon_family(ty));
+            d.add_typed(ty, kind.attack_weight() * *n as f64 * mult * affinity);
         }
         d.beam += self.platform_tiers as f64 * PLATFORM_TIER_ATTACK;
         d
@@ -352,20 +355,24 @@ impl Forces {
             return losses;
         }
         // (1) Interception: PD-fitted hull fraction of the SIDE screens torpedoes.
+        // §fitting: each PD stack's contribution is scaled by its hull's
+        // INTERCEPTION affinity (the screen hulls screen harder — magnitude
+        // only, the counter shape is untouched). Clamped so a fully-screened
+        // side never inverts the salvo.
         let mut ship_hull = 0.0;
         let mut pd_hull = 0.0;
         for ((kind, lo), n) in &self.stacks {
             let h = *n as f64 * kind.hull();
             ship_hull += h;
             if lo.has_pd() {
-                pd_hull += h;
+                pd_hull += h * crate::ship::hull_affinity(*kind, crate::module::Family::Interception);
             }
         }
         let pd_share = if ship_hull > 0.0 { pd_hull / ship_hull } else { 0.0 };
         let inc = TypedDamage {
             beam: incoming.beam,
             driver: incoming.driver,
-            torpedo: incoming.torpedo * (1.0 - PD_INTERCEPT * pd_share),
+            torpedo: incoming.torpedo * (1.0 - (PD_INTERCEPT * pd_share).min(1.0)),
         };
         // (2) hull weights (ship stacks + platform).
         let mut total_w = ship_hull;
@@ -384,13 +391,17 @@ impl Forces {
                 continue;
             }
             let frac = (have as f64 * kind.hull()) / total_w;
+            // §fitting: PROTECTION affinity scales the armor pair's mitigation
+            // on this hull (magnitude only — each armor still cuts exactly its
+            // own damage type). Clamped below full immunity.
+            let prot = crate::ship::hull_affinity(kind, crate::module::Family::Protection);
             let mut beam = inc.beam * frac;
             if lo.reflects() {
-                beam *= 1.0 - REFLECT_BLUNT;
+                beam *= 1.0 - (REFLECT_BLUNT * prot).min(0.95);
             }
             let mut driver = inc.driver * frac;
             if lo.whipples() {
-                driver *= 1.0 - WHIPPLE_BLUNT;
+                driver *= 1.0 - (WHIPPLE_BLUNT * prot).min(0.95);
             }
             let torpedo = inc.torpedo * frac; // armor ignores torpedoes
             let pool = self.damage.entry(key.clone()).or_insert(0.0);
@@ -1212,10 +1223,17 @@ mod tests {
         let torp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: h * 0.5 };
         let beam = TypedDamage { beam: h * 0.5, driver: 0.0, torpedo: 0.0 };
         // A fully PD-screened side (100% PD hull share) cuts torpedoes by the
-        // full PD_INTERCEPT; beams are untouched by PD.
+        // full PD_INTERCEPT — scaled by the hull's INTERCEPTION affinity
+        // (§fitting: the Corvette is the screen, ×1.25; a named factor, not a
+        // shape change — PD still touches torpedoes only). Beams untouched.
+        let aff = crate::ship::hull_affinity(ShipKind::Corvette, crate::module::Family::Interception);
         assert!((absorbed(ShipKind::Corvette, &[], 4, torp) - h * 0.5).abs() < 1e-9);
-        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 4, torp) - h * 0.5 * (1.0 - PD_INTERCEPT)).abs() < 1e-6);
+        assert!((absorbed(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 4, torp) - h * 0.5 * (1.0 - PD_INTERCEPT * aff)).abs() < 1e-6);
         assert!((absorbed(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 4, beam) - h * 0.5).abs() < 1e-6, "PD doesn't stop beams");
+        // A PD hull WITHOUT the affinity intercepts at exactly the base rate.
+        let rh = ShipKind::Raider.hull();
+        let rtorp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: rh * 0.5 };
+        assert!((absorbed(ShipKind::Raider, &[ModuleKind::PointDefenseScreen], 4, rtorp) - rh * 0.5 * (1.0 - PD_INTERCEPT)).abs() < 1e-6);
     }
 
     #[test]
@@ -1232,13 +1250,54 @@ mod tests {
     fn typed_offense_matches_the_weapon_module() {
         let d = fitted(ShipKind::Raider, &[ModuleKind::MassDriver], 3).typed_attack();
         assert!(d.beam == 0.0 && d.torpedo == 0.0 && (d.driver - 3.0 * ShipKind::Raider.attack_weight() * DRIVER_MULT).abs() < 1e-9);
+        // §fitting: the Raider is the torpedo boat — its TORPEDO affinity is a
+        // named factor in the chain (weight × count × mult × affinity).
+        let taff = crate::ship::hull_affinity(ShipKind::Raider, crate::module::Family::Torpedo);
         let t = fitted(ShipKind::Raider, &[ModuleKind::TorpedoRack], 3).typed_attack();
-        assert!((t.torpedo - 3.0 * ShipKind::Raider.attack_weight() * TORP_MULT).abs() < 1e-9);
+        assert!((t.torpedo - 3.0 * ShipKind::Raider.attack_weight() * TORP_MULT * taff).abs() < 1e-9);
         let p = fitted(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 2).typed_attack();
         assert!((p.beam - 2.0 * ShipKind::Corvette.attack_weight() * PD_ATTACK).abs() < 1e-9, "PD trades offense for screening");
         // Unfitted = plain beam at ×1 (the pre-module scalar).
         let u = fitted(ShipKind::Raider, &[], 3).typed_attack();
         assert!((u.beam - 3.0 * ShipKind::Raider.attack_weight()).abs() < 1e-9 && u.driver == 0.0);
+    }
+
+    #[test]
+    fn hull_affinity_scales_its_family_on_its_kind_only() {
+        use crate::module::Family;
+        use crate::ship::hull_affinity;
+        // The affinity table itself: Raider→Torpedo and Corvette→Interception
+        // only; everything else is 1.0 (incl. Beam everywhere — the unfitted
+        // calibration anchor — and Protection on every Stage-A hull).
+        assert_eq!(hull_affinity(ShipKind::Raider, Family::Torpedo), 1.25);
+        assert_eq!(hull_affinity(ShipKind::Corvette, Family::Interception), 1.25);
+        assert_eq!(hull_affinity(ShipKind::Corvette, Family::Torpedo), 1.0, "right family, wrong kind");
+        assert_eq!(hull_affinity(ShipKind::Raider, Family::Driver), 1.0, "right kind, wrong family");
+        assert_eq!(hull_affinity(ShipKind::Raider, Family::Interception), 1.0);
+        for k in crate::ship::ALL_SHIP_KINDS {
+            assert_eq!(hull_affinity(k, Family::Beam), 1.0, "beam affinity 1.0 keeps the unfitted calibration");
+            assert_eq!(hull_affinity(k, Family::Protection), 1.0);
+        }
+        // And in the pipeline: a torpedo CORVETTE fires at exactly TORP_MULT —
+        // no Raider bonus leaks across kinds.
+        let ct = fitted(ShipKind::Corvette, &[ModuleKind::TorpedoRack], 3).typed_attack();
+        assert!((ct.torpedo - 3.0 * ShipKind::Corvette.attack_weight() * TORP_MULT).abs() < 1e-9);
+        // Protection affinity 1.0 → armor mitigation is EXACTLY the base
+        // constants (pinned above); nothing else in the matrix moved.
+    }
+
+    #[test]
+    fn duplicate_weapons_stack_linearly_within_budget() {
+        // §fitting: 2× MassDriver fires at 2×DRIVER_MULT — duplicates stack
+        // linearly; the fitting budget (2+2=4 ≤ Raider's 4) is the brake.
+        let lo = crate::module::Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::MassDriver]);
+        assert!(lo.validate(ShipKind::Raider), "double-driver fits the Raider budget exactly");
+        let one = fitted(ShipKind::Raider, &[ModuleKind::MassDriver], 3).typed_attack();
+        let two = fitted(ShipKind::Raider, &[ModuleKind::MassDriver, ModuleKind::MassDriver], 3).typed_attack();
+        assert!((two.driver - 2.0 * one.driver).abs() < 1e-9, "second copy doubles the output");
+        // A double TORPEDO rack is budget-illegal on every subcapital (6 > 5).
+        let tt = crate::module::Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::TorpedoRack]);
+        assert!(!tt.validate(ShipKind::Raider) && !tt.validate(ShipKind::Corvette));
     }
 
     /// Defender survivors after `atk` grinds `def` to the finish. Higher =

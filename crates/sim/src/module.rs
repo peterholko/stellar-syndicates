@@ -132,6 +132,58 @@ impl ModuleKind {
             ModuleKind::MassDriver | ModuleKind::TorpedoRack | ModuleKind::PointDefenseScreen
         )
     }
+
+    /// §fitting: the module's FITTING-POINT cost — the capacity a hull spends to
+    /// carry it. Depth is ALLOCATION, not marks: no numbered tiers, ever. The
+    /// costs are tuned so the classic trade-offs bind on subcapitals (a torpedo
+    /// Corvette can't also take heavy armor; a torpedo Raider is a glass
+    /// cannon) — see `ship::fitting_points` for the per-hull budgets. Tunable.
+    pub fn fitting_cost(self) -> u32 {
+        match self {
+            ModuleKind::MassDriver => 2,
+            ModuleKind::TorpedoRack => 3,
+            ModuleKind::PointDefenseScreen => 2,
+            ModuleKind::ReflectivePlating => 2,
+            ModuleKind::WhippleArmor => 3,
+        }
+    }
+
+    /// §fitting: the module's FAMILY — the axis hull AFFINITIES key on (a hull
+    /// is good at a *kind of fighting*, not at a specific module).
+    pub fn family(self) -> Family {
+        match self {
+            ModuleKind::MassDriver => Family::Driver,
+            ModuleKind::TorpedoRack => Family::Torpedo,
+            // PD is BOTH a (beam) weapon and the interception screen; its
+            // affinity axis is the screening job — the weapon side rides the
+            // Beam family through `Loadout::offense()`.
+            ModuleKind::PointDefenseScreen => Family::Interception,
+            ModuleKind::ReflectivePlating | ModuleKind::WhippleArmor => Family::Protection,
+        }
+    }
+}
+
+/// §fitting: module FAMILIES — the axes hull affinities scale. The three weapon
+/// families are the damage types; Interception is PD's screening contribution;
+/// Protection is the armor pair's mitigation. (A `Utility` family arrives with
+/// the utility-module pass — parked, no member exists yet.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Family {
+    Beam,
+    Driver,
+    Torpedo,
+    Interception,
+    Protection,
+}
+
+/// The weapon FAMILY of a damage type (for affinity lookups on the offense side).
+pub fn weapon_family(ty: DamageType) -> Family {
+    match ty {
+        DamageType::Beam => Family::Beam,
+        DamageType::Driver => Family::Driver,
+        DamageType::Torpedo => Family::Torpedo,
+    }
 }
 
 impl fmt::Display for ModuleKind {
@@ -185,13 +237,19 @@ impl Loadout {
 
     /// The ship's OFFENSE: `(damage_type, multiplier)`. The WEAPON module
     /// decides it (torpedo > driver > point-defense-beam), else a stock beam.
-    /// Armor modules never change offense.
+    /// Armor modules never change offense. §fitting: DUPLICATES of the chosen
+    /// weapon stack LINEARLY (2× TorpedoRack fires at 2×TORP_MULT) — the
+    /// fitting budget is the brake, not a uniqueness rule. A single copy is
+    /// bit-identical to the pre-fitting model.
     pub fn offense(&self) -> (DamageType, f64) {
+        let count = |k: ModuleKind| self.0.iter().filter(|m| **m == k).count() as f64;
         if self.0.contains(&ModuleKind::TorpedoRack) {
-            (DamageType::Torpedo, TORP_MULT)
+            (DamageType::Torpedo, TORP_MULT * count(ModuleKind::TorpedoRack))
         } else if self.0.contains(&ModuleKind::MassDriver) {
-            (DamageType::Driver, DRIVER_MULT)
+            (DamageType::Driver, DRIVER_MULT * count(ModuleKind::MassDriver))
         } else if self.0.contains(&ModuleKind::PointDefenseScreen) {
+            // PD's beam does NOT stack — extra screens add interception
+            // presence, not gunnery (the weapon side is the trade-off).
             (DamageType::Beam, PD_ATTACK)
         } else {
             (DamageType::Beam, 1.0)
@@ -212,11 +270,73 @@ impl Loadout {
     pub fn has_pd(&self) -> bool {
         self.0.contains(&ModuleKind::PointDefenseScreen)
     }
+
+    /// §fitting: the loadout's total FITTING-POINT cost (duplicates stack —
+    /// the budget is the brake, not a uniqueness rule).
+    pub fn fitting_cost(&self) -> u32 {
+        self.0.iter().map(|m| m.fitting_cost()).sum()
+    }
+
+    /// §fitting: is this loadout LEGAL on `kind`? Both constraints at once —
+    /// the hull's module SLOTS and its FITTING-POINT budget. Enforced at build,
+    /// refit, and fit-save; deliberately NOT on snapshot load (grandfathering:
+    /// pre-fitting stacks that exceed a new budget keep flying — budgets bind
+    /// only when a player next builds or refits).
+    pub fn validate(&self, kind: crate::ship::ShipKind) -> bool {
+        self.0.len() as u32 <= kind.module_slots()
+            && self.fitting_cost() <= crate::ship::fitting_points(kind)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn torpedo_corvette_cannot_take_heavy_armor() {
+        // §fitting relationship 1: Torp(3) + Whipple(3) = 6 > the Corvette's 5.
+        let lo = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        assert_eq!(lo.fitting_cost(), 6);
+        assert!(!lo.validate(crate::ship::ShipKind::Corvette), "torpedo Corvette can't also armor up");
+    }
+
+    #[test]
+    fn driver_whipple_corvette_is_the_classic_brawler() {
+        // §fitting relationship 2: Driver(2) + Whipple(3) = 5 fits EXACTLY.
+        let lo = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        assert_eq!(lo.fitting_cost(), crate::ship::fitting_points(crate::ship::ShipKind::Corvette));
+        assert!(lo.validate(crate::ship::ShipKind::Corvette));
+    }
+
+    #[test]
+    fn torpedo_raider_is_a_glass_cannon() {
+        // §fitting relationship 3: Torp(3) on the Raider's 4 leaves 1 point —
+        // no module costs 1 today, so the rack flies alone. Intended.
+        let torp = Loadout::new(vec![ModuleKind::TorpedoRack]);
+        assert!(torp.validate(crate::ship::ShipKind::Raider));
+        for extra in MODULE_KINDS {
+            let lo = Loadout::new(vec![ModuleKind::TorpedoRack, extra]);
+            assert!(
+                !lo.validate(crate::ship::ShipKind::Raider),
+                "torp + {extra:?} must overflow the Raider budget"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_binds_both_slots_and_budget() {
+        use crate::ship::ShipKind;
+        // Slots bind even when the budget would allow: the Scout has 1 slot.
+        let two_cheap = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::ReflectivePlating]);
+        assert!(two_cheap.fitting_cost() <= crate::ship::fitting_points(ShipKind::Corvette));
+        assert!(!two_cheap.validate(ShipKind::Scout), "2 modules > the Scout's 1 slot");
+        assert!(Loadout::new(vec![ModuleKind::MassDriver]).validate(ShipKind::Scout));
+        // Logistics hulls carry nothing (0 slots) regardless of budget.
+        assert!(!Loadout::new(vec![ModuleKind::MassDriver]).validate(ShipKind::Convoy));
+        // The empty loadout is legal everywhere (stock is always allowed).
+        assert!(Loadout::default().validate(ShipKind::Convoy));
+        assert!(Loadout::default().validate(ShipKind::Corvette));
+    }
 
     #[test]
     fn key_round_trips_and_canonicalizes() {

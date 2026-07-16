@@ -1148,7 +1148,7 @@ impl World {
         let name = sanitize_name(&name);
         self.syndicates.insert(
             id,
-            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default() },
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default(), fits: Vec::new() },
         );
         self.set_membership(founder, Some(id));
     }
@@ -3659,6 +3659,43 @@ impl World {
                     s.research.designations.insert(*cap, *target);
                 }
             }
+            Command::SaveFit { player_id, name, ship, loadout } => {
+                // §fitting: save a doctrine fit on the caller's syndicate.
+                // Any member may curate the shared fit library (CC-local
+                // instant admin, like the research queue). The stored fit is
+                // legal BY CONSTRUCTION: slots + fitting budget validated here.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let name: String =
+                    name.trim().chars().take(crate::syndicate::FIT_NAME_MAX).collect();
+                if name.is_empty() || !loadout.validate(*ship) {
+                    return; // unnamed or illegal fit — soft reject
+                }
+                if let Some(existing) = s.fits.iter_mut().find(|f| f.name == name) {
+                    // Replace the same-name fit in place (order is curation state).
+                    existing.kind = *ship;
+                    existing.loadout = loadout.clone();
+                } else if s.fits.len() < crate::syndicate::SYNDICATE_MAX_FITS {
+                    s.fits.push(crate::syndicate::DoctrineFit {
+                        name,
+                        kind: *ship,
+                        loadout: loadout.clone(),
+                    });
+                }
+                // else: at the cap — soft reject (delete one first).
+            }
+            Command::DeleteFit { player_id, name } => {
+                // §fitting: drop a doctrine fit by name (member curation;
+                // unknown names are a no-op).
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let name = name.trim();
+                s.fits.retain(|f| f.name != name);
+            }
             Command::MoveShip {
                 player_id,
                 ship_id,
@@ -4594,15 +4631,16 @@ impl World {
                 ));
                 return;
             }
-            // §modules Part B4: validate the loadout — ≤ the hull's slots and
-            // every module covered by the system's ledger (soft-reject else; the
-            // ledger + recipe are never eaten on a reject).
+            // §modules Part B4 + §fitting: validate the loadout — the hull's
+            // slots AND its fitting-point budget (`Loadout::validate`), and
+            // every module covered by the system's ledger (soft-reject else;
+            // the ledger + recipe are never eaten on a reject).
             if !loadout.is_empty() {
                 let mut need: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
                 for m in loadout.modules() {
                     *need.entry(*m).or_insert(0) += 1;
                 }
-                let fits = loadout.len() as u32 <= ship.module_slots()
+                let fits = loadout.validate(ship)
                     && need.iter().all(|(m, n)| sys.modules.get(m).copied().unwrap_or(0) >= *n);
                 if !fits {
                     events.push(Event::new(
@@ -4937,8 +4975,10 @@ impl World {
         if fleet.owner != player_id || !matches!(fleet.order, FleetOrder::Idle) {
             return;
         }
-        // `to` must fit the hull, and be an actual CHANGE from `from`.
-        if to.len() as u32 > ship.module_slots() || from == to {
+        // `to` must fit the hull — slots AND the fitting budget (§fitting; a
+        // grandfathered over-budget `from` may only refit INTO legality) — and
+        // be an actual CHANGE from `from`.
+        if !to.validate(ship) || from == to {
             return;
         }
         let pos = fleet.pos;
@@ -10111,10 +10151,12 @@ mod tests {
         use crate::module::{Loadout, ModuleKind};
         let mut w = test_world();
         let id = PlayerId(1);
+        // §fitting: Driver(2)+Reflective(2) = 4 = the Raider's budget (Whipple
+        // would overflow it — that armored brawl is the Corvette's fit now).
         let from = Loadout::new(vec![ModuleKind::MassDriver]);
-        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
-        let (home, _hpos, fleet) = refit_home(&mut w, id, 3, &from, &[(ModuleKind::WhippleArmor, 2)]);
-        // Refit 2 of the 3 raiders to ADD Whipple (delta = +1 Whipple each).
+        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::ReflectivePlating]);
+        let (home, _hpos, fleet) = refit_home(&mut w, id, 3, &from, &[(ModuleKind::ReflectivePlating, 2)]);
+        // Refit 2 of the 3 raiders to ADD Reflective (delta = +1 each).
         w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: to.clone(), n: 2 }]);
         assert_eq!(w.fleets[&fleet].count(ShipKind::Raider), 1, "the 2 refitting hulls leave the fleet — out of combat in the yard");
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::WhippleArmor).copied().unwrap_or(0), 0, "both Whipple crates debited from the ledger");
@@ -10122,7 +10164,7 @@ mod tests {
         assert!(run_until(&mut w, 30, |w| w.refit_queue.is_empty()), "the refit completes on the clock");
         let f = &w.fleets[&fleet];
         assert_eq!(f.count(ShipKind::Raider), 3, "all hulls return");
-        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&to.key())).copied().unwrap_or(0), 2, "2 hulls now carry the whipple fit");
+        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&to.key())).copied().unwrap_or(0), 2, "2 hulls now carry the reflective fit");
         assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&from.key())).copied().unwrap_or(0), 1, "the un-refitted hull keeps its mass driver");
     }
 
@@ -10147,8 +10189,10 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         let from = Loadout::new(vec![ModuleKind::MassDriver]);
-        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
-        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &from, &[]); // NO whipple stocked
+        // Budget-legal target (4 = the Raider's points) so the LEDGER is the
+        // binding reject here, not the fitting budget.
+        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::ReflectivePlating]);
+        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &from, &[]); // NO plating stocked
         w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to, n: 2 }]);
         assert!(w.refit_queue.is_empty(), "no ledger cover → nothing queued");
         let f = &w.fleets[&fleet];
@@ -10172,6 +10216,147 @@ mod tests {
         w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: Loadout::default(), n: 1 }]);
         assert!(w.refit_queue.is_empty(), "no yard in reach → reject");
         assert_eq!(w.fleets[&fleet].count(ShipKind::Raider), 2, "the fleet is untouched by either reject");
+    }
+
+    // --- §fitting Stage A: budgets, grandfathering, doctrine fits ---------------
+
+    #[test]
+    fn fitting_budget_gates_builds_torp_whipple_corvette_rejected_driver_whipple_accepted() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.set_tier(crate::build::StructureKind::Shipyard, 2); // corvettes need tier 2
+            *s.modules.entry(ModuleKind::TorpedoRack).or_insert(0) += 2;
+            *s.modules.entry(ModuleKind::WhippleArmor).or_insert(0) += 2;
+            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+            s.id
+        };
+        seed_stock(&mut w, sid, &[(Commodity::Alloys, 400.0), (Commodity::Electronics, 200.0), (Commodity::Armaments, 200.0)]);
+        // Torp(3) + Whipple(3) = 6 > the Corvette's 5 → BuildRejected, ledger intact.
+        let heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: sid, ship_kind: ShipKind::Corvette, join: None, loadout: heavy }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. })), "over-budget fit rejects at build");
+        assert!(w.build_queue.is_empty(), "nothing queued");
+        let sys = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert_eq!(sys.modules.get(&ModuleKind::TorpedoRack).copied().unwrap_or(0), 2, "ledger never debited on a reject");
+        // Driver(2) + Whipple(3) = 5 fits exactly → the classic brawler builds.
+        let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: sid, ship_kind: ShipKind::Corvette, join: None, loadout: brawler }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the exact-budget brawler builds");
+    }
+
+    #[test]
+    fn grandfathered_overbudget_stacks_fly_fight_and_refit_only_into_legality() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        // A pre-fitting snapshot could hold a Torp+Whipple Corvette (cost 6 > 5).
+        let legacy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &Loadout::default(), &[(ModuleKind::MassDriver, 4), (ModuleKind::WhippleArmor, 4)]);
+        // Graft the legacy stack directly, as a loaded snapshot would carry it.
+        {
+            let f = w.fleets.get_mut(&fleet).unwrap();
+            f.add(ShipKind::Corvette, 2);
+            f.loadouts.entry(ShipKind::Corvette).or_default().insert(legacy.key(), 2);
+        }
+        // It SURVIVES a serde round-trip untouched (no strip/mutate on load)…
+        let json = serde_json::to_string(&w).expect("serialize");
+        let w2: World = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            w2.fleets[&fleet].loadouts.get(&ShipKind::Corvette).and_then(|m| m.get(&legacy.key())).copied().unwrap_or(0),
+            2,
+            "the over-budget legacy stack loads intact"
+        );
+        // …and it FIGHTS: the stack partitions into Forces and fires torpedoes.
+        let comp = w.fleets[&fleet].composition.clone();
+        let loadouts = w.fleets[&fleet].loadouts.clone();
+        let side = crate::combat::Forces::from_side(&comp, &loadouts, &Default::default());
+        assert!(side.typed_attack().torpedo > 0.0, "the legacy torpedo fit still fires");
+        // Refit must land on a LEGAL fit: legacy → another over-budget fit rejects…
+        let still_heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::ReflectivePlating]); // 5 ≤ 5 — actually legal on Corvette
+        assert!(still_heavy.validate(ShipKind::Corvette));
+        let over = Loadout::new(vec![ModuleKind::WhippleArmor, ModuleKind::WhippleArmor]); // 6 > 5
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Corvette, from: legacy.clone(), to: over, n: 1 }]);
+        assert!(w.refit_queue.is_empty(), "an over-budget refit target rejects");
+        // …while a legal target queues fine (out of the grandfathered stack).
+        let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Corvette, from: legacy.clone(), to: brawler, n: 1 }]);
+        assert_eq!(w.refit_queue.len(), 1, "the grandfathered stack refits INTO legality");
+    }
+
+    #[test]
+    fn doctrine_fits_save_replace_delete_cap_and_validate() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Guild".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        // Save a legal fit.
+        w.step(&[Command::SaveFit { player_id: id, name: "Brawler".into(), ship: ShipKind::Corvette, loadout: brawler.clone() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), 1);
+        assert_eq!(w.syndicates[&sid].fits[0].name, "Brawler");
+        // Same-name SAVE replaces in place (kind + loadout swap).
+        let screen = Loadout::new(vec![ModuleKind::PointDefenseScreen]);
+        w.step(&[Command::SaveFit { player_id: id, name: "Brawler".into(), ship: ShipKind::Corvette, loadout: screen.clone() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), 1, "replace, not append");
+        assert_eq!(w.syndicates[&sid].fits[0].loadout, screen);
+        // An ILLEGAL fit soft-rejects (budget), as does an unnamed one.
+        let heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        w.step(&[Command::SaveFit { player_id: id, name: "Heavy".into(), ship: ShipKind::Corvette, loadout: heavy }]);
+        w.step(&[Command::SaveFit { player_id: id, name: "   ".into(), ship: ShipKind::Corvette, loadout: brawler.clone() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), 1, "illegal + unnamed fits never store");
+        // Fill to the cap; the overflow save soft-rejects.
+        for i in 0..crate::syndicate::SYNDICATE_MAX_FITS {
+            w.step(&[Command::SaveFit { player_id: id, name: format!("fit-{i}"), ship: ShipKind::Raider, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        }
+        assert_eq!(w.syndicates[&sid].fits.len(), crate::syndicate::SYNDICATE_MAX_FITS, "capped");
+        // DELETE frees a slot; unknown names are a no-op.
+        w.step(&[Command::DeleteFit { player_id: id, name: "fit-0".into() }]);
+        w.step(&[Command::DeleteFit { player_id: id, name: "no-such-fit".into() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), crate::syndicate::SYNDICATE_MAX_FITS - 1);
+        // A long name is trimmed to the cap, and fits survive a serde round-trip.
+        let long = "x".repeat(80);
+        w.step(&[Command::SaveFit { player_id: id, name: long, ship: ShipKind::Scout, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        let stored = &w.syndicates[&sid].fits.last().unwrap().name;
+        assert_eq!(stored.chars().count(), crate::syndicate::FIT_NAME_MAX);
+        let json = serde_json::to_string(&w).expect("serialize");
+        let w2: World = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(w2.syndicates[&sid].fits.len(), w.syndicates[&sid].fits.len(), "fits round-trip");
+        // A non-member's save is a no-op.
+        let outsider = PlayerId(2);
+        w.step(&[Command::AddPlayer { id: outsider, name: "B".into() }]);
+        let before = w.syndicates[&sid].fits.len();
+        w.step(&[Command::SaveFit { player_id: outsider, name: "Intruder".into(), ship: ShipKind::Raider, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), before, "outsiders can't touch the fit library");
+    }
+
+    #[test]
+    fn fit_names_never_touch_sim_outcomes() {
+        use crate::module::{Loadout, ModuleKind};
+        // Two identical runs that differ ONLY in saved-fit names produce
+        // byte-identical fleets/systems — names are labels, not state.
+        let run = |fit_name: &str| -> (String, String) {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: id, name: "Guild".into() }]);
+            w.step(&[Command::SaveFit { player_id: id, name: fit_name.into(), ship: ShipKind::Raider, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+            for _ in 0..60 {
+                w.step(&[]);
+            }
+            (
+                serde_json::to_string(&w.fleets).unwrap(),
+                serde_json::to_string(&w.systems).unwrap(),
+            )
+        };
+        assert_eq!(run("Alpha Doctrine"), run("Zulu Doctrine"), "fit names are inert to the sim");
     }
 
     // --- §modules Part B3: module TRANSPORT (raidable crate convoy) -------------

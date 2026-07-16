@@ -416,6 +416,13 @@ function buildShipPanel(): void {
         else if (pendingRefit.length < 2) pendingRefit.push(m);
         updateShipPanel();
       }
+    } else if (act === "refitfit") {
+      // §fitting: one click composes the refit target from a saved doctrine fit.
+      const f = (state.syndicate?.fits ?? []).find((x) => x.name === (b as HTMLElement).dataset.fitname);
+      if (f) {
+        pendingRefit = [...f.modules];
+        updateShipPanel();
+      }
     } else if (act === "refit" && state.selectedShipId && net) {
       // §modules Part B4: refit the named (kind, from) stack to the composed
       // target (clamped to the hull's slots). The server enforces the docked-yard
@@ -2035,10 +2042,16 @@ function sideFamily(sv: SideRecordView): SalvoFamily {
   return "beam";
 }
 // A compact per-stack fit summary for a side header (participant only).
+// §fitting: stacks whose hull carries an AFFINITY for their fit show the named
+// factor (law 4 — every multiplier is a legible line).
 function bvFitLine(sv: SideRecordView): string {
   const fits = sv.loadouts ?? [];
   if (!fits.length) return "";
-  const parts = fits.map((st) => `${st.n}× ${st.modules.map((m) => MODULE_GLYPH[m as ModuleKind]).join("")} ${esc(shipKindLabel(st.kind))}`);
+  const parts = fits.map((st) => {
+    const aff = affinityLine(st.kind, st.modules as ModuleKind[]);
+    const tag = aff ? ` <span class="tone-up" title="${esc(aff)} — hull affinity, a named factor in this stack's damage.">×1.25</span>` : "";
+    return `${st.n}× ${st.modules.map((m) => MODULE_GLYPH[m as ModuleKind]).join("")} ${esc(shipKindLabel(st.kind))}${tag}`;
+  });
   return `<div class="bv-fits" title="What this side was fitted with — participant intel.">${parts.join(" · ")}</div>`;
 }
 
@@ -2959,6 +2972,39 @@ const MODULE_TIP: Record<ModuleKind, string> = {
   whipple_armor: "Armor: blunts incoming DRIVER into this ship.",
 };
 const MODULE_SLOTS: Record<string, number> = { corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0 };
+// §fitting: per-module FITTING-POINT costs + per-hull budgets (mirrors sim
+// ModuleKind::fitting_cost / ship::fitting_points) — the SECOND constraint
+// besides slots; both render in the fitting bar and gate the queue button.
+const MODULE_FIT_COST: Record<ModuleKind, number> = {
+  mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
+};
+const FITTING_POINTS: Record<string, number> = { corvette: 5, raider: 4, scout: 2, convoy: 2, colony: 2 };
+const fitCost = (mods: ModuleKind[]): number => mods.reduce((s, m) => s + (MODULE_FIT_COST[m] ?? 0), 0);
+// §fitting: is (kind, mods) legal — both slots and budget? (mirrors Loadout::validate)
+function fitLegal(kind: string, mods: ModuleKind[]): boolean {
+  return mods.length <= (MODULE_SLOTS[kind] ?? 0) && fitCost(mods) <= (FITTING_POINTS[kind] ?? 0);
+}
+// §fitting: the hull-AFFINITY factor line for a (kind, fit) — the named
+// multiplier the sim applies (mirrors ship::hull_affinity); null when none.
+function affinityLine(kind: string, mods: ModuleKind[]): string | null {
+  if (kind === "raider" && mods.includes("torpedo_rack")) return "Raider torpedo affinity ×1.25";
+  if (kind === "corvette" && mods.includes("point_defense_screen")) return "Corvette interception affinity ×1.25";
+  return null;
+}
+// The hull's standing affinity note (shown in the build detail even unfitted).
+const HULL_AFFINITY_NOTE: Record<string, string> = {
+  raider: "torpedo ×1.25", corvette: "interception ×1.25",
+};
+// §fitting: the FITTING BAR — used/total points with per-module cost chips;
+// red when the composed fit would overflow the hull's budget.
+function fittingBar(kind: string, mods: ModuleKind[]): string {
+  const total = FITTING_POINTS[kind] ?? 0;
+  const used = fitCost(mods);
+  const over = used > total;
+  const chips = mods.map((m) => `<span class="fit-cost-chip" title="${esc(MODULE_LABEL[m])} costs ${MODULE_FIT_COST[m]} pts">${MODULE_GLYPH[m]}${MODULE_FIT_COST[m]}</span>`).join("");
+  return `<span class="fitbar${over ? " is-over" : ""}" title="Fitting points — every module costs points against the hull's budget (the second constraint besides slots).">` +
+    `fit <b>${used}/${total}</b> pts${chips ? ` ${chips}` : ""}${over ? ` <span class="fitbar-over">OVER BUDGET</span>` : ""}</span>`;
+}
 // Sol's module spread (mirrors sim MODULE_BUY_MULT / MODULE_SELL_MULT) — DISPLAY
 // only; the server prices the real charge on execution (shown "~").
 const MODULE_BUY_MULT = 2.0, MODULE_SELL_MULT = 0.5;
@@ -3042,21 +3088,37 @@ function refitSection(g: GhostView): string {
   }
   const chips = MODULE_ALL.map((m) => {
     const on = pendingRefit.includes(m);
-    return `<button class="act fit-chip${on ? " is-on" : ""}" data-act="refitmod" data-mod="${m}" title="${esc(MODULE_TIP[m])}">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
+    return `<button class="act fit-chip${on ? " is-on" : ""}" data-act="refitmod" data-mod="${m}" title="${esc(MODULE_TIP[m])} Costs ${MODULE_FIT_COST[m]} fitting pts.">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
   }).join("");
+  // §fitting: saved doctrine fits matching this fleet's warship kinds — one
+  // click composes the target (and the fitting bar tracks the budget).
+  const kindsHere = new Set(warKinds.map((c) => c.kind));
+  const fitChips = (state.syndicate?.fits ?? []).filter((f) => kindsHere.has(f.kind)).map((f) =>
+    `<button class="act fit-chip" data-act="refitfit" data-fitname="${esc(f.name)}" title="Apply doctrine fit (${esc(shipKindLabel(f.kind))}): ${f.modules.map((m) => esc(MODULE_LABEL[m])).join(" + ") || "stock"}">${esc(f.name)}</button>`).join(" ");
   const targetTxt = pendingRefit.length ? pendingRefit.map((m) => `${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}`).join(" · ") : "stock (strip all fits)";
   const rows = stacks.map((s) => {
     const fromTxt = s.from.length ? s.from.map((m) => MODULE_GLYPH[m]).join("") : "stock";
     const to = pendingRefit.slice(0, MODULE_SLOTS[s.kind] ?? 0);
     const same = [...s.from].sort().join(",") === [...to].sort().join(",");
+    // §fitting: a grandfathered stack that exceeds today's budget keeps flying
+    // but is flagged — it may only refit INTO legality.
+    const legacy = s.from.length > 0 && !fitLegal(s.kind, s.from)
+      ? ` <span class="fit-legacy" title="This stack's fit exceeds the hull's current fitting budget (${fitCost(s.from)}/${FITTING_POINTS[s.kind] ?? 0} pts). It keeps flying as-is; a refit must land on a legal fit.">legacy fit</span>`
+      : "";
+    const overBudget = to.length > 0 && !fitLegal(s.kind, to);
+    const aff = affinityLine(s.kind, s.from);
     return `<div class="sp-line" style="justify-content:space-between;gap:6px">` +
-      `<span title="${s.n} ${esc(shipKindLabel(s.kind))} currently fitted: ${fromTxt}">${s.n}× ${esc(shipKindLabel(s.kind))} · ${fromTxt}</span>` +
-      `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same ? "disabled" : ""} title="Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.">Refit →</button>` +
+      `<span title="${s.n} ${esc(shipKindLabel(s.kind))} currently fitted: ${fromTxt}${aff ? ` — ${esc(aff)}` : ""}">${s.n}× ${esc(shipKindLabel(s.kind))} · ${fromTxt}${aff ? ` <span class="tone-up" title="${esc(aff)}">×1.25</span>` : ""}${legacy}</span>` +
+      `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same || overBudget ? "disabled" : ""} title="${overBudget ? `The target fit exceeds the ${esc(shipKindLabel(s.kind))}'s fitting budget (${fitCost(to)}/${FITTING_POINTS[s.kind] ?? 0} pts).` : `Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.`}">Refit →</button>` +
       `</div>`;
   }).join("");
+  // The bar tracks the FIRST warship kind's budget (per-row gating is exact).
+  const barKind = warKinds[0].kind;
   return `<div class="sp-sec">${svgIcon("action-build", "sm")} Refit</div>` +
-    `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> — at a docked Shipyard</div>` +
-    `<div class="fit-row">${chips}</div>${rows}`;
+    `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> · ${fittingBar(barKind, pendingRefit)} — at a docked Shipyard</div>` +
+    `<div class="fit-row">${chips}</div>` +
+    (fitChips ? `<div class="mhint" style="margin:2px 0">doctrine fits:</div><div class="fit-row">${fitChips}</div>` : "") +
+    rows;
 }
 
 // (buildOptionRow removed — the inline structure/ship rows it drew are gone; the
@@ -3267,6 +3329,33 @@ function buildBuildPanel(): void {
     if (qbtn) { shipQty = Math.max(1, Number(qbtn.dataset.bpQty) || 1); renderShipPanel(); return; }
     const row = t.closest("[data-bp-row]") as HTMLElement | null;
     if (row) { shipSelectedKind = row.dataset.bpRow ?? null; renderShipPanel(); return; }
+    // §fitting: the detail pane's fit chips + doctrine-fit library.
+    const fitBtn = t.closest("[data-fit]") as HTMLElement | null;
+    if (fitBtn) {
+      const m = fitBtn.dataset.fit as ModuleKind;
+      const cap = MODULE_SLOTS[shipSelectedKind ?? ""] ?? 2;
+      if (pendingFit.includes(m)) pendingFit = pendingFit.filter((x) => x !== m);
+      else if (pendingFit.length < cap) pendingFit.push(m);
+      renderShipPanel();
+      return;
+    }
+    const pick = t.closest("[data-fitpick]") as HTMLElement | null;
+    if (pick) {
+      const f = (state.syndicate?.fits ?? []).find((x) => x.name === pick.dataset.fitpick);
+      if (f) { pendingFit = [...f.modules]; shipSelectedKind = f.kind; renderShipPanel(); }
+      return;
+    }
+    const del = t.closest("[data-fitdel]") as HTMLElement | null;
+    if (del && net) { net.send({ type: "DeleteFit", name: del.dataset.fitdel ?? "" }); return; }
+    if (t.closest("[data-fitsave]") && net && shipSelectedKind) {
+      const sid = viewedSystemId();
+      const ledger = sid ? moduleLedgerAt(sid) : {};
+      const eff = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, MODULE_SLOTS[shipSelectedKind] ?? 0);
+      if (!eff.length || !fitLegal(shipSelectedKind, eff)) return;
+      const name = (window.prompt("Fit name (≤24 chars):") ?? "").trim();
+      if (name) net.send({ type: "SaveFit", name, ship: shipSelectedKind as ShipKind, loadout: eff });
+      return;
+    }
     if (t.closest("[data-bp='queue']")) { queueSelectedShips(); return; }
   });
 }
@@ -3489,7 +3578,39 @@ function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): stri
     ? `${icon("time", "sm")} <b>${per}s</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${Math.round(o.build_secs)}s).${q > 1 ? ` The ${q} build in parallel.` : ""}`
     : `${icon("time", "sm")} <b>${per}s</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
   const stat = (lbl: string, val: string) => `<div class="bp-stat"><span class="bp-stat-l">${lbl}</span><span class="bp-stat-v">${val}</span></div>`;
-  const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fuel", info.hull >= 1000 ? "heavy (∝ mass)" : "light (∝ mass)")}</div>` : "";
+  const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fit points", `${FITTING_POINTS[o.key] ?? 0}`)}</div>` : "";
+  // §fitting: the FITTING section — chips (ledger-gated), the used/total bar
+  // with per-module costs (red on overflow), the hull's affinity line, and the
+  // syndicate's saved DOCTRINE FITS for this hull (pick / save / delete).
+  let fitting = "";
+  const slots = MODULE_SLOTS[o.key] ?? 0;
+  if (slots > 0) {
+    const ledger = moduleLedgerAt(dyn.id);
+    const avail = MODULE_ALL.filter((m) => (ledger[m] ?? 0) > 0);
+    const chips = avail.map((m) => {
+      const on = pendingFit.includes(m);
+      return `<button class="act fit-chip${on ? " is-on" : ""}" data-fit="${m}" title="${esc(MODULE_TIP[m])} Costs ${MODULE_FIT_COST[m]} fitting pts.">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
+    }).join("");
+    const eff = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, slots);
+    const aff = affinityLine(o.key, eff);
+    const affNote = HULL_AFFINITY_NOTE[o.key]
+      ? `<div class="bp-d-line" title="Hull affinity — a named factor the sim applies to that module family on this hull.">${icon("intel", "sm")} hull affinity: <b>${esc(HULL_AFFINITY_NOTE[o.key])}</b>${aff ? ` — <span class="tone-up">${esc(aff)} active</span>` : ""}</div>`
+      : "";
+    // Saved doctrine fits for THIS hull (syndicate-wide; owner-only view).
+    const fits = (state.syndicate?.fits ?? []).filter((f) => f.kind === o.key);
+    const fitChips = fits.map((f) =>
+      `<span class="fit-saved"><button class="act fit-chip" data-fitpick="${esc(f.name)}" title="Apply this doctrine fit: ${f.modules.map((m) => esc(MODULE_LABEL[m])).join(" + ") || "stock"}">${esc(f.name)}</button>` +
+      `<button class="act fit-del" data-fitdel="${esc(f.name)}" title="Delete this fit from the syndicate library">✕</button></span>`).join(" ");
+    const canSave = eff.length > 0 && fitLegal(o.key, eff);
+    const fitLib = state.syndicate
+      ? `<div class="bp-d-line" style="margin-top:2px">${fitChips || `<span class="dim">no saved fits for this hull</span>`} ` +
+        `<button class="act fit-chip" data-fitsave="1" ${canSave ? "" : "disabled"} title="${canSave ? "Save the composed fit as a named syndicate doctrine fit" : "Compose a legal, non-empty fit first"}">💾 save fit…</button></div>`
+      : `<div class="bp-d-line dim">Join a syndicate to share doctrine fits.</div>`;
+    fitting = `<div class="bp-d-sec">Fitting — next build${eff.length ? "" : " (stock)"}</div>` +
+      `<div class="bp-d-line">${fittingBar(o.key, pendingFit.slice(0, Math.max(slots, pendingFit.length)))} <span class="dim">· ${slots} slot${slots > 1 ? "s" : ""}</span></div>` +
+      (avail.length ? `<div class="fit-row">${chips}</div>` : `<div class="bp-d-line dim">No modules in this system's ledger — manufacture some at an Armaments Complex.</div>`) +
+      affNote + fitLib;
+  }
   return `<div class="bp-d-head">${icon(SHIP_HULL_ICON[o.key] ?? "fleet", "md")} <b>${esc(o.label)}</b><span class="bp-d-tier">${st.yardShort ? `needs yard ${romanTier(st.needTier)}` : `${info?.slots ?? 0} slots`}</span></div>` +
     `<div class="bp-d-desc">${esc(info?.role ?? "")}</div>` +
     stepper +
@@ -3497,7 +3618,8 @@ function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): stri
     (st.yardShort ? `<div class="bp-d-warn">Requires Shipyard tier ${romanTier(st.needTier)} here — this system's yard is tier ${romanTier(st.yardTier)}.</div>` : "") +
     (!affordsQ ? `<div class="bp-d-warn">The stockpile covers ${st.maxAff} right now — queue that many, or wait for production.</div>` : "") +
     `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${timeLine}</div>` +
-    `<div class="bp-d-sec">Stats</div>${stats}<div class="bp-d-line" style="margin-top:4px">${esc(info?.cap ?? "")}</div>`;
+    `<div class="bp-d-sec">Stats</div>${stats}<div class="bp-d-line" style="margin-top:4px">${esc(info?.cap ?? "")}</div>` +
+    fitting;
 }
 function queueSelectedShips(): void {
   const sid = viewedSystemId();
@@ -3509,6 +3631,10 @@ function queueSelectedShips(): void {
   const st = shipOption(o, dyn);
   const q = Math.min(Math.max(1, shipQty), st.maxAff);
   if (st.yardShort || q < 1) return; // the button is disabled, but never trust the DOM
+  // §fitting: never dispatch an over-budget fit (the sim would soft-reject each).
+  const ledger = moduleLedgerAt(sid);
+  const eff = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, MODULE_SLOTS[shipSelectedKind] ?? 0);
+  if (eff.length && !fitLegal(shipSelectedKind, eff)) return;
   // §byte-identical: N × the exact BuildShip the inline row sent (the loadout comes
   // from the yard's fit picker via dispatchBuildKey, clamped per hull as before).
   for (let i = 0; i < q; i++) dispatchBuildKey(shipSelectedKind, sid);
@@ -3538,8 +3664,14 @@ function renderShipPanel(): void {
     : `<div class="bp-detail-empty">Select a hull to see its recipe, stats, and build time. Set a quantity, then queue the batch.</div>`;
   const selSt = selOpt ? shipOption(selOpt as BuildOpt, dyn) : null;
   const q = Math.max(1, shipQty);
-  const canQueue = !!selSt && !selSt.yardShort && q >= 1 && q <= selSt.maxAff;
-  const qTip = !selSt ? "Select a hull first." : selSt.yardShort ? selSt.reason : q > selSt.maxAff ? `The stockpile covers ${selSt.maxAff} right now.` : "Queue this batch — draws from the system stockpile.";
+  // §fitting: the queue button also gates on the composed fit's LEGALITY —
+  // what dispatch will actually send (ledger-filtered, slot-clamped).
+  const selKey = shipSelectedKind ?? "";
+  const ledger = sid ? moduleLedgerAt(sid) : {};
+  const effFit = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, MODULE_SLOTS[selKey] ?? 0);
+  const fitOk = !effFit.length || fitLegal(selKey, effFit);
+  const canQueue = !!selSt && !selSt.yardShort && q >= 1 && q <= selSt.maxAff && fitOk;
+  const qTip = !selSt ? "Select a hull first." : selSt.yardShort ? selSt.reason : q > selSt.maxAff ? `The stockpile covers ${selSt.maxAff} right now.` : !fitOk ? "The composed fit exceeds this hull's fitting budget — drop a module." : "Queue this batch — draws from the system stockpile.";
   // The yard's line: every ship job in the SYSTEM (ships build at the best yard).
   const queued = (dyn.builds ?? []).filter((j) => SHIP_KEYS.has(j.key));
   const queuedNote = queued.length ? `At the yard: <b>${queued.map((j) => esc(buildLabel(j.key))).join(", ")}</b>.` : "Nothing at the yard yet.";

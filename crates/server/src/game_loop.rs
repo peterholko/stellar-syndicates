@@ -362,6 +362,16 @@ impl GameLoop {
                         self.pending.push(Command::SetResearchQueue { player_id, queue });
                     }
                 }
+                ClientMsg::SaveFit { name, ship, loadout } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SaveFit { player_id, name, ship, loadout });
+                    }
+                }
+                ClientMsg::DeleteFit { name } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DeleteFit { player_id, name });
+                    }
+                }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);
@@ -832,6 +842,16 @@ impl GameLoop {
                         .invites
                         .iter()
                         .filter_map(|i| self.world.players.get(i).map(|c| c.name.clone()))
+                        .collect(),
+                    // §fitting: the shared doctrine-fit library (owner-only).
+                    fits: s
+                        .fits
+                        .iter()
+                        .map(|f| crate::protocol::FitView {
+                            name: f.name.clone(),
+                            kind: f.kind,
+                            modules: f.loadout.modules().to_vec(),
+                        })
                         .collect(),
                 }));
             let syndicate_invites: Vec<crate::protocol::SyndicateInviteView> = self
