@@ -403,7 +403,14 @@ impl Forces {
             if lo.whipples() {
                 driver *= 1.0 - (WHIPPLE_BLUNT * prot).min(0.95);
             }
-            let torpedo = inc.torpedo * frac; // armor ignores torpedoes
+            // Armor ignores torpedoes. §ladder B3: torpedoes into a CAPITAL-mass
+            // hull gain the capital edge — big slow hulls can't dodge a seeker.
+            // Magnitude only (PD interception already ran at the side level; the
+            // matrix shape is untouched). A named factor per law 4.
+            let mut torpedo = inc.torpedo * frac;
+            if kind.hull_mass() >= crate::ship::CAPITAL_MASS_THRESHOLD {
+                torpedo *= crate::ship::TORP_CAPITAL_EDGE;
+            }
             let pool = self.damage.entry(key.clone()).or_insert(0.0);
             *pool += beam + driver + torpedo;
             let hull = kind.hull();
@@ -1274,16 +1281,99 @@ mod tests {
         assert_eq!(hull_affinity(ShipKind::Corvette, Family::Torpedo), 1.0, "right family, wrong kind");
         assert_eq!(hull_affinity(ShipKind::Raider, Family::Driver), 1.0, "right kind, wrong family");
         assert_eq!(hull_affinity(ShipKind::Raider, Family::Interception), 1.0);
-        for k in crate::ship::ALL_SHIP_KINDS {
+        // The PRE-LADDER hulls keep Beam/Protection at 1.0 — the unfitted
+        // calibration anchor (capitals never existed pre-fitting, so their
+        // affinities can't disturb it).
+        for k in [ShipKind::Convoy, ShipKind::Raider, ShipKind::Corvette, ShipKind::Colony, ShipKind::Scout] {
             assert_eq!(hull_affinity(k, Family::Beam), 1.0, "beam affinity 1.0 keeps the unfitted calibration");
             assert_eq!(hull_affinity(k, Family::Protection), 1.0);
         }
+        // §ladder: each capital's ONE affinity (the Titan's broad weapon spread).
+        assert_eq!(hull_affinity(ShipKind::Destroyer, Family::Beam), 1.20);
+        assert_eq!(hull_affinity(ShipKind::Cruiser, Family::Protection), 1.20);
+        assert_eq!(hull_affinity(ShipKind::Battleship, Family::Driver), 1.20);
+        assert_eq!(hull_affinity(ShipKind::Dreadnought, Family::Interception), 1.30);
+        for f in [Family::Beam, Family::Driver, Family::Torpedo] {
+            assert_eq!(hull_affinity(ShipKind::Titan, f), 1.10, "broadly good");
+        }
+        assert_eq!(hull_affinity(ShipKind::Titan, Family::Interception), 1.0, "best at nothing");
+        assert_eq!(hull_affinity(ShipKind::Destroyer, Family::Torpedo), 1.0, "one affinity per capital");
         // And in the pipeline: a torpedo CORVETTE fires at exactly TORP_MULT —
         // no Raider bonus leaks across kinds.
         let ct = fitted(ShipKind::Corvette, &[ModuleKind::TorpedoRack], 3).typed_attack();
         assert!((ct.torpedo - 3.0 * ShipKind::Corvette.attack_weight() * TORP_MULT).abs() < 1e-9);
         // Protection affinity 1.0 → armor mitigation is EXACTLY the base
         // constants (pinned above); nothing else in the matrix moved.
+    }
+
+    #[test]
+    fn torpedo_capital_edge_is_torpedo_only_and_capital_only() {
+        use crate::ship::{CAPITAL_MASS_THRESHOLD, TORP_CAPITAL_EDGE};
+        // The threshold sits between Cruiser and Battleship, clear of the Colony.
+        assert!(ShipKind::Cruiser.hull_mass() < CAPITAL_MASS_THRESHOLD);
+        assert!(ShipKind::Colony.hull_mass() < CAPITAL_MASS_THRESHOLD, "civilian hulls stay out of the capital edge");
+        assert!(ShipKind::Battleship.hull_mass() >= CAPITAL_MASS_THRESHOLD);
+        // Torpedo into a CAPITAL takes the edge; beam/driver into the same hull
+        // don't; torpedo into a SUB-capital doesn't. Salvos below one hull.
+        let bh = ShipKind::Battleship.hull();
+        let torp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: bh * 0.4 };
+        let beam = TypedDamage { beam: bh * 0.4, driver: 0.0, torpedo: 0.0 };
+        assert!((absorbed(ShipKind::Battleship, &[], 1, torp) - bh * 0.4 * TORP_CAPITAL_EDGE).abs() < 1e-9, "torpedoes bite capitals harder");
+        assert!((absorbed(ShipKind::Battleship, &[], 1, beam) - bh * 0.4).abs() < 1e-9, "the edge is torpedo-typed only");
+        let ch = ShipKind::Cruiser.hull();
+        let ctorp = TypedDamage { beam: 0.0, driver: 0.0, torpedo: ch * 0.4 };
+        assert!((absorbed(ShipKind::Cruiser, &[], 1, ctorp) - ch * 0.4).abs() < 1e-9, "sub-capital hulls take base torpedo damage");
+        // Armor still doesn't stop torpedoes, even on a capital (matrix shape).
+        let armored = absorbed(ShipKind::Battleship, &[ModuleKind::WhippleArmor], 1, torp);
+        assert!((armored - bh * 0.4 * TORP_CAPITAL_EDGE).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pd_dreadnought_projects_platform_grade_interception_over_its_side() {
+        // §ladder B6.5: the side's torpedo interception RISES when a PD-fitted
+        // Dreadnought is present, and is absent otherwise. Mixed side: raiders
+        // + one Dreadnought; measure what a fixed torpedo salvo leaves behind.
+        let salvo = TypedDamage { beam: 0.0, driver: 0.0, torpedo: 10.0 };
+        let side = |dread_mods: &[ModuleKind]| -> f64 {
+            let mut f = fitted(ShipKind::Raider, &[], 4);
+            for ((k, lo), n) in fitted(ShipKind::Dreadnought, dread_mods, 1).stacks {
+                f.stacks.insert((k, lo), n);
+            }
+            f.absorb(salvo);
+            f.damage.values().sum::<f64>()
+        };
+        let bare = side(&[]);
+        let screened = side(&[ModuleKind::PointDefenseScreen]);
+        assert!(screened < bare, "a PD Dreadnought screens the whole side ({screened:.3} < {bare:.3})");
+        // Platform-grade: its huge hull share × the 1.30 interception affinity
+        // cuts the side salvo by MORE than the same PD on a corvette would.
+        let mut with_corvette = fitted(ShipKind::Raider, &[], 4);
+        for ((k, lo), n) in fitted(ShipKind::Corvette, &[ModuleKind::PointDefenseScreen], 1).stacks {
+            with_corvette.stacks.insert((k, lo), n);
+        }
+        with_corvette.absorb(salvo);
+        let corvette_screen: f64 = with_corvette.damage.values().sum();
+        assert!(screened < corvette_screen, "the Dreadnought screen out-screens a corvette screen");
+    }
+
+    #[test]
+    fn capital_fitting_combinations_live_on_the_big_budgets() {
+        use crate::module::Loadout;
+        // §ladder B6.6: Titan Torp+PD+both armors+2×Driver = 6 slots, 14 pts ≤ 45
+        // — capitals are where combinations live. (The handoff's example set.)
+        let big = Loadout::new(vec![
+            ModuleKind::TorpedoRack,
+            ModuleKind::PointDefenseScreen,
+            ModuleKind::ReflectivePlating,
+            ModuleKind::WhippleArmor,
+            ModuleKind::MassDriver,
+            ModuleKind::MassDriver,
+        ]);
+        assert_eq!(big.len(), 6);
+        assert!(big.validate(ShipKind::Titan), "a full 6-module Titan fit is legal");
+        assert!(!big.validate(ShipKind::Dreadnought), "5 slots — one fewer combination");
+        // A 1-count Titan buckets sanely (no new CountClass needed).
+        assert_eq!(crate::ship::CountClass::from_count(1), crate::ship::CountClass::One);
     }
 
     #[test]

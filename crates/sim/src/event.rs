@@ -138,6 +138,17 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
     },
 
+    /// §ladder B4: a syndicate's TITAN — its one flagship — was destroyed.
+    /// `name` is its christened name (None if unnamed; cleared on this event).
+    /// HEADLINE news: broadcast to every corp, light-delayed from the wreck
+    /// (the owner learns instantly — it's their ship).
+    FlagshipDestroyed {
+        owner: PlayerId,
+        syndicate: crate::ids::SyndicateId,
+        name: Option<String>,
+        pos: crate::math::Vec2,
+    },
+
     /// Construction began at an owned system: a recipe was deducted and a build job
     /// enqueued (§step1 growth sink). Owner-only news (the spend is private; the
     /// finished ship reveals as a normal light-gated ghost).
@@ -452,6 +463,12 @@ pub enum BuildRejectReason {
     /// The system's Shipyard tier is below what this ship kind needs
     /// (§buildings step 3: Convoy ≥ 1, Raider ≥ 2).
     NeedsShipyard { required: u32 },
+    /// §ladder: the hull's research programme (UnlockHull) isn't completed —
+    /// capitals are prizes on the Line ladder, not catalog items.
+    NeedsResearch,
+    /// §ladder B4: the syndicate already FIELDS (or is building) its one Titan
+    /// — the singleton flagship. Rebuild is allowed only after it is lost.
+    TitanFielded,
 }
 
 impl Event {

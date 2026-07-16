@@ -50,6 +50,30 @@ pub enum ShipKind {
     /// oversized sensor bubble (`sensor_mult`), and near rival systems captures
     /// timestamped intel snapshots of their fortifications.
     Scout,
+    // --- §ladder: the WARSHIP LADDER (research-gated; appended after Scout so
+    // every BTreeMap iteration order + snapshot stays stable). Capitals buy
+    // PRESENCE and ROLE, never efficiency — combat weight per Armaments spent
+    // peaks at Destroyer/Cruiser and declines up the ladder (pinned by test).
+    /// The heavy combatant (Line IV): the first true ship of the line — real
+    /// beam broadsides (Beam affinity), 3 slots / 8 fitting points.
+    Destroyer,
+    /// The season's prestige warship (Line V): the armored core of a fleet
+    /// (Protection affinity), 4 slots / 12 points, the efficiency PEAK of the
+    /// ladder — everything above buys presence, not value.
+    Cruiser,
+    /// The siege anchor (Line VI): driver broadsides (Driver affinity) and the
+    /// hull that holds a blockade line — its presence accelerates a siege
+    /// clock (`SIEGE_ANCHOR_MULT`). 4 slots / 18 points.
+    Battleship,
+    /// The fleet screen made flesh (Line VII): Interception affinity ×1.30 — a
+    /// PD-fitted Dreadnought screens its whole side at platform grade. 5 slots
+    /// / 28 points.
+    Dreadnought,
+    /// The flagship (Line VIII): a syndicate fields AT MOST ONE, and may name
+    /// it. Broadly good (×1.10 to every weapon family), best at nothing — its
+    /// answer is the wolfpack torpedo Raider, unless its 45 points went to PD
+    /// or Dreadnought screens (the puzzle the budgets exist to pose).
+    Titan,
 }
 
 /// Mass added per unit of cargo carried. A fully-loaded convoy is meaningfully
@@ -68,8 +92,15 @@ impl ShipKind {
             ShipKind::Convoy => 4500.0,
             ShipKind::Raider => 200.0,
             ShipKind::Corvette => 800.0,
-            ShipKind::Colony => 6000.0, // the heaviest hull — fuel-∝-mass bites
+            ShipKind::Colony => 6000.0, // heaviest CIVILIAN hull — fuel-∝-mass bites
             ShipKind::Scout => 80.0,
+            // §ladder: anchored to the Corvette (800) — 2.5× / 5× / 10× / 20× /
+            // 40×. Mass drives fuel cost, so the capital fuel burn emerges here.
+            ShipKind::Destroyer => 2_000.0,
+            ShipKind::Cruiser => 4_000.0,
+            ShipKind::Battleship => 8_000.0,
+            ShipKind::Dreadnought => 16_000.0,
+            ShipKind::Titan => 32_000.0,
         }
     }
 
@@ -93,8 +124,16 @@ impl ShipKind {
             ShipKind::Convoy => 40.0,
             ShipKind::Raider => 100.0,
             ShipKind::Corvette => 65.0, // keeps station with convoys, can't chase raiders
-            ShipKind::Colony => 33.0, // slowest — the long, visible voyage
+            ShipKind::Colony => 33.0, // slowest civilian — the long, visible voyage
             ShipKind::Scout => 115.0, // the fastest thing flying — still < c/2
+            // §ladder: each rung slower than the last (0.85 / 0.70 / 0.55 /
+            // 0.45 / 0.35 × the Corvette's 65) — a capital ARRIVES, it never
+            // chases. All far below c = 300.
+            ShipKind::Destroyer => 55.0,
+            ShipKind::Cruiser => 45.0,
+            ShipKind::Battleship => 36.0,
+            ShipKind::Dreadnought => 29.0,
+            ShipKind::Titan => 23.0, // the slowest hull flying — presence, not pursuit
         }
     }
 
@@ -105,8 +144,20 @@ impl ShipKind {
     pub fn broadcasts(self) -> bool {
         // Convoys (trade), corvettes (a DECLARED escort deters), and colony
         // ships (a declared civilian settlement vessel — expansion is
-        // telegraphed) broadcast; raiders and scouts run dark.
-        matches!(self, ShipKind::Convoy | ShipKind::Corvette | ShipKind::Colony)
+        // telegraphed) broadcast; raiders and scouts run dark. §ladder: every
+        // CAPITAL broadcasts — a ship of the line is a declared presence
+        // (deterrence is its job; sneaking is the Raider's).
+        matches!(
+            self,
+            ShipKind::Convoy
+                | ShipKind::Corvette
+                | ShipKind::Colony
+                | ShipKind::Destroyer
+                | ShipKind::Cruiser
+                | ShipKind::Battleship
+                | ShipKind::Dreadnought
+                | ShipKind::Titan
+        )
     }
 
     /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
@@ -136,6 +187,13 @@ impl ShipKind {
             ShipKind::Convoy => 0.0,   // civilians don't attack
             ShipKind::Colony => 0.0,   // colonists, not soldiers
             ShipKind::Scout => 0.0,    // dies if engaged — speed is its armor
+            // §ladder: raw broadside climbs the ladder — but per Armaments
+            // spent it DECLINES past the Cruiser (the efficiency invariant).
+            ShipKind::Destroyer => 2.4,
+            ShipKind::Cruiser => 4.5,
+            ShipKind::Battleship => 8.0,
+            ShipKind::Dreadnought => 12.0,
+            ShipKind::Titan => 24.0,
         }
     }
 
@@ -147,6 +205,13 @@ impl ShipKind {
             ShipKind::Convoy => 1.0,
             ShipKind::Colony => 1.0, // a fat civilian hull — escort it
             ShipKind::Scout => 0.0, // no armor at all
+            // §ladder: capitals are defense-heavier than they are gun-heavy —
+            // presence means being HARD TO REMOVE. Hull derives from this.
+            ShipKind::Destroyer => 2.6,
+            ShipKind::Cruiser => 5.5,
+            ShipKind::Battleship => 12.0,
+            ShipKind::Dreadnought => 26.0,
+            ShipKind::Titan => 44.0,
         }
     }
 
@@ -155,7 +220,16 @@ impl ShipKind {
     /// excluded exactly as the old raider-count was — so raider-only worlds see
     /// identical ratios.
     pub fn is_combatant(self) -> bool {
-        matches!(self, ShipKind::Raider | ShipKind::Corvette)
+        matches!(
+            self,
+            ShipKind::Raider
+                | ShipKind::Corvette
+                | ShipKind::Destroyer
+                | ShipKind::Cruiser
+                | ShipKind::Battleship
+                | ShipKind::Dreadnought
+                | ShipKind::Titan
+        )
     }
 
     /// A combatant's weight in force-ratio comparisons (attack + defense — its
@@ -175,13 +249,19 @@ impl ShipKind {
     }
 
     /// §modules Part B: how many MODULE slots this hull carries. Warships fit
-    /// modules; logistics hulls (Convoy/Colony) carry none. Tunable.
+    /// modules; logistics hulls (Convoy/Colony) carry none. §ladder: capitals
+    /// are where COMBINATIONS live — slots and points both climb. Tunable.
     pub fn module_slots(self) -> u32 {
         match self {
             ShipKind::Corvette => 2,
             ShipKind::Raider => 2,
             ShipKind::Scout => 1,
             ShipKind::Convoy | ShipKind::Colony => 0,
+            ShipKind::Destroyer => 3,
+            ShipKind::Cruiser => 4,
+            ShipKind::Battleship => 4,
+            ShipKind::Dreadnought => 5,
+            ShipKind::Titan => 6,
         }
     }
 }
@@ -201,6 +281,13 @@ pub fn fitting_points(kind: ShipKind) -> u32 {
         ShipKind::Colony => 2,
         ShipKind::Raider => 4,
         ShipKind::Corvette => 5,
+        // §ladder: the big budgets — capitals combine freely (a Titan carries
+        // Torp+PD+both armors and change); subcaps must CHOOSE.
+        ShipKind::Destroyer => 8,
+        ShipKind::Cruiser => 12,
+        ShipKind::Battleship => 18,
+        ShipKind::Dreadnought => 28,
+        ShipKind::Titan => 45,
     }
 }
 
@@ -215,8 +302,47 @@ pub fn hull_affinity(kind: ShipKind, family: crate::module::Family) -> f64 {
     match (kind, family) {
         (ShipKind::Raider, Family::Torpedo) => 1.25,      // the torpedo boat
         (ShipKind::Corvette, Family::Interception) => 1.25, // the screen
+        // §ladder: each capital is good at a KIND of fighting. The Titan is
+        // broadly good (×1.10 to every weapon family), best at nothing — the
+        // one Beam affinity above 1.0, deliberately (it never breaks the
+        // unfitted-calibration anchor because Titans never existed pre-fitting).
+        (ShipKind::Destroyer, Family::Beam) => 1.20,
+        (ShipKind::Cruiser, Family::Protection) => 1.20,
+        (ShipKind::Battleship, Family::Driver) => 1.20,
+        (ShipKind::Dreadnought, Family::Interception) => 1.30, // platform-grade screen
+        (ShipKind::Titan, Family::Beam | Family::Driver | Family::Torpedo) => 1.10,
         _ => 1.0,
     }
+}
+
+/// §ladder B3: torpedo-typed damage into a CAPITAL-mass hull gains this edge —
+/// big slow hulls can't dodge a seeker. Magnitude only (PD still intercepts,
+/// armor stays irrelevant); the threshold sits between the Cruiser (4000) and
+/// the Battleship (8000), clear of the Colony's 6000. Tunable.
+pub const CAPITAL_MASS_THRESHOLD: f64 = 7_000.0;
+/// §ladder B3: the torpedo capital-edge multiplier. Tunable.
+pub const TORP_CAPITAL_EDGE: f64 = 1.25;
+
+/// §ladder: does this hull require its research programme (UnlockHull) before
+/// it can be built? The five ladder hulls do; the original five never do.
+pub fn requires_hull_unlock(kind: ShipKind) -> bool {
+    matches!(
+        kind,
+        ShipKind::Destroyer
+            | ShipKind::Cruiser
+            | ShipKind::Battleship
+            | ShipKind::Dreadnought
+            | ShipKind::Titan
+    )
+}
+
+/// §ladder: a BATTLESHIP anchoring a blockade accelerates the siege clock —
+/// the named "siege anchor" line. Applied to capture-clock progress while any
+/// blockading fleet carries a Battleship or heavier combatant. Tunable.
+pub const SIEGE_ANCHOR_MULT: f64 = 1.25;
+/// Is this hull a siege anchor (Battleship-or-heavier ship of the line)?
+pub fn is_siege_anchor(kind: ShipKind) -> bool {
+    kind.is_combatant() && kind.hull_mass() >= CAPITAL_MASS_THRESHOLD
 }
 
 /// The FLAGSHIP precedence (GDD §13.1): a fleet is DRAWN and named for its
@@ -224,7 +350,14 @@ pub fn hull_affinity(kind: ShipKind, family: crate::module::Family) -> f64 {
 /// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A
 /// fleet-of-one resolves to that ship's own kind, so nothing changes for the
 /// N=1 world. Highest precedence first.
-pub const FLAGSHIP_PRECEDENCE: [ShipKind; 5] = [
+pub const FLAGSHIP_PRECEDENCE: [ShipKind; 10] = [
+    // §ladder: a capital OUTRANKS everything — a fleet with a Titan IS the
+    // Titan (its name, its sprite, its label), down the ladder from there.
+    ShipKind::Titan,
+    ShipKind::Dreadnought,
+    ShipKind::Battleship,
+    ShipKind::Cruiser,
+    ShipKind::Destroyer,
     ShipKind::Colony,
     ShipKind::Convoy,
     ShipKind::Corvette,
@@ -234,12 +367,17 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 5] = [
 
 /// All ship kinds, in a fixed deterministic order (composition iteration,
 /// damage-pool distribution, report ordering). Kept in sync with [`ShipKind`].
-pub const ALL_SHIP_KINDS: [ShipKind; 5] = [
+pub const ALL_SHIP_KINDS: [ShipKind; 10] = [
     ShipKind::Convoy,
     ShipKind::Raider,
     ShipKind::Corvette,
     ShipKind::Colony,
     ShipKind::Scout,
+    ShipKind::Destroyer,
+    ShipKind::Cruiser,
+    ShipKind::Battleship,
+    ShipKind::Dreadnought,
+    ShipKind::Titan,
 ];
 
 /// The fastest flying speed across every ship kind — the single number the

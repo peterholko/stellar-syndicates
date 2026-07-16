@@ -216,6 +216,8 @@ pub enum ClientMsg {
     SaveFit { name: String, ship: ShipKind, #[serde(default)] loadout: sim::Loadout },
     /// DELETE a doctrine fit by name from the caller's syndicate. CC-local.
     DeleteFit { name: String },
+    /// §ladder B4: NAME the syndicate's flagship Titan (empty un-christens).
+    NameFlagship { name: String },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -727,6 +729,11 @@ pub struct SyndicateView {
     /// any member curates). Owner-only like the rest of the view.
     #[serde(default)]
     pub fits: Vec<FitView>,
+    /// §ladder B4: the christened name of the syndicate's Titan (None if
+    /// unnamed / not fielded). Owner-only here; rivals meet it only in
+    /// participant battle records.
+    #[serde(default)]
+    pub flagship_name: Option<String>,
 }
 
 /// §fitting: one saved doctrine fit on the wire (modules sorted, never empty —
@@ -973,6 +980,10 @@ pub struct SideRecordView {
     /// The client labels the side and types its salvos by dominant weapon family.
     #[serde(default)]
     pub loadouts: Vec<LoadoutStack>,
+    /// §ladder B4: the christened name of this side's TITAN — PARTICIPANT ONLY
+    /// and only when the side fielded one. How a rival ever meets the name.
+    #[serde(default)]
+    pub flagship_name: Option<String>,
 }
 
 /// A recorded beat, viewer-filtered. `kind` is the snake_case note tag; `side`

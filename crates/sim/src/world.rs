@@ -1148,7 +1148,7 @@ impl World {
         let name = sanitize_name(&name);
         self.syndicates.insert(
             id,
-            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default(), fits: Vec::new() },
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default(), fits: Vec::new(), flagship_name: None },
         );
         self.set_membership(founder, Some(id));
     }
@@ -1990,6 +1990,7 @@ impl World {
         // exact fitted/unfitted ships combat killed — an armored stack that
         // absorbed less sheds fewer. `remove_stack` keeps composition + loadouts
         // in step. Distributed across the side's fleets, lowest id first.
+        let mut titan_losses: Vec<PlayerId> = Vec::new();
         for ((kind, loadout), n) in &losses.per_stack {
             let mut remaining = *n;
             for id in members.iter() {
@@ -2004,8 +2005,39 @@ impl World {
                     for _ in 0..take {
                         events.push(Event::new(self.time, EventPayload::ShipDestroyed { ship: *id, owner, kind: *kind, pos }));
                     }
+                    // §ladder B4: a dead TITAN is a HEADLINE — clear the
+                    // flagship name and broadcast (processed after the loop;
+                    // the borrow on `f` ends here).
+                    if *kind == ShipKind::Titan {
+                        titan_losses.push(owner);
+                    }
                 }
             }
+        }
+        for owner in titan_losses {
+            let Some(sid) = self.players.get(&owner).and_then(|c| c.syndicate) else {
+                // An unaffiliated owner's Titan dies without a syndicate to
+                // headline for (only reachable via post-build emigration —
+                // building one requires syndicate research).
+                continue;
+            };
+            // §ladder B4: the christened name belongs to THE syndicate's Titan.
+            // Membership churn can gather more than one (the singleton binds at
+            // BUILD time) — if another member Titan still flies after this
+            // loss, the LIVING flagship keeps the name and the fallen hull
+            // makes a nameless headline. The stack removal above already
+            // updated the fleets, so this reads the post-loss world.
+            let members = self.syndicates.get(&sid).map(|s| s.members.clone()).unwrap_or_default();
+            let another_flies = self
+                .fleets
+                .values()
+                .any(|f| members.contains(&f.owner) && f.count(ShipKind::Titan) > 0);
+            let Some(s) = self.syndicates.get_mut(&sid) else { continue };
+            let name = if another_flies { None } else { s.flagship_name.take() };
+            events.push(Event::new(
+                self.time,
+                EventPayload::FlagshipDestroyed { owner, syndicate: sid, name, pos },
+            ));
         }
         // Drop any fleet emptied out. §economy Part 4: a fleet that died with
         // specialists aboard loses them WITH the ship — the one specialist loss
@@ -3696,6 +3728,17 @@ impl World {
                 let name = name.trim();
                 s.fits.retain(|f| f.name != name);
             }
+            Command::NameFlagship { player_id, name } => {
+                // §ladder B4: christen (or un-christen, empty name) the
+                // syndicate's Titan. A pure label — no sim outcome touches it.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let name: String =
+                    name.trim().chars().take(crate::syndicate::FLAGSHIP_NAME_MAX).collect();
+                s.flagship_name = (!name.is_empty()).then_some(name);
+            }
             Command::MoveShip {
                 player_id,
                 ship_id,
@@ -4618,6 +4661,36 @@ impl World {
         // owner-only notice — the recipe is never eaten, the build simply holds
         // until the industry exists. This is what makes shipbuilding GEOGRAPHY.
         if let crate::build::BuildKind::Ship { ship } = what {
+            // §ladder: the five capital hulls are RESEARCH PRIZES — the Line
+            // programme's UnlockHull must be completed by the owner's syndicate
+            // before the yard will lay the keel. Soft reject with its own
+            // reason (the client shows the gate copy).
+            if crate::ship::requires_hull_unlock(ship) && !self.research_hull(player_id, ship) {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NeedsResearch,
+                    },
+                ));
+                return;
+            }
+            // §ladder B4: the TITAN is a syndicate SINGLETON — fielded + queued
+            // must be zero to lay a new keel (rebuild after loss is allowed).
+            if ship == ShipKind::Titan && self.titan_fielded_or_queued(player_id) {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::TitanFielded,
+                    },
+                ));
+                return;
+            }
             let required = crate::build::required_shipyard_tier(ship);
             if sys.tier(crate::build::StructureKind::Shipyard) < required {
                 events.push(Event::new(
@@ -5186,11 +5259,39 @@ impl World {
             .unwrap_or(0)
     }
 
-    /// §research R4b: has `owner`'s syndicate unlocked this hull / module? (Wired
-    /// with the new hulls/utility modules in R5.)
-    #[allow(dead_code)]
+    /// §research R4b: has `owner`'s syndicate unlocked this hull? Wired into the
+    /// §ladder BuildShip gate — the five capital hulls soft-reject without it.
     fn research_hull(&self, owner: PlayerId, kind: ShipKind) -> bool {
         self.research_of(owner).is_some_and(|r| crate::research::has_hull(r, kind))
+    }
+
+    /// §ladder B4: does `owner`'s syndicate (or the lone corp, if unaffiliated)
+    /// already FIELD or have QUEUED a Titan? The singleton check counts every
+    /// member's fleets and every member's pending Titan keel.
+    fn titan_fielded_or_queued(&self, owner: PlayerId) -> bool {
+        let members: std::collections::BTreeSet<PlayerId> = self
+            .players
+            .get(&owner)
+            .and_then(|c| c.syndicate)
+            .and_then(|sid| self.syndicates.get(&sid))
+            .map(|s| s.members.clone())
+            .unwrap_or_else(|| std::collections::BTreeSet::from([owner]));
+        let fielded = self
+            .fleets
+            .values()
+            .any(|f| members.contains(&f.owner) && f.count(ShipKind::Titan) > 0);
+        let queued = self.build_queue.iter().any(|j| {
+            members.contains(&j.owner)
+                && matches!(j.what, crate::build::BuildKind::Ship { ship: ShipKind::Titan })
+        });
+        // A Titan IN THE YARD mid-refit is out of every fleet for the job's
+        // duration — it still counts (else a 3s-per-hull refit window lets a
+        // second keel slip past the singleton).
+        let refitting = self
+            .refit_queue
+            .iter()
+            .any(|j| members.contains(&j.owner) && j.ship == ShipKind::Titan);
+        fielded || queued || refitting
     }
     #[allow(dead_code)]
     fn research_module(&self, owner: PlayerId, kind: crate::module::ModuleKind) -> bool {
@@ -5753,7 +5854,17 @@ impl World {
                     // Otherwise the existing soft-hold: intact, redirectable,
                     // never consumed in vain. "Sieges strangle; only colonists
                     // conquer" — no colony ship = no capture, ever.
-                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs;
+                    // §ladder: the SIEGE ANCHOR — a Battleship-or-heavier hull on
+                    // blockade station accelerates the capture clock: the ripe
+                    // duration divides by SIEGE_ANCHOR_MULT while one holds the
+                    // line. A named factor, presence-gated at evaluation.
+                    let anchored = self.fleets.values().any(|f| {
+                        f.owner == owner
+                            && matches!(f.order, crate::ship::FleetOrder::Blockade { system, .. } if system == sys_id)
+                            && f.composition.iter().any(|(k, n)| *n > 0 && crate::ship::is_siege_anchor(*k))
+                    });
+                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs
+                        / if anchored { crate::ship::SIEGE_ANCHOR_MULT } else { 1.0 };
                     let captureable = idle
                         && !self.is_home_system(holder, sys_id)
                         && self
@@ -5789,6 +5900,9 @@ impl World {
     /// Never called for a home system — the caller's home-protection gate holds.
     fn capture_system(&mut self, sys_id: EntityId, old_owner: PlayerId, new_owner: PlayerId, colony: EntityId, pos: Vec2, events: &mut Vec<Event>) {
         let now = self.time;
+        // §ladder B2: a capture is the Line VIII verb — counted ONCE per
+        // capture, at resolution (the only place ownership flips by siege).
+        self.add_research_verb(new_owner, crate::research::Verb::SystemsCaptured, 1.0);
         // Snapshot the seized stockpile (whole units) for the report BEFORE the flip.
         let plunder: BTreeMap<crate::cargo::Commodity, u32> = self
             .systems
@@ -7699,6 +7813,155 @@ mod tests {
             ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
             "with the Tier-IV/V unlock, tier 5 builds"
         );
+    }
+
+    #[test]
+    fn capital_hulls_gate_on_research_and_the_titan_is_a_singleton() {
+        use crate::event::BuildRejectReason;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(51);
+        w.step(&[Command::AddPlayer { id, name: "Line".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Armada".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap()
+            .set_tier(StructureKind::Shipyard, 6);
+        seed_stock(&mut w, home, &[
+            (Commodity::Alloys, 20_000.0), (Commodity::Electronics, 10_000.0),
+            (Commodity::Armaments, 10_000.0), (Commodity::Machinery, 10_000.0),
+            (Commodity::RareElements, 5_000.0), (Commodity::Fuel, 5_000.0),
+        ]);
+        // UNRESEARCHED: a capital keel soft-rejects with the research reason.
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::NeedsResearch, .. })),
+            "no Line programme → NeedsResearch"
+        );
+        // RESEARCHED: the unlock admits the hull.
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("hull_line_iv_destroyer".into());
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the unlocked Destroyer lays its keel");
+        // TITAN: research VIII grants the hull AND the Shipyard-6 ceiling (the
+        // effects array in action).
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("hull_line_viii_titan".into());
+        assert_eq!(
+            crate::research::unlocked_structure_tier(&w.syndicates[&sid].research, StructureKind::Shipyard),
+            6,
+            "Line VIII carries the yard ceiling with the hull"
+        );
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the first Titan keel is laid");
+        // SINGLETON: a second keel is rejected while one is QUEUED…
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::TitanFielded, .. })),
+            "one keel at a time — fielded + queued must be zero"
+        );
+        // …and while one is FIELDED (clear the queue, graft a live Titan).
+        w.build_queue.retain(|j| !matches!(j.what, crate::build::BuildKind::Ship { ship: ShipKind::Titan }));
+        let titan = squad(&mut w, id, hpos, ShipKind::Titan, 1, FleetOrder::Idle);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::TitanFielded, .. })));
+        // …and while one is IN THE YARD mid-REFIT (out of every fleet — the
+        // review-caught window): the refit_queue counts toward the singleton.
+        {
+            let f = w.fleets.get_mut(&titan).unwrap();
+            f.remove(ShipKind::Titan, 1);
+            f.add(ShipKind::Scout, 1); // keep the fleet alive while the hull is in the yard
+        }
+        w.refit_queue.push(crate::build::RefitJob {
+            id: 999_999, owner: id, system: home, fleet: titan, ship: ShipKind::Titan,
+            to: crate::module::Loadout::default(), n: 1, complete_tick: w.tick + 10_000,
+        });
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::TitanFielded, .. })),
+            "a Titan mid-refit still blocks a second keel"
+        );
+        w.refit_queue.clear();
+        w.fleets.get_mut(&titan).unwrap().add(ShipKind::Titan, 1); // back aboard for the death test
+        // NAME the flagship; a serde round-trip keeps it.
+        w.step(&[Command::NameFlagship { player_id: id, name: "Reckoning of Veles".into() }]);
+        assert_eq!(w.syndicates[&sid].flagship_name.as_deref(), Some("Reckoning of Veles"));
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w2.syndicates[&sid].flagship_name.as_deref(), Some("Reckoning of Veles"), "the name survives a snapshot");
+        // DESTRUCTION: the loss clears the name, makes the headline, and
+        // re-opens the yard for a rebuild.
+        let mut losses = crate::combat::Losses::default();
+        losses.add_stack(ShipKind::Titan, crate::module::Loadout::default(), 1);
+        let mut members = vec![titan];
+        let mut events = Vec::new();
+        w.apply_side_losses(&mut members, &losses, hpos, &mut events);
+        assert!(
+            events.iter().any(|e| matches!(&e.payload, EventPayload::FlagshipDestroyed { name: Some(n), .. } if n == "Reckoning of Veles")),
+            "the headline carries the christened name"
+        );
+        assert!(w.syndicates[&sid].flagship_name.is_none(), "the name dies with the ship");
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "rebuild after loss is allowed");
+    }
+
+    #[test]
+    fn flagship_name_stays_with_the_living_titan_on_membership_churn() {
+        // §ladder B4 (review-caught): membership churn can gather TWO Titans in
+        // one syndicate (the singleton binds at build). When one dies, the
+        // LIVING flagship keeps the christened name — the fallen hull makes a
+        // nameless headline; the name is taken only when the LAST Titan falls.
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(71);
+        w.step(&[Command::AddPlayer { id, name: "Churn".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Two Crowns".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        let t1 = squad(&mut w, id, hpos, ShipKind::Titan, 1, FleetOrder::Idle);
+        let _t2 = squad(&mut w, id, hpos + Vec2::new(50.0, 0.0), ShipKind::Titan, 1, FleetOrder::Idle);
+        w.step(&[Command::NameFlagship { player_id: id, name: "Reckoning".into() }]);
+        // First Titan dies → the name SURVIVES (the other still flies).
+        let mut losses = crate::combat::Losses::default();
+        losses.add_stack(ShipKind::Titan, crate::module::Loadout::default(), 1);
+        let mut members = vec![t1];
+        let mut events = Vec::new();
+        w.apply_side_losses(&mut members, &losses, hpos, &mut events);
+        assert!(
+            events.iter().any(|e| matches!(&e.payload, EventPayload::FlagshipDestroyed { name: None, .. })),
+            "the fallen hull headlines namelessly"
+        );
+        assert_eq!(w.syndicates[&sid].flagship_name.as_deref(), Some("Reckoning"), "the living flagship keeps the name");
+        // The second (last) Titan dies → NOW the name is taken.
+        let mut members = vec![_t2];
+        let mut events = Vec::new();
+        w.apply_side_losses(&mut members, &losses, hpos, &mut events);
+        assert!(events.iter().any(|e| matches!(&e.payload, EventPayload::FlagshipDestroyed { name: Some(n), .. } if n == "Reckoning")));
+        assert!(w.syndicates[&sid].flagship_name.is_none());
+    }
+
+    #[test]
+    fn systems_captured_verb_counts_once_per_capture() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(61);
+        let b = PlayerId(62);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: b, name: "Takers".into() }]);
+        let sid = w.players[&b].syndicate.unwrap();
+        // A system A owns; B lands the capture (the resolution path is the only
+        // place the verb increments — call it directly).
+        let sys_id = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(a);
+            s.claimed_at = Some(0.0);
+            s.id
+        };
+        let pos = w.systems.iter().find(|s| s.id == sys_id).unwrap().pos;
+        let colony = squad(&mut w, b, pos, ShipKind::Colony, 1, FleetOrder::Idle);
+        let mut events = Vec::new();
+        w.capture_system(sys_id, a, b, colony, pos, &mut events);
+        assert_eq!(w.syndicates[&sid].research.verb(crate::research::Verb::SystemsCaptured), 1.0, "one capture, one count");
     }
 
     /// §economy: the THREE derived slot pools — Resource from geology (one per

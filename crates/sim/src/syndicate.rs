@@ -77,4 +77,13 @@ pub struct Syndicate {
     /// state hash-relevant paths (they are labels on build inputs).
     #[serde(default)]
     pub fits: Vec<DoctrineFit>,
+    /// §ladder B4: the syndicate's FLAGSHIP NAME — its one Titan, christened.
+    /// Renders wherever the Titan stack appears for the OWNER side; rivals
+    /// learn it only through participant battle records (never buckets).
+    /// Cleared when the Titan dies (the headline). serde-default.
+    #[serde(default)]
+    pub flagship_name: Option<String>,
 }
+
+/// §ladder B4: flagship names cap at this many chars (same discipline as fits).
+pub const FLAGSHIP_NAME_MAX: usize = 24;

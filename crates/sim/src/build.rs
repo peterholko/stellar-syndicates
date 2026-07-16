@@ -283,6 +283,17 @@ pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0),
 /// Colony Ship: **Ore + Alloys + Provisions** (colonists eat) — absorbs the old
 /// instant-claim economics into a physical, raidable investment (§ships part 3).
 pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 15.0), (Commodity::Polymers, 20.0), (Commodity::Provisions, 30.0), (Commodity::Fuel, 15.0)], build_ticks: 30 * HZ };
+// §ladder: CAPITAL recipes — Rare-Elements-and-Machinery-heavy by design (the
+// deep-crust economy is the capital economy), and build TIMES measured in
+// hours-to-days: a capital under construction is a season event and a siege
+// target. Combat weight per Armaments spent peaks at Destroyer/Cruiser and
+// declines up the ladder (the efficiency invariant, pinned by test). Tunable.
+const HOUR_TICKS: u64 = 3600 * HZ;
+pub const DESTROYER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 60.0), (Commodity::Electronics, 25.0), (Commodity::Armaments, 30.0), (Commodity::Machinery, 20.0), (Commodity::Fuel, 15.0)], build_ticks: 8 * HOUR_TICKS };
+pub const CRUISER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 120.0), (Commodity::Electronics, 50.0), (Commodity::Armaments, 55.0), (Commodity::Machinery, 45.0), (Commodity::RareElements, 12.0), (Commodity::Fuel, 30.0)], build_ticks: 18 * HOUR_TICKS };
+pub const BATTLESHIP_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 260.0), (Commodity::Electronics, 100.0), (Commodity::Armaments, 120.0), (Commodity::Machinery, 100.0), (Commodity::RareElements, 35.0), (Commodity::Fuel, 60.0)], build_ticks: 48 * HOUR_TICKS };
+pub const DREADNOUGHT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 520.0), (Commodity::Electronics, 210.0), (Commodity::Armaments, 230.0), (Commodity::Machinery, 220.0), (Commodity::RareElements, 90.0), (Commodity::Fuel, 120.0)], build_ticks: 96 * HOUR_TICKS };
+pub const TITAN_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 1100.0), (Commodity::Electronics, 450.0), (Commodity::Armaments, 480.0), (Commodity::Machinery, 500.0), (Commodity::RareElements, 220.0), (Commodity::Fuel, 260.0)], build_ticks: 192 * HOUR_TICKS };
 // §economy Part 5: the FULL industrial-web cost table (design doc). Everything
 // advanced needs MACHINERY, and early Machinery comes from Sol — the intended
 // loop is extract → sell raws → buy Machinery → build industry → make your own.
@@ -345,6 +356,11 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Scout } => &SCOUT_RECIPE,
         BuildKind::Ship { ship: ShipKind::Corvette } => &CORVETTE_RECIPE,
         BuildKind::Ship { ship: ShipKind::Colony } => &COLONY_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Destroyer } => &DESTROYER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Cruiser } => &CRUISER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Battleship } => &BATTLESHIP_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Dreadnought } => &DREADNOUGHT_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Titan } => &TITAN_RECIPE,
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
         BuildKind::Module { module } => module_recipe(module),
         BuildKind::Upgrade { upgrade } => match upgrade {
@@ -454,6 +470,13 @@ pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
         ShipKind::Corvette => 2, // military industry, like the raider
         ShipKind::Colony => 1,   // civilian settlement — any yard
         ShipKind::Scout => 1,
+        // §ladder: capital yards — tiers 5/6 are themselves research prizes
+        // (Line VII/VIII grant the shipyard ceiling with the hull).
+        ShipKind::Destroyer => 3,
+        ShipKind::Cruiser => 4,
+        ShipKind::Battleship => 4,
+        ShipKind::Dreadnought => 5,
+        ShipKind::Titan => 6,
     }
 }
 
@@ -522,6 +545,54 @@ pub const STORAGE_PER_DEPOT_TIER: f64 = 400.0;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §ladder B6.1 — THE EFFICIENCY INVARIANT (load-bearing): combat weight
+    /// per Armaments spent PEAKS at Destroyer-or-Cruiser and STRICTLY DECLINES
+    /// Battleship → Dreadnought → Titan. Capitals buy presence and role, never
+    /// efficiency — enforced, not hoped.
+    #[test]
+    fn capital_efficiency_peaks_at_destroyer_or_cruiser_and_declines_up() {
+        let arm = |k: ShipKind| -> f64 {
+            recipe_for(BuildKind::Ship { ship: k })
+                .costs
+                .iter()
+                .find(|(c, _)| *c == Commodity::Armaments)
+                .map(|(_, n)| *n)
+                .expect("every warship recipe carries Armaments")
+        };
+        let eff = |k: ShipKind| (k.attack_weight() + k.defense_weight()) / arm(k);
+        let d = eff(ShipKind::Destroyer);
+        let c = eff(ShipKind::Cruiser);
+        let b = eff(ShipKind::Battleship);
+        let n = eff(ShipKind::Dreadnought);
+        let t = eff(ShipKind::Titan);
+        let peak = d.max(c);
+        assert!(peak >= b && peak >= n && peak >= t, "the ladder peaks at Destroyer/Cruiser");
+        assert!(b > n && n > t, "efficiency strictly declines Battleship → Dreadnought → Titan ({b:.4} > {n:.4} > {t:.4})");
+        assert!(peak > t, "a Titan is the LEAST efficient Armaments spend on the ladder");
+    }
+
+    #[test]
+    fn capital_recipes_and_gates_climb_the_ladder() {
+        // Shipyard gates 3/4/4/5/6 and build times 8h → 8d, strictly rising.
+        assert_eq!(required_shipyard_tier(ShipKind::Destroyer), 3);
+        assert_eq!(required_shipyard_tier(ShipKind::Cruiser), 4);
+        assert_eq!(required_shipyard_tier(ShipKind::Battleship), 4);
+        assert_eq!(required_shipyard_tier(ShipKind::Dreadnought), 5);
+        assert_eq!(required_shipyard_tier(ShipKind::Titan), 6);
+        let ticks = |k: ShipKind| recipe_for(BuildKind::Ship { ship: k }).build_ticks;
+        assert_eq!(ticks(ShipKind::Destroyer), 8 * 3600 * HZ, "a Destroyer takes 8 hours");
+        assert_eq!(ticks(ShipKind::Titan), 192 * 3600 * HZ, "a Titan takes 8 days — a season event");
+        assert!(ticks(ShipKind::Destroyer) < ticks(ShipKind::Cruiser)
+            && ticks(ShipKind::Cruiser) < ticks(ShipKind::Battleship)
+            && ticks(ShipKind::Battleship) < ticks(ShipKind::Dreadnought)
+            && ticks(ShipKind::Dreadnought) < ticks(ShipKind::Titan));
+        // Rare-Elements enters at Cruiser and climbs steeply (the capital economy).
+        let re = |k: ShipKind| recipe_for(BuildKind::Ship { ship: k }).costs.iter()
+            .find(|(c, _)| *c == Commodity::RareElements).map(|(_, n)| *n).unwrap_or(0.0);
+        assert_eq!(re(ShipKind::Destroyer), 0.0);
+        assert!(re(ShipKind::Cruiser) > 0.0 && re(ShipKind::Titan) > re(ShipKind::Dreadnought));
+    }
 
     #[test]
     fn tier_ceiling_gates_the_prize_tiers_behind_research() {

@@ -157,6 +157,7 @@ impl Verb {
             Verb::WarshipsCommissioned => "warships commissioned",
             Verb::PopulationGrown => "population grown (M)",
             Verb::SpecialistsTrained => "specialists trained",
+            Verb::SystemsCaptured => "systems captured",
         }
     }
 }
@@ -196,6 +197,9 @@ pub enum Verb {
     WarshipsCommissioned,
     PopulationGrown,
     SpecialistsTrained,
+    /// §ladder B2: rival systems CAPTURED via siege → colony landing (the Line
+    /// VIII gate). Appended last — BTreeMap<Verb, _> order stays stable.
+    SystemsCaptured,
 }
 
 /// INSTANTANEOUS STATE metrics (read each check, not accumulated).
@@ -382,12 +386,15 @@ pub enum DesignationTarget {
 pub struct Programme {
     pub id: &'static str,
     pub field: Field,
-    /// `None` = a shared Tier I/II programme; `Some` = a school Tier III–V one.
+    /// `None` = a shared Tier I/II programme; `Some` = a school Tier III–V one
+    /// (and the Line school's VI–VIII capital ladder).
     pub school: Option<School>,
     pub tier: u8,
     pub name: &'static str,
     pub blurb: &'static str,
-    pub effect: Effect,
+    /// §ladder B2: a programme may grant SEVERAL effects at once (Line VII/VIII
+    /// grant the hull AND the shipyard ceiling together). Most are singletons.
+    pub effects: &'static [Effect],
     /// Hidden entries never render and are never researchable in v1 (Salvage
     /// Rigs, Boarding Parties — enforcement deferred to their own handoffs).
     pub hidden: bool,
@@ -505,6 +512,12 @@ pub fn tier_gate(field: Field, school: Option<School>, tier: u8) -> Gate {
         1 => Gate::None,
         2 => field_gate(field),
         3 => school.map(school_gate).unwrap_or(Gate::None),
+        // §ladder B2: the CAPITAL tiers (Line only — no other school runs past
+        // V) are verb-gated on escalating martial proof: won battles, hull
+        // tonnage destroyed, systems CAPTURED. Thresholds Tunable vs season.
+        6 => Gate::Cumulative(Verb::BattlesWon, 25.0),
+        7 => Gate::Cumulative(Verb::HullMassDestroyed, 500.0),
+        8 => Gate::Cumulative(Verb::SystemsCaptured, 3.0),
         _ => Gate::None, // IV, V — ladder-governed
     }
 }
@@ -554,14 +567,19 @@ pub const SU_PER_LY: f64 = 40.0;
 
 /// Cost of a programme of `tier` in THROUGHPUT-SECONDS (at reference rate 1.0):
 /// a steep curve so late convergence never happens inside a season (law 6/8).
-/// T1 2h · T2 8h · T3 24h · T4 72h · T5 168h. Tunable.
+/// T1 2h · T2 8h · T3 24h · T4 72h · T5 168h — and the §ladder capital tiers
+/// VI 240h · VII 336h · VIII 480h (season-scale; a Titan is the deepest
+/// research in the game). Tunable.
 pub fn tier_cost_secs(tier: u8) -> f64 {
     match tier {
         1 => 2.0 * HOUR,
         2 => 8.0 * HOUR,
         3 => 24.0 * HOUR,
         4 => 72.0 * HOUR,
-        _ => 168.0 * HOUR,
+        5 => 168.0 * HOUR,
+        6 => 240.0 * HOUR,
+        7 => 336.0 * HOUR,
+        _ => 480.0 * HOUR,
     }
 }
 
@@ -621,371 +639,386 @@ pub fn field_affinity(field: Field) -> &'static [SpecialistKind] {
 // ModuleKind content and wires them (they can't be expressed with today's enums).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A no-op effect for programmes whose prize is NEW CONTENT not yet in the sim
-/// (new hulls / utility modules / view features). Keeps the tree complete; the
-/// full pass swaps these for real `UnlockHull`/`UnlockModule`/`Flag` effects.
-const PENDING: Effect = Effect::Mods(&[]);
+/// A no-op effect list for programmes whose prize is NEW CONTENT not yet in the
+/// sim (utility modules / view features). Keeps the tree complete; each content
+/// pass swaps these for real `UnlockHull`/`UnlockModule`/`Flag` effects.
+const PENDING: &[Effect] = &[Effect::Mods(&[])];
 
 pub const CATALOG: &[Programme] = &[
     // ═══════════════════ 1 · PROPULSION & LOGISTICS ═══════════════════
     // Shared I (open)
     Programme { id: "prop_drive_tuning", field: Field::Propulsion, school: None, tier: 1,
         name: "Drive Tuning", blurb: "+10% speed, all ship kinds.",
-        effect: Effect::Mods(&[(ModKey::SpeedAll, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::SpeedAll, 1.10)])], hidden: false },
     Programme { id: "prop_bunkerage", field: Field::Propulsion, school: None, tier: 1,
         name: "Bunkerage", blurb: "+25% fuel capacity.",
-        effect: Effect::Mods(&[(ModKey::FuelCapacity, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::FuelCapacity, 1.25)])], hidden: false },
     Programme { id: "prop_freight_frames", field: Field::Propulsion, school: None, tier: 1,
         name: "Freight Frames", blurb: "+20% convoy cargo.",
-        effect: Effect::Mods(&[(ModKey::ConvoyCargo, 1.20)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ConvoyCargo, 1.20)])], hidden: false },
     // Shared II (gate: 200 ly flown)
     Programme { id: "prop_efficient_burns", field: Field::Propulsion, school: None, tier: 2,
         name: "Efficient Burns", blurb: "−25% fuel consumption.",
-        effect: Effect::Mods(&[(ModKey::FuelConsumption, 0.75)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::FuelConsumption, 0.75)])], hidden: false },
     Programme { id: "prop_heavy_lifters", field: Field::Propulsion, school: None, tier: 2,
         name: "Heavy Lifters", blurb: "Colony ships seed +50% population.",
-        effect: Effect::Mods(&[(ModKey::ColonySeedPop, 1.50)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ColonySeedPop, 1.50)])], hidden: false },
     Programme { id: "prop_military_drives", field: Field::Propulsion, school: None, tier: 2,
         name: "Military Drives", blurb: "+20% warship speed.",
-        effect: Effect::Mods(&[(ModKey::SpeedWarship, 1.20)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::SpeedWarship, 1.20)])], hidden: false },
     // ⑂ LINE HAUL (gate: 30 convoy deliveries)
     Programme { id: "prop_line_logistics_doctrine", field: Field::Propulsion, school: Some(School::LineHaul), tier: 3,
         name: "Logistics Doctrine", blurb: "Standing-order triggers: thresholds, conditionals.",
-        effect: Effect::Flag(Cap::StandingTriggers), hidden: false },
+        effects: &[Effect::Flag(Cap::StandingTriggers)], hidden: false },
     Programme { id: "prop_line_express_charters", field: Field::Propulsion, school: Some(School::LineHaul), tier: 3,
         name: "Express Charters", blurb: "+25% convoy speed.",
-        effect: Effect::Mods(&[(ModKey::ConvoySpeed, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ConvoySpeed, 1.25)])], hidden: false },
     Programme { id: "prop_line_drop_berths", field: Field::Propulsion, school: Some(School::LineHaul), tier: 4,
         name: "Drop Berths", blurb: "Colony ships −30% cost and build time.",
-        effect: Effect::Mods(&[(ModKey::ColonyCost, 0.70), (ModKey::ColonyBuildTime, 0.70)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ColonyCost, 0.70), (ModKey::ColonyBuildTime, 0.70)])], hidden: false },
     Programme { id: "prop_line_bulk_charters", field: Field::Propulsion, school: Some(School::LineHaul), tier: 4,
         name: "Bulk Charters", blurb: "+40% convoy cargo.",
-        effect: Effect::Mods(&[(ModKey::ConvoyCargo, 1.40)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ConvoyCargo, 1.40)])], hidden: false },
     Programme { id: "prop_line_autonomous_freight", field: Field::Propulsion, school: Some(School::LineHaul), tier: 5,
         name: "Autonomous Freight", blurb: "Convoys chain multi-leg standing routes without CC round-trips.",
-        effect: Effect::Flag(Cap::AutonomousFreight), hidden: false },
+        effects: &[Effect::Flag(Cap::AutonomousFreight)], hidden: false },
     Programme { id: "prop_line_mass_streams", field: Field::Propulsion, school: Some(School::LineHaul), tier: 5,
         name: "Mass Streams", blurb: "One designated owned-pair route: +40% speed (rivals can learn + interdict).",
-        effect: Effect::Flag(Cap::MassStreams), hidden: false },
+        effects: &[Effect::Flag(Cap::MassStreams)], hidden: false },
     // ⑂ EXPEDITION (gate: 800 ly flown by warships)
     Programme { id: "prop_expedition_iii_extended_tanks", field: Field::Propulsion, school: Some(School::Expedition), tier: 3,
         name: "Extended Tanks", blurb: "Utility module: +fuel capacity (arrives with the utility-module pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "prop_expedition_iii_torch_regime", field: Field::Propulsion, school: Some(School::Expedition), tier: 3,
         name: "Torch Regime", blurb: "+30% warship speed, +40% burn — loud and thirsty.",
-        effect: Effect::Mods(&[(ModKey::SpeedWarship, 1.30), (ModKey::FuelConsumption, 1.40)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::SpeedWarship, 1.30), (ModKey::FuelConsumption, 1.40)])], hidden: false },
     Programme { id: "prop_expedition_iv_fleet_tenders", field: Field::Propulsion, school: Some(School::Expedition), tier: 4,
         name: "Fleet Tenders", blurb: "Convoys refuel fleets underway.",
-        effect: Effect::Flag(Cap::FleetTenders), hidden: false },
+        effects: &[Effect::Flag(Cap::FleetTenders)], hidden: false },
     Programme { id: "prop_expedition_iv_long_patrol", field: Field::Propulsion, school: Some(School::Expedition), tier: 4,
         name: "Long Patrol", blurb: "Warship fuel consumption −30%.",
-        effect: Effect::Mods(&[(ModKey::FuelOffensive, 0.70)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::FuelOffensive, 0.70)])], hidden: false },
     Programme { id: "prop_expedition_v_ramscoop", field: Field::Propulsion, school: Some(School::Expedition), tier: 5,
         name: "Ramscoop Skimming", blurb: "Ships regain fuel transiting gas-giant systems.",
-        effect: Effect::Flag(Cap::Ramscoop), hidden: false },
+        effects: &[Effect::Flag(Cap::Ramscoop)], hidden: false },
     Programme { id: "prop_expedition_v_underway_refit", field: Field::Propulsion, school: Some(School::Expedition), tier: 5,
         name: "Underway Refit", blurb: "Fleet Tenders perform module refits in the field.",
-        effect: Effect::Flag(Cap::UnderwayRefit), hidden: false },
+        effects: &[Effect::Flag(Cap::UnderwayRefit)], hidden: false },
 
     // ═══════════════════ 2 · MATERIALS & FABRICATION ═══════════════════
     // Shared I
     Programme { id: "mat_deep_bores", field: Field::Materials, school: None, tier: 1,
         name: "Deep Bores", blurb: "+15% extraction.",
-        effect: Effect::Mods(&[(ModKey::ExtractionRate, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ExtractionRate, 1.15)])], hidden: false },
     Programme { id: "mat_enrichment", field: Field::Materials, school: None, tier: 1,
         name: "Enrichment", blurb: "+15% processing yield.",
-        effect: Effect::Mods(&[(ModKey::ProcessingYield, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ProcessingYield, 1.15)])], hidden: false },
     Programme { id: "mat_bulk_storage", field: Field::Materials, school: None, tier: 1,
         name: "Bulk Storage", blurb: "+50% Depot caps.",
-        effect: Effect::Mods(&[(ModKey::DepotCap, 1.50)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::DepotCap, 1.50)])], hidden: false },
     // Shared II (gate: 10,000 units through industry)
     Programme { id: "mat_beneficiation", field: Field::Materials, school: None, tier: 2,
         name: "Beneficiation", blurb: "Poor deposits gain a richness floor (arrives with the extraction pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "mat_prefab_construction", field: Field::Materials, school: None, tier: 2,
         name: "Prefab Construction", blurb: "−25% structure build time.",
-        effect: Effect::Mods(&[(ModKey::StructureBuildTime, 0.75)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::StructureBuildTime, 0.75)])], hidden: false },
     Programme { id: "mat_autoforges", field: Field::Materials, school: None, tier: 2,
         name: "Autoforges", blurb: "Machinery recipe −20% inputs.",
-        effect: Effect::Mods(&[(ModKey::MachineryInputs, 0.80)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::MachineryInputs, 0.80)])], hidden: false },
     // ⑂ DEEP CRUST (gate: 15,000 raw units extracted)
     Programme { id: "mat_deepcrust_iii_tier4_extraction", field: Field::Materials, school: Some(School::DeepCrust), tier: 3,
         name: "Tier-IV Extraction", blurb: "Extraction structures reach tier IV.",
-        effect: Effect::UnlockStructureTier(StructureKind::MiningComplex, 4), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::MiningComplex, 4)], hidden: false },
     Programme { id: "mat_deepcrust_iii_strip_rigs", field: Field::Materials, school: Some(School::DeepCrust), tier: 3,
         name: "Strip Rigs", blurb: "+25% extraction on moons.",
-        effect: Effect::Mods(&[(ModKey::ExtractionMoons, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ExtractionMoons, 1.25)])], hidden: false },
     Programme { id: "mat_deepcrust_iv_trace_refining", field: Field::Materials, school: Some(School::DeepCrust), tier: 4,
         name: "Trace Refining", blurb: "Mining Complexes yield 5% Rare Elements on metallic deposits.",
-        effect: Effect::Flag(Cap::TraceRefining), hidden: false },
+        effects: &[Effect::Flag(Cap::TraceRefining)], hidden: false },
     Programme { id: "mat_deepcrust_iv_prospecting_charters", field: Field::Materials, school: Some(School::DeepCrust), tier: 4,
         name: "Prospecting Charters", blurb: "New colonies start at full deposit knowledge.",
-        effect: Effect::Flag(Cap::ProspectingCharters), hidden: false },
+        effects: &[Effect::Flag(Cap::ProspectingCharters)], hidden: false },
     Programme { id: "mat_deepcrust_v_mantle_taps", field: Field::Materials, school: Some(School::DeepCrust), tier: 5,
         name: "Mantle Taps", blurb: "Extraction ignores accessibility penalties.",
-        effect: Effect::Flag(Cap::MantleTaps), hidden: false },
+        effects: &[Effect::Flag(Cap::MantleTaps)], hidden: false },
     Programme { id: "mat_deepcrust_v_crown_vein", field: Field::Materials, school: Some(School::DeepCrust), tier: 5,
         name: "Crown Vein", blurb: "One designated body: deposits +1 richness band.",
-        effect: Effect::Flag(Cap::CrownVein), hidden: false },
+        effects: &[Effect::Flag(Cap::CrownVein)], hidden: false },
     // ⑂ FOUNDRY (gate: 12,000 units processed)
     Programme { id: "mat_foundry_iii_tier4_processors", field: Field::Materials, school: Some(School::Foundry), tier: 3,
         name: "Tier-IV Processors", blurb: "Processing structures reach tier IV.",
-        effect: Effect::UnlockStructureTier(StructureKind::Smelter, 4), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::Smelter, 4)], hidden: false },
     Programme { id: "mat_foundry_iii_slag_reclamation", field: Field::Materials, school: Some(School::Foundry), tier: 3,
         name: "Slag Reclamation", blurb: "Smelters emit 10% bonus Silicates.",
-        effect: Effect::Flag(Cap::SlagReclamation), hidden: false },
+        effects: &[Effect::Flag(Cap::SlagReclamation)], hidden: false },
     Programme { id: "mat_foundry_iv_orbital_yards", field: Field::Materials, school: Some(School::Foundry), tier: 4,
         name: "Orbital Yards", blurb: "Shipyard tier IV.",
-        effect: Effect::UnlockStructureTier(StructureKind::Shipyard, 4), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::Shipyard, 4)], hidden: false },
     Programme { id: "mat_foundry_iv_arcology_frames", field: Field::Materials, school: Some(School::Foundry), tier: 4,
         name: "Arcology Frames", blurb: "Habitat tier IV.",
-        effect: Effect::UnlockStructureTier(StructureKind::Habitat, 4), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::Habitat, 4)], hidden: false },
     Programme { id: "mat_foundry_v_flash_forges", field: Field::Materials, school: Some(School::Foundry), tier: 5,
         name: "Flash Forges", blurb: "Systems run 2 concurrent structure builds.",
-        effect: Effect::Flag(Cap::FlashForges), hidden: false },
+        effects: &[Effect::Flag(Cap::FlashForges)], hidden: false },
     Programme { id: "mat_foundry_v_crown_project", field: Field::Materials, school: Some(School::Foundry), tier: 5,
         name: "Crown Project", blurb: "One designated body gains +1 slot in every pool.",
-        effect: Effect::Flag(Cap::CrownProject), hidden: false },
+        effects: &[Effect::Flag(Cap::CrownProject)], hidden: false },
 
     // ═══════════════════ 3 · COMPUTATION & SENSORS ═══════════════════
     // Shared I
     Programme { id: "comp_sensor_gain", field: Field::Computation, school: None, tier: 1,
         name: "Sensor Gain", blurb: "+15% sensor radius.",
-        effect: Effect::Mods(&[(ModKey::SensorRadius, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::SensorRadius, 1.15)])], hidden: false },
     Programme { id: "comp_signal_libraries", field: Field::Computation, school: None, tier: 1,
         name: "Signal Libraries", blurb: "Rival fleets bucket one class finer to you.",
-        effect: Effect::Mods(&[(ModKey::BucketFineness, 1.0)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::BucketFineness, 1.0)])], hidden: false },
     Programme { id: "comp_survey_protocols", field: Field::Computation, school: None, tier: 1,
         name: "Survey Protocols", blurb: "Deposit ladder advances faster.",
-        effect: Effect::Mods(&[(ModKey::KnowledgeLadderRate, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::KnowledgeLadderRate, 1.25)])], hidden: false },
     // Shared II (gate: 10 systems scouted)
     Programme { id: "comp_predictive_plots", field: Field::Computation, school: None, tier: 2,
         name: "Predictive Plots", blurb: "Stale-intel confidence bands (view feature; arrives with the intel pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "comp_deep_space_arrays", field: Field::Computation, school: None, tier: 2,
         name: "Deep-Space Arrays", blurb: "Sensor Array tier IV.",
-        effect: Effect::UnlockStructureTier(StructureKind::SensorArray, 4), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::SensorArray, 4)], hidden: false },
     Programme { id: "comp_gravimetric_survey", field: Field::Computation, school: None, tier: 2,
         name: "Gravimetric Survey", blurb: "Deposits read one R-level deeper at range (arrives with the explore pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     // ⑂ WATCH (gate: 25 systems scouted)
     Programme { id: "comp_watch_iii_picket_networks", field: Field::Computation, school: Some(School::Watch), tier: 3,
         name: "Picket Networks", blurb: "Owned sensor radii +25%; overlaps form surveilled corridors.",
-        effect: Effect::Mods(&[(ModKey::SensorRadius, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::SensorRadius, 1.25)])], hidden: false },
     Programme { id: "comp_watch_iii_long_baselines", field: Field::Computation, school: Some(School::Watch), tier: 3,
         name: "Long Baselines", blurb: "+15% sensor range.",
-        effect: Effect::Mods(&[(ModKey::SensorRange, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::SensorRange, 1.15)])], hidden: false },
     Programme { id: "comp_watch_iv_battle_archives", field: Field::Computation, school: Some(School::Watch), tier: 4,
         name: "Battle Archives", blurb: "Third-party battle records gain bucketed kill detail.",
-        effect: Effect::Flag(Cap::BattleArchives), hidden: false },
+        effects: &[Effect::Flag(Cap::BattleArchives)], hidden: false },
     Programme { id: "comp_watch_iv_standing_watch", field: Field::Computation, school: Some(School::Watch), tier: 4,
         name: "Standing Watch", blurb: "Contacts persist as tracked estimates after leaving coverage.",
-        effect: Effect::Flag(Cap::StandingWatch), hidden: false },
+        effects: &[Effect::Flag(Cap::StandingWatch)], hidden: false },
     Programme { id: "comp_watch_v_panopticon", field: Field::Computation, school: Some(School::Watch), tier: 5,
         name: "Panopticon Catalog", blurb: "CC auto-catalogs every battle flash whose light reaches any asset.",
-        effect: Effect::Flag(Cap::PanopticonCatalog), hidden: false },
+        effects: &[Effect::Flag(Cap::PanopticonCatalog)], hidden: false },
     Programme { id: "comp_watch_v_survey_corps", field: Field::Computation, school: Some(School::Watch), tier: 5,
         name: "Survey Corps", blurb: "Scouts auto-advance the deposit ladder in-system.",
-        effect: Effect::Flag(Cap::SurveyCorps), hidden: false },
+        effects: &[Effect::Flag(Cap::SurveyCorps)], hidden: false },
     // ⑂ SHADOW (gate: 15 distinct rival or pirate fleets observed)
     Programme { id: "comp_shadow_iii_ecm_emitters", field: Field::Computation, school: Some(School::Shadow), tier: 3,
         name: "ECM Emitters", blurb: "Your fleets bucket one class coarser — sensor warfare; the combat matrix untouched.",
-        effect: Effect::Mods(&[(ModKey::BucketCoarseness, 1.0)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::BucketCoarseness, 1.0)])], hidden: false },
     Programme { id: "comp_shadow_iii_traffic_analysis", field: Field::Computation, school: Some(School::Shadow), tier: 3,
         name: "Traffic Analysis", blurb: "Contacts reveal convoy manifest class: goods / personnel / modules.",
-        effect: Effect::Flag(Cap::TrafficAnalysis), hidden: false },
+        effects: &[Effect::Flag(Cap::TrafficAnalysis)], hidden: false },
     Programme { id: "comp_shadow_iv_wake_analysis", field: Field::Computation, school: Some(School::Shadow), tier: 4,
         name: "Wake Analysis", blurb: "Observed fleets show estimated fuel state and origin bearing.",
-        effect: Effect::Flag(Cap::WakeAnalysis), hidden: false },
+        effects: &[Effect::Flag(Cap::WakeAnalysis)], hidden: false },
     Programme { id: "comp_shadow_iv_recon_suite", field: Field::Computation, school: Some(School::Shadow), tier: 4,
         name: "Recon Suite", blurb: "Utility module: +sensor radius (arrives with the utility-module pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "comp_shadow_v_signature_mimicry", field: Field::Computation, school: Some(School::Shadow), tier: 5,
         name: "Signature Mimicry", blurb: "A designated fleet reads one count-class smaller and can present as a convoy until it engages.",
-        effect: Effect::Flag(Cap::SignatureMimicry), hidden: false },
+        effects: &[Effect::Flag(Cap::SignatureMimicry)], hidden: false },
     Programme { id: "comp_shadow_v_counter_intel", field: Field::Computation, school: Some(School::Shadow), tier: 5,
         name: "Counter-Intelligence", blurb: "Rival Signal Libraries / Traffic / Wake analysis read null against you.",
-        effect: Effect::Flag(Cap::CounterIntel), hidden: false },
+        effects: &[Effect::Flag(Cap::CounterIntel)], hidden: false },
 
     // ═══════════════════ 4 · WEAPONS & ORDNANCE ═══════════════════
     // Shared I
     Programme { id: "weap_fire_control", field: Field::Weapons, school: None, tier: 1,
         name: "Fire Control", blurb: "+10% beam damage.",
-        effect: Effect::Mods(&[(ModKey::BeamDmg, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::BeamDmg, 1.10)])], hidden: false },
     Programme { id: "weap_magnetic_accelerators", field: Field::Weapons, school: None, tier: 1,
         name: "Magnetic Accelerators", blurb: "+10% driver damage.",
-        effect: Effect::Mods(&[(ModKey::DriverDmg, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::DriverDmg, 1.10)])], hidden: false },
     Programme { id: "weap_warhead_yields", field: Field::Weapons, school: None, tier: 1,
         name: "Warhead Yields", blurb: "+10% torpedo damage.",
-        effect: Effect::Mods(&[(ModKey::TorpDmg, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::TorpDmg, 1.10)])], hidden: false },
     // Shared II (gate: 5 battles fought)
     Programme { id: "weap_hardened_magazines", field: Field::Weapons, school: None, tier: 2,
         name: "Hardened Magazines", blurb: "Warship Armaments cost −15%.",
-        effect: Effect::Mods(&[(ModKey::WarshipCost, 0.85)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::WarshipCost, 0.85)])], hidden: false },
     Programme { id: "weap_munitions_lines", field: Field::Weapons, school: None, tier: 2,
         name: "Munitions Lines", blurb: "Modules −25% build time, −15% cost.",
-        effect: Effect::Mods(&[(ModKey::ModuleBuildTime, 0.75), (ModKey::ModuleCost, 0.85)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ModuleBuildTime, 0.75), (ModKey::ModuleCost, 0.85)])], hidden: false },
     Programme { id: "weap_fire_discipline", field: Field::Weapons, school: None, tier: 2,
         name: "Fire Discipline", blurb: "Your opening-round damage +10%.",
-        effect: Effect::Mods(&[(ModKey::OpeningRoundDmg, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::OpeningRoundDmg, 1.10)])], hidden: false },
     // ⑂ STRIKE SYSTEMS (gate: 150 hull-mass destroyed)
     Programme { id: "weap_strike_iii_lance_array", field: Field::Weapons, school: Some(School::Strike), tier: 3,
         name: "Lance Array", blurb: "Heavy-beam module, doubly vulnerable to Reflective (arrives with the weapon-module pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "weap_strike_iii_breaching_ordnance", field: Field::Weapons, school: Some(School::Strike), tier: 3,
         name: "Breaching Ordnance", blurb: "+25% damage to Defense Platforms.",
-        effect: Effect::Mods(&[(ModKey::DmgVsPlatforms, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::DmgVsPlatforms, 1.25)])], hidden: false },
     Programme { id: "weap_strike_iv_platform_lances", field: Field::Weapons, school: Some(School::Strike), tier: 4,
         name: "Platform Lances", blurb: "Defense Platforms mount Lance-profile beam fire.",
-        effect: Effect::Flag(Cap::PlatformLances), hidden: false },
+        effects: &[Effect::Flag(Cap::PlatformLances)], hidden: false },
     Programme { id: "weap_strike_iv_penetrator_slugs", field: Field::Weapons, school: Some(School::Strike), tier: 4,
         name: "Penetrator Slugs", blurb: "+15% driver damage.",
-        effect: Effect::Mods(&[(ModKey::DriverDmg, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::DriverDmg, 1.15)])], hidden: false },
     Programme { id: "weap_strike_v_first_strike", field: Field::Weapons, school: Some(School::Strike), tier: 5,
         name: "First Strike", blurb: "Attacking side's opening round +50%.",
-        effect: Effect::Flag(Cap::FirstStrike), hidden: false },
+        effects: &[Effect::Flag(Cap::FirstStrike)], hidden: false },
     Programme { id: "weap_strike_v_overpressure", field: Field::Weapons, school: Some(School::Strike), tier: 5,
         name: "Overpressure Warheads", blurb: "Torpedo kills splash 10% into the victim's stack (arrives with the combat pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     // ⑂ COUNTERMEASURES (gate: absorb 150 hull-mass of damage)
     Programme { id: "weap_cm_iii_flak_doctrine", field: Field::Weapons, school: Some(School::Countermeasures), tier: 3,
         name: "Flak Doctrine", blurb: "Point-Defense interception 0.60 → 0.75.",
-        effect: Effect::Mods(&[(ModKey::PdIntercept, 0.75 / 0.60)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::PdIntercept, 0.75 / 0.60)])], hidden: false },
     Programme { id: "weap_cm_iii_ablative_refits", field: Field::Weapons, school: Some(School::Countermeasures), tier: 3,
         name: "Ablative Refits", blurb: "Reflective blunt 0.35 → 0.45.",
-        effect: Effect::Mods(&[(ModKey::ReflectBlunt, 0.45 / 0.35)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ReflectBlunt, 0.45 / 0.35)])], hidden: false },
     Programme { id: "weap_cm_iv_platform_netfire", field: Field::Weapons, school: Some(School::Countermeasures), tier: 4,
         name: "Platform Netfire", blurb: "Defense Platforms project PD interception over the defending side.",
-        effect: Effect::Flag(Cap::PlatformNetfire), hidden: false },
+        effects: &[Effect::Flag(Cap::PlatformNetfire)], hidden: false },
     Programme { id: "weap_cm_iv_spall_liners", field: Field::Weapons, school: Some(School::Countermeasures), tier: 4,
         name: "Spall Liners", blurb: "Whipple blunt 0.45 → 0.55.",
-        effect: Effect::Mods(&[(ModKey::WhippleBlunt, 0.55 / 0.45)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::WhippleBlunt, 0.55 / 0.45)])], hidden: false },
     Programme { id: "weap_cm_v_grand_batteries", field: Field::Weapons, school: Some(School::Countermeasures), tier: 5,
         name: "Grand Batteries", blurb: "Defense Platform V; defended side gains an opening-round alpha.",
-        effect: Effect::Flag(Cap::GrandBatteries), hidden: false },
+        effects: &[Effect::Flag(Cap::GrandBatteries)], hidden: false },
     Programme { id: "weap_cm_v_citadel_compartments", field: Field::Weapons, school: Some(School::Countermeasures), tier: 5,
         name: "Citadel Compartments", blurb: "Your warships' damage pools run 20% deeper.",
-        effect: Effect::Mods(&[(ModKey::DamagePoolDepth, 1.20)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::DamagePoolDepth, 1.20)])], hidden: false },
 
     // ═══════════════════ 5 · HULLS ═══════════════════
     // Shared I
     Programme { id: "hull_drydock_efficiency", field: Field::Hulls, school: None, tier: 1,
         name: "Drydock Efficiency", blurb: "Warship build time −20%.",
-        effect: Effect::Mods(&[(ModKey::WarshipBuildTime, 0.80)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::WarshipBuildTime, 0.80)])], hidden: false },
     Programme { id: "hull_reinforced_frames", field: Field::Hulls, school: None, tier: 1,
         name: "Reinforced Frames", blurb: "Warship hull mass +10% — tougher in the attrition math.",
-        effect: Effect::Mods(&[(ModKey::HullMass, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::HullMass, 1.10)])], hidden: false },
     Programme { id: "hull_slipway_standards", field: Field::Hulls, school: None, tier: 1,
         name: "Slipway Standards", blurb: "Warship goods cost −10%.",
-        effect: Effect::Mods(&[(ModKey::WarshipCost, 0.90)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::WarshipCost, 0.90)])], hidden: false },
     // Shared II (gate: 15 warships commissioned)
     Programme { id: "hull_rapid_rearm", field: Field::Hulls, school: None, tier: 2,
         name: "Rapid Rearm", blurb: "Damage pools recover faster at friendly Shipyards.",
-        effect: Effect::Mods(&[(ModKey::RearmRate, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::RearmRate, 1.25)])], hidden: false },
     Programme { id: "hull_modular_berths", field: Field::Hulls, school: None, tier: 2,
         name: "Modular Berths", blurb: "Refits −50% time.",
-        effect: Effect::Mods(&[(ModKey::RefitTime, 0.50)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::RefitTime, 0.50)])], hidden: false },
     Programme { id: "hull_compartmentalization", field: Field::Hulls, school: None, tier: 2,
         name: "Compartmentalization", blurb: "Warship damage pools run 10% deeper.",
-        effect: Effect::Mods(&[(ModKey::DamagePoolDepth, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::DamagePoolDepth, 1.10)])], hidden: false },
     // ⑂ LINE — heavy displacement (gate: 8 battles won)
     Programme { id: "hull_line_iii_hardened_anchorage", field: Field::Hulls, school: Some(School::Line), tier: 3,
         name: "Hardened Anchorage", blurb: "Anchored fleets at owned systems take −15% damage.",
-        effect: Effect::Mods(&[(ModKey::AnchoredDmgTaken, 0.85)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::AnchoredDmgTaken, 0.85)])], hidden: false },
     Programme { id: "hull_line_iii_escort_datalink", field: Field::Hulls, school: Some(School::Line), tier: 3,
         name: "Escort Datalink", blurb: "Corvette utility module: +screening (arrives with the utility-module pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "hull_line_iv_destroyer", field: Field::Hulls, school: Some(School::Line), tier: 4,
-        name: "Destroyer Hull", blurb: "Heavy combatant: 3 module slots, slow, Armaments+Machinery-hungry (arrives with the hull pass).",
-        effect: PENDING, hidden: false },
+        name: "Destroyer Hull", blurb: "Heavy combatant: 3 slots / 8 fitting pts, beam affinity — the first ship of the line.",
+        effects: &[Effect::UnlockHull(ShipKind::Destroyer)], hidden: false },
     Programme { id: "hull_line_iv_fleet_escorts", field: Field::Hulls, school: Some(School::Line), tier: 4,
         name: "Fleet Escorts", blurb: "Convoys under Corvette escort take −25% raid damage.",
-        effect: Effect::Mods(&[(ModKey::EscortedConvoyRaidDmg, 0.75)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::EscortedConvoyRaidDmg, 0.75)])], hidden: false },
     Programme { id: "hull_line_v_cruiser", field: Field::Hulls, school: Some(School::Line), tier: 5,
-        name: "Cruiser Hull", blurb: "The season's prestige ship: 4 module slots, slowest combatant (arrives with the hull pass).",
-        effect: PENDING, hidden: false },
+        name: "Cruiser Hull", blurb: "The season's prestige warship: 4 slots / 12 fitting pts, protection affinity — the efficiency peak of the ladder.",
+        effects: &[Effect::UnlockHull(ShipKind::Cruiser)], hidden: false },
     Programme { id: "hull_line_v_fortress_doctrine", field: Field::Hulls, school: Some(School::Line), tier: 5,
         name: "Fortress Doctrine", blurb: "Friendly fleets disengage without exposure at your defended systems.",
-        effect: Effect::Flag(Cap::FortressDoctrine), hidden: false },
+        effects: &[Effect::Flag(Cap::FortressDoctrine)], hidden: false },
+    // §ladder B2: THE CAPITAL LADDER — Line is the ONLY school past Tier V (a
+    // deliberate, documented exception to the five-tier board shape: capitals
+    // are the deepest research in the game). Single-pick tiers, verb-gated
+    // (tier_gate), season-scale costs (tier_cost_secs). VII/VIII grant the
+    // hull AND the shipyard ceiling together — the effects-array's raison
+    // d'être.
+    Programme { id: "hull_line_vi_battleship", field: Field::Hulls, school: Some(School::Line), tier: 6,
+        name: "Battleship", blurb: "The siege anchor: 4 slots / 18 fitting pts, driver affinity; its presence on a blockade line accelerates the siege clock.",
+        effects: &[Effect::UnlockHull(ShipKind::Battleship)], hidden: false },
+    Programme { id: "hull_line_vii_dreadnought", field: Field::Hulls, school: Some(School::Line), tier: 7,
+        name: "Dreadnought", blurb: "The fleet screen: 5 slots / 28 fitting pts, interception affinity — a PD-fitted Dreadnought screens its side at platform grade. Grants Shipyard tier V.",
+        effects: &[Effect::UnlockHull(ShipKind::Dreadnought), Effect::UnlockStructureTier(StructureKind::Shipyard, 5)], hidden: false },
+    Programme { id: "hull_line_viii_titan", field: Field::Hulls, school: Some(School::Line), tier: 8,
+        name: "Titan", blurb: "The flagship: 6 slots / 45 fitting pts, broadly good at every weapon — one per syndicate, and yours to name. Grants Shipyard tier VI.",
+        effects: &[Effect::UnlockHull(ShipKind::Titan), Effect::UnlockStructureTier(StructureKind::Shipyard, 6)], hidden: false },
     // ⑂ CORSAIR — light displacement (gate: 8 successful raids)
     Programme { id: "hull_corsair_iii_wolfpack", field: Field::Hulls, school: Some(School::Corsair), tier: 3,
         name: "Wolfpack Doctrine", blurb: "Raider stacks +15% attack per additional raider stack, capped ×2.",
-        effect: Effect::Mods(&[(ModKey::WolfpackPerStack, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::WolfpackPerStack, 1.15)])], hidden: false },
     Programme { id: "hull_corsair_iii_prize_holds", field: Field::Hulls, school: Some(School::Corsair), tier: 3,
         name: "Prize Holds", blurb: "Raids steal +50% cargo.",
-        effect: Effect::Mods(&[(ModKey::RaidSteal, 1.50)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::RaidSteal, 1.50)])], hidden: false },
     Programme { id: "hull_corsair_iv_slip_anchors", field: Field::Hulls, school: Some(School::Corsair), tier: 4,
         name: "Slip Anchors", blurb: "Raiders disengage with −50% exposure.",
-        effect: Effect::Mods(&[(ModKey::RaiderDisengageExposure, 0.50)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::RaiderDisengageExposure, 0.50)])], hidden: false },
     Programme { id: "hull_corsair_iv_blockade_runners", field: Field::Hulls, school: Some(School::Corsair), tier: 4,
         name: "Blockade Runners", blurb: "Convoy refit variant: +30% speed, −20% cargo (arrives with the refit pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "hull_corsair_v_salvage_rigs", field: Field::Hulls, school: Some(School::Corsair), tier: 5,
         name: "Salvage Rigs", blurb: "Wreck module salvage (deferred).",
-        effect: Effect::Flag(Cap::SalvageRigs), hidden: true },
+        effects: &[Effect::Flag(Cap::SalvageRigs)], hidden: true },
     Programme { id: "hull_corsair_v_boarding_parties", field: Field::Hulls, school: Some(School::Corsair), tier: 5,
         name: "Boarding Parties", blurb: "Capture intercepted cargo (deferred).",
-        effect: Effect::Flag(Cap::BoardingParties), hidden: true },
+        effects: &[Effect::Flag(Cap::BoardingParties)], hidden: true },
 
     // ═══════════════════ 6 · LIFE & HABITATION ═══════════════════
     // Shared I
     Programme { id: "life_hydroponics", field: Field::Life, school: None, tier: 1,
         name: "Hydroponics", blurb: "+15% Agroplex output.",
-        effect: Effect::Mods(&[(ModKey::AgroplexYield, 1.15)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::AgroplexYield, 1.15)])], hidden: false },
     Programme { id: "life_med_bays", field: Field::Life, school: None, tier: 1,
         name: "Med Bays", blurb: "+10% population growth.",
-        effect: Effect::Mods(&[(ModKey::PopGrowth, 1.10)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::PopGrowth, 1.10)])], hidden: false },
     Programme { id: "life_dense_housing", field: Field::Life, school: None, tier: 1,
         name: "Dense Housing", blurb: "+25% Habitat capacity.",
-        effect: Effect::Mods(&[(ModKey::HabitatCap, 1.25)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::HabitatCap, 1.25)])], hidden: false },
     // Shared II (gate: 5M population grown)
     Programme { id: "life_civic_rations", field: Field::Life, school: None, tier: 2,
         name: "Civic Rations", blurb: "Rationing penalty 85% → 92%.",
-        effect: Effect::Mods(&[(ModKey::RationingFloor, 0.92 / 0.85)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::RationingFloor, 0.92 / 0.85)])], hidden: false },
     Programme { id: "life_cryo_berths", field: Field::Life, school: None, tier: 2,
         name: "Cryo Berths", blurb: "Colony ships arrive at half capacity.",
-        effect: Effect::Flag(Cap::CryoBerths), hidden: false },
+        effects: &[Effect::Flag(Cap::CryoBerths)], hidden: false },
     Programme { id: "life_gene_crops", field: Field::Life, school: None, tier: 2,
         name: "Gene-Tailored Crops", blurb: "Agroplex +25% output, −20% Biomass input.",
-        effect: Effect::Mods(&[(ModKey::AgroplexYield, 1.25), (ModKey::AgroplexInputs, 0.80)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::AgroplexYield, 1.25), (ModKey::AgroplexInputs, 0.80)])], hidden: false },
     // ⑂ GROWTH — settlement (gate: 20M total population)
     Programme { id: "life_growth_iii_orbital_habitats", field: Field::Life, school: Some(School::Growth), tier: 3,
         name: "Orbital Habitats", blurb: "Habitat buildable on station bodies (arrives with the habitat pass).",
-        effect: PENDING, hidden: false },
+        effects: PENDING, hidden: false },
     Programme { id: "life_growth_iii_boom_charters", field: Field::Life, school: Some(School::Growth), tier: 3,
         name: "Boom Charters", blurb: "+20% growth on bodies below half capacity.",
-        effect: Effect::Mods(&[(ModKey::GrowthBelowHalf, 1.20)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::GrowthBelowHalf, 1.20)])], hidden: false },
     Programme { id: "life_growth_iv_xenoacclimation", field: Field::Life, school: Some(School::Growth), tier: 4,
         name: "Xenoacclimation", blurb: "Marginal body kinds become colonizable.",
-        effect: Effect::Flag(Cap::Xenoacclimation), hidden: false },
+        effects: &[Effect::Flag(Cap::Xenoacclimation)], hidden: false },
     Programme { id: "life_growth_iv_closed_loop", field: Field::Life, school: Some(School::Growth), tier: 4,
         name: "Closed-Loop Ecology", blurb: "Provisions consumption −30%.",
-        effect: Effect::Mods(&[(ModKey::ProvisionsUse, 0.70)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::ProvisionsUse, 0.70)])], hidden: false },
     Programme { id: "life_growth_v_arcologies", field: Field::Life, school: Some(School::Growth), tier: 5,
         name: "Arcologies", blurb: "Habitat tier V.",
-        effect: Effect::UnlockStructureTier(StructureKind::Habitat, 5), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::Habitat, 5)], hidden: false },
     Programme { id: "life_growth_v_generation_charters", field: Field::Life, school: Some(School::Growth), tier: 5,
         name: "Generation Charters", blurb: "Colony ships carry one specialist and arrive WellSupplied.",
-        effect: Effect::Flag(Cap::GenerationCharters), hidden: false },
+        effects: &[Effect::Flag(Cap::GenerationCharters)], hidden: false },
     // ⑂ TALENT — institutional (gate: 8 specialists trained)
     Programme { id: "life_talent_iii_expert_training", field: Field::Life, school: Some(School::Talent), tier: 3,
         name: "Expert Training", blurb: "Unlocks the 2.25× expert specialist tier.",
-        effect: Effect::Flag(Cap::ExpertTraining), hidden: false },
+        effects: &[Effect::Flag(Cap::ExpertTraining)], hidden: false },
     Programme { id: "life_talent_iii_deep_careers", field: Field::Life, school: Some(School::Talent), tier: 3,
         name: "Deep Careers", blurb: "Specialist training time −40%.",
-        effect: Effect::Mods(&[(ModKey::TrainingTime, 0.60)]), hidden: false },
+        effects: &[Effect::Mods(&[(ModKey::TrainingTime, 0.60)])], hidden: false },
     Programme { id: "life_talent_iv_academy_iv", field: Field::Life, school: Some(School::Talent), tier: 4,
         name: "Academy IV", blurb: "Academy tier IV.",
-        effect: Effect::UnlockStructureTier(StructureKind::Academy, 4), hidden: false },
+        effects: &[Effect::UnlockStructureTier(StructureKind::Academy, 4)], hidden: false },
     Programme { id: "life_talent_iv_broad_curricula", field: Field::Life, school: Some(School::Talent), tier: 4,
         name: "Broad Curricula", blurb: "Academies run 2 concurrent training jobs.",
-        effect: Effect::Flag(Cap::BroadCurricula), hidden: false },
+        effects: &[Effect::Flag(Cap::BroadCurricula)], hidden: false },
     Programme { id: "life_talent_v_twin_campuses", field: Field::Life, school: Some(School::Talent), tier: 5,
         name: "Twin Campuses", blurb: "Each Habitat tier houses +1 specialist.",
-        effect: Effect::Flag(Cap::TwinCampuses), hidden: false },
+        effects: &[Effect::Flag(Cap::TwinCampuses)], hidden: false },
     Programme { id: "life_talent_v_founders_institutes", field: Field::Life, school: Some(School::Talent), tier: 5,
         name: "Founders' Institutes", blurb: "Newly trained specialists start expert.",
-        effect: Effect::Flag(Cap::FoundersInstitutes), hidden: false },
+        effects: &[Effect::Flag(Cap::FoundersInstitutes)], hidden: false },
 ];
 
 /// Look up a catalog programme by id.
@@ -1081,12 +1114,15 @@ pub fn cost_of(id: &str) -> f64 {
 pub fn mods(state: &ResearchState) -> BTreeMap<ModKey, f64> {
     let mut m: BTreeMap<ModKey, f64> = BTreeMap::new();
     for id in &state.completed {
-        if let Some(Effect::Mods(list)) = programme(id).map(|p| p.effect) {
-            for (key, factor) in list {
-                if key.is_additive() {
-                    *m.entry(*key).or_insert(0.0) += *factor;
-                } else {
-                    *m.entry(*key).or_insert(1.0) *= *factor;
+        let Some(p) = programme(id) else { continue };
+        for e in p.effects {
+            if let Effect::Mods(list) = e {
+                for (key, factor) in *list {
+                    if key.is_additive() {
+                        *m.entry(*key).or_insert(0.0) += *factor;
+                    } else {
+                        *m.entry(*key).or_insert(1.0) *= *factor;
+                    }
                 }
             }
         }
@@ -1100,29 +1136,32 @@ pub fn mod_of(state: &ResearchState, key: ModKey) -> f64 {
     mods(state).get(&key).copied().unwrap_or(if key.is_additive() { 0.0 } else { 1.0 })
 }
 
+/// Every effect a syndicate's completed programmes grant, flattened.
+fn completed_effects(state: &ResearchState) -> impl Iterator<Item = &'static Effect> + '_ {
+    state.completed.iter().filter_map(|id| programme(id)).flat_map(|p| p.effects.iter())
+}
+
 /// Has this syndicate unlocked the given capability flag?
 pub fn has_flag(state: &ResearchState, cap: Cap) -> bool {
-    state.completed.iter().any(|id| programme(id).map(|p| p.effect) == Some(Effect::Flag(cap)))
+    completed_effects(state).any(|e| *e == Effect::Flag(cap))
 }
 
 /// Has this syndicate unlocked the given hull?
 pub fn has_hull(state: &ResearchState, kind: ShipKind) -> bool {
-    state.completed.iter().any(|id| programme(id).map(|p| p.effect) == Some(Effect::UnlockHull(kind)))
+    completed_effects(state).any(|e| *e == Effect::UnlockHull(kind))
 }
 
 /// Has this syndicate unlocked the given module kind?
 pub fn has_module(state: &ResearchState, kind: ModuleKind) -> bool {
-    state.completed.iter().any(|id| programme(id).map(|p| p.effect) == Some(Effect::UnlockModule(kind)))
+    completed_effects(state).any(|e| *e == Effect::UnlockModule(kind))
 }
 
 /// The best UNLOCKED tier for `kind` from research (0 = none granted). A site
 /// takes `max(base_tier, this)` to gate tier-IV/V builds.
 pub fn unlocked_structure_tier(state: &ResearchState, kind: StructureKind) -> u32 {
-    state
-        .completed
-        .iter()
-        .filter_map(|id| match programme(id).map(|p| p.effect) {
-            Some(Effect::UnlockStructureTier(k, t)) if k == kind => Some(t),
+    completed_effects(state)
+        .filter_map(|e| match e {
+            Effect::UnlockStructureTier(k, t) if *k == kind => Some(*t),
             _ => None,
         })
         .max()
@@ -1143,8 +1182,16 @@ mod tests {
         let mut seen = BTreeSet::new();
         for p in CATALOG {
             assert!(seen.insert(p.id), "duplicate catalog id {}", p.id);
-            assert!((1..=5).contains(&p.tier), "{} has bad tier {}", p.id, p.tier);
-            // Tier I/II are shared (school None); III–V belong to a school of the field.
+            // §ladder B2: tiers VI–VIII exist for exactly ONE school — Line
+            // (the documented capital-ladder exception); every other node
+            // stays inside the five-tier board shape.
+            if p.tier > 5 {
+                assert_eq!(p.school, Some(School::Line), "{} — only Line runs past Tier V", p.id);
+                assert!((6..=8).contains(&p.tier), "{} has bad capital tier {}", p.id, p.tier);
+            } else {
+                assert!((1..=5).contains(&p.tier), "{} has bad tier {}", p.id, p.tier);
+            }
+            // Tier I/II are shared (school None); III+ belong to a school of the field.
             if p.tier <= 2 {
                 assert!(p.school.is_none(), "{} tier {} must be shared", p.id, p.tier);
             } else {
@@ -1156,11 +1203,13 @@ mod tests {
 
     #[test]
     fn catalog_is_the_full_six_board_tree() {
-        // 6 fields × (3 shared-I + 3 shared-II + two schools × (2+2+2)) = 6 × 18 = 108.
-        assert_eq!(CATALOG.len(), 108, "the full v6 tree is 108 programmes");
+        // 6 fields × (3 shared-I + 3 shared-II + two schools × (2+2+2)) = 108,
+        // §ladder B2: + the Line capital ladder (VI/VII/VIII, one each) = 111.
+        assert_eq!(CATALOG.len(), 111, "the v6 tree (108) + the 3 Line capital tiers");
         for field in [Field::Propulsion, Field::Materials, Field::Computation, Field::Weapons, Field::Hulls, Field::Life] {
             let of_field: Vec<&Programme> = CATALOG.iter().filter(|p| p.field == field).collect();
-            assert_eq!(of_field.len(), 18, "{field:?} has 18 programmes");
+            let expect = if field == Field::Hulls { 21 } else { 18 };
+            assert_eq!(of_field.len(), expect, "{field:?} programme count");
             // Exactly two schools, each a III/IV/V ladder of 2+2+2.
             let schools: BTreeSet<School> = of_field.iter().filter_map(|p| p.school).collect();
             assert_eq!(schools.len(), 2, "{field:?} forks into exactly two schools");
@@ -1176,11 +1225,51 @@ mod tests {
                 assert_eq!(n, 3, "{field:?} shared tier {t} has three programmes");
             }
         }
+        // §ladder B2: the capital tiers are SINGLE-PICK — exactly one Line
+        // programme per tier VI–VIII, and no other school has any.
+        for t in 6..=8u8 {
+            let of_tier: Vec<&Programme> = CATALOG.iter().filter(|p| p.tier == t).collect();
+            assert_eq!(of_tier.len(), 1, "capital tier {t} is single-pick");
+            assert_eq!(of_tier[0].school, Some(School::Line), "capital tier {t} belongs to Line");
+        }
         // Exactly the two documented hidden entries.
         let hidden: Vec<&str> = CATALOG.iter().filter(|p| p.hidden).map(|p| p.id).collect();
         assert_eq!(hidden, vec!["hull_corsair_v_salvage_rigs", "hull_corsair_v_boarding_parties"]);
         // Every catalog id resolves and every non-hidden one is visible.
-        assert_eq!(visible_ids().count(), 106);
+        assert_eq!(visible_ids().count(), 109);
+    }
+
+    #[test]
+    fn capital_ladder_gates_climb_and_grant_multi_effects() {
+        use crate::build::StructureKind;
+        use crate::ship::ShipKind;
+        let mut st = ResearchState::default();
+        // Tier VI needs a Line-V predecessor AND 25 battles won.
+        assert!(!is_available("hull_line_vi_battleship", &st, &no_metrics, 0.0));
+        st.completed.insert("hull_line_v_cruiser".into());
+        assert!(!is_available("hull_line_vi_battleship", &st, &no_metrics, 0.0), "predecessor alone isn't enough");
+        st.add_verb(Verb::BattlesWon, 25.0);
+        assert!(is_available("hull_line_vi_battleship", &st, &no_metrics, 0.0), "Line V + 25 battles won opens the Battleship");
+        st.completed.insert("hull_line_vi_battleship".into());
+        assert!(has_hull(&st, ShipKind::Battleship));
+        // Tier VII: 500 hull-mass destroyed; grants Dreadnought AND Shipyard 5.
+        assert!(!is_available("hull_line_vii_dreadnought", &st, &no_metrics, 0.0));
+        st.add_verb(Verb::HullMassDestroyed, 500.0);
+        assert!(is_available("hull_line_vii_dreadnought", &st, &no_metrics, 0.0));
+        st.completed.insert("hull_line_vii_dreadnought".into());
+        assert!(has_hull(&st, ShipKind::Dreadnought));
+        assert_eq!(unlocked_structure_tier(&st, StructureKind::Shipyard), 5, "the effects ARRAY: hull + yard ceiling in one programme");
+        // Tier VIII: 3 systems captured; grants Titan AND Shipyard 6.
+        assert!(!is_available("hull_line_viii_titan", &st, &no_metrics, 0.0));
+        st.add_verb(Verb::SystemsCaptured, 3.0);
+        assert!(is_available("hull_line_viii_titan", &st, &no_metrics, 0.0));
+        st.completed.insert("hull_line_viii_titan".into());
+        assert!(has_hull(&st, ShipKind::Titan));
+        assert_eq!(unlocked_structure_tier(&st, StructureKind::Shipyard), 6);
+        // Costs climb season-scale: VI 240h · VII 336h · VIII 480h.
+        assert_eq!(tier_cost_secs(6), 240.0 * 3600.0);
+        assert_eq!(tier_cost_secs(7), 336.0 * 3600.0);
+        assert_eq!(tier_cost_secs(8), 480.0 * 3600.0);
     }
 
     #[test]

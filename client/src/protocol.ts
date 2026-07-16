@@ -10,7 +10,10 @@ export interface Vec2 {
   y: number;
 }
 
-export type ShipKind = "convoy" | "raider" | "corvette" | "colony" | "scout";
+export type ShipKind =
+  | "convoy" | "raider" | "corvette" | "colony" | "scout"
+  // §ladder: the research-gated warship ladder.
+  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan";
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
 // is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
@@ -569,6 +572,7 @@ export type ClientMsg =
   | { type: "SetResearchQueue"; queue: string[] }
   | { type: "SaveFit"; name: string; ship: ShipKind; loadout: ModuleKind[] }
   | { type: "DeleteFit"; name: string }
+  | { type: "NameFlagship"; name: string }
   | { type: "Ping" };
 
 // §syndicates Part 1: an alliance id (opaque decimal string on the wire).
@@ -584,6 +588,8 @@ export interface SyndicateView {
   invited: string[];
   // §fitting: the syndicate's saved doctrine fits (any member curates).
   fits?: FitView[];
+  // §ladder B4: the christened name of the syndicate's Titan (owner-only).
+  flagship_name?: string | null;
 }
 
 // §fitting: one saved doctrine fit — a named hull + loadout the whole
@@ -753,6 +759,9 @@ export interface SideRecordView {
   // §modules B5: the side's opening fitted stacks — PARTICIPANT fidelity only
   // ([] at bucket/none). Labels the side + types its salvos by weapon family.
   loadouts?: LoadoutStack[];
+  // §ladder B4: the side's christened Titan name — participant fidelity only,
+  // and only when the side fielded one (how a rival ever meets the name).
+  flagship_name?: string | null;
 }
 export interface RoundNoteView {
   kind: string; // "joined" | "retreat_tripped" | "withdraw_ordered" | "disengage_exposure" | "platform_destroyed" | "mutual_disengage"

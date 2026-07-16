@@ -436,4 +436,9 @@ pub enum Command {
     /// §fitting: DELETE a doctrine fit by name from the caller's syndicate.
     /// CC-local instant admin; unknown names soft-reject (no-op).
     DeleteFit { player_id: PlayerId, name: String },
+
+    /// §ladder B4: NAME the syndicate's flagship (its one Titan). CC-local
+    /// instant admin, any member; an empty name un-christens. The name is a
+    /// LABEL — it never touches sim outcomes.
+    NameFlagship { player_id: PlayerId, name: String },
 }

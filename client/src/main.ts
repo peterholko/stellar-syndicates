@@ -170,7 +170,11 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // own-ship panel can show this ship's fuel burn rate honestly. Movement burns
 // FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
 const FUEL_PER_MASS_DISTANCE = 1.0e-6;
-const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80 };
+const HULL_MASS: Record<ShipKind, number> = {
+  convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
+  // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
+  destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+};
 const CARGO_MASS_PER_UNIT = 28;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
@@ -423,6 +427,10 @@ function buildShipPanel(): void {
         pendingRefit = [...f.modules];
         updateShipPanel();
       }
+    } else if (act === "nameflagship" && net) {
+      // §ladder B4: christen the syndicate's Titan (empty clears the name).
+      const name = window.prompt("Flagship name (≤24 chars — empty to un-name):", state.syndicate?.flagship_name ?? "");
+      if (name !== null) net.send({ type: "NameFlagship", name: name.trim() });
     } else if (act === "refit" && state.selectedShipId && net) {
       // §modules Part B4: refit the named (kind, from) stack to the composed
       // target (clamped to the hull's slots). The server enforces the docked-yard
@@ -452,7 +460,11 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
-const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "colony" ? "Colony Ship" : k === "scout" ? "Scout" : k);
+const SHIP_KIND_LABEL: Record<ShipKind, string> = {
+  convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+};
+const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
 // --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED ----------------
 // Below this, phases collapse to ~instant (a fleet near the command center) —
@@ -566,7 +578,7 @@ function postureSection(g: GhostView): string {
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
-const FLAGSHIP_ORDER: ShipKind[] = ["colony", "convoy", "corvette", "raider", "scout"];
+const FLAGSHIP_ORDER: ShipKind[] = ["titan", "dreadnought", "battleship", "cruiser", "destroyer", "colony", "convoy", "corvette", "raider", "scout"];
 
 // The COMPOSITION section of the fleet panel — mirrors the §13.1 intel ladder:
 // full composition for own fleets and rivals inside sensor coverage; a bucket-only
@@ -578,7 +590,15 @@ function compositionSection(g: GhostView): string {
       .map((c) => `${esc(shipKindLabel(c.kind))} <b>×${c.count}</b>`)
       .join(" · ");
     const total = g.composition.reduce((a, c) => a + c.count, 0);
-    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>`;
+    // §ladder B4: the OWNER's Titan row carries the christened flagship name —
+    // plus the christening button (any member; empty un-names).
+    let flagship = "";
+    if (g.own && g.composition.some((c) => c.kind === "titan" && c.count > 0)) {
+      const name = state.syndicate?.flagship_name;
+      flagship = `<div class="sp-line">${icon("fleet", "sm")} flagship: <b>${name ? esc(name) : "<span class=\"dim\">unnamed</span>"}</b> ` +
+        `<button class="act" style="width:auto;padding:2px 7px;font-size:11px" data-act="nameflagship" title="Christen your syndicate's Titan — the name shows on your fleet and in participant battle records.">${name ? "rename" : "name it"}…</button></div>`;
+    }
+    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>${flagship}`;
   }
   return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
@@ -904,7 +924,7 @@ const SCHOOL_TITLE: Record<string, string> = {
   watch: "Watch", shadow: "Shadow", strike: "Strike", countermeasures: "Countermeasures",
   line: "Line", corsair: "Corsair", growth: "Growth", talent: "Talent",
 };
-const ROMAN = ["", "I", "II", "III", "IV", "V"];
+const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
 let lastResearchSig = "";
 
 function fmtEta(secs: number): string {
@@ -974,7 +994,9 @@ function researchBoard(fieldSlug: string, progs: ProgrammeView[], queue: string[
   let inner = group(null, 1) + group(null, 2);
   for (const s of schools) {
     inner += `<div class="lbl" style="color:#8fd3dd;margin-top:2px">⑂ ${esc(SCHOOL_TITLE[s] ?? s)}</div>`;
-    inner += group(s, 3) + group(s, 4) + group(s, 5);
+    // §ladder B2: Line (alone) runs past Tier V — the capital ladder VI–VIII.
+    // group() renders nothing for tiers a school doesn't have.
+    inner += group(s, 3) + group(s, 4) + group(s, 5) + group(s, 6) + group(s, 7) + group(s, 8);
   }
   return `<div class="rp-board"><h4>${researchIcon(fieldSlug, "lg")}<span>${esc(FIELD_TITLE[fieldSlug] ?? fieldSlug)}</span></h4>${inner}</div>`;
 }
@@ -1791,6 +1813,10 @@ function arrivalLocal(delaySecs: number): string {
 const SHIP_ICON: Record<ShipKind, string> = {
   convoy: "concept-convoy", raider: "action-attack-raid", corvette: "concept-fleet",
   colony: "action-claim-system", scout: "action-survey-scout",
+  // §ladder: no dedicated svg art yet — the fleet concept stands in (a real
+  // capital sheet arrives separately; see PR note).
+  destroyer: "concept-fleet", cruiser: "concept-fleet", battleship: "concept-fleet",
+  dreadnought: "concept-fleet", titan: "concept-fleet",
 };
 // One force-strip chip: a ship-class icon + the count still standing. `lost` (own,
 // exact) draws a red "−k"; a fully-wiped class dims + strikes its count. `est`
@@ -2046,13 +2072,19 @@ function sideFamily(sv: SideRecordView): SalvoFamily {
 // factor (law 4 — every multiplier is a legible line).
 function bvFitLine(sv: SideRecordView): string {
   const fits = sv.loadouts ?? [];
-  if (!fits.length) return "";
+  // §ladder B4: a side's christened Titan leads its fit line — the one channel
+  // a rival ever meets the name through (participant records only).
+  const flag = sv.flagship_name
+    ? `<span class="tone-up" title="This side's flagship Titan — participant intel.">⚑ ${esc(sv.flagship_name)}</span>`
+    : "";
+  if (!fits.length && !flag) return "";
   const parts = fits.map((st) => {
     const aff = affinityLine(st.kind, st.modules as ModuleKind[]);
-    const tag = aff ? ` <span class="tone-up" title="${esc(aff)} — hull affinity, a named factor in this stack's damage.">×1.25</span>` : "";
+    const mult = aff?.match(/×[\d.]+/)?.[0] ?? "×1.25";
+    const tag = aff ? ` <span class="tone-up" title="${esc(aff)} — hull affinity, a named factor in this stack's damage.">${mult}</span>` : "";
     return `${st.n}× ${st.modules.map((m) => MODULE_GLYPH[m as ModuleKind]).join("")} ${esc(shipKindLabel(st.kind))}${tag}`;
   });
-  return `<div class="bv-fits" title="What this side was fitted with — participant intel.">${parts.join(" · ")}</div>`;
+  return `<div class="bv-fits" title="What this side was fitted with — participant intel.">${[flag, ...parts].filter(Boolean).join(" · ")}</div>`;
 }
 
 /// One side's column: a per-kind survivor bar (participant: exact; bucket:
@@ -2841,7 +2873,7 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
 // rendered for systems you own (the View only sends build state to the owner).
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
-const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
+const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout", "destroyer", "cruiser", "battleship", "dreadnought", "titan"]);
 
 // §economy Part 6 / §bodies: crew ± control → SetAssignment. `spec` is
 // "bodyId:slug:workers" — the line lives ON a body now; posted specialists are
@@ -2857,7 +2889,17 @@ function sendCrew(systemId: EntityId, spec: string): void {
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
-const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1 };
+const SHIP_REQ: Record<string, number> = {
+  convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1,
+  // §ladder: capital yards (tiers 5/6 are themselves Line VII/VIII prizes).
+  destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
+};
+// §ladder: the Line programme that unlocks each capital hull (mirrors
+// research.rs) — the client's research-gate copy; the sim enforces it.
+const HULL_PROGRAMME: Record<string, string> = {
+  destroyer: "hull_line_iv_destroyer", cruiser: "hull_line_v_cruiser",
+  battleship: "hull_line_vi_battleship", dreadnought: "hull_line_vii_dreadnought", titan: "hull_line_viii_titan",
+};
 
 // --- §build-progress: the construction QUEUE (Travian-style) -----------------
 // Rows derive ENTIRELY from the job timestamps the view already carries:
@@ -2971,14 +3013,21 @@ const MODULE_TIP: Record<ModuleKind, string> = {
   reflective_plating: "Armor: blunts incoming BEAM into this ship.",
   whipple_armor: "Armor: blunts incoming DRIVER into this ship.",
 };
-const MODULE_SLOTS: Record<string, number> = { corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0 };
+const MODULE_SLOTS: Record<string, number> = {
+  corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0,
+  destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
+};
 // §fitting: per-module FITTING-POINT costs + per-hull budgets (mirrors sim
 // ModuleKind::fitting_cost / ship::fitting_points) — the SECOND constraint
 // besides slots; both render in the fitting bar and gate the queue button.
 const MODULE_FIT_COST: Record<ModuleKind, number> = {
   mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
 };
-const FITTING_POINTS: Record<string, number> = { corvette: 5, raider: 4, scout: 2, convoy: 2, colony: 2 };
+const FITTING_POINTS: Record<string, number> = {
+  corvette: 5, raider: 4, scout: 2, convoy: 2, colony: 2,
+  // §ladder: the big budgets — capitals are where combinations live.
+  destroyer: 8, cruiser: 12, battleship: 18, dreadnought: 28, titan: 45,
+};
 const fitCost = (mods: ModuleKind[]): number => mods.reduce((s, m) => s + (MODULE_FIT_COST[m] ?? 0), 0);
 // §fitting: is (kind, mods) legal — both slots and budget? (mirrors Loadout::validate)
 function fitLegal(kind: string, mods: ModuleKind[]): boolean {
@@ -2987,13 +3036,22 @@ function fitLegal(kind: string, mods: ModuleKind[]): boolean {
 // §fitting: the hull-AFFINITY factor line for a (kind, fit) — the named
 // multiplier the sim applies (mirrors ship::hull_affinity); null when none.
 function affinityLine(kind: string, mods: ModuleKind[]): string | null {
+  const hasWeapon = mods.some((m) => m === "torpedo_rack" || m === "mass_driver" || m === "point_defense_screen");
   if (kind === "raider" && mods.includes("torpedo_rack")) return "Raider torpedo affinity ×1.25";
   if (kind === "corvette" && mods.includes("point_defense_screen")) return "Corvette interception affinity ×1.25";
+  // §ladder: each capital's one named factor.
+  if (kind === "destroyer" && !mods.includes("torpedo_rack") && !mods.includes("mass_driver")) return "Destroyer beam affinity ×1.20";
+  if (kind === "cruiser" && (mods.includes("reflective_plating") || mods.includes("whipple_armor"))) return "Cruiser protection affinity ×1.20";
+  if (kind === "battleship" && mods.includes("mass_driver")) return "Battleship driver affinity ×1.20";
+  if (kind === "dreadnought" && mods.includes("point_defense_screen")) return "Dreadnought interception affinity ×1.30";
+  if (kind === "titan" && (hasWeapon || mods.length === 0)) return "Titan weapon affinity ×1.10";
   return null;
 }
 // The hull's standing affinity note (shown in the build detail even unfitted).
 const HULL_AFFINITY_NOTE: Record<string, string> = {
   raider: "torpedo ×1.25", corvette: "interception ×1.25",
+  destroyer: "beam ×1.20", cruiser: "protection ×1.20", battleship: "driver ×1.20 · siege anchor ×1.25",
+  dreadnought: "interception ×1.30 (platform-grade screen)", titan: "all weapons ×1.10",
 };
 // §fitting: the FITTING BAR — used/total points with per-module cost chips;
 // red when the composed fit would overflow the hull's budget.
@@ -3504,8 +3562,12 @@ function renderBuildPanel(): void {
 // builder; shares its shell/dock/breakpoint via `.build-shell`). Opened from the
 // shipyard body's "Build ship" button; a sibling of the structure builder — the
 // two never render together. Client-only over the SAME BuildShip command. ----
-const SHIP_ORDER = ["scout", "corvette", "raider", "convoy", "colony"];
-const SHIP_HULL_ICON: Record<string, IconKey> = { convoy: "convoy", raider: "raider", corvette: "corvette", colony: "colony", scout: "scout" };
+const SHIP_ORDER = ["scout", "corvette", "raider", "convoy", "colony", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+const SHIP_HULL_ICON: Record<string, IconKey> = {
+  convoy: "convoy", raider: "raider", corvette: "corvette", colony: "colony", scout: "scout",
+  // §ladder: no dedicated icons yet — the fleet mark stands in.
+  destroyer: "fleet", cruiser: "fleet", battleship: "fleet", dreadnought: "fleet", titan: "fleet",
+};
 // Per-hull stats + one-line role, mirroring crates/sim/src/ship.rs (speed / hull
 // mass / attack+defense weights / module slots). Display only — the COSTS + gates
 // that matter for the command come from build_options + SHIP_REQ.
@@ -3515,23 +3577,48 @@ const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; at
   raider: { role: "The hunter — fast and hard-hitting; seizes a convoy's cargo on a won raid.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · takes prizes" },
   convoy: { role: "Bulk hauler — carries goods to the hub; raidable, wants an escort.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 0, cap: "Hauls cargo (raidable)" },
   colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
+  // §ladder: the research-gated warship ladder — capitals buy PRESENCE, never
+  // efficiency (weight per Armaments peaks at Destroyer/Cruiser).
+  destroyer: { role: "The first ship of the line — heavy beam broadsides (beam ×1.20).", speed: 55, hull: 2000, atk: 2.4, def: 2.6, slots: 3, cap: "Line IV research · 8 fit pts" },
+  cruiser: { role: "The season's prestige warship — armored core (protection ×1.20); the efficiency peak.", speed: 45, hull: 4000, atk: 4.5, def: 5.5, slots: 4, cap: "Line V research · 12 fit pts" },
+  battleship: { role: "The siege anchor — driver broadsides (driver ×1.20); accelerates a siege clock on station.", speed: 36, hull: 8000, atk: 8, def: 12, slots: 4, cap: "Line VI research · 18 fit pts" },
+  dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 12, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
+  titan: { role: "The flagship — broadly good at every weapon (×1.10), best at nothing; one per syndicate.", speed: 23, hull: 32000, atk: 24, def: 44, slots: 6, cap: "Line VIII research · 45 fit pts · singleton" },
 };
 interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; }
 /// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
 /// shipyard tier — the same field the old inline rows read) + afford, plus the
 /// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
+// §ladder: is this hull's Line programme completed? (Capitals only — the five
+// original hulls never need research. Mirrors the sim's NeedsResearch gate.)
+function hullResearched(key: string): boolean {
+  const prog = HULL_PROGRAMME[key];
+  if (!prog) return true;
+  return state.research?.programmes.find((p) => p.id === prog)?.state === "completed";
+}
 function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const yardTier = dyn.shipyard_tier ?? 0;
   const needTier = SHIP_REQ[o.key] ?? 1;
   const yardShort = yardTier < needTier;
+  const unresearched = !hullResearched(o.key);
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
   const maxAff = o.costs.length
     ? Math.max(0, Math.min(...o.costs.map((c) => Math.floor((have.get(c.commodity as Commodity) ?? 0) / c.units))))
     : 0;
-  const buildable = !yardShort && afford;
-  const reason = yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
-  return { o, needTier, yardTier, yardShort, afford, maxAff, buildable, reason };
+  const buildable = !yardShort && !unresearched && afford;
+  const reason = unresearched
+    ? "Requires its Line programme on the Hulls research board."
+    : yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason };
+}
+// A build duration for humans: seconds under 2 min, then minutes / hours / days
+// (a capital keel is a season event — "8d" reads, "691200s" doesn't).
+function fmtBuildDur(secs: number): string {
+  if (secs < 120) return `${Math.round(secs)}s`;
+  if (secs < 7200) return `${Math.round(secs / 60)}m`;
+  if (secs < 172800) return `${(secs / 3600).toFixed(secs < 36000 ? 1 : 0).replace(/\.0$/, "")}h`;
+  return `${(secs / 86400).toFixed(1).replace(/\.0$/, "")}d`;
 }
 /// The staffed-shipyard build-time multiplier (mirrors the sim: build_ticks /
 /// (1 + SHIPYARD_BOOST·staffing·skill), SHIPYARD_BOOST = 0.25). 1.0 when the yard
@@ -3544,12 +3631,12 @@ function shipRowHtml(st: ShipOpt): string {
   const sel = st.o.key === shipSelectedKind ? " is-sel" : "";
   const off = st.buildable ? "" : " is-off";
   const info = SHIP_STATS[st.o.key];
-  const short = st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
+  const short = !hullResearched(st.o.key) ? "needs research" : st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
   const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
   return `<button class="bp-row bp-ship-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(info?.role ?? st.o.label)}">` +
     `<span class="bp-row-ic">${icon(SHIP_HULL_ICON[st.o.key] ?? "fleet", "sm")}</span>` +
     `<span class="bp-ship-main"><span class="bp-ship-top"><span class="bp-row-name">${esc(st.o.label)}</span>` +
-    `<span class="bp-row-tier">${Math.round(st.o.build_secs)}s</span>${reason}</span>` +
+    `<span class="bp-row-tier">${fmtBuildDur(st.o.build_secs)}</span>${reason}</span>` +
     `<span class="bp-ship-role">${esc(info?.role ?? "")}</span></span></button>`;
 }
 function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): string {
@@ -3575,8 +3662,8 @@ function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): stri
   const boost = shipyardBoost(dyn, body);
   const per = Math.max(1, Math.round(o.build_secs / boost));
   const timeLine = boost > 1.001
-    ? `${icon("time", "sm")} <b>${per}s</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${Math.round(o.build_secs)}s).${q > 1 ? ` The ${q} build in parallel.` : ""}`
-    : `${icon("time", "sm")} <b>${per}s</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
+    ? `${icon("time", "sm")} <b>${fmtBuildDur(per)}</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${fmtBuildDur(o.build_secs)}).${q > 1 ? ` The ${q} build in parallel.` : ""}`
+    : `${icon("time", "sm")} <b>${fmtBuildDur(per)}</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
   const stat = (lbl: string, val: string) => `<div class="bp-stat"><span class="bp-stat-l">${lbl}</span><span class="bp-stat-v">${val}</span></div>`;
   const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fit points", `${FITTING_POINTS[o.key] ?? 0}`)}</div>` : "";
   // §fitting: the FITTING section — chips (ledger-gated), the used/total bar

@@ -1341,6 +1341,15 @@ export class Renderer {
       case "corvette": return this.texCorvette;
       case "colony": return this.texColony;
       case "scout": return this.texScout;
+      // §ladder: no capital art yet — null rides the primitive fallback,
+      // scaled by mass class (see drawGhost / shipSizePx). Real sprites
+      // arrive on a separate ChatGPT sheet.
+      case "destroyer":
+      case "cruiser":
+      case "battleship":
+      case "dreadnought":
+      case "titan":
+        return null;
     }
   }
 
@@ -1353,6 +1362,14 @@ export class Renderer {
       case "corvette": return "corvette";
       case "scout": return "scout";
       case "colony": return null;
+      // §ladder: a capital IS the formation — always the single (placeholder)
+      // hull + count badge, like the colony ship.
+      case "destroyer":
+      case "cruiser":
+      case "battleship":
+      case "dreadnought":
+      case "titan":
+        return null;
     }
   }
 
@@ -1468,7 +1485,11 @@ export class Renderer {
   /// All kinds converge to the SAME max size: up close the art's SHAPE
   /// distinguishes convoy vs raider, so identical max size is intended.
   private shipSizePx(kind: ShipKind): number {
-    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT;
+    // §ladder: capitals scale by MASS CLASS — each rung visibly bigger, the
+    // Titan the largest thing flying (procedural placeholder sizing).
+    const capital: Partial<Record<ShipKind, number>> = { destroyer: 52, cruiser: 60, battleship: 70, dreadnought: 82, titan: 96 };
+    const base = capital[kind]
+      ?? (kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT);
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
     return this.deepZoomPx(indicator, SHIP_MAX_PX);
