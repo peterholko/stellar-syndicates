@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
@@ -2067,6 +2067,34 @@ function sideFamily(sv: SideRecordView): SalvoFamily {
   if (mods.includes("mass_driver")) return "driver";
   return "beam";
 }
+// §tactical T3: the TRUTH MAP — an SVG top-down of the recorded keyframe.
+// Real positions, torpedo salvos, and exact deaths; ship dots scale with mass
+// class, dim with damage; platforms draw as emplacement squares. The viewer's
+// own side is always cyan, the foe red (bearing-agnostic legibility).
+function bvTruthMap(f: KeyframeView, ownSide: number | null): string {
+  const R = 1450; // arena + withdraw margin (battle-local coords)
+  const sx = (x: number) => ((x + R) / (2 * R)) * 100;
+  const sy = (y: number) => ((y + R) / (2 * R)) * 100;
+  const colOf = (side: number) => (ownSide === null ? (side === 0 ? "#e0574b" : "#5ad1e0") : side === ownSide ? "#5ad1e0" : "#e0574b");
+  const dots = f.ships.map((s) => {
+    const r = s.plat ? 1.6 : Math.max(0.7, Math.min(2.6, Math.sqrt((HULL_MASS[s.kind] ?? 400) / 1000)));
+    const o = (0.35 + 0.65 * Math.max(0, Math.min(1, s.hp))).toFixed(2);
+    const c = colOf(s.side);
+    return s.plat
+      ? `<rect x="${(sx(s.x) - r).toFixed(1)}" y="${(sy(s.y) - r).toFixed(1)}" width="${(2 * r).toFixed(1)}" height="${(2 * r).toFixed(1)}" fill="${c}" opacity="${o}"><title>Defense Platform tier</title></rect>`
+      : `<circle cx="${sx(s.x).toFixed(1)}" cy="${sy(s.y).toFixed(1)}" r="${r.toFixed(1)}" fill="${c}" opacity="${o}"><title>${esc(shipKindLabel(s.kind))} — ${Math.round(s.hp * 100)}% hull</title></circle>`;
+  }).join("");
+  const fish = f.torpedoes.map((t) =>
+    `<g transform="translate(${sx(t.x).toFixed(1)},${sy(t.y).toFixed(1)})"><path d="M0,-1.6 L1.2,0 L0,1.6 L-1.2,0 Z" fill="${FAMILY_COLOR.torpedo}"><title>${t.n} torpedo${t.n > 1 ? "es" : ""} in flight</title></path>` +
+    (t.n > 1 ? `<text x="1.8" y="1" font-size="3" fill="${FAMILY_COLOR.torpedo}">${t.n}</text>` : "") + `</g>`).join("");
+  const deaths = f.deaths.map((d) =>
+    `<g transform="translate(${sx(d.x).toFixed(1)},${sy(d.y).toFixed(1)})" opacity="0.85"><path d="M-1.4,-1.4 L1.4,1.4 M-1.4,1.4 L1.4,-1.4" stroke="${colOf(d.side)}" stroke-width="0.5"><title>${esc(shipKindLabel(d.kind))} destroyed here</title></path></g>`).join("");
+  return `<div class="bv-truth" title="The recorded battle truth — real positions this round (participant intel).">` +
+    `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">` +
+    `<circle cx="50" cy="50" r="${(1000 / R) * 50}" fill="none" stroke="rgba(255,255,255,0.10)" stroke-dasharray="2 2"/>` +
+    dots + fish + deaths + `</svg></div>`;
+}
+
 // A compact per-stack fit summary for a side header (participant only).
 // §fitting: stacks whose hull carries an AFFINITY for their fit show the named
 // factor (law 4 — every multiplier is a legible line).
@@ -2210,6 +2238,12 @@ function renderBattleViewer(): void {
       salvos = `<div class="bv-salvos" style="align-items:center;color:var(--dim)" title="exact fire strength is fogged — you see only the size buckets">⚔</div>`;
     }
     arena = `<div class="bv-arena">${bvSideHtml(rec, rd, 0, participant, false)}${salvos}${bvSideHtml(rec, rd, 1, participant, platGone)}</div>`;
+    // §tactical T3: TRUTH KEYFRAME — the theater is an interpolating replayer
+    // of real positions now (reality provides the choreography). Participant
+    // records carry frames; old/bucket records fall back to the arena columns.
+    if (rd.frame) {
+      arena += bvTruthMap(rd.frame, rec.own_side);
+    }
     notes = rd.notes.length ? `<div class="bv-notes">${rd.notes.map(bvNoteBanner).join("")}</div>` : "";
     const intoFight = Math.max(0, rd.tick / state.tickHz - rec.started_at);
     const delay = state.commandCenter && state.galaxy

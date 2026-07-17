@@ -774,6 +774,17 @@ export interface RoundRecordView {
   kills: [RecordCount[], RecordCount[]]; // losses of [attackers, defenders]
   dealt: [number, number] | null; // damage dealt — participant only
   notes: RoundNoteView[];
+  // §tactical T3: the round's TRUTH KEYFRAME — real combatant positions,
+  // torpedo salvos, exact deaths. Participant fidelity only; absent on old
+  // records (the viewer falls back to the choreographed arena).
+  frame?: KeyframeView | null;
+}
+
+// §tactical T3: keyframe payloads (battle-local arena coords, ±~1400).
+export interface KeyframeView {
+  ships: { side: number; kind: ShipKind; x: number; y: number; hp: number; plat?: boolean }[];
+  torpedoes: { side: number; x: number; y: number; n: number }[];
+  deaths: { step: number; side: number; kind: ShipKind; x: number; y: number }[];
 }
 export interface BattleRecordView {
   id: EntityId;

@@ -1007,6 +1007,7 @@ impl World {
     /// Feed one attrition tick to the record: the damage each side dealt, the
     /// ships each side lost, and the survivor counts (used only when a round
     /// actually flushes).
+    #[allow(clippy::too_many_arguments)]
     fn record_round(
         &mut self,
         eid: EntityId,
@@ -1016,9 +1017,13 @@ impl World {
         lb: &crate::combat::Losses,
         counts: [BTreeMap<ShipKind, u32>; 2],
         tick: u64,
+        frame: Option<crate::combat::Keyframe>,
     ) {
         if let Some(rec) = self.battle_records.get_mut(&eid) {
             rec.accumulate(dealt_a, dealt_b, la, lb);
+            if let Some(f) = frame {
+                rec.keyframe(f);
+            }
             rec.flush_if_due(tick, counts);
         }
     }
@@ -2528,7 +2533,7 @@ impl World {
             // grab resolves inside the short raid cap (the old RAID_RATE
             // asymmetry, preserved).
             let cadence = crate::tactical::tac_step_ticks(target);
-            let (dealt_a, dealt_b, platform_destroyed) = if tac.step == 0 || self.tick % cadence == 0 {
+            let (dealt_a, dealt_b, platform_destroyed, tac_frame) = if tac.step == 0 || self.tick % cadence == 0 {
                 let mods = [
                     crate::tactical::SideMods {
                         opening_bonus: self.research_flag(a_owner, crate::research::Cap::FirstStrike)
@@ -2549,9 +2554,11 @@ impl World {
                     lb.add_stack(k.0, k.1.clone(), *lo_map);
                 }
                 let pdestroyed = ptiers > 0 && tac.platform_tiers() == 0;
-                (outcome.dealt[0], outcome.dealt[1], pdestroyed)
+                // §T3: the round's truth keyframe rides the recorder.
+                let frame = tac.keyframe(outcome.deaths);
+                (outcome.dealt[0], outcome.dealt[1], pdestroyed, Some(frame))
             } else {
-                (0.0, 0.0, false)
+                (0.0, 0.0, false, None)
             };
 
             // Cargo SEIZURE: on a raid, if a defender convoy is emptied this tick,
@@ -2675,7 +2682,7 @@ impl World {
             if safety {
                 self.record_note(*eid, crate::combat::RoundNote::MutualDisengage);
             }
-            self.record_round(*eid, dealt_a, dealt_b, &la, &lb, [a_now.clone(), d_now.clone()], self.tick);
+            self.record_round(*eid, dealt_a, dealt_b, &la, &lb, [a_now.clone(), d_now.clone()], self.tick, tac_frame);
 
             // The tactical state persists on the engagement (serde mid-battle).
             self.engagements.get_mut(eid).unwrap().tactical = Some(tac);
@@ -10135,6 +10142,26 @@ mod tests {
         for r in &rec.rounds {
             assert!(r.counts[1].get(&ShipKind::Raider).copied().unwrap_or(0) <= 3, "defender survivors never exceed the opening");
         }
+        // §tactical T3: recorded rounds carry TRUTH KEYFRAMES — real positions
+        // inside the arena bounds — and the battle's deaths appear as exact
+        // (step, pos) events somewhere on the timeline.
+        let framed: Vec<&crate::combat::Keyframe> = rec.rounds.iter().filter_map(|r| r.frame.as_ref()).collect();
+        assert!(!framed.is_empty(), "rounds carry truth keyframes");
+        for f in &framed {
+            for s in &f.ships {
+                assert!(s.x.abs() <= 2_000.0 && s.y.abs() <= 2_000.0, "keyframe positions stay in arena bounds");
+                assert!((0.0..=1.0).contains(&s.hp), "hp is a fraction");
+            }
+        }
+        assert!(
+            framed.iter().any(|f| !f.deaths.is_empty()),
+            "the battle's kills appear as exact death events"
+        );
+        // Serde round-trip keeps frames (and old frame-less records still load —
+        // the field is serde-default).
+        let json = serde_json::to_string(rec).unwrap();
+        let back: crate::combat::BattleRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rounds.iter().filter(|r| r.frame.is_some()).count(), framed.len());
     }
 
     #[test]

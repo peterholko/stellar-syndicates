@@ -254,6 +254,8 @@ pub struct StepOutcome {
     pub dealt: [f64; 2],
     /// Platform tiers destroyed this step.
     pub platform_tiers_lost: u32,
+    /// §T3: exact death events — (step, side, kind, where) for the keyframe.
+    pub deaths: Vec<crate::combat::KfDeath>,
 }
 
 /// Per-side research flags fed into a step (owner-level lookups happen in the
@@ -823,6 +825,13 @@ impl TacticalState {
         }
         for i in dead.iter().rev() {
             let c = self.combatants.remove(*i);
+            out.deaths.push(crate::combat::KfDeath {
+                step: self.step,
+                side: c.side,
+                kind: c.kind,
+                x: c.pos.x as f32,
+                y: c.pos.y as f32,
+            });
             if c.platform {
                 out.platform_tiers_lost += 1;
             } else {
@@ -830,6 +839,40 @@ impl TacticalState {
             }
         }
         out
+    }
+
+    /// §T3: build the round's TRUTH KEYFRAME — every capital always rides
+    /// along; the rest fill to [`crate::combat::KEYFRAME_SHIP_CAP`] in stable
+    /// cid order. Live torpedoes summarize as per-side salvos (centroid + n).
+    pub fn keyframe(&self, deaths: Vec<crate::combat::KfDeath>) -> crate::combat::Keyframe {
+        use crate::combat::{KfSalvo, KfShip, KEYFRAME_SHIP_CAP};
+        let mut ships: Vec<KfShip> = Vec::new();
+        // Capitals (and platforms) first — the theater must never lose them.
+        for c in &self.combatants {
+            if c.platform || crate::ship::requires_hull_unlock(c.kind) {
+                ships.push(KfShip { side: c.side, kind: c.kind, x: c.pos.x as f32, y: c.pos.y as f32, hp: (c.hp / c.max_hp) as f32, plat: c.platform });
+            }
+        }
+        for c in &self.combatants {
+            if ships.len() >= KEYFRAME_SHIP_CAP {
+                break;
+            }
+            if !c.platform && !crate::ship::requires_hull_unlock(c.kind) {
+                ships.push(KfShip { side: c.side, kind: c.kind, x: c.pos.x as f32, y: c.pos.y as f32, hp: (c.hp / c.max_hp) as f32, plat: false });
+            }
+        }
+        let mut torpedoes: Vec<KfSalvo> = Vec::new();
+        for side in 0..2u8 {
+            let fish: Vec<&Torpedo> = self.torpedoes.iter().filter(|t| t.side == side).collect();
+            if fish.is_empty() {
+                continue;
+            }
+            let n = fish.len() as u32;
+            let cx = fish.iter().map(|t| t.pos.x).sum::<f64>() / n as f64;
+            let cy = fish.iter().map(|t| t.pos.y).sum::<f64>() / n as f64;
+            torpedoes.push(KfSalvo { side, x: cx as f32, y: cy as f32, n });
+        }
+        crate::combat::Keyframe { ships, torpedoes, deaths }
     }
 
     /// Damage into a combatant, with PER-HIT armor mitigation (Reflective vs

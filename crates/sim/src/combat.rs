@@ -614,6 +614,65 @@ pub struct RoundRecord {
     pub dealt: [f64; 2],
     pub kills: [BTreeMap<ShipKind, u32>; 2],
     pub notes: Vec<RoundNote>,
+    /// §tactical T3: the TRUTH KEYFRAME for this round — real combatant
+    /// positions, live torpedo salvos, exact deaths. serde-default: old
+    /// records have none (the client falls back to choreographed rendering).
+    /// PARTICIPANT fidelity only on the wire.
+    #[serde(default)]
+    pub frame: Option<Keyframe>,
+}
+
+// --- §tactical T3: TRUTH KEYFRAMES --------------------------------------------------
+
+/// Representative-combatant cap per keyframe (all capitals ALWAYS ride along;
+/// the rest fill to this cap in stable cid order). Tunable.
+pub const KEYFRAME_SHIP_CAP: usize = 60;
+/// Exact death events kept per recorded round. Tunable.
+pub const KEYFRAME_DEATH_CAP: usize = 40;
+
+/// A recorded round's slice of battle TRUTH: where (a sample of) the ships
+/// actually were, what torpedo salvos were in flight, and exactly where ships
+/// died. The theater is an interpolating REPLAYER of these — reality provides
+/// the choreography now.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Keyframe {
+    pub ships: Vec<KfShip>,
+    pub torpedoes: Vec<KfSalvo>,
+    pub deaths: Vec<KfDeath>,
+}
+
+/// One sampled combatant (positions in battle-local arena coords; `hp` is the
+/// remaining fraction so the client can dim the wounded).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfShip {
+    pub side: u8,
+    pub kind: ShipKind,
+    pub x: f32,
+    pub y: f32,
+    pub hp: f32,
+    /// A Defense Platform tier (drawn as an emplacement, not a hull).
+    #[serde(default)]
+    pub plat: bool,
+}
+
+/// A live torpedo SALVO summary: `n` fish around a centroid, per firing side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfSalvo {
+    pub side: u8,
+    pub x: f32,
+    pub y: f32,
+    pub n: u32,
+}
+
+/// An exact death event: which side lost what kind, where, at which tactical
+/// step (capped per round — see [`KEYFRAME_DEATH_CAP`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfDeath {
+    pub step: u64,
+    pub side: u8,
+    pub kind: ShipKind,
+    pub x: f32,
+    pub y: f32,
 }
 
 /// The resolved outcome: who won (as a [`RaidOutcome`]) + each side's total
@@ -638,6 +697,10 @@ struct PendingRound {
     notes: Vec<RoundNote>,
     /// Sim tick of the last flush (round cadence is measured from here).
     last_flush_tick: u64,
+    /// §tactical T3: the LATEST truth keyframe since the last flush (the
+    /// flushed round carries it) + deaths accumulated across the window.
+    frame: Option<Keyframe>,
+    deaths: Vec<KfDeath>,
     /// Flush cadence in ticks (computed at open from the expected duration).
     round_every: u64,
 }
@@ -723,6 +786,14 @@ impl BattleRecord {
     }
 
     /// Note a beat (forces a round flush on the next `flush_if_due`).
+    /// §tactical T3: feed the latest truth keyframe (deaths ACCUMULATE across
+    /// the round window, capped; the positional snapshot is last-wins).
+    pub fn keyframe(&mut self, mut frame: Keyframe) {
+        self.pending.deaths.append(&mut frame.deaths);
+        self.pending.deaths.truncate(KEYFRAME_DEATH_CAP);
+        self.pending.frame = Some(frame);
+    }
+
     pub fn note(&mut self, note: RoundNote) {
         self.pending.notes.push(note);
     }
@@ -740,9 +811,14 @@ impl BattleRecord {
         let dealt = self.pending.dealt;
         let kills = std::mem::take(&mut self.pending.kills);
         let notes = std::mem::take(&mut self.pending.notes);
+        let frame = self.pending.frame.take().map(|mut f| {
+            f.deaths = std::mem::take(&mut self.pending.deaths);
+            f
+        });
+        self.pending.deaths.clear();
         self.pending.dealt = [0.0, 0.0];
         self.pending.last_flush_tick = tick;
-        self.rounds.push(RoundRecord { tick, counts, dealt, kills, notes });
+        self.rounds.push(RoundRecord { tick, counts, dealt, kills, notes, frame });
     }
 
     fn pending_has_content(&self) -> bool {

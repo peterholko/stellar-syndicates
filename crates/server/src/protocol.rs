@@ -1005,6 +1005,11 @@ pub struct RoundRecordView {
     /// Damage each side dealt — PARTICIPANT ONLY (`None` at bucket fidelity).
     pub dealt: Option<[f64; 2]>,
     pub notes: Vec<RoundNoteView>,
+    /// §tactical T3: the round's TRUTH KEYFRAME (real positions, torpedo
+    /// salvos, exact deaths) — PARTICIPANT ONLY, absent on old records (the
+    /// client falls back to choreographed rendering).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<sim::combat::Keyframe>,
 }
 
 /// A battle's replay as one viewer perceives it — light-gated + fidelity-tiered.

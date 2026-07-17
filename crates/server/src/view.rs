@@ -937,6 +937,9 @@ fn record_round(rr: &sim::RoundRecord, participant: bool) -> RoundRecordView {
         kills: [record_counts(&rr.kills[0], participant), record_counts(&rr.kills[1], participant)],
         dealt: participant.then_some(rr.dealt),
         notes: rr.notes.iter().filter_map(|n| record_note(n, participant)).collect(),
+        // §T3: truth keyframes ride PARTICIPANT fidelity only (fog-safe — a
+        // bucket observer never learns the arena's geometry).
+        frame: if participant { rr.frame.clone() } else { None },
     }
 }
 
