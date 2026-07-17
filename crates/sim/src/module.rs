@@ -34,9 +34,10 @@ pub const DRIVER_MULT: f64 = 1.3;
 pub const TORP_MULT: f64 = 1.6;
 /// A Point-Defense ship trades offense for screening: its beam runs at half.
 pub const PD_ATTACK: f64 = 0.5;
-/// Side interception: incoming torpedo damage is cut by `PD_INTERCEPT × pd_share`,
-/// where `pd_share` is the PD-fitted hull fraction of the defending side.
-pub const PD_INTERCEPT: f64 = 0.6;
+// §tactical supersession: the side-level `PD_INTERCEPT` share-math is DELETED.
+// PD is LITERAL now — each PD-fitted ship rolls intercepts against torpedoes
+// crossing its screen bubble ([`crate::tactical::PD_ROLL_BASE`] × Interception
+// affinity × the Flak-research mod, wired through `SideMods::flak_mult`).
 /// Reflective Plating blunts BEAM damage into the fitted stack by this fraction.
 pub const REFLECT_BLUNT: f64 = 0.35;
 /// Whipple Armor blunts DRIVER damage into the fitted stack by this fraction —

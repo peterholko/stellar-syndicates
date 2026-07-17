@@ -1975,8 +1975,8 @@ impl World {
     }
 
     /// §modules: the side's aggregate LOADOUT partition (summed over its fleets)
-    /// — `kind → loadout key → count`, fitted stacks only. Feeds
-    /// [`crate::combat::Forces::from_side`] so combat fights the real fits.
+    /// — `kind → loadout key → count`, fitted stacks only. Feeds the tactical
+    /// unpack ([`crate::tactical::stacked`]) so battles fight the real fits.
     fn side_loadouts(&self, members: &[EntityId]) -> crate::combat::LoadoutMap {
         let mut out: crate::combat::LoadoutMap = BTreeMap::new();
         for id in members {
@@ -10656,11 +10656,17 @@ mod tests {
             2,
             "the over-budget legacy stack loads intact"
         );
-        // …and it FIGHTS: the stack partitions into Forces and fires torpedoes.
+        // …and it FIGHTS: the tactical unpack keeps the stack under its own
+        // loadout key, and that loadout's offense is torpedo-typed.
         let comp = w.fleets[&fleet].composition.clone();
         let loadouts = w.fleets[&fleet].loadouts.clone();
-        let side = crate::combat::Forces::from_side(&comp, &loadouts, &Default::default());
-        assert!(side.typed_attack().torpedo > 0.0, "the legacy torpedo fit still fires");
+        let stacks = crate::tactical::stacked(&comp, &loadouts);
+        assert_eq!(
+            stacks.get(&ShipKind::Corvette).and_then(|m| m.get(&legacy.key())).copied().unwrap_or(0),
+            2,
+            "the legacy stack unpacks into battle under its own fit"
+        );
+        assert!(matches!(legacy.offense().0, crate::module::DamageType::Torpedo), "the legacy torpedo fit still fires");
         // Refit must land on a LEGAL fit: legacy → another over-budget fit rejects…
         let still_heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::ReflectivePlating]); // 5 ≤ 5 — actually legal on Corvette
         assert!(still_heavy.validate(ShipKind::Corvette));

@@ -239,11 +239,11 @@ impl ShipKind {
         self.attack_weight() + self.defense_weight()
     }
 
-    /// HULL (§FLEETS Part 2 — Lanchester): the damage a kind's pool must absorb
-    /// to destroy ONE ship of it. Derived from its defense weight (`defense ×
-    /// [`crate::combat::HULL_PER_DEFENSE`]`) with a small floor so even a
-    /// zero-defense scout can be attritted (it just dies fast — speed was its
-    /// armor). Tunable via the combat block.
+    /// HULL: the strategic ACCOUNTING weight of one ship of this kind — used by
+    /// rankings and corp stats (hull destroyed/absorbed). Derived from its
+    /// defense weight (`defense × [`crate::combat::HULL_PER_DEFENSE`]`) with a
+    /// small floor. §tactical: battle HP is [`ShipKind::hull_mass`], not this —
+    /// this stays the cross-kind score currency. Tunable via the combat block.
     pub fn hull(self) -> f64 {
         (self.defense_weight() * crate::combat::HULL_PER_DEFENSE).max(crate::combat::HULL_MIN)
     }
@@ -315,13 +315,18 @@ pub fn hull_affinity(kind: ShipKind, family: crate::module::Family) -> f64 {
     }
 }
 
-/// §ladder B3: torpedo-typed damage into a CAPITAL-mass hull gains this edge —
-/// big slow hulls can't dodge a seeker. Magnitude only (PD still intercepts,
-/// armor stays irrelevant); the threshold sits between the Cruiser (4000) and
+/// The mass line above which a hull counts as a CAPITAL — it anchors instead
+/// of holding the line ([`crate::tactical::Role::Anchor`]) and platform-grade
+/// PD bubbles key off it. The threshold sits between the Cruiser (4000) and
 /// the Battleship (8000), clear of the Colony's 6000. Tunable.
+///
+/// §tactical supersession of ladder B3: the flat `TORP_CAPITAL_EDGE` ×1.25 is
+/// DELETED — the capital-hunting torpedo is now EMERGENT from tracking (to-hit
+/// rises steeply with target mass and falls with target speed, so a seeker
+/// near-guarantees against a Titan and struggles against a darting Corvette).
+/// The wolfpack answer exists because the physics says so, not because a
+/// multiplier was bolted on.
 pub const CAPITAL_MASS_THRESHOLD: f64 = 7_000.0;
-/// §ladder B3: the torpedo capital-edge multiplier. Tunable.
-pub const TORP_CAPITAL_EDGE: f64 = 1.25;
 
 /// §ladder: does this hull require its research programme (UnlockHull) before
 /// it can be built? The five ladder hulls do; the original five never do.

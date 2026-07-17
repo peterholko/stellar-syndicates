@@ -867,7 +867,7 @@ pub const CATALOG: &[Programme] = &[
         effects: PENDING, hidden: false },
     // ⑂ COUNTERMEASURES (gate: absorb 150 hull-mass of damage)
     Programme { id: "weap_cm_iii_flak_doctrine", field: Field::Weapons, school: Some(School::Countermeasures), tier: 3,
-        name: "Flak Doctrine", blurb: "Point-Defense interception 0.60 → 0.75.",
+        name: "Flak Doctrine", blurb: "Point-Defense intercept rolls ×1.25.",
         effects: &[Effect::Mods(&[(ModKey::PdIntercept, 0.75 / 0.60)])], hidden: false },
     Programme { id: "weap_cm_iii_ablative_refits", field: Field::Weapons, school: Some(School::Countermeasures), tier: 3,
         name: "Ablative Refits", blurb: "Reflective blunt 0.35 → 0.45.",

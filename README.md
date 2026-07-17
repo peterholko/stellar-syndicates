@@ -577,58 +577,54 @@ it. Dark fleets are omitted entirely outside coverage, so when seen at all they
 show full composition (consistent — no half-seen dark fleet). Cargo gating is
 unchanged (convoy cargo shows only in coverage).
 
-**Combat (Part 2 — deterministic Lanchester attrition).** Battles are no longer
-an all-or-nothing seeded coin-flip. Two pooled sides deal damage **each tick** in
-proportion to their weighted **attack** power; the damage spreads across the
-enemy's kinds by `count × hull` share and accumulates in per-kind **damage
-pools**; when a kind's pool fills a hull, one ship dies and the pool carries the
-remainder. You lose *counts*, not coin-flips.
+**Combat (§tactical — the individual-ship engine).** Battles unpack into
+INDIVIDUAL ships with positions, roles, and projectiles, fight inside a
+battle-local arena, and repack into count-stacks when it ends — the
+**containment law**: fleets are count-stacks everywhere outside an engagement
+(detection, buckets, movement, fuel, economy, fog — all untouched), so the
+strategic layer cannot tell the engine changed. This supersedes the pooled
+Lanchester attrition (`attrition_tick`/`absorb`/`project_engagement` are
+deleted; `tactical.rs` is the engine).
 
-- **Hull table** (`hull = defense_weight × 10`, floored at 2): Convoy 10 ·
-  Colony 10 · Raider 20 · Corvette 40 · Scout 2 (a scout "dies if engaged" —
-  stripped the instant it's in a battle) · platform tier 30. `DMG_RATE = 0.1`
-  per tick (a raider wears a convoy down in ~1 s, grinds a corvette screen over
-  ~4 s). **Corvettes soak first** via their high hull share — escort is now
-  primarily *composition* (put corvettes in the convoy fleet).
-- **Concentration law (proven numerically).** One 20-raider fleet vs a 10 leaves
-  **~18 survivors** (Lanchester's √(20²−10²) ≈ 17.3, not the linear 10); the same
-  20 beating **two sequential 10s** keeps **14** — concentration beats division,
-  exactly the Travian `(loser/winner)^1.5` spirit.
-- **Retreat is literal.** Doctrine thresholds now fire on the **fraction of own
-  weighted strength lost** (Half = withdraw at 50 % gone); survivors disengage
-  and flee home. Re-checked every tick, so **relief merging in mid-battle shifts
-  the ratio and can flip the outcome** (tested).
-- **Raid vs battle asymmetry.** Cargo raids run at `DMG_RATE × 0.3` (a survivable
-  skirmish — the raider seizes the convoy's cargo and breaks off); blockade /
-  defense-of-place run at full rate (decisive). A **defense platform** folds into
-  the defender as stationary tiers with their own pool (ram attrition preserved).
-- **Reports** are the same light-delayed, per-side battle reports — now
-  **composition vs composition with losses per kind** ("You lost 2 Raider · They
-  lost 3 Corvette"), read by old light.
+- **Seeded, isolated randomness.** Each battle derives its own RNG stream from
+  `(world_seed, battle_id)` — same seed, same battle, byte-identical for every
+  viewer, and the battle stream **never touches the world's RNG** (adding a
+  battle shifts zero unrelated draws — test-enforced). Dice live in targeting,
+  to-hit, ±15 % damage variance, and torpedo interception: bounded spice.
+  Small skirmishes are tense; big fleet actions converge on the math.
+- **Where the emergence lives.** To-hit rises with target MASS and falls with
+  target SPEED per weapon family — beams track well, drivers punish big slow
+  hulls and whiff on darting Corvettes, torpedoes near-guarantee against
+  capitals and struggle against small fast ships. The old flat
+  `TORP_CAPITAL_EDGE` ×1.25 is deleted: the capital-hunting torpedo and the
+  wolfpack answer are **emergent from tracking**, not bolted-on multipliers.
+- **Role scripts are published constants, not AI** (and there is **no player
+  tactical input, forever** — doctrine and fleet orders only): Anchor (capitals
+  hold the line's center) · Line (advance to preferred band, hold, fire) ·
+  Screen (PD ships interpose on the torpedo threat axis) · Skirmish (fast hulls
+  orbit the flanks) · Withdraw (burn for the edge under literal pursuit fire).
+- **PD is literal.** Each PD-fitted ship rolls intercepts against torpedoes
+  crossing its screen bubble (a Dreadnought projects a platform-grade radius) —
+  screening is positional truth: the Corvette actually standing between the
+  torpedo axis and your Battleship intercepts more. The counter matrix
+  (Reflective/beam, Whipple/driver, torpedoes ignore armor) survives as
+  per-hit multipliers — intact in expected value.
+- **The boundary conserves everything.** Survivors repack per `(kind, loadout)`
+  stack; missing HP flows into the existing per-stack damage pools; the dead
+  land in `Losses.per_stack`; waves commit deterministically at the 300-a-side
+  cap (huge fleets fight in echelons). Retreat doctrine, raid brevity, records,
+  and reports all ride on top unchanged.
 
-The engagement is otherwise **stateless**: only the damage pools persist (on the
-fleets and the platform), so a mid-battle snapshot/restart resumes the fight. The
-whole thing is a single shared pure function (`combat::attrition_tick` /
-`project_engagement`) — the authoritative sim and the stale-intel calculator
-(Part 3) both call it, so they can never drift.
-
-**The stale-intel battle calculator (Part 3).** When you commit a raid you get a
-**projected engagement estimate** — computed by running *that same shared
-Lanchester function* forward, fed **only by your own view data**:
-
-- **Your fleet** — exact (you know your own ships, pools and all).
-- **The target** — its ghost at the retarded state: **exact composition inside
-  your sensor coverage**, otherwise a **typical warfleet of the bucket midpoint**
-  ("assuming typical hulls") — provably a function of the *bucket*, never the true
-  count (leak-checked: a true 25-ship fleet out of coverage is modelled as ≤ 23).
-- **Their defenses** — a platform from your **aging scout snapshot** if one covers
-  the target, else marked unknown.
-
-The panel reports projected per-kind losses on both sides **and the age of every
-input** ("their composition: 12s old · defenses: scouted 4m ago") — exact
-arithmetic, honest about stale inputs. It **calls the shared combat function** (no
-reimplementation, no drift) and **never touches authoritative state** (a read-only
-`EstimateEngagement` query answered from the view filter).
+**The battle calculator (Monte Carlo).** When you commit a raid you get a
+**projected distribution** — `k = 32` seeded rollouts of the REAL engine
+(`tactical::simulate_engagement`, headless and pure) over **only your own view
+data**: your fleet exact; the target's ghost at the retarded state (exact in
+sensor coverage, else a **typical warfleet of the bucket midpoint** — provably
+never the true count); their defenses from your aging scout snapshot or marked
+unknown. The readout leads with **"68 % favorable · expected losses 4–7
+Corvettes"** (win rate + interquartile loss bands) and the age of every input —
+the no-drift law survives the engine swap: it is *reality's exact function,
+sampled, on stale inputs*, and it never touches authoritative state.
 
 **Management v1 (compose at an owned system, never in flight).**
 

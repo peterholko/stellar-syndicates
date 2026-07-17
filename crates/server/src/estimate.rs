@@ -1,9 +1,11 @@
-//! The STALE-INTEL battle calculator (§FLEETS Part 3).
+//! The STALE-INTEL battle calculator (§FLEETS Part 3, §tactical T4 — Monte
+//! Carlo).
 //!
 //! When a player is about to commit an intercept/raid, they get a PROJECTED
-//! engagement estimate — computed by running the SAME shared Lanchester
-//! attrition ([`sim::project_engagement`]) forward, fed ONLY by that observer's
-//! own view data:
+//! engagement estimate — computed by SAMPLING the real tactical engine
+//! ([`sim::tactical::project_distribution`] → k seeded headless rollouts of
+//! [`sim::tactical::simulate_engagement`]), fed ONLY by that observer's own
+//! view data:
 //!
 //!   * **Own fleet** — exact (you know your own ships).
 //!   * **Target** — its ghost at the retarded state: exact composition when it's
@@ -12,10 +14,12 @@
 //!   * **Defenses** — a defense platform from the player's aging scout snapshot
 //!     if one covers the target, else unknown.
 //!
-//! It MUST call the shared combat function (no reimplementation, no drift) and
-//! MUST NOT touch authoritative state — it only reads the world (own fleet) and
-//! the view filter (what the observer can see). The output is honest about the
-//! age of every input.
+//! The no-drift law survives the engine swap: the projection IS reality's
+//! exact function, sampled, on stale inputs — never a reimplementation. It
+//! MUST NOT touch authoritative state — it only reads the world (own fleet)
+//! and the view filter (what the observer can see). The output is honest about
+//! the age of every input, and honest about VARIANCE: a win percentage and
+//! interquartile loss bands, not a single false-precision number.
 
 use sim::{PlayerId, Vec2, World};
 

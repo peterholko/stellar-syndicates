@@ -49,8 +49,8 @@ pub use colony::FoodState;
 pub use production::{Assignment, SuspendReason};
 pub use specialist::SpecialistKind;
 pub use combat::{
-    attrition_tick, project_engagement, typical_forces, BattleOutcomeSummary, BattleRecord, Forces,
-    Losses, RoundNote, RoundRecord, SideRecord, TypedDamage,
+    typical_forces, BattleOutcomeSummary, BattleRecord, Forces, Losses, RoundNote, RoundRecord,
+    SideRecord, TypedDamage,
 };
 pub use module::{weapon_family, DamageType, Family, Loadout, ModuleKind};
 pub use command::Command;
