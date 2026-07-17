@@ -378,6 +378,27 @@ pub struct EngagementEstimate {
     pub defenses_age: Option<f64>,
     /// Scouted platform tiers folded into the target, if a snapshot covered it.
     pub platform_tiers: Option<u32>,
+    /// §tactical T4: the Monte Carlo readout — attacker-favorable fraction over
+    /// `runs` rollouts of the REAL engine on derived seeds ("68% favorable").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<u32>,
+    /// Per-kind 25th–75th percentile loss bands ("expected losses 4–7
+    /// Corvettes"). Predictive Plots research widens the DISPLAY of these —
+    /// it never invents math.
+    #[serde(default)]
+    pub own_loss_bands: Vec<LossRange>,
+    #[serde(default)]
+    pub target_loss_bands: Vec<LossRange>,
+}
+
+/// §tactical T4: one per-kind loss band (25th–75th percentile of the rollouts).
+#[derive(Debug, Clone, Serialize)]
+pub struct LossRange {
+    pub kind: ShipKind,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 /// Severity of a check-in timeline entry — drives the client's colour/icon.

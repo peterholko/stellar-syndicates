@@ -704,14 +704,15 @@ export interface RaidReport {
   target_losses: CompCount[];
 }
 
-// A projected engagement estimate (§FLEETS Part 3), computed server-side by
-// running the SAME Lanchester attrition forward on YOUR view data. Honest about
-// staleness: `target_known = false` means the target was out of sensor coverage,
-// so it assumed a typical warfleet of the bucket size (never the true count).
+// A projected engagement estimate (§FLEETS Part 3, §tactical T4), computed
+// server-side by Monte Carlo: k seeded rollouts of the REAL tactical engine on
+// YOUR view data. Honest about staleness: `target_known = false` means the
+// target was out of sensor coverage, so it assumed a typical warfleet of the
+// bucket size (never the true count).
 export interface EngagementEstimate {
   attacker: EntityId;
   target: EntityId;
-  own_losses: CompCount[];
+  own_losses: CompCount[]; // median rollout
   target_losses: CompCount[];
   own_survivors: CompCount[];
   target_survivors: CompCount[];
@@ -720,6 +721,18 @@ export interface EngagementEstimate {
   composition_age: number; // age of the target sighting (s)
   defenses_age: number | null; // age of the scouted-defenses snapshot (s), if any
   platform_tiers: number | null;
+  // §tactical T4: distribution readout. Absent from pre-Monte-Carlo servers.
+  win_pct?: number | null; // % of rollouts the attacker wins
+  runs?: number | null; // rollout count (k)
+  own_loss_bands?: LossRange[]; // 25th–75th percentile losses per hull
+  target_loss_bands?: LossRange[];
+}
+
+// §tactical T4: an interquartile loss band for one hull kind.
+export interface LossRange {
+  kind: ShipKind;
+  lo: number;
+  hi: number;
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).

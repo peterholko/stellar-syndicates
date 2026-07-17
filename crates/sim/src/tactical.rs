@@ -1008,6 +1008,172 @@ impl TacticalState {
     }
 }
 
+// --- §T4: THE CALCULATOR IS MONTE CARLO NOW ---------------------------------------
+//
+// `project_engagement` (closed-form Lanchester) is superseded: the projection
+// runs THE REAL ENGINE, headless and pure, k times on derived seeds over the
+// observer's light-delayed view data. The no-drift property survives — it is
+// still reality's exact function, sampled, on stale inputs.
+
+/// A headless projection setup (built from VIEW data — own side exact, target
+/// side fogged exactly as the observer sees it).
+#[derive(Debug, Clone, Default)]
+pub struct ProjSetup {
+    pub a: LoadoutMap,
+    pub d: LoadoutMap,
+    pub a_pool: StackPoolMap,
+    pub d_pool: StackPoolMap,
+    pub platform_tiers: u32,
+    pub raid: bool,
+    /// Retreat thresholds as min-strength-ratio (mirroring doctrine); `None`
+    /// fights to the end.
+    pub a_retreat: Option<f64>,
+    pub d_retreat: Option<f64>,
+}
+
+/// One headless rollout's outcome.
+#[derive(Debug, Clone, Default)]
+pub struct SimOutcome {
+    pub a_losses: BTreeMap<ShipKind, u32>,
+    pub d_losses: BTreeMap<ShipKind, u32>,
+    pub a_survivors: BTreeMap<ShipKind, u32>,
+    pub d_survivors: BTreeMap<ShipKind, u32>,
+    pub steps: u64,
+    /// The attacker's side prevailed: the defender is wiped or withdrew while
+    /// the attacker still stands.
+    pub a_won: bool,
+}
+
+/// Hard step cap for a headless rollout (a real battle at the production
+/// cadence resolves in well under this; the cap bounds a runaway stalemate).
+pub const MAX_PROJ_STEPS: u64 = 600;
+
+/// Run the REAL engine headless: pure over `(setup, seed)` — byte-identical
+/// outcome for identical inputs, and the world's RNG is never touched.
+pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
+    let mut st = TacticalState::open(
+        seed,
+        0xC0FFEE, // the projection's battle-id salt — any constant works
+        &setup.a,
+        &setup.d,
+        &setup.a_pool,
+        &setup.d_pool,
+        setup.platform_tiers,
+        0.0,
+        Vec2::new(1.0, 0.0),
+    );
+    let scouts = st.sync([&setup.a, &setup.d]);
+    let mut out = SimOutcome::default();
+    // Boundary scouts die instantly, as in the real lifecycle.
+    if scouts[0] > 0 {
+        *out.a_losses.entry(ShipKind::Scout).or_insert(0) += scouts[0];
+    }
+    if scouts[1] > 0 {
+        *out.d_losses.entry(ShipKind::Scout).or_insert(0) += scouts[1];
+    }
+    let start = [st.side_hp(0, false).max(1e-9), st.side_hp(1, false).max(1e-9)];
+    while out.steps < MAX_PROJ_STEPS {
+        let step_out = st.step(setup.raid, [SideMods::default(), SideMods::default()]);
+        out.steps += 1;
+        for (side, losses) in step_out.losses.iter().enumerate() {
+            let tgt = if side == 0 { &mut out.a_losses } else { &mut out.d_losses };
+            for (k, n) in &losses.per_kind {
+                *tgt.entry(*k).or_insert(0) += n;
+            }
+        }
+        // Doctrine-mirrored retreat: trip once, then run for the edge.
+        if let Some(m) = setup.a_retreat
+            && !st.withdrawing[0]
+            && st.side_hp(0, false) / start[0] < m
+        {
+            st.order_withdraw(0);
+        }
+        if let Some(m) = setup.d_retreat
+            && !st.withdrawing[1]
+            && st.side_hp(1, false) / start[1] < m
+        {
+            st.order_withdraw(1);
+        }
+        let a_alive = st.alive(0) > 0;
+        let d_alive = st.alive(1) > 0 || st.platform_tiers() > 0;
+        if !a_alive || !d_alive || st.side_withdrawn(0) || st.side_withdrawn(1) {
+            break;
+        }
+    }
+    for c in st.combatants.iter().filter(|c| !c.platform) {
+        let tgt = if c.side == 0 { &mut out.a_survivors } else { &mut out.d_survivors };
+        *tgt.entry(c.kind).or_insert(0) += 1;
+    }
+    let a_alive = st.alive(0) > 0;
+    let d_gone = st.alive(1) == 0 && st.platform_tiers() == 0;
+    out.a_won = a_alive && (d_gone || st.withdrawing[1]);
+    out
+}
+
+/// A per-kind loss RANGE across the rollouts (the 25th–75th percentile band —
+/// "expected losses 4–7 Corvettes").
+#[derive(Debug, Clone)]
+pub struct LossBand {
+    pub kind: ShipKind,
+    pub lo: u32,
+    pub hi: u32,
+}
+
+/// The sampled DISTRIBUTION the calculator shows.
+#[derive(Debug, Clone, Default)]
+pub struct Distribution {
+    pub runs: u32,
+    pub a_win_pct: f64,
+    pub a_bands: Vec<LossBand>,
+    pub d_bands: Vec<LossBand>,
+    /// The MEDIAN-outcome rollout (by attacker losses) — the legacy single-
+    /// projection fields read from this.
+    pub median: SimOutcome,
+}
+
+/// `k` rollouts on seeds derived from `base_seed` — deterministic for the same
+/// inputs, independent across rollouts. `k` is DOWNSAMPLED for huge setups
+/// (the stated CPU budget: a reference battle × 32 stays trivially cheap; a
+/// 300v300 echelon fight samples 8).
+pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distribution {
+    let ships: u32 = setup.a.values().flat_map(|m| m.values()).sum::<u32>()
+        + setup.d.values().flat_map(|m| m.values()).sum::<u32>();
+    let k = if ships > 150 { k.min(8) } else if ships > 60 { k.min(16) } else { k.max(1) };
+    let mut outs: Vec<SimOutcome> = (0..k)
+        .map(|i| simulate_engagement(setup, base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+        .collect();
+    let wins = outs.iter().filter(|o| o.a_won).count();
+    let band = |outs: &[SimOutcome], side_a: bool| -> Vec<LossBand> {
+        let mut kinds: Vec<ShipKind> = Vec::new();
+        for o in outs {
+            for k in (if side_a { &o.a_losses } else { &o.d_losses }).keys() {
+                if !kinds.contains(k) {
+                    kinds.push(*k);
+                }
+            }
+        }
+        kinds.sort();
+        kinds
+            .into_iter()
+            .map(|kind| {
+                let mut v: Vec<u32> = outs
+                    .iter()
+                    .map(|o| (if side_a { &o.a_losses } else { &o.d_losses }).get(&kind).copied().unwrap_or(0))
+                    .collect();
+                v.sort_unstable();
+                let q = |p: f64| v[((v.len() - 1) as f64 * p).round() as usize];
+                LossBand { kind, lo: q(0.25), hi: q(0.75) }
+            })
+            .collect()
+    };
+    let a_bands = band(&outs, true);
+    let d_bands = band(&outs, false);
+    // Median rollout by total attacker losses (stable order → deterministic).
+    outs.sort_by_key(|o| o.a_losses.values().sum::<u32>());
+    let median = outs[outs.len() / 2].clone();
+    Distribution { runs: k, a_win_pct: wins as f64 / k as f64, a_bands, d_bands, median }
+}
+
 /// The role a hull takes at unpack — kind + loadout (+ side anchoring). A
 /// published rule, not AI: capitals anchor, PD screens, light fast hulls
 /// skirmish, the middle of the line holds the line.

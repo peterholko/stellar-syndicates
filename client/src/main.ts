@@ -4184,6 +4184,13 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
   const log = $("reports-log");
   const fmt = (l: import("./protocol").CompCount[]): string =>
     l.filter((c) => c.count > 0).map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") || "none";
+  // §tactical T4: an interquartile band reads "4–7 Corvettes" (or just "5" when tight).
+  const fmtBands = (b: import("./protocol").LossRange[] | null | undefined): string | null => {
+    if (!b?.length) return null;
+    const parts = b.filter((x) => x.hi > 0)
+      .map((x) => `${x.lo === x.hi ? x.lo : `${x.lo}–${x.hi}`} ${shipKindLabel(x.kind)}`);
+    return parts.length ? parts.join(", ") : "none";
+  };
   const targetDesc = e.target_known
     ? "their exact composition"
     : `est. ${countClassLabel(e.target_count_class)} ships — <b>assuming typical hulls</b>`;
@@ -4191,10 +4198,35 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
   ages.push(e.defenses_age != null ? `defenses: scouted ${e.defenses_age.toFixed(0)}s ago` : `defenses: unknown`);
   const el = document.createElement("div");
   el.className = "report good";
+  // §tactical T4: lead with the distribution — "68% favorable · expected losses
+  // 4–7 Corvettes". Predictive Plots research widens the DISPLAY (their bands,
+  // rollout count) — the math underneath is identical either way.
+  const plots = state.research?.programmes.find((p) => p.id === "comp_predictive_plots")?.state === "completed";
+  const ownBand = fmtBands(e.own_loss_bands);
+  let lines: string;
+  if (e.win_pct != null && ownBand != null) {
+    const pct = Math.round(e.win_pct);
+    const tone = pct >= 55 ? "favorable" : pct >= 45 ? "even" : "unfavorable";
+    const verdict = `<b>${pct}% ${tone}</b> · expected losses ${esc(ownBand)}`;
+    const detail: string[] = [];
+    if (plots) {
+      const theirBand = fmtBands(e.target_loss_bands);
+      if (theirBand) detail.push(`their losses: ${theirBand}`);
+      if (e.runs != null) detail.push(`${e.runs} rollouts of the live engine`);
+    } else {
+      detail.push(`they'd lose: ${fmt(e.target_losses)} (median)`);
+    }
+    if (e.platform_tiers != null) detail.push(`through a ${e.platform_tiers}-tier platform`);
+    lines = `<div class="sp-line dim" style="margin-top:2px">${verdict}</div>` +
+      `<div class="sp-line dim">${esc(detail.join(" · "))}</div>`;
+  } else {
+    // Pre-distribution server: the old median-only readout.
+    lines = `<div class="sp-line dim" style="margin-top:2px">You'd lose: ${esc(fmt(e.own_losses))} · They'd lose: ${esc(fmt(e.target_losses))}${e.platform_tiers != null ? ` · through a ${e.platform_tiers}-tier platform` : ""}</div>`;
+  }
   el.innerHTML =
     `<span class="ic">⟿</span> <b>Projected raid</b> — ${targetDesc}` +
-    `<div class="sp-line dim" style="margin-top:2px">You'd lose: ${esc(fmt(e.own_losses))} · They'd lose: ${esc(fmt(e.target_losses))}${e.platform_tiers != null ? ` · through a ${e.platform_tiers}-tier platform` : ""}</div>` +
-    `<div class="sp-line dim">${esc(ages.join(" · "))} — exact arithmetic on stale inputs</div>`;
+    lines +
+    `<div class="sp-line dim">${esc(ages.join(" · "))} — the real engine, sampled, on stale inputs</div>`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 15000);
