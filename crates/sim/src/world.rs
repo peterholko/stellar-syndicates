@@ -2358,19 +2358,33 @@ impl World {
                         }
                     }
                 }
+                // §tactical T6 (stint accounting): relief folds into the side's
+                // START composition too — end-of-battle losses are computed as
+                // `start − final`, so without this a joined ship's death simply
+                // VANISHED from the report and the record's outcome summary.
+                // (Symmetric with the alive-exit subtraction in the disengage
+                // pass, so a flee-and-rejoin cycle stays exact.)
+                {
+                    let e = self.engagements.get_mut(eid).unwrap();
+                    for (fid, atk) in joiners {
+                        if atk {
+                            e.attackers.push(fid);
+                        } else {
+                            e.defenders.push(fid);
+                        }
+                    }
+                    for (k, n) in &atk_join {
+                        *e.a_start.entry(*k).or_insert(0) += *n;
+                    }
+                    for (k, n) in &def_join {
+                        *e.d_start.entry(*k).or_insert(0) += *n;
+                    }
+                }
                 if !atk_join.is_empty() {
                     self.record_note(*eid, crate::combat::RoundNote::Joined { side: 0, comp: atk_join });
                 }
                 if !def_join.is_empty() {
                     self.record_note(*eid, crate::combat::RoundNote::Joined { side: 1, comp: def_join });
-                }
-                let e = self.engagements.get_mut(eid).unwrap();
-                for (fid, atk) in joiners {
-                    if atk {
-                        e.attackers.push(fid);
-                    } else {
-                        e.defenders.push(fid);
-                    }
                 }
             }
         }
@@ -2432,6 +2446,17 @@ impl World {
                 // §battle-records: which side(s) BEGAN disengaging this tick.
                 let dis_atk = set_dis.iter().any(|(fid, _)| atkers.contains(fid));
                 let dis_def = set_dis.iter().any(|(fid, _)| defers.contains(fid));
+                // §tactical T6 (stint accounting): a fleet that exits ALIVE takes
+                // its surviving ships back OUT of the side's start composition —
+                // end-of-battle losses are `start − final`, and without this every
+                // escaped survivor was reported as a combat death. Symmetric with
+                // the join fold (enter: add current comp; leave alive: subtract
+                // it), so each stint contributes exactly its own losses — even
+                // across a flee-home-and-rejoin cycle.
+                let flee_comps: Vec<(EntityId, BTreeMap<ShipKind, u32>)> = flee
+                    .iter()
+                    .filter_map(|fid| self.fleets.get(fid).map(|f| (*fid, f.composition.clone())))
+                    .collect();
                 let e = self.engagements.get_mut(eid).unwrap();
                 for (fid, t) in set_dis {
                     e.disengaging.insert(fid, t);
@@ -2445,6 +2470,15 @@ impl World {
                     }
                     if e.defenders.contains(fid) {
                         e.d_fled = true;
+                    }
+                    let side_start = if e.attackers.contains(fid) { &mut e.a_start } else { &mut e.d_start };
+                    if let Some((_, comp)) = flee_comps.iter().find(|(id, _)| id == fid) {
+                        for (k, n) in comp {
+                            if let Some(have) = side_start.get_mut(k) {
+                                *have = have.saturating_sub(*n);
+                            }
+                        }
+                        side_start.retain(|_, n| *n > 0);
                     }
                     e.attackers.retain(|x| x != fid);
                     e.defenders.retain(|x| x != fid);
@@ -10163,6 +10197,182 @@ mod tests {
         let back: crate::combat::BattleRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rounds.iter().filter(|r| r.frame.is_some()).count(), framed.len());
     }
+
+    /// §tactical law 2 (stream isolation, test-enforced): battle dice come
+    /// from a stream derived from `(world_seed, battle_id)` — NEVER the world
+    /// RNG. Two worlds, identical except one fights an extra battle: after
+    /// equal tick counts their WORLD RNG states are byte-identical, so adding
+    /// or removing a battle shifts no unrelated draw anywhere in the sim.
+    #[test]
+    fn an_extra_battle_draws_nothing_from_the_world_rng() {
+        // Returns (rng state, whether a battle ever formed) — the premise is
+        // asserted below so the test can never pass vacuously (e.g. a future
+        // gate change silently rejecting the attack in both worlds).
+        let world_rng_after = |fight: bool| -> (serde_json::Value, bool) {
+            let mut w = test_world();
+            let (a, b) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+            let far = w.players[&a].command_center + Vec2::new(4_000.0, 4_000.0);
+            let striker = squad(&mut w, a, far, ShipKind::Raider, 6, FleetOrder::Idle);
+            let target = squad(&mut w, b, far + Vec2::new(40.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+            let cmds = if fight {
+                vec![Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]
+            } else {
+                vec![]
+            };
+            w.step(&cmds);
+            let mut battled = false;
+            for _ in 0..(40 * crate::config::TICK_HZ) {
+                w.step(&[]);
+                battled |= !w.engagements.is_empty();
+            }
+            (serde_json::to_value(&w).unwrap().get("rng").expect("world rng rides the snapshot").clone(), battled)
+        };
+        let (quiet, quiet_battled) = world_rng_after(false);
+        let (fought, fought_battled) = world_rng_after(true);
+        assert!(fought_battled, "the fight world really fought (the premise holds)");
+        assert!(!quiet_battled, "the control world stayed quiet (the premise holds)");
+        assert_eq!(quiet, fought, "a whole extra battle drew NOTHING from the world RNG stream");
+    }
+
+    /// §tactical law 1 (containment at the boundary): repack conserves ships
+    /// plus kills EXACTLY — every ship that unpacked either repacks into a
+    /// surviving stack or appears in the record's losses. Fought far from
+    /// both homes so no starter fleet folds in as relief.
+    #[test]
+    fn repack_conserves_ships_plus_kills() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        let far = w.players[&a].command_center + Vec2::new(4_000.0, 4_000.0);
+        let striker = squad(&mut w, a, far, ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(&mut w, b, far + Vec2::new(40.0, 0.0), ShipKind::Raider, 5, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let o = rec.outcome.as_ref().expect("outcome stamped");
+        assert!(
+            !rec.rounds.iter().flat_map(|r| &r.notes).any(|n| matches!(n, crate::combat::RoundNote::Joined { .. })),
+            "an isolated duel — nothing folded in"
+        );
+        for (side, fid) in [(0usize, striker), (1usize, target)] {
+            let survivors = w.fleets.get(&fid).map(|f| f.composition.get(&ShipKind::Raider).copied().unwrap_or(0)).unwrap_or(0);
+            let lost = o.total_losses[side].get(&ShipKind::Raider).copied().unwrap_or(0);
+            let initial = rec.sides[side].initial.get(&ShipKind::Raider).copied().unwrap_or(0);
+            assert_eq!(survivors + lost, initial, "side {side}: survivors + kills == what unpacked");
+        }
+    }
+
+    /// §tactical T6 (the join-accounting fix): when relief folds in mid-battle,
+    /// the joined ships' deaths COUNT — the outcome's per-side losses equal
+    /// `(opening + joined) − survivors`, never the opening-only diff that used
+    /// to swallow a reinforced side's casualties.
+    #[test]
+    fn reinforced_side_losses_are_fully_counted() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        let far = w.players[&a].command_center + Vec2::new(4_000.0, -4_000.0);
+        // A deliberately losing attacker + relief AT the site (folds in at open),
+        // against a defender wall that will kill attackers from BOTH wings.
+        let striker = squad(&mut w, a, far, ShipKind::Raider, 3, FleetOrder::Idle);
+        let relief = squad(&mut w, a, far + Vec2::new(30.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        let target = squad(&mut w, b, far + Vec2::new(60.0, 0.0), ShipKind::Raider, 9, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let joined: u32 = rec
+            .rounds
+            .iter()
+            .flat_map(|r| &r.notes)
+            .filter_map(|n| match n {
+                crate::combat::RoundNote::Joined { side: 0, comp } => Some(comp.get(&ShipKind::Raider).copied().unwrap_or(0)),
+                _ => None,
+            })
+            .sum();
+        assert!(joined > 0, "the relief wing folded into the attacker side");
+        let survivors: u32 = [striker, relief]
+            .iter()
+            .filter_map(|fid| w.fleets.get(fid))
+            .map(|f| f.composition.get(&ShipKind::Raider).copied().unwrap_or(0))
+            .sum();
+        let o = rec.outcome.as_ref().expect("outcome stamped");
+        let lost = o.total_losses[0].get(&ShipKind::Raider).copied().unwrap_or(0);
+        let initial = rec.sides[0].initial.get(&ShipKind::Raider).copied().unwrap_or(0);
+        assert!(lost > 0, "the outnumbered attacker bled somewhere");
+        assert_eq!(survivors + lost, initial + joined, "reinforced-side losses are fully counted");
+    }
+
+    /// §tactical T6 (the alive-exit half of stint accounting): a fleet that
+    /// FLEES a battle alive takes its surviving ships out of the side's start
+    /// composition — the record must never report an escaped survivor as a
+    /// combat death (`start − final` used to count the whole escaped fleet).
+    #[test]
+    fn escaped_survivors_are_not_reported_as_losses() {
+        let mut w = test_world();
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: d, name: "D".into() }]);
+        let mut doc = w.players[&a].doctrine;
+        doc.engagement = crate::doctrine::EngagementPolicy::Avoid;
+        w.step(&[Command::SetFleetDoctrine { player_id: a, doctrine: doc }]);
+        let pos = w.players[&a].command_center + Vec2::new(500.0, 0.0);
+        // a's raiders (Avoid, faster) are jumped by d's corvettes: a brief
+        // scrape, then they out-speed the corvettes and escape ALIVE.
+        let raider = squad(&mut w, a, pos, ShipKind::Raider, 2, FleetOrder::Idle);
+        let _corv = squad(&mut w, d, pos + Vec2::new(40.0, 0.0), ShipKind::Corvette, 3, FleetOrder::Intercept { target: raider });
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the scrape opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 120, |w| w.engagements.is_empty()), "the scrape resolves");
+        let escaped = w.fleets.get(&raider).map(|f| f.composition.get(&ShipKind::Raider).copied().unwrap_or(0)).unwrap_or(0);
+        assert!(escaped > 0, "the faster raiders got away with ships");
+        let rec = &w.battle_records[&eid];
+        let o = rec.outcome.as_ref().expect("outcome stamped");
+        // The raiders were the jumped side — find which side they were on.
+        let side = if rec.sides[0].corp == a { 0 } else { 1 };
+        let lost = o.total_losses[side].get(&ShipKind::Raider).copied().unwrap_or(0);
+        assert_eq!(lost + escaped, 2, "losses = what actually died; escapees are never phantom kills");
+    }
+
+    /// §tactical: a PRE-ENGINE mid-battle snapshot (`Engagement.tactical`
+    /// absent) loads and resolves sanely — the one-way migration re-opens the
+    /// fight from the persisted counts + pools at the next tick.
+    #[test]
+    fn an_old_mid_battle_snapshot_migrates_into_the_engine() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        let cc = w.players[&a].command_center;
+        // Raiders into a corvette wall: the 6 400 HP of held line grinds long
+        // enough to snapshot mid-fight. (The striker needs raiders — the
+        // AttackFleet gate is contains-a-raider.)
+        let striker = squad(&mut w, a, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(&mut w, b, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 8, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        for _ in 0..(2 * crate::config::TICK_HZ) {
+            w.step(&[]); // real fighting, so pools are non-trivial
+        }
+        assert!(!w.engagements.is_empty(), "still mid-battle at snapshot time");
+        // Strip the tactical state — the exact shape of a pre-engine snapshot.
+        let mut v = serde_json::to_value(&w).expect("snapshot");
+        let engs = v.get_mut("engagements").and_then(|e| e.as_object_mut()).expect("engagements object");
+        for (_, e) in engs.iter_mut() {
+            e.as_object_mut().unwrap().insert("tactical".into(), serde_json::Value::Null);
+        }
+        let mut w2: World = serde_json::from_value(v).expect("the stripped snapshot still loads");
+        assert!(run_until(&mut w2, 400, |w| w.engagements.is_empty()), "the migrated battle resolves");
+        assert!(
+            w2.battle_records.values().any(|r| r.ended_tick.is_some()),
+            "…and finalizes its record without panic"
+        );
+    }
+
+    // (Record-hash determinism — same seed + same battle → byte-identical
+    // records — is already proven by `battle_records_are_deterministic`.)
 
     #[test]
     fn records_note_a_reinforcement_join() {
