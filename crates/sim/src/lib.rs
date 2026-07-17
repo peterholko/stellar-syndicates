@@ -39,6 +39,7 @@ pub mod ship;
 pub mod specialist;
 pub mod standing;
 pub mod syndicate;
+pub mod tactical;
 pub mod world;
 
 pub use body::{Body, BodyKind};

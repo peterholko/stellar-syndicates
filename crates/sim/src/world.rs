@@ -499,6 +499,12 @@ pub struct Engagement {
     /// Touched this tick? (Untouched engagements have ended — flush + remove.)
     #[serde(skip)]
     touched: bool,
+    /// §tactical: the INDIVIDUAL-SHIP battle state (the engine that replaced
+    /// pooled Lanchester). `None` on old snapshots → the next tick MIGRATES
+    /// one-way: pooled counts + damage pools unpack into combatants and the
+    /// battle continues under the new engine.
+    #[serde(default)]
+    tactical: Option<crate::tactical::TacticalState>,
 }
 
 /// The flagship kind of a pooled composition (flagship precedence) — for the
@@ -2080,7 +2086,8 @@ impl World {
         let now = self.time;
         let hub = self.hub;
         let target = self.config.battle_target_secs;
-        let base_rate = crate::combat::dmg_rate(target);
+        // (The pooled engine's per-tick dmg_rate is superseded — the tactical
+        // engine steps on its own cadence; see tactical::tac_step_ticks.)
 
         for e in self.engagements.values_mut() {
             e.touched = false;
@@ -2289,6 +2296,7 @@ impl World {
                 a_fled: false,
                 d_fled: false,
                 touched: true,
+                tactical: None,
             });
         }
 
@@ -2469,34 +2477,82 @@ impl World {
 
             let a_pool = self.engagements[eid].a_stack_pool.clone();
             let d_pool = self.engagements[eid].d_stack_pool.clone();
-            // §modules: partition each side into (kind, loadout) stacks from the
-            // live fleets' fits; the per-kind carried pool distributes across them.
+            // §tactical: partition each side into (kind, loadout) stacks from the
+            // live fleets' fits — the engine's sync/unpack input.
             let a_loadouts = self.side_loadouts(&attackers);
             let d_loadouts = self.side_loadouts(&defenders);
-            let mut a_side = crate::combat::Forces::from_side(&a_comp, &a_loadouts, &a_pool);
-            let mut d_side = crate::combat::Forces::from_side(&d_comp, &d_loadouts, &d_pool).with_platform(ptiers, ppool);
+            let a_stacks = crate::tactical::stacked(&a_comp, &a_loadouts);
+            let d_stacks = crate::tactical::stacked(&d_comp, &d_loadouts);
 
-            // Scouts die the instant they are in a battle.
-            let a_scouts = a_side.strip_scouts();
-            let d_scouts = d_side.strip_scouts();
-            // Raids run at the FIXED quick RAID_RATE (a smash-and-grab is not
-            // slowed by the config battle timescale); battles run config-scaled.
-            let rate = if raid { crate::combat::RAID_RATE } else { base_rate };
-            // §battle-records: each side deals `rate × attack_power` evaluated
-            // PRE-tick — the same value `attrition_tick` applies internally.
-            let dealt_a = rate * a_side.attack_power();
-            let dealt_b = rate * d_side.attack_power();
-            let (mut la, mut lb) = crate::combat::attrition_tick(&mut a_side, &mut d_side, rate);
-            // The defender's Defense Platform lost its LAST tier this tick.
-            let platform_destroyed = ptiers > 0 && d_side.platform_tiers == 0;
-            // Stripped scouts die as UNFITTED losses (both loss views, so the
-            // per-stack loss-application removes them from the fleets).
-            if a_scouts > 0 {
-                la.add_kind(ShipKind::Scout, a_scouts);
+            // OPEN or MIGRATE: a fresh battle (or an old-snapshot pooled one)
+            // unpacks into individual combatants — pro-rata HP from the stack
+            // pools, defender anchored, attacker on their real approach bearing,
+            // platform tiers as stationary combatants. One-way; documented.
+            let mut tac = match self.engagements.get_mut(eid).unwrap().tactical.take() {
+                Some(t) => t,
+                None => {
+                    let bearing = attackers
+                        .first()
+                        .and_then(|id| self.fleets.get(id))
+                        .map(|f| f.pos - pos)
+                        .unwrap_or(Vec2::new(1.0, 0.0));
+                    crate::tactical::TacticalState::open(
+                        self.config.seed,
+                        eid.0,
+                        &a_stacks,
+                        &d_stacks,
+                        &a_pool,
+                        &d_pool,
+                        ptiers,
+                        ppool,
+                        bearing,
+                    )
+                }
+            };
+
+            // SYNC to the live strategic sides (relief joins unpack at the edge;
+            // withdrawn fleets' ships leave). Scouts die at the boundary — the
+            // same instant death the old strip_scouts applied.
+            let scouts = tac.sync([&a_stacks, &d_stacks]);
+            let mut la = crate::combat::Losses::default();
+            let mut lb = crate::combat::Losses::default();
+            if scouts[0] > 0 {
+                la.add_kind(ShipKind::Scout, scouts[0]);
             }
-            if d_scouts > 0 {
-                lb.add_kind(ShipKind::Scout, d_scouts);
+            if scouts[1] > 0 {
+                lb.add_kind(ShipKind::Scout, scouts[1]);
             }
+
+            // STEP the engine on its own cadence (1 Hz production, 2 Hz playtest
+            // — see tac_step_ticks). Raids hit harder per step so a smash-and-
+            // grab resolves inside the short raid cap (the old RAID_RATE
+            // asymmetry, preserved).
+            let cadence = crate::tactical::tac_step_ticks(target);
+            let (dealt_a, dealt_b, platform_destroyed) = if tac.step == 0 || self.tick % cadence == 0 {
+                let mods = [
+                    crate::tactical::SideMods {
+                        opening_bonus: self.research_flag(a_owner, crate::research::Cap::FirstStrike)
+                            || self.research_flag(a_owner, crate::research::Cap::GrandBatteries),
+                        flak_mult: self.research_mod(a_owner, crate::research::ModKey::PdIntercept),
+                    },
+                    crate::tactical::SideMods {
+                        opening_bonus: self.research_flag(d_owner, crate::research::Cap::FirstStrike)
+                            || self.research_flag(d_owner, crate::research::Cap::GrandBatteries),
+                        flak_mult: self.research_mod(d_owner, crate::research::ModKey::PdIntercept),
+                    },
+                ];
+                let outcome = tac.step(raid, mods);
+                for (k, lo_map) in &outcome.losses[0].per_stack {
+                    la.add_stack(k.0, k.1.clone(), *lo_map);
+                }
+                for (k, lo_map) in &outcome.losses[1].per_stack {
+                    lb.add_stack(k.0, k.1.clone(), *lo_map);
+                }
+                let pdestroyed = ptiers > 0 && tac.platform_tiers() == 0;
+                (outcome.dealt[0], outcome.dealt[1], pdestroyed)
+            } else {
+                (0.0, 0.0, false)
+            };
 
             // Cargo SEIZURE: on a raid, if a defender convoy is emptied this tick,
             // the (first) attacker loots its cargo before the wreck is removed.
@@ -2524,19 +2580,21 @@ impl World {
                 }
             }
 
-            // Persist pools back onto the engagement (re-summed PER KIND — the
-            // loadout split is re-derived from the live fleets next tick), apply
-            // deaths, platform tiers.
+            // Persist the engine's truth back through the OLD channels (§law 1:
+            // the strategic layer sees the same shapes): HP deficits → per-stack
+            // pools; platform tiers + pool → the system.
+            let tac_ptiers = tac.platform_tiers();
+            let tac_ppool = tac.platform_pool();
             {
                 let e = self.engagements.get_mut(eid).unwrap();
-                e.a_stack_pool = a_side.damage_by_stack();
-                e.d_stack_pool = d_side.damage_by_stack();
+                e.a_stack_pool = tac.pools(0);
+                e.d_stack_pool = tac.pools(1);
             }
             if let Some(sid) = platform_system
                 && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
             {
-                s.set_tier(crate::build::StructureKind::DefensePlatform, d_side.platform_tiers);
-                s.defense_pool = d_side.platform_pool;
+                s.set_tier(crate::build::StructureKind::DefensePlatform, tac_ptiers);
+                s.defense_pool = tac_ppool;
             }
             let mut atk = attackers.clone();
             let mut def = defenders.clone();
@@ -2548,7 +2606,12 @@ impl World {
                 e.defenders = def.clone();
             }
 
-            // End conditions, re-derived on the survivors (fleets still existing).
+            // End conditions, re-derived on the survivors. §tactical: a retreat/
+            // raid-cap/safety trigger no longer ENDS the battle instantly — it
+            // orders the side to WITHDRAW; the ships physically burn for the
+            // disengage edge while pursuers get real shots (literal pursuit fire
+            // replaces the old abstract disengage-exposure number). The battle
+            // ends when a side is dead or its withdrawal completes.
             let _ = (atk, def);
             let elapsed = now - started_at;
             let a_now = self.side_comp(&self.engagements[eid].attackers);
@@ -2559,17 +2622,43 @@ impl World {
                 .unwrap_or(0);
             let a_alive = !a_now.is_empty();
             let d_alive = !d_now.is_empty() || d_ptiers > 0;
-            let a_cur = crate::combat::Forces::from_fleet(&a_now, &BTreeMap::new()).strength();
-            let d_cur = crate::combat::Forces::from_fleet(&d_now, &BTreeMap::new()).strength();
+            // Retreat metric: Σ remaining ship HP vs the side's at-open HP.
+            let a_cur = tac.side_hp(0, false);
+            let d_cur = tac.side_hp(1, false);
             let a_doc = self.players.get(&a_owner).map(|c| c.doctrine).unwrap_or_default();
             let d_doc = self.players.get(&d_owner).map(|c| c.doctrine).unwrap_or_default();
-            let a_retreats = a_alive && a_doc.retreat.min_ratio().is_some_and(|m| a_cur / a_start_strength.max(1e-9) < m);
-            let d_retreats = d_alive && d_doc.retreat.min_ratio().is_some_and(|m| d_cur / d_start_strength.max(1e-9) < m);
+            let _ = (a_start_strength, d_start_strength); // superseded by HP baselines
+            let a_retreats = a_alive
+                && !tac.withdrawing[0]
+                && a_doc.retreat.min_ratio().is_some_and(|m| a_cur / tac.start_hp[0].max(1e-9) < m);
+            let d_retreats = d_alive
+                && !tac.withdrawing[1]
+                && d_doc.retreat.min_ratio().is_some_and(|m| d_cur / tac.start_hp[1].max(1e-9) < m);
             // Raid cap: the raider breaks off after a short slice of a battle.
-            let raid_cap = raid && elapsed >= crate::combat::RAID_CAP_FRAC * target;
+            let raid_cap = raid && !tac.withdrawing[0] && elapsed >= crate::combat::RAID_CAP_FRAC * target;
             // Safety valve: a no-retreat grind ends in MUTUAL disengage.
             let safety = elapsed >= crate::combat::MAX_BATTLE_MULT * target;
-            let defender_withdraws = d_retreats || safety;
+            if a_retreats || raid_cap {
+                tac.order_withdraw(0);
+                self.engagements.get_mut(eid).unwrap().a_fled = true;
+            }
+            if d_retreats {
+                tac.order_withdraw(1);
+                self.engagements.get_mut(eid).unwrap().d_fled = true;
+            }
+            if safety && !(tac.withdrawing[0] && tac.withdrawing[1]) {
+                tac.order_withdraw(0);
+                tac.order_withdraw(1);
+                let e = self.engagements.get_mut(eid).unwrap();
+                e.a_fled = true;
+                e.d_fled = true;
+            }
+            let a_out = tac.side_withdrawn(0);
+            let d_out = tac.side_withdrawn(1);
+            // A hard stop bounds the pursuit phase (a withdrawal can't drag on
+            // past the safety valve plus a pursuit grace window).
+            let hard_stop = elapsed >= crate::combat::MAX_BATTLE_MULT * target + 60.0;
+            let defender_withdraws = tac.withdrawing[1];
 
             // §battle-records: push this tick's beats, then feed the round — the
             // pending beats force a flush, so beats + this tick's damage/kills +
@@ -2588,7 +2677,10 @@ impl World {
             }
             self.record_round(*eid, dealt_a, dealt_b, &la, &lb, [a_now.clone(), d_now.clone()], self.tick);
 
-            if !a_alive || !d_alive || a_retreats || raid_cap || safety || d_retreats {
+            // The tactical state persists on the engagement (serde mid-battle).
+            self.engagements.get_mut(eid).unwrap().tactical = Some(tac);
+
+            if !a_alive || !d_alive || a_out || d_out || hard_stop {
                 self.end_battle(*eid, defender_withdraws, events);
             }
         }
@@ -2779,6 +2871,7 @@ impl World {
             a_fled: false,
             d_fled: false,
             touched: true,
+            tactical: None,
         });
     }
 
@@ -3381,6 +3474,7 @@ impl World {
                 a_fled: false,
                 d_fled: false,
                 touched: true,
+                tactical: None,
             });
         }
 

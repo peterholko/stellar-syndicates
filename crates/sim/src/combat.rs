@@ -106,7 +106,9 @@ pub const RAID_SKIRMISH_MULT: f64 = 0.3;
 /// A raid engagement ends after at most this fraction of `battle_target_secs`
 /// (whichever comes first with cargo-seized / retreat) — raids stay quick
 /// smash-and-grabs even as battles get slow. Tunable.
-pub const RAID_CAP_FRAC: f64 = 0.15;
+// §tactical: raised from 0.15 — raiders now physically CLOSE from standoff
+// before the guns bear, so the smash-and-grab window absorbs the approach.
+pub const RAID_CAP_FRAC: f64 = 0.35;
 /// SAFETY VALVE: an engagement that has run this multiple of `battle_target_secs`
 /// without either side hitting a retreat threshold forces a MUTUAL DISENGAGE —
 /// no infinite grind between two no-retreat (doctrine Never) fleets. Tunable.
