@@ -266,6 +266,12 @@ export class Renderer {
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
+  // §ladder: the capital ladder (sliced from the capital-ships sheet).
+  private texDestroyer: Texture | null = null;
+  private texCruiser: Texture | null = null;
+  private texBattleship: Texture | null = null;
+  private texDreadnought: Texture | null = null;
+  private texTitan: Texture | null = null;
   // §fleet-lod: bold low-detail fleet icons shown at far zoom-out (freighter =
   // convoy, raider, corvette). Null → the detailed art is used at every zoom.
   private texIconFreighter: Texture | null = null;
@@ -360,6 +366,19 @@ export class Renderer {
       load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
+    // §ladder: the capital ladder, same 256px top-down/nose-up idiom.
+    const [destroyer, cruiser, battleship, dreadnought, titan] = await Promise.all([
+      load("/art/ship_sprites/destroyer_line_ship.png"),
+      load("/art/ship_sprites/cruiser_line_ship.png"),
+      load("/art/ship_sprites/battleship_line_ship.png"),
+      load("/art/ship_sprites/dreadnought_line_ship.png"),
+      load("/art/ship_sprites/titan_flagship.png"),
+    ]);
+    this.texDestroyer = destroyer;
+    this.texCruiser = cruiser;
+    this.texBattleship = battleship;
+    this.texDreadnought = dreadnought;
+    this.texTitan = titan;
     // The landmark is ONE 1254px texture drawn from a ~72px marker all the way
     // up to native 1:1 — enable mipmap generation so the minified marker keeps
     // trilinear filtering (no shimmer/aliasing at normal zoom); linear mag
@@ -1341,15 +1360,12 @@ export class Renderer {
       case "corvette": return this.texCorvette;
       case "colony": return this.texColony;
       case "scout": return this.texScout;
-      // §ladder: no capital art yet — null rides the primitive fallback,
-      // scaled by mass class (see drawGhost / shipSizePx). Real sprites
-      // arrive on a separate ChatGPT sheet.
-      case "destroyer":
-      case "cruiser":
-      case "battleship":
-      case "dreadnought":
-      case "titan":
-        return null;
+      // §ladder: the capital ladder (null until loaded — primitive fallback).
+      case "destroyer": return this.texDestroyer;
+      case "cruiser": return this.texCruiser;
+      case "battleship": return this.texBattleship;
+      case "dreadnought": return this.texDreadnought;
+      case "titan": return this.texTitan;
     }
   }
 
