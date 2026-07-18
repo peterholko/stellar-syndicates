@@ -86,7 +86,7 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: () => theaterDemo() };
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false) => theaterDemo(titanDown) };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -2284,7 +2284,7 @@ function renderBattleViewer(): void {
 // `__ss.theaterDemo()` fabricates a deterministic participant record with
 // truth keyframes — capitals, torpedo salvos, PD screens, deaths, a platform,
 // a retreat — and opens the viewer on it. Pure client-side; touches nothing.
-function theaterDemo(): void {
+function theaterDemo(titanDown = false): void {
   const mk = (side: number, kind: ShipKind, x: number, y: number, hp = 1, plat = false) => ({ side, kind, x, y, hp, plat });
   const rounds: BattleRecordView["rounds"] = [];
   const N = 10;
@@ -2292,7 +2292,7 @@ function theaterDemo(): void {
     const t = i / (N - 1);
     const ax = -880 + 620 * t; // attackers close from the left
     const ships: KeyframeView["ships"] = [
-      mk(0, "titan", ax - 60, 0, 1 - 0.25 * t),
+      ...(titanDown && i >= 9 ? [] : [mk(0, "titan", ax - 60, 0, titanDown ? 1 - 0.9 * t : 1 - 0.25 * t)]),
       mk(0, "battleship", ax - 20, 120, 1 - 0.35 * t),
       ...[0, 1, 2, 3].map((k) => mk(0, "corvette", ax + 40, -160 + k * 90, 1 - 0.3 * t * ((k % 2) + 1) / 2)),
       ...[0, 1, 2, 3].map((k) => (i < 8 || k > 0 ? mk(0, "raider", ax + 90 + 30 * Math.sin(t * 6 + k), -220 + k * 140, 1 - 0.2 * t) : null)),
@@ -2310,11 +2310,12 @@ function theaterDemo(): void {
     if (i === 5) deaths.push({ step: 3, side: 1, kind: "raider", x: 340, y: -110 });
     if (i === 7) deaths.push({ step: 1, side: 1, kind: "raider", x: 355, y: 30 }, { step: 4, side: 1, kind: "raider", x: 310, y: 96 });
     if (i === 8) deaths.push({ step: 2, side: 0, kind: "raider", x: ax + 90, y: -220 });
+    if (titanDown && i === 9) deaths.push({ step: 3, side: 0, kind: "titan", x: ax - 60, y: 0 });
     const rc = (kind: ShipKind, n: number) => ({ kind, exact: n, class: "one" as CountClass });
     rounds.push({
       tick: i * 15,
       counts: [
-        [rc("titan", 1), rc("battleship", 1), rc("corvette", 4), rc("raider", i < 8 ? 4 : 3)],
+        [rc("titan", titanDown && i >= 9 ? 0 : 1), rc("battleship", 1), rc("corvette", 4), rc("raider", i < 8 ? 4 : 3)],
         [rc("raider", i < 5 ? 8 : i < 7 ? 6 : 4), rc("corvette", 2), rc("convoy", 1)],
       ],
       kills: [

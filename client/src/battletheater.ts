@@ -129,12 +129,40 @@ interface ShipVis {
   exiting: boolean; // unmatched in the next frame (died/withdrew) → fade out
 }
 
+/// The FX SCHEDULE for one window — derived ONCE per (battleId, round) from
+/// record data + the cosmetic PRNG, then rendered statelessly against the
+/// transport clock. Scrubbing back re-derives the identical schedule.
+interface FxWindow {
+  /// Beam volleys: instantaneous flash-lines (they arrive with their own
+  /// light — the instant line IS the fiction). `heavy` = capital emitter
+  /// (charge-up + thicker, longer-held line; the Lance Array variant when
+  /// that module lands). `glint` = target is Reflective-fitted (mirror-flash
+  /// deflection instead of a full bloom).
+  beams: { t: number; from: number; to: number; w: number; heavy: boolean; glint: boolean }[];
+  /// Driver tracer streaks with short visible flight; `miss` tracers pass
+  /// close and carry on (pure cosmetics — hit math already happened in the
+  /// sim). `spall` = target is Whipple-fitted (shattered-armor debris puffs
+  /// instead of clean sparks).
+  tracers: { t: number; from: number; to: number; miss: boolean; spall: boolean }[];
+  /// Torpedo arcs — the centerpiece motion. Expanded from the per-side salvo
+  /// summary: each arc curves from the salvo origin toward its target across
+  /// the window. outcome: 'fly' persists past the window; 'hit' detonates at
+  /// tEnd; 'flak' dies to point-defense short of the target at tEnd.
+  arcs: { side: number; x0: number; y0: number; cx: number; cy: number; to: number; tEnd: number; outcome: "fly" | "hit" | "flak" }[];
+  /// PD tracer fans: which defending ships screen this window (indices).
+  pdShips: number[];
+  /// Exact deaths from the record, timed within the window by their step.
+  deaths: { t: number; x: number; y: number; kind: ShipKind; side: number; cls: 0 | 1 | 2 | 3; shipIdx: number | null }[];
+}
+
 interface TheaterState {
   rec: BattleRecordView;
   round: number; // active window = frames[round] → frames[round+1]
   frac: number;
   live: boolean;
   ships: ShipVis[];
+  fx: FxWindow | null;
+  withdrawFrom: [number, number]; // first round each side runs (Infinity = never)
   windowKey: string; // `${recId}:${round}` — rebuild tracks when it changes
 }
 
@@ -154,6 +182,19 @@ let st: TheaterState | null = null;
 let shipPool: ShipVis[] = [];
 let backdropKey = ""; // rebuilt only when the record changes
 let sceneClock = 0; // seconds since open — drives idle drift only (cosmetic)
+// Persistent immediate-mode surfaces — cleared + redrawn each frame, never
+// re-allocated (the budget law: pooled surfaces, no per-frame objects).
+let fxG: Graphics | null = null;
+let debrisG: Graphics | null = null;
+let debrisKey = ""; // debris field rebuilt only when the round changes
+let debrisField: { x: number; y: number; dx: number; dy: number; r: number; tint: number; bornRound: number }[] = [];
+let banner: HTMLDivElement | null = null;
+let bannerKey = "";
+// Degradation ladder: rolling fps estimate → tier 0 full · 1 no miss-tracers
+// · 2 thinned drivers · 3 reduced debris. Torpedo arcs, flak, deaths, and
+// mitigation feedback are NEVER dropped (they carry information).
+let fpsEma = 60;
+let perfTier = 0;
 
 const sx = (x: number) => CANVAS_W / 2 + x * SCALE;
 const sy = (y: number) => CANVAS_H / 2 + y * SCALE;
@@ -185,6 +226,35 @@ async function ensureApp(): Promise<void> {
     ui: new Container(),
   };
   app.stage.addChild(layers.backdrop, layers.debris, layers.ships, layers.fx, layers.ui);
+  debrisG = new Graphics();
+  layers.debris.addChild(debrisG);
+  fxG = new Graphics();
+  layers.fx.addChild(fxG);
+  banner = document.createElement("div");
+  banner.className = "bv-theater-banner";
+  banner.style.display = "none";
+  holder.appendChild(banner);
+  // Torpedo-arc hover: arcs are immediate-mode (no display objects), so the
+  // canvas hit-tests the few live arc heads directly.
+  app.canvas.addEventListener("pointermove", (ev: PointerEvent) => {
+    if (!st?.fx || !tooltip || !app) return;
+    const r = app.canvas.getBoundingClientRect();
+    const mx = ((ev.clientX - r.left) / r.width) * CANVAS_W;
+    const my = ((ev.clientY - r.top) / r.height) * CANVAS_H;
+    for (const a of st.fx.arcs) {
+      if (st.frac > a.tEnd) continue;
+      const t = Math.min(st.frac / a.tEnd, 1) * (a.outcome === "flak" ? 0.72 : 1);
+      const [hx, hy] = arcPoint(a, t, st.frac);
+      if (Math.hypot(sx(hx) - mx, sy(hy) - my) < 10) {
+        const target = st.ships[a.to];
+        tooltip.textContent = `Torpedo salvo → ${target ? KIND_LABEL[target.kind] : "target"}`;
+        tooltip.style.display = "block";
+        tooltip.style.left = `${Math.min(CANVAS_W - 160, Math.max(4, mx + 10))}px`;
+        tooltip.style.top = `${Math.max(4, my - 24)}px`;
+        return;
+      }
+    }
+  });
   app.ticker.add(() => frame(app!.ticker.deltaMS / 1000));
   // Runs ONLY while the viewer shows the theater (theaterClose stops it); a
   // hidden browser tab throttles to nothing on its own (the ticker is
@@ -217,7 +287,10 @@ export function theaterSetTime(round: number, frac: number, live: boolean): void
 
 /// New light arrived for the open record (rounds grew) — rebind in place.
 export function theaterRefresh(rec: BattleRecordView): void {
-  if (st && st.rec.id === rec.id) st.rec = rec;
+  if (st && st.rec.id === rec.id) {
+    if (st.rec !== rec) st.windowKey = "";
+    st.rec = rec;
+  }
 }
 
 /// The viewer closed — stop rendering entirely (the map is never affected).
@@ -237,14 +310,20 @@ export function theaterStep(dt = 1 / 60): void {
 }
 
 /// Debug introspection (acceptance rig + dev probing) — read-only.
-export function theaterDebug(): { ships: number; fx: number; ticker: boolean; round: number; frac: number } | null {
+export function theaterDebug(): Record<string, unknown> | null {
   if (!st || !layers || !app) return null;
   return {
     ships: st.ships.filter((s) => s.inUse).length,
-    fx: layers.fx.children.length,
     ticker: app.ticker.started,
     round: st.round,
     frac: st.frac,
+    beams: st.fx?.beams.length ?? -1,
+    tracers: st.fx?.tracers.length ?? -1,
+    arcs: st.fx?.arcs.length ?? -1,
+    arcFlak: st.fx?.arcs.filter((a) => a.outcome === "flak").length ?? -1,
+    deaths: st.fx?.deaths.map((d) => ({ t: d.t, cls: d.cls, ship: d.shipIdx })) ?? null,
+    debris: debrisField.length,
+    tier: perfTier,
   };
 }
 
@@ -268,6 +347,10 @@ export function theaterHash(): number {
 
 function bindRecord(rec: BattleRecordView): void {
   if (st && st.rec.id === rec.id) {
+    // Same battle, possibly NEW data (fresh light extended the rounds, or the
+    // record object was replaced) — invalidate the active window so tracks
+    // and the FX schedule rebuild against the new truth.
+    if (st.rec !== rec) st.windowKey = "";
     st.rec = rec;
     return;
   }
@@ -277,9 +360,24 @@ function bindRecord(rec: BattleRecordView): void {
     frac: 0,
     live: false,
     ships: [],
+    fx: null,
+    withdrawFrom: [Infinity, Infinity],
     windowKey: "",
   };
+  // Withdrawal is rendered from the record's notes: from its first
+  // retreat/withdraw beat, a side's ships burn with flared engines while
+  // pursuit fire chases them out (the literal pursuit-fire mechanic).
+  rec.rounds.forEach((r, i) => {
+    for (const n of r.notes) {
+      if ((n.kind === "retreat_tripped" || n.kind === "withdraw_ordered") && n.side !== null) {
+        st!.withdrawFrom[n.side] = Math.min(st!.withdrawFrom[n.side], i);
+      }
+    }
+  });
   sceneClock = 0;
+  debrisKey = "";
+  debrisField = [];
+  bannerKey = "";
   buildBackdrop(rec);
 }
 
@@ -498,6 +596,195 @@ function rebuildWindow(): void {
     st.ships.push(v);
     i++;
   }
+  st.fx = buildFxWindow(rec, round, st.ships, wseed);
+  rebuildDebris();
+}
+
+// --- The FX schedule (all volume derives from the record) --------------------------
+
+/// Weapon-family weights for a side, from its participant loadout stacks —
+/// the wire has no dealt-by-family, so the fits ARE the family signal.
+function familyWeights(rec: BattleRecordView, side: number): { beam: number; driver: number; torp: number; pdN: number; reflN: Map<ShipKind, number>; whipN: Map<ShipKind, number> } {
+  let beam = 0.0001, driver = 0, torp = 0, pdN = 0;
+  const reflN = new Map<ShipKind, number>();
+  const whipN = new Map<ShipKind, number>();
+  for (const stx of rec.sides[side]?.loadouts ?? []) {
+    if (stx.modules.includes("torpedo_rack")) torp += stx.n;
+    else if (stx.modules.includes("mass_driver")) driver += stx.n * 1.3;
+    else beam += stx.n * (stx.modules.includes("point_defense_screen") ? 0.5 : 1);
+    if (stx.modules.includes("point_defense_screen")) pdN += stx.n;
+    if (stx.modules.includes("reflective_plating")) reflN.set(stx.kind, (reflN.get(stx.kind) ?? 0) + stx.n);
+    if (stx.modules.includes("whipple_armor")) whipN.set(stx.kind, (whipN.get(stx.kind) ?? 0) + stx.n);
+  }
+  // Unfitted remainder fires stock beam: side counts minus fitted stacks.
+  const rd = rec.rounds[0];
+  const fitted = (rec.sides[side]?.loadouts ?? []).reduce((a, l) => a + l.n, 0);
+  const total = (rd?.counts[side] ?? []).reduce((a, c) => a + (c.exact ?? 0), 0);
+  beam += Math.max(0, total - fitted);
+  return { beam, driver, torp, pdN, reflN, whipN };
+}
+
+/// Is the `idx`-th shown representative of its (side,kind) group treated as
+/// carrying `n` fitted hulls? Deterministic: the FIRST ⌈share⌉ sprites of the
+/// group wear the fit (stable order — every viewer sees the same ships glint).
+function fittedFlag(ships: ShipVis[], v: ShipVis, fittedCount: number): boolean {
+  if (fittedCount <= 0) return false;
+  const group = ships.filter((s) => s.inUse && s.side === v.side && s.kind === v.kind && !s.plat);
+  const pos = group.indexOf(v);
+  const share = Math.ceil((fittedCount / Math.max(1, group.length * Math.max(1, v.reps))) * group.length);
+  return pos >= 0 && pos < Math.max(1, Math.min(group.length, share));
+}
+
+function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], wseed: number): FxWindow {
+  const fx: FxWindow = { beams: [], tracers: [], arcs: [], pdShips: [], deaths: [] };
+  const rng = mulberry32(wseed ^ 0x00f0f0);
+  const rd = rec.rounds[round];
+  const next = rec.rounds[round + 1];
+  const alive = (side: number) => ships.map((v, i) => ({ v, i })).filter((e) => e.v.inUse && e.v.side === side);
+  const wA = familyWeights(rec, 0);
+  const wD = familyWeights(rec, 1);
+  // Normalized intensity per side: this round's dealt vs the battle's peak —
+  // fx volume visibly tracks the record's damage output.
+  const dmax = Math.max(1e-6, ...rec.rounds.flatMap((r) => (r.dealt ? [r.dealt[0], r.dealt[1]] : [0])));
+  for (let side = 0 as 0 | 1; side < 2; side = (side + 1) as 0 | 1) {
+    const w = side === 0 ? wA : wD;
+    const foes = alive(1 - side);
+    const own = alive(side);
+    if (!foes.length || !own.length) continue;
+    const intensity = Math.min(1, (rd?.dealt?.[side] ?? 0) / dmax);
+    const famTotal = w.beam + w.driver + w.torp;
+    // Targets weighted by threat MASS (the sim's targeting spirit) — heavies
+    // draw fire; the seeded roll keeps every viewer's scene identical.
+    const pickTarget = () => {
+      const tw = foes.map((f) => Math.pow(MASS[f.v.kind] ?? 800, 0.5));
+      let r = rng() * tw.reduce((a, b) => a + b, 0);
+      for (let k = 0; k < foes.length; k++) { r -= tw[k]; if (r <= 0) return foes[k].i; }
+      return foes[foes.length - 1].i;
+    };
+    const reflFoe = side === 0 ? wD.reflN : wA.reflN;
+    const whipFoe = side === 0 ? wD.whipN : wA.whipN;
+    // BEAMS — count scaled by the beam share of this side's output.
+    const nBeams = Math.round((1 + 7 * intensity) * (w.beam / famTotal));
+    for (let k = 0; k < nBeams; k++) {
+      const from = own[Math.floor(rng() * own.length)];
+      const to = pickTarget();
+      const tv = ships[to];
+      fx.beams.push({
+        t: 0.08 + rng() * 0.84,
+        from: from.i,
+        to,
+        w: 0.8 + 2.6 * intensity * (w.beam / famTotal),
+        heavy: (MASS[from.v.kind] ?? 0) >= 8000, // capitals fire the held lance-grade line
+        glint: fittedFlag(ships, tv, reflFoe.get(tv.kind) ?? 0),
+      });
+    }
+    // DRIVER tracers — bursty, short flight, seeded misses.
+    const nTracers = Math.round((2 + 14 * intensity) * (w.driver / famTotal));
+    for (let k = 0; k < nTracers; k++) {
+      const from = own[Math.floor(rng() * own.length)];
+      const to = pickTarget();
+      const tv = ships[to];
+      fx.tracers.push({
+        t: 0.05 + rng() * 0.85,
+        from: from.i,
+        to,
+        miss: rng() < 0.28,
+        spall: fittedFlag(ships, tv, whipFoe.get(tv.kind) ?? 0),
+      });
+    }
+    // TORPEDO ARCS — expanded from the salvo summary; the count drop between
+    // this frame and the next budgets how many arcs RESOLVE this window, and
+    // the defender's PD presence decides how many of those die to flak.
+    const s0 = rd?.frame?.torpedoes.find((t) => t.side === side);
+    const s1 = next?.frame?.torpedoes.find((t) => t.side === side);
+    if (s0 && s0.n > 0) {
+      const shown = Math.min(16, s0.n);
+      const resolved = Math.round(shown * Math.min(1, Math.max(0, (s0.n - (s1?.n ?? 0)) / s0.n)));
+      const foePd = side === 0 ? wD.pdN : wA.pdN;
+      const foeShips = (next ?? rd)?.counts[1 - side]?.reduce((a, c) => a + (c.exact ?? 0), 0) ?? 1;
+      const pdShare = Math.min(0.85, (foePd / Math.max(1, foeShips)) * 1.6);
+      const nFlak = Math.round(resolved * pdShare);
+      // PD ships of the defending side screen this window (dense fans).
+      const pdKinds = new Set((rec.sides[1 - side]?.loadouts ?? []).filter((l) => l.modules.includes("point_defense_screen")).map((l) => l.kind));
+      for (const f of foes) if (pdKinds.has(f.v.kind) || f.v.kind === "dreadnought") fx.pdShips.push(f.i);
+      // Arcs sorted so the ones passing nearest PD ships die to flak first.
+      const arcs: { d: number; a: FxWindow["arcs"][number] }[] = [];
+      for (let k = 0; k < shown; k++) {
+        const ox = (rng() - 0.5) * 90, oy = (rng() - 0.5) * 90;
+        const to = pickTarget();
+        const tv = ships[to];
+        const mx = (s0.x + ox + tv.x1) / 2 + (rng() - 0.5) * 260;
+        const my = (s0.y + oy + tv.y1) / 2 + (rng() - 0.5) * 260;
+        const isResolved = k < resolved;
+        const tEnd = isResolved ? 0.45 + rng() * 0.5 : 1.1;
+        let dPd = Infinity;
+        for (const pi of fx.pdShips) {
+          const p = ships[pi];
+          dPd = Math.min(dPd, Math.hypot(mx - p.x1, my - p.y1));
+        }
+        arcs.push({ d: dPd, a: { side, x0: s0.x + ox, y0: s0.y + oy, cx: mx, cy: my, to, tEnd, outcome: isResolved ? "hit" : "fly" } });
+      }
+      arcs.sort((p, q) => p.d - q.d);
+      let flakLeft = nFlak;
+      for (const e of arcs) {
+        if (flakLeft > 0 && e.a.outcome === "hit") { e.a.outcome = "flak"; flakLeft--; }
+        fx.arcs.push(e.a);
+      }
+    }
+  }
+  // DEATHS — exact record events, timed within the window by their step.
+  const deaths = next?.frame?.deaths ?? [];
+  if (deaths.length) {
+    const steps = deaths.map((d) => d.step);
+    const lo = Math.min(...steps), hi = Math.max(...steps);
+    for (const d of deaths) {
+      const mass = MASS[d.kind] ?? 800;
+      const cls = (d.kind === "titan" ? 3 : mass >= 8000 ? 2 : mass >= 2000 ? 1 : 0) as 0 | 1 | 2 | 3;
+      // Bind the death to the nearest EXITING sprite of its side+kind so the
+      // hull disappears exactly when it dies (not a fade).
+      let shipIdx: number | null = null;
+      let best = Infinity;
+      ships.forEach((v, i) => {
+        if (v.inUse && v.exiting && v.side === d.side && v.kind === d.kind) {
+          const dist = Math.hypot(v.x0 - d.x, v.y0 - d.y);
+          if (dist < best) { best = dist; shipIdx = i; }
+        }
+      });
+      fx.deaths.push({ t: hi > lo ? 0.15 + 0.7 * ((d.step - lo) / (hi - lo)) : 0.5, x: d.x, y: d.y, kind: d.kind, side: d.side, cls, shipIdx });
+    }
+  }
+  return fx;
+}
+
+/// The persistent battlefield: every death ≤ the current round leaves
+/// drifting debris for the rest of the scene — the aftermath tableau is a
+/// true battlefield. Deterministic: rebuilt from the record on round change;
+/// drift is a pure function of (round + frac − bornRound).
+function rebuildDebris(): void {
+  if (!st) return;
+  const key = `${st.rec.id}:${st.round}`;
+  if (debrisKey === key) return;
+  debrisKey = key;
+  debrisField = [];
+  const cap = perfTier >= 3 ? 4 : 9; // ladder tier 3: reduce debris counts
+  for (let r = 0; r <= st.round && r < st.rec.rounds.length; r++) {
+    for (const d of st.rec.rounds[r].frame?.deaths ?? []) {
+      const rng = mulberry32(hashId(`${st.rec.id}:debris:${r}:${Math.round(d.x)}:${Math.round(d.y)}`));
+      const mass = MASS[d.kind] ?? 800;
+      const n = Math.min(cap, Math.max(3, Math.round(Math.pow(mass / 300, 0.45))));
+      for (let k = 0; k < n; k++) {
+        const ang = rng() * Math.PI * 2;
+        const sp = 6 + rng() * 22;
+        debrisField.push({
+          x: d.x, y: d.y,
+          dx: Math.cos(ang) * sp, dy: Math.sin(ang) * sp,
+          r: 0.7 + rng() * (mass >= 8000 ? 2.6 : 1.4),
+          tint: rng() < 0.35 ? 0xff9d5c : 0x8fa4bd, // some sections still burn
+          bornRound: r,
+        });
+      }
+    }
+  }
 }
 
 /// Apply art/fallback, scale, team glow, badge, nameplate to a pooled sprite.
@@ -542,6 +829,11 @@ function dressShip(v: ShipVis): void {
 function frame(dt: number): void {
   if (!st || !layers) return;
   sceneClock += dt;
+  // Degradation ladder bookkeeping (rolling fps estimate).
+  if (dt > 0) {
+    fpsEma = fpsEma * 0.95 + (1 / Math.max(1e-3, dt)) * 0.05;
+    perfTier = fpsEma >= 45 ? Math.max(0, perfTier - (fpsEma > 55 ? 1 : 0)) : Math.min(3, perfTier + 1);
+  }
   rebuildWindow();
   const { frac, live } = st;
   const atFrontier = st.round >= st.rec.rounds.length - 1;
@@ -578,36 +870,224 @@ function frame(dt: number): void {
     // Labels stay horizontal whatever the hull is doing.
     v.badge.rotation = -v.root.rotation;
     v.plate.rotation = -v.root.rotation;
-    // Fade for wave arrivals / departures (deaths get real FX in §TH2).
-    const a = v.entered ? Math.min(1, frac * 3) : v.exiting ? Math.max(0.15, 1 - frac) : 1;
+    // Wave arrivals fade in; a ship bound to a recorded DEATH disappears at
+    // its exact moment (the explosion takes over); other departures (withdrew
+    // or sampled out) fade.
+    const idx = st.ships.indexOf(v);
+    const death = st.fx?.deaths.find((d) => d.shipIdx === idx);
+    let a = v.entered ? Math.min(1, frac * 3) : 1;
+    if (death) a = frac >= death.t ? 0 : 1;
+    else if (v.exiting) a = Math.max(0.15, 1 - frac);
     v.root.alpha = a * (0.45 + 0.55 * v.hp);
-  }
-  drawTorpedoClusters();
-}
-
-/// Minimal torpedo presence for the core stage: the per-side salvo cluster at
-/// its interpolated centroid (the full individual-arc grammar lands in §TH2).
-function drawTorpedoClusters(): void {
-  if (!st || !layers) return;
-  layers.fx.removeChildren().forEach((c) => c.destroy());
-  const f0 = st.rec.rounds[st.round]?.frame;
-  const f1 = st.rec.rounds[st.round + 1]?.frame ?? f0;
-  if (!f0) return;
-  const g = new Graphics();
-  for (let side = 0; side < 2; side++) {
-    const s0 = f0.torpedoes.find((t) => t.side === side);
-    const s1 = f1?.torpedoes.find((t) => t.side === side) ?? s0;
-    if (!s0 || s0.n === 0) continue;
-    const e = st.frac;
-    const cx = s0.x + ((s1?.x ?? s0.x) - s0.x) * e;
-    const cy = s0.y + ((s1?.y ?? s0.y) - s0.y) * e;
-    const rng = mulberry32(hashId(`${st.rec.id}:${st.round}:torp:${side}`));
-    const shown = Math.min(12, s0.n);
-    for (let i = 0; i < shown; i++) {
-      const ox = (rng() - 0.5) * 60;
-      const oy = (rng() - 0.5) * 60;
-      g.circle(sx(cx + ox), sy(cy + oy), 1.6).fill({ color: 0xe0574b, alpha: 0.9 });
+    // Withdrawal: engines flare hard while the side burns for the edge.
+    if (!v.plat && st.round >= st.withdrawFrom[v.side]) {
+      const px = spritePx(v.kind);
+      v.glow.clear();
+      const tint = st.rec.own_side !== null && v.side === st.rec.own_side ? TINT_OWN : TINT_FOE;
+      v.glow.circle(0, 0, px * 0.5).fill({ color: tint, alpha: 0.06 });
+      v.glow.circle(-px * 0.62, 0, px * 0.3).fill({ color: 0xffd98a, alpha: 0.75 });
+      v.glow.circle(-px * 0.95, 0, px * 0.16).fill({ color: 0xffb46b, alpha: 0.5 });
     }
   }
-  layers.fx.addChild(g);
+  drawDebris();
+  drawFx(dt);
+  applyShakeAndBanner();
+}
+
+// --- FX rendering (immediate mode on persistent surfaces) --------------------------
+
+const shipXY = (i: number, frac: number): [number, number] => {
+  const v = st!.ships[i];
+  if (!v) return [0, 0];
+  const e = frac * frac * (3 - 2 * frac);
+  return [v.x0 + (v.x1 - v.x0) * e, v.y0 + (v.y1 - v.y0) * e];
+};
+
+/// Quadratic bezier point for a torpedo arc (curving pursuit).
+function arcPoint(a: FxWindow["arcs"][number], t: number, frac: number): [number, number] {
+  const [tx, ty] = shipXY(a.to, frac);
+  const u = 1 - t;
+  return [u * u * a.x0 + 2 * u * t * a.cx + t * t * tx, u * u * a.y0 + 2 * u * t * a.cy + t * t * ty];
+}
+
+function drawDebris(): void {
+  if (!debrisG || !st) return;
+  debrisG.clear();
+  const now = st.round + st.frac;
+  for (const d of debrisField) {
+    const age = Math.max(0, now - d.bornRound);
+    const x = d.x + d.dx * age;
+    const y = d.y + d.dy * age;
+    if (Math.abs(x) > VIEW_R || Math.abs(y) > VIEW_R) continue;
+    debrisG.circle(sx(x), sy(y), d.r).fill({ color: d.tint, alpha: d.tint === 0xff9d5c ? 0.5 : 0.35 });
+  }
+}
+
+/// The weapon-FX grammar, drawn statelessly for the current (round, frac):
+/// every family visually distinct, every effect scaled to the record.
+function drawFx(dt: number): void {
+  if (!fxG || !st) return;
+  void dt;
+  fxG.clear();
+  const fx = st.fx;
+  if (!fx) return;
+  const f = st.frac;
+
+  // BEAMS — instant flash-lines alive for a short window around t; heavy
+  // (capital) beams show a charge-up glow then hold the line longer.
+  for (const b of fx.beams) {
+    const dur = b.heavy ? 0.14 : 0.06;
+    const dtb = f - b.t;
+    if (b.heavy && dtb > -0.05 && dtb < 0) {
+      const [x, y] = shipXY(b.from, f);
+      fxG.circle(sx(x), sy(y), 5 + 60 * (dtb + 0.05)).fill({ color: 0x9fd9ff, alpha: 0.35 });
+      continue;
+    }
+    if (dtb < 0 || dtb > dur) continue;
+    const k = 1 - dtb / dur;
+    const [x0, y0] = shipXY(b.from, f);
+    const [x1, y1] = shipXY(b.to, f);
+    fxG.moveTo(sx(x0), sy(y0)).lineTo(sx(x1), sy(y1))
+      .stroke({ color: 0x9fd9ff, width: (b.heavy ? 2.4 : 1) * b.w * k + 0.4, alpha: 0.55 + 0.4 * k });
+    if (b.glint) {
+      // Reflective mitigation: a mirror-flash deflection sparkle, not a bloom.
+      fxG.moveTo(sx(x1) - 5, sy(y1)).lineTo(sx(x1) + 5, sy(y1)).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
+      fxG.moveTo(sx(x1), sy(y1) - 5).lineTo(sx(x1), sy(y1) + 5).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
+    } else {
+      fxG.circle(sx(x1), sy(y1), 2.5 + 3.5 * b.w * k).fill({ color: 0xcfeaff, alpha: 0.5 * k });
+    }
+  }
+
+  // DRIVER tracers — short visible flight with muzzle flash and impact
+  // sparks; misses pass close and carry on (dropped first by the ladder).
+  const FLIGHT = 0.1;
+  for (const tr of fx.tracers) {
+    if (tr.miss && perfTier >= 1) continue;
+    const dtt = f - tr.t;
+    if (dtt < 0 || dtt > FLIGHT + 0.06) continue;
+    const [x0, y0] = shipXY(tr.from, f);
+    const [x1raw, y1raw] = shipXY(tr.to, f);
+    const missOff = tr.miss ? 26 : 0;
+    const x1 = x1raw + missOff, y1 = y1raw + missOff * 0.6;
+    const p = Math.min(1, dtt / FLIGHT);
+    const q = Math.max(0, p - (perfTier >= 2 ? 0.1 : 0.16)); // ladder: thinner streak
+    const ax = x0 + (x1 - x0) * (tr.miss ? p * 1.35 : p);
+    const ay = y0 + (y1 - y0) * (tr.miss ? p * 1.35 : p);
+    const bx = x0 + (x1 - x0) * (tr.miss ? q * 1.35 : q);
+    const by = y0 + (y1 - y0) * (tr.miss ? q * 1.35 : q);
+    fxG.moveTo(sx(bx), sy(by)).lineTo(sx(ax), sy(ay)).stroke({ color: 0xe8a13a, width: 1.1, alpha: 0.85 });
+    if (dtt < 0.03) fxG.circle(sx(x0), sy(y0), 2.2).fill({ color: 0xffd98a, alpha: 0.8 }); // muzzle
+    if (!tr.miss && p >= 1) {
+      if (tr.spall) {
+        // Whipple mitigation: shattered-armor spall puffs, not clean sparks.
+        const rngS = mulberry32(hashId(`${st.rec.id}:${st.round}:spall:${tr.from}:${tr.to}`));
+        for (let k = 0; k < 4; k++) {
+          fxG.circle(sx(x1) + (rngS() - 0.5) * 12, sy(y1) + (rngS() - 0.5) * 12, 1.6).fill({ color: 0x9aa8ba, alpha: 0.7 });
+        }
+      } else {
+        fxG.star(sx(x1), sy(y1), 4, 4, 1.4).fill({ color: 0xffe0a8, alpha: 0.85 });
+      }
+    }
+  }
+
+  // TORPEDO ARCS — the centerpiece: engine-glow trails curving toward their
+  // targets; flak deaths burst short of the target; hits detonate biggest.
+  for (const a of fx.arcs) {
+    const prog = Math.min(f / a.tEnd, 1);
+    if (f > a.tEnd + 0.12 && a.outcome !== "fly") continue;
+    const endT = a.outcome === "flak" ? 0.72 : 1; // flak kills it short of the target
+    const t = Math.min(prog, 1) * endT;
+    const [hx, hy] = arcPoint(a, t, f);
+    if (f <= a.tEnd) {
+      for (let k = 0; k < 4; k++) { // trail
+        const [px, py] = arcPoint(a, Math.max(0, t - 0.05 * (k + 1)), f);
+        fxG.circle(sx(px), sy(py), 1.5 - k * 0.28).fill({ color: 0xe0574b, alpha: 0.6 - k * 0.13 });
+      }
+      fxG.circle(sx(hx), sy(hy), 1.8).fill({ color: 0xffb0a0, alpha: 0.95 });
+    }
+    const since = f - a.tEnd;
+    if (since >= 0 && since < 0.12 && a.outcome === "flak") {
+      fxG.circle(sx(hx), sy(hy), 3 + 26 * since).stroke({ color: 0xffd98a, width: 1.2, alpha: 0.8 * (1 - since / 0.12) });
+    }
+    if (since >= 0 && since < 0.12 && a.outcome === "hit") {
+      const [tx2, ty2] = shipXY(a.to, f);
+      fxG.circle(sx(tx2), sy(ty2), 4 + 46 * since).fill({ color: 0xffb46b, alpha: 0.55 * (1 - since / 0.12) });
+      fxG.circle(sx(tx2), sy(ty2), 2 + 20 * since).fill({ color: 0xfff2cc, alpha: 0.8 * (1 - since / 0.12) });
+    }
+  }
+
+  // POINT-DEFENSE fans — screening ships spray rapid small tracers at arcs
+  // inside their bubble (a Dreadnought's fan is denser and longer-ranged).
+  for (const pi of fx.pdShips) {
+    const v = st.ships[pi];
+    if (!v?.inUse) continue;
+    const [px, py] = shipXY(pi, f);
+    const radius = v.kind === "dreadnought" ? 400 : 180;
+    const dense = v.kind === "dreadnought" ? 5 : 3;
+    for (const a of fx.arcs) {
+      if (a.side === v.side) continue;
+      if (f > a.tEnd) continue;
+      const t = Math.min(f / a.tEnd, 1) * (a.outcome === "flak" ? 0.72 : 1);
+      const [hx, hy] = arcPoint(a, t, f);
+      if (Math.hypot(hx - px, hy - py) > radius) continue;
+      const rngF = mulberry32(hashId(`${st.rec.id}:${st.round}:pd:${pi}`) ^ Math.floor(f * 24));
+      for (let k = 0; k < dense; k++) {
+        const jx = hx + (rngF() - 0.5) * 30, jy = hy + (rngF() - 0.5) * 30;
+        fxG.moveTo(sx(px), sy(py)).lineTo(sx(jx), sy(jy)).stroke({ color: 0xbfe0ff, width: 0.5, alpha: 0.4 });
+      }
+    }
+  }
+
+  // DEATHS — exact record events: explosion scaled by mass class. Corvettes
+  // pop; cruisers flash-and-break; capitals go in multi-stage breakups.
+  for (const d of fx.deaths) {
+    const since = f - d.t;
+    if (since < 0) continue;
+    const life = d.cls === 3 ? 0.5 : d.cls === 2 ? 0.3 : 0.16;
+    if (since > life) continue;
+    const k = since / life;
+    const base = [10, 16, 26, 40][d.cls];
+    fxG.circle(sx(d.x), sy(d.y), 2 + base * k).fill({ color: 0xffb46b, alpha: 0.5 * (1 - k) });
+    fxG.circle(sx(d.x), sy(d.y), 1 + base * 0.45 * k).fill({ color: 0xfff2cc, alpha: 0.85 * (1 - k) });
+    if (d.cls >= 2) {
+      // Multi-stage: burning sections shed outward on a seeded fan.
+      const rngD = mulberry32(hashId(`${st.rec.id}:death:${d.x.toFixed(0)}:${d.y.toFixed(0)}`));
+      for (let s2 = 0; s2 < (d.cls === 3 ? 7 : 4); s2++) {
+        const ang = rngD() * Math.PI * 2;
+        const rr = (14 + rngD() * 30) * k;
+        fxG.circle(sx(d.x) + Math.cos(ang) * rr, sy(d.y) + Math.sin(ang) * rr, 2.4 * (1 - k) + 0.6)
+          .fill({ color: 0xff9d5c, alpha: 0.7 * (1 - k) });
+      }
+    }
+  }
+}
+
+/// Titan set piece: screen shake within taste + the flagship-name banner
+/// (mirrors the sim's news headline). Shake decays; scrub-safe (pure f(t)).
+function applyShakeAndBanner(): void {
+  if (!st || !app || !layers) return;
+  const f = st.frac;
+  let shake = 0;
+  for (const d of st.fx?.deaths ?? []) {
+    if (d.cls < 2) continue;
+    const since = f - d.t;
+    if (since >= 0 && since < 0.5) shake = Math.max(shake, (d.cls === 3 ? 5 : 2.4) * (1 - since / 0.5));
+  }
+  const rngS = mulberry32(hashId(`${st.rec.id}:${st.round}:shake`) ^ Math.floor(f * 60));
+  app.stage.position.set(shake ? (rngS() - 0.5) * 2 * shake : 0, shake ? (rngS() - 0.5) * 2 * shake : 0);
+  // Banner: the Titan death headline, once per (record, round).
+  const titan = st.fx?.deaths.find((d) => d.cls === 3);
+  if (banner) {
+    if (titan && f >= titan.t) {
+      const key = `${st.rec.id}:${st.round}`;
+      const name = st.rec.sides[titan.side]?.flagship_name ?? "THE TITAN";
+      if (bannerKey !== key) { bannerKey = key; banner.textContent = `☄ ${name.toUpperCase()} IS DOWN`; }
+      banner.style.display = "block";
+      banner.style.opacity = String(Math.max(0, 1 - Math.max(0, f - titan.t - 0.35) * 2));
+    } else if (bannerKey && !titan) {
+      banner.style.display = "none";
+    } else if (!titan || f < titan.t) {
+      banner.style.display = "none";
+    }
+  }
 }
