@@ -6,6 +6,7 @@ import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
+import { theaterAttach, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 
 const state: ViewState = initialState();
@@ -85,7 +86,7 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer };
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: () => theaterDemo() };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -2021,6 +2022,7 @@ function closeBattleViewer(): void {
   openBattleViewerId = null;
   bvPlaying = false;
   $("battle-viewer").classList.remove("is-open");
+  theaterClose(); // stop the theater's ticker — the map is never affected
 }
 
 /// The playback clock — advances the shown round while playing, clamped to the
@@ -2042,6 +2044,9 @@ function bvTick(ts: number): void {
     }
     if (changed) renderBattleViewer();
   }
+  // §theater: push transport time every frame — round + fractional progress
+  // drives the theater's interpolation; LIGHT-LIVE pins it to the frontier.
+  theaterSetTime(bvRound, bvPlaying ? Math.min(1, bvAccum) : 0, bvLive);
   bvLastTs = ts;
   requestAnimationFrame(bvTick);
 }
@@ -2238,10 +2243,13 @@ function renderBattleViewer(): void {
       salvos = `<div class="bv-salvos" style="align-items:center;color:var(--dim)" title="exact fire strength is fogged — you see only the size buckets">⚔</div>`;
     }
     arena = `<div class="bv-arena">${bvSideHtml(rec, rd, 0, participant, false)}${salvos}${bvSideHtml(rec, rd, 1, participant, platGone)}</div>`;
-    // §tactical T3: TRUTH KEYFRAME — the theater is an interpolating replayer
-    // of real positions now (reality provides the choreography). Participant
-    // records carry frames; old/bucket records fall back to the arena columns.
-    if (rd.frame) {
+    // §theater: participant records with truth keyframes get the FULL battle
+    // theater (ship sprites + weapon FX, an interpolating replayer of real
+    // positions). Records without frames (old/bucket) keep the SVG truth map
+    // per-round when one exists, else just the arena columns.
+    if (rec.rounds.some((r) => r.frame)) {
+      arena += `<div class="bv-theater" id="bv-theater-mount"></div>`;
+    } else if (rd.frame) {
       arena += bvTruthMap(rd.frame, rec.own_side);
     }
     notes = rd.notes.length ? `<div class="bv-notes">${rd.notes.map(bvNoteBanner).join("")}</div>` : "";
@@ -2265,6 +2273,83 @@ function renderBattleViewer(): void {
 
   $("battle-viewer").innerHTML = head + sub + arena + notes + transport;
   $("battle-viewer").classList.add("is-open");
+  // §theater: (re)mount the persistent canvas into the fresh DOM — the holder
+  // is re-appended, so the WebGL context survives innerHTML rebuilds.
+  const thMount = document.getElementById("bv-theater-mount");
+  if (thMount) theaterAttach(thMount, rec);
+  else theaterClose();
+}
+
+// §theater: a SCRIPTED demo record (debug + the acceptance spot-check rig).
+// `__ss.theaterDemo()` fabricates a deterministic participant record with
+// truth keyframes — capitals, torpedo salvos, PD screens, deaths, a platform,
+// a retreat — and opens the viewer on it. Pure client-side; touches nothing.
+function theaterDemo(): void {
+  const mk = (side: number, kind: ShipKind, x: number, y: number, hp = 1, plat = false) => ({ side, kind, x, y, hp, plat });
+  const rounds: BattleRecordView["rounds"] = [];
+  const N = 10;
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const ax = -880 + 620 * t; // attackers close from the left
+    const ships: KeyframeView["ships"] = [
+      mk(0, "titan", ax - 60, 0, 1 - 0.25 * t),
+      mk(0, "battleship", ax - 20, 120, 1 - 0.35 * t),
+      ...[0, 1, 2, 3].map((k) => mk(0, "corvette", ax + 40, -160 + k * 90, 1 - 0.3 * t * ((k % 2) + 1) / 2)),
+      ...[0, 1, 2, 3].map((k) => (i < 8 || k > 0 ? mk(0, "raider", ax + 90 + 30 * Math.sin(t * 6 + k), -220 + k * 140, 1 - 0.2 * t) : null)),
+      ...[...Array(i < 5 ? 8 : i < 7 ? 6 : 4)].map((_, k) => mk(1, "raider", 320 + 25 * Math.cos(t * 5 + k), -260 + k * 76, 1 - 0.45 * t)),
+      mk(1, "corvette", 250, -60, 1 - 0.3 * t),
+      mk(1, "corvette", 250, 60, 1 - 0.3 * t),
+      mk(1, "convoy", 540, 30, 1 - 0.5 * t),
+      mk(1, "corvette", 600, 0, 1 - 0.6 * t, true),
+      mk(1, "corvette", 600, 40, 1, true),
+    ].filter((s): s is NonNullable<typeof s> => s !== null);
+    const torps: KeyframeView["torpedoes"] = i >= 2 && i <= 8
+      ? [{ side: 0, x: ax + 200 + 180 * ((i % 3) / 3), y: -20, n: Math.max(2, 10 - i) }]
+      : [];
+    const deaths: KeyframeView["deaths"] = [];
+    if (i === 5) deaths.push({ step: 3, side: 1, kind: "raider", x: 340, y: -110 });
+    if (i === 7) deaths.push({ step: 1, side: 1, kind: "raider", x: 355, y: 30 }, { step: 4, side: 1, kind: "raider", x: 310, y: 96 });
+    if (i === 8) deaths.push({ step: 2, side: 0, kind: "raider", x: ax + 90, y: -220 });
+    const rc = (kind: ShipKind, n: number) => ({ kind, exact: n, class: "one" as CountClass });
+    rounds.push({
+      tick: i * 15,
+      counts: [
+        [rc("titan", 1), rc("battleship", 1), rc("corvette", 4), rc("raider", i < 8 ? 4 : 3)],
+        [rc("raider", i < 5 ? 8 : i < 7 ? 6 : 4), rc("corvette", 2), rc("convoy", 1)],
+      ],
+      kills: [
+        [i === 8 ? rc("raider", 1) : rc("raider", 0)].filter((k) => k.exact),
+        [i === 5 ? rc("raider", 1) : i === 7 ? rc("raider", 2) : rc("raider", 0)].filter((k) => k.exact),
+      ],
+      dealt: [26 + i * 5, 18 + i * 3],
+      notes: i === 6 ? [{ kind: "retreat_tripped", side: 1, comp: null }] : i === 9 ? [{ kind: "withdraw_ordered", side: 1, comp: null }] : [],
+      frame: { ships, torpedoes: torps, deaths },
+    });
+  }
+  const rec: BattleRecordView = {
+    id: "demo-battle" as unknown as BattleRecordView["id"],
+    pos: { x: 0, y: 0 },
+    system: null,
+    started_at: 0,
+    raid: false,
+    fidelity: "participant",
+    own_side: 0,
+    sides: [
+      { corp: "1", posture: "engage_any", platform_tiers: 0, initial: rounds[0].counts[0], loadouts: [
+        { kind: "raider", modules: ["torpedo_rack"], n: 4 },
+        { kind: "corvette", modules: ["whipple_armor"], n: 2 },
+      ], flagship_name: "Emberfall" },
+      { corp: "2", posture: null, platform_tiers: 2, initial: rounds[0].counts[1], loadouts: [
+        { kind: "corvette", modules: ["point_defense_screen"], n: 2 },
+        { kind: "raider", modules: ["mass_driver"], n: 4 },
+      ], flagship_name: null },
+    ],
+    rounds,
+    light_frontier_tick: (N - 1) * 15,
+    outcome: "target_destroyed" as BattleRecordView["outcome"],
+  };
+  state.battleRecords = state.battleRecords.filter((r) => r.id !== rec.id).concat([rec]);
+  openBattleViewer(rec.id);
 }
 
 // §contestable-territory Part 2: the CAPTURE results panel — a system changed
