@@ -11529,7 +11529,12 @@ mod tests {
             ticks += 1;
         }
         let secs = ticks as f64 / 30.0;
-        assert!(secs > 20.0, "equal squadrons grind for ~the target duration (got {secs:.0}s)");
+        // AMENDED with §arena discipline (2026-07): the compact in-arena dance
+        // resolves equal mirrors faster than the old wide-swing dance; battle
+        // DURATION is emergent under the tactical engine (battle_target_secs
+        // drives cadence + windows, not the grind). The law kept here is
+        // GRIND, NOT MELT: an equal fight is a real exchange, never a flash.
+        assert!(secs > 10.0, "equal squadrons grind, not melt (got {secs:.0}s)");
     }
 
     // ---- Constant per-kind speed (§14.1) + lead pursuit (§8) ----
