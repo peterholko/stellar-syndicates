@@ -1917,11 +1917,12 @@ function updateOngoingBattlePanel(): void {
     `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
   const ragingLine = `<div class="sp-line dim">Raging <b style="color:var(--ink)">${fmtCountdown(observed)}</b> · forces remaining by your light</div>`;
-  // §battle-records: watch the round-by-round replay of this live fight (if a
-  // record for it has reached us — participants always have one, an observer
-  // only when their sensors cover the site).
+  // §battle-records: WATCH THIS FIGHT LIVE (if a record for it has reached us
+  // — participants always have one, an observer only when their sensors cover
+  // the site). The viewer opens pinned LIGHT-LIVE and chase-plays each round
+  // as its light arrives — you are watching the battle at your light delay.
   const viewBtn = state.battleRecords.some((r) => r.id === b.id)
-    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${svgIcon("concept-fleet", "sm")} View battle replay</button>`
+    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the fight as its light reaches you — rounds stream in live, delayed by distance.">${svgIcon("concept-fleet", "sm")} ◉ Watch live</button>`
     : "";
   const body =
     ragingLine +
@@ -1932,6 +1933,7 @@ function updateOngoingBattlePanel(): void {
         viewBtn +
         `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", "sm")} Doctrine ▸</button>`
       : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
+        viewBtn +
         `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>` +
         viewBtn);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
