@@ -86,7 +86,7 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false, big = false) => theaterDemo(titanDown, big) };
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false, big = false) => theaterDemo(titanDown, big), theaterDemoLive: (ms = 1800) => theaterDemoLive(ms) };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -2032,8 +2032,31 @@ function bvTick(ts: number): void {
   const rec = bvRecordFor(openBattleViewerId);
   if (!rec) { closeBattleViewer(); bvLoopRunning = false; return; }
   const frontier = rec.rounds.length - 1;
-  if (bvPlaying && frontier >= 0) {
-    const dt = bvLastTs ? Math.min(0.25, (ts - bvLastTs) / 1000) : 0;
+  const dt = bvLastTs ? Math.min(0.25, (ts - bvLastTs) / 1000) : 0;
+  if (bvLive && frontier >= 0) {
+    // LIGHT-LIVE is a CHASE, not a slideshow: each newly-arrived round plays
+    // through smoothly at the battle's REAL pace (wall-seconds per recorded
+    // round), trailing the light frontier; the scene holds with idle drift
+    // only when fully caught up. Everything shown has already arrived — the
+    // light-cone law is untouched, this is presentation of arrived truth.
+    if (bvRound < frontier) {
+      const hz = state.tickHz || 30;
+      const wnd = Math.max(0.2, (rec.rounds[bvRound + 1].tick - rec.rounds[bvRound].tick) / hz);
+      bvAccum += dt / wnd;
+      let changed = false;
+      while (bvAccum >= 1 && bvRound < frontier) { bvRound++; bvAccum -= 1; changed = true; }
+      if (bvRound >= frontier) bvAccum = 0; // caught up — hold at the newest light
+      if (changed) renderBattleViewer();
+    } else {
+      bvAccum = 0;
+      if (rec.outcome !== null) {
+        // The ending's light arrived and its last window played out.
+        bvLive = false;
+        bvPlaying = false;
+        renderBattleViewer();
+      }
+    }
+  } else if (bvPlaying && frontier >= 0) {
     bvAccum += (dt * bvSpeed) / BV_ROUND_SECS;
     let changed = false;
     while (bvAccum >= 1 && bvRound < frontier) { bvRound++; bvAccum -= 1; changed = true; }
@@ -2208,7 +2231,7 @@ function renderBattleViewer(): void {
   const participant = rec.fidelity === "participant";
   const running = rec.outcome === null;
   const frontier = rec.rounds.length - 1;
-  if (bvLive && frontier >= 0) bvRound = frontier;
+  if (bvLive && frontier >= 0) bvRound = Math.min(bvRound, frontier); // the chase advances; never snap-jump
   bvRound = Math.max(0, Math.min(bvRound, Math.max(0, frontier)));
 
   const head =
@@ -2365,6 +2388,39 @@ function theaterDemo(titanDown = false, big = false): void {
   };
   state.battleRecords = state.battleRecords.filter((r) => r.id !== rec.id).concat([rec]);
   openBattleViewer(rec.id);
+}
+
+// §theater: the LIVE demo rig — streams the scripted record's rounds in on a
+// wall-clock timer (simulated arriving light) so LIGHT-LIVE chase playback
+// can be watched without staging a real battle: `__ss.theaterDemoLive()`.
+let demoLiveTimer: number | null = null;
+function theaterDemoLive(intervalMs = 1800): void {
+  if (demoLiveTimer !== null) { clearInterval(demoLiveTimer); demoLiveTimer = null; }
+  theaterDemo(); // installs the full scripted record
+  const full = state.battleRecords.find((r) => r.id === "demo-battle");
+  if (!full) return;
+  const allRounds = full.rounds;
+  let upto = 2;
+  const install = () => {
+    const rec: BattleRecordView = {
+      ...full,
+      rounds: allRounds.slice(0, upto),
+      outcome: upto >= allRounds.length ? full.outcome : null,
+      light_frontier_tick: allRounds[upto - 1].tick,
+    };
+    state.battleRecords = state.battleRecords.filter((r) => r.id !== rec.id).concat([rec]);
+    refreshOpenBattleViewer();
+  };
+  install();
+  openBattleViewer(full.id); // opens pinned LIGHT-LIVE on the "running" fight
+  demoLiveTimer = window.setInterval(() => {
+    upto++;
+    install();
+    if (upto >= allRounds.length && demoLiveTimer !== null) {
+      clearInterval(demoLiveTimer);
+      demoLiveTimer = null;
+    }
+  }, intervalMs);
 }
 
 // §contestable-territory Part 2: the CAPTURE results panel — a system changed
