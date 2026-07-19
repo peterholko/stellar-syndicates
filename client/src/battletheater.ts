@@ -205,7 +205,13 @@ let perfTier = 0;
 let camX = 0;
 let camY = 0;
 let camZoom = 1;
-let camManual = false; // the user took the stick (wheel/drag) — stop auto-fit
+/// Wheel sets a ZOOM LOCK: the camera keeps FOLLOWING the fight at the
+/// user's magnification (zooming in must never mean losing the battle).
+let camZoomLock: number | null = null;
+/// Full manual (frozen frame) is DRAG-only; a watchdog re-engages follow if
+/// the fight leaves the frozen view — nobody stares at empty space.
+let camManual = false;
+let manualEmptySecs = 0;
 let dragging = false;
 let dragLast: [number, number] | null = null;
 const CAM_ZOOM_MIN = 0.8;
@@ -283,6 +289,10 @@ async function initApp(): Promise<void> {
   banner.className = "bv-theater-banner";
   banner.style.display = "none";
   holder.appendChild(banner);
+  const hint = document.createElement("div");
+  hint.className = "bv-theater-hint";
+  hint.textContent = "scroll zoom · drag pan · double-click follows the fight";
+  holder.appendChild(hint);
   // Camera controls: wheel zooms toward the cursor, drag pans, double-click
   // returns to auto-fit. (The theater takes no input that isn't a camera or
   // transport control — the standing interaction law.)
@@ -297,7 +307,7 @@ async function initApp(): Promise<void> {
     camZoom = Math.min(CAM_ZOOM_MAX, Math.max(CAM_ZOOM_MIN, camZoom * Math.exp(-ev.deltaY * 0.0016)));
     camX = wx - (mx - CANVAS_W / 2) / (SCALE * camZoom); // …stays under it
     camY = wy - (my - CANVAS_H / 2) / (SCALE * camZoom);
-    camManual = true;
+    camZoomLock = camZoom; // follow continues at this magnification
   }, { passive: false });
   app.canvas.addEventListener("pointerdown", (ev: PointerEvent) => {
     dragging = true;
@@ -308,7 +318,8 @@ async function initApp(): Promise<void> {
   app.canvas.addEventListener("pointerup", endDrag);
   app.canvas.addEventListener("pointercancel", endDrag);
   app.canvas.addEventListener("dblclick", () => {
-    camManual = false; // hand the stick back to auto-fit
+    camManual = false; // hand the stick back to auto-fit…
+    camZoomLock = null; // …at its own framing
   });
   // Pointer-move does double duty: drag = pan; hover = torpedo-arc tooltip
   // (arcs are immediate-mode, so the canvas hit-tests the few live arc heads).
@@ -413,7 +424,7 @@ export function theaterDebug(): Record<string, unknown> | null {
     deaths: st.fx?.deaths.map((d) => ({ t: d.t, cls: d.cls, ship: d.shipIdx })) ?? null,
     debris: debrisField.length,
     tier: perfTier,
-    cam: { x: +camX.toFixed(1), y: +camY.toFixed(1), zoom: +camZoom.toFixed(3), manual: camManual },
+    cam: { x: +camX.toFixed(1), y: +camY.toFixed(1), zoom: +camZoom.toFixed(3), manual: camManual, lock: camZoomLock, withdrawFrom: st.withdrawFrom },
   };
 }
 
@@ -454,12 +465,17 @@ export function theaterHash(): number {
 // --- Record binding & backdrop ---------------------------------------------------
 
 /// First round each side runs, from the record's retreat/withdraw beats.
+/// `mutual_disengage` (the raid cap + the safety valve — the COMMON endings)
+/// carries no side: BOTH sides break off from that round.
 function scanWithdraw(rec: BattleRecordView): [number, number] {
   const w: [number, number] = [Infinity, Infinity];
   rec.rounds.forEach((r, i) => {
     for (const n of r.notes) {
       if ((n.kind === "retreat_tripped" || n.kind === "withdraw_ordered") && n.side !== null) {
         w[n.side] = Math.min(w[n.side], i);
+      } else if (n.kind === "mutual_disengage") {
+        w[0] = Math.min(w[0], i);
+        w[1] = Math.min(w[1], i);
       }
     }
   });
@@ -498,7 +514,9 @@ function bindRecord(rec: BattleRecordView): void {
   camX = 0;
   camY = 0;
   camZoom = 1;
+  camZoomLock = null;
   camManual = false;
+  manualEmptySecs = 0;
   buildBackdrop(rec);
 }
 
@@ -1005,30 +1023,46 @@ function frame(dt: number): void {
   const { frac, live } = st;
   const atFrontier = st.round >= st.rec.rounds.length - 1;
   const holdLive = live && atFrontier;
-  // AUTO-FIT camera: frame the ships still FIGHTING — exiting hulls and a
-  // withdrawing side's runners past the arena edge don't drag the view (the
-  // fix for "everyone slides off the map in one direction": the runners fade
-  // at the edge and the camera stays on the fight).
-  if (!camManual) {
-    let lo0 = Infinity, lo1 = Infinity, hi0 = -Infinity, hi1 = -Infinity;
-    for (const v of st.ships) {
-      if (!v.inUse) continue;
-      const e0 = frac * frac * (3 - 2 * frac);
-      const px = v.x0 + (v.x1 - v.x0) * e0;
-      const py = v.y0 + (v.y1 - v.y0) * e0;
-      const runner = (v.exiting || st.round >= st.withdrawFrom[v.side]) && Math.hypot(px, py) > 1050;
-      if (runner || (v.deathT !== null && frac >= v.deathT)) continue;
-      lo0 = Math.min(lo0, px); hi0 = Math.max(hi0, px);
-      lo1 = Math.min(lo1, py); hi1 = Math.max(hi1, py);
+  // AUTO-FIT camera: frame the ships still FIGHTING. Runners past the arena
+  // edge never drag the view, and once ANY side is breaking off (retreat,
+  // withdraw order, or the common mutual-disengage endings) the far-out
+  // CHASE stops dragging it too — the pursuit is an epilogue: the camera
+  // eases back to the arena overview while everyone burns out and fades.
+  const anyWithdraw = st.round >= st.withdrawFrom[0] || st.round >= st.withdrawFrom[1];
+  const e0 = frac * frac * (3 - 2 * frac);
+  let lo0 = Infinity, lo1 = Infinity, hi0 = -Infinity, hi1 = -Infinity;
+  for (const v of st.ships) {
+    if (!v.inUse) continue;
+    const px = v.x0 + (v.x1 - v.x0) * e0;
+    const py = v.y0 + (v.y1 - v.y0) * e0;
+    const r = Math.hypot(px, py);
+    if (v.deathT !== null && frac >= v.deathT) continue;
+    if ((v.exiting || st.round >= st.withdrawFrom[v.side]) && r > 1050) continue;
+    if (anyWithdraw && r > 1150) continue; // the chase epilogue
+    lo0 = Math.min(lo0, px); hi0 = Math.max(hi0, px);
+    lo1 = Math.min(lo1, py); hi1 = Math.max(hi1, py);
+  }
+  let tx = 0, ty = 0, tz = 1;
+  if (isFinite(lo0)) {
+    const m = 140; // arena-unit margin around the fight
+    tx = Math.max(-900, Math.min(900, (lo0 + hi0) / 2));
+    ty = Math.max(-900, Math.min(900, (lo1 + hi1) / 2));
+    tz = Math.min(2.6, Math.max(0.9,
+      Math.min(CANVAS_W / ((hi0 - lo0 + 2 * m) * SCALE), CANVAS_H / ((hi1 - lo1 + 2 * m) * SCALE))));
+  }
+  if (camManual) {
+    // Frozen frame (drag): a watchdog re-engages FOLLOW when the fight has
+    // left the frozen view — never leave the player staring at empty space.
+    const cx0 = sx(tx), cy0 = sy(ty);
+    const fightVisible = isFinite(lo0)
+      && cx0 > -40 && cx0 < CANVAS_W + 40 && cy0 > -40 && cy0 < CANVAS_H + 40;
+    manualEmptySecs = fightVisible ? 0 : manualEmptySecs + dt;
+    if (manualEmptySecs > 1.5) {
+      camManual = false;
+      manualEmptySecs = 0;
     }
-    let tx = 0, ty = 0, tz = 1;
-    if (isFinite(lo0)) {
-      const m = 140; // arena-unit margin around the fight
-      tx = Math.max(-900, Math.min(900, (lo0 + hi0) / 2));
-      ty = Math.max(-900, Math.min(900, (lo1 + hi1) / 2));
-      tz = Math.min(2.6, Math.max(0.9,
-        Math.min(CANVAS_W / ((hi0 - lo0 + 2 * m) * SCALE), CANVAS_H / ((hi1 - lo1 + 2 * m) * SCALE))));
-    }
+  } else {
+    if (camZoomLock !== null) tz = camZoomLock; // follow at the user's zoom
     const k = Math.min(1, dt * 2.5); // smooth approach — no camera snaps
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;
