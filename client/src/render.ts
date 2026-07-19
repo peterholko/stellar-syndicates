@@ -46,8 +46,8 @@ const COL_SYSTEM = 0x4a5d7a;
 // deposit-value sizing + dominant-resource tint were geology leaks).
 const BAND_SIZE: Record<string, number> = { poor: 22, fair: 32, rich: 44 };
 const BAND_GLOW: Record<string, number> = { poor: 5, fair: 10, rich: 16 };
-const COL_OWN = 0x4fc3ff;
-const COL_OTHER = 0xff7a6b;
+export const COL_OWN = 0x4fc3ff; // exported: the battle theater reuses the team palette
+export const COL_OTHER = 0xff7a6b; // exported: the battle theater reuses the team palette
 // §syndicates: a SYNDICATE ally — a friendly GREEN, distinct from own cyan and
 // rival red (and from the teal sensor bubbles). Applied per the viewer's
 // light-delayed membership knowledge (the `ally` view flag).

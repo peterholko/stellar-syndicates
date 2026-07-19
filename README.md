@@ -615,6 +615,26 @@ deleted; `tactical.rs` is the engine).
   cap (huge fleets fight in echelons). Retreat doctrine, raid brevity, records,
   and reports all ride on top unchanged.
 
+**The Battle Theater (§theater — the visual layer).** Participant records
+with truth keyframes replay in a Pixi theater inside the battle viewer: real
+ship sprites (art-or-fallback per kind, size ∝ hull_mass^0.4, team glow in
+the map's colors, ×N stack badges, the Titan's nameplate) interpolating the
+recorded positions, plus a weapon-FX grammar where every family reads
+distinctly — instant beam flash-lines, driver tracers with seeded misses,
+torpedo arcs curving into PD flak or detonations, Reflective glints vs
+Whipple spall on hit, mass-scaled deaths at their exact recorded positions,
+persistent drifting debris, and flared-engine withdrawals under pursuit
+fire. The theater is a REPLAYER: all fx volume derives from the record
+(`dealt` × the side's loadout families; salvo-count drops budget torpedo
+resolutions), all cosmetic placement comes from a PRNG seeded on
+`(battleId, round)` — two independent renders are the identical scene,
+scrubbing back replays identically, and nothing here can ever influence
+resolution. Budgets: ≤80 ship sprites (heaviest kept, counts fold into
+badges), immediate-mode fx on persistent surfaces, a degradation ladder
+that never drops information-bearing effects. `__ss.theaterDemo()` opens a
+scripted record for spot-checks; `__ss.theaterHash()` exposes the
+determinism hash.
+
 **The battle calculator (Monte Carlo).** When you commit a raid you get a
 **projected distribution** — `k = 32` seeded rollouts of the REAL engine
 (`tactical::simulate_engagement`, headless and pure) over **only your own view

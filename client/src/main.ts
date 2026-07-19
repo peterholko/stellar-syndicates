@@ -6,7 +6,7 @@ import { initialState, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
-import { theaterAttach, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
+import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 
 const state: ViewState = initialState();
@@ -86,7 +86,7 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false) => theaterDemo(titanDown) };
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false, big = false) => theaterDemo(titanDown, big) };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -2046,7 +2046,9 @@ function bvTick(ts: number): void {
   }
   // §theater: push transport time every frame — round + fractional progress
   // drives the theater's interpolation; LIGHT-LIVE pins it to the frontier.
-  theaterSetTime(bvRound, bvPlaying ? Math.min(1, bvAccum) : 0, bvLive);
+  // bvAccum simply stops advancing while paused, so a pause holds the scene
+  // mid-window instead of snapping it back to the keyframe.
+  theaterSetTime(bvRound, Math.min(1, bvAccum), bvLive);
   bvLastTs = ts;
   requestAnimationFrame(bvTick);
 }
@@ -2245,9 +2247,9 @@ function renderBattleViewer(): void {
     arena = `<div class="bv-arena">${bvSideHtml(rec, rd, 0, participant, false)}${salvos}${bvSideHtml(rec, rd, 1, participant, platGone)}</div>`;
     // §theater: participant records with truth keyframes get the FULL battle
     // theater (ship sprites + weapon FX, an interpolating replayer of real
-    // positions). Records without frames (old/bucket) keep the SVG truth map
-    // per-round when one exists, else just the arena columns.
-    if (rec.rounds.some((r) => r.frame)) {
+    // positions). If the theater can't run (no WebGL / init failed), the SVG
+    // truth map is the per-round fallback; frameless records keep the columns.
+    if (rec.rounds.some((r) => r.frame) && theaterAvailable()) {
       arena += `<div class="bv-theater" id="bv-theater-mount"></div>`;
     } else if (rd.frame) {
       arena += bvTruthMap(rd.frame, rec.own_side);
@@ -2284,7 +2286,7 @@ function renderBattleViewer(): void {
 // `__ss.theaterDemo()` fabricates a deterministic participant record with
 // truth keyframes — capitals, torpedo salvos, PD screens, deaths, a platform,
 // a retreat — and opens the viewer on it. Pure client-side; touches nothing.
-function theaterDemo(titanDown = false): void {
+function theaterDemo(titanDown = false, big = false): void {
   const mk = (side: number, kind: ShipKind, x: number, y: number, hp = 1, plat = false) => ({ side, kind, x, y, hp, plat });
   const rounds: BattleRecordView["rounds"] = [];
   const N = 10;
@@ -2303,6 +2305,17 @@ function theaterDemo(titanDown = false): void {
       mk(1, "corvette", 600, 0, 1 - 0.6 * t, true),
       mk(1, "corvette", 600, 40, 1, true),
     ].filter((s): s is NonNullable<typeof s> => s !== null);
+    if (big) {
+      // 60v60 with capitals — the budget/degradation acceptance scene.
+      for (let k = 0; k < 46; k++) {
+        ships.push(mk(0, k % 3 === 0 ? "raider" : "corvette", ax + 60 + (k % 8) * 34, -300 + Math.floor(k / 8) * 52, 1 - 0.3 * t));
+      }
+      ships.push(mk(0, "dreadnought", ax - 90, -80, 1 - 0.2 * t));
+      for (let k = 0; k < 44; k++) {
+        ships.push(mk(1, k % 4 === 0 ? "corvette" : "raider", 300 + (k % 8) * 30, -280 + Math.floor(k / 8) * 50, 1 - 0.4 * t));
+      }
+      ships.push(mk(1, "battleship", 560, -60, 1 - 0.35 * t), mk(1, "cruiser", 560, 90, 1 - 0.3 * t));
+    }
     const torps: KeyframeView["torpedoes"] = i >= 2 && i <= 8
       ? [{ side: 0, x: ax + 200 + 180 * ((i % 3) / 3), y: -20, n: Math.max(2, 10 - i) }]
       : [];
@@ -2343,6 +2356,7 @@ function theaterDemo(titanDown = false): void {
       { corp: "2", posture: null, platform_tiers: 2, initial: rounds[0].counts[1], loadouts: [
         { kind: "corvette", modules: ["point_defense_screen"], n: 2 },
         { kind: "raider", modules: ["mass_driver"], n: 4 },
+        { kind: "raider", modules: ["reflective_plating"], n: 3 },
       ], flagship_name: null },
     ],
     rounds,
@@ -5302,7 +5316,13 @@ function join(): void {
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
           state.captureReports = msg.capture_reports;
-          state.battleRecords = msg.battle_records ?? []; // §battle-records: replay timelines
+          // §battle-records: replay timelines. The scripted §theater demo
+          // record (a client-only debug rig) survives server view replaces.
+          {
+            const demo = state.battleRecords.find((r) => r.id === "demo-battle");
+            state.battleRecords = msg.battle_records ?? [];
+            if (demo) state.battleRecords.push(demo);
+          }
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];

@@ -31,6 +31,7 @@ import type { BattleRecordView, KeyframeView, ShipKind } from "./protocol";
 import { hashId, mulberry32 } from "./prng";
 import { starTypeFor, starConceptUrl } from "./stars";
 import { STAR_TINT } from "./systemview";
+import { COL_OWN as TINT_OWN, COL_OTHER as TINT_FOE } from "./render";
 
 // --- Geometry & scale ---------------------------------------------------------
 
@@ -61,10 +62,8 @@ function spritePx(kind: ShipKind): number {
   return Math.max(10, Math.min(64, 7.0 * Math.pow((MASS[kind] ?? 800) / 100, 0.4)));
 }
 
-// Team identity — the map's exact conventions (render.ts COL_OWN / COL_OTHER;
-// no invented palette). Applied as engine/rim glow + a light sprite tint.
-const TINT_OWN = 0x4fc3ff;
-const TINT_FOE = 0xff7a6b;
+// Team identity: the map's own constants (imported from render.ts — no
+// invented palette), applied as engine/rim glow; the art stays natural.
 
 // --- Art: one resolver, art-or-fallback ---------------------------------------
 
@@ -118,7 +117,10 @@ interface ShipVis {
   inUse: boolean;
   // matched track for the active window:
   x0: number; y0: number; x1: number; y1: number;
-  hdg: number; // smoothed heading (rad)
+  hdg: number; // this window's track heading (rad)
+  hdg0: number; // heading at window ENTRY (prev window's track) — rotation
+  // is a PURE function of (record, round, frac): lerp hdg0→hdg over frac.
+  deathT: number | null; // bound recorded death time within the window
   side: number;
   kind: ShipKind;
   plat: boolean;
@@ -186,7 +188,6 @@ let sceneClock = 0; // seconds since open — drives idle drift only (cosmetic)
 // re-allocated (the budget law: pooled surfaces, no per-frame objects).
 let fxG: Graphics | null = null;
 let debrisG: Graphics | null = null;
-let debrisKey = ""; // debris field rebuilt only when the round changes
 let debrisField: { x: number; y: number; dx: number; dy: number; r: number; tint: number; bornRound: number }[] = [];
 let banner: HTMLDivElement | null = null;
 let bannerKey = "";
@@ -199,9 +200,40 @@ let perfTier = 0;
 const sx = (x: number) => CANVAS_W / 2 + x * SCALE;
 const sy = (y: number) => CANVAS_H / 2 + y * SCALE;
 
+/// Allocation-free deterministic jitter in [0,1) — integer-hash based, for
+/// per-frame cosmetics (PD fans, shake) where a full PRNG stream per frame
+/// would allocate a closure (the budget law: never allocate per frame).
+function jitter(a: number): number {
+  let x = a | 0;
+  x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d);
+  x = Math.imul(x ^ (x >>> 12), 0x297a2d39);
+  x ^= x >>> 15;
+  return (x >>> 0) / 4294967296;
+}
+
+let appInit: Promise<void> | null = null;
+let theaterFailed = false; // WebGL/init failure → the SVG truth map takes over
+
+/// Is the theater usable? (False after an init failure — the viewer falls
+/// back to the SVG truth map instead of a dead canvas.)
+export function theaterAvailable(): boolean {
+  return !theaterFailed;
+}
+
 /// Create the Pixi app once, lazily; reused across opens forever after.
-async function ensureApp(): Promise<void> {
-  if (app) return;
+/// SINGLE-FLIGHT: concurrent attaches during the first init await the same
+/// promise (a second caller must never see a half-initialized app).
+function ensureApp(): Promise<void> {
+  if (appInit) return appInit;
+  appInit = initApp().catch((e) => {
+    theaterFailed = true;
+    app = null;
+    throw e;
+  });
+  return appInit;
+}
+
+async function initApp(): Promise<void> {
   app = new Application();
   holder = document.createElement("div");
   holder.className = "bv-theater-holder";
@@ -243,8 +275,7 @@ async function ensureApp(): Promise<void> {
     const my = ((ev.clientY - r.top) / r.height) * CANVAS_H;
     for (const a of st.fx.arcs) {
       if (st.frac > a.tEnd) continue;
-      const t = Math.min(st.frac / a.tEnd, 1) * (a.outcome === "flak" ? 0.72 : 1);
-      const [hx, hy] = arcPoint(a, t, st.frac);
+      const [hx, hy] = arcHead(a, st.frac);
       if (Math.hypot(sx(hx) - mx, sy(hy) - my) < 10) {
         const target = st.ships[a.to];
         tooltip.textContent = `Torpedo salvo → ${target ? KIND_LABEL[target.kind] : "target"}`;
@@ -267,13 +298,23 @@ async function ensureApp(): Promise<void> {
 /// Mount the theater into the viewer's placeholder div (re-appended across the
 /// viewer's innerHTML rebuilds — the WebGL canvas survives), and (re)bind the
 /// record. Safe to call every render.
+let attachGen = 0; // bumped by theaterClose — cancels in-flight attaches
+
 export function theaterAttach(mount: HTMLElement, rec: BattleRecordView): void {
-  void ensureApp().then(() => {
-    if (!holder || !app) return;
-    if (holder.parentElement !== mount) mount.appendChild(holder);
-    bindRecord(rec);
-    app.ticker.start();
-  });
+  const gen = attachGen;
+  ensureApp().then(
+    () => {
+      // A close that landed while init was in flight wins: stay closed.
+      if (gen !== attachGen || !holder || !app) return;
+      if (holder.parentElement !== mount) mount.appendChild(holder);
+      bindRecord(rec);
+      app.ticker.start();
+    },
+    () => {
+      // Init failed (no WebGL, context exhausted): the next render falls
+      // back to the SVG truth map via theaterAvailable().
+    },
+  );
 }
 
 /// The transport pushes time every animation frame (round + fractional
@@ -285,18 +326,11 @@ export function theaterSetTime(round: number, frac: number, live: boolean): void
   st.live = live;
 }
 
-/// New light arrived for the open record (rounds grew) — rebind in place.
-export function theaterRefresh(rec: BattleRecordView): void {
-  if (st && st.rec.id === rec.id) {
-    if (st.rec !== rec) st.windowKey = "";
-    st.rec = rec;
-  }
-}
-
 /// The viewer closed — stop rendering entirely (the map is never affected).
 export function theaterClose(): void {
+  attachGen++; // cancel any attach still awaiting init
   st = null;
-  if (app) app.ticker.stop();
+  app?.ticker?.stop(); // ticker exists only once init completed
   if (holder?.parentElement) holder.parentElement.removeChild(holder);
 }
 
@@ -335,22 +369,56 @@ export function theaterHash(): number {
   let h = hashId(`${st.rec.id}:${st.round}`);
   for (const v of st.ships) {
     if (!v.inUse) continue;
-    h = (Math.imul(h, 31) + (v.side << 1) + (v.plat ? 1 : 0)) >>> 0;
-    h = (Math.imul(h, 31) + Math.round(v.x0 * 10) + Math.round(v.y0 * 10)) >>> 0;
-    h = (Math.imul(h, 31) + Math.round(v.x1 * 10) + Math.round(v.y1 * 10)) >>> 0;
-    h = (Math.imul(h, 31) + v.reps) >>> 0;
+    h = (Math.imul(h, 31) + (v.side << 1) + (v.plat ? 1 : 0) + v.kind.charCodeAt(0) * 97) >>> 0;
+    h = (Math.imul(h, 31) + Math.round(v.x0 * 10) * 3 + Math.round(v.y0 * 10) * 7) >>> 0;
+    h = (Math.imul(h, 31) + Math.round(v.x1 * 10) * 5 + Math.round(v.y1 * 10) * 11) >>> 0;
+    h = (Math.imul(h, 31) + v.reps + Math.round(v.hp * 100) * 13) >>> 0;
+  }
+  // The FX SCHEDULE is scene truth too — a divergence in any beam, tracer,
+  // arc outcome, or death timing must change the hash (the instrument backs
+  // the whole determinism law, not just track geometry).
+  const fx = st.fx;
+  if (fx) {
+    for (const b of fx.beams) {
+      h = (Math.imul(h, 33) + b.from * 5 + b.to * 13 + Math.round(b.t * 1000) + (b.heavy ? 17 : 0) + (b.glint ? 29 : 0)) >>> 0;
+    }
+    for (const tr of fx.tracers) {
+      h = (Math.imul(h, 33) + tr.from * 5 + tr.to * 13 + Math.round(tr.t * 1000) + (tr.miss ? 17 : 0) + (tr.spall ? 29 : 0)) >>> 0;
+    }
+    for (const a of fx.arcs) {
+      h = (Math.imul(h, 33) + a.to * 5 + Math.round(a.x0 * 10) * 3 + Math.round(a.y0 * 10) * 7 + Math.round(a.tEnd * 1000) + (a.outcome === "flak" ? 37 : a.outcome === "hit" ? 41 : 43)) >>> 0;
+    }
+    for (const d of fx.deaths) {
+      h = (Math.imul(h, 33) + Math.round(d.t * 1000) + d.cls * 7 + ((d.shipIdx ?? 63) + 1) * 3) >>> 0;
+    }
   }
   return h >>> 0;
 }
 
 // --- Record binding & backdrop ---------------------------------------------------
 
+/// First round each side runs, from the record's retreat/withdraw beats.
+function scanWithdraw(rec: BattleRecordView): [number, number] {
+  const w: [number, number] = [Infinity, Infinity];
+  rec.rounds.forEach((r, i) => {
+    for (const n of r.notes) {
+      if ((n.kind === "retreat_tripped" || n.kind === "withdraw_ordered") && n.side !== null) {
+        w[n.side] = Math.min(w[n.side], i);
+      }
+    }
+  });
+  return w;
+}
+
 function bindRecord(rec: BattleRecordView): void {
   if (st && st.rec.id === rec.id) {
     // Same battle, possibly NEW data (fresh light extended the rounds, or the
-    // record object was replaced) — invalidate the active window so tracks
-    // and the FX schedule rebuild against the new truth.
-    if (st.rec !== rec) st.windowKey = "";
+    // record object was replaced) — invalidate the active window so tracks,
+    // the FX schedule, AND the withdraw flags rebuild against the new truth.
+    if (st.rec !== rec) {
+      st.windowKey = "";
+      st.withdrawFrom = scanWithdraw(rec);
+    }
     st.rec = rec;
     return;
   }
@@ -367,15 +435,8 @@ function bindRecord(rec: BattleRecordView): void {
   // Withdrawal is rendered from the record's notes: from its first
   // retreat/withdraw beat, a side's ships burn with flared engines while
   // pursuit fire chases them out (the literal pursuit-fire mechanic).
-  rec.rounds.forEach((r, i) => {
-    for (const n of r.notes) {
-      if ((n.kind === "retreat_tripped" || n.kind === "withdraw_ordered") && n.side !== null) {
-        st!.withdrawFrom[n.side] = Math.min(st!.withdrawFrom[n.side], i);
-      }
-    }
-  });
+  st.withdrawFrom = scanWithdraw(rec);
   sceneClock = 0;
-  debrisKey = "";
   debrisField = [];
   bannerKey = "";
   buildBackdrop(rec);
@@ -450,7 +511,7 @@ function makeShipVis(): ShipVis {
   root.cursor = "default";
   const v: ShipVis = {
     root, sprite, body, glow, badge, plate,
-    inUse: false, x0: 0, y0: 0, x1: 0, y1: 0, hdg: 0,
+    inUse: false, x0: 0, y0: 0, x1: 0, y1: 0, hdg: 0, hdg0: 0, deathT: null,
     side: 0, kind: "raider", plat: false, hp: 1, reps: 1, seed: 0,
     entered: false, exiting: false,
   };
@@ -568,10 +629,50 @@ function rebuildWindow(): void {
   releaseAllShips();
   st.ships = [];
   const f0 = rec.rounds[round]?.frame;
-  if (!f0) return;
+  if (!f0) {
+    // A frameless round (old/bucket data mid-list): no ships, no FX — never
+    // replay a stale schedule against an empty scene.
+    st.fx = null;
+    fxG?.clear();
+    debrisG?.clear();
+    return;
+  }
+  // Window-ENTRY headings: match the PREVIOUS frame to this one, so each
+  // ship's rotation lerps hdg0→hdg purely from (record, round, frac) — no
+  // wall-clock easing, no stale pooled rotation (the determinism law).
+  const fPrev = rec.rounds[round - 1]?.frame;
+  const prevHdg = new Map<KfShipView, number>();
+  if (fPrev) {
+    for (const tr of matchFrames(fPrev.ships, f0.ships)) {
+      if (tr.from && tr.to) {
+        const dx = tr.to.x - tr.from.x, dy = tr.to.y - tr.from.y;
+        if (Math.abs(dx) + Math.abs(dy) > 1) prevHdg.set(tr.to, Math.atan2(dy, dx));
+      }
+    }
+  }
   const f1 = rec.rounds[round + 1]?.frame ?? f0;
-  const tracks = matchFrames(f0.ships, f1.ships);
-  const reps = repsFor(rec, round, f0);
+  let tracks = matchFrames(f0.ships, f1.ships);
+  // BUDGET: ≤80 ship sprites. A keyframe can carry up to 60/side + capitals;
+  // over the cap we keep the heaviest hulls (capitals + platforms always) and
+  // the dropped light hulls fold into the survivors' ×N badges via repsFor
+  // (count-stack philosophy — nothing vanishes from the accounting).
+  const SHIP_SPRITE_CAP = 80;
+  if (tracks.length > SHIP_SPRITE_CAP) {
+    tracks = tracks
+      .map((tr, ix) => ({ tr, ix }))
+      .sort((a, b) => {
+        const sa = a.tr.from ?? a.tr.to!;
+        const sb = b.tr.from ?? b.tr.to!;
+        const wa = (sa.plat ? 1e9 : 0) + (MASS[sa.kind] ?? 0);
+        const wb = (sb.plat ? 1e9 : 0) + (MASS[sb.kind] ?? 0);
+        return wb - wa || a.ix - b.ix; // stable: mass desc, keyframe order
+      })
+      .slice(0, SHIP_SPRITE_CAP)
+      .sort((a, b) => a.ix - b.ix)
+      .map((e) => e.tr);
+  }
+  const shownShips = tracks.map((tr) => (tr.from ?? tr.to!));
+  const reps = repsFor(rec, round, { ...f0, ships: shownShips });
   const wseed = hashId(`${rec.id}:${round}`);
   let i = 0;
   for (const tr of tracks) {
@@ -592,11 +693,18 @@ function rebuildWindow(): void {
     // Initial heading: along the track, else face the arena centre-line.
     const dx = v.x1 - v.x0, dy = v.y1 - v.y0;
     v.hdg = Math.abs(dx) + Math.abs(dy) > 1 ? Math.atan2(dy, dx) : (v.side === 0 ? 0 : Math.PI);
+    v.hdg0 = tr.from ? (prevHdg.get(tr.from as KfShipView) ?? v.hdg) : v.hdg;
+    v.deathT = null;
     dressShip(v);
     st.ships.push(v);
     i++;
   }
   st.fx = buildFxWindow(rec, round, st.ships, wseed);
+  // Bind each recorded death to its sprite ONCE per window (frame() reads
+  // v.deathT — no per-frame index scans).
+  for (const d of st.fx.deaths) {
+    if (d.shipIdx !== null && st.ships[d.shipIdx]) st.ships[d.shipIdx].deathT = d.t;
+  }
   rebuildDebris();
 }
 
@@ -717,7 +825,10 @@ function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], w
         const my = (s0.y + oy + tv.y1) / 2 + (rng() - 0.5) * 260;
         const isResolved = k < resolved;
         const tEnd = isResolved ? 0.45 + rng() * 0.5 : 1.1;
-        let dPd = Infinity;
+        // Finite base + stable per-arc epsilon: the comparator never sees
+        // Infinity−Infinity (NaN comparators are engine-dependent — a replay
+        // divergence risk in an effect class the ladder never drops).
+        let dPd = 1e9 + k;
         for (const pi of fx.pdShips) {
           const p = ships[pi];
           dPd = Math.min(dPd, Math.hypot(mx - p.x1, my - p.y1));
@@ -762,11 +873,10 @@ function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], w
 /// drift is a pure function of (round + frac − bornRound).
 function rebuildDebris(): void {
   if (!st) return;
-  const key = `${st.rec.id}:${st.round}`;
-  if (debrisKey === key) return;
-  debrisKey = key;
   debrisField = [];
-  const cap = perfTier >= 3 ? 4 : 9; // ladder tier 3: reduce debris counts
+  // Content is a PURE function of the record (the determinism law): the
+  // degradation ladder thins debris at DRAW time, never at build time.
+  const cap = 9;
   for (let r = 0; r <= st.round && r < st.rec.rounds.length; r++) {
     for (const d of st.rec.rounds[r].frame?.deaths ?? []) {
       const rng = mulberry32(hashId(`${st.rec.id}:debris:${r}:${Math.round(d.x)}:${Math.round(d.y)}`));
@@ -844,28 +954,29 @@ function frame(dt: number): void {
     const e = frac * frac * (3 - 2 * frac); // smoothstep
     let x = v.x0 + (v.x1 - v.x0) * e;
     let y = v.y0 + (v.y1 - v.y0) * e;
+    v.root.position.set(sx(x), sy(y));
     // LIGHT-LIVE hold: the newest keyframe breathes — engine flicker + slight
-    // station-keeping — rather than freezing while waiting for light.
+    // station-keeping (a few SCREEN pixels, so it reads at any zoom) — rather
+    // than freezing while waiting for light. Wall-clock is allowed here only:
+    // the hold is a live view, not a replay (replays never enter this branch).
     if (holdLive) {
-      const r = mulberry32(v.seed);
-      const p1 = r() * Math.PI * 2;
-      const p2 = r() * Math.PI * 2;
-      x += Math.sin(sceneClock * 0.7 + p1) * 6;
-      y += Math.cos(sceneClock * 0.55 + p2) * 6;
+      const p1 = jitter(v.seed) * Math.PI * 2;
+      const p2 = jitter(v.seed ^ 0x9e37) * Math.PI * 2;
+      v.root.position.x += Math.sin(sceneClock * 0.7 + p1) * 3;
+      v.root.position.y += Math.cos(sceneClock * 0.55 + p2) * 3;
       v.glow.alpha = 0.8 + 0.2 * Math.sin(sceneClock * 5 + p1);
     } else {
       v.glow.alpha = 1;
     }
-    v.root.position.set(sx(x), sy(y));
-    // Smoothed turning toward the track heading (no snap).
+    // Rotation is a PURE function of (record, round, frac): ease from the
+    // window-entry heading to this window's track heading over the first
+    // third — deterministic across renders, scrubs, and frame rates.
     if (!v.plat) {
-      const want = v.hdg;
-      let cur = v.root.rotation - Math.PI / 2;
-      let d = want - cur;
+      let d = v.hdg - v.hdg0;
       while (d > Math.PI) d -= 2 * Math.PI;
       while (d < -Math.PI) d += 2 * Math.PI;
-      cur += d * Math.min(1, dt * 6);
-      v.root.rotation = cur + Math.PI / 2; // art is nose-up
+      const k = Math.min(1, frac / 0.35);
+      v.root.rotation = v.hdg0 + d * (k * k * (3 - 2 * k)) + Math.PI / 2; // art is nose-up
     }
     // Labels stay horizontal whatever the hull is doing.
     v.badge.rotation = -v.root.rotation;
@@ -873,10 +984,8 @@ function frame(dt: number): void {
     // Wave arrivals fade in; a ship bound to a recorded DEATH disappears at
     // its exact moment (the explosion takes over); other departures (withdrew
     // or sampled out) fade.
-    const idx = st.ships.indexOf(v);
-    const death = st.fx?.deaths.find((d) => d.shipIdx === idx);
     let a = v.entered ? Math.min(1, frac * 3) : 1;
-    if (death) a = frac >= death.t ? 0 : 1;
+    if (v.deathT !== null) a = frac >= v.deathT ? 0 : 1;
     else if (v.exiting) a = Math.max(0.15, 1 - frac);
     v.root.alpha = a * (0.45 + 0.55 * v.hp);
     // Withdrawal: engines flare hard while the side burns for the edge.
@@ -910,11 +1019,20 @@ function arcPoint(a: FxWindow["arcs"][number], t: number, frac: number): [number
   return [u * u * a.x0 + 2 * u * t * a.cx + t * t * tx, u * u * a.y0 + 2 * u * t * a.cy + t * t * ty];
 }
 
+/// An arc's current HEAD position at transport time `frac` (flak arcs die at
+/// 72% of the path) — the one shared formula for drawing, PD fans, and hover.
+function arcHead(a: FxWindow["arcs"][number], frac: number): [number, number] {
+  const t = Math.min(frac / a.tEnd, 1) * (a.outcome === "flak" ? 0.72 : 1);
+  return arcPoint(a, t, frac);
+}
+
 function drawDebris(): void {
   if (!debrisG || !st) return;
   debrisG.clear();
   const now = st.round + st.frac;
-  for (const d of debrisField) {
+  for (let i = 0; i < debrisField.length; i++) {
+    if (perfTier >= 3 && (i & 1) === 1) continue; // ladder: thin at draw time
+    const d = debrisField[i];
     const age = Math.max(0, now - d.bornRound);
     const x = d.x + d.dx * age;
     const y = d.y + d.dy * age;
@@ -932,6 +1050,7 @@ function drawFx(dt: number): void {
   const fx = st.fx;
   if (!fx) return;
   const f = st.frac;
+  const wjit = hashId(`${st.rec.id}:${st.round}`) | 0;
 
   // BEAMS — instant flash-lines alive for a short window around t; heavy
   // (capital) beams show a charge-up glow then hold the line longer.
@@ -980,9 +1099,10 @@ function drawFx(dt: number): void {
     if (!tr.miss && p >= 1) {
       if (tr.spall) {
         // Whipple mitigation: shattered-armor spall puffs, not clean sparks.
-        const rngS = mulberry32(hashId(`${st.rec.id}:${st.round}:spall:${tr.from}:${tr.to}`));
         for (let k = 0; k < 4; k++) {
-          fxG.circle(sx(x1) + (rngS() - 0.5) * 12, sy(y1) + (rngS() - 0.5) * 12, 1.6).fill({ color: 0x9aa8ba, alpha: 0.7 });
+          const ox = (jitter(wjit ^ tr.from * 131 ^ tr.to * 61 ^ k * 977) - 0.5) * 12;
+          const oy = (jitter(wjit ^ tr.from * 137 ^ tr.to * 67 ^ k * 983) - 0.5) * 12;
+          fxG.circle(sx(x1) + ox, sy(y1) + oy, 1.6).fill({ color: 0x9aa8ba, alpha: 0.7 });
         }
       } else {
         fxG.star(sx(x1), sy(y1), 4, 4, 1.4).fill({ color: 0xffe0a8, alpha: 0.85 });
@@ -993,10 +1113,8 @@ function drawFx(dt: number): void {
   // TORPEDO ARCS — the centerpiece: engine-glow trails curving toward their
   // targets; flak deaths burst short of the target; hits detonate biggest.
   for (const a of fx.arcs) {
-    const prog = Math.min(f / a.tEnd, 1);
     if (f > a.tEnd + 0.12 && a.outcome !== "fly") continue;
-    const endT = a.outcome === "flak" ? 0.72 : 1; // flak kills it short of the target
-    const t = Math.min(prog, 1) * endT;
+    const t = Math.min(f / a.tEnd, 1) * (a.outcome === "flak" ? 0.72 : 1);
     const [hx, hy] = arcPoint(a, t, f);
     if (f <= a.tEnd) {
       for (let k = 0; k < 4; k++) { // trail
@@ -1027,12 +1145,12 @@ function drawFx(dt: number): void {
     for (const a of fx.arcs) {
       if (a.side === v.side) continue;
       if (f > a.tEnd) continue;
-      const t = Math.min(f / a.tEnd, 1) * (a.outcome === "flak" ? 0.72 : 1);
-      const [hx, hy] = arcPoint(a, t, f);
+      const [hx, hy] = arcHead(a, f);
       if (Math.hypot(hx - px, hy - py) > radius) continue;
-      const rngF = mulberry32(hashId(`${st.rec.id}:${st.round}:pd:${pi}`) ^ Math.floor(f * 24));
+      const bucket = Math.floor(f * 24);
       for (let k = 0; k < dense; k++) {
-        const jx = hx + (rngF() - 0.5) * 30, jy = hy + (rngF() - 0.5) * 30;
+        const jx = hx + (jitter(wjit ^ pi * 131 ^ bucket * 40503 ^ k * 9973) - 0.5) * 30;
+        const jy = hy + (jitter(wjit ^ pi * 137 ^ bucket * 40503 ^ k * 9931) - 0.5) * 30;
         fxG.moveTo(sx(px), sy(py)).lineTo(sx(jx), sy(jy)).stroke({ color: 0xbfe0ff, width: 0.5, alpha: 0.4 });
       }
     }
@@ -1073,21 +1191,21 @@ function applyShakeAndBanner(): void {
     const since = f - d.t;
     if (since >= 0 && since < 0.5) shake = Math.max(shake, (d.cls === 3 ? 5 : 2.4) * (1 - since / 0.5));
   }
-  const rngS = mulberry32(hashId(`${st.rec.id}:${st.round}:shake`) ^ Math.floor(f * 60));
-  app.stage.position.set(shake ? (rngS() - 0.5) * 2 * shake : 0, shake ? (rngS() - 0.5) * 2 * shake : 0);
+  const sb = hashId(`${st.rec.id}:${st.round}`) ^ Math.floor(f * 60);
+  app.stage.position.set(shake ? (jitter(sb) - 0.5) * 2 * shake : 0, shake ? (jitter(sb ^ 0x55aa) - 0.5) * 2 * shake : 0);
   // Banner: the Titan death headline, once per (record, round).
   const titan = st.fx?.deaths.find((d) => d.cls === 3);
   if (banner) {
-    if (titan && f >= titan.t) {
+    const show = titan !== undefined && f >= titan.t;
+    banner.style.display = show ? "block" : "none";
+    if (show && titan) {
       const key = `${st.rec.id}:${st.round}`;
-      const name = st.rec.sides[titan.side]?.flagship_name ?? "THE TITAN";
-      if (bannerKey !== key) { bannerKey = key; banner.textContent = `☄ ${name.toUpperCase()} IS DOWN`; }
-      banner.style.display = "block";
+      if (bannerKey !== key) {
+        bannerKey = key;
+        const name = st.rec.sides[titan.side]?.flagship_name ?? "THE TITAN";
+        banner.textContent = `☄ ${name.toUpperCase()} IS DOWN`;
+      }
       banner.style.opacity = String(Math.max(0, 1 - Math.max(0, f - titan.t - 0.35) * 2));
-    } else if (bannerKey && !titan) {
-      banner.style.display = "none";
-    } else if (!titan || f < titan.t) {
-      banner.style.display = "none";
     }
   }
 }
