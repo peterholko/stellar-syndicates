@@ -39,10 +39,11 @@ import { COL_OWN as TINT_OWN, COL_OTHER as TINT_FOE } from "./render";
 /// withdraw margin — mirrors the sim's WITHDRAW_EXIT_RADIUS 1400).
 const ARENA_R = 1000;
 const VIEW_R = 1500;
-/// Canvas size — the viewer overlay is min(760px, 94vw) wide.
-const CANVAS_W = 712;
-const CANVAS_H = 448;
-/// Arena → screen scale: fit the withdraw margin into the canvas height.
+/// Canvas size — the viewer overlay is min(1140px, 96vw) wide.
+const CANVAS_W = 1068;
+const CANVAS_H = 672;
+/// Arena → screen scale at zoom 1: fit the withdraw margin into the canvas
+/// height. The CAMERA multiplies this (wheel zoom, drag pan, auto-fit).
 const SCALE = CANVAS_H / (2 * VIEW_R);
 
 /// Client mirror of the sim's hull masses (also mirrored in main.ts — keep in
@@ -197,8 +198,24 @@ let bannerKey = "";
 let fpsEma = 60;
 let perfTier = 0;
 
-const sx = (x: number) => CANVAS_W / 2 + x * SCALE;
-const sy = (y: number) => CANVAS_H / 2 + y * SCALE;
+// --- Camera (a VIEW control — never scene content; the hash ignores it) ----
+// Default: AUTO-FIT frames the ships still fighting (withdrawing runners and
+// the empty half of the arena don't drag the view). Wheel = zoom toward the
+// cursor · drag = pan · double-click = back to auto-fit.
+let camX = 0;
+let camY = 0;
+let camZoom = 1;
+let camManual = false; // the user took the stick (wheel/drag) — stop auto-fit
+let dragging = false;
+let dragLast: [number, number] | null = null;
+const CAM_ZOOM_MIN = 0.8;
+const CAM_ZOOM_MAX = 4.5;
+
+const sx = (x: number) => CANVAS_W / 2 + (x - camX) * SCALE * camZoom;
+const sy = (y: number) => CANVAS_H / 2 + (y - camY) * SCALE * camZoom;
+/// Screen → arena (for zoom-toward-cursor and drag panning).
+const ax = (px: number) => camX + (px - CANVAS_W / 2) / (SCALE * camZoom);
+const ay = (py: number) => camY + (py - CANVAS_H / 2) / (SCALE * camZoom);
 
 /// Allocation-free deterministic jitter in [0,1) — integer-hash based, for
 /// per-frame cosmetics (PD fans, shake) where a full PRNG stream per frame
@@ -266,9 +283,47 @@ async function initApp(): Promise<void> {
   banner.className = "bv-theater-banner";
   banner.style.display = "none";
   holder.appendChild(banner);
-  // Torpedo-arc hover: arcs are immediate-mode (no display objects), so the
-  // canvas hit-tests the few live arc heads directly.
+  // Camera controls: wheel zooms toward the cursor, drag pans, double-click
+  // returns to auto-fit. (The theater takes no input that isn't a camera or
+  // transport control — the standing interaction law.)
+  app.canvas.addEventListener("wheel", (ev: WheelEvent) => {
+    if (!app) return;
+    ev.preventDefault();
+    const r = app.canvas.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return; // collapsed layout — no math on it
+    const mx = ((ev.clientX - r.left) / r.width) * CANVAS_W;
+    const my = ((ev.clientY - r.top) / r.height) * CANVAS_H;
+    const wx = ax(mx), wy = ay(my); // arena point under the cursor…
+    camZoom = Math.min(CAM_ZOOM_MAX, Math.max(CAM_ZOOM_MIN, camZoom * Math.exp(-ev.deltaY * 0.0016)));
+    camX = wx - (mx - CANVAS_W / 2) / (SCALE * camZoom); // …stays under it
+    camY = wy - (my - CANVAS_H / 2) / (SCALE * camZoom);
+    camManual = true;
+  }, { passive: false });
+  app.canvas.addEventListener("pointerdown", (ev: PointerEvent) => {
+    dragging = true;
+    dragLast = [ev.clientX, ev.clientY];
+    app?.canvas.setPointerCapture?.(ev.pointerId);
+  });
+  const endDrag = () => { dragging = false; dragLast = null; };
+  app.canvas.addEventListener("pointerup", endDrag);
+  app.canvas.addEventListener("pointercancel", endDrag);
+  app.canvas.addEventListener("dblclick", () => {
+    camManual = false; // hand the stick back to auto-fit
+  });
+  // Pointer-move does double duty: drag = pan; hover = torpedo-arc tooltip
+  // (arcs are immediate-mode, so the canvas hit-tests the few live arc heads).
   app.canvas.addEventListener("pointermove", (ev: PointerEvent) => {
+    if (dragging && dragLast && app) {
+      const r0 = app.canvas.getBoundingClientRect();
+      if (r0.width < 2 || r0.height < 2) return;
+      const kx = CANVAS_W / r0.width, ky = CANVAS_H / r0.height;
+      camX -= ((ev.clientX - dragLast[0]) * kx) / (SCALE * camZoom);
+      camY -= ((ev.clientY - dragLast[1]) * ky) / (SCALE * camZoom);
+      dragLast = [ev.clientX, ev.clientY];
+      camManual = true;
+      hideTip();
+      return;
+    }
     if (!st?.fx || !tooltip || !app) return;
     const r = app.canvas.getBoundingClientRect();
     const mx = ((ev.clientX - r.left) / r.width) * CANVAS_W;
@@ -358,6 +413,7 @@ export function theaterDebug(): Record<string, unknown> | null {
     deaths: st.fx?.deaths.map((d) => ({ t: d.t, cls: d.cls, ship: d.shipIdx })) ?? null,
     debris: debrisField.length,
     tier: perfTier,
+    cam: { x: +camX.toFixed(1), y: +camY.toFixed(1), zoom: +camZoom.toFixed(3), manual: camManual },
   };
 }
 
@@ -439,6 +495,10 @@ function bindRecord(rec: BattleRecordView): void {
   sceneClock = 0;
   debrisField = [];
   bannerKey = "";
+  camX = 0;
+  camY = 0;
+  camZoom = 1;
+  camManual = false;
   buildBackdrop(rec);
 }
 
@@ -460,11 +520,8 @@ function buildBackdrop(rec: BattleRecordView): void {
     field.circle(x, y, r).fill({ color: 0xcfe0ff, alpha: 0.08 + rng() * 0.2 });
   }
   layers.backdrop.addChild(field);
-  // The arena ring + withdraw edge, dashed-faint (the stage itself).
-  const ring = new Graphics();
-  ring.circle(CANVAS_W / 2, CANVAS_H / 2, ARENA_R * SCALE).stroke({ color: 0x5a7ba6, alpha: 0.22, width: 1 });
-  ring.circle(CANVAS_W / 2, CANVAS_H / 2, 1400 * SCALE).stroke({ color: 0x5a7ba6, alpha: 0.1, width: 1 });
-  layers.backdrop.addChild(ring);
+  // (The arena ring lives in drawDebris — it must move with the camera; the
+  // starfield + star stay static, reading as far-parallax backdrop.)
   // The host system's star, if the battle stood at one.
   if (rec.system) {
     const t = starTypeFor(rec.system);
@@ -948,6 +1005,41 @@ function frame(dt: number): void {
   const { frac, live } = st;
   const atFrontier = st.round >= st.rec.rounds.length - 1;
   const holdLive = live && atFrontier;
+  // AUTO-FIT camera: frame the ships still FIGHTING — exiting hulls and a
+  // withdrawing side's runners past the arena edge don't drag the view (the
+  // fix for "everyone slides off the map in one direction": the runners fade
+  // at the edge and the camera stays on the fight).
+  if (!camManual) {
+    let lo0 = Infinity, lo1 = Infinity, hi0 = -Infinity, hi1 = -Infinity;
+    for (const v of st.ships) {
+      if (!v.inUse) continue;
+      const e0 = frac * frac * (3 - 2 * frac);
+      const px = v.x0 + (v.x1 - v.x0) * e0;
+      const py = v.y0 + (v.y1 - v.y0) * e0;
+      const runner = (v.exiting || st.round >= st.withdrawFrom[v.side]) && Math.hypot(px, py) > 1050;
+      if (runner || (v.deathT !== null && frac >= v.deathT)) continue;
+      lo0 = Math.min(lo0, px); hi0 = Math.max(hi0, px);
+      lo1 = Math.min(lo1, py); hi1 = Math.max(hi1, py);
+    }
+    let tx = 0, ty = 0, tz = 1;
+    if (isFinite(lo0)) {
+      const m = 140; // arena-unit margin around the fight
+      tx = Math.max(-900, Math.min(900, (lo0 + hi0) / 2));
+      ty = Math.max(-900, Math.min(900, (lo1 + hi1) / 2));
+      tz = Math.min(2.6, Math.max(0.9,
+        Math.min(CANVAS_W / ((hi0 - lo0 + 2 * m) * SCALE), CANVAS_H / ((hi1 - lo1 + 2 * m) * SCALE))));
+    }
+    const k = Math.min(1, dt * 2.5); // smooth approach — no camera snaps
+    camX += (tx - camX) * k;
+    camY += (ty - camY) * k;
+    camZoom += (tz - camZoom) * k;
+    // Self-heal: a poisoned camera (NaN from any degenerate input) recovers
+    // instead of propagating forever through the easing.
+    if (!isFinite(camX) || !isFinite(camY) || !isFinite(camZoom)) {
+      camX = tx; camY = ty; camZoom = tz;
+    }
+  }
+  const zs = Math.pow(camZoom, 0.85); // ships grow with zoom (slightly damped)
   for (const v of st.ships) {
     if (!v.inUse) continue;
     // Eased interpolation along the matched track.
@@ -955,6 +1047,7 @@ function frame(dt: number): void {
     let x = v.x0 + (v.x1 - v.x0) * e;
     let y = v.y0 + (v.y1 - v.y0) * e;
     v.root.position.set(sx(x), sy(y));
+    v.root.scale.set(zs);
     // LIGHT-LIVE hold: the newest keyframe breathes — engine flicker + slight
     // station-keeping (a few SCREEN pixels, so it reads at any zoom) — rather
     // than freezing while waiting for light. Wall-clock is allowed here only:
@@ -978,15 +1071,23 @@ function frame(dt: number): void {
       const k = Math.min(1, frac / 0.35);
       v.root.rotation = v.hdg0 + d * (k * k * (3 - 2 * k)) + Math.PI / 2; // art is nose-up
     }
-    // Labels stay horizontal whatever the hull is doing.
+    // Labels stay horizontal and constant-size whatever the hull/camera do.
     v.badge.rotation = -v.root.rotation;
     v.plate.rotation = -v.root.rotation;
+    v.badge.scale.set(1 / zs);
+    v.plate.scale.set(1 / zs);
     // Wave arrivals fade in; a ship bound to a recorded DEATH disappears at
     // its exact moment (the explosion takes over); other departures (withdrew
     // or sampled out) fade.
     let a = v.entered ? Math.min(1, frac * 3) : 1;
     if (v.deathT !== null) a = frac >= v.deathT ? 0 : 1;
     else if (v.exiting) a = Math.max(0.15, 1 - frac);
+    // Runners DISSOLVE across the withdraw margin (the sim removes them at
+    // the exit radius) — nothing slides endlessly off the map.
+    if (v.exiting || st.round >= st.withdrawFrom[v.side]) {
+      const r = Math.hypot(x, y);
+      a *= Math.max(0, Math.min(1, (1400 - r) / 350));
+    }
     v.root.alpha = a * (0.45 + 0.55 * v.hp);
     // Withdrawal: engines flare hard while the side burns for the edge.
     if (!v.plat && st.round >= st.withdrawFrom[v.side]) {
@@ -1029,6 +1130,9 @@ function arcHead(a: FxWindow["arcs"][number], frac: number): [number, number] {
 function drawDebris(): void {
   if (!debrisG || !st) return;
   debrisG.clear();
+  // The arena ring + withdraw edge — world-space, so they track the camera.
+  debrisG.circle(sx(0), sy(0), ARENA_R * SCALE * camZoom).stroke({ color: 0x5a7ba6, alpha: 0.22, width: 1 });
+  debrisG.circle(sx(0), sy(0), 1400 * SCALE * camZoom).stroke({ color: 0x5a7ba6, alpha: 0.1, width: 1 });
   const now = st.round + st.frac;
   for (let i = 0; i < debrisField.length; i++) {
     if (perfTier >= 3 && (i & 1) === 1) continue; // ladder: thin at draw time
@@ -1037,7 +1141,7 @@ function drawDebris(): void {
     const x = d.x + d.dx * age;
     const y = d.y + d.dy * age;
     if (Math.abs(x) > VIEW_R || Math.abs(y) > VIEW_R) continue;
-    debrisG.circle(sx(x), sy(y), d.r).fill({ color: d.tint, alpha: d.tint === 0xff9d5c ? 0.5 : 0.35 });
+    debrisG.circle(sx(x), sy(y), d.r * Math.pow(camZoom, 0.85)).fill({ color: d.tint, alpha: d.tint === 0xff9d5c ? 0.5 : 0.35 });
   }
 }
 
@@ -1051,6 +1155,7 @@ function drawFx(dt: number): void {
   if (!fx) return;
   const f = st.frac;
   const wjit = hashId(`${st.rec.id}:${st.round}`) | 0;
+  const zs = Math.pow(camZoom, 0.85); // world-ish FX radii track the camera
 
   // BEAMS — instant flash-lines alive for a short window around t; heavy
   // (capital) beams show a charge-up glow then hold the line longer.
@@ -1059,7 +1164,7 @@ function drawFx(dt: number): void {
     const dtb = f - b.t;
     if (b.heavy && dtb > -0.05 && dtb < 0) {
       const [x, y] = shipXY(b.from, f);
-      fxG.circle(sx(x), sy(y), 5 + 60 * (dtb + 0.05)).fill({ color: 0x9fd9ff, alpha: 0.35 });
+      fxG.circle(sx(x), sy(y), (5 + 60 * (dtb + 0.05)) * zs).fill({ color: 0x9fd9ff, alpha: 0.35 });
       continue;
     }
     if (dtb < 0 || dtb > dur) continue;
@@ -1070,10 +1175,10 @@ function drawFx(dt: number): void {
       .stroke({ color: 0x9fd9ff, width: (b.heavy ? 2.4 : 1) * b.w * k + 0.4, alpha: 0.55 + 0.4 * k });
     if (b.glint) {
       // Reflective mitigation: a mirror-flash deflection sparkle, not a bloom.
-      fxG.moveTo(sx(x1) - 5, sy(y1)).lineTo(sx(x1) + 5, sy(y1)).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
-      fxG.moveTo(sx(x1), sy(y1) - 5).lineTo(sx(x1), sy(y1) + 5).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
+      fxG.moveTo(sx(x1) - 5 * zs, sy(y1)).lineTo(sx(x1) + 5 * zs, sy(y1)).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
+      fxG.moveTo(sx(x1), sy(y1) - 5 * zs).lineTo(sx(x1), sy(y1) + 5 * zs).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
     } else {
-      fxG.circle(sx(x1), sy(y1), 2.5 + 3.5 * b.w * k).fill({ color: 0xcfeaff, alpha: 0.5 * k });
+      fxG.circle(sx(x1), sy(y1), (2.5 + 3.5 * b.w * k) * zs).fill({ color: 0xcfeaff, alpha: 0.5 * k });
     }
   }
 
@@ -1095,17 +1200,17 @@ function drawFx(dt: number): void {
     const bx = x0 + (x1 - x0) * (tr.miss ? q * 1.35 : q);
     const by = y0 + (y1 - y0) * (tr.miss ? q * 1.35 : q);
     fxG.moveTo(sx(bx), sy(by)).lineTo(sx(ax), sy(ay)).stroke({ color: 0xe8a13a, width: 1.1, alpha: 0.85 });
-    if (dtt < 0.03) fxG.circle(sx(x0), sy(y0), 2.2).fill({ color: 0xffd98a, alpha: 0.8 }); // muzzle
+    if (dtt < 0.03) fxG.circle(sx(x0), sy(y0), 2.2 * zs).fill({ color: 0xffd98a, alpha: 0.8 }); // muzzle
     if (!tr.miss && p >= 1) {
       if (tr.spall) {
         // Whipple mitigation: shattered-armor spall puffs, not clean sparks.
         for (let k = 0; k < 4; k++) {
           const ox = (jitter(wjit ^ tr.from * 131 ^ tr.to * 61 ^ k * 977) - 0.5) * 12;
           const oy = (jitter(wjit ^ tr.from * 137 ^ tr.to * 67 ^ k * 983) - 0.5) * 12;
-          fxG.circle(sx(x1) + ox, sy(y1) + oy, 1.6).fill({ color: 0x9aa8ba, alpha: 0.7 });
+          fxG.circle(sx(x1) + ox * zs, sy(y1) + oy * zs, 1.6 * zs).fill({ color: 0x9aa8ba, alpha: 0.7 });
         }
       } else {
-        fxG.star(sx(x1), sy(y1), 4, 4, 1.4).fill({ color: 0xffe0a8, alpha: 0.85 });
+        fxG.star(sx(x1), sy(y1), 4, 4 * zs, 1.4 * zs).fill({ color: 0xffe0a8, alpha: 0.85 });
       }
     }
   }
@@ -1119,18 +1224,18 @@ function drawFx(dt: number): void {
     if (f <= a.tEnd) {
       for (let k = 0; k < 4; k++) { // trail
         const [px, py] = arcPoint(a, Math.max(0, t - 0.05 * (k + 1)), f);
-        fxG.circle(sx(px), sy(py), 1.5 - k * 0.28).fill({ color: 0xe0574b, alpha: 0.6 - k * 0.13 });
+        fxG.circle(sx(px), sy(py), (1.5 - k * 0.28) * zs).fill({ color: 0xe0574b, alpha: 0.6 - k * 0.13 });
       }
-      fxG.circle(sx(hx), sy(hy), 1.8).fill({ color: 0xffb0a0, alpha: 0.95 });
+      fxG.circle(sx(hx), sy(hy), 1.8 * zs).fill({ color: 0xffb0a0, alpha: 0.95 });
     }
     const since = f - a.tEnd;
     if (since >= 0 && since < 0.12 && a.outcome === "flak") {
-      fxG.circle(sx(hx), sy(hy), 3 + 26 * since).stroke({ color: 0xffd98a, width: 1.2, alpha: 0.8 * (1 - since / 0.12) });
+      fxG.circle(sx(hx), sy(hy), (3 + 26 * since) * zs).stroke({ color: 0xffd98a, width: 1.2, alpha: 0.8 * (1 - since / 0.12) });
     }
     if (since >= 0 && since < 0.12 && a.outcome === "hit") {
       const [tx2, ty2] = shipXY(a.to, f);
-      fxG.circle(sx(tx2), sy(ty2), 4 + 46 * since).fill({ color: 0xffb46b, alpha: 0.55 * (1 - since / 0.12) });
-      fxG.circle(sx(tx2), sy(ty2), 2 + 20 * since).fill({ color: 0xfff2cc, alpha: 0.8 * (1 - since / 0.12) });
+      fxG.circle(sx(tx2), sy(ty2), (4 + 46 * since) * zs).fill({ color: 0xffb46b, alpha: 0.55 * (1 - since / 0.12) });
+      fxG.circle(sx(tx2), sy(ty2), (2 + 20 * since) * zs).fill({ color: 0xfff2cc, alpha: 0.8 * (1 - since / 0.12) });
     }
   }
 
@@ -1165,15 +1270,15 @@ function drawFx(dt: number): void {
     if (since > life) continue;
     const k = since / life;
     const base = [10, 16, 26, 40][d.cls];
-    fxG.circle(sx(d.x), sy(d.y), 2 + base * k).fill({ color: 0xffb46b, alpha: 0.5 * (1 - k) });
-    fxG.circle(sx(d.x), sy(d.y), 1 + base * 0.45 * k).fill({ color: 0xfff2cc, alpha: 0.85 * (1 - k) });
+    fxG.circle(sx(d.x), sy(d.y), (2 + base * k) * zs).fill({ color: 0xffb46b, alpha: 0.5 * (1 - k) });
+    fxG.circle(sx(d.x), sy(d.y), (1 + base * 0.45 * k) * zs).fill({ color: 0xfff2cc, alpha: 0.85 * (1 - k) });
     if (d.cls >= 2) {
       // Multi-stage: burning sections shed outward on a seeded fan.
       const rngD = mulberry32(hashId(`${st.rec.id}:death:${d.x.toFixed(0)}:${d.y.toFixed(0)}`));
       for (let s2 = 0; s2 < (d.cls === 3 ? 7 : 4); s2++) {
         const ang = rngD() * Math.PI * 2;
-        const rr = (14 + rngD() * 30) * k;
-        fxG.circle(sx(d.x) + Math.cos(ang) * rr, sy(d.y) + Math.sin(ang) * rr, 2.4 * (1 - k) + 0.6)
+        const rr = (14 + rngD() * 30) * k * zs;
+        fxG.circle(sx(d.x) + Math.cos(ang) * rr, sy(d.y) + Math.sin(ang) * rr, (2.4 * (1 - k) + 0.6) * zs)
           .fill({ color: 0xff9d5c, alpha: 0.7 * (1 - k) });
       }
     }
