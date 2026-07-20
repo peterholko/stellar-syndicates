@@ -7511,21 +7511,21 @@ impl World {
         // longer used for its route, but kept available for future picket setups.
         let _ = nearest;
         let raider_id = self.alloc_entity_id();
-        self.fleets.insert(
+        let mut raider_fleet = Fleet::single(
             raider_id,
-            Fleet::single(
-                raider_id,
-                owner,
-                ShipKind::Raider,
-                home,
-                FleetOrder::Patrol {
-                    waypoints: vec![home, hub],
-                    index: 1,
-                    dwell_until: 0.0,
-                },
-                None, // raiders carry no cargo
-            ),
+            owner,
+            ShipKind::Raider,
+            home,
+            FleetOrder::Patrol {
+                waypoints: vec![home, hub],
+                index: 1,
+                dwell_until: 0.0,
+            },
+            None, // raiders carry no cargo
         );
+        // TESTING: start with a 3-ship raider wing (Fleet::single seeds one).
+        raider_fleet.add(ShipKind::Raider, 2);
+        self.fleets.insert(raider_id, raider_fleet);
         events.push(Event::new(
             self.time,
             EventPayload::ShipSpawned {
