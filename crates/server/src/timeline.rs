@@ -840,6 +840,7 @@ mod tests {
                     player: a,
                     commodity: Commodity::MetallicOre,
                     units: i + 1,
+                    system: None,
                 }),
             );
             tl.ingest(&[ev], &w);

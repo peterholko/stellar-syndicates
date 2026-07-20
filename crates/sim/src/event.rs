@@ -366,8 +366,10 @@ pub enum EventPayload {
 pub enum TradeEvent {
     /// A market buy settled instantly at the hub; a delivery convoy is inbound.
     Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64 },
-    /// A buy's delivery convoy reached home; goods deposited.
-    Delivered { player: PlayerId, commodity: Commodity, units: u32 },
+    /// A delivery convoy arrived and deposited its cargo. `system == None` means it
+    /// landed in the corp's HQ trading pool (a market buy); `Some(id)` means it was
+    /// stocked into THAT system's stockpile (a Supply-from-HQ run or standing order).
+    Delivered { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
     /// A sell convoy was dispatched toward the hub (goods committed to the dark).
     SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
     /// A sell convoy reached the hub and cleared at the price-on-arrival.
@@ -392,6 +394,10 @@ pub enum TradeEvent {
     /// are never silently destroyed). Any storable part was delivered first (its
     /// own `Delivered` event).
     StorageOverflow { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
+    /// A SUPPLY-FROM-HQ convoy left home carrying `units` of `commodity` out of the
+    /// corp's trading inventory toward `system`'s stockpile (sub-light, raidable).
+    /// Arrival is reported by the usual `Delivered` (deposited) / `StorageOverflow`.
+    StockDispatched { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
 }
 
 /// What became of an automated supply convoy whose destination was no longer
@@ -419,7 +425,8 @@ impl TradeEvent {
             | TradeEvent::LimitFilled { player, .. }
             | TradeEvent::AutoDispatched { player, .. }
             | TradeEvent::SupplyDiverted { player, .. }
-            | TradeEvent::StorageOverflow { player, .. } => *player,
+            | TradeEvent::StorageOverflow { player, .. }
+            | TradeEvent::StockDispatched { player, .. } => *player,
         }
     }
 }

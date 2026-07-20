@@ -95,6 +95,16 @@ export interface AssignmentView {
   outputs: [Commodity, number][];
 }
 
+/// A built converter's live status for the system-view idle banner.
+export interface ConverterStatusView {
+  body_id: number;
+  structure: string;
+  title: string;
+  tier: number;
+  /// running | needs_crew | no_inputs | no_food | storage_full
+  status: string;
+}
+
 export interface SystemStateView {
   id: EntityId;
   owner: PlayerId | null;
@@ -149,6 +159,8 @@ export interface SystemStateView {
   workforce: { units: number; posted: number } | null;
   /// Production lines with resolved factor chains — owner-only; rivals see [].
   assignments: AssignmentView[];
+  /// Idle-converter status for the system-view banner — owner-only; rivals see [].
+  converters?: ConverterStatusView[];
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -316,14 +328,15 @@ export interface WalletView {
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
 export type TradeEvent =
   | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
-  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number }
+  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
   | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
   | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
-  | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
+  | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
+  | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
 
 export type DivertAction = "lost" | "returned_home" | "sold_at_hub";
 
@@ -524,6 +537,7 @@ export type ClientMsg =
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "ShipProduction"; system_id: EntityId }
+  | { type: "StockSystem"; system_id: EntityId; commodity: Commodity; units: number }
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }

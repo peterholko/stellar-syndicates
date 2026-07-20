@@ -409,6 +409,11 @@ impl GameLoop {
                         self.pending.push(Command::ShipProduction { player_id, system_id });
                     }
                 }
+                ClientMsg::StockSystem { system_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::StockSystem { player_id, system_id, commodity, units });
+                    }
+                }
                 ClientMsg::SetStandingOrder { order } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetStandingOrder { player_id, order });

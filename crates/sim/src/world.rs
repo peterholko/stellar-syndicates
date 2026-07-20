@@ -4033,6 +4033,51 @@ impl World {
                 let cargo = Cargo { commodity: *commodity, units };
                 self.spawn_trade_convoy(*player_id, home, self.hub, cargo, TradeMission::SellAtHub);
             }
+            // SUPPLY FROM HQ (§economy): move goods from the corp's HQ trading
+            // inventory into an OWNED system's stockpile via a sub-light raidable
+            // convoy — the bridge that lets market-bought inputs feed a system's
+            // converters (which read sys.stockpile, not the trading pool).
+            Command::StockSystem { player_id, system_id, commodity, units } => {
+                let units = *units;
+                if units == 0 {
+                    return;
+                }
+                // Owner-only: you can only stock a system you currently own.
+                let Some(dest) = self
+                    .systems
+                    .iter()
+                    .find(|s| s.id == *system_id && s.owner == Some(*player_id))
+                    .map(|s| s.pos)
+                else {
+                    return; // not yours (or gone) — soft reject
+                };
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
+                if have < units {
+                    return; // not enough held at HQ
+                }
+                let home = corp.home;
+                // Commit goods out of the HQ pool up front (mirror MarketSell).
+                if let Some(corp) = self.players.get_mut(player_id) {
+                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::StockDispatched {
+                        player: *player_id,
+                        commodity: *commodity,
+                        units,
+                        system: *system_id,
+                    }),
+                ));
+                // The DeliverToSystem arm deposits into sys.stockpile (with the
+                // depot-cap / overflow-to-hub handling) on arrival. No fuel charge —
+                // parity with the manual hub-trade family (MarketBuy/MarketSell).
+                let cargo = Cargo { commodity: *commodity, units };
+                self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+            }
             Command::PlaceLimitOrder {
                 player_id,
                 side,
@@ -7132,6 +7177,7 @@ impl World {
                             player: ship.owner,
                             commodity: cargo.commodity,
                             units: cargo.units,
+                            system: None, // DeliverHome → the HQ trading pool
                         }),
                     ));
                 }
@@ -7186,6 +7232,7 @@ impl World {
                                     player: ship.owner,
                                     commodity: cargo.commodity,
                                     units: stored,
+                                    system: Some(system), // DeliverToSystem → the system stockpile
                                 }),
                             ));
                             if fought
@@ -12251,6 +12298,57 @@ mod tests {
     }
 
     #[test]
+    fn stock_system_moves_hq_inventory_into_a_system_stockpile() {
+        use crate::cargo::Commodity::Volatiles;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.players[&id].home_system.expect("home system");
+        // AddPlayer seeds the HQ trading inventory with 120 of each raw good.
+        let held0 = w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0);
+        assert!(held0 >= 100, "precondition: HQ holds >=100 volatiles (had {held0})");
+        let ships0 = w.fleets.len();
+
+        // Soft-reject cases: zero units, more than held, a system you don't own —
+        // none may debit HQ or spawn a convoy.
+        w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 0 }]);
+        w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 999_999 }]);
+        w.step(&[Command::StockSystem { player_id: id, system_id: EntityId(987_654), commodity: Volatiles, units: 10 }]);
+        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0, "rejected stock must not debit HQ");
+        assert_eq!(w.fleets.len(), ships0, "rejected stock must not spawn a convoy");
+
+        // Valid: debits HQ now, dispatches the convoy, and routes the goods to the
+        // SYSTEM stockpile. At ~zero home→home-system distance the DeliverToSystem
+        // convoy deposits the SAME tick, so assert the OUTCOME, not a lingering ship.
+        let vol_at = |w: &World| w.systems.iter().find(|s| s.id == sys).and_then(|s| s.stockpile.get(&Volatiles).copied()).unwrap_or(0.0);
+        let s0 = vol_at(&w);
+        let overflow_of = |evs: &[Event]| evs.iter().any(|e| matches!(&e.payload,
+            EventPayload::Trade(TradeEvent::StorageOverflow { system, commodity, .. })
+                if *system == sys && *commodity == Volatiles));
+        let evs = w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 100 }]);
+        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0 - 100, "HQ debited by the shipped units");
+        assert!(evs.iter().any(|e| matches!(&e.payload,
+            EventPayload::Trade(TradeEvent::StockDispatched { system, commodity, units, .. })
+                if *system == sys && *commodity == Volatiles && *units == 100)),
+            "a StockDispatched event should fire for the shipment");
+
+        // The goods land in the SYSTEM stockpile (single-player → never raided).
+        // A big jump (≥50, unreachable by per-tick production drift) or an
+        // overflow-to-hub both prove the goods were routed to the SYSTEM, not HQ.
+        let mut delivered = vol_at(&w) >= s0 + 50.0 || overflow_of(&evs);
+        if !delivered {
+            for _ in 0..(260 * crate::config::TICK_HZ) {
+                let evs = w.step(&[]);
+                if vol_at(&w) >= s0 + 50.0 || overflow_of(&evs) {
+                    delivered = true;
+                    break;
+                }
+            }
+        }
+        assert!(delivered, "the shipped volatiles never reached the destination system stockpile");
+    }
+
+    #[test]
     fn cannot_buy_without_credits_or_sell_without_goods() {
         use crate::cargo::Commodity::Alloys;
         let mut w = test_world();
@@ -14639,7 +14737,7 @@ mod tests {
                 outcome: RaidOutcome::TargetDestroyed, pos: Vec2::ZERO,
                 attacker_losses: a_loss, target_losses: d_loss,
             }),
-            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5 })),
+            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5, system: None })),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }), // dup
             Event::new(0.0, EventPayload::IntelGathered { owner: a, system: EntityId(4), defense_tier: 1, shipyard_tier: 0, pos: Vec2::ZERO }),
@@ -15164,7 +15262,7 @@ mod tests {
 
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
-            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10 })),
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None })),
             ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0 })),
             ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0 })),

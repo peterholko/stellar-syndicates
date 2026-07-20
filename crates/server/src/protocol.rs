@@ -64,6 +64,11 @@ pub enum ClientMsg {
     /// spawns raidable convoys from the system.
     ShipProduction { system_id: EntityId },
 
+    /// Supply from HQ: move goods from the corp's HQ trading inventory into an
+    /// owned system's stockpile via a raidable convoy — the bridge that lets
+    /// market-bought inputs feed a system's converters.
+    StockSystem { system_id: EntityId, commodity: Commodity, units: u32 },
+
     /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
     /// a matching id edits. Instant local administration; the server attaches the
     /// issuing player.
@@ -652,6 +657,11 @@ pub struct SystemStateView {
     /// (the shown-math law: output = base · throughput · staffing · skill ·
     /// food) — owner-only; rivals always see an empty list.
     pub assignments: Vec<AssignmentView>,
+    /// §economy: per built-converter idle status for the system-view banner —
+    /// owner-only (rivals always see an empty list). serde default keeps old
+    /// clients parsing.
+    #[serde(default)]
+    pub converters: Vec<ConverterStatusView>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under
@@ -908,6 +918,21 @@ pub struct AssignmentView {
     /// Net output lines at those factors (commodity, units/s) — extraction
     /// lists each deposit's commodity; a converter lists its output.
     pub outputs: Vec<(Commodity, f64)>,
+}
+
+/// §economy: a built CONVERTER's live status, for the system-view idle banner:
+/// `running`, or WHY it produces nothing — `needs_crew` (built but no crew
+/// posted), or a staffed line's latched outage (`no_inputs` / `no_food` /
+/// `storage_full`). Owner-only; mirrors the tick's converter gate so the banner
+/// never contradicts what the sim actually did.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConverterStatusView {
+    pub body_id: u32,
+    pub structure: String,
+    pub title: String,
+    pub tier: u32,
+    /// running | needs_crew | no_inputs | no_food | storage_full
+    pub status: String,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within

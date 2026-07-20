@@ -765,6 +765,8 @@ pub fn filter_systems(
                 // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
                 // owner-only (rivals: empty — production is private intel).
                 assignments: if own { assignment_views(sys) } else { Vec::new() },
+                // §economy: idle-converter status for the system-view banner (owner-only).
+                converters: if own { converter_statuses(sys) } else { Vec::new() },
                 refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
@@ -895,6 +897,45 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
             }
         })
         .collect()
+}
+
+/// §economy: the live status of every BUILT converter at `sys`, for the system-
+/// view idle banner. Reproduces the tick's converter gate (the world.rs converter
+/// loop) EXACTLY: a built line with no crew reads `needs_crew`; a staffed line
+/// reports its latched suspend reason (`no_inputs` / `no_food` / `storage_full`)
+/// or `running`. Owner-gated by the caller (rivals get an empty list).
+fn converter_statuses(sys: &sim::StarSystem) -> Vec<crate::protocol::ConverterStatusView> {
+    let line_spec = sys.effective_specialists();
+    let mut out = Vec::new();
+    for b in &sys.bodies {
+        for conv in &sim::production::CONVERTERS {
+            let kind = conv.structure;
+            let tier = b.tier(kind);
+            if tier == 0 {
+                continue; // not built on this body — no line to report
+            }
+            let workers = b.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+            let spec_crew = line_spec.get(&(b.id, kind)).map(|(c, _)| *c).unwrap_or(0);
+            // Same gate as the tick: workers + spec_crew == 0 ⇒ idle by choice.
+            let status = if workers + spec_crew == 0 {
+                "needs_crew"
+            } else {
+                b.assignments
+                    .get(&kind)
+                    .and_then(|a| a.suspended)
+                    .map(|r| r.slug())
+                    .unwrap_or("running")
+            };
+            out.push(crate::protocol::ConverterStatusView {
+                body_id: b.id,
+                structure: kind.slug().to_string(),
+                title: kind.title().to_string(),
+                tier,
+                status: status.to_string(),
+            });
+        }
+    }
+    out
 }
 
 // --- §battle-records Part A2: light-gated, fidelity-tiered replay views -------

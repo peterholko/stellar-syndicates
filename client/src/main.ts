@@ -1422,6 +1422,7 @@ function updateSysviewManage(): void {
   const sections = [
     blockadeBanner,
     storageBar + productionReadout(dyn), // Stockpile Capacity + bar, then the commodity rows
+    converterBanner(dyn), // "Idle converters" — built lines that need crew / inputs / food
     `<div class="deps-head">Planets</div>` + devs, // the planet roster under its own header
     vitals + poolStrip, // colony vitals + slot pools
     garrisonHost,
@@ -1439,6 +1440,18 @@ function buildPlanetPanel(): void {
   // anchor is a lens, not an address; nothing here is per-planet on the wire).
   $("planet-panel").addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest("[data-act='close']")) { closePlanetPanel(); return; }
+    // §economy Supply-from-HQ: ship held goods into THIS system's stockpile.
+    const sup = (e.target as HTMLElement).closest("[data-act='supply']") as HTMLElement | null;
+    if (sup?.dataset.c && net) {
+      const supSid = viewedSystemId();
+      const units = Number(sup.dataset.n) || 0;
+      if (supSid && units > 0) {
+        net.send({ type: "StockSystem", system_id: supSid, commodity: sup.dataset.c as Commodity, units });
+        refreshOpenBodyPanel();
+        updateSysviewManage();
+      }
+      return;
+    }
     const el = (e.target as HTMLElement).closest("[data-build],[data-crew],[data-action],[data-fit]") as HTMLElement | null;
     const sid = viewedSystemId();
     if (!el || !sid || !net) return;
@@ -1635,7 +1648,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
 
     // The "Under construction" progress bars sit directly under Production Lines
     // (a structure being built is production-in-progress), above the Build menu.
-    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + depotSec;
+    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + depotSec + supplyFromHqSection();
     // §bodies edge state: a body with nothing built and nothing buildable
     // stays a quiet piece of scenery.
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
@@ -2984,24 +2997,16 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
-  // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
-  const refTier = dyn?.refinery_tier ?? 0;
-  let refinery = "";
-  if (refTier > 0) {
-    // §economy: the refinery is a STAFFED converter line now — this hint shows
-    // its base rate; the Part-7 colony panel carries the live factor chain.
-    const rate = state.galaxy?.fuel_refinery_rate ?? 0.8;
-    const vol = stockOf.get("volatiles") ?? 0;
-    refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px" title="Fuel Refinery ×${refTier}: converts Volatiles → Fuel (1:1) up to ${rate.toFixed(1)}/s per throughput tier when staffed.">${icon("refinery", "sm")} ${icon("volatiles", "sm")} → ${icon("fuel", "sm")} up to ${rate.toFixed(1)}/s · staffed line</div>`
-      : `<div class="mhint" style="margin-top:4px" title="Fuel Refinery idle — no Volatiles to convert. Haul some in (1 Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
-  }
+  // (The Fuel Refinery — like every converter — now reports its real idle reason
+  // via `converterBanner`, which reads the server-computed status. The old
+  // volatiles>0 heuristic here wrongly claimed "staffed line" without checking
+  // crew, so it was dropped in favour of the accurate banner.)
   return rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `<span class="sp-name">${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + refinery;
+    }).join("");
 }
 
 // §economy Part 6: the per-line PRODUCTION ROWS — one row per line with the
@@ -3017,7 +3022,43 @@ const SUSPEND_HINT: Record<string, string> = {
   no_food: "out of Provisions — ship food",
   no_inputs: "input basket dry — ship raws in or staff extraction",
   storage_full: "storage full — ship goods out or build a Depot",
+  needs_crew: "built but idle — post a crew (open its body and hire/assign workers)",
 };
+
+// §economy Supply-from-HQ: ship goods held in the corp's HQ trading pool (bought
+// at the Exchange) into THIS system's stockpile via a raidable convoy — the
+// bridge that lets market-bought inputs feed a system's converters, which draw
+// from the system stockpile, not the HQ pool. Returns "" when HQ holds nothing.
+function supplyFromHqSection(): string {
+  const held = (state.wallet?.inventory ?? []).filter((i) => i.units > 0);
+  if (!held.length) return "";
+  const rows = held.map((i) => {
+    const presets = [...new Set([10, 50, i.units])].filter((n) => n >= 1 && n <= i.units).sort((a, b) => a - b);
+    const btns = presets.map((n) =>
+      `<button class="act act--mini" data-act="supply" data-c="${esc(i.commodity)}" data-n="${n}" ` +
+      `title="Ship ${n} ${esc(label(i.commodity))} from HQ to this system's stockpile (sub-light, raidable)">${n === i.units ? `All ${fmt(n)}` : `+${n}`}</button>`
+    ).join("");
+    return `<div class="supply-row">${commodityIcon(i.commodity, "sm")} <b>${esc(label(i.commodity))}</b> ` +
+      `<span class="dim">— ${fmt(i.units)} held</span> <span class="supply-btns">${btns}</span></div>`;
+  }).join("");
+  return ppSec("Supply from HQ → this system", "Goods you buy at the Exchange land in your HQ trading pool. Ship them here to feed converters, which draw from THIS system's stockpile. Convoys are sub-light and raidable.") + rows;
+}
+
+// §economy: an at-a-glance banner for BUILT converters producing nothing, with
+// the reason (needs crew / no inputs / no food / storage full). "" when all run.
+function converterBanner(dyn: SystemStateView | undefined): string {
+  const idle = (dyn?.converters ?? []).filter((c) => c.status !== "running");
+  if (!idle.length) return "";
+  const rows = idle.map((c) => {
+    const tone = c.status === "no_food" ? "negative" : "warn";
+    const word = c.status === "needs_crew" ? "needs crew"
+      : c.status === "no_inputs" ? "no inputs"
+      : c.status === "no_food" ? "no food"
+      : c.status === "storage_full" ? "storage full" : c.status;
+    return `<div class="conv-idle">${badgeChip("unfed", esc(word), tone, SUSPEND_HINT[c.status] ?? "idle")} <b>${esc(c.title)}</b></div>`;
+  }).join("");
+  return `<div class="deps-head">Idle converters</div>${rows}`;
+}
 // §body-management: the production-line rows, shared between the read-only
 // summary/rail digest (withControls=false — pure data) and the BODY PANELS
 // (withControls=true — the ONLY place crew ± controls render; the SetAssignment
@@ -4639,7 +4680,11 @@ function addTradeNews(t: TradeEvent): void {
   let text = "";
   switch (t.event) {
     case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
-    case "Delivered": text = `Delivery arrived: +${t.units} ${label(t.commodity)} (stored at destination).`; break;
+    case "Delivered": text = t.system
+      ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — added to your HQ stock (Exchange). Use “Supply from HQ” in a system to feed its converters.`;
+      break;
+    case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
     case "Sold": text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;

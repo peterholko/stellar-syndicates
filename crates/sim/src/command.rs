@@ -93,6 +93,19 @@ pub enum Command {
         system_id: EntityId,
     },
 
+    /// SUPPLY FROM HQ: move `units` of `commodity` from the corp's HQ trading
+    /// inventory into an OWNED system's stockpile, carried by a sub-light,
+    /// raidable convoy. This is the bridge from the market pool (what buys fill)
+    /// to a system's production stockpile (what converters/refineries consume and
+    /// the system view shows). Ignored unless the player owns the target system
+    /// and holds at least `units` of the commodity at HQ.
+    StockSystem {
+        player_id: PlayerId,
+        system_id: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
     /// Create or replace a standing logistics order (§15) — a constrained
     /// automation rule the corp runs server-side, online or off. INSTANT local
     /// administration (like a limit order): it changes only the player's own

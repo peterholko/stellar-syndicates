@@ -436,6 +436,11 @@
          grows/truncates, everything after it stays inline at content width. */
       .sys-prod--flow { display: flex; align-items: center; gap: 8px; }
       .sys-prod--flow .sp-name { flex: 1 1 auto; }
+      /* §economy Supply-from-HQ rows + idle-converter chips (system & body panels). */
+      .supply-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 0; font-size: 11px; }
+      .supply-row .supply-btns { display: flex; gap: 5px; margin-left: auto; flex-wrap: wrap; }
+      .act.act--mini { width: auto; margin: 0; padding: 3px 8px; font-size: 11px; display: inline-flex; line-height: 1.2; }
+      .conv-idle { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
       /* The crew ± / "+ crew" controls are the full-width stacked .act by
          default (see the #planet-panel .act rule) — in this flex line they must
          stay content-sized, or they grow and starve the name. Same override the
