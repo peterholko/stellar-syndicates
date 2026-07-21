@@ -436,10 +436,17 @@
          grows/truncates, everything after it stays inline at content width. */
       .sys-prod--flow { display: flex; align-items: center; gap: 8px; }
       .sys-prod--flow .sp-name { flex: 1 1 auto; }
-      /* §economy Supply-from-HQ rows + idle-converter chips (system & body panels). */
-      .supply-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 0; font-size: 11px; }
-      .supply-row .supply-btns { display: flex; gap: 5px; margin-left: auto; flex-wrap: wrap; }
-      .act.act--mini { width: auto; margin: 0; padding: 3px 8px; font-size: 11px; display: inline-flex; line-height: 1.2; }
+      /* §economy Supply-from-HQ rows (Market → Supply tab): a 3-column grid so the
+         name, amount, and buttons line up in aligned columns across rows, with the
+         buttons kept tight next to the amount. Rows use display:contents so their
+         cells flow into the parent grid. */
+      #mk-supply-rows { display: grid; grid-template-columns: auto auto auto; column-gap: 10px; row-gap: 5px; align-items: center; font-size: 11px; width: fit-content; margin-inline: auto; }
+      #mk-supply-rows > .mhint { grid-column: 1 / -1; }
+      .supply-row { display: contents; }
+      .supply-row .sr-name { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .supply-row .sr-qty { text-align: right; font-variant-numeric: tabular-nums; }
+      .supply-row .supply-btns { display: flex; gap: 5px; flex-wrap: nowrap; margin-left: 16px; }
+      .act.act--mini { width: auto; margin: 0; padding: 3px 8px; font-size: 11px; display: inline-flex; line-height: 1.2; white-space: nowrap; }
       .conv-idle { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
       /* The crew ± / "+ crew" controls are the full-width stacked .act by
          default (see the #planet-panel .act rule) — in this flex line they must
@@ -1141,9 +1148,11 @@
         <button data-mtab="exchange" class="is-active" role="tab">Exchange</button>
         <button data-mtab="specialists" role="tab">Specialists</button>
         <button data-mtab="modules" role="tab">Modules</button>
+        <button data-mtab="supply" role="tab">Supply</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
+        <div class="mhint" style="margin-bottom:6px">Trades your <b>HQ inventory</b> — goods held at HQ, <b>separate from your systems' stockpiles</b>. Buy delivers here; Sell ships from here. To feed a system's converters, use the <b>Supply</b> tab.</div>
+        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your HQ inventory — the tradeable pool Buy/Sell use. This is NOT a system's stockpile.">HQ</span></div>
         <div id="market-board"></div>
         <div class="composer">
           <div class="composer__row"><label>Order</label>
@@ -1165,6 +1174,12 @@
       <div id="market-pane-modules" hidden>
         <div id="mod-rows"></div>
         <div class="mhint" id="mod-feedback"></div>
+      </div>
+      <div id="market-pane-supply" hidden>
+        <div class="mhint">Ship goods held in your HQ trading pool into a system's stockpile — to feed its converters. Sub-light and raidable.</div>
+        <div class="composer__row" style="margin-top:8px"><label>To system</label><select id="mk-supply-dest"></select></div>
+        <div id="mk-supply-rows" style="margin-top:8px"></div>
+        <div class="mhint" id="mk-supply-feedback"></div>
       </div>
     </div>
 

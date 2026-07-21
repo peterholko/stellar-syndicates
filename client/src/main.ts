@@ -1440,18 +1440,6 @@ function buildPlanetPanel(): void {
   // anchor is a lens, not an address; nothing here is per-planet on the wire).
   $("planet-panel").addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest("[data-act='close']")) { closePlanetPanel(); return; }
-    // §economy Supply-from-HQ: ship held goods into THIS system's stockpile.
-    const sup = (e.target as HTMLElement).closest("[data-act='supply']") as HTMLElement | null;
-    if (sup?.dataset.c && net) {
-      const supSid = viewedSystemId();
-      const units = Number(sup.dataset.n) || 0;
-      if (supSid && units > 0) {
-        net.send({ type: "StockSystem", system_id: supSid, commodity: sup.dataset.c as Commodity, units });
-        refreshOpenBodyPanel();
-        updateSysviewManage();
-      }
-      return;
-    }
     const el = (e.target as HTMLElement).closest("[data-build],[data-crew],[data-action],[data-fit]") as HTMLElement | null;
     const sid = viewedSystemId();
     if (!el || !sid || !net) return;
@@ -1648,7 +1636,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
 
     // The "Under construction" progress bars sit directly under Production Lines
     // (a structure being built is production-in-progress), above the Build menu.
-    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + depotSec + supplyFromHqSection();
+    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + depotSec;
     // §bodies edge state: a body with nothing built and nothing buildable
     // stays a quiet piece of scenery.
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
@@ -3004,8 +2992,14 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   return rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
+      // Fuel here is the system's operating/movement RESERVE — not the tradeable HQ
+      // inventory the Exchange buys/sells. Tag it so a market sell "not moving" this
+      // number reads as expected, not a bug.
+      const nameCell = c === "fuel"
+        ? `<span class="sp-name" title="This system's operating/movement reserve — ships spend it to move. NOT the tradeable HQ inventory the Exchange buys/sells, so a market Buy/Sell never changes it.">${label(c)} <span class="dim" style="font-size:9px">· reserve</span></span>`
+        : `<span class="sp-name">${label(c)}</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
-        `<span class="sp-name">${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
+        `${nameCell}<span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
     }).join("");
 }
 
@@ -3029,19 +3023,37 @@ const SUSPEND_HINT: Record<string, string> = {
 // at the Exchange) into THIS system's stockpile via a raidable convoy — the
 // bridge that lets market-bought inputs feed a system's converters, which draw
 // from the system stockpile, not the HQ pool. Returns "" when HQ holds nothing.
-function supplyFromHqSection(): string {
+// §economy Supply-from-HQ (Market → Supply tab): ship goods held in the corp's HQ
+// trading pool into a chosen OWNED system's stockpile (to feed its converters).
+// Lives ONLY in the Market panel so HQ/market inventory never appears on the
+// planet/system views. The destination <select> is static HTML — its options are
+// rebuilt only when the owned-system set changes (never mid-dropdown at ~10 Hz).
+let supplyDestSig = "";
+function renderSupplyPane(): void {
+  const owned = (state.systems ?? []).filter((s) => s.owner === state.playerId);
+  const sel = $("mk-supply-dest") as HTMLSelectElement;
+  const sig = owned.map((s) => s.id).join(",");
+  if (sig !== supplyDestSig) {
+    supplyDestSig = sig;
+    const prev = sel.value;
+    sel.innerHTML = owned.map((s) => `<option value="${esc(s.id)}">${esc(systemName(s.id))}</option>`).join("");
+    if (owned.some((s) => s.id === prev)) sel.value = prev; // keep the pick across roster changes
+  }
+  const rows = $("mk-supply-rows");
+  if (!owned.length) { rows.innerHTML = `<div class="mhint dim">Claim a system before you can supply one.</div>`; return; }
   const held = (state.wallet?.inventory ?? []).filter((i) => i.units > 0);
-  if (!held.length) return "";
-  const rows = held.map((i) => {
+  if (!held.length) { rows.innerHTML = `<div class="mhint dim">No goods held at HQ. Buy on the Exchange, then supply a system here.</div>`; return; }
+  rows.innerHTML = held.map((i) => {
     const presets = [...new Set([10, 50, i.units])].filter((n) => n >= 1 && n <= i.units).sort((a, b) => a - b);
     const btns = presets.map((n) =>
-      `<button class="act act--mini" data-act="supply" data-c="${esc(i.commodity)}" data-n="${n}" ` +
-      `title="Ship ${n} ${esc(label(i.commodity))} from HQ to this system's stockpile (sub-light, raidable)">${n === i.units ? `All ${fmt(n)}` : `+${n}`}</button>`
+      `<button class="act act--mini" data-supply-c="${esc(i.commodity)}" data-supply-n="${n}" ` +
+      `title="Ship ${n} ${esc(label(i.commodity))} to the selected system (sub-light, raidable)">${n === i.units ? `All ${fmt(n)}` : `+${n}`}</button>`
     ).join("");
-    return `<div class="supply-row">${commodityIcon(i.commodity, "sm")} <b>${esc(label(i.commodity))}</b> ` +
-      `<span class="dim">— ${fmt(i.units)} held</span> <span class="supply-btns">${btns}</span></div>`;
+    return `<div class="supply-row">` +
+      `<span class="sr-name">${commodityIcon(i.commodity, "sm")} <b>${esc(label(i.commodity))}</b></span>` +
+      `<span class="sr-qty">${fmt(i.units)}</span>` +
+      `<span class="supply-btns">${btns}</span></div>`;
   }).join("");
-  return ppSec("Supply from HQ → this system", "Goods you buy at the Exchange land in your HQ trading pool. Ship them here to feed converters, which draw from THIS system's stockpile. Convoys are sub-light and raidable.") + rows;
 }
 
 // §economy: an at-a-glance banner for BUILT converters producing nothing, with
@@ -4462,13 +4474,14 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-type MarketTab = "exchange" | "specialists" | "modules";
+type MarketTab = "exchange" | "specialists" | "modules" | "supply";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
+  ($("market-pane-supply") as HTMLElement).hidden = tab !== "supply";
   document.querySelectorAll<HTMLElement>("#market-tabs button").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.mtab === tab));
   updateMarket();
@@ -4495,6 +4508,17 @@ function buildMarketPanel(): void {
       net.send({ type: "SellModule", module: b.dataset.msell as ModuleKind, n: 1, from_system: home });
       $("mod-feedback").textContent = `Selling a ${MODULE_LABEL[b.dataset.msell as ModuleKind]} to Sol — convoy away, clears on arrival.`;
     }
+  });
+  // §economy Supply: ship HQ-held goods → the selected owned system's stockpile
+  // (StockSystem). Lives on the Supply pane so market inventory stays in the Market.
+  $("market-pane-supply").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-supply-c]") as HTMLElement | null;
+    if (!b?.dataset.supplyC || !net) return;
+    const dest = ($("mk-supply-dest") as HTMLSelectElement).value;
+    const units = Number(b.dataset.supplyN) || 0;
+    if (!dest || units <= 0) return;
+    net.send({ type: "StockSystem", system_id: dest, commodity: b.dataset.supplyC as Commodity, units });
+    $("mk-supply-feedback").textContent = `Supply convoy away: ${units} ${label(b.dataset.supplyC as Commodity)} → ${systemName(dest)} (raidable).`;
   });
   // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
   // Lives on the Specialists pane; feedback lands where the player is looking.
@@ -4640,10 +4664,10 @@ function renderComposer(): void {
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} <b>raidable</b> delivery</span>`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods cross fogged space as a raidable delivery convoy into your HQ INVENTORY — not a system's stockpile. Use the Supply tab to ship them to a system.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} to <b>HQ</b> (raidable)</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
-    $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
+    $("mk-preview").innerHTML = `<span title="Ships from your HQ INVENTORY (not a system's stockpile — a system's fuel/goods are unaffected); the convoy clears at the price ON ARRIVAL (not today's ${px}) and is raidable to the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} from <b>HQ</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
 }
@@ -4673,6 +4697,7 @@ function updateMarket(): void {
   renderRestingOrders();
   renderSpecialistsPane();
   renderModulesPane();
+  renderSupplyPane();
 }
 
 function addTradeNews(t: TradeEvent): void {
