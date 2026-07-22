@@ -499,6 +499,12 @@ pub struct Engagement {
     /// Touched this tick? (Untouched engagements have ended — flush + remove.)
     #[serde(skip)]
     touched: bool,
+    /// §tactical: the INDIVIDUAL-SHIP battle state (the engine that replaced
+    /// pooled Lanchester). `None` on old snapshots → the next tick MIGRATES
+    /// one-way: pooled counts + damage pools unpack into combatants and the
+    /// battle continues under the new engine.
+    #[serde(default)]
+    tactical: Option<crate::tactical::TacticalState>,
 }
 
 /// The flagship kind of a pooled composition (flagship precedence) — for the
@@ -1001,6 +1007,7 @@ impl World {
     /// Feed one attrition tick to the record: the damage each side dealt, the
     /// ships each side lost, and the survivor counts (used only when a round
     /// actually flushes).
+    #[allow(clippy::too_many_arguments)]
     fn record_round(
         &mut self,
         eid: EntityId,
@@ -1010,9 +1017,13 @@ impl World {
         lb: &crate::combat::Losses,
         counts: [BTreeMap<ShipKind, u32>; 2],
         tick: u64,
+        frame: Option<crate::combat::Keyframe>,
     ) {
         if let Some(rec) = self.battle_records.get_mut(&eid) {
             rec.accumulate(dealt_a, dealt_b, la, lb);
+            if let Some(f) = frame {
+                rec.keyframe(f);
+            }
             rec.flush_if_due(tick, counts);
         }
     }
@@ -1148,7 +1159,7 @@ impl World {
         let name = sanitize_name(&name);
         self.syndicates.insert(
             id,
-            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default() },
+            Syndicate { id, name, founder, members, invites: std::collections::BTreeSet::new(), created_at: self.time, research: Default::default(), fits: Vec::new(), flagship_name: None },
         );
         self.set_membership(founder, Some(id));
     }
@@ -1964,8 +1975,8 @@ impl World {
     }
 
     /// §modules: the side's aggregate LOADOUT partition (summed over its fleets)
-    /// — `kind → loadout key → count`, fitted stacks only. Feeds
-    /// [`crate::combat::Forces::from_side`] so combat fights the real fits.
+    /// — `kind → loadout key → count`, fitted stacks only. Feeds the tactical
+    /// unpack ([`crate::tactical::stacked`]) so battles fight the real fits.
     fn side_loadouts(&self, members: &[EntityId]) -> crate::combat::LoadoutMap {
         let mut out: crate::combat::LoadoutMap = BTreeMap::new();
         for id in members {
@@ -1990,6 +2001,7 @@ impl World {
         // exact fitted/unfitted ships combat killed — an armored stack that
         // absorbed less sheds fewer. `remove_stack` keeps composition + loadouts
         // in step. Distributed across the side's fleets, lowest id first.
+        let mut titan_losses: Vec<PlayerId> = Vec::new();
         for ((kind, loadout), n) in &losses.per_stack {
             let mut remaining = *n;
             for id in members.iter() {
@@ -2004,8 +2016,39 @@ impl World {
                     for _ in 0..take {
                         events.push(Event::new(self.time, EventPayload::ShipDestroyed { ship: *id, owner, kind: *kind, pos }));
                     }
+                    // §ladder B4: a dead TITAN is a HEADLINE — clear the
+                    // flagship name and broadcast (processed after the loop;
+                    // the borrow on `f` ends here).
+                    if *kind == ShipKind::Titan {
+                        titan_losses.push(owner);
+                    }
                 }
             }
+        }
+        for owner in titan_losses {
+            let Some(sid) = self.players.get(&owner).and_then(|c| c.syndicate) else {
+                // An unaffiliated owner's Titan dies without a syndicate to
+                // headline for (only reachable via post-build emigration —
+                // building one requires syndicate research).
+                continue;
+            };
+            // §ladder B4: the christened name belongs to THE syndicate's Titan.
+            // Membership churn can gather more than one (the singleton binds at
+            // BUILD time) — if another member Titan still flies after this
+            // loss, the LIVING flagship keeps the name and the fallen hull
+            // makes a nameless headline. The stack removal above already
+            // updated the fleets, so this reads the post-loss world.
+            let members = self.syndicates.get(&sid).map(|s| s.members.clone()).unwrap_or_default();
+            let another_flies = self
+                .fleets
+                .values()
+                .any(|f| members.contains(&f.owner) && f.count(ShipKind::Titan) > 0);
+            let Some(s) = self.syndicates.get_mut(&sid) else { continue };
+            let name = if another_flies { None } else { s.flagship_name.take() };
+            events.push(Event::new(
+                self.time,
+                EventPayload::FlagshipDestroyed { owner, syndicate: sid, name, pos },
+            ));
         }
         // Drop any fleet emptied out. §economy Part 4: a fleet that died with
         // specialists aboard loses them WITH the ship — the one specialist loss
@@ -2048,7 +2091,8 @@ impl World {
         let now = self.time;
         let hub = self.hub;
         let target = self.config.battle_target_secs;
-        let base_rate = crate::combat::dmg_rate(target);
+        // (The pooled engine's per-tick dmg_rate is superseded — the tactical
+        // engine steps on its own cadence; see tactical::tac_step_ticks.)
 
         for e in self.engagements.values_mut() {
             e.touched = false;
@@ -2257,6 +2301,7 @@ impl World {
                 a_fled: false,
                 d_fled: false,
                 touched: true,
+                tactical: None,
             });
         }
 
@@ -2313,19 +2358,33 @@ impl World {
                         }
                     }
                 }
+                // §tactical T6 (stint accounting): relief folds into the side's
+                // START composition too — end-of-battle losses are computed as
+                // `start − final`, so without this a joined ship's death simply
+                // VANISHED from the report and the record's outcome summary.
+                // (Symmetric with the alive-exit subtraction in the disengage
+                // pass, so a flee-and-rejoin cycle stays exact.)
+                {
+                    let e = self.engagements.get_mut(eid).unwrap();
+                    for (fid, atk) in joiners {
+                        if atk {
+                            e.attackers.push(fid);
+                        } else {
+                            e.defenders.push(fid);
+                        }
+                    }
+                    for (k, n) in &atk_join {
+                        *e.a_start.entry(*k).or_insert(0) += *n;
+                    }
+                    for (k, n) in &def_join {
+                        *e.d_start.entry(*k).or_insert(0) += *n;
+                    }
+                }
                 if !atk_join.is_empty() {
                     self.record_note(*eid, crate::combat::RoundNote::Joined { side: 0, comp: atk_join });
                 }
                 if !def_join.is_empty() {
                     self.record_note(*eid, crate::combat::RoundNote::Joined { side: 1, comp: def_join });
-                }
-                let e = self.engagements.get_mut(eid).unwrap();
-                for (fid, atk) in joiners {
-                    if atk {
-                        e.attackers.push(fid);
-                    } else {
-                        e.defenders.push(fid);
-                    }
                 }
             }
         }
@@ -2387,6 +2446,17 @@ impl World {
                 // §battle-records: which side(s) BEGAN disengaging this tick.
                 let dis_atk = set_dis.iter().any(|(fid, _)| atkers.contains(fid));
                 let dis_def = set_dis.iter().any(|(fid, _)| defers.contains(fid));
+                // §tactical T6 (stint accounting): a fleet that exits ALIVE takes
+                // its surviving ships back OUT of the side's start composition —
+                // end-of-battle losses are `start − final`, and without this every
+                // escaped survivor was reported as a combat death. Symmetric with
+                // the join fold (enter: add current comp; leave alive: subtract
+                // it), so each stint contributes exactly its own losses — even
+                // across a flee-home-and-rejoin cycle.
+                let flee_comps: Vec<(EntityId, BTreeMap<ShipKind, u32>)> = flee
+                    .iter()
+                    .filter_map(|fid| self.fleets.get(fid).map(|f| (*fid, f.composition.clone())))
+                    .collect();
                 let e = self.engagements.get_mut(eid).unwrap();
                 for (fid, t) in set_dis {
                     e.disengaging.insert(fid, t);
@@ -2400,6 +2470,15 @@ impl World {
                     }
                     if e.defenders.contains(fid) {
                         e.d_fled = true;
+                    }
+                    let side_start = if e.attackers.contains(fid) { &mut e.a_start } else { &mut e.d_start };
+                    if let Some((_, comp)) = flee_comps.iter().find(|(id, _)| id == fid) {
+                        for (k, n) in comp {
+                            if let Some(have) = side_start.get_mut(k) {
+                                *have = have.saturating_sub(*n);
+                            }
+                        }
+                        side_start.retain(|_, n| *n > 0);
                     }
                     e.attackers.retain(|x| x != fid);
                     e.defenders.retain(|x| x != fid);
@@ -2437,34 +2516,84 @@ impl World {
 
             let a_pool = self.engagements[eid].a_stack_pool.clone();
             let d_pool = self.engagements[eid].d_stack_pool.clone();
-            // §modules: partition each side into (kind, loadout) stacks from the
-            // live fleets' fits; the per-kind carried pool distributes across them.
+            // §tactical: partition each side into (kind, loadout) stacks from the
+            // live fleets' fits — the engine's sync/unpack input.
             let a_loadouts = self.side_loadouts(&attackers);
             let d_loadouts = self.side_loadouts(&defenders);
-            let mut a_side = crate::combat::Forces::from_side(&a_comp, &a_loadouts, &a_pool);
-            let mut d_side = crate::combat::Forces::from_side(&d_comp, &d_loadouts, &d_pool).with_platform(ptiers, ppool);
+            let a_stacks = crate::tactical::stacked(&a_comp, &a_loadouts);
+            let d_stacks = crate::tactical::stacked(&d_comp, &d_loadouts);
 
-            // Scouts die the instant they are in a battle.
-            let a_scouts = a_side.strip_scouts();
-            let d_scouts = d_side.strip_scouts();
-            // Raids run at the FIXED quick RAID_RATE (a smash-and-grab is not
-            // slowed by the config battle timescale); battles run config-scaled.
-            let rate = if raid { crate::combat::RAID_RATE } else { base_rate };
-            // §battle-records: each side deals `rate × attack_power` evaluated
-            // PRE-tick — the same value `attrition_tick` applies internally.
-            let dealt_a = rate * a_side.attack_power();
-            let dealt_b = rate * d_side.attack_power();
-            let (mut la, mut lb) = crate::combat::attrition_tick(&mut a_side, &mut d_side, rate);
-            // The defender's Defense Platform lost its LAST tier this tick.
-            let platform_destroyed = ptiers > 0 && d_side.platform_tiers == 0;
-            // Stripped scouts die as UNFITTED losses (both loss views, so the
-            // per-stack loss-application removes them from the fleets).
-            if a_scouts > 0 {
-                la.add_kind(ShipKind::Scout, a_scouts);
+            // OPEN or MIGRATE: a fresh battle (or an old-snapshot pooled one)
+            // unpacks into individual combatants — pro-rata HP from the stack
+            // pools, defender anchored, attacker on their real approach bearing,
+            // platform tiers as stationary combatants. One-way; documented.
+            let mut tac = match self.engagements.get_mut(eid).unwrap().tactical.take() {
+                Some(t) => t,
+                None => {
+                    let bearing = attackers
+                        .first()
+                        .and_then(|id| self.fleets.get(id))
+                        .map(|f| f.pos - pos)
+                        .unwrap_or(Vec2::new(1.0, 0.0));
+                    crate::tactical::TacticalState::open(
+                        self.config.seed,
+                        eid.0,
+                        &a_stacks,
+                        &d_stacks,
+                        &a_pool,
+                        &d_pool,
+                        ptiers,
+                        ppool,
+                        bearing,
+                    )
+                }
+            };
+
+            // SYNC to the live strategic sides (relief joins unpack at the edge;
+            // withdrawn fleets' ships leave). Scouts die at the boundary — the
+            // same instant death the old strip_scouts applied.
+            let scouts = tac.sync([&a_stacks, &d_stacks]);
+            let mut la = crate::combat::Losses::default();
+            let mut lb = crate::combat::Losses::default();
+            if scouts[0] > 0 {
+                la.add_kind(ShipKind::Scout, scouts[0]);
             }
-            if d_scouts > 0 {
-                lb.add_kind(ShipKind::Scout, d_scouts);
+            if scouts[1] > 0 {
+                lb.add_kind(ShipKind::Scout, scouts[1]);
             }
+
+            // STEP the engine on its own cadence (1 Hz production, 2 Hz playtest
+            // — see tac_step_ticks). Raids hit harder per step so a smash-and-
+            // grab resolves inside the short raid cap (the old RAID_RATE
+            // asymmetry, preserved).
+            let cadence = crate::tactical::tac_step_ticks(target);
+            let (dealt_a, dealt_b, platform_destroyed, tac_frame) = if tac.step == 0 || self.tick % cadence == 0 {
+                let mods = [
+                    crate::tactical::SideMods {
+                        opening_bonus: self.research_flag(a_owner, crate::research::Cap::FirstStrike)
+                            || self.research_flag(a_owner, crate::research::Cap::GrandBatteries),
+                        flak_mult: self.research_mod(a_owner, crate::research::ModKey::PdIntercept),
+                    },
+                    crate::tactical::SideMods {
+                        opening_bonus: self.research_flag(d_owner, crate::research::Cap::FirstStrike)
+                            || self.research_flag(d_owner, crate::research::Cap::GrandBatteries),
+                        flak_mult: self.research_mod(d_owner, crate::research::ModKey::PdIntercept),
+                    },
+                ];
+                let outcome = tac.step(raid, mods);
+                for (k, lo_map) in &outcome.losses[0].per_stack {
+                    la.add_stack(k.0, k.1.clone(), *lo_map);
+                }
+                for (k, lo_map) in &outcome.losses[1].per_stack {
+                    lb.add_stack(k.0, k.1.clone(), *lo_map);
+                }
+                let pdestroyed = ptiers > 0 && tac.platform_tiers() == 0;
+                // §T3: the round's truth keyframe rides the recorder.
+                let frame = tac.keyframe(outcome.deaths);
+                (outcome.dealt[0], outcome.dealt[1], pdestroyed, Some(frame))
+            } else {
+                (0.0, 0.0, false, None)
+            };
 
             // Cargo SEIZURE: on a raid, if a defender convoy is emptied this tick,
             // the (first) attacker loots its cargo before the wreck is removed.
@@ -2492,19 +2621,21 @@ impl World {
                 }
             }
 
-            // Persist pools back onto the engagement (re-summed PER KIND — the
-            // loadout split is re-derived from the live fleets next tick), apply
-            // deaths, platform tiers.
+            // Persist the engine's truth back through the OLD channels (§law 1:
+            // the strategic layer sees the same shapes): HP deficits → per-stack
+            // pools; platform tiers + pool → the system.
+            let tac_ptiers = tac.platform_tiers();
+            let tac_ppool = tac.platform_pool();
             {
                 let e = self.engagements.get_mut(eid).unwrap();
-                e.a_stack_pool = a_side.damage_by_stack();
-                e.d_stack_pool = d_side.damage_by_stack();
+                e.a_stack_pool = tac.pools(0);
+                e.d_stack_pool = tac.pools(1);
             }
             if let Some(sid) = platform_system
                 && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
             {
-                s.set_tier(crate::build::StructureKind::DefensePlatform, d_side.platform_tiers);
-                s.defense_pool = d_side.platform_pool;
+                s.set_tier(crate::build::StructureKind::DefensePlatform, tac_ptiers);
+                s.defense_pool = tac_ppool;
             }
             let mut atk = attackers.clone();
             let mut def = defenders.clone();
@@ -2516,7 +2647,12 @@ impl World {
                 e.defenders = def.clone();
             }
 
-            // End conditions, re-derived on the survivors (fleets still existing).
+            // End conditions, re-derived on the survivors. §tactical: a retreat/
+            // raid-cap/safety trigger no longer ENDS the battle instantly — it
+            // orders the side to WITHDRAW; the ships physically burn for the
+            // disengage edge while pursuers get real shots (literal pursuit fire
+            // replaces the old abstract disengage-exposure number). The battle
+            // ends when a side is dead or its withdrawal completes.
             let _ = (atk, def);
             let elapsed = now - started_at;
             let a_now = self.side_comp(&self.engagements[eid].attackers);
@@ -2527,17 +2663,43 @@ impl World {
                 .unwrap_or(0);
             let a_alive = !a_now.is_empty();
             let d_alive = !d_now.is_empty() || d_ptiers > 0;
-            let a_cur = crate::combat::Forces::from_fleet(&a_now, &BTreeMap::new()).strength();
-            let d_cur = crate::combat::Forces::from_fleet(&d_now, &BTreeMap::new()).strength();
+            // Retreat metric: Σ remaining ship HP vs the side's at-open HP.
+            let a_cur = tac.side_hp(0, false);
+            let d_cur = tac.side_hp(1, false);
             let a_doc = self.players.get(&a_owner).map(|c| c.doctrine).unwrap_or_default();
             let d_doc = self.players.get(&d_owner).map(|c| c.doctrine).unwrap_or_default();
-            let a_retreats = a_alive && a_doc.retreat.min_ratio().is_some_and(|m| a_cur / a_start_strength.max(1e-9) < m);
-            let d_retreats = d_alive && d_doc.retreat.min_ratio().is_some_and(|m| d_cur / d_start_strength.max(1e-9) < m);
+            let _ = (a_start_strength, d_start_strength); // superseded by HP baselines
+            let a_retreats = a_alive
+                && !tac.withdrawing[0]
+                && a_doc.retreat.min_ratio().is_some_and(|m| a_cur / tac.start_hp[0].max(1e-9) < m);
+            let d_retreats = d_alive
+                && !tac.withdrawing[1]
+                && d_doc.retreat.min_ratio().is_some_and(|m| d_cur / tac.start_hp[1].max(1e-9) < m);
             // Raid cap: the raider breaks off after a short slice of a battle.
-            let raid_cap = raid && elapsed >= crate::combat::RAID_CAP_FRAC * target;
+            let raid_cap = raid && !tac.withdrawing[0] && elapsed >= crate::combat::RAID_CAP_FRAC * target;
             // Safety valve: a no-retreat grind ends in MUTUAL disengage.
             let safety = elapsed >= crate::combat::MAX_BATTLE_MULT * target;
-            let defender_withdraws = d_retreats || safety;
+            if a_retreats || raid_cap {
+                tac.order_withdraw(0);
+                self.engagements.get_mut(eid).unwrap().a_fled = true;
+            }
+            if d_retreats {
+                tac.order_withdraw(1);
+                self.engagements.get_mut(eid).unwrap().d_fled = true;
+            }
+            if safety && !(tac.withdrawing[0] && tac.withdrawing[1]) {
+                tac.order_withdraw(0);
+                tac.order_withdraw(1);
+                let e = self.engagements.get_mut(eid).unwrap();
+                e.a_fled = true;
+                e.d_fled = true;
+            }
+            let a_out = tac.side_withdrawn(0);
+            let d_out = tac.side_withdrawn(1);
+            // A hard stop bounds the pursuit phase (a withdrawal can't drag on
+            // past the safety valve plus a pursuit grace window).
+            let hard_stop = elapsed >= crate::combat::MAX_BATTLE_MULT * target + 60.0;
+            let defender_withdraws = tac.withdrawing[1];
 
             // §battle-records: push this tick's beats, then feed the round — the
             // pending beats force a flush, so beats + this tick's damage/kills +
@@ -2554,9 +2716,12 @@ impl World {
             if safety {
                 self.record_note(*eid, crate::combat::RoundNote::MutualDisengage);
             }
-            self.record_round(*eid, dealt_a, dealt_b, &la, &lb, [a_now.clone(), d_now.clone()], self.tick);
+            self.record_round(*eid, dealt_a, dealt_b, &la, &lb, [a_now.clone(), d_now.clone()], self.tick, tac_frame);
 
-            if !a_alive || !d_alive || a_retreats || raid_cap || safety || d_retreats {
+            // The tactical state persists on the engagement (serde mid-battle).
+            self.engagements.get_mut(eid).unwrap().tactical = Some(tac);
+
+            if !a_alive || !d_alive || a_out || d_out || hard_stop {
                 self.end_battle(*eid, defender_withdraws, events);
             }
         }
@@ -2747,6 +2912,7 @@ impl World {
             a_fled: false,
             d_fled: false,
             touched: true,
+            tactical: None,
         });
     }
 
@@ -3349,6 +3515,7 @@ impl World {
                 a_fled: false,
                 d_fled: false,
                 touched: true,
+                tactical: None,
             });
         }
 
@@ -3659,6 +3826,54 @@ impl World {
                     s.research.designations.insert(*cap, *target);
                 }
             }
+            Command::SaveFit { player_id, name, ship, loadout } => {
+                // §fitting: save a doctrine fit on the caller's syndicate.
+                // Any member may curate the shared fit library (CC-local
+                // instant admin, like the research queue). The stored fit is
+                // legal BY CONSTRUCTION: slots + fitting budget validated here.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let name: String =
+                    name.trim().chars().take(crate::syndicate::FIT_NAME_MAX).collect();
+                if name.is_empty() || !loadout.validate(*ship) {
+                    return; // unnamed or illegal fit — soft reject
+                }
+                if let Some(existing) = s.fits.iter_mut().find(|f| f.name == name) {
+                    // Replace the same-name fit in place (order is curation state).
+                    existing.kind = *ship;
+                    existing.loadout = loadout.clone();
+                } else if s.fits.len() < crate::syndicate::SYNDICATE_MAX_FITS {
+                    s.fits.push(crate::syndicate::DoctrineFit {
+                        name,
+                        kind: *ship,
+                        loadout: loadout.clone(),
+                    });
+                }
+                // else: at the cap — soft reject (delete one first).
+            }
+            Command::DeleteFit { player_id, name } => {
+                // §fitting: drop a doctrine fit by name (member curation;
+                // unknown names are a no-op).
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let name = name.trim();
+                s.fits.retain(|f| f.name != name);
+            }
+            Command::NameFlagship { player_id, name } => {
+                // §ladder B4: christen (or un-christen, empty name) the
+                // syndicate's Titan. A pure label — no sim outcome touches it.
+                let Some(sid) = self.players.get(player_id).and_then(|c| c.syndicate) else {
+                    return;
+                };
+                let Some(s) = self.syndicates.get_mut(&sid) else { return };
+                let name: String =
+                    name.trim().chars().take(crate::syndicate::FLAGSHIP_NAME_MAX).collect();
+                s.flagship_name = (!name.is_empty()).then_some(name);
+            }
             Command::MoveShip {
                 player_id,
                 ship_id,
@@ -3817,6 +4032,51 @@ impl World {
                 ));
                 let cargo = Cargo { commodity: *commodity, units };
                 self.spawn_trade_convoy(*player_id, home, self.hub, cargo, TradeMission::SellAtHub);
+            }
+            // SUPPLY FROM HQ (§economy): move goods from the corp's HQ trading
+            // inventory into an OWNED system's stockpile via a sub-light raidable
+            // convoy — the bridge that lets market-bought inputs feed a system's
+            // converters (which read sys.stockpile, not the trading pool).
+            Command::StockSystem { player_id, system_id, commodity, units } => {
+                let units = *units;
+                if units == 0 {
+                    return;
+                }
+                // Owner-only: you can only stock a system you currently own.
+                let Some(dest) = self
+                    .systems
+                    .iter()
+                    .find(|s| s.id == *system_id && s.owner == Some(*player_id))
+                    .map(|s| s.pos)
+                else {
+                    return; // not yours (or gone) — soft reject
+                };
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
+                if have < units {
+                    return; // not enough held at HQ
+                }
+                let home = corp.home;
+                // Commit goods out of the HQ pool up front (mirror MarketSell).
+                if let Some(corp) = self.players.get_mut(player_id) {
+                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::StockDispatched {
+                        player: *player_id,
+                        commodity: *commodity,
+                        units,
+                        system: *system_id,
+                    }),
+                ));
+                // The DeliverToSystem arm deposits into sys.stockpile (with the
+                // depot-cap / overflow-to-hub handling) on arrival. No fuel charge —
+                // parity with the manual hub-trade family (MarketBuy/MarketSell).
+                let cargo = Cargo { commodity: *commodity, units };
+                self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
             }
             Command::PlaceLimitOrder {
                 player_id,
@@ -4581,6 +4841,36 @@ impl World {
         // owner-only notice — the recipe is never eaten, the build simply holds
         // until the industry exists. This is what makes shipbuilding GEOGRAPHY.
         if let crate::build::BuildKind::Ship { ship } = what {
+            // §ladder: the five capital hulls are RESEARCH PRIZES — the Line
+            // programme's UnlockHull must be completed by the owner's syndicate
+            // before the yard will lay the keel. Soft reject with its own
+            // reason (the client shows the gate copy).
+            if crate::ship::requires_hull_unlock(ship) && !self.research_hull(player_id, ship) {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NeedsResearch,
+                    },
+                ));
+                return;
+            }
+            // §ladder B4: the TITAN is a syndicate SINGLETON — fielded + queued
+            // must be zero to lay a new keel (rebuild after loss is allowed).
+            if ship == ShipKind::Titan && self.titan_fielded_or_queued(player_id) {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::TitanFielded,
+                    },
+                ));
+                return;
+            }
             let required = crate::build::required_shipyard_tier(ship);
             if sys.tier(crate::build::StructureKind::Shipyard) < required {
                 events.push(Event::new(
@@ -4594,15 +4884,16 @@ impl World {
                 ));
                 return;
             }
-            // §modules Part B4: validate the loadout — ≤ the hull's slots and
-            // every module covered by the system's ledger (soft-reject else; the
-            // ledger + recipe are never eaten on a reject).
+            // §modules Part B4 + §fitting: validate the loadout — the hull's
+            // slots AND its fitting-point budget (`Loadout::validate`), and
+            // every module covered by the system's ledger (soft-reject else;
+            // the ledger + recipe are never eaten on a reject).
             if !loadout.is_empty() {
                 let mut need: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
                 for m in loadout.modules() {
                     *need.entry(*m).or_insert(0) += 1;
                 }
-                let fits = loadout.len() as u32 <= ship.module_slots()
+                let fits = loadout.validate(ship)
                     && need.iter().all(|(m, n)| sys.modules.get(m).copied().unwrap_or(0) >= *n);
                 if !fits {
                     events.push(Event::new(
@@ -4937,8 +5228,10 @@ impl World {
         if fleet.owner != player_id || !matches!(fleet.order, FleetOrder::Idle) {
             return;
         }
-        // `to` must fit the hull, and be an actual CHANGE from `from`.
-        if to.len() as u32 > ship.module_slots() || from == to {
+        // `to` must fit the hull — slots AND the fitting budget (§fitting; a
+        // grandfathered over-budget `from` may only refit INTO legality) — and
+        // be an actual CHANGE from `from`.
+        if !to.validate(ship) || from == to {
             return;
         }
         let pos = fleet.pos;
@@ -5146,11 +5439,39 @@ impl World {
             .unwrap_or(0)
     }
 
-    /// §research R4b: has `owner`'s syndicate unlocked this hull / module? (Wired
-    /// with the new hulls/utility modules in R5.)
-    #[allow(dead_code)]
+    /// §research R4b: has `owner`'s syndicate unlocked this hull? Wired into the
+    /// §ladder BuildShip gate — the five capital hulls soft-reject without it.
     fn research_hull(&self, owner: PlayerId, kind: ShipKind) -> bool {
         self.research_of(owner).is_some_and(|r| crate::research::has_hull(r, kind))
+    }
+
+    /// §ladder B4: does `owner`'s syndicate (or the lone corp, if unaffiliated)
+    /// already FIELD or have QUEUED a Titan? The singleton check counts every
+    /// member's fleets and every member's pending Titan keel.
+    fn titan_fielded_or_queued(&self, owner: PlayerId) -> bool {
+        let members: std::collections::BTreeSet<PlayerId> = self
+            .players
+            .get(&owner)
+            .and_then(|c| c.syndicate)
+            .and_then(|sid| self.syndicates.get(&sid))
+            .map(|s| s.members.clone())
+            .unwrap_or_else(|| std::collections::BTreeSet::from([owner]));
+        let fielded = self
+            .fleets
+            .values()
+            .any(|f| members.contains(&f.owner) && f.count(ShipKind::Titan) > 0);
+        let queued = self.build_queue.iter().any(|j| {
+            members.contains(&j.owner)
+                && matches!(j.what, crate::build::BuildKind::Ship { ship: ShipKind::Titan })
+        });
+        // A Titan IN THE YARD mid-refit is out of every fleet for the job's
+        // duration — it still counts (else a 3s-per-hull refit window lets a
+        // second keel slip past the singleton).
+        let refitting = self
+            .refit_queue
+            .iter()
+            .any(|j| members.contains(&j.owner) && j.ship == ShipKind::Titan);
+        fielded || queued || refitting
     }
     #[allow(dead_code)]
     fn research_module(&self, owner: PlayerId, kind: crate::module::ModuleKind) -> bool {
@@ -5713,7 +6034,17 @@ impl World {
                     // Otherwise the existing soft-hold: intact, redirectable,
                     // never consumed in vain. "Sieges strangle; only colonists
                     // conquer" — no colony ship = no capture, ever.
-                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs;
+                    // §ladder: the SIEGE ANCHOR — a Battleship-or-heavier hull on
+                    // blockade station accelerates the capture clock: the ripe
+                    // duration divides by SIEGE_ANCHOR_MULT while one holds the
+                    // line. A named factor, presence-gated at evaluation.
+                    let anchored = self.fleets.values().any(|f| {
+                        f.owner == owner
+                            && matches!(f.order, crate::ship::FleetOrder::Blockade { system, .. } if system == sys_id)
+                            && f.composition.iter().any(|(k, n)| *n > 0 && crate::ship::is_siege_anchor(*k))
+                    });
+                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs
+                        / if anchored { crate::ship::SIEGE_ANCHOR_MULT } else { 1.0 };
                     let captureable = idle
                         && !self.is_home_system(holder, sys_id)
                         && self
@@ -5749,6 +6080,9 @@ impl World {
     /// Never called for a home system — the caller's home-protection gate holds.
     fn capture_system(&mut self, sys_id: EntityId, old_owner: PlayerId, new_owner: PlayerId, colony: EntityId, pos: Vec2, events: &mut Vec<Event>) {
         let now = self.time;
+        // §ladder B2: a capture is the Line VIII verb — counted ONCE per
+        // capture, at resolution (the only place ownership flips by siege).
+        self.add_research_verb(new_owner, crate::research::Verb::SystemsCaptured, 1.0);
         // Snapshot the seized stockpile (whole units) for the report BEFORE the flip.
         let plunder: BTreeMap<crate::cargo::Commodity, u32> = self
             .systems
@@ -6843,6 +7177,7 @@ impl World {
                             player: ship.owner,
                             commodity: cargo.commodity,
                             units: cargo.units,
+                            system: None, // DeliverHome → the HQ trading pool
                         }),
                     ));
                 }
@@ -6897,6 +7232,7 @@ impl World {
                                     player: ship.owner,
                                     commodity: cargo.commodity,
                                     units: stored,
+                                    system: Some(system), // DeliverToSystem → the system stockpile
                                 }),
                             ));
                             if fought
@@ -7175,21 +7511,21 @@ impl World {
         // longer used for its route, but kept available for future picket setups.
         let _ = nearest;
         let raider_id = self.alloc_entity_id();
-        self.fleets.insert(
+        let mut raider_fleet = Fleet::single(
             raider_id,
-            Fleet::single(
-                raider_id,
-                owner,
-                ShipKind::Raider,
-                home,
-                FleetOrder::Patrol {
-                    waypoints: vec![home, hub],
-                    index: 1,
-                    dwell_until: 0.0,
-                },
-                None, // raiders carry no cargo
-            ),
+            owner,
+            ShipKind::Raider,
+            home,
+            FleetOrder::Patrol {
+                waypoints: vec![home, hub],
+                index: 1,
+                dwell_until: 0.0,
+            },
+            None, // raiders carry no cargo
         );
+        // TESTING: start with a 3-ship raider wing (Fleet::single seeds one).
+        raider_fleet.add(ShipKind::Raider, 2);
+        self.fleets.insert(raider_id, raider_fleet);
         events.push(Event::new(
             self.time,
             EventPayload::ShipSpawned {
@@ -7659,6 +7995,155 @@ mod tests {
             ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
             "with the Tier-IV/V unlock, tier 5 builds"
         );
+    }
+
+    #[test]
+    fn capital_hulls_gate_on_research_and_the_titan_is_a_singleton() {
+        use crate::event::BuildRejectReason;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(51);
+        w.step(&[Command::AddPlayer { id, name: "Line".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Armada".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap()
+            .set_tier(StructureKind::Shipyard, 6);
+        seed_stock(&mut w, home, &[
+            (Commodity::Alloys, 20_000.0), (Commodity::Electronics, 10_000.0),
+            (Commodity::Armaments, 10_000.0), (Commodity::Machinery, 10_000.0),
+            (Commodity::RareElements, 5_000.0), (Commodity::Fuel, 5_000.0),
+        ]);
+        // UNRESEARCHED: a capital keel soft-rejects with the research reason.
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::NeedsResearch, .. })),
+            "no Line programme → NeedsResearch"
+        );
+        // RESEARCHED: the unlock admits the hull.
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("hull_line_iv_destroyer".into());
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the unlocked Destroyer lays its keel");
+        // TITAN: research VIII grants the hull AND the Shipyard-6 ceiling (the
+        // effects array in action).
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("hull_line_viii_titan".into());
+        assert_eq!(
+            crate::research::unlocked_structure_tier(&w.syndicates[&sid].research, StructureKind::Shipyard),
+            6,
+            "Line VIII carries the yard ceiling with the hull"
+        );
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the first Titan keel is laid");
+        // SINGLETON: a second keel is rejected while one is QUEUED…
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::TitanFielded, .. })),
+            "one keel at a time — fielded + queued must be zero"
+        );
+        // …and while one is FIELDED (clear the queue, graft a live Titan).
+        w.build_queue.retain(|j| !matches!(j.what, crate::build::BuildKind::Ship { ship: ShipKind::Titan }));
+        let titan = squad(&mut w, id, hpos, ShipKind::Titan, 1, FleetOrder::Idle);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::TitanFielded, .. })));
+        // …and while one is IN THE YARD mid-REFIT (out of every fleet — the
+        // review-caught window): the refit_queue counts toward the singleton.
+        {
+            let f = w.fleets.get_mut(&titan).unwrap();
+            f.remove(ShipKind::Titan, 1);
+            f.add(ShipKind::Scout, 1); // keep the fleet alive while the hull is in the yard
+        }
+        w.refit_queue.push(crate::build::RefitJob {
+            id: 999_999, owner: id, system: home, fleet: titan, ship: ShipKind::Titan,
+            to: crate::module::Loadout::default(), n: 1, complete_tick: w.tick + 10_000,
+        });
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: BuildRejectReason::TitanFielded, .. })),
+            "a Titan mid-refit still blocks a second keel"
+        );
+        w.refit_queue.clear();
+        w.fleets.get_mut(&titan).unwrap().add(ShipKind::Titan, 1); // back aboard for the death test
+        // NAME the flagship; a serde round-trip keeps it.
+        w.step(&[Command::NameFlagship { player_id: id, name: "Reckoning of Veles".into() }]);
+        assert_eq!(w.syndicates[&sid].flagship_name.as_deref(), Some("Reckoning of Veles"));
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(w2.syndicates[&sid].flagship_name.as_deref(), Some("Reckoning of Veles"), "the name survives a snapshot");
+        // DESTRUCTION: the loss clears the name, makes the headline, and
+        // re-opens the yard for a rebuild.
+        let mut losses = crate::combat::Losses::default();
+        losses.add_stack(ShipKind::Titan, crate::module::Loadout::default(), 1);
+        let mut members = vec![titan];
+        let mut events = Vec::new();
+        w.apply_side_losses(&mut members, &losses, hpos, &mut events);
+        assert!(
+            events.iter().any(|e| matches!(&e.payload, EventPayload::FlagshipDestroyed { name: Some(n), .. } if n == "Reckoning of Veles")),
+            "the headline carries the christened name"
+        );
+        assert!(w.syndicates[&sid].flagship_name.is_none(), "the name dies with the ship");
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "rebuild after loss is allowed");
+    }
+
+    #[test]
+    fn flagship_name_stays_with_the_living_titan_on_membership_churn() {
+        // §ladder B4 (review-caught): membership churn can gather TWO Titans in
+        // one syndicate (the singleton binds at build). When one dies, the
+        // LIVING flagship keeps the christened name — the fallen hull makes a
+        // nameless headline; the name is taken only when the LAST Titan falls.
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(71);
+        w.step(&[Command::AddPlayer { id, name: "Churn".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Two Crowns".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        let t1 = squad(&mut w, id, hpos, ShipKind::Titan, 1, FleetOrder::Idle);
+        let _t2 = squad(&mut w, id, hpos + Vec2::new(50.0, 0.0), ShipKind::Titan, 1, FleetOrder::Idle);
+        w.step(&[Command::NameFlagship { player_id: id, name: "Reckoning".into() }]);
+        // First Titan dies → the name SURVIVES (the other still flies).
+        let mut losses = crate::combat::Losses::default();
+        losses.add_stack(ShipKind::Titan, crate::module::Loadout::default(), 1);
+        let mut members = vec![t1];
+        let mut events = Vec::new();
+        w.apply_side_losses(&mut members, &losses, hpos, &mut events);
+        assert!(
+            events.iter().any(|e| matches!(&e.payload, EventPayload::FlagshipDestroyed { name: None, .. })),
+            "the fallen hull headlines namelessly"
+        );
+        assert_eq!(w.syndicates[&sid].flagship_name.as_deref(), Some("Reckoning"), "the living flagship keeps the name");
+        // The second (last) Titan dies → NOW the name is taken.
+        let mut members = vec![_t2];
+        let mut events = Vec::new();
+        w.apply_side_losses(&mut members, &losses, hpos, &mut events);
+        assert!(events.iter().any(|e| matches!(&e.payload, EventPayload::FlagshipDestroyed { name: Some(n), .. } if n == "Reckoning")));
+        assert!(w.syndicates[&sid].flagship_name.is_none());
+    }
+
+    #[test]
+    fn systems_captured_verb_counts_once_per_capture() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let a = PlayerId(61);
+        let b = PlayerId(62);
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: b, name: "Takers".into() }]);
+        let sid = w.players[&b].syndicate.unwrap();
+        // A system A owns; B lands the capture (the resolution path is the only
+        // place the verb increments — call it directly).
+        let sys_id = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(a);
+            s.claimed_at = Some(0.0);
+            s.id
+        };
+        let pos = w.systems.iter().find(|s| s.id == sys_id).unwrap().pos;
+        let colony = squad(&mut w, b, pos, ShipKind::Colony, 1, FleetOrder::Idle);
+        let mut events = Vec::new();
+        w.capture_system(sys_id, a, b, colony, pos, &mut events);
+        assert_eq!(w.syndicates[&sid].research.verb(crate::research::Verb::SystemsCaptured), 1.0, "one capture, one count");
     }
 
     /// §economy: the THREE derived slot pools — Resource from geology (one per
@@ -9738,7 +10223,203 @@ mod tests {
         for r in &rec.rounds {
             assert!(r.counts[1].get(&ShipKind::Raider).copied().unwrap_or(0) <= 3, "defender survivors never exceed the opening");
         }
+        // §tactical T3: recorded rounds carry TRUTH KEYFRAMES — real positions
+        // inside the arena bounds — and the battle's deaths appear as exact
+        // (step, pos) events somewhere on the timeline.
+        let framed: Vec<&crate::combat::Keyframe> = rec.rounds.iter().filter_map(|r| r.frame.as_ref()).collect();
+        assert!(!framed.is_empty(), "rounds carry truth keyframes");
+        for f in &framed {
+            for s in &f.ships {
+                assert!(s.x.abs() <= 2_000.0 && s.y.abs() <= 2_000.0, "keyframe positions stay in arena bounds");
+                assert!((0.0..=1.0).contains(&s.hp), "hp is a fraction");
+            }
+        }
+        assert!(
+            framed.iter().any(|f| !f.deaths.is_empty()),
+            "the battle's kills appear as exact death events"
+        );
+        // Serde round-trip keeps frames (and old frame-less records still load —
+        // the field is serde-default).
+        let json = serde_json::to_string(rec).unwrap();
+        let back: crate::combat::BattleRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rounds.iter().filter(|r| r.frame.is_some()).count(), framed.len());
     }
+
+    /// §tactical law 2 (stream isolation, test-enforced): battle dice come
+    /// from a stream derived from `(world_seed, battle_id)` — NEVER the world
+    /// RNG. Two worlds, identical except one fights an extra battle: after
+    /// equal tick counts their WORLD RNG states are byte-identical, so adding
+    /// or removing a battle shifts no unrelated draw anywhere in the sim.
+    #[test]
+    fn an_extra_battle_draws_nothing_from_the_world_rng() {
+        // Returns (rng state, whether a battle ever formed) — the premise is
+        // asserted below so the test can never pass vacuously (e.g. a future
+        // gate change silently rejecting the attack in both worlds).
+        let world_rng_after = |fight: bool| -> (serde_json::Value, bool) {
+            let mut w = test_world();
+            let (a, b) = (PlayerId(1), PlayerId(2));
+            w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+            let far = w.players[&a].command_center + Vec2::new(4_000.0, 4_000.0);
+            let striker = squad(&mut w, a, far, ShipKind::Raider, 6, FleetOrder::Idle);
+            let target = squad(&mut w, b, far + Vec2::new(40.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+            let cmds = if fight {
+                vec![Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]
+            } else {
+                vec![]
+            };
+            w.step(&cmds);
+            let mut battled = false;
+            for _ in 0..(40 * crate::config::TICK_HZ) {
+                w.step(&[]);
+                battled |= !w.engagements.is_empty();
+            }
+            (serde_json::to_value(&w).unwrap().get("rng").expect("world rng rides the snapshot").clone(), battled)
+        };
+        let (quiet, quiet_battled) = world_rng_after(false);
+        let (fought, fought_battled) = world_rng_after(true);
+        assert!(fought_battled, "the fight world really fought (the premise holds)");
+        assert!(!quiet_battled, "the control world stayed quiet (the premise holds)");
+        assert_eq!(quiet, fought, "a whole extra battle drew NOTHING from the world RNG stream");
+    }
+
+    /// §tactical law 1 (containment at the boundary): repack conserves ships
+    /// plus kills EXACTLY — every ship that unpacked either repacks into a
+    /// surviving stack or appears in the record's losses. Fought far from
+    /// both homes so no starter fleet folds in as relief.
+    #[test]
+    fn repack_conserves_ships_plus_kills() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        let far = w.players[&a].command_center + Vec2::new(4_000.0, 4_000.0);
+        let striker = squad(&mut w, a, far, ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(&mut w, b, far + Vec2::new(40.0, 0.0), ShipKind::Raider, 5, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let o = rec.outcome.as_ref().expect("outcome stamped");
+        assert!(
+            !rec.rounds.iter().flat_map(|r| &r.notes).any(|n| matches!(n, crate::combat::RoundNote::Joined { .. })),
+            "an isolated duel — nothing folded in"
+        );
+        for (side, fid) in [(0usize, striker), (1usize, target)] {
+            let survivors = w.fleets.get(&fid).map(|f| f.composition.get(&ShipKind::Raider).copied().unwrap_or(0)).unwrap_or(0);
+            let lost = o.total_losses[side].get(&ShipKind::Raider).copied().unwrap_or(0);
+            let initial = rec.sides[side].initial.get(&ShipKind::Raider).copied().unwrap_or(0);
+            assert_eq!(survivors + lost, initial, "side {side}: survivors + kills == what unpacked");
+        }
+    }
+
+    /// §tactical T6 (the join-accounting fix): when relief folds in mid-battle,
+    /// the joined ships' deaths COUNT — the outcome's per-side losses equal
+    /// `(opening + joined) − survivors`, never the opening-only diff that used
+    /// to swallow a reinforced side's casualties.
+    #[test]
+    fn reinforced_side_losses_are_fully_counted() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        let far = w.players[&a].command_center + Vec2::new(4_000.0, -4_000.0);
+        // A deliberately losing attacker + relief AT the site (folds in at open),
+        // against a defender wall that will kill attackers from BOTH wings.
+        let striker = squad(&mut w, a, far, ShipKind::Raider, 3, FleetOrder::Idle);
+        let relief = squad(&mut w, a, far + Vec2::new(30.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        let target = squad(&mut w, b, far + Vec2::new(60.0, 0.0), ShipKind::Raider, 9, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 400, |w| w.engagements.is_empty()), "the battle resolves");
+        let rec = &w.battle_records[&eid];
+        let joined: u32 = rec
+            .rounds
+            .iter()
+            .flat_map(|r| &r.notes)
+            .filter_map(|n| match n {
+                crate::combat::RoundNote::Joined { side: 0, comp } => Some(comp.get(&ShipKind::Raider).copied().unwrap_or(0)),
+                _ => None,
+            })
+            .sum();
+        assert!(joined > 0, "the relief wing folded into the attacker side");
+        let survivors: u32 = [striker, relief]
+            .iter()
+            .filter_map(|fid| w.fleets.get(fid))
+            .map(|f| f.composition.get(&ShipKind::Raider).copied().unwrap_or(0))
+            .sum();
+        let o = rec.outcome.as_ref().expect("outcome stamped");
+        let lost = o.total_losses[0].get(&ShipKind::Raider).copied().unwrap_or(0);
+        let initial = rec.sides[0].initial.get(&ShipKind::Raider).copied().unwrap_or(0);
+        assert!(lost > 0, "the outnumbered attacker bled somewhere");
+        assert_eq!(survivors + lost, initial + joined, "reinforced-side losses are fully counted");
+    }
+
+    /// §tactical T6 (the alive-exit half of stint accounting): a fleet that
+    /// FLEES a battle alive takes its surviving ships out of the side's start
+    /// composition — the record must never report an escaped survivor as a
+    /// combat death (`start − final` used to count the whole escaped fleet).
+    #[test]
+    fn escaped_survivors_are_not_reported_as_losses() {
+        let mut w = test_world();
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: d, name: "D".into() }]);
+        let mut doc = w.players[&a].doctrine;
+        doc.engagement = crate::doctrine::EngagementPolicy::Avoid;
+        w.step(&[Command::SetFleetDoctrine { player_id: a, doctrine: doc }]);
+        let pos = w.players[&a].command_center + Vec2::new(500.0, 0.0);
+        // a's raiders (Avoid, faster) are jumped by d's corvettes: a brief
+        // scrape, then they out-speed the corvettes and escape ALIVE.
+        let raider = squad(&mut w, a, pos, ShipKind::Raider, 2, FleetOrder::Idle);
+        let _corv = squad(&mut w, d, pos + Vec2::new(40.0, 0.0), ShipKind::Corvette, 3, FleetOrder::Intercept { target: raider });
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the scrape opens");
+        let eid = *w.engagements.keys().next().unwrap();
+        assert!(run_until(&mut w, 120, |w| w.engagements.is_empty()), "the scrape resolves");
+        let escaped = w.fleets.get(&raider).map(|f| f.composition.get(&ShipKind::Raider).copied().unwrap_or(0)).unwrap_or(0);
+        assert!(escaped > 0, "the faster raiders got away with ships");
+        let rec = &w.battle_records[&eid];
+        let o = rec.outcome.as_ref().expect("outcome stamped");
+        // The raiders were the jumped side — find which side they were on.
+        let side = if rec.sides[0].corp == a { 0 } else { 1 };
+        let lost = o.total_losses[side].get(&ShipKind::Raider).copied().unwrap_or(0);
+        assert_eq!(lost + escaped, 2, "losses = what actually died; escapees are never phantom kills");
+    }
+
+    /// §tactical: a PRE-ENGINE mid-battle snapshot (`Engagement.tactical`
+    /// absent) loads and resolves sanely — the one-way migration re-opens the
+    /// fight from the persisted counts + pools at the next tick.
+    #[test]
+    fn an_old_mid_battle_snapshot_migrates_into_the_engine() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[Command::AddPlayer { id: a, name: "A".into() }, Command::AddPlayer { id: b, name: "B".into() }]);
+        let cc = w.players[&a].command_center;
+        // Raiders into a corvette wall: the 6 400 HP of held line grinds long
+        // enough to snapshot mid-fight. (The striker needs raiders — the
+        // AttackFleet gate is contains-a-raider.)
+        let striker = squad(&mut w, a, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
+        let target = squad(&mut w, b, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 8, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: a, fleet_id: striker, target_id: target }]);
+        assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "the battle opens");
+        for _ in 0..(2 * crate::config::TICK_HZ) {
+            w.step(&[]); // real fighting, so pools are non-trivial
+        }
+        assert!(!w.engagements.is_empty(), "still mid-battle at snapshot time");
+        // Strip the tactical state — the exact shape of a pre-engine snapshot.
+        let mut v = serde_json::to_value(&w).expect("snapshot");
+        let engs = v.get_mut("engagements").and_then(|e| e.as_object_mut()).expect("engagements object");
+        for (_, e) in engs.iter_mut() {
+            e.as_object_mut().unwrap().insert("tactical".into(), serde_json::Value::Null);
+        }
+        let mut w2: World = serde_json::from_value(v).expect("the stripped snapshot still loads");
+        assert!(run_until(&mut w2, 400, |w| w.engagements.is_empty()), "the migrated battle resolves");
+        assert!(
+            w2.battle_records.values().any(|r| r.ended_tick.is_some()),
+            "…and finalizes its record without panic"
+        );
+    }
+
+    // (Record-hash determinism — same seed + same battle → byte-identical
+    // records — is already proven by `battle_records_are_deterministic`.)
 
     #[test]
     fn records_note_a_reinforcement_join() {
@@ -10111,10 +10792,12 @@ mod tests {
         use crate::module::{Loadout, ModuleKind};
         let mut w = test_world();
         let id = PlayerId(1);
+        // §fitting: Driver(2)+Reflective(2) = 4 = the Raider's budget (Whipple
+        // would overflow it — that armored brawl is the Corvette's fit now).
         let from = Loadout::new(vec![ModuleKind::MassDriver]);
-        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
-        let (home, _hpos, fleet) = refit_home(&mut w, id, 3, &from, &[(ModuleKind::WhippleArmor, 2)]);
-        // Refit 2 of the 3 raiders to ADD Whipple (delta = +1 Whipple each).
+        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::ReflectivePlating]);
+        let (home, _hpos, fleet) = refit_home(&mut w, id, 3, &from, &[(ModuleKind::ReflectivePlating, 2)]);
+        // Refit 2 of the 3 raiders to ADD Reflective (delta = +1 each).
         w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: to.clone(), n: 2 }]);
         assert_eq!(w.fleets[&fleet].count(ShipKind::Raider), 1, "the 2 refitting hulls leave the fleet — out of combat in the yard");
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules.get(&ModuleKind::WhippleArmor).copied().unwrap_or(0), 0, "both Whipple crates debited from the ledger");
@@ -10122,7 +10805,7 @@ mod tests {
         assert!(run_until(&mut w, 30, |w| w.refit_queue.is_empty()), "the refit completes on the clock");
         let f = &w.fleets[&fleet];
         assert_eq!(f.count(ShipKind::Raider), 3, "all hulls return");
-        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&to.key())).copied().unwrap_or(0), 2, "2 hulls now carry the whipple fit");
+        assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&to.key())).copied().unwrap_or(0), 2, "2 hulls now carry the reflective fit");
         assert_eq!(f.loadouts.get(&ShipKind::Raider).and_then(|m| m.get(&from.key())).copied().unwrap_or(0), 1, "the un-refitted hull keeps its mass driver");
     }
 
@@ -10147,8 +10830,10 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         let from = Loadout::new(vec![ModuleKind::MassDriver]);
-        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
-        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &from, &[]); // NO whipple stocked
+        // Budget-legal target (4 = the Raider's points) so the LEDGER is the
+        // binding reject here, not the fitting budget.
+        let to = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::ReflectivePlating]);
+        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &from, &[]); // NO plating stocked
         w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to, n: 2 }]);
         assert!(w.refit_queue.is_empty(), "no ledger cover → nothing queued");
         let f = &w.fleets[&fleet];
@@ -10172,6 +10857,153 @@ mod tests {
         w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: from.clone(), to: Loadout::default(), n: 1 }]);
         assert!(w.refit_queue.is_empty(), "no yard in reach → reject");
         assert_eq!(w.fleets[&fleet].count(ShipKind::Raider), 2, "the fleet is untouched by either reject");
+    }
+
+    // --- §fitting Stage A: budgets, grandfathering, doctrine fits ---------------
+
+    #[test]
+    fn fitting_budget_gates_builds_torp_whipple_corvette_rejected_driver_whipple_accepted() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let sid = {
+            let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
+            s.owner = Some(id);
+            s.claimed_at = Some(0.0);
+            s.set_tier(crate::build::StructureKind::Shipyard, 2); // corvettes need tier 2
+            *s.modules.entry(ModuleKind::TorpedoRack).or_insert(0) += 2;
+            *s.modules.entry(ModuleKind::WhippleArmor).or_insert(0) += 2;
+            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+            s.id
+        };
+        seed_stock(&mut w, sid, &[(Commodity::Alloys, 400.0), (Commodity::Electronics, 200.0), (Commodity::Armaments, 200.0)]);
+        // Torp(3) + Whipple(3) = 6 > the Corvette's 5 → BuildRejected, ledger intact.
+        let heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: sid, ship_kind: ShipKind::Corvette, join: None, loadout: heavy }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. })), "over-budget fit rejects at build");
+        assert!(w.build_queue.is_empty(), "nothing queued");
+        let sys = w.systems.iter().find(|s| s.id == sid).unwrap();
+        assert_eq!(sys.modules.get(&ModuleKind::TorpedoRack).copied().unwrap_or(0), 2, "ledger never debited on a reject");
+        // Driver(2) + Whipple(3) = 5 fits exactly → the classic brawler builds.
+        let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: sid, ship_kind: ShipKind::Corvette, join: None, loadout: brawler }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the exact-budget brawler builds");
+    }
+
+    #[test]
+    fn grandfathered_overbudget_stacks_fly_fight_and_refit_only_into_legality() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        // A pre-fitting snapshot could hold a Torp+Whipple Corvette (cost 6 > 5).
+        let legacy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        let (_home, _hpos, fleet) = refit_home(&mut w, id, 2, &Loadout::default(), &[(ModuleKind::MassDriver, 4), (ModuleKind::WhippleArmor, 4)]);
+        // Graft the legacy stack directly, as a loaded snapshot would carry it.
+        {
+            let f = w.fleets.get_mut(&fleet).unwrap();
+            f.add(ShipKind::Corvette, 2);
+            f.loadouts.entry(ShipKind::Corvette).or_default().insert(legacy.key(), 2);
+        }
+        // It SURVIVES a serde round-trip untouched (no strip/mutate on load)…
+        let json = serde_json::to_string(&w).expect("serialize");
+        let w2: World = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            w2.fleets[&fleet].loadouts.get(&ShipKind::Corvette).and_then(|m| m.get(&legacy.key())).copied().unwrap_or(0),
+            2,
+            "the over-budget legacy stack loads intact"
+        );
+        // …and it FIGHTS: the tactical unpack keeps the stack under its own
+        // loadout key, and that loadout's offense is torpedo-typed.
+        let comp = w.fleets[&fleet].composition.clone();
+        let loadouts = w.fleets[&fleet].loadouts.clone();
+        let stacks = crate::tactical::stacked(&comp, &loadouts);
+        assert_eq!(
+            stacks.get(&ShipKind::Corvette).and_then(|m| m.get(&legacy.key())).copied().unwrap_or(0),
+            2,
+            "the legacy stack unpacks into battle under its own fit"
+        );
+        assert!(matches!(legacy.offense().0, crate::module::DamageType::Torpedo), "the legacy torpedo fit still fires");
+        // Refit must land on a LEGAL fit: legacy → another over-budget fit rejects…
+        let still_heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::ReflectivePlating]); // 5 ≤ 5 — actually legal on Corvette
+        assert!(still_heavy.validate(ShipKind::Corvette));
+        let over = Loadout::new(vec![ModuleKind::WhippleArmor, ModuleKind::WhippleArmor]); // 6 > 5
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Corvette, from: legacy.clone(), to: over, n: 1 }]);
+        assert!(w.refit_queue.is_empty(), "an over-budget refit target rejects");
+        // …while a legal target queues fine (out of the grandfathered stack).
+        let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Corvette, from: legacy.clone(), to: brawler, n: 1 }]);
+        assert_eq!(w.refit_queue.len(), 1, "the grandfathered stack refits INTO legality");
+    }
+
+    #[test]
+    fn doctrine_fits_save_replace_delete_cap_and_validate() {
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Guild".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
+        // Save a legal fit.
+        w.step(&[Command::SaveFit { player_id: id, name: "Brawler".into(), ship: ShipKind::Corvette, loadout: brawler.clone() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), 1);
+        assert_eq!(w.syndicates[&sid].fits[0].name, "Brawler");
+        // Same-name SAVE replaces in place (kind + loadout swap).
+        let screen = Loadout::new(vec![ModuleKind::PointDefenseScreen]);
+        w.step(&[Command::SaveFit { player_id: id, name: "Brawler".into(), ship: ShipKind::Corvette, loadout: screen.clone() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), 1, "replace, not append");
+        assert_eq!(w.syndicates[&sid].fits[0].loadout, screen);
+        // An ILLEGAL fit soft-rejects (budget), as does an unnamed one.
+        let heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
+        w.step(&[Command::SaveFit { player_id: id, name: "Heavy".into(), ship: ShipKind::Corvette, loadout: heavy }]);
+        w.step(&[Command::SaveFit { player_id: id, name: "   ".into(), ship: ShipKind::Corvette, loadout: brawler.clone() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), 1, "illegal + unnamed fits never store");
+        // Fill to the cap; the overflow save soft-rejects.
+        for i in 0..crate::syndicate::SYNDICATE_MAX_FITS {
+            w.step(&[Command::SaveFit { player_id: id, name: format!("fit-{i}"), ship: ShipKind::Raider, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        }
+        assert_eq!(w.syndicates[&sid].fits.len(), crate::syndicate::SYNDICATE_MAX_FITS, "capped");
+        // DELETE frees a slot; unknown names are a no-op.
+        w.step(&[Command::DeleteFit { player_id: id, name: "fit-0".into() }]);
+        w.step(&[Command::DeleteFit { player_id: id, name: "no-such-fit".into() }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), crate::syndicate::SYNDICATE_MAX_FITS - 1);
+        // A long name is trimmed to the cap, and fits survive a serde round-trip.
+        let long = "x".repeat(80);
+        w.step(&[Command::SaveFit { player_id: id, name: long, ship: ShipKind::Scout, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        let stored = &w.syndicates[&sid].fits.last().unwrap().name;
+        assert_eq!(stored.chars().count(), crate::syndicate::FIT_NAME_MAX);
+        let json = serde_json::to_string(&w).expect("serialize");
+        let w2: World = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(w2.syndicates[&sid].fits.len(), w.syndicates[&sid].fits.len(), "fits round-trip");
+        // A non-member's save is a no-op.
+        let outsider = PlayerId(2);
+        w.step(&[Command::AddPlayer { id: outsider, name: "B".into() }]);
+        let before = w.syndicates[&sid].fits.len();
+        w.step(&[Command::SaveFit { player_id: outsider, name: "Intruder".into(), ship: ShipKind::Raider, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+        assert_eq!(w.syndicates[&sid].fits.len(), before, "outsiders can't touch the fit library");
+    }
+
+    #[test]
+    fn fit_names_never_touch_sim_outcomes() {
+        use crate::module::{Loadout, ModuleKind};
+        // Two identical runs that differ ONLY in saved-fit names produce
+        // byte-identical fleets/systems — names are labels, not state.
+        let run = |fit_name: &str| -> (String, String) {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+            w.step(&[Command::CreateSyndicate { player_id: id, name: "Guild".into() }]);
+            w.step(&[Command::SaveFit { player_id: id, name: fit_name.into(), ship: ShipKind::Raider, loadout: Loadout::new(vec![ModuleKind::MassDriver]) }]);
+            for _ in 0..60 {
+                w.step(&[]);
+            }
+            (
+                serde_json::to_string(&w.fleets).unwrap(),
+                serde_json::to_string(&w.systems).unwrap(),
+            )
+        };
+        assert_eq!(run("Alpha Doctrine"), run("Zulu Doctrine"), "fit names are inert to the sim");
     }
 
     // --- §modules Part B3: module TRANSPORT (raidable crate convoy) -------------
@@ -10744,7 +11576,12 @@ mod tests {
             ticks += 1;
         }
         let secs = ticks as f64 / 30.0;
-        assert!(secs > 20.0, "equal squadrons grind for ~the target duration (got {secs:.0}s)");
+        // AMENDED with §arena discipline (2026-07): the compact in-arena dance
+        // resolves equal mirrors faster than the old wide-swing dance; battle
+        // DURATION is emergent under the tactical engine (battle_target_secs
+        // drives cadence + windows, not the grind). The law kept here is
+        // GRIND, NOT MELT: an equal fight is a real exchange, never a flash.
+        assert!(secs > 10.0, "equal squadrons grind, not melt (got {secs:.0}s)");
     }
 
     // ---- Constant per-kind speed (§14.1) + lead pursuit (§8) ----
@@ -11458,6 +12295,57 @@ mod tests {
             }
         }
         panic!("sell convoy never cleared");
+    }
+
+    #[test]
+    fn stock_system_moves_hq_inventory_into_a_system_stockpile() {
+        use crate::cargo::Commodity::Volatiles;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let sys = w.players[&id].home_system.expect("home system");
+        // AddPlayer seeds the HQ trading inventory with 120 of each raw good.
+        let held0 = w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0);
+        assert!(held0 >= 100, "precondition: HQ holds >=100 volatiles (had {held0})");
+        let ships0 = w.fleets.len();
+
+        // Soft-reject cases: zero units, more than held, a system you don't own —
+        // none may debit HQ or spawn a convoy.
+        w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 0 }]);
+        w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 999_999 }]);
+        w.step(&[Command::StockSystem { player_id: id, system_id: EntityId(987_654), commodity: Volatiles, units: 10 }]);
+        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0, "rejected stock must not debit HQ");
+        assert_eq!(w.fleets.len(), ships0, "rejected stock must not spawn a convoy");
+
+        // Valid: debits HQ now, dispatches the convoy, and routes the goods to the
+        // SYSTEM stockpile. At ~zero home→home-system distance the DeliverToSystem
+        // convoy deposits the SAME tick, so assert the OUTCOME, not a lingering ship.
+        let vol_at = |w: &World| w.systems.iter().find(|s| s.id == sys).and_then(|s| s.stockpile.get(&Volatiles).copied()).unwrap_or(0.0);
+        let s0 = vol_at(&w);
+        let overflow_of = |evs: &[Event]| evs.iter().any(|e| matches!(&e.payload,
+            EventPayload::Trade(TradeEvent::StorageOverflow { system, commodity, .. })
+                if *system == sys && *commodity == Volatiles));
+        let evs = w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 100 }]);
+        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0 - 100, "HQ debited by the shipped units");
+        assert!(evs.iter().any(|e| matches!(&e.payload,
+            EventPayload::Trade(TradeEvent::StockDispatched { system, commodity, units, .. })
+                if *system == sys && *commodity == Volatiles && *units == 100)),
+            "a StockDispatched event should fire for the shipment");
+
+        // The goods land in the SYSTEM stockpile (single-player → never raided).
+        // A big jump (≥50, unreachable by per-tick production drift) or an
+        // overflow-to-hub both prove the goods were routed to the SYSTEM, not HQ.
+        let mut delivered = vol_at(&w) >= s0 + 50.0 || overflow_of(&evs);
+        if !delivered {
+            for _ in 0..(260 * crate::config::TICK_HZ) {
+                let evs = w.step(&[]);
+                if vol_at(&w) >= s0 + 50.0 || overflow_of(&evs) {
+                    delivered = true;
+                    break;
+                }
+            }
+        }
+        assert!(delivered, "the shipped volatiles never reached the destination system stockpile");
     }
 
     #[test]
@@ -13849,7 +14737,7 @@ mod tests {
                 outcome: RaidOutcome::TargetDestroyed, pos: Vec2::ZERO,
                 attacker_losses: a_loss, target_losses: d_loss,
             }),
-            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5 })),
+            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5, system: None })),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }), // dup
             Event::new(0.0, EventPayload::IntelGathered { owner: a, system: EntityId(4), defense_tier: 1, shipyard_tier: 0, pos: Vec2::ZERO }),
@@ -14374,7 +15262,7 @@ mod tests {
 
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
-            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10 })),
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None })),
             ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0 })),
             ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0 })),

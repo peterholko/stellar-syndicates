@@ -362,6 +362,21 @@ impl GameLoop {
                         self.pending.push(Command::SetResearchQueue { player_id, queue });
                     }
                 }
+                ClientMsg::SaveFit { name, ship, loadout } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SaveFit { player_id, name, ship, loadout });
+                    }
+                }
+                ClientMsg::DeleteFit { name } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DeleteFit { player_id, name });
+                    }
+                }
+                ClientMsg::NameFlagship { name } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::NameFlagship { player_id, name });
+                    }
+                }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);
@@ -392,6 +407,11 @@ impl GameLoop {
                 ClientMsg::ShipProduction { system_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::ShipProduction { player_id, system_id });
+                    }
+                }
+                ClientMsg::StockSystem { system_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::StockSystem { player_id, system_id, commodity, units });
                     }
                 }
                 ClientMsg::SetStandingOrder { order } => {
@@ -833,6 +853,18 @@ impl GameLoop {
                         .iter()
                         .filter_map(|i| self.world.players.get(i).map(|c| c.name.clone()))
                         .collect(),
+                    // §fitting: the shared doctrine-fit library (owner-only).
+                    fits: s
+                        .fits
+                        .iter()
+                        .map(|f| crate::protocol::FitView {
+                            name: f.name.clone(),
+                            kind: f.kind,
+                            modules: f.loadout.modules().to_vec(),
+                        })
+                        .collect(),
+                    // §ladder B4: the christened Titan (owner-only here).
+                    flagship_name: s.flagship_name.clone(),
                 }));
             let syndicate_invites: Vec<crate::protocol::SyndicateInviteView> = self
                 .world
@@ -906,7 +938,15 @@ impl GameLoop {
                 }
             }
             let battle_records =
-                view::battle_record_views(&self.world.battle_records, player_id, cc, c, now, &coverage);
+                view::battle_record_views_named(&self.world.battle_records, player_id, cc, c, now, &coverage, &|corp| {
+                    // §ladder B4: resolve a side's christened Titan name.
+                    self.world
+                        .players
+                        .get(&corp)
+                        .and_then(|p| p.syndicate)
+                        .and_then(|sid| self.world.syndicates.get(&sid))
+                        .and_then(|s| s.flagship_name.clone())
+                });
 
             views.insert(
                 player_id,
@@ -1017,6 +1057,13 @@ fn build_options() -> Vec<BuildOptionView> {
         ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
         ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
         ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
+        // §ladder: the warship ladder (research-gated hulls; the client shows
+        // the gate copy, the sim enforces UnlockHull at BuildShip).
+        ("destroyer", "Destroyer", BuildKind::Ship { ship: ShipKind::Destroyer }),
+        ("cruiser", "Cruiser", BuildKind::Ship { ship: ShipKind::Cruiser }),
+        ("battleship", "Battleship", BuildKind::Ship { ship: ShipKind::Battleship }),
+        ("dreadnought", "Dreadnought", BuildKind::Ship { ship: ShipKind::Dreadnought }),
+        ("titan", "Titan", BuildKind::Ship { ship: ShipKind::Titan }),
     ];
     // §modules Part B3: the 5 modules, keyed `module:<slug>` so the client routes
     // them to BuildModule (not BuildShip/DevelopSystem) while reusing the same

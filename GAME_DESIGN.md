@@ -38,11 +38,18 @@ violate one.
    no twitch advantage, only earlier awareness.
 
 2. **Legibility. You always know exactly how blind you are.** Inherited from *Stellar Charters*'
-   shown-math rule. Outcomes resolve from named, visible factors — never hidden dice. The lightspeed
-   model is honest: the UI always tells you how stale your information is and how long your commands
-   will take. You have *certainty about the extent of your ignorance* and *uncertainty about its
-   contents* — never the reverse. A loss must always trace to a decision you made, never to the game
-   concealing something it should have shown.
+   shown-math rule. Outcomes resolve from named, visible factors — never hidden dice. Battle
+   resolution does use **bounded, seeded, battle-isolated randomness** (to-hit rolls, ±15% damage
+   variance, torpedo interception — the spice that makes small skirmishes tense while big fleet
+   actions converge on the math), but it is *published* randomness: the distributions are game
+   rules, the pre-commit calculator samples the very same engine to show you win odds and loss
+   bands, and the same seed replays the same battle for every viewer. Doctrine-over-input is
+   untouched — no mid-battle commands exist, so a roll can season an outcome but never substitute
+   for your commit-time decisions. The lightspeed model is honest: the UI always tells you how
+   stale your information is and how long your commands will take. You have *certainty about the
+   extent of your ignorance* and *uncertainty about its contents* — never the reverse. A loss must
+   always trace to a decision you made, never to the game concealing something it should have
+   shown.
 
 3. **Distance is the antagonist.** A single spatial variable — distance from the hub (and from your
    home) — drives nearly everything: travel time, fuel cost, information lag, settlement reliability,

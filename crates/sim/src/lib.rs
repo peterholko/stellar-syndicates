@@ -39,6 +39,7 @@ pub mod ship;
 pub mod specialist;
 pub mod standing;
 pub mod syndicate;
+pub mod tactical;
 pub mod world;
 
 pub use body::{Body, BodyKind};
@@ -48,10 +49,10 @@ pub use colony::FoodState;
 pub use production::{Assignment, SuspendReason};
 pub use specialist::SpecialistKind;
 pub use combat::{
-    attrition_tick, project_engagement, typical_forces, BattleOutcomeSummary, BattleRecord, Forces,
-    Losses, RoundNote, RoundRecord, SideRecord, TypedDamage,
+    typical_forces, BattleOutcomeSummary, BattleRecord, Forces, Losses, RoundNote, RoundRecord,
+    SideRecord, TypedDamage,
 };
-pub use module::{DamageType, Loadout, ModuleKind};
+pub use module::{weapon_family, DamageType, Family, Loadout, ModuleKind};
 pub use command::Command;
 pub use config::{SimConfig, DT, TICK_HZ};
 pub use doctrine::{
@@ -73,11 +74,14 @@ pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
 pub use rng::Rng;
 pub use detection::{detected as detected_by, signature as fleet_signature};
 pub use ship::{
-    CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission, TransitMode,
-    ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
+    fitting_points, hull_affinity, CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind,
+    TradeMission, TransitMode, ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
-pub use syndicate::{syndicate_cap, Syndicate, SYNDICATE_MAX_FRAC, SYNDICATE_MIN_CAP};
+pub use syndicate::{
+    syndicate_cap, DoctrineFit, Syndicate, SYNDICATE_MAX_FITS, SYNDICATE_MAX_FRAC,
+    SYNDICATE_MIN_CAP,
+};
 pub use world::{
     AcademyContribution, BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView,
     World,

@@ -53,6 +53,14 @@ pub fn sig_size(kind: ShipKind) -> f64 {
         ShipKind::Corvette => 2.0,
         ShipKind::Convoy => 4.0,
         ShipKind::Colony => 5.0,
+        // §ladder: capitals light sensors from far off — the size proxy tracks
+        // the mass ladder (a Titan is unmistakable long before it arrives).
+        // Mostly moot in practice: every capital BROADCASTS anyway.
+        ShipKind::Destroyer => 3.0,
+        ShipKind::Cruiser => 4.5,
+        ShipKind::Battleship => 6.5,
+        ShipKind::Dreadnought => 9.0,
+        ShipKind::Titan => 13.0,
     }
 }
 

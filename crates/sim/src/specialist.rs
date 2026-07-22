@@ -97,7 +97,15 @@ pub fn passenger_capacity(kind: ShipKind) -> u32 {
     match kind {
         ShipKind::Convoy => 4,
         ShipKind::Colony => 8,
-        ShipKind::Scout | ShipKind::Raider | ShipKind::Corvette => 0,
+        // Warships carry crews, not passengers — capitals included (§ladder).
+        ShipKind::Scout
+        | ShipKind::Raider
+        | ShipKind::Corvette
+        | ShipKind::Destroyer
+        | ShipKind::Cruiser
+        | ShipKind::Battleship
+        | ShipKind::Dreadnought
+        | ShipKind::Titan => 0,
     }
 }
 

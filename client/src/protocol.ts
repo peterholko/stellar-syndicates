@@ -10,7 +10,10 @@ export interface Vec2 {
   y: number;
 }
 
-export type ShipKind = "convoy" | "raider" | "corvette" | "colony" | "scout";
+export type ShipKind =
+  | "convoy" | "raider" | "corvette" | "colony" | "scout"
+  // §ladder: the research-gated warship ladder.
+  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan";
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
 // is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
@@ -92,6 +95,16 @@ export interface AssignmentView {
   outputs: [Commodity, number][];
 }
 
+/// A built converter's live status for the system-view idle banner.
+export interface ConverterStatusView {
+  body_id: number;
+  structure: string;
+  title: string;
+  tier: number;
+  /// running | needs_crew | no_inputs | no_food | storage_full
+  status: string;
+}
+
 export interface SystemStateView {
   id: EntityId;
   owner: PlayerId | null;
@@ -146,6 +159,8 @@ export interface SystemStateView {
   workforce: { units: number; posted: number } | null;
   /// Production lines with resolved factor chains — owner-only; rivals see [].
   assignments: AssignmentView[];
+  /// Idle-converter status for the system-view banner — owner-only; rivals see [].
+  converters?: ConverterStatusView[];
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -313,14 +328,15 @@ export interface WalletView {
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
 export type TradeEvent =
   | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
-  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number }
+  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
   | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
   | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
-  | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
+  | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
+  | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
 
 export type DivertAction = "lost" | "returned_home" | "sold_at_hub";
 
@@ -521,6 +537,7 @@ export type ClientMsg =
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "ShipProduction"; system_id: EntityId }
+  | { type: "StockSystem"; system_id: EntityId; commodity: Commodity; units: number }
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
@@ -567,6 +584,9 @@ export type ClientMsg =
   | { type: "DissolveSyndicate" }
   // §research R6 — set the syndicate research queue (front promotes to active).
   | { type: "SetResearchQueue"; queue: string[] }
+  | { type: "SaveFit"; name: string; ship: ShipKind; loadout: ModuleKind[] }
+  | { type: "DeleteFit"; name: string }
+  | { type: "NameFlagship"; name: string }
   | { type: "Ping" };
 
 // §syndicates Part 1: an alliance id (opaque decimal string on the wire).
@@ -580,6 +600,18 @@ export interface SyndicateView {
   is_founder: boolean;
   members: { id: PlayerId; name: string }[];
   invited: string[];
+  // §fitting: the syndicate's saved doctrine fits (any member curates).
+  fits?: FitView[];
+  // §ladder B4: the christened name of the syndicate's Titan (owner-only).
+  flagship_name?: string | null;
+}
+
+// §fitting: one saved doctrine fit — a named hull + loadout the whole
+// syndicate builds from / refits to (legal by construction at save).
+export interface FitView {
+  name: string;
+  kind: ShipKind;
+  modules: ModuleKind[];
 }
 
 // A pending invitation the viewer may accept.
@@ -686,14 +718,15 @@ export interface RaidReport {
   target_losses: CompCount[];
 }
 
-// A projected engagement estimate (§FLEETS Part 3), computed server-side by
-// running the SAME Lanchester attrition forward on YOUR view data. Honest about
-// staleness: `target_known = false` means the target was out of sensor coverage,
-// so it assumed a typical warfleet of the bucket size (never the true count).
+// A projected engagement estimate (§FLEETS Part 3, §tactical T4), computed
+// server-side by Monte Carlo: k seeded rollouts of the REAL tactical engine on
+// YOUR view data. Honest about staleness: `target_known = false` means the
+// target was out of sensor coverage, so it assumed a typical warfleet of the
+// bucket size (never the true count).
 export interface EngagementEstimate {
   attacker: EntityId;
   target: EntityId;
-  own_losses: CompCount[];
+  own_losses: CompCount[]; // median rollout
   target_losses: CompCount[];
   own_survivors: CompCount[];
   target_survivors: CompCount[];
@@ -702,6 +735,18 @@ export interface EngagementEstimate {
   composition_age: number; // age of the target sighting (s)
   defenses_age: number | null; // age of the scouted-defenses snapshot (s), if any
   platform_tiers: number | null;
+  // §tactical T4: distribution readout. Absent from pre-Monte-Carlo servers.
+  win_pct?: number | null; // % of rollouts the attacker wins
+  runs?: number | null; // rollout count (k)
+  own_loss_bands?: LossRange[]; // 25th–75th percentile losses per hull
+  target_loss_bands?: LossRange[];
+}
+
+// §tactical T4: an interquartile loss band for one hull kind.
+export interface LossRange {
+  kind: ShipKind;
+  lo: number;
+  hi: number;
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
@@ -741,6 +786,9 @@ export interface SideRecordView {
   // §modules B5: the side's opening fitted stacks — PARTICIPANT fidelity only
   // ([] at bucket/none). Labels the side + types its salvos by weapon family.
   loadouts?: LoadoutStack[];
+  // §ladder B4: the side's christened Titan name — participant fidelity only,
+  // and only when the side fielded one (how a rival ever meets the name).
+  flagship_name?: string | null;
 }
 export interface RoundNoteView {
   kind: string; // "joined" | "retreat_tripped" | "withdraw_ordered" | "disengage_exposure" | "platform_destroyed" | "mutual_disengage"
@@ -753,6 +801,17 @@ export interface RoundRecordView {
   kills: [RecordCount[], RecordCount[]]; // losses of [attackers, defenders]
   dealt: [number, number] | null; // damage dealt — participant only
   notes: RoundNoteView[];
+  // §tactical T3: the round's TRUTH KEYFRAME — real combatant positions,
+  // torpedo salvos, exact deaths. Participant fidelity only; absent on old
+  // records (the viewer falls back to the choreographed arena).
+  frame?: KeyframeView | null;
+}
+
+// §tactical T3: keyframe payloads (battle-local arena coords, ±~1400).
+export interface KeyframeView {
+  ships: { side: number; kind: ShipKind; x: number; y: number; hp: number; plat?: boolean }[];
+  torpedoes: { side: number; x: number; y: number; n: number }[];
+  deaths: { step: number; side: number; kind: ShipKind; x: number; y: number }[];
 }
 export interface BattleRecordView {
   id: EntityId;

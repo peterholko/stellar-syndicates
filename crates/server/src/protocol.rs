@@ -64,6 +64,11 @@ pub enum ClientMsg {
     /// spawns raidable convoys from the system.
     ShipProduction { system_id: EntityId },
 
+    /// Supply from HQ: move goods from the corp's HQ trading inventory into an
+    /// owned system's stockpile via a raidable convoy — the bridge that lets
+    /// market-bought inputs feed a system's converters.
+    StockSystem { system_id: EntityId, commodity: Commodity, units: u32 },
+
     /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
     /// a matching id edits. Instant local administration; the server attaches the
     /// issuing player.
@@ -209,6 +214,15 @@ pub enum ClientMsg {
     /// front promotes to the active programme; the sim validates + soft-rejects
     /// unknown/hidden/completed ids. CC-local, no positional delay.
     SetResearchQueue { queue: Vec<String> },
+
+    // ---- FITTING (§fitting Stage A) ------------------------------------------
+    /// SAVE a doctrine fit (named hull + loadout) on the caller's syndicate.
+    /// The sim validates slots + fitting budget; same-name replaces. CC-local.
+    SaveFit { name: String, ship: ShipKind, #[serde(default)] loadout: sim::Loadout },
+    /// DELETE a doctrine fit by name from the caller's syndicate. CC-local.
+    DeleteFit { name: String },
+    /// §ladder B4: NAME the syndicate's flagship Titan (empty un-christens).
+    NameFlagship { name: String },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -369,6 +383,27 @@ pub struct EngagementEstimate {
     pub defenses_age: Option<f64>,
     /// Scouted platform tiers folded into the target, if a snapshot covered it.
     pub platform_tiers: Option<u32>,
+    /// §tactical T4: the Monte Carlo readout — attacker-favorable fraction over
+    /// `runs` rollouts of the REAL engine on derived seeds ("68% favorable").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<u32>,
+    /// Per-kind 25th–75th percentile loss bands ("expected losses 4–7
+    /// Corvettes"). Predictive Plots research widens the DISPLAY of these —
+    /// it never invents math.
+    #[serde(default)]
+    pub own_loss_bands: Vec<LossRange>,
+    #[serde(default)]
+    pub target_loss_bands: Vec<LossRange>,
+}
+
+/// §tactical T4: one per-kind loss band (25th–75th percentile of the rollouts).
+#[derive(Debug, Clone, Serialize)]
+pub struct LossRange {
+    pub kind: ShipKind,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 /// Severity of a check-in timeline entry — drives the client's colour/icon.
@@ -622,6 +657,11 @@ pub struct SystemStateView {
     /// (the shown-math law: output = base · throughput · staffing · skill ·
     /// food) — owner-only; rivals always see an empty list.
     pub assignments: Vec<AssignmentView>,
+    /// §economy: per built-converter idle status for the system-view banner —
+    /// owner-only (rivals always see an empty list). serde default keeps old
+    /// clients parsing.
+    #[serde(default)]
+    pub converters: Vec<ConverterStatusView>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under
@@ -716,6 +756,24 @@ pub struct SyndicateView {
     pub members: Vec<SyndicateMember>,
     /// Outstanding invites the founder has sent (names), for the roster panel.
     pub invited: Vec<String>,
+    /// §fitting: the syndicate's saved DOCTRINE FITS (named hull + loadout;
+    /// any member curates). Owner-only like the rest of the view.
+    #[serde(default)]
+    pub fits: Vec<FitView>,
+    /// §ladder B4: the christened name of the syndicate's Titan (None if
+    /// unnamed / not fielded). Owner-only here; rivals meet it only in
+    /// participant battle records.
+    #[serde(default)]
+    pub flagship_name: Option<String>,
+}
+
+/// §fitting: one saved doctrine fit on the wire (modules sorted, never empty —
+/// an all-stock "fit" isn't storable; stock is the absence of a fit).
+#[derive(Debug, Clone, Serialize)]
+pub struct FitView {
+    pub name: String,
+    pub kind: ShipKind,
+    pub modules: Vec<sim::ModuleKind>,
 }
 
 /// One member of a [`SyndicateView`] roster.
@@ -862,6 +920,21 @@ pub struct AssignmentView {
     pub outputs: Vec<(Commodity, f64)>,
 }
 
+/// §economy: a built CONVERTER's live status, for the system-view idle banner:
+/// `running`, or WHY it produces nothing — `needs_crew` (built but no crew
+/// posted), or a staffed line's latched outage (`no_inputs` / `no_food` /
+/// `storage_full`). Owner-only; mirrors the tick's converter gate so the banner
+/// never contradicts what the sim actually did.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConverterStatusView {
+    pub body_id: u32,
+    pub structure: String,
+    pub title: String,
+    pub tier: u32,
+    /// running | needs_crew | no_inputs | no_food | storage_full
+    pub status: String,
+}
+
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within
 /// range (Tier 2). Absent from the ghost when out of sensor coverage.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -953,6 +1026,10 @@ pub struct SideRecordView {
     /// The client labels the side and types its salvos by dominant weapon family.
     #[serde(default)]
     pub loadouts: Vec<LoadoutStack>,
+    /// §ladder B4: the christened name of this side's TITAN — PARTICIPANT ONLY
+    /// and only when the side fielded one. How a rival ever meets the name.
+    #[serde(default)]
+    pub flagship_name: Option<String>,
 }
 
 /// A recorded beat, viewer-filtered. `kind` is the snake_case note tag; `side`
@@ -974,6 +1051,11 @@ pub struct RoundRecordView {
     /// Damage each side dealt — PARTICIPANT ONLY (`None` at bucket fidelity).
     pub dealt: Option<[f64; 2]>,
     pub notes: Vec<RoundNoteView>,
+    /// §tactical T3: the round's TRUTH KEYFRAME (real positions, torpedo
+    /// salvos, exact deaths) — PARTICIPANT ONLY, absent on old records (the
+    /// client falls back to choreographed rendering).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<sim::combat::Keyframe>,
 }
 
 /// A battle's replay as one viewer perceives it — light-gated + fidelity-tiered.

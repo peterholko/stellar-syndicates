@@ -765,6 +765,8 @@ pub fn filter_systems(
                 // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
                 // owner-only (rivals: empty — production is private intel).
                 assignments: if own { assignment_views(sys) } else { Vec::new() },
+                // §economy: idle-converter status for the system-view banner (owner-only).
+                converters: if own { converter_statuses(sys) } else { Vec::new() },
                 refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
@@ -897,6 +899,45 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
         .collect()
 }
 
+/// §economy: the live status of every BUILT converter at `sys`, for the system-
+/// view idle banner. Reproduces the tick's converter gate (the world.rs converter
+/// loop) EXACTLY: a built line with no crew reads `needs_crew`; a staffed line
+/// reports its latched suspend reason (`no_inputs` / `no_food` / `storage_full`)
+/// or `running`. Owner-gated by the caller (rivals get an empty list).
+fn converter_statuses(sys: &sim::StarSystem) -> Vec<crate::protocol::ConverterStatusView> {
+    let line_spec = sys.effective_specialists();
+    let mut out = Vec::new();
+    for b in &sys.bodies {
+        for conv in &sim::production::CONVERTERS {
+            let kind = conv.structure;
+            let tier = b.tier(kind);
+            if tier == 0 {
+                continue; // not built on this body — no line to report
+            }
+            let workers = b.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
+            let spec_crew = line_spec.get(&(b.id, kind)).map(|(c, _)| *c).unwrap_or(0);
+            // Same gate as the tick: workers + spec_crew == 0 ⇒ idle by choice.
+            let status = if workers + spec_crew == 0 {
+                "needs_crew"
+            } else {
+                b.assignments
+                    .get(&kind)
+                    .and_then(|a| a.suspended)
+                    .map(|r| r.slug())
+                    .unwrap_or("running")
+            };
+            out.push(crate::protocol::ConverterStatusView {
+                body_id: b.id,
+                structure: kind.slug().to_string(),
+                title: kind.title().to_string(),
+                tier,
+                status: status.to_string(),
+            });
+        }
+    }
+    out
+}
+
 // --- §battle-records Part A2: light-gated, fidelity-tiered replay views -------
 
 /// Per-kind counts → wire form. `exact` is filled ONLY at participant fidelity;
@@ -937,6 +978,9 @@ fn record_round(rr: &sim::RoundRecord, participant: bool) -> RoundRecordView {
         kills: [record_counts(&rr.kills[0], participant), record_counts(&rr.kills[1], participant)],
         dealt: participant.then_some(rr.dealt),
         notes: rr.notes.iter().filter_map(|n| record_note(n, participant)).collect(),
+        // §T3: truth keyframes ride PARTICIPANT fidelity only (fog-safe — a
+        // bucket observer never learns the arena's geometry).
+        frame: if participant { rr.frame.clone() } else { None },
     }
 }
 
@@ -949,6 +993,7 @@ fn record_round(rr: &sim::RoundRecord, participant: bool) -> RoundRecordView {
 /// (CountClass only, no dealt, joins/mutual-disengage beats only); anyone else
 /// gets no entry (the existing news + wreck marker still reach them separately).
 /// Nothing beyond the light frontier is ever shipped.
+#[allow(dead_code)] // the no-name convenience entry — the test suite's builder
 pub fn battle_record_views(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
@@ -956,6 +1001,22 @@ pub fn battle_record_views(
     c: f64,
     now: f64,
     coverage: &[(Vec2, f64)],
+) -> Vec<BattleRecordView> {
+    battle_record_views_named(records, viewer, cc, c, now, coverage, &|_| None)
+}
+
+/// §ladder B4: the full builder — `flagship_of(corp)` resolves a side's
+/// christened Titan name (participant fidelity only, Titan fielded only).
+/// The plain [`battle_record_views`] wrapper passes a no-name lookup.
+#[allow(clippy::too_many_arguments)]
+pub fn battle_record_views_named(
+    records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+    coverage: &[(Vec2, f64)],
+    flagship_of: &dyn Fn(PlayerId) -> Option<String>,
 ) -> Vec<BattleRecordView> {
     let mut out = Vec::new();
     for r in records.values() {
@@ -1000,6 +1061,13 @@ pub fn battle_record_views(
             } else {
                 Vec::new()
             },
+            // §ladder B4: the christened Titan name — PARTICIPANT fidelity
+            // only, and only when this side actually fielded one. This is the
+            // ONLY channel a rival ever meets the name through (never buckets).
+            flagship_name: (participant
+                && r.sides[s].initial.get(&sim::ShipKind::Titan).copied().unwrap_or(0) > 0)
+                .then(|| flagship_of(r.sides[s].corp))
+                .flatten(),
         };
         // The ARRIVED round prefix (rounds are tick-ascending → stop at the frontier).
         let mut rounds = Vec::new();
@@ -1041,6 +1109,11 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "destroyer",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "cruiser",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Battleship } => "battleship",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Dreadnought } => "dreadnought",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Titan } => "titan",
         sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
         // §economy Part 4: Academy courses key by profession slug.
         sim::BuildKind::Train { specialist } => specialist.slug(),

@@ -49,15 +49,9 @@ const EXOTIC = STAR_TYPES.filter((s) => s.exotic);
 // special. Tunable. (~1 in 6 systems here.)
 export const EXOTIC_FRACTION = 0.16;
 
-// Deterministic 32-bit hash of the id string (FNV-1a).
-function hashId(id: string): number {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h >>> 0;
-}
+// Deterministic 32-bit hash of the id string (FNV-1a) — shared home in
+// prng.ts. The sim replicates this bit-for-bit (node parity test).
+import { hashId } from "./prng";
 
 /// The star type for a system id — stable and rarity-weighted (exotics rare).
 export function starTypeFor(id: string): StarType {

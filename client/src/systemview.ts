@@ -35,6 +35,7 @@
 import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, Deposit, PlayerId, SystemInfo, BodyView } from "./protocol";
 import { starAnchor, starTypeFor, starVisualRatio, type StarType } from "./stars";
+import { hashId, mulberry32 } from "./prng";
 
 // ---- Public presentation data model (client-side, non-authoritative) --------
 
@@ -156,7 +157,8 @@ const CHUNK_ART_FILL = 0.43;
 const BELT_CHUNKS = 22;
 
 // Fallback star tints (used only when the star icon texture hasn't loaded).
-const STAR_TINT: Record<string, number> = {
+// Exported: the battle theater reuses them for its system-battle backdrop.
+export const STAR_TINT: Record<string, number> = {
   red_dwarf: 0xff8a5c, yellow_star: 0xffe08a, white_star: 0xdfe8ff, blue_giant: 0x9fc4ff,
   red_giant: 0xff7a5c, white_dwarf: 0xcfe0ff, neutron_star: 0xbfe0ff, binary_star: 0xffd98a,
   black_hole: 0x40507a, magnetar: 0xc9a0ff,
@@ -169,24 +171,7 @@ const COMMODITY_COLOR: Record<Commodity, number> = {
 };
 
 // ---- Deterministic RNG (public geography — same for every player) ------------
-
-function hashId(id: string): number {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h >>> 0;
-}
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Shared home: client/src/prng.ts (same functions, bit-identical).
 
 function radiusForKind(kind: PlanetKind, rng: () => number): number {
   if (kind === "gas_giant") return 0.052 + rng() * 0.024; // giants read clearly larger

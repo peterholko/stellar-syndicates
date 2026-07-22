@@ -3,9 +3,10 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
+import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 
 const state: ViewState = initialState();
@@ -85,7 +86,7 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer };
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false, big = false) => theaterDemo(titanDown, big), theaterDemoLive: (ms = 1800) => theaterDemoLive(ms) };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -170,7 +171,11 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // own-ship panel can show this ship's fuel burn rate honestly. Movement burns
 // FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
 const FUEL_PER_MASS_DISTANCE = 1.0e-6;
-const HULL_MASS: Record<ShipKind, number> = { convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80 };
+const HULL_MASS: Record<ShipKind, number> = {
+  convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
+  // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
+  destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+};
 const CARGO_MASS_PER_UNIT = 28;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
@@ -416,6 +421,17 @@ function buildShipPanel(): void {
         else if (pendingRefit.length < 2) pendingRefit.push(m);
         updateShipPanel();
       }
+    } else if (act === "refitfit") {
+      // §fitting: one click composes the refit target from a saved doctrine fit.
+      const f = (state.syndicate?.fits ?? []).find((x) => x.name === (b as HTMLElement).dataset.fitname);
+      if (f) {
+        pendingRefit = [...f.modules];
+        updateShipPanel();
+      }
+    } else if (act === "nameflagship" && net) {
+      // §ladder B4: christen the syndicate's Titan (empty clears the name).
+      const name = window.prompt("Flagship name (≤24 chars — empty to un-name):", state.syndicate?.flagship_name ?? "");
+      if (name !== null) net.send({ type: "NameFlagship", name: name.trim() });
     } else if (act === "refit" && state.selectedShipId && net) {
       // §modules Part B4: refit the named (kind, from) stack to the composed
       // target (clamped to the hull's slots). The server enforces the docked-yard
@@ -445,7 +461,11 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
-const shipKindLabel = (k: ShipKind): string => (k === "convoy" ? "Convoy" : k === "raider" ? "Raider" : k === "corvette" ? "Corvette" : k === "colony" ? "Colony Ship" : k === "scout" ? "Scout" : k);
+const SHIP_KIND_LABEL: Record<ShipKind, string> = {
+  convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+};
+const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
 // --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED ----------------
 // Below this, phases collapse to ~instant (a fleet near the command center) —
@@ -559,7 +579,7 @@ function postureSection(g: GhostView): string {
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
-const FLAGSHIP_ORDER: ShipKind[] = ["colony", "convoy", "corvette", "raider", "scout"];
+const FLAGSHIP_ORDER: ShipKind[] = ["titan", "dreadnought", "battleship", "cruiser", "destroyer", "colony", "convoy", "corvette", "raider", "scout"];
 
 // The COMPOSITION section of the fleet panel — mirrors the §13.1 intel ladder:
 // full composition for own fleets and rivals inside sensor coverage; a bucket-only
@@ -571,7 +591,15 @@ function compositionSection(g: GhostView): string {
       .map((c) => `${esc(shipKindLabel(c.kind))} <b>×${c.count}</b>`)
       .join(" · ");
     const total = g.composition.reduce((a, c) => a + c.count, 0);
-    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>`;
+    // §ladder B4: the OWNER's Titan row carries the christened flagship name —
+    // plus the christening button (any member; empty un-names).
+    let flagship = "";
+    if (g.own && g.composition.some((c) => c.kind === "titan" && c.count > 0)) {
+      const name = state.syndicate?.flagship_name;
+      flagship = `<div class="sp-line">${icon("fleet", "sm")} flagship: <b>${name ? esc(name) : "<span class=\"dim\">unnamed</span>"}</b> ` +
+        `<button class="act" style="width:auto;padding:2px 7px;font-size:11px" data-act="nameflagship" title="Christen your syndicate's Titan — the name shows on your fleet and in participant battle records.">${name ? "rename" : "name it"}…</button></div>`;
+    }
+    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>${flagship}`;
   }
   return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
@@ -897,7 +925,7 @@ const SCHOOL_TITLE: Record<string, string> = {
   watch: "Watch", shadow: "Shadow", strike: "Strike", countermeasures: "Countermeasures",
   line: "Line", corsair: "Corsair", growth: "Growth", talent: "Talent",
 };
-const ROMAN = ["", "I", "II", "III", "IV", "V"];
+const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
 let lastResearchSig = "";
 
 function fmtEta(secs: number): string {
@@ -967,7 +995,9 @@ function researchBoard(fieldSlug: string, progs: ProgrammeView[], queue: string[
   let inner = group(null, 1) + group(null, 2);
   for (const s of schools) {
     inner += `<div class="lbl" style="color:#8fd3dd;margin-top:2px">⑂ ${esc(SCHOOL_TITLE[s] ?? s)}</div>`;
-    inner += group(s, 3) + group(s, 4) + group(s, 5);
+    // §ladder B2: Line (alone) runs past Tier V — the capital ladder VI–VIII.
+    // group() renders nothing for tiers a school doesn't have.
+    inner += group(s, 3) + group(s, 4) + group(s, 5) + group(s, 6) + group(s, 7) + group(s, 8);
   }
   return `<div class="rp-board"><h4>${researchIcon(fieldSlug, "lg")}<span>${esc(FIELD_TITLE[fieldSlug] ?? fieldSlug)}</span></h4>${inner}</div>`;
 }
@@ -1392,6 +1422,7 @@ function updateSysviewManage(): void {
   const sections = [
     blockadeBanner,
     storageBar + productionReadout(dyn), // Stockpile Capacity + bar, then the commodity rows
+    converterBanner(dyn), // "Idle converters" — built lines that need crew / inputs / food
     `<div class="deps-head">Planets</div>` + devs, // the planet roster under its own header
     vitals + poolStrip, // colony vitals + slot pools
     garrisonHost,
@@ -1784,6 +1815,10 @@ function arrivalLocal(delaySecs: number): string {
 const SHIP_ICON: Record<ShipKind, string> = {
   convoy: "concept-convoy", raider: "action-attack-raid", corvette: "concept-fleet",
   colony: "action-claim-system", scout: "action-survey-scout",
+  // §ladder: no dedicated svg art yet — the fleet concept stands in (a real
+  // capital sheet arrives separately; see PR note).
+  destroyer: "concept-fleet", cruiser: "concept-fleet", battleship: "concept-fleet",
+  dreadnought: "concept-fleet", titan: "concept-fleet",
 };
 // One force-strip chip: a ship-class icon + the count still standing. `lost` (own,
 // exact) draws a red "−k"; a fully-wiped class dims + strikes its count. `est`
@@ -1883,11 +1918,12 @@ function updateOngoingBattlePanel(): void {
     `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
   const ragingLine = `<div class="sp-line dim">Raging <b style="color:var(--ink)">${fmtCountdown(observed)}</b> · forces remaining by your light</div>`;
-  // §battle-records: watch the round-by-round replay of this live fight (if a
-  // record for it has reached us — participants always have one, an observer
-  // only when their sensors cover the site).
+  // §battle-records: WATCH THIS FIGHT LIVE (if a record for it has reached us
+  // — participants always have one, an observer only when their sensors cover
+  // the site). The viewer opens pinned LIGHT-LIVE and chase-plays each round
+  // as its light arrives — you are watching the battle at your light delay.
   const viewBtn = state.battleRecords.some((r) => r.id === b.id)
-    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the round-by-round replay — it streams in as light arrives.">${svgIcon("concept-fleet", "sm")} View battle replay</button>`
+    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the fight as its light reaches you — rounds stream in live, delayed by distance.">${svgIcon("concept-fleet", "sm")} ◉ Watch live</button>`
     : "";
   const body =
     ragingLine +
@@ -1898,6 +1934,7 @@ function updateOngoingBattlePanel(): void {
         viewBtn +
         `<button class="act" data-act="doctrine" title="Change your corp fleet doctrine — the standing engage/retreat/escort policy your fleets follow.">${icon("doctrine", "sm")} Doctrine ▸</button>`
       : `<div class="force-strip">${forceSide("Forces", "foe", rivalChips)}</div>` +
+        viewBtn +
         `<div class="mhint dim" title="You see this fight only by its weapons-fire light — you have no forces here.">no forces here</div>` +
         viewBtn);
   panel.innerHTML = head + `<div class="pp-body">${body}</div>`;
@@ -1988,6 +2025,7 @@ function closeBattleViewer(): void {
   openBattleViewerId = null;
   bvPlaying = false;
   $("battle-viewer").classList.remove("is-open");
+  theaterClose(); // stop the theater's ticker — the map is never affected
 }
 
 /// The playback clock — advances the shown round while playing, clamped to the
@@ -1997,8 +2035,31 @@ function bvTick(ts: number): void {
   const rec = bvRecordFor(openBattleViewerId);
   if (!rec) { closeBattleViewer(); bvLoopRunning = false; return; }
   const frontier = rec.rounds.length - 1;
-  if (bvPlaying && frontier >= 0) {
-    const dt = bvLastTs ? Math.min(0.25, (ts - bvLastTs) / 1000) : 0;
+  const dt = bvLastTs ? Math.min(0.25, (ts - bvLastTs) / 1000) : 0;
+  if (bvLive && frontier >= 0) {
+    // LIGHT-LIVE is a CHASE, not a slideshow: each newly-arrived round plays
+    // through smoothly at the battle's REAL pace (wall-seconds per recorded
+    // round), trailing the light frontier; the scene holds with idle drift
+    // only when fully caught up. Everything shown has already arrived — the
+    // light-cone law is untouched, this is presentation of arrived truth.
+    if (bvRound < frontier) {
+      const hz = state.tickHz || 30;
+      const wnd = Math.max(0.2, (rec.rounds[bvRound + 1].tick - rec.rounds[bvRound].tick) / hz);
+      bvAccum += dt / wnd;
+      let changed = false;
+      while (bvAccum >= 1 && bvRound < frontier) { bvRound++; bvAccum -= 1; changed = true; }
+      if (bvRound >= frontier) bvAccum = 0; // caught up — hold at the newest light
+      if (changed) renderBattleViewer();
+    } else {
+      bvAccum = 0;
+      if (rec.outcome !== null) {
+        // The ending's light arrived and its last window played out.
+        bvLive = false;
+        bvPlaying = false;
+        renderBattleViewer();
+      }
+    }
+  } else if (bvPlaying && frontier >= 0) {
     bvAccum += (dt * bvSpeed) / BV_ROUND_SECS;
     let changed = false;
     while (bvAccum >= 1 && bvRound < frontier) { bvRound++; bvAccum -= 1; changed = true; }
@@ -2009,6 +2070,11 @@ function bvTick(ts: number): void {
     }
     if (changed) renderBattleViewer();
   }
+  // §theater: push transport time every frame — round + fractional progress
+  // drives the theater's interpolation; LIGHT-LIVE pins it to the frontier.
+  // bvAccum simply stops advancing while paused, so a pause holds the scene
+  // mid-window instead of snapping it back to the keyframe.
+  theaterSetTime(bvRound, Math.min(1, bvAccum), bvLive);
   bvLastTs = ts;
   requestAnimationFrame(bvTick);
 }
@@ -2034,12 +2100,52 @@ function sideFamily(sv: SideRecordView): SalvoFamily {
   if (mods.includes("mass_driver")) return "driver";
   return "beam";
 }
+// §tactical T3: the TRUTH MAP — an SVG top-down of the recorded keyframe.
+// Real positions, torpedo salvos, and exact deaths; ship dots scale with mass
+// class, dim with damage; platforms draw as emplacement squares. The viewer's
+// own side is always cyan, the foe red (bearing-agnostic legibility).
+function bvTruthMap(f: KeyframeView, ownSide: number | null): string {
+  const R = 1450; // arena + withdraw margin (battle-local coords)
+  const sx = (x: number) => ((x + R) / (2 * R)) * 100;
+  const sy = (y: number) => ((y + R) / (2 * R)) * 100;
+  const colOf = (side: number) => (ownSide === null ? (side === 0 ? "#e0574b" : "#5ad1e0") : side === ownSide ? "#5ad1e0" : "#e0574b");
+  const dots = f.ships.map((s) => {
+    const r = s.plat ? 1.6 : Math.max(0.7, Math.min(2.6, Math.sqrt((HULL_MASS[s.kind] ?? 400) / 1000)));
+    const o = (0.35 + 0.65 * Math.max(0, Math.min(1, s.hp))).toFixed(2);
+    const c = colOf(s.side);
+    return s.plat
+      ? `<rect x="${(sx(s.x) - r).toFixed(1)}" y="${(sy(s.y) - r).toFixed(1)}" width="${(2 * r).toFixed(1)}" height="${(2 * r).toFixed(1)}" fill="${c}" opacity="${o}"><title>Defense Platform tier</title></rect>`
+      : `<circle cx="${sx(s.x).toFixed(1)}" cy="${sy(s.y).toFixed(1)}" r="${r.toFixed(1)}" fill="${c}" opacity="${o}"><title>${esc(shipKindLabel(s.kind))} — ${Math.round(s.hp * 100)}% hull</title></circle>`;
+  }).join("");
+  const fish = f.torpedoes.map((t) =>
+    `<g transform="translate(${sx(t.x).toFixed(1)},${sy(t.y).toFixed(1)})"><path d="M0,-1.6 L1.2,0 L0,1.6 L-1.2,0 Z" fill="${FAMILY_COLOR.torpedo}"><title>${t.n} torpedo${t.n > 1 ? "es" : ""} in flight</title></path>` +
+    (t.n > 1 ? `<text x="1.8" y="1" font-size="3" fill="${FAMILY_COLOR.torpedo}">${t.n}</text>` : "") + `</g>`).join("");
+  const deaths = f.deaths.map((d) =>
+    `<g transform="translate(${sx(d.x).toFixed(1)},${sy(d.y).toFixed(1)})" opacity="0.85"><path d="M-1.4,-1.4 L1.4,1.4 M-1.4,1.4 L1.4,-1.4" stroke="${colOf(d.side)}" stroke-width="0.5"><title>${esc(shipKindLabel(d.kind))} destroyed here</title></path></g>`).join("");
+  return `<div class="bv-truth" title="The recorded battle truth — real positions this round (participant intel).">` +
+    `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">` +
+    `<circle cx="50" cy="50" r="${(1000 / R) * 50}" fill="none" stroke="rgba(255,255,255,0.10)" stroke-dasharray="2 2"/>` +
+    dots + fish + deaths + `</svg></div>`;
+}
+
 // A compact per-stack fit summary for a side header (participant only).
+// §fitting: stacks whose hull carries an AFFINITY for their fit show the named
+// factor (law 4 — every multiplier is a legible line).
 function bvFitLine(sv: SideRecordView): string {
   const fits = sv.loadouts ?? [];
-  if (!fits.length) return "";
-  const parts = fits.map((st) => `${st.n}× ${st.modules.map((m) => MODULE_GLYPH[m as ModuleKind]).join("")} ${esc(shipKindLabel(st.kind))}`);
-  return `<div class="bv-fits" title="What this side was fitted with — participant intel.">${parts.join(" · ")}</div>`;
+  // §ladder B4: a side's christened Titan leads its fit line — the one channel
+  // a rival ever meets the name through (participant records only).
+  const flag = sv.flagship_name
+    ? `<span class="tone-up" title="This side's flagship Titan — participant intel.">⚑ ${esc(sv.flagship_name)}</span>`
+    : "";
+  if (!fits.length && !flag) return "";
+  const parts = fits.map((st) => {
+    const aff = affinityLine(st.kind, st.modules as ModuleKind[]);
+    const mult = aff?.match(/×[\d.]+/)?.[0] ?? "×1.25";
+    const tag = aff ? ` <span class="tone-up" title="${esc(aff)} — hull affinity, a named factor in this stack's damage.">${mult}</span>` : "";
+    return `${st.n}× ${st.modules.map((m) => MODULE_GLYPH[m as ModuleKind]).join("")} ${esc(shipKindLabel(st.kind))}${tag}`;
+  });
+  return `<div class="bv-fits" title="What this side was fitted with — participant intel.">${[flag, ...parts].filter(Boolean).join(" · ")}</div>`;
 }
 
 /// One side's column: a per-kind survivor bar (participant: exact; bucket:
@@ -2128,7 +2234,7 @@ function renderBattleViewer(): void {
   const participant = rec.fidelity === "participant";
   const running = rec.outcome === null;
   const frontier = rec.rounds.length - 1;
-  if (bvLive && frontier >= 0) bvRound = frontier;
+  if (bvLive && frontier >= 0) bvRound = Math.min(bvRound, frontier); // the chase advances; never snap-jump
   bvRound = Math.max(0, Math.min(bvRound, Math.max(0, frontier)));
 
   const head =
@@ -2165,6 +2271,15 @@ function renderBattleViewer(): void {
       salvos = `<div class="bv-salvos" style="align-items:center;color:var(--dim)" title="exact fire strength is fogged — you see only the size buckets">⚔</div>`;
     }
     arena = `<div class="bv-arena">${bvSideHtml(rec, rd, 0, participant, false)}${salvos}${bvSideHtml(rec, rd, 1, participant, platGone)}</div>`;
+    // §theater: participant records with truth keyframes get the FULL battle
+    // theater (ship sprites + weapon FX, an interpolating replayer of real
+    // positions). If the theater can't run (no WebGL / init failed), the SVG
+    // truth map is the per-round fallback; frameless records keep the columns.
+    if (rec.rounds.some((r) => r.frame) && theaterAvailable()) {
+      arena += `<div class="bv-theater" id="bv-theater-mount"></div>`;
+    } else if (rd.frame) {
+      arena += bvTruthMap(rd.frame, rec.own_side);
+    }
     notes = rd.notes.length ? `<div class="bv-notes">${rd.notes.map(bvNoteBanner).join("")}</div>` : "";
     const intoFight = Math.max(0, rd.tick / state.tickHz - rec.started_at);
     const delay = state.commandCenter && state.galaxy
@@ -2186,6 +2301,129 @@ function renderBattleViewer(): void {
 
   $("battle-viewer").innerHTML = head + sub + arena + notes + transport;
   $("battle-viewer").classList.add("is-open");
+  // §theater: (re)mount the persistent canvas into the fresh DOM — the holder
+  // is re-appended, so the WebGL context survives innerHTML rebuilds.
+  const thMount = document.getElementById("bv-theater-mount");
+  if (thMount) theaterAttach(thMount, rec);
+  else theaterClose();
+}
+
+// §theater: a SCRIPTED demo record (debug + the acceptance spot-check rig).
+// `__ss.theaterDemo()` fabricates a deterministic participant record with
+// truth keyframes — capitals, torpedo salvos, PD screens, deaths, a platform,
+// a retreat — and opens the viewer on it. Pure client-side; touches nothing.
+function theaterDemo(titanDown = false, big = false): void {
+  const mk = (side: number, kind: ShipKind, x: number, y: number, hp = 1, plat = false) => ({ side, kind, x, y, hp, plat });
+  const rounds: BattleRecordView["rounds"] = [];
+  const N = 10;
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const ax = -880 + 620 * t; // attackers close from the left
+    const ships: KeyframeView["ships"] = [
+      ...(titanDown && i >= 9 ? [] : [mk(0, "titan", ax - 60, 0, titanDown ? 1 - 0.9 * t : 1 - 0.25 * t)]),
+      mk(0, "battleship", ax - 20, 120, 1 - 0.35 * t),
+      ...[0, 1, 2, 3].map((k) => mk(0, "corvette", ax + 40, -160 + k * 90, 1 - 0.3 * t * ((k % 2) + 1) / 2)),
+      ...[0, 1, 2, 3].map((k) => (i < 8 || k > 0 ? mk(0, "raider", ax + 90 + 30 * Math.sin(t * 6 + k), -220 + k * 140, 1 - 0.2 * t) : null)),
+      ...[...Array(i < 5 ? 8 : i < 7 ? 6 : 4)].map((_, k) => mk(1, "raider", 320 + 25 * Math.cos(t * 5 + k), -260 + k * 76, 1 - 0.45 * t)),
+      mk(1, "corvette", 250, -60, 1 - 0.3 * t),
+      mk(1, "corvette", 250, 60, 1 - 0.3 * t),
+      mk(1, "convoy", 540, 30, 1 - 0.5 * t),
+      mk(1, "corvette", 600, 0, 1 - 0.6 * t, true),
+      mk(1, "corvette", 600, 40, 1, true),
+    ].filter((s): s is NonNullable<typeof s> => s !== null);
+    if (big) {
+      // 60v60 with capitals — the budget/degradation acceptance scene.
+      for (let k = 0; k < 46; k++) {
+        ships.push(mk(0, k % 3 === 0 ? "raider" : "corvette", ax + 60 + (k % 8) * 34, -300 + Math.floor(k / 8) * 52, 1 - 0.3 * t));
+      }
+      ships.push(mk(0, "dreadnought", ax - 90, -80, 1 - 0.2 * t));
+      for (let k = 0; k < 44; k++) {
+        ships.push(mk(1, k % 4 === 0 ? "corvette" : "raider", 300 + (k % 8) * 30, -280 + Math.floor(k / 8) * 50, 1 - 0.4 * t));
+      }
+      ships.push(mk(1, "battleship", 560, -60, 1 - 0.35 * t), mk(1, "cruiser", 560, 90, 1 - 0.3 * t));
+    }
+    const torps: KeyframeView["torpedoes"] = i >= 2 && i <= 8
+      ? [{ side: 0, x: ax + 200 + 180 * ((i % 3) / 3), y: -20, n: Math.max(2, 10 - i) }]
+      : [];
+    const deaths: KeyframeView["deaths"] = [];
+    if (i === 5) deaths.push({ step: 3, side: 1, kind: "raider", x: 340, y: -110 });
+    if (i === 7) deaths.push({ step: 1, side: 1, kind: "raider", x: 355, y: 30 }, { step: 4, side: 1, kind: "raider", x: 310, y: 96 });
+    if (i === 8) deaths.push({ step: 2, side: 0, kind: "raider", x: ax + 90, y: -220 });
+    if (titanDown && i === 9) deaths.push({ step: 3, side: 0, kind: "titan", x: ax - 60, y: 0 });
+    const rc = (kind: ShipKind, n: number) => ({ kind, exact: n, class: "one" as CountClass });
+    rounds.push({
+      tick: i * 15,
+      counts: [
+        [rc("titan", titanDown && i >= 9 ? 0 : 1), rc("battleship", 1), rc("corvette", 4), rc("raider", i < 8 ? 4 : 3)],
+        [rc("raider", i < 5 ? 8 : i < 7 ? 6 : 4), rc("corvette", 2), rc("convoy", 1)],
+      ],
+      kills: [
+        [i === 8 ? rc("raider", 1) : rc("raider", 0)].filter((k) => k.exact),
+        [i === 5 ? rc("raider", 1) : i === 7 ? rc("raider", 2) : rc("raider", 0)].filter((k) => k.exact),
+      ],
+      dealt: [26 + i * 5, 18 + i * 3],
+      notes: i === 6 ? [{ kind: "retreat_tripped", side: 1, comp: null }] : i === 9 ? [{ kind: "withdraw_ordered", side: 1, comp: null }] : [],
+      frame: { ships, torpedoes: torps, deaths },
+    });
+  }
+  const rec: BattleRecordView = {
+    id: "demo-battle" as unknown as BattleRecordView["id"],
+    pos: { x: 0, y: 0 },
+    system: null,
+    started_at: 0,
+    raid: false,
+    fidelity: "participant",
+    own_side: 0,
+    sides: [
+      { corp: "1", posture: "engage_any", platform_tiers: 0, initial: rounds[0].counts[0], loadouts: [
+        { kind: "raider", modules: ["torpedo_rack"], n: 4 },
+        { kind: "corvette", modules: ["whipple_armor"], n: 2 },
+      ], flagship_name: "Emberfall" },
+      { corp: "2", posture: null, platform_tiers: 2, initial: rounds[0].counts[1], loadouts: [
+        { kind: "corvette", modules: ["point_defense_screen"], n: 2 },
+        { kind: "raider", modules: ["mass_driver"], n: 4 },
+        { kind: "raider", modules: ["reflective_plating"], n: 3 },
+      ], flagship_name: null },
+    ],
+    rounds,
+    light_frontier_tick: (N - 1) * 15,
+    outcome: "target_destroyed" as BattleRecordView["outcome"],
+  };
+  state.battleRecords = state.battleRecords.filter((r) => r.id !== rec.id).concat([rec]);
+  openBattleViewer(rec.id);
+}
+
+// §theater: the LIVE demo rig — streams the scripted record's rounds in on a
+// wall-clock timer (simulated arriving light) so LIGHT-LIVE chase playback
+// can be watched without staging a real battle: `__ss.theaterDemoLive()`.
+let demoLiveTimer: number | null = null;
+function theaterDemoLive(intervalMs = 1800): void {
+  if (demoLiveTimer !== null) { clearInterval(demoLiveTimer); demoLiveTimer = null; }
+  theaterDemo(); // installs the full scripted record
+  const full = state.battleRecords.find((r) => r.id === "demo-battle");
+  if (!full) return;
+  const allRounds = full.rounds;
+  let upto = 2;
+  const install = () => {
+    const rec: BattleRecordView = {
+      ...full,
+      rounds: allRounds.slice(0, upto),
+      outcome: upto >= allRounds.length ? full.outcome : null,
+      light_frontier_tick: allRounds[upto - 1].tick,
+    };
+    state.battleRecords = state.battleRecords.filter((r) => r.id !== rec.id).concat([rec]);
+    refreshOpenBattleViewer();
+  };
+  install();
+  openBattleViewer(full.id); // opens pinned LIGHT-LIVE on the "running" fight
+  demoLiveTimer = window.setInterval(() => {
+    upto++;
+    install();
+    if (upto >= allRounds.length && demoLiveTimer !== null) {
+      clearInterval(demoLiveTimer);
+      demoLiveTimer = null;
+    }
+  }, intervalMs);
 }
 
 // §contestable-territory Part 2: the CAPTURE results panel — a system changed
@@ -2747,24 +2985,22 @@ function productionReadout(dyn: SystemStateView | undefined): string {
   const all = new Set<Commodity>([...stockOf.keys(), ...rateOf.keys()] as Commodity[]);
   const rows = [...all].filter((c) => (stockOf.get(c) ?? 0) >= 1 || (rateOf.get(c) ?? 0) > 0.01);
   if (!rows.length) return "";
-  // Refinery line (§buildings step 3b): converting Volatiles → Fuel, or idle dry.
-  const refTier = dyn?.refinery_tier ?? 0;
-  let refinery = "";
-  if (refTier > 0) {
-    // §economy: the refinery is a STAFFED converter line now — this hint shows
-    // its base rate; the Part-7 colony panel carries the live factor chain.
-    const rate = state.galaxy?.fuel_refinery_rate ?? 0.8;
-    const vol = stockOf.get("volatiles") ?? 0;
-    refinery = vol > 0
-      ? `<div class="mhint" style="margin-top:4px" title="Fuel Refinery ×${refTier}: converts Volatiles → Fuel (1:1) up to ${rate.toFixed(1)}/s per throughput tier when staffed.">${icon("refinery", "sm")} ${icon("volatiles", "sm")} → ${icon("fuel", "sm")} up to ${rate.toFixed(1)}/s · staffed line</div>`
-      : `<div class="mhint" style="margin-top:4px" title="Fuel Refinery idle — no Volatiles to convert. Haul some in (1 Fuel per Volatile).">${icon("refinery", "sm")} ${badgeChip("warning", "idle — no Volatiles", "warn", "Haul Volatiles in to convert.")}</div>`;
-  }
+  // (The Fuel Refinery — like every converter — now reports its real idle reason
+  // via `converterBanner`, which reads the server-computed status. The old
+  // volatiles>0 heuristic here wrongly claimed "staffed line" without checking
+  // crew, so it was dropped in favour of the accurate banner.)
   return rows.map((c) => {
       const rt = rateOf.get(c) ?? 0;
       const rate = rt > 0.01 ? `<span class="sp-rate">+${rt.toFixed(2)}/s</span>` : `<span class="sp-none">—</span>`;
+      // Fuel here is the system's operating/movement RESERVE — not the tradeable HQ
+      // inventory the Exchange buys/sells. Tag it so a market sell "not moving" this
+      // number reads as expected, not a bug.
+      const nameCell = c === "fuel"
+        ? `<span class="sp-name" title="This system's operating/movement reserve — ships spend it to move. NOT the tradeable HQ inventory the Exchange buys/sells, so a market Buy/Sell never changes it.">${label(c)} <span class="dim" style="font-size:9px">· reserve</span></span>`
+        : `<span class="sp-name">${label(c)}</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
-        `<span class="sp-name">${label(c)}</span><span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
-    }).join("") + refinery;
+        `${nameCell}<span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
+    }).join("");
 }
 
 // §economy Part 6: the per-line PRODUCTION ROWS — one row per line with the
@@ -2780,7 +3016,61 @@ const SUSPEND_HINT: Record<string, string> = {
   no_food: "out of Provisions — ship food",
   no_inputs: "input basket dry — ship raws in or staff extraction",
   storage_full: "storage full — ship goods out or build a Depot",
+  needs_crew: "built but idle — post a crew (open its body and hire/assign workers)",
 };
+
+// §economy Supply-from-HQ: ship goods held in the corp's HQ trading pool (bought
+// at the Exchange) into THIS system's stockpile via a raidable convoy — the
+// bridge that lets market-bought inputs feed a system's converters, which draw
+// from the system stockpile, not the HQ pool. Returns "" when HQ holds nothing.
+// §economy Supply-from-HQ (Market → Supply tab): ship goods held in the corp's HQ
+// trading pool into a chosen OWNED system's stockpile (to feed its converters).
+// Lives ONLY in the Market panel so HQ/market inventory never appears on the
+// planet/system views. The destination <select> is static HTML — its options are
+// rebuilt only when the owned-system set changes (never mid-dropdown at ~10 Hz).
+let supplyDestSig = "";
+function renderSupplyPane(): void {
+  const owned = (state.systems ?? []).filter((s) => s.owner === state.playerId);
+  const sel = $("mk-supply-dest") as HTMLSelectElement;
+  const sig = owned.map((s) => s.id).join(",");
+  if (sig !== supplyDestSig) {
+    supplyDestSig = sig;
+    const prev = sel.value;
+    sel.innerHTML = owned.map((s) => `<option value="${esc(s.id)}">${esc(systemName(s.id))}</option>`).join("");
+    if (owned.some((s) => s.id === prev)) sel.value = prev; // keep the pick across roster changes
+  }
+  const rows = $("mk-supply-rows");
+  if (!owned.length) { rows.innerHTML = `<div class="mhint dim">Claim a system before you can supply one.</div>`; return; }
+  const held = (state.wallet?.inventory ?? []).filter((i) => i.units > 0);
+  if (!held.length) { rows.innerHTML = `<div class="mhint dim">No goods held at HQ. Buy on the Exchange, then supply a system here.</div>`; return; }
+  rows.innerHTML = held.map((i) => {
+    const presets = [...new Set([10, 50, i.units])].filter((n) => n >= 1 && n <= i.units).sort((a, b) => a - b);
+    const btns = presets.map((n) =>
+      `<button class="act act--mini" data-supply-c="${esc(i.commodity)}" data-supply-n="${n}" ` +
+      `title="Ship ${n} ${esc(label(i.commodity))} to the selected system (sub-light, raidable)">${n === i.units ? `All ${fmt(n)}` : `+${n}`}</button>`
+    ).join("");
+    return `<div class="supply-row">` +
+      `<span class="sr-name">${commodityIcon(i.commodity, "sm")} <b>${esc(label(i.commodity))}</b></span>` +
+      `<span class="sr-qty">${fmt(i.units)}</span>` +
+      `<span class="supply-btns">${btns}</span></div>`;
+  }).join("");
+}
+
+// §economy: an at-a-glance banner for BUILT converters producing nothing, with
+// the reason (needs crew / no inputs / no food / storage full). "" when all run.
+function converterBanner(dyn: SystemStateView | undefined): string {
+  const idle = (dyn?.converters ?? []).filter((c) => c.status !== "running");
+  if (!idle.length) return "";
+  const rows = idle.map((c) => {
+    const tone = c.status === "no_food" ? "negative" : "warn";
+    const word = c.status === "needs_crew" ? "needs crew"
+      : c.status === "no_inputs" ? "no inputs"
+      : c.status === "no_food" ? "no food"
+      : c.status === "storage_full" ? "storage full" : c.status;
+    return `<div class="conv-idle">${badgeChip("unfed", esc(word), tone, SUSPEND_HINT[c.status] ?? "idle")} <b>${esc(c.title)}</b></div>`;
+  }).join("");
+  return `<div class="deps-head">Idle converters</div>${rows}`;
+}
 // §body-management: the production-line rows, shared between the read-only
 // summary/rail digest (withControls=false — pure data) and the BODY PANELS
 // (withControls=true — the ONLY place crew ± controls render; the SetAssignment
@@ -2828,7 +3118,7 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
 // rendered for systems you own (the View only sends build state to the owner).
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
-const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout"]);
+const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout", "destroyer", "cruiser", "battleship", "dreadnought", "titan"]);
 
 // §economy Part 6 / §bodies: crew ± control → SetAssignment. `spec` is
 // "bodyId:slug:workers" — the line lives ON a body now; posted specialists are
@@ -2844,7 +3134,17 @@ function sendCrew(systemId: EntityId, spec: string): void {
 // Shipyard tier each ship kind requires — MIRRORS the sim's
 // `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
 // Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
-const SHIP_REQ: Record<string, number> = { convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1 };
+const SHIP_REQ: Record<string, number> = {
+  convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1,
+  // §ladder: capital yards (tiers 5/6 are themselves Line VII/VIII prizes).
+  destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
+};
+// §ladder: the Line programme that unlocks each capital hull (mirrors
+// research.rs) — the client's research-gate copy; the sim enforces it.
+const HULL_PROGRAMME: Record<string, string> = {
+  destroyer: "hull_line_iv_destroyer", cruiser: "hull_line_v_cruiser",
+  battleship: "hull_line_vi_battleship", dreadnought: "hull_line_vii_dreadnought", titan: "hull_line_viii_titan",
+};
 
 // --- §build-progress: the construction QUEUE (Travian-style) -----------------
 // Rows derive ENTIRELY from the job timestamps the view already carries:
@@ -2958,7 +3258,56 @@ const MODULE_TIP: Record<ModuleKind, string> = {
   reflective_plating: "Armor: blunts incoming BEAM into this ship.",
   whipple_armor: "Armor: blunts incoming DRIVER into this ship.",
 };
-const MODULE_SLOTS: Record<string, number> = { corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0 };
+const MODULE_SLOTS: Record<string, number> = {
+  corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0,
+  destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
+};
+// §fitting: per-module FITTING-POINT costs + per-hull budgets (mirrors sim
+// ModuleKind::fitting_cost / ship::fitting_points) — the SECOND constraint
+// besides slots; both render in the fitting bar and gate the queue button.
+const MODULE_FIT_COST: Record<ModuleKind, number> = {
+  mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
+};
+const FITTING_POINTS: Record<string, number> = {
+  corvette: 5, raider: 4, scout: 2, convoy: 2, colony: 2,
+  // §ladder: the big budgets — capitals are where combinations live.
+  destroyer: 8, cruiser: 12, battleship: 18, dreadnought: 28, titan: 45,
+};
+const fitCost = (mods: ModuleKind[]): number => mods.reduce((s, m) => s + (MODULE_FIT_COST[m] ?? 0), 0);
+// §fitting: is (kind, mods) legal — both slots and budget? (mirrors Loadout::validate)
+function fitLegal(kind: string, mods: ModuleKind[]): boolean {
+  return mods.length <= (MODULE_SLOTS[kind] ?? 0) && fitCost(mods) <= (FITTING_POINTS[kind] ?? 0);
+}
+// §fitting: the hull-AFFINITY factor line for a (kind, fit) — the named
+// multiplier the sim applies (mirrors ship::hull_affinity); null when none.
+function affinityLine(kind: string, mods: ModuleKind[]): string | null {
+  const hasWeapon = mods.some((m) => m === "torpedo_rack" || m === "mass_driver" || m === "point_defense_screen");
+  if (kind === "raider" && mods.includes("torpedo_rack")) return "Raider torpedo affinity ×1.25";
+  if (kind === "corvette" && mods.includes("point_defense_screen")) return "Corvette interception affinity ×1.25";
+  // §ladder: each capital's one named factor.
+  if (kind === "destroyer" && !mods.includes("torpedo_rack") && !mods.includes("mass_driver")) return "Destroyer beam affinity ×1.20";
+  if (kind === "cruiser" && (mods.includes("reflective_plating") || mods.includes("whipple_armor"))) return "Cruiser protection affinity ×1.20";
+  if (kind === "battleship" && mods.includes("mass_driver")) return "Battleship driver affinity ×1.20";
+  if (kind === "dreadnought" && mods.includes("point_defense_screen")) return "Dreadnought interception affinity ×1.30";
+  if (kind === "titan" && (hasWeapon || mods.length === 0)) return "Titan weapon affinity ×1.10";
+  return null;
+}
+// The hull's standing affinity note (shown in the build detail even unfitted).
+const HULL_AFFINITY_NOTE: Record<string, string> = {
+  raider: "torpedo ×1.25", corvette: "interception ×1.25",
+  destroyer: "beam ×1.20", cruiser: "protection ×1.20", battleship: "driver ×1.20 · siege anchor ×1.25",
+  dreadnought: "interception ×1.30 (platform-grade screen)", titan: "all weapons ×1.10",
+};
+// §fitting: the FITTING BAR — used/total points with per-module cost chips;
+// red when the composed fit would overflow the hull's budget.
+function fittingBar(kind: string, mods: ModuleKind[]): string {
+  const total = FITTING_POINTS[kind] ?? 0;
+  const used = fitCost(mods);
+  const over = used > total;
+  const chips = mods.map((m) => `<span class="fit-cost-chip" title="${esc(MODULE_LABEL[m])} costs ${MODULE_FIT_COST[m]} pts">${MODULE_GLYPH[m]}${MODULE_FIT_COST[m]}</span>`).join("");
+  return `<span class="fitbar${over ? " is-over" : ""}" title="Fitting points — every module costs points against the hull's budget (the second constraint besides slots).">` +
+    `fit <b>${used}/${total}</b> pts${chips ? ` ${chips}` : ""}${over ? ` <span class="fitbar-over">OVER BUDGET</span>` : ""}</span>`;
+}
 // Sol's module spread (mirrors sim MODULE_BUY_MULT / MODULE_SELL_MULT) — DISPLAY
 // only; the server prices the real charge on execution (shown "~").
 const MODULE_BUY_MULT = 2.0, MODULE_SELL_MULT = 0.5;
@@ -3042,21 +3391,37 @@ function refitSection(g: GhostView): string {
   }
   const chips = MODULE_ALL.map((m) => {
     const on = pendingRefit.includes(m);
-    return `<button class="act fit-chip${on ? " is-on" : ""}" data-act="refitmod" data-mod="${m}" title="${esc(MODULE_TIP[m])}">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
+    return `<button class="act fit-chip${on ? " is-on" : ""}" data-act="refitmod" data-mod="${m}" title="${esc(MODULE_TIP[m])} Costs ${MODULE_FIT_COST[m]} fitting pts.">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
   }).join("");
+  // §fitting: saved doctrine fits matching this fleet's warship kinds — one
+  // click composes the target (and the fitting bar tracks the budget).
+  const kindsHere = new Set(warKinds.map((c) => c.kind));
+  const fitChips = (state.syndicate?.fits ?? []).filter((f) => kindsHere.has(f.kind)).map((f) =>
+    `<button class="act fit-chip" data-act="refitfit" data-fitname="${esc(f.name)}" title="Apply doctrine fit (${esc(shipKindLabel(f.kind))}): ${f.modules.map((m) => esc(MODULE_LABEL[m])).join(" + ") || "stock"}">${esc(f.name)}</button>`).join(" ");
   const targetTxt = pendingRefit.length ? pendingRefit.map((m) => `${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}`).join(" · ") : "stock (strip all fits)";
   const rows = stacks.map((s) => {
     const fromTxt = s.from.length ? s.from.map((m) => MODULE_GLYPH[m]).join("") : "stock";
     const to = pendingRefit.slice(0, MODULE_SLOTS[s.kind] ?? 0);
     const same = [...s.from].sort().join(",") === [...to].sort().join(",");
+    // §fitting: a grandfathered stack that exceeds today's budget keeps flying
+    // but is flagged — it may only refit INTO legality.
+    const legacy = s.from.length > 0 && !fitLegal(s.kind, s.from)
+      ? ` <span class="fit-legacy" title="This stack's fit exceeds the hull's current fitting budget (${fitCost(s.from)}/${FITTING_POINTS[s.kind] ?? 0} pts). It keeps flying as-is; a refit must land on a legal fit.">legacy fit</span>`
+      : "";
+    const overBudget = to.length > 0 && !fitLegal(s.kind, to);
+    const aff = affinityLine(s.kind, s.from);
     return `<div class="sp-line" style="justify-content:space-between;gap:6px">` +
-      `<span title="${s.n} ${esc(shipKindLabel(s.kind))} currently fitted: ${fromTxt}">${s.n}× ${esc(shipKindLabel(s.kind))} · ${fromTxt}</span>` +
-      `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same ? "disabled" : ""} title="Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.">Refit →</button>` +
+      `<span title="${s.n} ${esc(shipKindLabel(s.kind))} currently fitted: ${fromTxt}${aff ? ` — ${esc(aff)}` : ""}">${s.n}× ${esc(shipKindLabel(s.kind))} · ${fromTxt}${aff ? ` <span class="tone-up" title="${esc(aff)}">×1.25</span>` : ""}${legacy}</span>` +
+      `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same || overBudget ? "disabled" : ""} title="${overBudget ? `The target fit exceeds the ${esc(shipKindLabel(s.kind))}'s fitting budget (${fitCost(to)}/${FITTING_POINTS[s.kind] ?? 0} pts).` : `Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.`}">Refit →</button>` +
       `</div>`;
   }).join("");
+  // The bar tracks the FIRST warship kind's budget (per-row gating is exact).
+  const barKind = warKinds[0].kind;
   return `<div class="sp-sec">${svgIcon("action-build", "sm")} Refit</div>` +
-    `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> — at a docked Shipyard</div>` +
-    `<div class="fit-row">${chips}</div>${rows}`;
+    `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> · ${fittingBar(barKind, pendingRefit)} — at a docked Shipyard</div>` +
+    `<div class="fit-row">${chips}</div>` +
+    (fitChips ? `<div class="mhint" style="margin:2px 0">doctrine fits:</div><div class="fit-row">${fitChips}</div>` : "") +
+    rows;
 }
 
 // (buildOptionRow removed — the inline structure/ship rows it drew are gone; the
@@ -3267,6 +3632,33 @@ function buildBuildPanel(): void {
     if (qbtn) { shipQty = Math.max(1, Number(qbtn.dataset.bpQty) || 1); renderShipPanel(); return; }
     const row = t.closest("[data-bp-row]") as HTMLElement | null;
     if (row) { shipSelectedKind = row.dataset.bpRow ?? null; renderShipPanel(); return; }
+    // §fitting: the detail pane's fit chips + doctrine-fit library.
+    const fitBtn = t.closest("[data-fit]") as HTMLElement | null;
+    if (fitBtn) {
+      const m = fitBtn.dataset.fit as ModuleKind;
+      const cap = MODULE_SLOTS[shipSelectedKind ?? ""] ?? 2;
+      if (pendingFit.includes(m)) pendingFit = pendingFit.filter((x) => x !== m);
+      else if (pendingFit.length < cap) pendingFit.push(m);
+      renderShipPanel();
+      return;
+    }
+    const pick = t.closest("[data-fitpick]") as HTMLElement | null;
+    if (pick) {
+      const f = (state.syndicate?.fits ?? []).find((x) => x.name === pick.dataset.fitpick);
+      if (f) { pendingFit = [...f.modules]; shipSelectedKind = f.kind; renderShipPanel(); }
+      return;
+    }
+    const del = t.closest("[data-fitdel]") as HTMLElement | null;
+    if (del && net) { net.send({ type: "DeleteFit", name: del.dataset.fitdel ?? "" }); return; }
+    if (t.closest("[data-fitsave]") && net && shipSelectedKind) {
+      const sid = viewedSystemId();
+      const ledger = sid ? moduleLedgerAt(sid) : {};
+      const eff = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, MODULE_SLOTS[shipSelectedKind] ?? 0);
+      if (!eff.length || !fitLegal(shipSelectedKind, eff)) return;
+      const name = (window.prompt("Fit name (≤24 chars):") ?? "").trim();
+      if (name) net.send({ type: "SaveFit", name, ship: shipSelectedKind as ShipKind, loadout: eff });
+      return;
+    }
     if (t.closest("[data-bp='queue']")) { queueSelectedShips(); return; }
   });
 }
@@ -3415,8 +3807,12 @@ function renderBuildPanel(): void {
 // builder; shares its shell/dock/breakpoint via `.build-shell`). Opened from the
 // shipyard body's "Build ship" button; a sibling of the structure builder — the
 // two never render together. Client-only over the SAME BuildShip command. ----
-const SHIP_ORDER = ["scout", "corvette", "raider", "convoy", "colony"];
-const SHIP_HULL_ICON: Record<string, IconKey> = { convoy: "convoy", raider: "raider", corvette: "corvette", colony: "colony", scout: "scout" };
+const SHIP_ORDER = ["scout", "corvette", "raider", "convoy", "colony", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+const SHIP_HULL_ICON: Record<string, IconKey> = {
+  convoy: "convoy", raider: "raider", corvette: "corvette", colony: "colony", scout: "scout",
+  // §ladder: no dedicated icons yet — the fleet mark stands in.
+  destroyer: "fleet", cruiser: "fleet", battleship: "fleet", dreadnought: "fleet", titan: "fleet",
+};
 // Per-hull stats + one-line role, mirroring crates/sim/src/ship.rs (speed / hull
 // mass / attack+defense weights / module slots). Display only — the COSTS + gates
 // that matter for the command come from build_options + SHIP_REQ.
@@ -3426,23 +3822,48 @@ const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; at
   raider: { role: "The hunter — fast and hard-hitting; seizes a convoy's cargo on a won raid.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · takes prizes" },
   convoy: { role: "Bulk hauler — carries goods to the hub; raidable, wants an escort.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 0, cap: "Hauls cargo (raidable)" },
   colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
+  // §ladder: the research-gated warship ladder — capitals buy PRESENCE, never
+  // efficiency (weight per Armaments peaks at Destroyer/Cruiser).
+  destroyer: { role: "The first ship of the line — heavy beam broadsides (beam ×1.20).", speed: 55, hull: 2000, atk: 2.4, def: 2.6, slots: 3, cap: "Line IV research · 8 fit pts" },
+  cruiser: { role: "The season's prestige warship — armored core (protection ×1.20); the efficiency peak.", speed: 45, hull: 4000, atk: 4.5, def: 5.5, slots: 4, cap: "Line V research · 12 fit pts" },
+  battleship: { role: "The siege anchor — driver broadsides (driver ×1.20); accelerates a siege clock on station.", speed: 36, hull: 8000, atk: 8, def: 12, slots: 4, cap: "Line VI research · 18 fit pts" },
+  dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 12, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
+  titan: { role: "The flagship — broadly good at every weapon (×1.10), best at nothing; one per syndicate.", speed: 23, hull: 32000, atk: 24, def: 44, slots: 6, cap: "Line VIII research · 45 fit pts · singleton" },
 };
 interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; }
 /// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
 /// shipyard tier — the same field the old inline rows read) + afford, plus the
 /// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
+// §ladder: is this hull's Line programme completed? (Capitals only — the five
+// original hulls never need research. Mirrors the sim's NeedsResearch gate.)
+function hullResearched(key: string): boolean {
+  const prog = HULL_PROGRAMME[key];
+  if (!prog) return true;
+  return state.research?.programmes.find((p) => p.id === prog)?.state === "completed";
+}
 function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
   const yardTier = dyn.shipyard_tier ?? 0;
   const needTier = SHIP_REQ[o.key] ?? 1;
   const yardShort = yardTier < needTier;
+  const unresearched = !hullResearched(o.key);
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
   const maxAff = o.costs.length
     ? Math.max(0, Math.min(...o.costs.map((c) => Math.floor((have.get(c.commodity as Commodity) ?? 0) / c.units))))
     : 0;
-  const buildable = !yardShort && afford;
-  const reason = yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
-  return { o, needTier, yardTier, yardShort, afford, maxAff, buildable, reason };
+  const buildable = !yardShort && !unresearched && afford;
+  const reason = unresearched
+    ? "Requires its Line programme on the Hulls research board."
+    : yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason };
+}
+// A build duration for humans: seconds under 2 min, then minutes / hours / days
+// (a capital keel is a season event — "8d" reads, "691200s" doesn't).
+function fmtBuildDur(secs: number): string {
+  if (secs < 120) return `${Math.round(secs)}s`;
+  if (secs < 7200) return `${Math.round(secs / 60)}m`;
+  if (secs < 172800) return `${(secs / 3600).toFixed(secs < 36000 ? 1 : 0).replace(/\.0$/, "")}h`;
+  return `${(secs / 86400).toFixed(1).replace(/\.0$/, "")}d`;
 }
 /// The staffed-shipyard build-time multiplier (mirrors the sim: build_ticks /
 /// (1 + SHIPYARD_BOOST·staffing·skill), SHIPYARD_BOOST = 0.25). 1.0 when the yard
@@ -3455,12 +3876,12 @@ function shipRowHtml(st: ShipOpt): string {
   const sel = st.o.key === shipSelectedKind ? " is-sel" : "";
   const off = st.buildable ? "" : " is-off";
   const info = SHIP_STATS[st.o.key];
-  const short = st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
+  const short = !hullResearched(st.o.key) ? "needs research" : st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
   const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
   return `<button class="bp-row bp-ship-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(info?.role ?? st.o.label)}">` +
     `<span class="bp-row-ic">${icon(SHIP_HULL_ICON[st.o.key] ?? "fleet", "sm")}</span>` +
     `<span class="bp-ship-main"><span class="bp-ship-top"><span class="bp-row-name">${esc(st.o.label)}</span>` +
-    `<span class="bp-row-tier">${Math.round(st.o.build_secs)}s</span>${reason}</span>` +
+    `<span class="bp-row-tier">${fmtBuildDur(st.o.build_secs)}</span>${reason}</span>` +
     `<span class="bp-ship-role">${esc(info?.role ?? "")}</span></span></button>`;
 }
 function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): string {
@@ -3486,10 +3907,42 @@ function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): stri
   const boost = shipyardBoost(dyn, body);
   const per = Math.max(1, Math.round(o.build_secs / boost));
   const timeLine = boost > 1.001
-    ? `${icon("time", "sm")} <b>${per}s</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${Math.round(o.build_secs)}s).${q > 1 ? ` The ${q} build in parallel.` : ""}`
-    : `${icon("time", "sm")} <b>${per}s</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
+    ? `${icon("time", "sm")} <b>${fmtBuildDur(per)}</b> each — staffed-yard bonus ×${boost.toFixed(2)} (base ${fmtBuildDur(o.build_secs)}).${q > 1 ? ` The ${q} build in parallel.` : ""}`
+    : `${icon("time", "sm")} <b>${fmtBuildDur(per)}</b> each${q > 1 ? ` · the ${q} build in parallel` : ""}. <span class="dim">Post crew to the Shipyard to build faster.</span>`;
   const stat = (lbl: string, val: string) => `<div class="bp-stat"><span class="bp-stat-l">${lbl}</span><span class="bp-stat-v">${val}</span></div>`;
-  const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fuel", info.hull >= 1000 ? "heavy (∝ mass)" : "light (∝ mass)")}</div>` : "";
+  const stats = info ? `<div class="bp-stats">${stat("Speed", `${info.speed}`)}${stat("Hull mass", `${info.hull}`)}${stat("Attack", `${info.atk}`)}${stat("Defense", `${info.def}`)}${stat("Module slots", `${info.slots}`)}${stat("Fit points", `${FITTING_POINTS[o.key] ?? 0}`)}</div>` : "";
+  // §fitting: the FITTING section — chips (ledger-gated), the used/total bar
+  // with per-module costs (red on overflow), the hull's affinity line, and the
+  // syndicate's saved DOCTRINE FITS for this hull (pick / save / delete).
+  let fitting = "";
+  const slots = MODULE_SLOTS[o.key] ?? 0;
+  if (slots > 0) {
+    const ledger = moduleLedgerAt(dyn.id);
+    const avail = MODULE_ALL.filter((m) => (ledger[m] ?? 0) > 0);
+    const chips = avail.map((m) => {
+      const on = pendingFit.includes(m);
+      return `<button class="act fit-chip${on ? " is-on" : ""}" data-fit="${m}" title="${esc(MODULE_TIP[m])} Costs ${MODULE_FIT_COST[m]} fitting pts.">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
+    }).join("");
+    const eff = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, slots);
+    const aff = affinityLine(o.key, eff);
+    const affNote = HULL_AFFINITY_NOTE[o.key]
+      ? `<div class="bp-d-line" title="Hull affinity — a named factor the sim applies to that module family on this hull.">${icon("intel", "sm")} hull affinity: <b>${esc(HULL_AFFINITY_NOTE[o.key])}</b>${aff ? ` — <span class="tone-up">${esc(aff)} active</span>` : ""}</div>`
+      : "";
+    // Saved doctrine fits for THIS hull (syndicate-wide; owner-only view).
+    const fits = (state.syndicate?.fits ?? []).filter((f) => f.kind === o.key);
+    const fitChips = fits.map((f) =>
+      `<span class="fit-saved"><button class="act fit-chip" data-fitpick="${esc(f.name)}" title="Apply this doctrine fit: ${f.modules.map((m) => esc(MODULE_LABEL[m])).join(" + ") || "stock"}">${esc(f.name)}</button>` +
+      `<button class="act fit-del" data-fitdel="${esc(f.name)}" title="Delete this fit from the syndicate library">✕</button></span>`).join(" ");
+    const canSave = eff.length > 0 && fitLegal(o.key, eff);
+    const fitLib = state.syndicate
+      ? `<div class="bp-d-line" style="margin-top:2px">${fitChips || `<span class="dim">no saved fits for this hull</span>`} ` +
+        `<button class="act fit-chip" data-fitsave="1" ${canSave ? "" : "disabled"} title="${canSave ? "Save the composed fit as a named syndicate doctrine fit" : "Compose a legal, non-empty fit first"}">💾 save fit…</button></div>`
+      : `<div class="bp-d-line dim">Join a syndicate to share doctrine fits.</div>`;
+    fitting = `<div class="bp-d-sec">Fitting — next build${eff.length ? "" : " (stock)"}</div>` +
+      `<div class="bp-d-line">${fittingBar(o.key, pendingFit.slice(0, Math.max(slots, pendingFit.length)))} <span class="dim">· ${slots} slot${slots > 1 ? "s" : ""}</span></div>` +
+      (avail.length ? `<div class="fit-row">${chips}</div>` : `<div class="bp-d-line dim">No modules in this system's ledger — manufacture some at an Armaments Complex.</div>`) +
+      affNote + fitLib;
+  }
   return `<div class="bp-d-head">${icon(SHIP_HULL_ICON[o.key] ?? "fleet", "md")} <b>${esc(o.label)}</b><span class="bp-d-tier">${st.yardShort ? `needs yard ${romanTier(st.needTier)}` : `${info?.slots ?? 0} slots`}</span></div>` +
     `<div class="bp-d-desc">${esc(info?.role ?? "")}</div>` +
     stepper +
@@ -3497,7 +3950,8 @@ function shipDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView): stri
     (st.yardShort ? `<div class="bp-d-warn">Requires Shipyard tier ${romanTier(st.needTier)} here — this system's yard is tier ${romanTier(st.yardTier)}.</div>` : "") +
     (!affordsQ ? `<div class="bp-d-warn">The stockpile covers ${st.maxAff} right now — queue that many, or wait for production.</div>` : "") +
     `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${timeLine}</div>` +
-    `<div class="bp-d-sec">Stats</div>${stats}<div class="bp-d-line" style="margin-top:4px">${esc(info?.cap ?? "")}</div>`;
+    `<div class="bp-d-sec">Stats</div>${stats}<div class="bp-d-line" style="margin-top:4px">${esc(info?.cap ?? "")}</div>` +
+    fitting;
 }
 function queueSelectedShips(): void {
   const sid = viewedSystemId();
@@ -3509,6 +3963,10 @@ function queueSelectedShips(): void {
   const st = shipOption(o, dyn);
   const q = Math.min(Math.max(1, shipQty), st.maxAff);
   if (st.yardShort || q < 1) return; // the button is disabled, but never trust the DOM
+  // §fitting: never dispatch an over-budget fit (the sim would soft-reject each).
+  const ledger = moduleLedgerAt(sid);
+  const eff = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, MODULE_SLOTS[shipSelectedKind] ?? 0);
+  if (eff.length && !fitLegal(shipSelectedKind, eff)) return;
   // §byte-identical: N × the exact BuildShip the inline row sent (the loadout comes
   // from the yard's fit picker via dispatchBuildKey, clamped per hull as before).
   for (let i = 0; i < q; i++) dispatchBuildKey(shipSelectedKind, sid);
@@ -3538,8 +3996,14 @@ function renderShipPanel(): void {
     : `<div class="bp-detail-empty">Select a hull to see its recipe, stats, and build time. Set a quantity, then queue the batch.</div>`;
   const selSt = selOpt ? shipOption(selOpt as BuildOpt, dyn) : null;
   const q = Math.max(1, shipQty);
-  const canQueue = !!selSt && !selSt.yardShort && q >= 1 && q <= selSt.maxAff;
-  const qTip = !selSt ? "Select a hull first." : selSt.yardShort ? selSt.reason : q > selSt.maxAff ? `The stockpile covers ${selSt.maxAff} right now.` : "Queue this batch — draws from the system stockpile.";
+  // §fitting: the queue button also gates on the composed fit's LEGALITY —
+  // what dispatch will actually send (ledger-filtered, slot-clamped).
+  const selKey = shipSelectedKind ?? "";
+  const ledger = sid ? moduleLedgerAt(sid) : {};
+  const effFit = pendingFit.filter((m) => (ledger[m] ?? 0) > 0).slice(0, MODULE_SLOTS[selKey] ?? 0);
+  const fitOk = !effFit.length || fitLegal(selKey, effFit);
+  const canQueue = !!selSt && !selSt.yardShort && q >= 1 && q <= selSt.maxAff && fitOk;
+  const qTip = !selSt ? "Select a hull first." : selSt.yardShort ? selSt.reason : q > selSt.maxAff ? `The stockpile covers ${selSt.maxAff} right now.` : !fitOk ? "The composed fit exceeds this hull's fitting budget — drop a module." : "Queue this batch — draws from the system stockpile.";
   // The yard's line: every ship job in the SYSTEM (ships build at the best yard).
   const queued = (dyn.builds ?? []).filter((j) => SHIP_KEYS.has(j.key));
   const queuedNote = queued.length ? `At the yard: <b>${queued.map((j) => esc(buildLabel(j.key))).join(", ")}</b>.` : "Nothing at the yard yet.";
@@ -3931,6 +4395,13 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
   const log = $("reports-log");
   const fmt = (l: import("./protocol").CompCount[]): string =>
     l.filter((c) => c.count > 0).map((c) => `${c.count} ${shipKindLabel(c.kind)}`).join(", ") || "none";
+  // §tactical T4: an interquartile band reads "4–7 Corvettes" (or just "5" when tight).
+  const fmtBands = (b: import("./protocol").LossRange[] | null | undefined): string | null => {
+    if (!b?.length) return null;
+    const parts = b.filter((x) => x.hi > 0)
+      .map((x) => `${x.lo === x.hi ? x.lo : `${x.lo}–${x.hi}`} ${shipKindLabel(x.kind)}`);
+    return parts.length ? parts.join(", ") : "none";
+  };
   const targetDesc = e.target_known
     ? "their exact composition"
     : `est. ${countClassLabel(e.target_count_class)} ships — <b>assuming typical hulls</b>`;
@@ -3938,10 +4409,35 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
   ages.push(e.defenses_age != null ? `defenses: scouted ${e.defenses_age.toFixed(0)}s ago` : `defenses: unknown`);
   const el = document.createElement("div");
   el.className = "report good";
+  // §tactical T4: lead with the distribution — "68% favorable · expected losses
+  // 4–7 Corvettes". Predictive Plots research widens the DISPLAY (their bands,
+  // rollout count) — the math underneath is identical either way.
+  const plots = state.research?.programmes.find((p) => p.id === "comp_predictive_plots")?.state === "completed";
+  const ownBand = fmtBands(e.own_loss_bands);
+  let lines: string;
+  if (e.win_pct != null && ownBand != null) {
+    const pct = Math.round(e.win_pct);
+    const tone = pct >= 55 ? "favorable" : pct >= 45 ? "even" : "unfavorable";
+    const verdict = `<b>${pct}% ${tone}</b> · expected losses ${esc(ownBand)}`;
+    const detail: string[] = [];
+    if (plots) {
+      const theirBand = fmtBands(e.target_loss_bands);
+      if (theirBand) detail.push(`their losses: ${theirBand}`);
+      if (e.runs != null) detail.push(`${e.runs} rollouts of the live engine`);
+    } else {
+      detail.push(`they'd lose: ${fmt(e.target_losses)} (median)`);
+    }
+    if (e.platform_tiers != null) detail.push(`through a ${e.platform_tiers}-tier platform`);
+    lines = `<div class="sp-line dim" style="margin-top:2px">${verdict}</div>` +
+      `<div class="sp-line dim">${esc(detail.join(" · "))}</div>`;
+  } else {
+    // Pre-distribution server: the old median-only readout.
+    lines = `<div class="sp-line dim" style="margin-top:2px">You'd lose: ${esc(fmt(e.own_losses))} · They'd lose: ${esc(fmt(e.target_losses))}${e.platform_tiers != null ? ` · through a ${e.platform_tiers}-tier platform` : ""}</div>`;
+  }
   el.innerHTML =
     `<span class="ic">⟿</span> <b>Projected raid</b> — ${targetDesc}` +
-    `<div class="sp-line dim" style="margin-top:2px">You'd lose: ${esc(fmt(e.own_losses))} · They'd lose: ${esc(fmt(e.target_losses))}${e.platform_tiers != null ? ` · through a ${e.platform_tiers}-tier platform` : ""}</div>` +
-    `<div class="sp-line dim">${esc(ages.join(" · "))} — exact arithmetic on stale inputs</div>`;
+    lines +
+    `<div class="sp-line dim">${esc(ages.join(" · "))} — the real engine, sampled, on stale inputs</div>`;
   log.prepend(el);
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 15000);
@@ -3978,13 +4474,14 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-type MarketTab = "exchange" | "specialists" | "modules";
+type MarketTab = "exchange" | "specialists" | "modules" | "supply";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
+  ($("market-pane-supply") as HTMLElement).hidden = tab !== "supply";
   document.querySelectorAll<HTMLElement>("#market-tabs button").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.mtab === tab));
   updateMarket();
@@ -4011,6 +4508,17 @@ function buildMarketPanel(): void {
       net.send({ type: "SellModule", module: b.dataset.msell as ModuleKind, n: 1, from_system: home });
       $("mod-feedback").textContent = `Selling a ${MODULE_LABEL[b.dataset.msell as ModuleKind]} to Sol — convoy away, clears on arrival.`;
     }
+  });
+  // §economy Supply: ship HQ-held goods → the selected owned system's stockpile
+  // (StockSystem). Lives on the Supply pane so market inventory stays in the Market.
+  $("market-pane-supply").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-supply-c]") as HTMLElement | null;
+    if (!b?.dataset.supplyC || !net) return;
+    const dest = ($("mk-supply-dest") as HTMLSelectElement).value;
+    const units = Number(b.dataset.supplyN) || 0;
+    if (!dest || units <= 0) return;
+    net.send({ type: "StockSystem", system_id: dest, commodity: b.dataset.supplyC as Commodity, units });
+    $("mk-supply-feedback").textContent = `Supply convoy away: ${units} ${label(b.dataset.supplyC as Commodity)} → ${systemName(dest)} (raidable).`;
   });
   // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
   // Lives on the Specialists pane; feedback lands where the player is looking.
@@ -4156,10 +4664,10 @@ function renderComposer(): void {
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods then cross fogged space to your home anchor as a delivery convoy — raidable in transit.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} <b>raidable</b> delivery</span>`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods cross fogged space as a raidable delivery convoy into your HQ INVENTORY — not a system's stockpile. Use the Supply tab to ship them to a system.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} to <b>HQ</b> (raidable)</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
-    $("mk-preview").innerHTML = `<span title="A convoy is dispatched now; it clears at the price ON ARRIVAL (not today's ${px}) and is raidable until it reaches the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} <b>dispatched now</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
+    $("mk-preview").innerHTML = `<span title="Ships from your HQ INVENTORY (not a system's stockpile — a system's fuel/goods are unaffected); the convoy clears at the price ON ARRIVAL (not today's ${px}) and is raidable to the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} from <b>HQ</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
 }
@@ -4189,6 +4697,7 @@ function updateMarket(): void {
   renderRestingOrders();
   renderSpecialistsPane();
   renderModulesPane();
+  renderSupplyPane();
 }
 
 function addTradeNews(t: TradeEvent): void {
@@ -4196,7 +4705,11 @@ function addTradeNews(t: TradeEvent): void {
   let text = "";
   switch (t.event) {
     case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
-    case "Delivered": text = `Delivery arrived: +${t.units} ${label(t.commodity)} (stored at destination).`; break;
+    case "Delivered": text = t.system
+      ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — added to your HQ stock (Exchange). Use “Supply from HQ” in a system to feed its converters.`;
+      break;
+    case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
     case "Sold": text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
@@ -4931,7 +5444,13 @@ function join(): void {
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
           state.captureReports = msg.capture_reports;
-          state.battleRecords = msg.battle_records ?? []; // §battle-records: replay timelines
+          // §battle-records: replay timelines. The scripted §theater demo
+          // record (a client-only debug rig) survives server view replaces.
+          {
+            const demo = state.battleRecords.find((r) => r.id === "demo-battle");
+            state.battleRecords = msg.battle_records ?? [];
+            if (demo) state.battleRecords.push(demo);
+          }
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];

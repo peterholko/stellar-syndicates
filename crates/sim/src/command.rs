@@ -93,6 +93,19 @@ pub enum Command {
         system_id: EntityId,
     },
 
+    /// SUPPLY FROM HQ: move `units` of `commodity` from the corp's HQ trading
+    /// inventory into an OWNED system's stockpile, carried by a sub-light,
+    /// raidable convoy. This is the bridge from the market pool (what buys fill)
+    /// to a system's production stockpile (what converters/refineries consume and
+    /// the system view shows). Ignored unless the player owns the target system
+    /// and holds at least `units` of the commodity at HQ.
+    StockSystem {
+        player_id: PlayerId,
+        system_id: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
     /// Create or replace a standing logistics order (§15) — a constrained
     /// automation rule the corp runs server-side, online or off. INSTANT local
     /// administration (like a limit order): it changes only the player's own
@@ -421,4 +434,24 @@ pub enum Command {
         cap: crate::research::Cap,
         target: crate::research::DesignationTarget,
     },
+
+    /// §fitting: SAVE a doctrine fit (named hull + loadout) on the caller's
+    /// syndicate. CC-local instant admin. Validates the loadout against the
+    /// hull's slots + fitting budget; replaces a same-name fit; soft-rejects
+    /// past the fit cap or on an illegal/unnamed fit.
+    SaveFit {
+        player_id: PlayerId,
+        name: String,
+        ship: crate::ship::ShipKind,
+        loadout: crate::module::Loadout,
+    },
+
+    /// §fitting: DELETE a doctrine fit by name from the caller's syndicate.
+    /// CC-local instant admin; unknown names soft-reject (no-op).
+    DeleteFit { player_id: PlayerId, name: String },
+
+    /// §ladder B4: NAME the syndicate's flagship (its one Titan). CC-local
+    /// instant admin, any member; an empty name un-christens. The name is a
+    /// LABEL — it never touches sim outcomes.
+    NameFlagship { player_id: PlayerId, name: String },
 }

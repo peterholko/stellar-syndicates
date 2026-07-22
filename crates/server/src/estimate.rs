@@ -1,9 +1,11 @@
-//! The STALE-INTEL battle calculator (§FLEETS Part 3).
+//! The STALE-INTEL battle calculator (§FLEETS Part 3, §tactical T4 — Monte
+//! Carlo).
 //!
 //! When a player is about to commit an intercept/raid, they get a PROJECTED
-//! engagement estimate — computed by running the SAME shared Lanchester
-//! attrition ([`sim::project_engagement`]) forward, fed ONLY by that observer's
-//! own view data:
+//! engagement estimate — computed by SAMPLING the real tactical engine
+//! ([`sim::tactical::project_distribution`] → k seeded headless rollouts of
+//! [`sim::tactical::simulate_engagement`]), fed ONLY by that observer's own
+//! view data:
 //!
 //!   * **Own fleet** — exact (you know your own ships).
 //!   * **Target** — its ghost at the retarded state: exact composition when it's
@@ -12,19 +14,18 @@
 //!   * **Defenses** — a defense platform from the player's aging scout snapshot
 //!     if one covers the target, else unknown.
 //!
-//! It MUST call the shared combat function (no reimplementation, no drift) and
-//! MUST NOT touch authoritative state — it only reads the world (own fleet) and
-//! the view filter (what the observer can see). The output is honest about the
-//! age of every input.
+//! The no-drift law survives the engine swap: the projection IS reality's
+//! exact function, sampled, on stale inputs — never a reimplementation. It
+//! MUST NOT touch authoritative state — it only reads the world (own fleet)
+//! and the view filter (what the observer can see). The output is honest about
+//! the age of every input, and honest about VARIANCE: a win percentage and
+//! interquartile loss bands, not a single false-precision number.
 
 use sim::{PlayerId, Vec2, World};
 
 use crate::protocol::{CompCount, EngagementEstimate};
 use crate::view::{NodeEffects, PositionHistory};
 
-/// Ticks to project forward before giving up (a hard cap for a runaway
-/// stalemate; real engagements resolve far sooner).
-const MAX_PROJECTION_TICKS: u32 = 100_000;
 
 fn comp_to_view(comp: &std::collections::BTreeMap<sim::ShipKind, u32>) -> Vec<CompCount> {
     comp.iter().filter(|(_, n)| **n > 0).map(|(k, n)| CompCount { kind: *k, count: *n }).collect()
@@ -51,7 +52,6 @@ pub fn estimate_engagement(
     if own_fleet.owner != viewer {
         return None; // can only estimate for your own attacker
     }
-    let own = sim::Forces::from_fleet(&own_fleet.composition, &own_fleet.damage);
 
     // TARGET — only what the observer's view reveals. Find its ghost. §node: feed
     // the viewer's regional effects so a Deep-Scan target reads as exact (the
@@ -96,38 +96,70 @@ pub fn estimate_engagement(
         }
     }
 
-    // Rate + retreat, mirroring the authoritative sim: a cargo raid (target
-    // flagship convoy) is a skirmish; own doctrine's threshold governs when the
-    // attacker would withdraw (the target's is unknown → assume it fights on).
+    // §tactical T4: the calculator is MONTE CARLO now — k rollouts of the REAL
+    // engine (headless, pure, derived seeds) over this observer's stale view
+    // data. Still reality's exact function, sampled, on fogged inputs.
     let raid = ghost.kind == sim::ShipKind::Convoy;
-    // A raid uses the fixed quick RAID_RATE; a battle uses the config-scaled rate.
-    let rate = if raid {
-        sim::combat::RAID_RATE
-    } else {
-        sim::combat::dmg_rate(world.config.battle_target_secs)
-    };
-    let own_retreat = world
-        .players
-        .get(&viewer)
-        .and_then(|c| c.doctrine.retreat.min_ratio())
-        .map(|m| 1.0 - m);
+    let own_retreat = world.players.get(&viewer).and_then(|c| c.doctrine.retreat.min_ratio());
 
-    // Run the SHARED attrition forward — no reimplementation, no drift.
-    let (own_after, target_after, own_losses, target_losses) =
-        sim::project_engagement(&own, &target_forces, rate, own_retreat, None, MAX_PROJECTION_TICKS);
+    // Own side EXACT — composition + fitted stacks + carried per-kind damage
+    // (spread under the unfitted key: a projection-grade approximation).
+    let a = sim::tactical::stacked(&own_fleet.composition, &own_fleet.loadouts);
+    let mut a_pool: sim::combat::StackPoolMap = std::collections::BTreeMap::new();
+    for (k, dmg) in &own_fleet.damage {
+        if *dmg > 0.0 {
+            a_pool.entry(*k).or_default().insert(String::new(), *dmg);
+        }
+    }
+    // Target side exactly as the view shows it: exact comp (+ revealed fitted
+    // stacks) inside coverage, else the bucket-midpoint typical warfleet.
+    let d = {
+        let comp = target_forces.comp();
+        let mut lm: sim::combat::LoadoutMap = std::collections::BTreeMap::new();
+        if let Some(stacks) = &ghost.loadouts {
+            for st in stacks {
+                let key = sim::Loadout::new(st.modules.clone()).key();
+                if !key.is_empty() {
+                    *lm.entry(st.kind).or_default().entry(key).or_insert(0) += st.n;
+                }
+            }
+        }
+        sim::tactical::stacked(&comp, &lm)
+    };
+    let setup = sim::tactical::ProjSetup {
+        a,
+        d,
+        a_pool,
+        d_pool: std::collections::BTreeMap::new(),
+        platform_tiers: platform_tiers.unwrap_or(0),
+        raid,
+        a_retreat: own_retreat,
+        d_retreat: None, // the target's doctrine is unknown → assume it fights on
+    };
+    // Deterministic per (galaxy, attacker, target): the readout is stable
+    // between refreshes; the spread comes from the k derived rollout seeds.
+    let base_seed = world.config.seed ^ attacker.0.rotate_left(17) ^ target.0.rotate_left(41);
+    let dist = sim::tactical::project_distribution(&setup, base_seed, 32);
+    let band = |b: &[sim::tactical::LossBand]| -> Vec<crate::protocol::LossRange> {
+        b.iter().map(|x| crate::protocol::LossRange { kind: x.kind, lo: x.lo, hi: x.hi }).collect()
+    };
 
     Some(EngagementEstimate {
         attacker,
         target,
-        own_losses: comp_to_view(&own_losses.per_kind),
-        target_losses: comp_to_view(&target_losses.per_kind),
-        own_survivors: comp_to_view(&own_after.comp()),
-        target_survivors: comp_to_view(&target_after.comp()),
+        own_losses: comp_to_view(&dist.median.a_losses),
+        target_losses: comp_to_view(&dist.median.d_losses),
+        own_survivors: comp_to_view(&dist.median.a_survivors),
+        target_survivors: comp_to_view(&dist.median.d_survivors),
         target_known,
         target_count_class: ghost.count_class,
         composition_age,
         defenses_age,
         platform_tiers,
+        win_pct: Some(dist.a_win_pct),
+        runs: Some(dist.runs),
+        own_loss_bands: band(&dist.a_bands),
+        target_loss_bands: band(&dist.d_bands),
     })
 }
 

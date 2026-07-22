@@ -94,6 +94,23 @@ impl Timeline {
                         }
                     }
                 }
+                // §ladder B4: a Titan dying is HEADLINE news — every corp hears
+                // it (light-delayed from the wreck; the owner instantly).
+                EventPayload::FlagshipDestroyed { owner, name, pos, .. } => {
+                    let title = match name {
+                        Some(n) => format!("The *{n}* is destroyed."),
+                        None => "A Titan is destroyed.".to_string(),
+                    };
+                    let wreck = *pos;
+                    for (&p, corp) in &world.players {
+                        if p == *owner {
+                            self.push(p, e.time, TimelineSeverity::Bad, format!("{title} Your syndicate's flagship is gone — the yards may lay a new keel."));
+                        } else {
+                            let observe = e.time + wreck.distance(corp.command_center) / c;
+                            self.push(p, observe, TimelineSeverity::Warn, title.clone());
+                        }
+                    }
+                }
                 // Construction is your own private administration (§step1) — owner-only,
                 // observable instantly; the finished ship reveals as a light-gated ghost.
                 EventPayload::BuildStarted { owner, system, what, .. } => {
@@ -118,6 +135,14 @@ impl Timeline {
                         ),
                         sim::BuildRejectReason::NeedsShipyard { required } => format!(
                             "Can't build {} at {name}: needs Shipyard tier {required} there.",
+                            build_label(*what)
+                        ),
+                        sim::BuildRejectReason::NeedsResearch => format!(
+                            "Can't build {} at {name}: its hull hasn't been researched — complete the Line programme on the Hulls board.",
+                            build_label(*what)
+                        ),
+                        sim::BuildRejectReason::TitanFielded => format!(
+                            "Can't build {} at {name}: your syndicate already fields its Titan — one flagship per syndicate (rebuild only after it is lost).",
                             build_label(*what)
                         ),
                     };
@@ -548,6 +573,11 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
                 sim::ShipKind::Scout => "scout",
+                sim::ShipKind::Destroyer => "destroyer",
+                sim::ShipKind::Cruiser => "cruiser",
+                sim::ShipKind::Battleship => "battleship",
+                sim::ShipKind::Dreadnought => "dreadnought",
+                sim::ShipKind::Titan => "titan",
             };
             format!("your {k} fleet")
         }
@@ -569,6 +599,11 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "a Destroyer",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "a Cruiser",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Battleship } => "a Battleship",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Dreadnought } => "a Dreadnought",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Titan } => "a Titan",
         sim::BuildKind::Upgrade { upgrade } => upgrade.title(),
         // §economy Part 4: an Academy course — label by profession.
         sim::BuildKind::Train { specialist } => match specialist {
@@ -596,6 +631,11 @@ fn kind_word(k: ShipKind) -> &'static str {
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
         ShipKind::Scout => "scout",
+        ShipKind::Destroyer => "destroyer",
+        ShipKind::Cruiser => "cruiser",
+        ShipKind::Battleship => "battleship",
+        ShipKind::Dreadnought => "dreadnought",
+        ShipKind::Titan => "titan",
     }
 }
 
@@ -800,6 +840,7 @@ mod tests {
                     player: a,
                     commodity: Commodity::MetallicOre,
                     units: i + 1,
+                    system: None,
                 }),
             );
             tl.ingest(&[ev], &w);

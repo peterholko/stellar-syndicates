@@ -436,6 +436,18 @@
          grows/truncates, everything after it stays inline at content width. */
       .sys-prod--flow { display: flex; align-items: center; gap: 8px; }
       .sys-prod--flow .sp-name { flex: 1 1 auto; }
+      /* §economy Supply-from-HQ rows (Market → Supply tab): a 3-column grid so the
+         name, amount, and buttons line up in aligned columns across rows, with the
+         buttons kept tight next to the amount. Rows use display:contents so their
+         cells flow into the parent grid. */
+      #mk-supply-rows { display: grid; grid-template-columns: auto auto auto; column-gap: 10px; row-gap: 5px; align-items: center; font-size: 11px; width: fit-content; margin-inline: auto; }
+      #mk-supply-rows > .mhint { grid-column: 1 / -1; }
+      .supply-row { display: contents; }
+      .supply-row .sr-name { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .supply-row .sr-qty { text-align: right; font-variant-numeric: tabular-nums; }
+      .supply-row .supply-btns { display: flex; gap: 5px; flex-wrap: nowrap; margin-left: 16px; }
+      .act.act--mini { width: auto; margin: 0; padding: 3px 8px; font-size: 11px; display: inline-flex; line-height: 1.2; white-space: nowrap; }
+      .conv-idle { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
       /* The crew ± / "+ crew" controls are the full-width stacked .act by
          default (see the #planet-panel .act rule) — in this flex line they must
          stay content-sized, or they grow and starve the name. Same override the
@@ -455,6 +467,17 @@
       .fit-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
       .fit-chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; opacity: 0.7; }
       .fit-chip.is-on { opacity: 1; border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+      /* §fitting: the FITTING BAR (used/total points + per-module cost chips;
+         red when over budget), the grandfathered "legacy fit" tag, and the
+         saved doctrine-fit chips with their delete button. */
+      .fitbar { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+      .fitbar.is-over, .fitbar.is-over b { color: var(--negative); }
+      .fitbar .fitbar-over { font-size: 9px; letter-spacing: 0.5px; color: var(--negative); font-weight: 700; }
+      .fit-cost-chip { font-size: 10px; padding: 0 4px; border: 1px solid var(--border); border-radius: 8px; color: var(--dim); white-space: nowrap; }
+      .fit-legacy { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; padding: 0 5px; }
+      .fit-saved { display: inline-flex; align-items: center; gap: 0; }
+      .fit-saved .fit-del { padding: 2px 5px; font-size: 10px; color: var(--dim); }
+      .fit-saved .fit-del:hover { color: var(--negative); }
       /* Storage fill bar (X / CAP) under the stat strip; warns when full. */
       /* §build-progress: construction queue rows (Travian-style). */
       .bq-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
@@ -486,6 +509,30 @@
       /* Section divider between the System panel's info groups (stockpile /
          planets / colony vitals / queue). */
       #svm-body .svm-div { height: 0; border-top: 1px solid var(--border); margin: 2px 0 10px; }
+
+      /* §tactical T3: the battle viewer's TRUTH MAP (keyframe replay). */
+      .bv-truth { margin: 6px 0 2px; border: 1px solid var(--border); border-radius: 6px; background: rgba(10,16,22,0.6); overflow: hidden; }
+      .bv-truth svg { display: block; width: 100%; height: 150px; }
+
+      /* §theater: the battle theater canvas (ship sprites + weapon FX). */
+      .bv-theater { margin: 6px 0 2px; border: 1px solid var(--border); border-radius: 6px; background: #05070d; overflow: hidden; }
+      .bv-theater-holder { position: relative; display: flex; justify-content: center; }
+      .bv-theater-holder canvas { display: block; max-width: 100%; }
+      .bv-theater-tip {
+        position: absolute; pointer-events: none; z-index: 3; max-width: 200px;
+        padding: 3px 7px; font-size: 11px; line-height: 1.35; color: var(--fg);
+        background: rgba(8, 13, 20, 0.92); border: 1px solid var(--border); border-radius: 5px;
+      }
+      .bv-theater-hint {
+        position: absolute; right: 8px; bottom: 6px; pointer-events: none; z-index: 2;
+        font-size: 10px; letter-spacing: 0.04em; color: var(--dim); opacity: 0.75;
+      }
+      .bv-theater-banner {
+        position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+        pointer-events: none; z-index: 2; white-space: nowrap;
+        font-size: 15px; font-weight: 700; letter-spacing: 0.14em; color: #ffd98a;
+        text-shadow: 0 0 14px rgba(255, 160, 90, 0.8), 0 1px 2px #000;
+      }
 
       /* ---- Market board (MARKET tab) ---- */
       .board__row {
@@ -872,9 +919,11 @@
       /* ---- §battle-records: the BATTLE VIEWER overlay (the light-cone replay) ----
              House width, centered like the Market, stacked above it (z 9). ---- */
       #battle-viewer {
-        position: fixed; top: 62px; left: 50%; transform: translateX(-50%);
+        position: fixed; top: 34px; left: 50%; transform: translateX(-50%);
         display: none;
-        width: min(760px, 94vw); max-height: 82vh; overflow-y: auto;
+        /* §theater: 50% wider than the original 760px panel — the theater
+           canvas (1068×672) is the centerpiece and needs the room. */
+        width: min(1140px, 96vw); max-height: 92vh; overflow-y: auto;
         padding: 12px 16px 14px;
         background: var(--panel-bg);
         border: 1px solid var(--border); border-top: 2px solid #d08a5a; border-radius: 8px;
@@ -1099,9 +1148,11 @@
         <button data-mtab="exchange" class="is-active" role="tab">Exchange</button>
         <button data-mtab="specialists" role="tab">Specialists</button>
         <button data-mtab="modules" role="tab">Modules</button>
+        <button data-mtab="supply" role="tab">Supply</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
+        <div class="mhint" style="margin-bottom:6px">Trades your <b>HQ inventory</b> — goods held at HQ, <b>separate from your systems' stockpiles</b>. Buy delivers here; Sell ships from here. To feed a system's converters, use the <b>Supply</b> tab.</div>
+        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your HQ inventory — the tradeable pool Buy/Sell use. This is NOT a system's stockpile.">HQ</span></div>
         <div id="market-board"></div>
         <div class="composer">
           <div class="composer__row"><label>Order</label>
@@ -1123,6 +1174,12 @@
       <div id="market-pane-modules" hidden>
         <div id="mod-rows"></div>
         <div class="mhint" id="mod-feedback"></div>
+      </div>
+      <div id="market-pane-supply" hidden>
+        <div class="mhint">Ship goods held in your HQ trading pool into a system's stockpile — to feed its converters. Sub-light and raidable.</div>
+        <div class="composer__row" style="margin-top:8px"><label>To system</label><select id="mk-supply-dest"></select></div>
+        <div id="mk-supply-rows" style="margin-top:8px"></div>
+        <div class="mhint" id="mk-supply-feedback"></div>
       </div>
     </div>
 

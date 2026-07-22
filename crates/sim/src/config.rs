@@ -59,13 +59,16 @@ pub struct SimConfig {
 
     /// The target DURATION (seconds) two EQUAL reference forces take to grind to
     /// their retreat thresholds — the strategic timescale of a decisive battle.
-    /// Drives the Lanchester damage rate ([`crate::combat::dmg_rate`] =
-    /// `DMG_RATE_CALIBRATION / battle_target_secs`). PRESETS: **playtest ≈ 45 s**
-    /// (30–60 s band — travel is quick in the 12-player galaxy) · **production
-    /// ≈ 2700 s** (30–60 min — battles at the scale of light-delays and relief
-    /// travel). Lopsided fights still end fast; a safety valve
-    /// ([`crate::combat::MAX_BATTLE_MULT`]) caps a no-retreat grind. serde default
-    /// keeps old snapshots loading.
+    /// §tactical: drives the engine's step CADENCE
+    /// ([`crate::tactical::tac_step_ticks`] — short playtest battles step at
+    /// 2 Hz so tactics stay visible, production at 1 Hz), with the per-step
+    /// to-hit/damage calibration ([`crate::tactical::HIT_DMG_CAL`]) tuned so
+    /// equal reference forces resolve near this target. PRESETS: **playtest
+    /// ≈ 45 s** (30–60 s band — travel is quick in the 12-player galaxy) ·
+    /// **production ≈ 2700 s** (30–60 min — battles at the scale of
+    /// light-delays and relief travel). Lopsided fights still end fast; a
+    /// safety valve ([`crate::combat::MAX_BATTLE_MULT`]) caps a no-retreat
+    /// grind. serde default keeps old snapshots loading.
     #[serde(default = "default_battle_target_secs")]
     pub battle_target_secs: f64,
 

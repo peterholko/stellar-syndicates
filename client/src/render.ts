@@ -46,8 +46,8 @@ const COL_SYSTEM = 0x4a5d7a;
 // deposit-value sizing + dominant-resource tint were geology leaks).
 const BAND_SIZE: Record<string, number> = { poor: 22, fair: 32, rich: 44 };
 const BAND_GLOW: Record<string, number> = { poor: 5, fair: 10, rich: 16 };
-const COL_OWN = 0x4fc3ff;
-const COL_OTHER = 0xff7a6b;
+export const COL_OWN = 0x4fc3ff; // exported: the battle theater reuses the team palette
+export const COL_OTHER = 0xff7a6b; // exported: the battle theater reuses the team palette
 // §syndicates: a SYNDICATE ally — a friendly GREEN, distinct from own cyan and
 // rival red (and from the teal sensor bubbles). Applied per the viewer's
 // light-delayed membership knowledge (the `ally` view flag).
@@ -266,6 +266,12 @@ export class Renderer {
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
+  // §ladder: the capital ladder (sliced from the capital-ships sheet).
+  private texDestroyer: Texture | null = null;
+  private texCruiser: Texture | null = null;
+  private texBattleship: Texture | null = null;
+  private texDreadnought: Texture | null = null;
+  private texTitan: Texture | null = null;
   // §fleet-lod: bold low-detail fleet icons shown at far zoom-out (freighter =
   // convoy, raider, corvette). Null → the detailed art is used at every zoom.
   private texIconFreighter: Texture | null = null;
@@ -360,6 +366,19 @@ export class Renderer {
       load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
     ]);
+    // §ladder: the capital ladder, same 256px top-down/nose-up idiom.
+    const [destroyer, cruiser, battleship, dreadnought, titan] = await Promise.all([
+      load("/art/ship_sprites/destroyer_line_ship.png"),
+      load("/art/ship_sprites/cruiser_line_ship.png"),
+      load("/art/ship_sprites/battleship_line_ship.png"),
+      load("/art/ship_sprites/dreadnought_line_ship.png"),
+      load("/art/ship_sprites/titan_flagship.png"),
+    ]);
+    this.texDestroyer = destroyer;
+    this.texCruiser = cruiser;
+    this.texBattleship = battleship;
+    this.texDreadnought = dreadnought;
+    this.texTitan = titan;
     // The landmark is ONE 1254px texture drawn from a ~72px marker all the way
     // up to native 1:1 — enable mipmap generation so the minified marker keeps
     // trilinear filtering (no shimmer/aliasing at normal zoom); linear mag
@@ -1341,6 +1360,12 @@ export class Renderer {
       case "corvette": return this.texCorvette;
       case "colony": return this.texColony;
       case "scout": return this.texScout;
+      // §ladder: the capital ladder (null until loaded — primitive fallback).
+      case "destroyer": return this.texDestroyer;
+      case "cruiser": return this.texCruiser;
+      case "battleship": return this.texBattleship;
+      case "dreadnought": return this.texDreadnought;
+      case "titan": return this.texTitan;
     }
   }
 
@@ -1353,6 +1378,14 @@ export class Renderer {
       case "corvette": return "corvette";
       case "scout": return "scout";
       case "colony": return null;
+      // §ladder: a capital IS the formation — always the single (placeholder)
+      // hull + count badge, like the colony ship.
+      case "destroyer":
+      case "cruiser":
+      case "battleship":
+      case "dreadnought":
+      case "titan":
+        return null;
     }
   }
 
@@ -1468,7 +1501,11 @@ export class Renderer {
   /// All kinds converge to the SAME max size: up close the art's SHAPE
   /// distinguishes convoy vs raider, so identical max size is intended.
   private shipSizePx(kind: ShipKind): number {
-    const base = kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT;
+    // §ladder: capitals scale by MASS CLASS — each rung visibly bigger, the
+    // Titan the largest thing flying (procedural placeholder sizing).
+    const capital: Partial<Record<ShipKind, number>> = { destroyer: 52, cruiser: 60, battleship: 70, dreadnought: 82, titan: 96 };
+    const base = capital[kind]
+      ?? (kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT);
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
     return this.deepZoomPx(indicator, SHIP_MAX_PX);
