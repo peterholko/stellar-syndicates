@@ -79,7 +79,7 @@ pub use ship::{
     TradeMission, TransitMode, ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
-pub use tca::{FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
+pub use tca::{charter_status, CharterStatus, FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
 pub use syndicate::{
     syndicate_cap, DoctrineFit, Syndicate, SYNDICATE_MAX_FITS, SYNDICATE_MAX_FRAC,
     SYNDICATE_MIN_CAP,

@@ -276,6 +276,30 @@ pub struct WalletView {
     pub fuel_total: f64,
 }
 
+/// §TCA Phase 2: the viewer's own CHARTER STANDING with the Authority, and the
+/// band it derives. OWNER-ONLY — your legal standing is between you and the
+/// Charterhouse; rivals learn of your offenses only from the PUBLIC citations
+/// that travel at lightspeed, never by reading your record.
+#[derive(Debug, Clone, Serialize)]
+pub struct CharterView {
+    pub standing: f64,
+    pub max_standing: f64,
+    /// The derived band ("good_standing" … "proscribed").
+    pub status: sim::CharterStatus,
+    /// Human title of the band, for the status chip.
+    pub title: &'static str,
+    /// The band ladder's thresholds, so the client can draw the ladder without
+    /// duplicating the constants: (title, standing at/below which it applies).
+    pub ladder: Vec<(&'static str, f64)>,
+    /// Freight-fee multiplier currently applied (1.0 in good standing).
+    pub tariff_mult: f64,
+    /// Exchange penalty fee currently applied, as a fraction of trade value
+    /// (0.0 in good standing — good-standing players pay nothing).
+    pub market_penalty_frac: f64,
+    /// Credits per standing point to buy back through reinstatement.
+    pub reinstate_cost_per_point: f64,
+}
+
 /// Which side of a raid the recipient is on.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -1252,6 +1276,10 @@ pub enum ServerMsg {
         market: MarketView,
         /// The player's own credits + holdings (fresh).
         wallet: WalletView,
+        /// §TCA Phase 2: the player's OWN charter standing and band. Owner-only —
+        /// rivals learn of offenses only through public citations, never by
+        /// reading a corporation's record.
+        charter: CharterView,
         /// The player's own standing logistics orders (§15) — fresh (own private
         /// policy, not light-gated, like the wallet). Lets the client list/edit them
         /// and show what's running automatically.

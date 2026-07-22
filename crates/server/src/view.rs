@@ -1610,6 +1610,43 @@ mod tests {
         assert!(rv[0].trait_.is_none(), "my trait never reaches the rival's wire");
     }
 
+    /// §TCA Phase 2: CHARTER STANDING is OWNER-ONLY. A rival learns of your
+    /// offenses from the PUBLIC citations that travel at lightspeed — never by
+    /// reading your record. Leak-checked both directions: the view a player is
+    /// built carries only their OWN standing, and a corporation's standing never
+    /// appears on any surface addressed to someone else.
+    #[test]
+    fn charter_standing_is_owner_only() {
+        // The per-player charter block is assembled from `corp.tca_standing` for
+        // the VIEWER's own corp only (game_loop), and the ladder/derivations are
+        // pure functions of that one number. Assert the shape that guarantees it:
+        // nothing in the sim's public surfaces exposes another corp's standing.
+        let mut w = sim::World::new(sim::SimConfig::for_players(7, 4));
+        let (me, rival) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            sim::Command::AddPlayer { id: me, name: "Me".into() },
+            sim::Command::AddPlayer { id: rival, name: "Rival".into() },
+        ]);
+        w.players.get_mut(&rival).unwrap().tca_standing = -50.0; // deep outlaw
+        assert_eq!(sim::charter_status(w.players[&rival].tca_standing), sim::CharterStatus::Proscribed);
+
+        // The PUBLIC leaderboard is the one CROSS-CORP roster on the wire. Run to
+        // a ledger close so it actually publishes, then check it names no standing.
+        while w.rankings.is_empty() {
+            w.step(&[]);
+        }
+        assert!(w.rankings.iter().any(|r| r.player_id == rival), "the rival is on the public board");
+        let rankings = serde_json::to_string(&w.rankings).unwrap();
+        assert!(!rankings.contains("standing"), "leak: the public board must not carry charter standing");
+        assert!(!rankings.contains("charter"), "leak: nor the derived band");
+
+        // And my own view of the rival's corp record is not reachable: the only
+        // per-corp standing read is keyed by the viewer's own id.
+        let mine = w.players[&me].tca_standing;
+        assert_eq!(mine, sim::tca::TCA_STANDING_START, "my own standing is mine to see");
+        assert_ne!(mine, w.players[&rival].tca_standing, "the rival's is a different number entirely");
+    }
+
     /// BLOCKADE state (§contestable-territory Part 1) is surfaced to the two
     /// PARTICIPANTS only, each light-honestly: the BESIEGER sees it instantly
     /// (their fleet is there); the OWNER only once the onset light reaches their

@@ -64,6 +64,15 @@ pub struct Corporation {
     /// leased-bay handoff lands. Every inflow path here deposits unconditionally.
     #[serde(default)]
     pub warehouse: BTreeMap<crate::cargo::Commodity, u32>,
+    /// §TCA Phase 2: CHARTER STANDING with the Terran Charter Authority. Starts
+    /// (and regenerates back) to [`crate::tca::TCA_STANDING_START`]; each incident
+    /// against an Authority hull decrements it once the citation's light reaches
+    /// the hub. The BAND (`CharterStatus`) is always derived from this by
+    /// [`crate::tca::charter_status`] and never stored, so there is no cached copy
+    /// to desync. `#[serde(default = …)]` so every pre-law snapshot loads in GOOD
+    /// STANDING — nobody is retroactively an outlaw.
+    #[serde(default = "default_tca_standing")]
+    pub tca_standing: f64,
     /// Equity / net worth, recomputed on a slow cadence (§9) to avoid
     /// share-price noise: credits + goods (held, in-transit, and reserved in
     /// resting orders) at market value + buy-order escrow.
@@ -162,6 +171,13 @@ struct PendingOrder {
     /// The order flavor, for the lifecycle panel/digest.
     #[serde(default = "default_order_kind")]
     kind: crate::event::OrderKind,
+}
+
+/// serde default for [`Corporation::tca_standing`] (§TCA Phase 2) — a pre-law
+/// snapshot loads every corporation in GOOD STANDING; nobody is retroactively an
+/// outlaw.
+fn default_tca_standing() -> f64 {
+    crate::tca::TCA_STANDING_START
 }
 
 fn default_order_kind() -> crate::event::OrderKind {
@@ -1394,6 +1410,17 @@ impl World {
         //    batch cadence (the uniform-price call auction, §9).
         self.tick += 1;
         self.time += DT;
+
+        // §TCA Phase 2: CHARTER STANDING regenerates, unconditionally and at the
+        // same rate in EVERY band. Time served is time served — the Authority's
+        // memory fades whether or not you are currently proscribed, so no player
+        // is ever permanently locked out by arithmetic alone. Deterministic (a
+        // fixed rate × dt), clamped to the ceiling.
+        for corp in self.players.values_mut() {
+            corp.tca_standing = (corp.tca_standing + crate::tca::TCA_STANDING_REGEN_PER_SEC * DT)
+                .min(crate::tca::TCA_STANDING_MAX);
+        }
+
         if self.tick.is_multiple_of(MARKET_UPDATE_TICKS) {
             self.market.drift(&mut self.rng);
         }
@@ -3782,6 +3809,8 @@ impl World {
                         // them to the Exchange via freight or a convoy when it
                         // wants to trade them.
                         warehouse: BTreeMap::new(),
+                        // §TCA Phase 2: a fresh corp is issued a clean charter.
+                        tca_standing: crate::tca::TCA_STANDING_START,
                         valuation: 10_000.0,
                         standing_orders: Vec::new(),
                         next_standing_id: 0,
@@ -7658,6 +7687,63 @@ mod tests {
         }
     }
 
+    /// §TCA Phase 2: charter standing REGENERATES unconditionally, at the same
+    /// rate in every band, and clamps at the ceiling. Time served is time served:
+    /// nobody is permanently locked out by arithmetic alone.
+    #[test]
+    fn charter_standing_regenerates_in_every_band_and_clamps() {
+        let mut w = test_world();
+        let (clean, outlaw) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: clean, name: "Clean".into() },
+            Command::AddPlayer { id: outlaw, name: "Outlaw".into() },
+        ]);
+        // A fresh charter starts at full standing, in good standing.
+        assert_eq!(w.players[&clean].tca_standing, crate::tca::TCA_STANDING_START);
+        assert_eq!(crate::tca::charter_status(w.players[&clean].tca_standing), crate::tca::CharterStatus::GoodStanding);
+
+        // Drive one corp deep into Proscribed and run a while.
+        w.players.get_mut(&outlaw).unwrap().tca_standing = crate::tca::TCA_PROSCRIBED_AT - 5.0;
+        let ticks = 20 * crate::config::TICK_HZ as u64;
+        for _ in 0..ticks {
+            w.step(&[]);
+        }
+        let secs = ticks as f64 * DT;
+        let expect = crate::tca::TCA_PROSCRIBED_AT - 5.0 + crate::tca::TCA_STANDING_REGEN_PER_SEC * secs;
+        assert!(
+            (w.players[&outlaw].tca_standing - expect).abs() < 1e-6,
+            "regen applies in the WORST band too (got {}, want {expect})",
+            w.players[&outlaw].tca_standing
+        );
+        // The clean corp is pinned at the ceiling, never above it.
+        assert_eq!(w.players[&clean].tca_standing, crate::tca::TCA_STANDING_MAX, "regen clamps at the ceiling");
+    }
+    /// §TCA Phase 2 (snapshot compatibility): a PRE-LAW snapshot has no
+    /// `tca_standing` at all — every corporation must load in GOOD STANDING.
+    /// Nobody is retroactively an outlaw.
+    #[test]
+    fn a_pre_law_snapshot_loads_every_corp_in_good_standing() {
+        let mut w = test_world();
+        let id = PlayerId(4);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // A corp that HAD fallen…
+        w.players.get_mut(&id).unwrap().tca_standing = 5.0;
+        let json = serde_json::to_string(&w).unwrap();
+
+        // …but whose snapshot predates the law entirely.
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for (_pid, corp) in v.get_mut("players").unwrap().as_object_mut().unwrap().iter_mut() {
+            corp.as_object_mut().unwrap().remove("tca_standing");
+        }
+        let stripped = serde_json::to_string(&v).unwrap();
+        assert!(!stripped.contains("tca_standing"));
+
+        let old: World = serde_json::from_str(&stripped).unwrap();
+        for corp in old.players.values() {
+            assert_eq!(corp.tca_standing, crate::tca::TCA_STANDING_START);
+            assert_eq!(crate::tca::charter_status(corp.tca_standing), crate::tca::CharterStatus::GoodStanding);
+        }
+    }
     #[test]
     fn clock_advances_one_dt_per_step() {
         let mut w = test_world();

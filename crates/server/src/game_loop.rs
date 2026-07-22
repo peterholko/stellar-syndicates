@@ -895,6 +895,20 @@ impl GameLoop {
 
             // The player's own wallet — fresh (their local treasury + holdings +
             // resting limit orders).
+            // §TCA Phase 2: the player's own charter standing. The BAND is always
+            // derived (never stored), so this can't desync from the sim.
+            let standing = corp.tca_standing;
+            let charter = crate::protocol::CharterView {
+                standing,
+                max_standing: sim::tca::TCA_STANDING_MAX,
+                status: sim::charter_status(standing),
+                title: sim::charter_status(standing).title(),
+                ladder: sim::tca::status_ladder().to_vec(),
+                tariff_mult: sim::tca::tariff_mult(standing),
+                market_penalty_frac: sim::tca::market_penalty_frac(standing),
+                reinstate_cost_per_point: sim::tca::TCA_REINSTATE_FEE_PER_POINT,
+            };
+
             let wallet = WalletView {
                 credits: corp.credits,
                 valuation: corp.valuation,
@@ -959,6 +973,7 @@ impl GameLoop {
                     ghosts,
                     market,
                     wallet,
+                    charter,
                     // The player's own standing orders (fresh — private policy, not
                     // light-gated), so the client can list/edit them.
                     standing_orders: corp.standing_orders.clone(),
