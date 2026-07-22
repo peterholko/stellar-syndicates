@@ -52,6 +52,18 @@ pub struct Corporation {
     pub credits: f64,
     /// Goods held at home, by commodity.
     pub inventory: BTreeMap<crate::cargo::Commodity, u32>,
+    /// §TCA: goods held AT THE CHARTERHOUSE — this corp's private warehouse at the
+    /// hub. The Exchange settles ONLY against this (buys deposit here; sells and
+    /// sell-side limit escrow draw ONLY from here). Nothing about a trade moves
+    /// goods across space; moving goods hub↔systems is the separate, explicit act
+    /// of TCA freight or a player convoy. `#[serde(default)]` so every pre-feature
+    /// snapshot loads with an empty warehouse — existing goods stay in `inventory`
+    /// at home and are moved with the new channels (that IS the migration).
+    ///
+    /// CAPACITY-UNCHECKED by design: the warehouse is infinite until the separate
+    /// leased-bay handoff lands. Every inflow path here deposits unconditionally.
+    #[serde(default)]
+    pub warehouse: BTreeMap<crate::cargo::Commodity, u32>,
     /// Equity / net worth, recomputed on a slow cadence (§9) to avoid
     /// share-price noise: credits + goods (held, in-transit, and reserved in
     /// resting orders) at market value + buy-order escrow.
@@ -415,6 +427,20 @@ pub struct World {
     /// recipient's `surveyed` set (permanent). `#[serde(default)]` for old snaps.
     #[serde(default)]
     pub pending_survey_reports: Vec<SurveyReport>,
+    /// §TCA: booked freight SHIPMENTS awaiting a departure — escrowed (goods have
+    /// left the warehouse / a system stockpile) but not yet aboard a freighter.
+    /// Keyed by [`crate::tca::ShipmentId`]; the scheduler drains it FIFO per
+    /// corp+destination. `#[serde(default)]` so pre-feature snapshots load empty.
+    #[serde(default)]
+    pub freight_queue: BTreeMap<crate::tca::ShipmentId, crate::tca::Shipment>,
+    /// §TCA: in-flight freighter RUNS, keyed by the freighter fleet id. The
+    /// multi-owner manifest rides here (never in `Fleet.cargo`). `#[serde(default)]`
+    /// so pre-feature snapshots load with no runs.
+    #[serde(default)]
+    pub freight_runs: BTreeMap<EntityId, crate::tca::FreightRun>,
+    /// §TCA: monotonic allocator for shipment ids (0 ⇒ first id is 1).
+    #[serde(default)]
+    next_shipment_id: u64,
 }
 
 /// §explore Part 2: one in-flight survey-report leg (see
@@ -625,6 +651,9 @@ impl World {
             band_lo: 0.0,
             band_hi: 0.0,
             pending_survey_reports: Vec::new(),
+            freight_queue: BTreeMap::new(),
+            freight_runs: BTreeMap::new(),
+            next_shipment_id: 0,
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
@@ -3748,6 +3777,11 @@ impl World {
                         home_system: Some(home_system),
                         credits: 10_000.0,
                         inventory,
+                        // §TCA: a fresh corp starts with an EMPTY Charterhouse
+                        // warehouse — its starter goods sit at home, and it moves
+                        // them to the Exchange via freight or a convoy when it
+                        // wants to trade them.
+                        warehouse: BTreeMap::new(),
                         valuation: 10_000.0,
                         standing_orders: Vec::new(),
                         next_standing_id: 0,
@@ -4696,6 +4730,23 @@ impl World {
     /// that resolves at `tick + build_ticks`. Determinism: pure, runs in command
     /// phase so the debit is visible to this tick's accrual + standing orders.
     fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
+        // §TCA: a corporation can never build an Authority Freighter (it is TCA-only
+        // and absent from every BUILDABLE menu). Soft-reject BEFORE any recipe lookup
+        // — no debit, no job — so `recipe_for`/`required_shipyard_tier` never see it.
+        if let crate::build::BuildKind::Ship { ship } = what
+            && !ship.is_buildable()
+        {
+            events.push(Event::new(
+                self.time,
+                EventPayload::BuildRejected {
+                    owner: player_id,
+                    system: system_id,
+                    what,
+                    reason: crate::event::BuildRejectReason::NotBuildable,
+                },
+            ));
+            return;
+        }
         let recipe = crate::build::recipe_for(what);
         // §research R4a: the build's COST + TIME tuners, by kind (neutral 1.0 until
         // researched). Read here (before any `sys` borrow) so `self` is free.
@@ -6605,12 +6656,29 @@ impl World {
             };
             *reserved.entry(o.player).or_insert(0.0) += v;
         }
+        // §TCA: goods escrowed in FREIGHT — queued shipments (left the warehouse /
+        // a stockpile, awaiting a departure) and shipments aboard a freighter's
+        // manifest. Valued at market like any in-transit convoy cargo, so a
+        // corp's net worth doesn't blink while its goods ride the Authority's hulls.
+        let mut freight: BTreeMap<PlayerId, f64> = BTreeMap::new();
+        for sh in self.freight_queue.values() {
+            *freight.entry(sh.owner).or_insert(0.0) += value(&sh.commodity, sh.units);
+        }
+        for run in self.freight_runs.values() {
+            for sh in run.shipments.values() {
+                *freight.entry(sh.owner).or_insert(0.0) += value(&sh.commodity, sh.units);
+            }
+        }
         for (id, corp) in self.players.iter_mut() {
             let inv: f64 = corp.inventory.iter().map(|(c, u)| value(c, *u)).sum();
+            // §TCA: warehouse goods held at the Charterhouse count like home goods.
+            let wh: f64 = corp.warehouse.iter().map(|(c, u)| value(c, *u)).sum();
             corp.valuation = corp.credits
                 + inv
+                + wh
                 + transit.get(id).copied().unwrap_or(0.0)
-                + reserved.get(id).copied().unwrap_or(0.0);
+                + reserved.get(id).copied().unwrap_or(0.0)
+                + freight.get(id).copied().unwrap_or(0.0);
             // §rankings RECOVERY: a major loss (a captured system) since the last
             // close stamps this fresh, post-loss valuation as the trough to climb
             // back from. Measured at the close so it reflects the settled loss.
@@ -7773,6 +7841,92 @@ mod tests {
         for (c, n) in items {
             *s.stockpile.entry(*c).or_insert(0.0) += *n;
         }
+    }
+
+    /// §TCA Part 1: a corporation can NEVER mint an Authority Freighter.
+    /// `BuildShip` soft-rejects it (NotBuildable) BEFORE any stockpile/slot/
+    /// shipyard check, no job is enqueued, and no Freighter fleet ever appears —
+    /// even after the world runs on. The freighter is a TCA-sentinel-only hull,
+    /// sitting outside the warship ladder entirely.
+    #[test]
+    fn freighter_is_never_buildable_by_a_corporation() {
+        // The buildability predicate itself: everything on the ladder but the Freighter.
+        for k in crate::ship::ALL_SHIP_KINDS {
+            assert_eq!(k.is_buildable(), k != ShipKind::Freighter, "{k:?}");
+        }
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Pile the home high so NO ordinary reason (stockpile, slot, shipyard)
+        // could explain a refusal — only the buildability guard can.
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 900.0), (Commodity::Machinery, 400.0), (Commodity::Polymers, 400.0)]);
+        let ev = w.step(&[Command::BuildShip {
+            player_id: id,
+            system_id: home,
+            ship_kind: ShipKind::Freighter,
+            join: None,
+            loadout: Default::default(),
+        }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::BuildRejected { owner, reason: crate::event::BuildRejectReason::NotBuildable, .. } if *owner == id
+            )),
+            "BuildShip{{Freighter}} soft-rejects as NotBuildable"
+        );
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no build started");
+        assert!(
+            w.build_queue.iter().all(|j| !matches!(j.what, crate::build::BuildKind::Ship { ship: ShipKind::Freighter })),
+            "no freighter job enqueued"
+        );
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(
+            !w.fleets.values().any(|f| f.contains(ShipKind::Freighter)),
+            "no Freighter fleet is ever minted by a corporation build"
+        );
+    }
+
+    /// §TCA Part 1 (snapshot compatibility): a PRE-FEATURE snapshot — one that
+    /// predates the warehouse + freight fields — still loads. We simulate it by
+    /// serializing a live world, DELETING the new keys (`warehouse` on each corp;
+    /// `freight_queue`/`freight_runs`/`next_shipment_id` on the world), and loading
+    /// the result: every `#[serde(default)]` fills in empty, and the world is intact.
+    #[test]
+    fn pre_feature_snapshot_without_warehouse_or_freight_still_loads() {
+        let mut w = test_world();
+        let id = PlayerId(11);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        for _ in 0..10 {
+            w.step(&[]);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let reloaded: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.players.len(), w.players.len());
+        assert!(reloaded.freight_queue.is_empty() && reloaded.freight_runs.is_empty());
+
+        // STRIP the new keys to forge a genuine pre-feature snapshot.
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("freight_queue");
+        obj.remove("freight_runs");
+        obj.remove("next_shipment_id");
+        for (_pid, corp) in obj.get_mut("players").unwrap().as_object_mut().unwrap().iter_mut() {
+            corp.as_object_mut().unwrap().remove("warehouse");
+        }
+        let stripped = serde_json::to_string(&v).unwrap();
+        assert!(!stripped.contains("warehouse"), "the forged snapshot has no warehouse key");
+        assert!(!stripped.contains("freight_queue"), "…and no freight_queue key");
+
+        let old: World = serde_json::from_str(&stripped).unwrap();
+        assert!(old.freight_queue.is_empty() && old.freight_runs.is_empty());
+        for corp in old.players.values() {
+            assert!(corp.warehouse.is_empty(), "a pre-feature corp loads with an empty warehouse");
+        }
+        assert_eq!(old.players.len(), w.players.len());
+        assert_eq!(old.tick, w.tick);
     }
 
     #[test]

@@ -1108,6 +1108,9 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
+        // §TCA: the Authority Freighter is never a corp build option — a defensive
+        // key so the match stays total (absent from the client build menu).
+        sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "freighter",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
         sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "destroyer",
         sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "cruiser",

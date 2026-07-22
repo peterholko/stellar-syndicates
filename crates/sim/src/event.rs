@@ -470,6 +470,11 @@ pub enum BuildRejectReason {
     /// The system's Shipyard tier is below what this ship kind needs
     /// (§buildings step 3: Convoy ≥ 1, Raider ≥ 2).
     NeedsShipyard { required: u32 },
+    /// The requested ship kind is not buildable by a corporation (§TCA — the
+    /// Authority Freighter is TCA-only). Should never reach a real client (it is
+    /// absent from every BUILDABLE menu); a defensive soft-reject for a malformed
+    /// or legacy command.
+    NotBuildable,
     /// §ladder: the hull's research programme (UnlockHull) isn't completed —
     /// capitals are prizes on the Line ladder, not catalog items.
     NeedsResearch,

@@ -137,6 +137,10 @@ impl Timeline {
                             "Can't build {} at {name}: needs Shipyard tier {required} there.",
                             build_label(*what)
                         ),
+                        sim::BuildRejectReason::NotBuildable => format!(
+                            "Can't build {} at {name}: it isn't a corporation-buildable hull.",
+                            build_label(*what)
+                        ),
                         sim::BuildRejectReason::NeedsResearch => format!(
                             "Can't build {} at {name}: its hull hasn't been researched — complete the Line programme on the Hulls board.",
                             build_label(*what)
@@ -573,6 +577,7 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
                 sim::ShipKind::Scout => "scout",
+                sim::ShipKind::Freighter => "freighter",
                 sim::ShipKind::Destroyer => "destroyer",
                 sim::ShipKind::Cruiser => "cruiser",
                 sim::ShipKind::Battleship => "battleship",
@@ -598,6 +603,9 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
+        // §TCA: never appears in a real build event (the Freighter is TCA-only),
+        // but the match must be total — a defensive label.
+        sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "an Authority Freighter",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
         sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "a Destroyer",
         sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "a Cruiser",
@@ -631,6 +639,7 @@ fn kind_word(k: ShipKind) -> &'static str {
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
         ShipKind::Scout => "scout",
+        ShipKind::Freighter => "freighter",
         ShipKind::Destroyer => "destroyer",
         ShipKind::Cruiser => "cruiser",
         ShipKind::Battleship => "battleship",

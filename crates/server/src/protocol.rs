@@ -1356,5 +1356,12 @@ pub fn player_id_from_name(name: &str) -> PlayerId {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
     }
+    // Guard the reserved NEUTRAL sentinel ids (PIRATE, TCA): a real name that
+    // happened to hash onto one would be mistaken for the faction that owns pirate
+    // packs / Authority freighters. A 1-in-2^64 event, but the sentinels' whole
+    // safety rests on "no corporation ever has this id", so we make it certain.
+    while hash == PlayerId::PIRATE.0 || hash == PlayerId::TCA.0 {
+        hash = hash.wrapping_add(1);
+    }
     PlayerId(hash)
 }

@@ -26,9 +26,29 @@ impl PlayerId {
     /// `player_id_from_name` guards against ever colliding with it.
     pub const PIRATE: PlayerId = PlayerId(0x5049_5241_5445_0000); // "PIRATE\0\0"
 
+    /// The neutral TERRAN CHARTER AUTHORITY faction (§TCA) — a reserved SENTINEL
+    /// that owns the scheduled [`crate::ship::ShipKind::Freighter`] fleets but is
+    /// NOT a real [`crate::world::Corporation`] in `World.players`. It holds no
+    /// territory, never appears in rankings or valuation, and is hostile to none
+    /// (its hulls are just physical objects in a hostile world). Mirrors
+    /// [`Self::PIRATE`]: a distinctive high tag far from any name hash; the
+    /// server's `player_id_from_name` guards against ever colliding with it.
+    pub const TCA: PlayerId = PlayerId(0x5443_4100_0000_0000); // "TCA\0\0\0\0\0"
+
     /// Whether this id is the neutral PIRATE faction.
     pub fn is_pirate(self) -> bool {
         self.0 == Self::PIRATE.0
+    }
+
+    /// Whether this id is the neutral Terran Charter Authority faction (§TCA).
+    pub fn is_tca(self) -> bool {
+        self.0 == Self::TCA.0
+    }
+
+    /// Whether this id is any NEUTRAL sentinel faction (PIRATE or TCA) rather than
+    /// a real player corporation — the common test for "not a ranked/valued corp".
+    pub fn is_sentinel(self) -> bool {
+        self.is_pirate() || self.is_tca()
     }
 }
 

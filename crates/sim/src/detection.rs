@@ -61,6 +61,7 @@ pub fn sig_size(kind: ShipKind) -> f64 {
         ShipKind::Battleship => 6.5,
         ShipKind::Dreadnought => 9.0,
         ShipKind::Titan => 13.0,
+        ShipKind::Freighter => 5.0, // a fat bulk carrier (moot: it broadcasts anyway)
     }
 }
 
