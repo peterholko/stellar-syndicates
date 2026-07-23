@@ -343,6 +343,16 @@ pub enum EventPayload {
     /// Logistics resume. Light-delayed to the owner from the system.
     BlockadeLifted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
 
+    /// A fleet ORDER was soft-rejected (§TCA) — owner-only and instant: the order
+    /// never installed, the fleet kept doing what it was doing, and nothing was
+    /// spent. Tells the player WHY so the refusal isn't a mystery.
+    OrderRejected {
+        owner: PlayerId,
+        fleet: EntityId,
+        target: EntityId,
+        reason: OrderRejectReason,
+    },
+
     /// A besieged system was CAPTURED (§contestable-territory Part 2): a colony
     /// ship arrived while defenses were suppressed and the siege clock had run,
     /// so the system FLIPPED from `old_owner` to `new_owner`. Both learn it
@@ -570,6 +580,22 @@ pub enum TradeRejectReason {
     /// §TCA freight: the treasury can't cover the freight fee. The fee is charged
     /// in full at booking or not at all — no partial lots.
     CannotAffordFee { fee: f64 },
+    /// §TCA freight: the Charterhouse won't book to or from a BLOCKADED system.
+    /// This is the Authority acting on its OWN light-delayed knowledge: it starts
+    /// refusing only once the blockade's light reaches the hub, and keeps refusing
+    /// until the lift's light does. Freight already in flight carries on — it
+    /// launched on information that was true when it left.
+    DestinationBlockaded,
+}
+
+/// Why a fleet ORDER was soft-rejected. Owner-only: the order simply never
+/// installs, nothing is spent, and the client is never hard-errored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum OrderRejectReason {
+    /// §TCA: the target shelters inside the CHARTERHOUSE SOVEREIGNTY BUBBLE, where
+    /// no engagement may open. Fleeing into the bubble is sanctuary, by design.
+    InsideSovereignZone,
 }
 
 impl Event {

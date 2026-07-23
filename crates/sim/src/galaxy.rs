@@ -136,6 +136,15 @@ pub struct StarSystem {
     /// keeps the (unbroken) `since` / siege clock. `default` None (no blockade).
     #[serde(default)]
     pub blockade: Option<Blockade>,
+    /// §TCA: the PREVIOUS blockade window `(since, lifted_at)` — a two-state
+    /// history so a DISTANT observer can answer "was this system blockaded at
+    /// retarded time T?" across the light-delay window. The Charterhouse uses it
+    /// to decide whether to accept freight bookings on its own (light-delayed)
+    /// knowledge: it keeps refusing until the LIFT's light reaches the hub, and
+    /// keeps accepting until the ONSET's light does. Mirrors the two-state
+    /// `Corporation::syndicate_prev` pattern. `default` None (never blockaded).
+    #[serde(default)]
+    pub blockade_prev: Option<(f64, f64)>,
     /// §explore Part 3: the system's HIDDEN TRAIT (R3) — revealed only by
     /// ownership; effects are always-on ground truth. Seeded at generation
     /// (`TRAIT_FRACTION` of systems, an isolated stream). `default` None — a
@@ -694,6 +703,7 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, names: &[String]
             food_state: crate::colony::FoodState::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            blockade_prev: None,
             trait_: None,
             cache_claimed: false,
             legacy_structures: BTreeMap::new(),
@@ -836,6 +846,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
         food_state: crate::colony::FoodState::default(),
         legacy_refinery_tier: 0,
         blockade: None,
+        blockade_prev: None,
         trait_: None,
         cache_claimed: false,
         legacy_structures: BTreeMap::new(),

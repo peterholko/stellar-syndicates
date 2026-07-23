@@ -397,6 +397,19 @@ pub enum Command {
         system_id: EntityId,
     },
 
+    /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
+    /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
+    /// system. INSTANT local administration on the player's own fleet — a standing
+    /// policy like [`Command::SetFleetPosture`], not a real-time order, so it can
+    /// be flipped without disturbing the blockade the fleet is holding. Off by
+    /// default: a blockade strangles a rival's logistics without picking a fight
+    /// with the chartering power. Soft-reject if not the player's fleet.
+    SetEngageFreight {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        on: bool,
+    },
+
     /// SURVEY a system's exact geology (§explore Part 2 — the scout's second
     /// job). The fleet must CONTAIN ≥1 Scout (the sensing capability; escorts
     /// ride along). Valid on ANY system — unclaimed frontier, an ally's, or a

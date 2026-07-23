@@ -2137,7 +2137,8 @@ impl World {
         // rule — and the owner is told (light-delayed from the wreck).
         members.retain(|id| self.fleets.get(id).is_some_and(|f| !f.is_empty()));
         let mut lost: Vec<Event> = Vec::new();
-        self.fleets.retain(|_, f| {
+        let mut wrecked: Vec<EntityId> = Vec::new();
+        self.fleets.retain(|id, f| {
             if f.is_empty() {
                 if !f.passengers.is_empty() {
                     lost.push(Event::new(
@@ -2152,12 +2153,31 @@ impl World {
                         EventPayload::ModulesLost { owner: f.owner, manifest: f.modules.clone(), pos: f.pos },
                     ));
                 }
+                wrecked.push(*id);
                 false
             } else {
                 true
             }
         });
         events.extend(lost);
+        // §TCA: a destroyed Authority FREIGHTER takes its whole manifest down with
+        // it — every shipper aboard is told, and the run is cleaned up so no orphan
+        // survives the hull. (What a raider managed to seize was already loaded
+        // onto it above; from the shipper's side the lot is gone either way.)
+        for id in wrecked {
+            self.scuttle_freight_run(id, events);
+        }
+    }
+
+    /// Retire the freight run a destroyed/removed freighter was flying (§TCA):
+    /// every lot aboard is lost, with an owner-only notice each.
+    fn scuttle_freight_run(&mut self, fleet: EntityId, events: &mut Vec<Event>) {
+        let Some(run) = self.freight_runs.remove(&fleet) else {
+            return;
+        };
+        for s in run.shipments.values().copied() {
+            self.freight_note(events, &s, s.units, FreightStage::LostWithFreighter);
+        }
     }
 
     /// Resolve BATTLES this tick (§battles-take-time). Combat is deterministic
@@ -2245,7 +2265,7 @@ impl World {
         // Contacts: an attacker on Intercept OR Attack within reach of a rival
         // target. The `is_attack` flag (an Attack order) forces a FULL battle on
         // contact even against a convoy (destroy, not raid) — see the raid flag.
-        let contacts: Vec<(EntityId, EntityId, bool)> = self
+        let mut contacts: Vec<(EntityId, EntityId, bool)> = self
             .fleets
             .iter()
             .filter_map(|(rid, ship)| {
@@ -2258,6 +2278,12 @@ impl World {
                     && ship.owner != t.owner
                     && !self.are_allied(ship.owner, t.owner)
                     && ship.pos.distance(t.pos) <= CONTACT_RADIUS
+                    // §TCA SOVEREIGNTY: no engagement may OPEN inside the
+                    // Charterhouse bubble — for EITHER party. Fleeing into it is
+                    // sanctuary, and you cannot shoot out of it either. (A battle
+                    // already running is positionally anchored and unaffected.)
+                    && !self.in_sovereign_zone(t.pos)
+                    && !self.in_sovereign_zone(ship.pos)
                 {
                     Some((*rid, target, is_attack))
                 } else {
@@ -2265,6 +2291,29 @@ impl World {
                 }
             })
             .collect();
+
+        // §TCA: a BLOCKADER set to engage Authority freight treats a freighter
+        // arriving at the strangled system as an ordinary hostile contact — no new
+        // combat rules, and the fleet keeps holding its station order. Off by
+        // default, so the freighter otherwise lands and unloads through the
+        // blockade (a small leak, self-limiting: new bookings are already refused).
+        let freight_contacts: Vec<(EntityId, EntityId, bool)> = self
+            .fleets
+            .iter()
+            .filter(|(_, f)| f.engage_freight && matches!(f.order, FleetOrder::Blockade { .. }))
+            .flat_map(|(bid, blocker)| {
+                self.fleets
+                    .iter()
+                    .filter(move |(_, t)| {
+                        t.owner.is_tca()
+                            && t.contains(ShipKind::Freighter)
+                            && blocker.pos.distance(t.pos) <= BLOCKADE_STATION_RADIUS
+                    })
+                    .map(move |(tid, _)| (*bid, *tid, false))
+            })
+            .filter(|(_, tid, _)| self.fleets.get(tid).is_some_and(|t| !self.in_sovereign_zone(t.pos)))
+            .collect();
+        contacts.extend(freight_contacts);
 
         for (aid, tid, is_attack) in contacts {
             let a_owner_c = self.fleets.get(&aid).map(|f| f.owner);
@@ -2322,13 +2371,19 @@ impl World {
             // platform + nearby friendly corvette screens.
             let (Some(att), Some(tgt)) = (self.fleets.get(&aid), self.fleets.get(&tid)) else { continue };
             let (a_owner, d_owner, t_kind, t_pos) = (att.owner, tgt.owner, tgt.flagship_kind(), tgt.pos);
-            let civilian = matches!(t_kind, ShipKind::Convoy | ShipKind::Colony);
+            // §TCA: an Authority freighter is a civilian hull like a convoy — a
+            // contact on it is a cargo RAID by default (an explicit Attack still
+            // escalates to destruction).
+            let civilian = matches!(t_kind, ShipKind::Convoy | ShipKind::Colony | ShipKind::Freighter);
             let mut defenders = vec![tid];
             let mut platform_system = None;
             // A convoy contact is a cargo RAID by default — UNLESS this is an
             // explicit ATTACK order (destroy, cargo lost) or the convoy is defended
             // (fighting the escort/platform is a battle). Everything armed is a battle.
-            let mut raid = !is_attack && t_kind == ShipKind::Convoy;
+            // §TCA: an Authority freighter is raided for its manifest exactly as a
+            // convoy is raided for its cargo — STEAL, not destroy, unless the
+            // aggressor explicitly ordered an Attack.
+            let mut raid = !is_attack && matches!(t_kind, ShipKind::Convoy | ShipKind::Freighter);
             if civilian {
                 // Pull in EVERY covering friendly corvette fleet (escort/garrison).
                 let screens: Vec<EntityId> = self
@@ -2682,7 +2737,25 @@ impl World {
             if raid {
                 let dead_cargo: Option<Cargo> = defenders
                     .iter()
-                    .find_map(|id| self.fleets.get(id).filter(|f| f.count(ShipKind::Convoy) > 0 && lb.per_kind.get(&ShipKind::Convoy).copied().unwrap_or(0) >= f.count(ShipKind::Convoy)).and_then(|f| f.cargo));
+                    .find_map(|id| self.fleets.get(id).filter(|f| f.count(ShipKind::Convoy) > 0 && lb.per_kind.get(&ShipKind::Convoy).copied().unwrap_or(0) >= f.count(ShipKind::Convoy)).and_then(|f| f.cargo))
+                    // §TCA: …or an Authority FREIGHTER dying with a multi-owner
+                    // manifest. A raider's hold takes ONE commodity (`Fleet.cargo`
+                    // is single-commodity), so it seizes the first manifest entry's
+                    // good — entries in stable shipment-id order — plus every other
+                    // entry of that same good. The rest is lost with the hull.
+                    .or_else(|| {
+                        defenders.iter().find_map(|id| {
+                            let f = self.fleets.get(id)?;
+                            let aboard = f.count(ShipKind::Freighter);
+                            if aboard == 0 || lb.per_kind.get(&ShipKind::Freighter).copied().unwrap_or(0) < aboard {
+                                return None;
+                            }
+                            let run = self.freight_runs.get(id)?;
+                            let commodity = run.shipments.values().next()?.commodity;
+                            let units: u32 = run.shipments.values().filter(|s| s.commodity == commodity).map(|s| s.units).sum();
+                            (units > 0).then_some(Cargo { commodity, units })
+                        })
+                    });
                 if let Some(cargo) = dead_cargo {
                     // Load the loot onto the (first empty-handed) attacker and note
                     // WHO seized it — the borrow of the fleet ends with the closure.
@@ -3036,7 +3109,20 @@ impl World {
         let convoys: Vec<(EntityId, Vec2)> = self
             .fleets
             .iter()
-            .filter(|(_, f)| !f.owner.is_pirate() && f.flagship_kind() == ShipKind::Convoy && f.broadcasts() && !covered(f.pos) && !shielded.contains(&f.owner))
+            // §TCA v1: the enclaves prey on SYNDICATE shipping, not on the flag that
+            // hunts them — pirate packs never target an Authority hull. (The Convoy
+            // flagship filter already excludes freighters incidentally; this states
+            // the rule outright so a future retarget can't reintroduce it by accident.
+            // Revisit post-playtest.) The `shielded` term is market-ux's new-player
+            // pirate grace and is preserved alongside it.
+            .filter(|(_, f)| {
+                !f.owner.is_pirate()
+                    && !f.owner.is_tca()
+                    && f.flagship_kind() == ShipKind::Convoy
+                    && f.broadcasts()
+                    && !covered(f.pos)
+                    && !shielded.contains(&f.owner)
+            })
             .map(|(id, f)| (*id, f.pos))
             .collect();
         let epos: BTreeMap<EntityId, Vec2> =
@@ -3642,6 +3728,12 @@ impl World {
                     events.push(Event::new(now, EventPayload::BlockadeEstablished { by, owner, system: sys.id, pos: sys.pos }));
                 }
                 (true, false) => {
+                    // §TCA: remember the window that just closed, so a distant
+                    // observer (the Charterhouse) can still answer "blockaded at
+                    // retarded time T?" until the LIFT's light reaches it.
+                    if let Some(b) = sys.blockade {
+                        sys.blockade_prev = Some((b.since, now));
+                    }
                     sys.blockade = None;
                     if let Some(owner) = sys.owner {
                         events.push(Event::new(now, EventPayload::BlockadeLifted { owner, system: sys.id, pos: sys.pos }));
@@ -4009,6 +4101,21 @@ impl World {
                 if self.are_allied(*player_id, target.owner) {
                     return;
                 }
+                // §TCA SOVEREIGNTY: no engagement may be opened against something
+                // sheltering in the Charterhouse bubble. Soft-reject, owner-only —
+                // the fleet keeps its current order and nothing is spent.
+                if self.in_sovereign_zone(target.pos) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::OrderRejected {
+                            owner: *player_id,
+                            fleet: *raider_id,
+                            target: *target_id,
+                            reason: crate::event::OrderRejectReason::InsideSovereignZone,
+                        },
+                    ));
+                    return;
+                }
                 let target_pos = target.pos;
                 // The raider must exist and be the player's.
                 let Some(raider) = self.fleets.get(raider_id) else {
@@ -4188,6 +4295,13 @@ impl World {
                 // parity with the manual hub-trade family (MarketBuy/MarketSell).
                 let cargo = Cargo { commodity: *commodity, units };
                 self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+            }
+            Command::SetEngageFreight { player_id, fleet_id, on } => {
+                if let Some(f) = self.fleets.get_mut(fleet_id)
+                    && f.owner == *player_id
+                {
+                    f.engage_freight = *on;
+                }
             }
             Command::BookFreightOut { player_id, system, commodity, units } => {
                 self.book_freight(*player_id, *system, *commodity, *units, ShipmentDir::Outbound, false, events);
@@ -4655,6 +4769,21 @@ impl World {
                 }
                 // §syndicates: no attacking an ALLY while allied.
                 if self.are_allied(*player_id, target.owner) {
+                    return;
+                }
+                // §TCA SOVEREIGNTY: no engagement may be opened against something
+                // sheltering in the Charterhouse bubble. Soft-reject, owner-only —
+                // the fleet keeps its current order and nothing is spent.
+                if self.in_sovereign_zone(target.pos) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::OrderRejected {
+                            owner: *player_id,
+                            fleet: *fleet_id,
+                            target: *target_id,
+                            reason: crate::event::OrderRejectReason::InsideSovereignZone,
+                        },
+                    ));
                     return;
                 }
                 let target_pos = target.pos;
@@ -7226,6 +7355,38 @@ impl World {
         ShipmentId(self.next_shipment_id)
     }
 
+    /// §TCA: was `system` blockaded as far as an observer at `from` can KNOW right
+    /// now? The observer reads the system as it was at RETARDED time
+    /// `now - dist/c`, so a fresh blockade isn't known until its light arrives, and
+    /// a lifted one still looks blockaded until the lift's light does. Used by the
+    /// Charterhouse to accept or refuse freight bookings on its own honest,
+    /// light-delayed knowledge — never on instant omniscience.
+    pub fn believed_blockaded(&self, system: EntityId, from: Vec2, now: f64) -> bool {
+        let Some(sys) = self.systems.iter().find(|s| s.id == system) else {
+            return false;
+        };
+        let seen_at = now - sys.pos.distance(from) / self.config.c;
+        if let Some(b) = sys.blockade
+            && seen_at >= b.since
+        {
+            return true;
+        }
+        // Still inside the window a since-lifted blockade occupied.
+        if let Some((since, lifted)) = sys.blockade_prev
+            && seen_at >= since
+            && seen_at < lifted
+        {
+            return true;
+        }
+        false
+    }
+
+    /// §TCA: is `p` inside the CHARTERHOUSE SOVEREIGNTY BUBBLE, where no
+    /// engagement may open?
+    fn in_sovereign_zone(&self, p: Vec2) -> bool {
+        p.distance(self.hub) <= crate::tca::TCA_SOVEREIGN_RADIUS
+    }
+
     // --- §TCA public read surface (the client's booking preview) --------------
     // All EXACT, not estimates: the timetable and the freighter's constant cruise
     // are pure functions of the config, so the client can show a player precisely
@@ -7334,6 +7495,12 @@ impl World {
         let has_depot = sys.tier(crate::build::StructureKind::Depot) > 0;
         let sys_stock = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
         let dist = self.hub.distance(sys.pos);
+        // The Charterhouse won't book to or from a system it BELIEVES blockaded —
+        // on its own light-delayed knowledge, both starting and stopping late.
+        if self.believed_blockaded(system_id, self.hub, self.time) {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::DestinationBlockaded);
+            return;
+        }
         let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist, has_depot);
 
         // The SOURCE must cover the lot (warehouse outbound / stockpile inbound).
@@ -13201,6 +13368,288 @@ mod tests {
             !w.fleets.values().any(|f| f.owner == id && f.mission.is_some()),
             "both legacy convoys resolved and left the world"
         );
+    }
+
+    // ==== §TCA Part 4: freight under fire ===================================
+
+    /// Park a TCA freighter at `pos` carrying one lot per `(owner, commodity,
+    /// units)` — the shape the scheduler produces, built directly so combat tests
+    /// don't have to fly a whole round trip first.
+    fn freighter_at(w: &mut World, pos: Vec2, dest: EntityId, lots: &[(PlayerId, Commodity, u32)]) -> EntityId {
+        let fid = w.alloc_entity_id();
+        // IN TRANSIT (a distant MoveTo), not Idle — an Idle freighter would be
+        // treated as ARRIVED by the arrivals pass and unload on the spot. This is
+        // the state a freighter is actually in when someone jumps it.
+        w.fleets.insert(
+            fid,
+            Fleet::single(fid, PlayerId::TCA, ShipKind::Freighter, pos, FleetOrder::MoveTo { dest: pos + Vec2::new(20_000.0, 0.0) }, None),
+        );
+        let mut shipments = BTreeMap::new();
+        let mut manifest = Vec::new();
+        for (owner, commodity, units) in lots {
+            let id = w.alloc_shipment_id();
+            manifest.push(id);
+            shipments.insert(
+                id,
+                crate::tca::Shipment {
+                    id,
+                    owner: *owner,
+                    system: dest,
+                    direction: ShipmentDir::Outbound,
+                    commodity: *commodity,
+                    units: *units,
+                    fee_paid: 1.0,
+                    booked_at: 0.0,
+                    sell_on_arrival: false,
+                },
+            );
+        }
+        w.freight_runs.insert(fid, crate::tca::FreightRun { fleet: fid, dest, leg: RunLeg::Outbound, manifest, shipments });
+        fid
+    }
+
+    /// A RAID on an Authority freighter steals out of the MANIFEST (not
+    /// `Fleet.cargo`, which a freighter never uses) — a raider's hold takes one
+    /// commodity's worth — and the run is cleaned up with the hull, every shipper
+    /// aboard told their lot is gone.
+    #[test]
+    fn a_raid_on_a_freighter_seizes_from_the_manifest() {
+        let mut w = test_world();
+        let (atk, victim) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        let dest = w.systems[0].id;
+        // Two lots of the SAME good plus one of another — the raider takes the
+        // first entry's commodity (stable id order) and every entry of that good.
+        let freighter = freighter_at(
+            &mut w,
+            cc + Vec2::new(160.0, 0.0),
+            dest,
+            &[(victim, Commodity::Alloys, 30), (victim, Commodity::Fuel, 50), (atk, Commodity::Alloys, 20)],
+        );
+
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: freighter }]);
+        let mut lost = 0u32;
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::Trade(TradeEvent::FreightMoved { units, stage: crate::event::FreightStage::LostWithFreighter, .. }) = e.payload {
+                    lost += units;
+                }
+            }
+            if !w.fleets.contains_key(&freighter) {
+                break;
+            }
+        }
+        assert!(!w.fleets.contains_key(&freighter), "the raid destroys the freighter");
+        // Alloys entries (30 + 20 = 50) came off; the Fuel lot went down with it.
+        let seized = w.fleets.get(&raider).and_then(|f| f.cargo);
+        assert_eq!(seized.map(|c| (c.commodity, c.units)), Some((Commodity::Alloys, 50)), "the raider's hold takes one commodity's worth");
+        assert!(w.freight_runs.get(&freighter).is_none(), "the run is cleaned up with the hull — no orphan");
+        assert_eq!(lost, 100, "every shipper aboard is told their whole lot is gone");
+    }
+
+    /// An ATTACK destroys a freighter outright — nothing is seized, the entire
+    /// manifest is lost, and the run is retired.
+    #[test]
+    fn an_attack_on_a_freighter_destroys_the_whole_manifest() {
+        let mut w = test_world();
+        let (atk, victim) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        let dest = w.systems[0].id;
+        let freighter = freighter_at(&mut w, cc + Vec2::new(160.0, 0.0), dest, &[(victim, Commodity::Alloys, 30)]);
+
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: raider, target_id: freighter }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&freighter));
+        assert!(!w.fleets.contains_key(&freighter), "the attack destroys the freighter");
+        assert!(w.fleets.get(&raider).and_then(|f| f.cargo).is_none(), "ATTACK destroys the manifest — nothing seized");
+        assert!(w.freight_runs.is_empty(), "the run is retired with the hull");
+    }
+
+    /// §TCA v1: pirate packs never hunt the Authority — the enclaves prey on
+    /// syndicate shipping, not on the flag that hunts them.
+    #[test]
+    fn pirates_never_target_authority_freight() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Park a freighter INSIDE an enclave's hunt radius (2600) but clear of the
+        // base's own platform-equivalent defenses (1300) — so the only thing that
+        // could touch it is a pack choosing it as prey.
+        let epos = w
+            .enclaves
+            .keys()
+            .find_map(|sid| w.systems.iter().find(|s| s.id == *sid).map(|s| s.pos))
+            .expect("a seeded enclave");
+        let dest = w.systems[0].id;
+        let freighter = freighter_at(&mut w, epos + Vec2::new(2000.0, 0.0), dest, &[(id, Commodity::Alloys, 40)]);
+
+        for _ in 0..(200 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(
+                !w.fleets.values().any(|f| f.owner.is_pirate() && matches!(f.order, FleetOrder::Intercept { target } if target == freighter)),
+                "a pirate pack must never commit against an Authority hull"
+            );
+            if !w.fleets.contains_key(&freighter) {
+                panic!("the freighter was destroyed — pirates engaged the Authority");
+            }
+        }
+    }
+
+    /// The Charterhouse refuses bookings on its OWN light-delayed knowledge of a
+    /// blockade: it keeps accepting until the ONSET light arrives, and keeps
+    /// refusing until the LIFT light does. Both window edges are checked.
+    #[test]
+    fn booking_refusal_follows_the_blockade_at_lightspeed() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        let c = w.config.c;
+        let lag = 1200.0 / c; // hub <- colony light delay
+
+        // A blockade begins at t = 100.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+            s.blockade = Some(crate::galaxy::Blockade { by: PlayerId(2), since: 100.0, siege_since: None });
+        }
+        // Just BEFORE the onset light lands, the hub still knows nothing.
+        assert!(!w.believed_blockaded(colony, w.hub, 100.0 + lag - 1e-6), "the hub cannot know before the light arrives");
+        assert!(w.believed_blockaded(colony, w.hub, 100.0 + lag + 1e-6), "…and knows the instant it does");
+
+        // The blockade lifts at t = 300: the hub keeps refusing until THAT light lands.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+            s.blockade = None;
+            s.blockade_prev = Some((100.0, 300.0));
+        }
+        assert!(w.believed_blockaded(colony, w.hub, 300.0 + lag - 1e-6), "still believed blockaded until the lift light lands");
+        assert!(!w.believed_blockaded(colony, w.hub, 300.0 + lag + 1e-6), "…and accepted again the instant it does");
+
+        // And the refusal is a real, free soft-reject at the booking desk.
+        seed_warehouse(&mut w, id, &[(Commodity::Alloys, 50)]);
+        {
+            // Started long enough ago that its light has certainly reached the hub.
+            let since = w.time - lag - 10.0;
+            let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+            s.blockade = Some(crate::galaxy::Blockade { by: PlayerId(2), since, siege_since: None });
+            s.blockade_prev = None;
+        }
+        let credits0 = w.players[&id].credits;
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Commodity::Alloys, units: 50 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::DestinationBlockaded, .. })
+            )),
+            "a blockaded destination is refused with the typed reason"
+        );
+        assert_eq!(wh(&w, id, Commodity::Alloys), 50, "the goods stay put");
+        assert_eq!(w.players[&id].credits, credits0, "and it costs nothing");
+    }
+
+    /// `engage_freight` decides whether a blockader touches arriving Authority
+    /// freight. OFF (the default) the freighter passes through untouched; ON it
+    /// becomes an ordinary hostile contact.
+    #[test]
+    fn engage_freight_decides_whether_a_blockader_touches_a_freighter() {
+        let outcome = |engage: bool| -> bool {
+            let mut w = test_world();
+            let (blk_owner, victim) = (PlayerId(1), PlayerId(2));
+            w.step(&[
+                Command::AddPlayer { id: blk_owner, name: "Blk".into() },
+                Command::AddPlayer { id: victim, name: "Vic".into() },
+            ]);
+            let colony = near_hub_colony(&mut w, victim, 3000.0);
+            let station = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
+            // The blockading fleet, on station.
+            let blk = find_ship(&w, blk_owner, ShipKind::Raider);
+            {
+                let f = w.fleets.get_mut(&blk).unwrap();
+                f.pos = station;
+                f.vel = Vec2::ZERO;
+                f.order = FleetOrder::Blockade { system: colony, station };
+            }
+            w.step(&[Command::SetEngageFreight { player_id: blk_owner, fleet_id: blk, on: engage }]);
+            assert_eq!(w.fleets[&blk].engage_freight, engage, "the toggle sticks");
+            // An Authority freighter arrives on station.
+            let freighter = freighter_at(&mut w, station, colony, &[(victim, Commodity::Alloys, 40)]);
+            for _ in 0..(60 * crate::config::TICK_HZ) {
+                w.step(&[]);
+                if !w.fleets.contains_key(&freighter) {
+                    return true; // engaged and destroyed
+                }
+            }
+            w.engagements.values().any(|e| e.defenders.contains(&freighter))
+        };
+        assert!(!outcome(false), "OFF: the freighter lands and unloads through the blockade");
+        assert!(outcome(true), "ON: the freighter is engaged as an ordinary hostile contact");
+    }
+
+    /// §TCA SOVEREIGNTY: inside the Charterhouse bubble no engagement may OPEN —
+    /// an Intercept/Attack order against a target sheltering there soft-rejects,
+    /// and a contact never forms. Fleeing into the bubble is sanctuary, by design.
+    #[test]
+    fn the_charterhouse_bubble_is_sanctuary() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        // Both parked deep inside the bubble, well within contact range.
+        let inside = crate::tca::TCA_SOVEREIGN_RADIUS * 0.5;
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = Vec2::new(inside, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        {
+            let c = w.fleets.get_mut(&convoy).unwrap();
+            c.pos = Vec2::new(inside + 10.0, 0.0);
+            c.vel = Vec2::ZERO;
+            c.order = FleetOrder::Idle;
+        }
+        // The ORDER itself is refused, with the typed reason, costing nothing.
+        let ev = w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::OrderRejected { owner, reason: crate::event::OrderRejectReason::InsideSovereignZone, .. } if *owner == atk
+            )),
+            "an intercept into the bubble soft-rejects with the typed reason"
+        );
+        assert!(!matches!(w.fleets[&raider].order, FleetOrder::Intercept { .. }), "the order never installed");
+        // And even if an order were somehow already standing, no contact opens.
+        w.fleets.get_mut(&raider).unwrap().order = FleetOrder::Intercept { target: convoy };
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.engagements.is_empty(), "no engagement may OPEN inside the sovereignty bubble");
+            assert!(w.fleets.contains_key(&convoy), "the sheltering fleet is never destroyed there");
+        }
     }
 
     // ==== §TCA Part 3: scheduled Authority freight ==========================

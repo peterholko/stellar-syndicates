@@ -64,6 +64,10 @@ pub enum ClientMsg {
     /// warehouse and settles instantly at the standing price.
     MarketSell { commodity: Commodity, units: u32 },
 
+    /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
+    /// Authority freight arriving at the strangled system. Instant local policy.
+    SetEngageFreight { fleet_id: EntityId, on: bool },
+
     /// §TCA: book OUTBOUND Authority freight — warehouse → an owned system.
     BookFreightOut { system: EntityId, commodity: Commodity, units: u32 },
 
@@ -322,6 +326,22 @@ pub struct CharterView {
     pub market_penalty_frac: f64,
     /// Credits per standing point to buy back through reinstatement.
     pub reinstate_cost_per_point: f64,
+}
+
+/// §TCA: one entry of an Authority freighter's MANIFEST, as a viewer may read it.
+/// The hull broadcasts under the Convention, but the manifest is TWO-TIER, per
+/// entry: the entry's OWNER always sees their own lot (it is their property), and
+/// anyone else sees it only from inside sensor range — the same rule that governs
+/// a convoy's cargo. So a rival watching a freighter go by learns nothing about
+/// who is shipping what until they get close enough to look.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ManifestEntryView {
+    pub owner: PlayerId,
+    pub commodity: Commodity,
+    pub units: u32,
+    pub direction: sim::ShipmentDir,
+    /// True when this entry is the viewer's own lot.
+    pub mine: bool,
 }
 
 /// §TCA: one of the viewer's freight shipments — queued for a departure or
@@ -1308,6 +1328,24 @@ pub struct GhostView {
     /// drives the distinct hostile-neutral tint. Hostile to everyone.
     #[serde(default)]
     pub pirate: bool,
+    /// §TCA: this fleet is a Terran Charter Authority FREIGHTER — the scheduled
+    /// common carrier. Drives its own neutral tint, distinct from a corp convoy.
+    #[serde(default)]
+    pub tca: bool,
+    /// §TCA: the freighter's MANIFEST as this viewer may read it — their own lots
+    /// always, everyone else's only from inside sensor range. Empty for any other
+    /// fleet, and empty for a freighter a distant rival is merely watching.
+    #[serde(default)]
+    pub manifest: Vec<ManifestEntryView>,
+    /// Whether this ghost is close enough for the viewer to read its manifest /
+    /// cargo (Tier 2). Set by the view filter; the game loop uses it to decide
+    /// whether a rival's freight entries may be shown.
+    #[serde(default)]
+    pub revealed: bool,
+    /// §TCA: OWNER-ONLY — whether this (blockading) fleet is set to engage
+    /// Authority freight. `None` on anyone else's ghost, like `posture`.
+    #[serde(default)]
+    pub engage_freight: Option<bool>,
 }
 
 /// Messages pushed by the server to a single player's connection.

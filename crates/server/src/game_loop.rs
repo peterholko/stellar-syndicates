@@ -388,6 +388,11 @@ impl GameLoop {
                         self.pending.push(Command::MarketBuy { player_id, commodity, units, ship_to });
                     }
                 }
+                ClientMsg::SetEngageFreight { fleet_id, on } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetEngageFreight { player_id, fleet_id, on });
+                    }
+                }
                 ClientMsg::BookFreightOut { system, commodity, units } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::BookFreightOut { player_id, system, commodity, units });
@@ -739,6 +744,9 @@ impl GameLoop {
             for g in ghosts.iter_mut() {
                 if g.own {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                    // §TCA: owner-only blockade policy — does this fleet engage
+                    // Authority freight arriving at the system it strangles?
+                    g.engage_freight = self.world.fleets.get(&g.id).map(|f| f.engage_freight);
                     // §syndicates Part 3: OWNER-ONLY garrison status — if this fleet
                     // is stationed as an ally garrison, its host + fed state.
                     if let Some(host) = self.world.garrison_host_of(g.id) {
@@ -758,6 +766,14 @@ impl GameLoop {
                 // the ghost) is a syndicate member as THIS viewer knows it
                 // (light-delayed membership; `known_ally` returns false for own).
                 g.ally = self.world.known_ally(player_id, g.owner, now);
+                // §TCA: an Authority freighter's MANIFEST is two-tier PER ENTRY —
+                // your own lots are always yours to see (they're your property),
+                // everyone else's only from inside sensor range (`revealed`, the
+                // same Tier-2 gate that governs a convoy's cargo). A distant rival
+                // sees the hull go by and learns nothing about who ships what.
+                if let Some(run) = self.world.freight_runs.get(&g.id) {
+                    g.manifest = crate::view::visible_manifest(run, player_id, g.revealed);
+                }
             }
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-

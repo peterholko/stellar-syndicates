@@ -712,6 +712,15 @@ pub struct Fleet {
     /// no field → all-unfitted → zero migration.
     #[serde(default)]
     pub loadouts: crate::combat::LoadoutMap,
+    /// §TCA: while this fleet BLOCKADES a system, also engage Terran Charter
+    /// Authority FREIGHTERS that arrive there. Off by default — a blockade
+    /// strangles a rival's own logistics without picking a fight with the
+    /// chartering power, and in Phase 1 that choice is free (the law arrives in
+    /// Phase 2). When on, an arriving freighter becomes an ordinary hostile
+    /// contact and the existing raid-vs-battle logic decides the rest. serde
+    /// default `false` so every old snapshot loads with today's behaviour.
+    #[serde(default)]
+    pub engage_freight: bool,
 }
 
 /// serde default for `Fleet::garrison_fed` (old snapshots load fed).
@@ -752,6 +761,7 @@ impl Fleet {
             garrison_fed: true,
             fought: false,
             loadouts: BTreeMap::new(),
+            engage_freight: false,
         }
     }
 

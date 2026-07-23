@@ -746,6 +746,14 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     format!("Can't book {units} {com}: the Authority's freight fee is {fee:.0} credits."),
                 ),
+                sim::TradeRejectReason::DestinationBlockaded => (
+                    Warn,
+                    format!(
+                        "The Charterhouse won't book {units} {com} to {} — it reports the system BLOCKADED. \
+                         Break the blockade, or move the goods yourself.",
+                        where_.unwrap_or_else(|| "that system".into())
+                    ),
+                ),
             }
         }
         // §TCA: the booking receipt — what it cost and when the Authority sails.

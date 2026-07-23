@@ -34,9 +34,7 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BattleFidelity, BattleRecordView, BlockadeStateView, BuildStateView, CargoView,
-    CompCount, DepositView, GhostView, IntelView, LoadoutStack, RecordCount, RoundNoteView, RoundRecordView,
-    SideRecordView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -486,6 +484,13 @@ impl PositionHistory {
                 // §pirates: the neutral faction flag — this history-only view keys
                 // off the recorded owner, filled by the game loop.
                 pirate: p.owner.is_pirate(),
+                // §TCA: the Authority flag + the manifest are injected by the game
+                // loop from authoritative freight state (this history-only view
+                // can't see runs); `revealed` is the Tier-2 gate it needs.
+                tca: p.owner.is_tca(),
+                manifest: Vec::new(),
+                revealed: detected,
+                engage_freight: None,
             });
         }
         // Deterministic ordering by id.
@@ -1101,6 +1106,35 @@ pub fn battle_record_views_named(
     out
 }
 
+/// §TCA — THE TWO-TIER MANIFEST RULE. An Authority freighter's hull broadcasts
+/// under the Convention, but WHAT IT CARRIES is private, per entry:
+///
+/// * the entry's OWNER always reads their own lot — it is their property, and
+///   they are told where their goods are regardless of distance; and
+/// * everyone else reads it only when `revealed` — the hull is inside their
+///   sensor coverage — exactly the Tier-2 rule that governs a convoy's cargo.
+///
+/// So a rival who watches a freighter cross the dark learns that a hull went by
+/// and nothing whatever about whose goods are on it. Entries come out in stable
+/// shipment-id order (the run's `BTreeMap`), so the wire is deterministic.
+pub fn visible_manifest(
+    run: &sim::FreightRun,
+    viewer: sim::PlayerId,
+    revealed: bool,
+) -> Vec<ManifestEntryView> {
+    run.shipments
+        .values()
+        .filter(|s| s.owner == viewer || revealed)
+        .map(|s| ManifestEntryView {
+            owner: s.owner,
+            commodity: s.commodity,
+            units: s.units,
+            direction: s.direction,
+            mine: s.owner == viewer,
+        })
+        .collect()
+}
+
 /// Stable key string for a buildable thing (matches the client's build commands).
 pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
@@ -1425,6 +1459,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+                blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
         let mut systems = vec![
@@ -1567,6 +1602,7 @@ mod tests {
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            blockade_prev: None,
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
             trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
@@ -1647,6 +1683,74 @@ mod tests {
         assert_ne!(mine, w.players[&rival].tca_standing, "the rival's is a different number entirely");
     }
 
+    /// §TCA: an Authority freighter's MANIFEST is owner-only per ENTRY, gated by
+    /// the ordinary Tier-2 sensor rule for everyone else. Leak-checked BOTH
+    /// directions: a distant rival reads nothing off a passing hull, and even a
+    /// close one never sees an entry marked as theirs.
+    #[test]
+    fn freighter_manifest_is_per_entry_owner_only_and_sensor_gated() {
+        use std::collections::BTreeMap;
+        let (a, b, third) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        let mut shipments = BTreeMap::new();
+        for (i, (owner, com, units)) in [
+            (a, sim::Commodity::Alloys, 60u32),
+            (b, sim::Commodity::Fuel, 90),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = sim::ShipmentId(i as u64 + 1);
+            shipments.insert(
+                id,
+                sim::Shipment {
+                    id,
+                    owner,
+                    system: EntityId(5),
+                    direction: sim::ShipmentDir::Outbound,
+                    commodity: com,
+                    units,
+                    fee_paid: 1.0,
+                    booked_at: 0.0,
+                    sell_on_arrival: false,
+                },
+            );
+        }
+        let run = sim::FreightRun {
+            fleet: EntityId(99),
+            dest: EntityId(5),
+            leg: sim::RunLeg::Outbound,
+            manifest: shipments.keys().copied().collect(),
+            shipments,
+        };
+
+        // FAR AWAY (not revealed): each shipper sees ONLY their own lot…
+        let far_a = visible_manifest(&run, a, false);
+        assert_eq!(far_a.len(), 1, "a distant shipper reads only their own entry");
+        assert_eq!(far_a[0].owner, a);
+        assert_eq!(far_a[0].units, 60);
+        assert!(far_a[0].mine);
+        let far_b = visible_manifest(&run, b, false);
+        assert_eq!(far_b.len(), 1);
+        assert_eq!(far_b[0].owner, b);
+        // …and an uninvolved rival watching the hull go by reads NOTHING.
+        assert!(
+            visible_manifest(&run, third, false).is_empty(),
+            "leak: a distant third party must learn nothing about who ships what"
+        );
+
+        // IN SENSOR RANGE (revealed): the manifest opens up, but ownership marking
+        // stays honest — nobody else's lot is ever flagged as yours.
+        let near_third = visible_manifest(&run, third, true);
+        assert_eq!(near_third.len(), 2, "a close observer reads the whole manifest");
+        assert!(near_third.iter().all(|e| !e.mine), "leak: no entry is ever mis-marked as the viewer's");
+        let near_a = visible_manifest(&run, a, true);
+        assert_eq!(near_a.iter().filter(|e| e.mine).count(), 1, "exactly one entry is mine");
+        assert_eq!(near_a.iter().filter(|e| e.owner == b).count(), 1, "and the rival's is visible up close");
+        // Deterministic order (shipment-id / BTreeMap order), so the wire is stable.
+        assert_eq!(near_third[0].owner, a);
+        assert_eq!(near_third[1].owner, b);
+    }
+
     /// BLOCKADE state (§contestable-territory Part 1) is surfaced to the two
     /// PARTICIPANTS only, each light-honestly: the BESIEGER sees it instantly
     /// (their fleet is there); the OWNER only once the onset light reaches their
@@ -1666,6 +1770,7 @@ mod tests {
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+                blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
@@ -1722,6 +1827,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+                blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         }];
         let mut intel = BTreeMap::new();
@@ -1771,6 +1877,7 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+                blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         }]
     }
