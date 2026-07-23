@@ -53,18 +53,21 @@ pub enum Command {
         raider_id: EntityId,
     },
 
-    /// Buy at market on the hub Exchange (§9): instant settlement at the true
-    /// standing price (credits debited now), then a delivery convoy carries the
-    /// goods hub → home (raidable in transit). Price-certain, delivery-risky.
+    /// Buy at market on the CHARTERHOUSE Exchange (§9, §TCA): instant settlement at
+    /// the true standing price (credits debited now); the goods land in the corp's
+    /// Charterhouse WAREHOUSE. Nothing crosses space — moving goods out to a system
+    /// is the separate, explicit act of TCA freight or a player convoy.
     MarketBuy {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
         units: u32,
     },
 
-    /// Sell at market (§9): commit goods to the crossing FIRST — a convoy carries
-    /// them home → hub and sells at the price-on-arrival (not a locked launch
-    /// price). The seller faces double uncertainty (raid + unknown final price).
+    /// Sell at market (§9, §TCA): draws ONLY from the corp's Charterhouse
+    /// WAREHOUSE and settles instantly at the standing price — the goods are
+    /// already at the Exchange, so there is no crossing and no price-on-arrival
+    /// gamble. Home goods are not a valid source: ship them to the Charterhouse
+    /// first. Soft-rejects (free, owner-only notice) if the warehouse is short.
     MarketSell {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
@@ -74,7 +77,9 @@ pub enum Command {
     /// Place a resting limit order (§9). It clears in the periodic uniform-price
     /// call auction — within a batch everyone clears at one price, so reacting
     /// fastest confers no edge (the anti-sniping mechanism). Resources are
-    /// reserved when placed (credits for a buy, goods for a sell).
+    /// reserved when placed: credits for a buy, and for a sell the goods are
+    /// escrowed out of the Charterhouse WAREHOUSE (§TCA — never home inventory).
+    /// A buy's fill deposits into that same warehouse.
     PlaceLimitOrder {
         player_id: PlayerId,
         side: crate::market::Side,

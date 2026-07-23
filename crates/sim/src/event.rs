@@ -398,6 +398,18 @@ pub enum TradeEvent {
     /// corp's trading inventory toward `system`'s stockpile (sub-light, raidable).
     /// Arrival is reported by the usual `Delivered` (deposited) / `StorageOverflow`.
     StockDispatched { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
+    /// An Exchange order or freight booking was SOFT-REJECTED (§9, §TCA) — owner-
+    /// only and instant (your own administration): nothing was spent, the request
+    /// simply couldn't be honored. Names WHY, so the fix is obvious. `system` is
+    /// the destination/origin a freight booking concerned; `None` for a plain
+    /// Exchange order, which concerns only the Charterhouse.
+    Rejected {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: Option<EntityId>,
+        reason: TradeRejectReason,
+    },
 }
 
 /// What became of an automated supply convoy whose destination was no longer
@@ -426,7 +438,8 @@ impl TradeEvent {
             | TradeEvent::AutoDispatched { player, .. }
             | TradeEvent::SupplyDiverted { player, .. }
             | TradeEvent::StorageOverflow { player, .. }
-            | TradeEvent::StockDispatched { player, .. } => *player,
+            | TradeEvent::StockDispatched { player, .. }
+            | TradeEvent::Rejected { player, .. } => *player,
         }
     }
 }
@@ -481,6 +494,20 @@ pub enum BuildRejectReason {
     /// §ladder B4: the syndicate already FIELDS (or is building) its one Titan
     /// — the singleton flagship. Rebuild is allowed only after it is lost.
     TitanFielded,
+}
+
+/// Why an Exchange order (§9) or a freight booking (§TCA) was SOFT-REJECTED.
+/// Owner-only detail for the timeline notice. The async-fair rule: a rejected
+/// request costs NOTHING — no debit, no escrow, no shipment, no partial state —
+/// and it is never a hard error to the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum TradeRejectReason {
+    /// The corp's CHARTERHOUSE WAREHOUSE holds fewer units than the order needs.
+    /// Selling — and sell-side limit escrow — draws ONLY from the warehouse now;
+    /// goods held at home must first be moved to the Charterhouse (by TCA freight
+    /// or a player convoy) before they can be sold.
+    InsufficientWarehouseStock { have: u32 },
 }
 
 impl Event {

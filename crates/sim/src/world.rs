@@ -317,6 +317,19 @@ const VALUATION_TICKS: u64 = 60 * TICK_HZ as u64;
 /// flood the map (the async-automation anti-spam invariant).
 const EVAL_PERIOD: u64 = 5 * TICK_HZ as u64;
 
+/// Remove `units` of `c` from a whole-unit goods map (a corp's `inventory` or
+/// `warehouse`), DROPPING the entry once it empties — so a warehouse never
+/// accumulates zero rows to clutter the wire, the timeline, or a snapshot diff.
+/// Saturating: never underflows.
+fn take_from(map: &mut BTreeMap<crate::cargo::Commodity, u32>, c: crate::cargo::Commodity, units: u32) {
+    if let Some(u) = map.get_mut(&c) {
+        *u = u.saturating_sub(units);
+        if *u == 0 {
+            map.remove(&c);
+        }
+    }
+}
+
 /// The order that resumes a saved patrol route after a defensive sortie (or idles
 /// if the route was empty).
 fn resume_patrol(route: Vec<Vec2>) -> FleetOrder {
@@ -4040,16 +4053,19 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
-                let home = corp.home;
                 let price = self.market.price(*commodity);
                 let cost = units as f64 * price;
                 if corp.credits < cost {
                     return; // can't afford
                 }
-                // Instant settlement at the true standing price (§9).
+                // Instant settlement at the true standing price (§9). The goods
+                // land in the corp's CHARTERHOUSE WAREHOUSE — nothing about a trade
+                // moves goods across space any more (§TCA). Getting them to a
+                // system is a separate, explicit act: TCA freight or a player convoy.
                 let unit_price = self.market.execute_buy(*commodity, units);
                 if let Some(corp) = self.players.get_mut(player_id) {
                     corp.credits -= units as f64 * unit_price;
+                    *corp.warehouse.entry(*commodity).or_insert(0) += units;
                 }
                 events.push(Event::new(
                     self.time,
@@ -4060,9 +4076,6 @@ impl World {
                         unit_price,
                     }),
                 ));
-                // Delivery convoy carries the goods home (raidable in transit).
-                let cargo = Cargo { commodity: *commodity, units };
-                self.spawn_trade_convoy(*player_id, self.hub, home, cargo, TradeMission::DeliverHome);
             }
             Command::MarketSell {
                 player_id,
@@ -4076,25 +4089,40 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
-                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
+                // §TCA: a sale draws ONLY from the CHARTERHOUSE WAREHOUSE. The goods
+                // are already AT the Exchange, so the old "commit to the crossing and
+                // take the price on arrival" dance is gone — settlement is instant,
+                // like a buy. Home goods are no longer a valid sell source: move them
+                // to the Charterhouse first (freight or a convoy).
+                let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
                 if have < units {
-                    return; // not enough goods
+                    // Async-fair soft reject: nothing spent, owner-only notice.
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::Trade(TradeEvent::Rejected {
+                            player: *player_id,
+                            commodity: *commodity,
+                            units,
+                            system: None,
+                            reason: crate::event::TradeRejectReason::InsufficientWarehouseStock { have },
+                        }),
+                    ));
+                    return;
                 }
-                let home = corp.home;
-                // Commit goods to the crossing FIRST — price is decided on arrival.
+                let unit_price = self.market.execute_sell(*commodity, units);
                 if let Some(corp) = self.players.get_mut(player_id) {
-                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                    take_from(&mut corp.warehouse, *commodity, units);
+                    corp.credits += units as f64 * unit_price;
                 }
                 events.push(Event::new(
                     self.time,
-                    EventPayload::Trade(TradeEvent::SellDispatched {
+                    EventPayload::Trade(TradeEvent::Sold {
                         player: *player_id,
                         commodity: *commodity,
                         units,
+                        unit_price,
                     }),
                 ));
-                let cargo = Cargo { commodity: *commodity, units };
-                self.spawn_trade_convoy(*player_id, home, self.hub, cargo, TradeMission::SellAtHub);
             }
             // SUPPLY FROM HQ (§economy): move goods from the corp's HQ trading
             // inventory into an OWNED system's stockpile via a sub-light raidable
@@ -4168,11 +4196,25 @@ impl World {
                         }
                     }
                     Side::Sell => {
-                        if corp.inventory.get(commodity).copied().unwrap_or(0) < units {
+                        // §TCA: sell-side escrow draws from the CHARTERHOUSE
+                        // WAREHOUSE (the goods must already be at the Exchange),
+                        // never from home inventory.
+                        let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
+                        if have < units {
+                            events.push(Event::new(
+                                self.time,
+                                EventPayload::Trade(TradeEvent::Rejected {
+                                    player: *player_id,
+                                    commodity: *commodity,
+                                    units,
+                                    system: None,
+                                    reason: crate::event::TradeRejectReason::InsufficientWarehouseStock { have },
+                                }),
+                            ));
                             return;
                         }
                         if let Some(c) = self.players.get_mut(player_id) {
-                            c.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                            take_from(&mut c.warehouse, *commodity, units);
                         }
                     }
                 }
@@ -6616,11 +6658,13 @@ impl World {
                 };
                 match order.side {
                     Side::Buy => {
-                        // Refund the over-reservation; goods cross home; news.
+                        // Refund the over-reservation; the matched goods land in the
+                        // buyer's CHARTERHOUSE WAREHOUSE (§TCA — a fill is an
+                        // Exchange settlement, never a crossing); news.
                         let refund = filled as f64 * (order.limit_price - price);
-                        let home = self.players.get(&order.player).map(|c| c.home);
                         if let Some(c) = self.players.get_mut(&order.player) {
                             c.credits += refund;
+                            *c.warehouse.entry(commodity).or_insert(0) += filled;
                         }
                         events.push(Event::new(
                             now,
@@ -6632,10 +6676,6 @@ impl World {
                                 unit_price: price,
                             }),
                         ));
-                        if let Some(home) = home {
-                            let cargo = Cargo { commodity, units: filled };
-                            self.spawn_trade_convoy(order.player, self.hub, home, cargo, TradeMission::DeliverHome);
-                        }
                     }
                     Side::Sell => {
                         if let Some(c) = self.players.get_mut(&order.player) {
@@ -6740,12 +6780,15 @@ impl World {
                     TradeEvent::Delivered { player, units, .. } => {
                         self.bump_stats(player, |s| s.trade_units += units as u64);
                     }
-                    // A hub SALE is both throughput AND market revenue.
+                    // A SALE is market REVENUE only. §TCA: it is no longer trade
+                    // THROUGHPUT — a Charterhouse sale settles against the warehouse
+                    // and hauls nothing, so counting it would both misreport the
+                    // "units your convoys delivered" counter and make throughput
+                    // farmable risk-free by buying and selling on the spot. The
+                    // convoy paths that DO haul goods to the hub bump `trade_units`
+                    // at their own arrival site (see `resolve_trade_arrivals`).
                     TradeEvent::Sold { player, units, unit_price, .. } => {
-                        self.bump_stats(player, |s| {
-                            s.trade_units += units as u64;
-                            s.market_revenue += units as f64 * unit_price;
-                        });
+                        self.bump_stats(player, |s| s.market_revenue += units as f64 * unit_price);
                     }
                     // MARKET PROFIT cost side (immediate buy).
                     TradeEvent::Bought { player, units, unit_price, .. } => {
@@ -7282,6 +7325,11 @@ impl World {
                     let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
                         corp.credits += cargo.units as f64 * unit_price;
+                        // §TCA: THIS is a real haul — a convoy crossed and delivered
+                        // to the hub — so it earns trade throughput here, at the
+                        // arrival site. (The `Sold` event itself no longer bumps it:
+                        // an instant warehouse sale moves nothing.)
+                        corp.stats.trade_units += cargo.units as u64;
                         if fought {
                             corp.stats.cargo_protected += cargo.units as u64;
                         }
@@ -8011,6 +8059,20 @@ mod tests {
         }
         assert_eq!(old.players.len(), w.players.len());
         assert_eq!(old.tick, w.tick);
+    }
+
+    /// §TCA: put goods in a corp's CHARTERHOUSE WAREHOUSE — the only source the
+    /// Exchange sells from now, so most market tests need it seeded.
+    fn seed_warehouse(w: &mut World, who: PlayerId, items: &[(Commodity, u32)]) {
+        let c = w.players.get_mut(&who).unwrap();
+        for (com, n) in items {
+            *c.warehouse.entry(*com).or_insert(0) += *n;
+        }
+    }
+
+    /// How many units of `c` sit in `who`'s Charterhouse warehouse.
+    fn wh(w: &World, who: PlayerId, c: Commodity) -> u32 {
+        w.players[&who].warehouse.get(&c).copied().unwrap_or(0)
     }
 
     #[test]
@@ -12478,61 +12540,139 @@ mod tests {
         assert_battle_consistent(&w, outcome, raider, convoy);
     }
 
+    /// §TCA Part 2: a BUY settles instantly at the standing price and deposits into
+    /// the CHARTERHOUSE WAREHOUSE. No convoy is conjured, and home inventory is
+    /// untouched — a trade never moves goods across space any more.
     #[test]
-    fn market_buy_settles_now_and_delivers_later() {
+    fn market_buy_settles_into_the_warehouse_without_a_convoy() {
         use crate::cargo::Commodity::Fuel;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let credits0 = w.players[&id].credits;
-        let fuel0 = w.players[&id].inventory[&Fuel];
+        let fuel_home0 = w.players[&id].inventory[&Fuel];
+        let fleets0 = w.fleets.len();
         let price = w.market.price(Fuel);
 
         w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 50 }]);
         // Instant settlement: credits debited now (≈ 50 × price).
         let spent = credits0 - w.players[&id].credits;
-        assert!((spent - 50.0 * price).abs() < 1e-6, "buy should settle at the standing price");
-        // A delivery convoy spawned at the hub, carrying the goods.
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome));
-        assert!(convoy.is_some(), "buy should spawn a delivery convoy");
-        assert!(convoy.unwrap().pos.distance(w.hub) < 5.0, "delivery convoy starts at the hub");
-        // Inventory not yet increased (goods still in transit).
-        assert_eq!(w.players[&id].inventory[&Fuel], fuel0);
-
-        // Run until the convoy reaches home and deposits the goods.
-        for _ in 0..(220 * crate::config::TICK_HZ) {
-            w.step(&[]);
-            if w.players[&id].inventory[&Fuel] == fuel0 + 50 {
-                return;
-            }
-        }
-        panic!("delivery convoy never arrived");
+        assert!((spent - 50.0 * price).abs() < 1e-6, "buy settles at the standing price");
+        // The goods are AT the Charterhouse immediately…
+        assert_eq!(wh(&w, id, Fuel), 50, "bought goods land in the warehouse");
+        // …home inventory is untouched, and NOTHING was launched.
+        assert_eq!(w.players[&id].inventory[&Fuel], fuel_home0, "home inventory untouched");
+        assert_eq!(w.fleets.len(), fleets0, "a buy conjures no convoy");
+        assert!(
+            !w.fleets.values().any(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome)),
+            "no DeliverHome convoy is ever created by the Exchange"
+        );
     }
 
+    /// §TCA Part 2: a SELL draws ONLY from the warehouse and settles instantly —
+    /// the goods are already at the Exchange, so there is no crossing and no
+    /// price-on-arrival gamble.
     #[test]
-    fn market_sell_commits_goods_and_clears_on_arrival() {
+    fn market_sell_draws_from_the_warehouse_and_settles_now() {
         use crate::cargo::Commodity::MetallicOre;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(MetallicOre, 100)]);
         let credits0 = w.players[&id].credits;
-        let ore0 = w.players[&id].inventory[&MetallicOre];
+        let home_ore0 = w.players[&id].inventory[&MetallicOre];
+        let fleets0 = w.fleets.len();
+        let price = w.market.price(MetallicOre);
 
         w.step(&[Command::MarketSell { player_id: id, commodity: MetallicOre, units: 40 }]);
-        // Goods committed to the crossing now; credits unchanged until arrival.
-        assert_eq!(w.players[&id].inventory[&MetallicOre], ore0 - 40);
-        assert_eq!(w.players[&id].credits, credits0);
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
-        assert!(convoy.is_some(), "sell should spawn a convoy toward the hub");
+        assert_eq!(wh(&w, id, MetallicOre), 60, "sold units leave the warehouse");
+        let gained = w.players[&id].credits - credits0;
+        assert!((gained - 40.0 * price).abs() < 1e-6, "credited instantly at the standing price");
+        assert_eq!(w.players[&id].inventory[&MetallicOre], home_ore0, "home goods are not a sell source");
+        assert_eq!(w.fleets.len(), fleets0, "a sell conjures no convoy");
+        assert!(
+            !w.fleets.values().any(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub)),
+            "no SellAtHub convoy is ever created by the Exchange"
+        );
+    }
 
-        // Run until it reaches the hub and clears at the price-on-arrival.
-        for _ in 0..(260 * crate::config::TICK_HZ) {
-            w.step(&[]);
-            if w.players[&id].credits > credits0 {
-                return; // sold at arrival, credited
-            }
+    /// §TCA Part 2: home goods are NO LONGER a valid sell source — a corp holding
+    /// plenty at home but nothing at the Charterhouse is soft-rejected, for free,
+    /// with the typed reason that tells it to ship the goods in first.
+    #[test]
+    fn selling_home_goods_soft_rejects_until_they_reach_the_charterhouse() {
+        use crate::cargo::Commodity::MetallicOre;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home_ore = w.players[&id].inventory[&MetallicOre];
+        assert!(home_ore > 0, "the starter corp does hold ore AT HOME");
+        let credits0 = w.players[&id].credits;
+
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: MetallicOre, units: home_ore }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected {
+                    player, reason: crate::event::TradeRejectReason::InsufficientWarehouseStock { have: 0 }, ..
+                }) if *player == id
+            )),
+            "an empty warehouse soft-rejects with the typed reason"
+        );
+        // Costs nothing: home goods and credits both untouched.
+        assert_eq!(w.players[&id].inventory[&MetallicOre], home_ore);
+        assert_eq!(w.players[&id].credits, credits0);
+    }
+
+    /// §TCA Part 2 (grandfathering): a convoy already in flight when the warehouse
+    /// rework landed — i.e. one loaded from a PRE-FEATURE snapshot — still resolves
+    /// under the OLD semantics. `DeliverHome` deposits into home inventory and
+    /// `SellAtHub` clears at the price-on-arrival, exactly as before. New code never
+    /// creates either mission (the Exchange tests above assert that side).
+    #[test]
+    fn in_flight_convoys_from_an_old_snapshot_still_resolve() {
+        use crate::cargo::Commodity::{Fuel, MetallicOre};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home;
+        let home_fuel0 = w.players[&id].inventory.get(&Fuel).copied().unwrap_or(0);
+        let credits0 = w.players[&id].credits;
+
+        // Forge the two legacy convoys, ARRIVED (Idle at their destination) —
+        // exactly the shape an old snapshot's in-flight convoy loads with.
+        for (mission, pos, cargo) in [
+            (TradeMission::DeliverHome, home, Cargo { commodity: Fuel, units: 25 }),
+            (TradeMission::SellAtHub, w.hub, Cargo { commodity: MetallicOre, units: 30 }),
+        ] {
+            let fid = w.alloc_entity_id();
+            let mut f = Fleet::single(fid, id, ShipKind::Convoy, pos, FleetOrder::Idle, Some(cargo));
+            f.mission = Some(mission);
+            w.fleets.insert(fid, f);
         }
-        panic!("sell convoy never cleared");
+
+        w.step(&[]);
+
+        // DeliverHome deposited into HOME inventory (old semantics — not the warehouse).
+        assert_eq!(
+            w.players[&id].inventory.get(&Fuel).copied().unwrap_or(0),
+            home_fuel0 + 25,
+            "a grandfathered DeliverHome still deposits at home"
+        );
+        assert_eq!(wh(&w, id, Fuel), 0, "…and not into the warehouse");
+        // SellAtHub cleared into credits — and, because a convoy really did cross
+        // and deliver, it earns trade THROUGHPUT at the arrival site (25 delivered
+        // home + 30 carried to the hub), unlike an instant warehouse sale.
+        assert!(w.players[&id].credits > credits0, "a grandfathered SellAtHub still clears");
+        assert_eq!(
+            w.players[&id].stats.trade_units, 55,
+            "hauled goods earn throughput: 25 delivered home + 30 sold at the hub"
+        );
+        // Both convoys are consumed.
+        assert!(
+            !w.fleets.values().any(|f| f.owner == id && f.mission.is_some()),
+            "both legacy convoys resolved and left the world"
+        );
     }
 
     #[test]
@@ -12593,15 +12733,16 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let ships0 = w.fleets.len();
-        // Sell more than held → ignored (no convoy, inventory unchanged).
-        let alloys0 = w.players[&id].inventory[&Alloys];
+        // Sell more than the WAREHOUSE holds → soft-rejected, nothing spent.
+        seed_warehouse(&mut w, id, &[(Alloys, 10)]);
         w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 99_999 }]);
-        assert_eq!(w.players[&id].inventory[&Alloys], alloys0);
+        assert_eq!(wh(&w, id, Alloys), 10, "a rejected sell leaves the warehouse intact");
         assert_eq!(w.fleets.len(), ships0, "rejected sell must not spawn a convoy");
         // Buy beyond the treasury → ignored.
         let credits0 = w.players[&id].credits;
         w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000 }]);
         assert_eq!(w.players[&id].credits, credits0);
+        assert_eq!(wh(&w, id, Alloys), 10, "a rejected buy deposits nothing");
         assert_eq!(w.fleets.len(), ships0, "rejected buy must not spawn a convoy");
     }
 
@@ -12614,17 +12755,20 @@ mod tests {
             Command::AddPlayer { id: buyer, name: "Buy".into() },
             Command::AddPlayer { id: seller, name: "Sell".into() },
         ]);
+        // §TCA: sell-side escrow draws from the CHARTERHOUSE WAREHOUSE, so the
+        // seller's goods must already be at the Exchange.
+        seed_warehouse(&mut w, seller, &[(MetallicOre, 50)]);
         let buyer_credits0 = w.players[&buyer].credits;
         let seller_credits0 = w.players[&seller].credits;
-        let seller_ore0 = w.players[&seller].inventory[&MetallicOre];
+        let seller_ore0 = wh(&w, seller, MetallicOre);
 
         // A crossing pair: buyer pays up to 9, seller wants at least 7.
         w.step(&[
             Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: MetallicOre, units: 50, limit_price: 7.0 },
             Command::PlaceLimitOrder { player_id: buyer, side: Side::Buy, commodity: MetallicOre, units: 50, limit_price: 9.0 },
         ]);
-        // Reservations taken at placement.
-        assert_eq!(w.players[&seller].inventory[&MetallicOre], seller_ore0 - 50);
+        // Reservations taken at placement — out of the warehouse.
+        assert_eq!(wh(&w, seller, MetallicOre), seller_ore0 - 50);
         assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 9.0)).abs() < 1e-6);
         assert_eq!(w.book.len(), 2);
 
@@ -12643,8 +12787,13 @@ mod tests {
         // paid 50×7; buyer's over-reservation (50×2) is refunded → net 50×7.
         assert!((w.players[&seller].credits - (seller_credits0 + 50.0 * 7.0)).abs() < 1e-6, "seller paid at uniform price");
         assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 7.0)).abs() < 1e-6, "buyer settled at uniform price (over-reservation refunded)");
-        // The buyer's matched goods cross home as a delivery convoy.
-        assert!(w.fleets.values().any(|s| s.owner == buyer && s.mission == Some(TradeMission::DeliverHome)));
+        // §TCA: the buyer's matched goods land in their Charterhouse warehouse —
+        // a fill is an Exchange settlement, never a crossing.
+        assert_eq!(wh(&w, buyer, MetallicOre), 50, "the fill deposits into the buyer's warehouse");
+        assert!(
+            !w.fleets.values().any(|s| s.owner == buyer && s.mission == Some(TradeMission::DeliverHome)),
+            "a limit fill conjures no delivery convoy"
+        );
     }
 
     #[test]
@@ -12656,6 +12805,7 @@ mod tests {
             Command::AddPlayer { id: buyer, name: "Buy".into() },
             Command::AddPlayer { id: seller, name: "Sell".into() },
         ]);
+        seed_warehouse(&mut w, seller, &[(Fuel, 30)]); // §TCA: escrow comes from the warehouse
         // Buyer pays up to 6, seller wants 9 — they do NOT cross.
         w.step(&[
             Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: Fuel, units: 30, limit_price: 9.0 },
@@ -15510,7 +15660,10 @@ mod tests {
         ]);
         {
             let s = &w.players[&p1].stats;
-            assert_eq!(s.trade_units, 14, "delivered 10 + sold 4");
+            // §TCA: only the DELIVERY hauls goods. A `Sold` is market revenue, not
+            // throughput (an instant Charterhouse sale moves nothing); the convoy
+            // paths that really haul bump throughput at their arrival site instead.
+            assert_eq!(s.trade_units, 10, "delivered 10; the sale hauled nothing");
             assert_eq!(s.market_revenue, 4.0 * 5.0 + 3.0 * 2.0);
             assert_eq!(s.market_spend, 2.0 * 3.0 + 1.0 * 4.0);
             assert_eq!(s.market_profit(), 26.0 - 10.0);

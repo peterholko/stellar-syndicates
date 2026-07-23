@@ -62,6 +62,7 @@ pub use doctrine::{
 };
 pub use event::{
     BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
+    TradeRejectReason,
 };
 pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId, SyndicateId};

@@ -1,8 +1,16 @@
-//! The hub Exchange (§9). A single shared market with a standing price per
+//! The CHARTERHOUSE Exchange (§9) — the market the Terran Charter Authority
+//! operates at the wormhole hub. A single shared market with a standing price per
 //! commodity. **Execution is instant** (settlement is correlation, §3) — a
-//! market order fills against the standing price right now. Prices *walk* with
-//! flow (buys lift, sells depress) along a simple elasticity curve, and drift on
-//! a slow seeded random walk so there is always something to trade against.
+//! market order fills against the standing price right now, settling against the
+//! trader's Charterhouse WAREHOUSE (§TCA): buys deposit into it, sells and
+//! sell-side limit escrow draw only from it, and no trade ever moves goods across
+//! space. Prices *walk* with flow (buys lift, sells depress) along a simple
+//! elasticity curve, and drift on a slow seeded random walk so there is always
+//! something to trade against.
+//!
+//! There is deliberately NO base market fee — the clearing invariants (and the
+//! economy-clearing tests) depend on it; Phase 2's TCA tariffs are penalty-only
+//! precisely so those invariants continue to hold.
 //!
 //! Note: the *information* of the price is lightspeed-bound — that lag lives in
 //! the server's view filter, not here. This struct is ground truth.

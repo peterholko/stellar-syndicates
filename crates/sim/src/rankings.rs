@@ -43,8 +43,11 @@ pub fn hull_sum(losses: &BTreeMap<ShipKind, u32>) -> f64 {
 /// (`#[serde(default)]` on every field, so pre-feature snapshots load as zeroes).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RankingStats {
-    /// TRADE THROUGHPUT — cargo units a corp's convoys successfully delivered
-    /// (home, an owned/ally system, or sold at the hub market).
+    /// TRADE THROUGHPUT — cargo units a corp's convoys successfully HAULED and
+    /// delivered (home, an owned/ally system, or carried to the hub and sold).
+    /// §TCA: an instant Charterhouse sale settles against the warehouse and moves
+    /// nothing, so it earns NO throughput — only goods that actually crossed space
+    /// count here.
     #[serde(default)]
     pub trade_units: u64,
     /// NET MARKET PROFIT (revenue side): proceeds from hub sales + filled sell
