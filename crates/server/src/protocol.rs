@@ -49,13 +49,33 @@ pub enum ClientMsg {
     /// Recall a raider (break off, return home). May arrive too late (§8).
     RecallRaid { raider_id: EntityId },
 
-    /// Buy at market on the hub Exchange (§9): instant settlement, then a
-    /// delivery convoy carries the goods home.
-    MarketBuy { commodity: Commodity, units: u32 },
+    /// Buy at the Charterhouse Exchange (§9, §TCA): instant settlement into the
+    /// corp's warehouse. `ship_to` optionally hands the lot straight to Authority
+    /// freight for one of the corp's owned systems (the one-checkbox composition);
+    /// serde default so older clients still parse.
+    MarketBuy {
+        commodity: Commodity,
+        units: u32,
+        #[serde(default)]
+        ship_to: Option<EntityId>,
+    },
 
-    /// Sell at market (§9): a convoy carries the goods to the hub and clears at
-    /// the price-on-arrival.
+    /// Sell at the Charterhouse Exchange (§9, §TCA): draws from the corp's
+    /// warehouse and settles instantly at the standing price.
     MarketSell { commodity: Commodity, units: u32 },
+
+    /// §TCA: book OUTBOUND Authority freight — warehouse → an owned system.
+    BookFreightOut { system: EntityId, commodity: Commodity, units: u32 },
+
+    /// §TCA: book INBOUND Authority freight — an owned system → the warehouse,
+    /// optionally sold at the Exchange the moment it lands.
+    BookFreightIn {
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        #[serde(default)]
+        sell_on_arrival: bool,
+    },
 
     /// Place a resting limit order; it clears in the periodic batch (§9).
     PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
@@ -269,7 +289,11 @@ pub struct WalletView {
     pub credits: f64,
     /// Equity / net worth, from the slow valuation close (§9).
     pub valuation: f64,
+    /// Goods held AT HOME.
     pub inventory: Vec<InvSlot>,
+    /// §TCA: goods held at the CHARTERHOUSE — the only stock the Exchange trades
+    /// against. Owner-only, like the rest of the wallet.
+    pub warehouse: Vec<InvSlot>,
     pub orders: Vec<OrderView>,
     /// Total Fuel across all owned systems' stockpiles — the fleet's operating
     /// reserve (§step1 part 2). Owner-only (summed from owned systems only).
@@ -298,6 +322,64 @@ pub struct CharterView {
     pub market_penalty_frac: f64,
     /// Credits per standing point to buy back through reinstatement.
     pub reinstate_cost_per_point: f64,
+}
+
+/// §TCA: one of the viewer's freight shipments — queued for a departure or
+/// already aboard an Authority freighter. OWNER-ONLY: a player sees only their
+/// own lots, never anyone else's.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ShipmentView {
+    pub id: u64,
+    /// The destination (outbound) or origin (inbound) system.
+    pub system: EntityId,
+    pub commodity: Commodity,
+    pub units: u32,
+    pub direction: sim::ShipmentDir,
+    pub sell_on_arrival: bool,
+    pub fee_paid: f64,
+    pub booked_at: f64,
+    /// `false` = still queued at the Charterhouse; `true` = aboard a freighter.
+    pub aboard: bool,
+}
+
+/// §TCA: the Authority's freight TERMS for one of the viewer's owned systems —
+/// everything the client needs to price and time a booking BEFORE committing.
+/// Deterministic: the departure phase and the freighter's constant cruise are
+/// pure functions of the config, so these are exact, not estimates.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct FreightTermsView {
+    pub system: EntityId,
+    /// Charterhouse → system distance (sim units).
+    pub distance: f64,
+    /// Whether the system has a Depot (bigger cap, discounted fee).
+    pub depot: bool,
+    /// Max units this corp may load to this destination per departure.
+    pub cap: u32,
+    /// Flight time one way (seconds) — add to a departure for the outbound ETA.
+    pub secs_out: f64,
+    /// Flight time out AND back (seconds) — an inbound lot's total after departure.
+    pub secs_round: f64,
+}
+
+/// §TCA: the Charterhouse freight desk — the timetable, the fee formula's inputs,
+/// the viewer's own shipment queue. Owner-only.
+#[derive(Debug, Clone, Serialize)]
+pub struct FreightView {
+    /// Sim-time of the next scheduled departure (exact).
+    pub next_departure: f64,
+    /// Seconds between departures.
+    pub period: f64,
+    /// Fee = units × (price × `fee_frac` + distance × `fee_per_unit_dist`),
+    /// then × `depot_fee_mult` if the destination has a Depot. Exposed as inputs
+    /// (not a per-commodity table) so the client prices any lot live off the
+    /// ticker; `freight_view_terms_price_a_lot_exactly` guards the contract.
+    pub fee_frac: f64,
+    pub fee_per_unit_dist: f64,
+    pub depot_fee_mult: f64,
+    /// Terms for each system the viewer currently owns (the valid destinations).
+    pub terms: Vec<FreightTermsView>,
+    /// The viewer's own lots, queued and aboard.
+    pub shipments: Vec<ShipmentView>,
 }
 
 /// Which side of a raid the recipient is on.
@@ -1280,6 +1362,10 @@ pub enum ServerMsg {
         /// rivals learn of offenses only through public citations, never by
         /// reading a corporation's record.
         charter: CharterView,
+        /// §TCA: the Charterhouse freight desk — timetable, terms per owned
+        /// destination, and the player's OWN shipment queue. Owner-only, fresh
+        /// (it is the player's own administration, like the wallet).
+        freight: FreightView,
         /// The player's own standing logistics orders (§15) — fresh (own private
         /// policy, not light-gated, like the wallet). Lets the client list/edit them
         /// and show what's running automatically.

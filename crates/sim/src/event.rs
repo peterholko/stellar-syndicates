@@ -410,6 +410,54 @@ pub enum TradeEvent {
         system: Option<EntityId>,
         reason: TradeRejectReason,
     },
+    /// §TCA: a freight booking was ACCEPTED — goods escrowed, fee charged (and
+    /// destroyed). Owner-only. `depart_at` and `eta` are DETERMINISTIC forecasts
+    /// (the departure phase and the freighter's constant cruise are pure functions
+    /// of the config), so the client can show them before the player commits.
+    FreightBooked {
+        player: PlayerId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        direction: crate::tca::ShipmentDir,
+        fee: f64,
+        /// Sim-time of the scheduled departure this lot is forecast to ride.
+        depart_at: f64,
+        /// Sim-time the goods are forecast to reach their destination (the system
+        /// for an outbound lot; back at the Charterhouse for an inbound one).
+        eta: f64,
+    },
+    /// §TCA: a freight shipment reached a milestone of its journey. Owner-only.
+    FreightMoved {
+        player: PlayerId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        stage: FreightStage,
+    },
+}
+
+/// Where a §TCA freight shipment got to — the owner-only progress notices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreightStage {
+    /// Loaded aboard an Authority freighter that has left the Charterhouse.
+    Departed,
+    /// Unloaded into the destination system's stockpile.
+    DeliveredToSystem,
+    /// Collected from the origin system and aboard for the run home.
+    CollectedForPickup,
+    /// Landed in the owner's Charterhouse warehouse.
+    ArrivedAtWarehouse,
+    /// Could not be delivered (the system is no longer the owner's, or its depot
+    /// had no room), so the Authority carried it back to the owner's warehouse.
+    /// Friendlier than the convoy cargo-lost rule, and deliberately so.
+    ReturnedUndeliverable,
+    /// The origin system was lost before pickup, so the queued lot is gone — to
+    /// nobody. The captor gets nothing; the fee is not refunded.
+    ForfeitedOnCapture,
+    /// The lot was destroyed with the freighter carrying it.
+    LostWithFreighter,
 }
 
 /// What became of an automated supply convoy whose destination was no longer
@@ -439,7 +487,9 @@ impl TradeEvent {
             | TradeEvent::SupplyDiverted { player, .. }
             | TradeEvent::StorageOverflow { player, .. }
             | TradeEvent::StockDispatched { player, .. }
-            | TradeEvent::Rejected { player, .. } => *player,
+            | TradeEvent::Rejected { player, .. }
+            | TradeEvent::FreightBooked { player, .. }
+            | TradeEvent::FreightMoved { player, .. } => *player,
         }
     }
 }
@@ -500,7 +550,9 @@ pub enum BuildRejectReason {
 /// Owner-only detail for the timeline notice. The async-fair rule: a rejected
 /// request costs NOTHING — no debit, no escrow, no shipment, no partial state —
 /// and it is never a hard error to the client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// (No `Eq`: `CannotAffordFee` carries the f64 fee it couldn't pay.)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum TradeRejectReason {
     /// The corp's CHARTERHOUSE WAREHOUSE holds fewer units than the order needs.
@@ -508,6 +560,16 @@ pub enum TradeRejectReason {
     /// goods held at home must first be moved to the Charterhouse (by TCA freight
     /// or a player convoy) before they can be sold.
     InsufficientWarehouseStock { have: u32 },
+    /// §TCA freight: the named system is not one the corp currently owns. The
+    /// Authority serves a corporation's OWN colonies only — it will not deliver to
+    /// (or collect from) a rival's ground.
+    NotYourSystem,
+    /// §TCA freight: the corp's stockpile AT THE ORIGIN SYSTEM is short of the
+    /// units an inbound booking asked to collect.
+    InsufficientSystemStock { have: u32 },
+    /// §TCA freight: the treasury can't cover the freight fee. The fee is charged
+    /// in full at booking or not at all — no partial lots.
+    CannotAffordFee { fee: f64 },
 }
 
 impl Event {

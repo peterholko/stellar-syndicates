@@ -590,6 +590,12 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
     }
 }
 
+/// An ABSOLUTE sim-time as a mission-clock stamp ("T+7:20") — used for the §TCA
+/// freight timetable, whose departure and arrival instants are exact.
+fn fmt_clock(t: f64) -> String {
+    format!("T+{}", fmt_wait(t))
+}
+
 /// Format a wait in seconds as `M:SS` for the echo countdown label.
 fn fmt_wait(secs: f64) -> String {
     let s = secs.max(0.0).round() as u64;
@@ -705,15 +711,89 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
         }
         // A SOFT-REJECTED Exchange order or freight booking (§9, §TCA) — owner-only,
         // instant, and free: nothing was spent. Names the reason so the fix is obvious.
-        TradeEvent::Rejected { commodity, units, reason, .. } => {
+        TradeEvent::Rejected { commodity, units, system, reason, .. } => {
             let com = commodity_name(commodity);
+            let where_ = system.map(|s| system_name(world, s));
             match reason {
                 sim::TradeRejectReason::InsufficientWarehouseStock { have } => (
                     Warn,
+                    match &where_ {
+                        Some(name) => format!(
+                            "Can't ship {units} {com} to {name}: your Charterhouse warehouse holds {have}."
+                        ),
+                        None => format!(
+                            "Can't sell {units} {com}: your Charterhouse warehouse holds {have}. \
+                             Ship goods to the Charterhouse first (Authority freight or a convoy)."
+                        ),
+                    },
+                ),
+                sim::TradeRejectReason::NotYourSystem => (
+                    Warn,
                     format!(
-                        "Can't sell {units} {com}: your Charterhouse warehouse holds {have}. \
-                         Ship goods to the Charterhouse first (Authority freight or a convoy)."
+                        "Authority freight refused {units} {com}: {} isn't yours. The Charter \
+                         Authority serves your own colonies only.",
+                        where_.unwrap_or_else(|| "that system".into())
                     ),
+                ),
+                sim::TradeRejectReason::InsufficientSystemStock { have } => (
+                    Warn,
+                    format!(
+                        "Can't collect {units} {com} from {}: its stockpile holds {have}.",
+                        where_.unwrap_or_else(|| "that system".into())
+                    ),
+                ),
+                sim::TradeRejectReason::CannotAffordFee { fee } => (
+                    Warn,
+                    format!("Can't book {units} {com}: the Authority's freight fee is {fee:.0} credits."),
+                ),
+            }
+        }
+        // §TCA: the booking receipt — what it cost and when the Authority sails.
+        TradeEvent::FreightBooked { commodity, units, system, direction, fee, depart_at, eta, .. } => {
+            let name = system_name(world, system);
+            let (verb, dest) = match direction {
+                sim::ShipmentDir::Outbound => ("Booked", format!("to {name}")),
+                sim::ShipmentDir::Inbound => ("Booked pickup of", format!("from {name}")),
+            };
+            (
+                Good,
+                format!(
+                    "{verb} {units} {} {dest} — fee {fee:.0}cr, departs {}, arrives {}.",
+                    commodity_name(commodity),
+                    fmt_clock(depart_at),
+                    fmt_clock(eta)
+                ),
+            )
+        }
+        // §TCA: freight progress. Only the outcomes a player would want in an
+        // away-digest; the routine "departed" tick stays out of it.
+        TradeEvent::FreightMoved { commodity, units, system, stage, .. } => {
+            let name = system_name(world, system);
+            let com = commodity_name(commodity);
+            match stage {
+                sim::FreightStage::Departed => return None,
+                sim::FreightStage::CollectedForPickup => return None,
+                sim::FreightStage::DeliveredToSystem => {
+                    (Good, format!("Authority freight delivered {units} {com} to {name}."))
+                }
+                sim::FreightStage::ArrivedAtWarehouse => (
+                    Good,
+                    format!("Authority freight landed {units} {com} from {name} in your Charterhouse warehouse."),
+                ),
+                sim::FreightStage::ReturnedUndeliverable => (
+                    Warn,
+                    format!(
+                        "Authority freight couldn't unload {units} {com} at {name} — it's no longer yours, \
+                         or its depot is full. The lot is back in your Charterhouse warehouse."
+                    ),
+                ),
+                sim::FreightStage::ForfeitedOnCapture => (
+                    Bad,
+                    format!("Lost {units} {com} awaiting pickup at {name} — the system fell before the Authority collected it."),
+                ),
+                sim::FreightStage::LostWithFreighter => (
+                    Bad,
+                    format!("{units} {com} destroyed with the Authority freighter carrying it (to/from {name})."),
                 ),
             }
         }

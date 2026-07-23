@@ -383,9 +383,19 @@ impl GameLoop {
                         self.pending.push(Command::RecallRaid { player_id, raider_id });
                     }
                 }
-                ClientMsg::MarketBuy { commodity, units } => {
+                ClientMsg::MarketBuy { commodity, units, ship_to } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MarketBuy { player_id, commodity, units });
+                        self.pending.push(Command::MarketBuy { player_id, commodity, units, ship_to });
+                    }
+                }
+                ClientMsg::BookFreightOut { system, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BookFreightOut { player_id, system, commodity, units });
+                    }
+                }
+                ClientMsg::BookFreightIn { system, commodity, units, sell_on_arrival } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BookFreightIn { player_id, system, commodity, units, sell_on_arrival });
                     }
                 }
                 ClientMsg::MarketSell { commodity, units } => {
@@ -917,6 +927,12 @@ impl GameLoop {
                     .iter()
                     .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
                     .collect(),
+                // §TCA: goods at the Charterhouse — what the Exchange trades against.
+                warehouse: corp
+                    .warehouse
+                    .iter()
+                    .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
+                    .collect(),
                 orders: self
                     .world
                     .book
@@ -961,6 +977,50 @@ impl GameLoop {
                         .and_then(|sid| self.world.syndicates.get(&sid))
                         .and_then(|s| s.flagship_name.clone())
                 });
+            // §TCA: the Charterhouse freight desk. Terms for every system this
+            // player owns (the only valid destinations), plus their OWN lots.
+            let freight = crate::protocol::FreightView {
+                next_departure: self.world.next_freight_departure(),
+                period: self.world.freight_period_secs(),
+                fee_frac: sim::tca::TCA_FREIGHT_FEE_FRAC,
+                fee_per_unit_dist: sim::tca::TCA_FREIGHT_FEE_PER_UNIT_DIST,
+                depot_fee_mult: sim::tca::TCA_DEPOT_FEE_MULT,
+                terms: self
+                    .world
+                    .systems
+                    .iter()
+                    .filter(|s| s.owner == Some(player_id))
+                    .map(|s| {
+                        let distance = hub.distance(s.pos);
+                        let depot = s.tier(sim::StructureKind::Depot) > 0;
+                        let secs_out = sim::World::freight_flight_secs(distance);
+                        crate::protocol::FreightTermsView {
+                            system: s.id,
+                            distance,
+                            depot,
+                            cap: sim::tca::shipment_cap(depot),
+                            secs_out,
+                            secs_round: secs_out * 2.0,
+                        }
+                    })
+                    .collect(),
+                shipments: self
+                    .world
+                    .shipments_of(player_id)
+                    .into_iter()
+                    .map(|(s, aboard)| crate::protocol::ShipmentView {
+                        id: s.id.0,
+                        system: s.system,
+                        commodity: s.commodity,
+                        units: s.units,
+                        direction: s.direction,
+                        sell_on_arrival: s.sell_on_arrival,
+                        fee_paid: s.fee_paid,
+                        booked_at: s.booked_at,
+                        aboard,
+                    })
+                    .collect(),
+            };
 
             views.insert(
                 player_id,
@@ -974,6 +1034,7 @@ impl GameLoop {
                     market,
                     wallet,
                     charter,
+                    freight,
                     // The player's own standing orders (fresh — private policy, not
                     // light-gated), so the client can list/edit them.
                     standing_orders: corp.standing_orders.clone(),

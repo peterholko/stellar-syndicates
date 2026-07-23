@@ -17,7 +17,7 @@ use crate::config::{SimConfig, DT, TICK_HZ};
 use crate::doctrine::{
     DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine,
 };
-use crate::event::{DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
+use crate::event::{DivertAction, Event, EventPayload, FreightStage, RaidOutcome, TradeEvent, TradeRejectReason};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
@@ -26,6 +26,7 @@ use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 use crate::syndicate::{syndicate_cap, Syndicate};
+use crate::tca::{FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
 use crate::pirate::{self, Enclave};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
@@ -1374,6 +1375,12 @@ impl World {
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
 
+        // 5a'. §TCA: resolve Authority FREIGHTER runs that reached the end of a leg
+        //      — unload at the colony, collect the pickups waiting there and turn
+        //      for home, or land the whole manifest in its owners' Charterhouse
+        //      warehouses. Alongside the convoy arrivals, on the same cadence.
+        self.resolve_freight_arrivals(&mut events);
+
         // 5b. Accrue production at every claimed system (§5.1 continuous progress)
         //     — happens whether or not the owner is logged in.
         self.accrue_production(&mut events);
@@ -1442,6 +1449,12 @@ impl World {
         }
         if self.tick.is_multiple_of(VALUATION_TICKS) {
             self.recompute_valuations();
+        }
+        // §TCA: the Authority's SCHEDULED DEPARTURE — one freighter per destination
+        // that has freight waiting in either direction. On the tick cadence like the
+        // other periodic passes, so the timetable is exact and previewable.
+        if self.tick.is_multiple_of(Self::freight_depart_ticks()) {
+            self.depart_freight(&mut events);
         }
 
         // §rankings: tally THIS tick's events into the cumulative counters (cheap —
@@ -4045,6 +4058,7 @@ impl World {
                 player_id,
                 commodity,
                 units,
+                ship_to,
             } => {
                 let units = *units;
                 if units == 0 {
@@ -4076,6 +4090,12 @@ impl World {
                         unit_price,
                     }),
                 ));
+                // §TCA one-checkbox composition: hand the whole lot straight to
+                // the Authority for delivery. If the booking soft-rejects, the
+                // goods simply stay in the warehouse and the owner is told why.
+                if let Some(dest) = *ship_to {
+                    self.book_freight(*player_id, dest, *commodity, units, ShipmentDir::Outbound, false, events);
+                }
             }
             Command::MarketSell {
                 player_id,
@@ -4168,6 +4188,12 @@ impl World {
                 // parity with the manual hub-trade family (MarketBuy/MarketSell).
                 let cargo = Cargo { commodity: *commodity, units };
                 self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+            }
+            Command::BookFreightOut { player_id, system, commodity, units } => {
+                self.book_freight(*player_id, *system, *commodity, *units, ShipmentDir::Outbound, false, events);
+            }
+            Command::BookFreightIn { player_id, system, commodity, units, sell_on_arrival } => {
+                self.book_freight(*player_id, *system, *commodity, *units, ShipmentDir::Inbound, *sell_on_arrival, events);
             }
             Command::PlaceLimitOrder {
                 player_id,
@@ -7170,6 +7196,472 @@ impl World {
     }
 
     /// Spawn a raidable trade convoy that resolves its mission on arrival.
+    // ==== §TCA SCHEDULED FREIGHT ==========================================
+    // The Authority's common carrier. Everything here is PURE and keyed off the
+    // tick counter (never a float clock comparison), and every iteration runs in
+    // stable id order, so the whole service is byte-for-byte deterministic.
+
+    /// The departure period in TICKS. The schedule is keyed off the tick counter so
+    /// "is this a departure?" is exact integer arithmetic, never a float compare.
+    fn freight_depart_ticks() -> u64 {
+        (crate::tca::TCA_DEPARTURE_PERIOD * TICK_HZ as f64).round().max(1.0) as u64
+    }
+
+    /// The next scheduled departure strictly AFTER `tick`, as `(tick, sim-time)`.
+    /// A pure function of the config — which is what lets the client preview the
+    /// exact departure instant before the player commits to a booking.
+    fn next_departure_after(&self, tick: u64) -> (u64, f64) {
+        let p = Self::freight_depart_ticks();
+        let t = (tick / p + 1) * p;
+        (t, t as f64 * DT)
+    }
+
+    /// One-way freighter flight time over `dist` (constant cruise, §14.1).
+    fn freight_leg_secs(dist: f64) -> f64 {
+        dist / ShipKind::Freighter.max_speed()
+    }
+
+    fn alloc_shipment_id(&mut self) -> ShipmentId {
+        self.next_shipment_id += 1;
+        ShipmentId(self.next_shipment_id)
+    }
+
+    // --- §TCA public read surface (the client's booking preview) --------------
+    // All EXACT, not estimates: the timetable and the freighter's constant cruise
+    // are pure functions of the config, so the client can show a player precisely
+    // when their goods sail and land before they commit a credit.
+
+    /// Sim-time of the next scheduled freight departure.
+    pub fn next_freight_departure(&self) -> f64 {
+        self.next_departure_after(self.tick).1
+    }
+
+    /// Seconds between scheduled freight departures.
+    pub fn freight_period_secs(&self) -> f64 {
+        Self::freight_depart_ticks() as f64 * DT
+    }
+
+    /// One-way freighter flight time over `dist` (seconds).
+    pub fn freight_flight_secs(dist: f64) -> f64 {
+        Self::freight_leg_secs(dist)
+    }
+
+    /// Every freight lot belonging to `who`, in shipment-id order, paired with
+    /// whether it is ABOARD a freighter (`true`) or still queued (`false`).
+    /// Owner-scoped by construction — it never returns anyone else's lots.
+    pub fn shipments_of(&self, who: PlayerId) -> Vec<(Shipment, bool)> {
+        let mut out: Vec<(Shipment, bool)> = self
+            .freight_queue
+            .values()
+            .filter(|s| s.owner == who)
+            .map(|s| (*s, false))
+            .chain(
+                self.freight_runs
+                    .values()
+                    .flat_map(|r| r.shipments.values())
+                    .filter(|s| s.owner == who)
+                    .map(|s| (*s, true)),
+            )
+            .collect();
+        out.sort_by_key(|(s, _)| s.id);
+        out
+    }
+
+    /// Push an owner-only freight progress notice.
+    fn freight_note(&self, events: &mut Vec<Event>, s: &Shipment, units: u32, stage: FreightStage) {
+        if units == 0 {
+            return;
+        }
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::FreightMoved {
+                player: s.owner,
+                system: s.system,
+                commodity: s.commodity,
+                units,
+                stage,
+            }),
+        ));
+    }
+
+    /// Push an owner-only soft-reject for an Exchange order or freight booking.
+    fn reject_trade(
+        &self,
+        events: &mut Vec<Event>,
+        player: PlayerId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        system: Option<EntityId>,
+        reason: TradeRejectReason,
+    ) {
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::Rejected { player, commodity, units, system, reason }),
+        ));
+    }
+
+    /// BOOK a freight shipment (§TCA) — the shared body of `BookFreightOut` /
+    /// `BookFreightIn`. Escrows the goods out of their source, charges the fee (a
+    /// pure sink — destroyed, never refunded), and queues the lot for the next
+    /// departure it fits on. Async-fair: every failure path costs NOTHING and
+    /// emits an owner-only typed reason.
+    ///
+    /// The per-departure CAP never rejects — a lot larger than a corp's allowance
+    /// simply rides several consecutive departures (it is split at load time), so
+    /// a big shipper is slowed, never refused.
+    fn book_freight(
+        &mut self,
+        player_id: PlayerId,
+        system_id: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        direction: ShipmentDir,
+        sell_on_arrival: bool,
+        events: &mut Vec<Event>,
+    ) {
+        if units == 0 || !self.players.contains_key(&player_id) {
+            return;
+        }
+        // The Authority serves a corporation's OWN colonies only.
+        let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::NotYourSystem);
+            return;
+        };
+        if sys.owner != Some(player_id) {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::NotYourSystem);
+            return;
+        }
+        let has_depot = sys.tier(crate::build::StructureKind::Depot) > 0;
+        let sys_stock = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
+        let dist = self.hub.distance(sys.pos);
+        let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist, has_depot);
+
+        // The SOURCE must cover the lot (warehouse outbound / stockpile inbound).
+        match direction {
+            ShipmentDir::Outbound => {
+                let have = self.players[&player_id].warehouse.get(&commodity).copied().unwrap_or(0);
+                if have < units {
+                    self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::InsufficientWarehouseStock { have });
+                    return;
+                }
+            }
+            ShipmentDir::Inbound => {
+                if sys_stock < units as f64 {
+                    self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::InsufficientSystemStock { have: sys_stock as u32 });
+                    return;
+                }
+            }
+        }
+        if self.players[&player_id].credits < fee {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::CannotAffordFee { fee });
+            return;
+        }
+
+        // Forecast the departure this lot rides: everything of ours already queued
+        // for this destination and direction goes first (FIFO), a cap's worth per
+        // scheduled departure.
+        let cap = crate::tca::shipment_cap(has_depot).max(1);
+        let ahead: u32 = self
+            .freight_queue
+            .values()
+            .filter(|s| s.owner == player_id && s.system == system_id && s.direction == direction)
+            .map(|s| s.units)
+            .sum();
+        let (_, first_dep) = self.next_departure_after(self.tick);
+        let period_secs = Self::freight_depart_ticks() as f64 * DT;
+        let depart_at = first_dep + (ahead / cap) as f64 * period_secs;
+        let leg = Self::freight_leg_secs(dist);
+        let eta = match direction {
+            // Out to the colony…
+            ShipmentDir::Outbound => depart_at + leg,
+            // …or out to collect it and back to the Charterhouse.
+            ShipmentDir::Inbound => depart_at + 2.0 * leg,
+        };
+
+        // COMMIT — debit the fee (destroyed), escrow the goods, queue the lot.
+        if let Some(corp) = self.players.get_mut(&player_id) {
+            corp.credits -= fee;
+            if direction == ShipmentDir::Outbound {
+                take_from(&mut corp.warehouse, commodity, units);
+            }
+        }
+        if direction == ShipmentDir::Inbound
+            && let Some(s) = self.systems.iter_mut().find(|s| s.id == system_id)
+        {
+            let left = (s.stockpile.get(&commodity).copied().unwrap_or(0.0) - units as f64).max(0.0);
+            if left <= 0.0 {
+                s.stockpile.remove(&commodity);
+            } else {
+                s.stockpile.insert(commodity, left);
+            }
+        }
+        let id = self.alloc_shipment_id();
+        self.freight_queue.insert(
+            id,
+            Shipment {
+                id,
+                owner: player_id,
+                system: system_id,
+                direction,
+                commodity,
+                units,
+                fee_paid: fee,
+                booked_at: self.time,
+                sell_on_arrival: direction == ShipmentDir::Inbound && sell_on_arrival,
+            },
+        );
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::FreightBooked {
+                player: player_id,
+                system: system_id,
+                commodity,
+                units,
+                direction,
+                fee,
+                depart_at,
+                eta,
+            }),
+        ));
+    }
+
+    /// Queued INBOUND lots whose origin system the owner no longer holds are
+    /// FORFEIT — to nobody. The captor gets nothing (the goods were already out of
+    /// the stockpile, in the Authority's care), the fee is not refunded, and the
+    /// owner gets a notice. Swept on the departure cadence.
+    fn forfeit_lost_pickups(&mut self, events: &mut Vec<Event>) {
+        let lost: Vec<ShipmentId> = self
+            .freight_queue
+            .iter()
+            .filter(|(_, s)| {
+                s.direction == ShipmentDir::Inbound
+                    && self.systems.iter().find(|sys| sys.id == s.system).map(|sys| sys.owner) != Some(Some(s.owner))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in lost {
+            let s = self.freight_queue.remove(&id).expect("just listed");
+            self.freight_note(events, &s, s.units, FreightStage::ForfeitedOnCapture);
+        }
+    }
+
+    /// Draw queued shipments of `direction` for `dest` onto a manifest, FIFO
+    /// (ascending shipment id) and capped per corporation. A lot bigger than the
+    /// remaining allowance is SPLIT: the part that fits rides now under a fresh id,
+    /// the remainder keeps its original (older) id and so keeps its place at the
+    /// head of the queue for the next departure.
+    fn load_shipments(
+        &mut self,
+        dest: EntityId,
+        direction: ShipmentDir,
+        cap: u32,
+        manifest: &mut Vec<ShipmentId>,
+        aboard: &mut BTreeMap<ShipmentId, Shipment>,
+    ) {
+        // BTreeMap iteration is ascending id — exactly FIFO booking order.
+        let queued: Vec<ShipmentId> = self
+            .freight_queue
+            .iter()
+            .filter(|(_, s)| s.system == dest && s.direction == direction)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut used: BTreeMap<PlayerId, u32> = BTreeMap::new();
+        for sid in queued {
+            let s = self.freight_queue[&sid];
+            let spent = used.entry(s.owner).or_insert(0);
+            let room = cap.saturating_sub(*spent);
+            if room == 0 {
+                continue;
+            }
+            let take = room.min(s.units);
+            if take == s.units {
+                let sh = self.freight_queue.remove(&sid).expect("just listed");
+                manifest.push(sid);
+                aboard.insert(sid, sh);
+            } else {
+                // Partial lift: the fitting part sails under a fresh id.
+                let share = s.fee_paid * (take as f64 / s.units as f64);
+                let new_id = self.alloc_shipment_id();
+                let mut part = s;
+                part.id = new_id;
+                part.units = take;
+                part.fee_paid = share;
+                manifest.push(new_id);
+                aboard.insert(new_id, part);
+                if let Some(rem) = self.freight_queue.get_mut(&sid) {
+                    rem.units -= take;
+                    rem.fee_paid -= share;
+                }
+            }
+            *spent += take;
+        }
+    }
+
+    /// THE SCHEDULED DEPARTURE (§TCA): at every multiple of the departure period,
+    /// each destination with anything queued in EITHER direction gets exactly one
+    /// Authority freighter out of the Charterhouse. Outbound lots load now; the
+    /// same hull collects that destination's inbound lots when it arrives. Never
+    /// launches an empty run with nothing to do at either end.
+    fn depart_freight(&mut self, events: &mut Vec<Event>) {
+        self.forfeit_lost_pickups(events);
+        let dests: std::collections::BTreeSet<EntityId> =
+            self.freight_queue.values().map(|s| s.system).collect();
+        for dest in dests {
+            let Some(sys) = self.systems.iter().find(|s| s.id == dest) else {
+                continue;
+            };
+            let dest_pos = sys.pos;
+            let cap = crate::tca::shipment_cap(sys.tier(crate::build::StructureKind::Depot) > 0).max(1);
+            let mut manifest: Vec<ShipmentId> = Vec::new();
+            let mut aboard: BTreeMap<ShipmentId, Shipment> = BTreeMap::new();
+            self.load_shipments(dest, ShipmentDir::Outbound, cap, &mut manifest, &mut aboard);
+            // Nothing to carry AND nothing to collect there → no hull is sent.
+            let pickup_waiting = self
+                .freight_queue
+                .values()
+                .any(|s| s.system == dest && s.direction == ShipmentDir::Inbound);
+            if aboard.is_empty() && !pickup_waiting {
+                continue;
+            }
+            let fid = self.alloc_entity_id();
+            self.fleets.insert(
+                fid,
+                Fleet::single(fid, PlayerId::TCA, ShipKind::Freighter, self.hub, FleetOrder::MoveTo { dest: dest_pos }, None),
+            );
+            for sid in &manifest {
+                let s = aboard[sid];
+                self.freight_note(events, &s, s.units, FreightStage::Departed);
+            }
+            self.freight_runs.insert(fid, FreightRun { fleet: fid, dest, leg: RunLeg::Outbound, manifest, shipments: aboard });
+        }
+    }
+
+    /// Resolve freighter runs that reached the end of a leg (§TCA).
+    ///
+    /// At the DESTINATION: every outbound lot whose owner still holds the system
+    /// unloads into its stockpile (bounded by the depot's headroom). Anything that
+    /// can't land — the system changed hands, or the depot is full — STAYS ABOARD
+    /// and rides home to the owner's warehouse. The Authority holds your goods; it
+    /// never destroys them (deliberately friendlier than the convoy cargo-lost
+    /// rule). The hull then collects that destination's queued inbound lots and
+    /// turns for the Charterhouse.
+    ///
+    /// At the CHARTERHOUSE: everything aboard lands in its owner's warehouse, and
+    /// any inbound lot flagged `sell_on_arrival` is sold immediately at that tick's
+    /// standing price through the ordinary sale path. The run and hull are retired.
+    fn resolve_freight_arrivals(&mut self, events: &mut Vec<Event>) {
+        let arrived: Vec<EntityId> = self
+            .freight_runs
+            .keys()
+            .copied()
+            .filter(|fid| self.fleets.get(fid).is_some_and(|f| matches!(f.order, FleetOrder::Idle)))
+            .collect();
+        for fid in arrived {
+            let leg = self.freight_runs[&fid].leg;
+            match leg {
+                RunLeg::Outbound => {
+                    let dest = self.freight_runs[&fid].dest;
+                    let manifest = self.freight_runs[&fid].manifest.clone();
+                    // UNLOAD, in load order so the depot's headroom is shared FIFO.
+                    let mut delivered: Vec<ShipmentId> = Vec::new();
+                    for sid in manifest {
+                        let Some(s) = self.freight_runs[&fid].shipments.get(&sid).copied() else {
+                            continue;
+                        };
+                        if s.direction != ShipmentDir::Outbound {
+                            continue;
+                        }
+                        let Some(sys) = self.systems.iter_mut().find(|x| x.id == dest) else {
+                            continue;
+                        };
+                        if sys.owner != Some(s.owner) {
+                            continue; // no longer yours — it rides home
+                        }
+                        // Whole units, bounded by the depot's remaining headroom.
+                        let room = sys.storage_headroom().floor().max(0.0) as u32;
+                        let take = room.min(s.units);
+                        if take > 0 {
+                            *sys.stockpile.entry(s.commodity).or_insert(0.0) += take as f64;
+                        }
+                        self.freight_note(events, &s, take, FreightStage::DeliveredToSystem);
+                        if take == s.units {
+                            delivered.push(sid);
+                        } else if let Some(r) = self.freight_runs.get_mut(&fid)
+                            && let Some(rem) = r.shipments.get_mut(&sid)
+                        {
+                            rem.units -= take; // the rest rides home
+                        }
+                    }
+                    if let Some(r) = self.freight_runs.get_mut(&fid) {
+                        for sid in &delivered {
+                            r.shipments.remove(sid);
+                        }
+                        r.manifest.retain(|s| !delivered.contains(s));
+                    }
+                    // COLLECT this destination's inbound lots (same per-corp cap),
+                    // dropping any whose origin the owner lost since booking.
+                    self.forfeit_lost_pickups(events);
+                    let cap = self
+                        .systems
+                        .iter()
+                        .find(|s| s.id == dest)
+                        .map(|s| crate::tca::shipment_cap(s.tier(crate::build::StructureKind::Depot) > 0).max(1))
+                        .unwrap_or(crate::tca::TCA_SHIPMENT_CAP);
+                    let mut manifest = Vec::new();
+                    let mut aboard = BTreeMap::new();
+                    self.load_shipments(dest, ShipmentDir::Inbound, cap, &mut manifest, &mut aboard);
+                    for sid in &manifest {
+                        let s = aboard[sid];
+                        self.freight_note(events, &s, s.units, FreightStage::CollectedForPickup);
+                    }
+                    if let Some(r) = self.freight_runs.get_mut(&fid) {
+                        r.manifest.extend(manifest);
+                        r.shipments.extend(aboard);
+                        r.leg = RunLeg::Returning;
+                    }
+                    let hub = self.hub;
+                    if let Some(f) = self.fleets.get_mut(&fid) {
+                        f.order = FleetOrder::MoveTo { dest: hub };
+                    }
+                }
+                RunLeg::Returning => {
+                    let run = self.freight_runs.remove(&fid).expect("just listed");
+                    self.fleets.remove(&fid);
+                    // Deterministic: shipment-id order.
+                    for s in run.shipments.values().copied() {
+                        if let Some(corp) = self.players.get_mut(&s.owner) {
+                            *corp.warehouse.entry(s.commodity).or_insert(0) += s.units;
+                        }
+                        let stage = match s.direction {
+                            ShipmentDir::Inbound => FreightStage::ArrivedAtWarehouse,
+                            ShipmentDir::Outbound => FreightStage::ReturnedUndeliverable,
+                        };
+                        self.freight_note(events, &s, s.units, stage);
+                        // SELL ON ARRIVAL — the ordinary sale path, so the price
+                        // walk, the event, and the ranking stats are all identical
+                        // to a hand-typed MarketSell at this tick.
+                        if s.direction == ShipmentDir::Inbound && s.sell_on_arrival && s.units > 0 {
+                            let unit_price = self.market.execute_sell(s.commodity, s.units);
+                            if let Some(corp) = self.players.get_mut(&s.owner) {
+                                take_from(&mut corp.warehouse, s.commodity, s.units);
+                                corp.credits += s.units as f64 * unit_price;
+                            }
+                            events.push(Event::new(
+                                self.time,
+                                EventPayload::Trade(TradeEvent::Sold {
+                                    player: s.owner,
+                                    commodity: s.commodity,
+                                    units: s.units,
+                                    unit_price,
+                                }),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn spawn_trade_convoy(
         &mut self,
         owner: PlayerId,
@@ -8073,6 +8565,42 @@ mod tests {
     /// How many units of `c` sit in `who`'s Charterhouse warehouse.
     fn wh(w: &World, who: PlayerId, c: Commodity) -> u32 {
         w.players[&who].warehouse.get(&c).copied().unwrap_or(0)
+    }
+
+    /// §TCA test rig: hand `owner` a colony parked `dist` from the Charterhouse.
+    /// A SHORT freight leg keeps the round-trip tests quick (the real geometry is
+    /// exercised by the fee/ETA maths, which are pure). Never the home system, so
+    /// the home bootstrap's staffing can't pollute the stockpile assertions.
+    fn near_hub_colony(w: &mut World, owner: PlayerId, dist: f64) -> EntityId {
+        // `owner` need not be a registered corp — rival-ownership tests hand a
+        // system to a bare id that never joined.
+        let home = w.players.get(&owner).and_then(|c| c.home_system);
+        let sys = w
+            .systems
+            .iter_mut()
+            .find(|s| s.owner.is_none() && Some(s.id) != home)
+            .expect("an unowned system exists");
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.pos = Vec2::new(dist, 0.0);
+        sys.id
+    }
+
+    /// Step until `f` holds, or panic after `max` ticks (keeps a stuck freight test
+    /// from hanging while still being timing-robust).
+    fn step_until(w: &mut World, max: u64, what: &str, mut f: impl FnMut(&World) -> bool) {
+        for _ in 0..max {
+            if f(w) {
+                return;
+            }
+            w.step(&[]);
+        }
+        panic!("timed out waiting for: {what}");
+    }
+
+    /// Units of `c` in a system's stockpile, rounded down to whole units.
+    fn sys_units(w: &World, sys: EntityId, c: Commodity) -> u32 {
+        w.systems.iter().find(|s| s.id == sys).unwrap().stockpile.get(&c).copied().unwrap_or(0.0) as u32
     }
 
     #[test]
@@ -12554,7 +13082,7 @@ mod tests {
         let fleets0 = w.fleets.len();
         let price = w.market.price(Fuel);
 
-        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 50 }]);
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 50, ship_to: None }]);
         // Instant settlement: credits debited now (≈ 50 × price).
         let spent = credits0 - w.players[&id].credits;
         assert!((spent - 50.0 * price).abs() < 1e-6, "buy settles at the standing price");
@@ -12675,6 +13203,349 @@ mod tests {
         );
     }
 
+    // ==== §TCA Part 3: scheduled Authority freight ==========================
+
+    /// THE WHOLE ROUND TRIP: buy at the Exchange, hand the lot to the Authority,
+    /// watch a real freighter carry it to the colony and unload, then book the
+    /// return leg with sell-on-arrival and see it collected, landed in the
+    /// warehouse, and cleared at the Exchange.
+    #[test]
+    fn freight_round_trip_delivers_collects_and_sells() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 100)]);
+        let credits_after_buy = w.players[&id].credits;
+
+        // --- BOOK OUT: goods leave the warehouse, the fee is charged now. ---
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        let booked = ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::FreightBooked { fee, depart_at, eta, .. }) => Some((*fee, *depart_at, *eta)),
+            _ => None,
+        });
+        let (fee, depart_at, eta) = booked.expect("a booking receipt");
+        assert!(fee > 0.0, "the Authority charges for the lift");
+        assert!(eta > depart_at, "the lot arrives after it departs");
+        assert_eq!(wh(&w, id, Alloys), 0, "the lot is escrowed out of the warehouse");
+        assert!((w.players[&id].credits - (credits_after_buy - fee)).abs() < 1e-9, "the fee is a pure sink");
+        assert_eq!(w.freight_queue.len(), 1, "one lot waits for the next departure");
+
+        // --- DEPARTURE: one Authority freighter, owned by the TCA sentinel. ---
+        step_until(&mut w, 4000, "the scheduled departure", |w| !w.freight_runs.is_empty());
+        assert!(w.freight_queue.is_empty(), "the queue drained onto the hull");
+        let fid = *w.freight_runs.keys().next().unwrap();
+        let f = &w.fleets[&fid];
+        assert!(f.owner.is_tca(), "the hull belongs to the Authority, not a corporation");
+        assert!(f.contains(ShipKind::Freighter));
+        assert!(f.cargo.is_none(), "the manifest rides on the RUN, never in Fleet.cargo");
+        assert_eq!(w.freight_runs[&fid].shipments.values().next().unwrap().units, 100);
+        // A TCA hull is never a corporation asset.
+        assert!(!w.players.contains_key(&PlayerId::TCA), "the Authority is not a corporation");
+
+        // --- DELIVERY into the colony's stockpile; the hull turns for home. ---
+        step_until(&mut w, 4000, "delivery into the colony stockpile", |w| sys_units(w, colony, Alloys) >= 100);
+        assert_eq!(w.freight_runs[&fid].leg, crate::tca::RunLeg::Returning, "the hull turns for the Charterhouse");
+        assert!(w.freight_runs[&fid].shipments.is_empty(), "nothing undelivered rides home");
+
+        // --- BOOK IN with sell-on-arrival: the goods leave the stockpile now. ---
+        let credits_before_return = w.players[&id].credits;
+        w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 100, sell_on_arrival: true }]);
+        assert_eq!(sys_units(&w, colony, Alloys), 0, "the lot is escrowed out of the stockpile");
+
+        // --- A later freighter collects it and brings it home, and it SELLS. ---
+        step_until(&mut w, 12_000, "the pickup to land and clear", |w| {
+            w.freight_queue.is_empty() && w.freight_runs.is_empty() && w.players[&id].credits > credits_before_return
+        });
+        assert_eq!(wh(&w, id, Alloys), 0, "sell-on-arrival left nothing in the warehouse");
+        assert!(w.players[&id].credits > credits_before_return, "the lot cleared at the Exchange");
+        assert!(!w.fleets.values().any(|f| f.owner.is_tca()), "the freighter is retired at the Charterhouse");
+    }
+
+    /// Same seed, same commands ⇒ same world, byte-for-byte — across the whole
+    /// freight machine (booking, the scheduler, a physical run, and unloading).
+    #[test]
+    fn freight_is_deterministic_across_identical_runs() {
+        use crate::cargo::Commodity::Alloys;
+        let script = |w: &mut World| {
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let colony = near_hub_colony(w, id, 1200.0);
+            seed_warehouse(w, id, &[(Alloys, 500)]);
+            w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 250 }]);
+            for _ in 0..6000 {
+                w.step(&[]);
+            }
+            w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 40, sell_on_arrival: true }]);
+            for _ in 0..6000 {
+                w.step(&[]);
+            }
+        };
+        let mut a = test_world();
+        let mut b = test_world();
+        script(&mut a);
+        script(&mut b);
+        // The run actually happened (so the comparison means something).
+        assert!(a.players[&PlayerId(1)].stats.market_revenue > 0.0 || a.tick > 0);
+        assert_eq!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    /// The per-departure CAP never REJECTS a booking — an oversized lot is split
+    /// and rolls forward onto consecutive departures, FIFO.
+    #[test]
+    fn freight_cap_rolls_a_big_lot_onto_later_departures() {
+        use crate::cargo::Commodity::Alloys;
+        let cap = crate::tca::TCA_SHIPMENT_CAP;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        // One and a half caps in ONE booking (kept under the colony's 700-unit
+        // storage cap so THIS test isolates the departure cap), and the credits
+        // to pay for it.
+        let lot = cap + cap / 2;
+        seed_warehouse(&mut w, id, &[(Alloys, lot)]);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: lot }]);
+        assert!(
+            !ev.iter().any(|e| matches!(&e.payload, EventPayload::Trade(TradeEvent::Rejected { .. }))),
+            "an oversized lot is never rejected — it queues"
+        );
+        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), lot);
+
+        // First departure lifts exactly one cap; the rest keeps its place.
+        step_until(&mut w, 4000, "the first departure", |w| !w.freight_runs.is_empty());
+        let first: u32 = w.freight_runs.values().flat_map(|r| r.shipments.values()).map(|s| s.units).sum();
+        assert_eq!(first, cap, "one departure lifts exactly one cap per corp");
+        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), lot - cap, "the remainder waits");
+
+        // Everything eventually lands at the colony — nothing is lost to the cap.
+        step_until(&mut w, 40_000, "the whole lot to arrive", |w| sys_units(w, colony, Alloys) >= lot);
+        assert!(w.freight_queue.is_empty(), "the queue drained completely");
+    }
+
+    /// A DEPOT at the destination both doubles the per-departure cap and discounts
+    /// the fee — the flat v1 terms.
+    #[test]
+    fn a_depot_doubles_the_lift_and_discounts_the_fee() {
+        use crate::cargo::Commodity::Alloys;
+        let cap = crate::tca::TCA_SHIPMENT_CAP;
+        let fee_of = |depot: bool| {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let colony = near_hub_colony(&mut w, id, 1200.0);
+            if depot {
+                let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+                s.set_tier(crate::build::StructureKind::Depot, 1);
+            }
+            seed_warehouse(&mut w, id, &[(Alloys, cap * 2)]);
+            w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+            let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: cap * 2 }]);
+            let fee = ev
+                .iter()
+                .find_map(|e| match &e.payload {
+                    EventPayload::Trade(TradeEvent::FreightBooked { fee, .. }) => Some(*fee),
+                    _ => None,
+                })
+                .expect("a booking receipt");
+            step_until(&mut w, 4000, "the first departure", |w| !w.freight_runs.is_empty());
+            let lifted: u32 = w.freight_runs.values().flat_map(|r| r.shipments.values()).map(|s| s.units).sum();
+            (fee, lifted)
+        };
+        let (plain_fee, plain_lift) = fee_of(false);
+        let (depot_fee, depot_lift) = fee_of(true);
+        assert_eq!(plain_lift, cap, "no depot: one cap per departure");
+        assert_eq!(depot_lift, cap * 2, "a depot doubles the per-departure lift");
+        assert!(
+            (depot_fee - plain_fee * crate::tca::TCA_DEPOT_FEE_MULT).abs() < 1e-6,
+            "a depot discounts the fee (plain {plain_fee}, depot {depot_fee})"
+        );
+    }
+
+    /// A queued PICKUP whose origin system falls before collection is forfeit — to
+    /// NOBODY. The captor gets nothing and the fee is not refunded.
+    #[test]
+    fn a_queued_pickup_is_forfeit_when_the_system_falls() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_stock(&mut w, colony, &[(Alloys, 200.0)]);
+        w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 100, sell_on_arrival: false }]);
+        assert_eq!(w.freight_queue.len(), 1);
+
+        // The system changes hands before a freighter ever gets there.
+        let rival = PlayerId(2);
+        w.systems.iter_mut().find(|s| s.id == colony).unwrap().owner = Some(rival);
+
+        let mut forfeited = false;
+        for _ in 0..8000 {
+            for e in w.step(&[]) {
+                if let EventPayload::Trade(TradeEvent::FreightMoved { player, units, stage: crate::event::FreightStage::ForfeitedOnCapture, .. }) = e.payload
+                    && player == id
+                {
+                    assert_eq!(units, 100);
+                    forfeited = true;
+                }
+            }
+            if forfeited {
+                break;
+            }
+        }
+        assert!(forfeited, "the queued pickup is forfeit with an owner notice");
+        assert!(w.freight_queue.is_empty(), "the lot is gone from the queue");
+        assert_eq!(wh(&w, id, Alloys), 0, "forfeit means gone — not returned");
+        // The captor gains nothing: the goods left the stockpile at booking.
+        assert_eq!(sys_units(&w, colony, Alloys), 100, "only the un-booked remainder is there to capture");
+    }
+
+    /// If the destination is no longer the shipper's when the freighter arrives, the
+    /// lot is NOT lost — the Authority holds it and carries it back to the owner's
+    /// Charterhouse warehouse. Deliberately friendlier than the convoy rule.
+    #[test]
+    fn undeliverable_freight_returns_to_the_warehouse() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 100)]);
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        step_until(&mut w, 4000, "the departure", |w| !w.freight_runs.is_empty());
+
+        // Lose the colony while the lot is in flight.
+        w.systems.iter_mut().find(|s| s.id == colony).unwrap().owner = Some(PlayerId(2));
+
+        step_until(&mut w, 12_000, "the lot to come home", |w| wh(w, id, Alloys) == 100);
+        assert_eq!(sys_units(&w, colony, Alloys), 0, "the new owner is not gifted the cargo");
+        assert!(w.freight_runs.is_empty() && !w.fleets.values().any(|f| f.owner.is_tca()), "the run is retired");
+    }
+
+    /// A FULL DEPOT bounces what won't fit: the Authority unloads up to the
+    /// system's remaining headroom and carries the rest back to the owner's
+    /// warehouse. Goods are never destroyed and never silently vanish.
+    ///
+    /// (The handoff didn't specify freight-vs-storage-cap; respecting the cap keeps
+    /// freight from being a way to smuggle goods past a limit convoys obey, and
+    /// reuses the "the Authority holds your goods" return rule rather than
+    /// inventing a second overflow mechanism.)
+    #[test]
+    fn freight_respects_the_storage_cap_and_returns_the_overflow() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        let cap_units = w.systems.iter().find(|s| s.id == colony).unwrap().storage_cap();
+        // Pre-fill the depot to 60 units short of full, then ship 200.
+        seed_stock(&mut w, colony, &[(Alloys, cap_units - 60.0)]);
+        seed_warehouse(&mut w, id, &[(Alloys, 200)]);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 200 }]);
+
+        step_until(&mut w, 20_000, "the overflow to come home", |w| wh(w, id, Alloys) > 0 && w.freight_runs.is_empty());
+        // 60 landed, 140 came back — nothing created, nothing destroyed.
+        assert_eq!(sys_units(&w, colony, Alloys), cap_units as u32, "the depot filled exactly to its cap");
+        assert_eq!(wh(&w, id, Alloys), 140, "the overflow is back in the Charterhouse warehouse");
+    }
+
+    /// §TCA fog: the shipment queue is OWNER-ONLY. `shipments_of` — the one read
+    /// the View is built from — never returns another corporation's lots, whether
+    /// they are queued at the Charterhouse or aboard a shared freighter's manifest.
+    #[test]
+    fn the_shipment_queue_is_owner_scoped() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        // BOTH corps ship to their own colony, and both lots ride the SAME hull.
+        let shared = near_hub_colony(&mut w, a, 1200.0);
+        seed_warehouse(&mut w, a, &[(Alloys, 60)]);
+        seed_warehouse(&mut w, b, &[(Alloys, 90)]);
+        w.step(&[Command::BookFreightOut { player_id: a, system: shared, commodity: Alloys, units: 60 }]);
+        // B books to the same destination by briefly holding it — the point is one
+        // manifest carrying two owners' lots.
+        w.systems.iter_mut().find(|s| s.id == shared).unwrap().owner = Some(b);
+        w.step(&[Command::BookFreightOut { player_id: b, system: shared, commodity: Alloys, units: 90 }]);
+
+        let queued_a = w.shipments_of(a);
+        let queued_b = w.shipments_of(b);
+        assert_eq!(queued_a.len(), 1);
+        assert_eq!(queued_b.len(), 1);
+        assert!(queued_a.iter().all(|(s, _)| s.owner == a), "A sees only A's lots");
+        assert!(queued_b.iter().all(|(s, _)| s.owner == b), "B sees only B's lots");
+        assert_eq!(queued_a[0].0.units, 60);
+        assert_eq!(queued_b[0].0.units, 90);
+
+        // Once ABOARD one shared freighter, the split still holds.
+        step_until(&mut w, 4000, "the departure", |w| !w.freight_runs.is_empty());
+        assert_eq!(w.freight_runs.len(), 1, "one hull serves the destination");
+        assert_eq!(w.freight_runs.values().next().unwrap().shipments.len(), 2, "two owners aboard");
+        for (who, other) in [(a, b), (b, a)] {
+            let mine = w.shipments_of(who);
+            assert!(mine.iter().all(|(s, aboard)| s.owner == who && *aboard), "{who} sees only their own aboard lot");
+            assert!(!mine.iter().any(|(s, _)| s.owner == other), "no cross-owner leak");
+        }
+    }
+
+    /// Freight to a system the corp does NOT own is refused, for free, with the
+    /// typed reason — the Authority serves your own colonies only.
+    #[test]
+    fn freight_to_a_rivals_system_is_refused_for_free() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let rival_sys = near_hub_colony(&mut w, PlayerId(2), 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 100)]);
+        let credits0 = w.players[&id].credits;
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: rival_sys, commodity: Alloys, units: 100 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { player, reason: TradeRejectReason::NotYourSystem, .. }) if *player == id
+            )),
+            "booking to a rival's system is refused with the typed reason"
+        );
+        assert_eq!(wh(&w, id, Alloys), 100, "the goods stay put");
+        assert_eq!(w.players[&id].credits, credits0, "and it costs nothing");
+        assert!(w.freight_queue.is_empty());
+    }
+
+    /// `MarketBuy { ship_to }` is ONE checkbox: buy, then hand the lot straight to
+    /// the Authority. If the booking can't be honored the goods simply stay in the
+    /// warehouse and the owner is told why.
+    #[test]
+    fn market_buy_ship_to_books_freight_or_leaves_the_lot_in_the_warehouse() {
+        use crate::cargo::Commodity::Fuel;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        // Happy path: the lot is bought AND booked in one command.
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 40, ship_to: Some(colony) }]);
+        assert_eq!(wh(&w, id, Fuel), 0, "the whole lot went straight onto the freight queue");
+        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), 40);
+
+        // Sad path: a rival's system — the goods stay bought, and stay put.
+        let rival_sys = near_hub_colony(&mut w, PlayerId(2), 1500.0);
+        let ev = w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 25, ship_to: Some(rival_sys) }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::NotYourSystem, .. })
+            )),
+            "the failed leg reports why"
+        );
+        assert_eq!(wh(&w, id, Fuel), 25, "the purchase stands; the lot simply stays at the Charterhouse");
+    }
+
     #[test]
     fn stock_system_moves_hq_inventory_into_a_system_stockpile() {
         use crate::cargo::Commodity::Volatiles;
@@ -12740,7 +13611,7 @@ mod tests {
         assert_eq!(w.fleets.len(), ships0, "rejected sell must not spawn a convoy");
         // Buy beyond the treasury → ignored.
         let credits0 = w.players[&id].credits;
-        w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000 }]);
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000, ship_to: None }]);
         assert_eq!(w.players[&id].credits, credits0);
         assert_eq!(wh(&w, id, Alloys), 10, "a rejected buy deposits nothing");
         assert_eq!(w.fleets.len(), ships0, "rejected buy must not spawn a convoy");

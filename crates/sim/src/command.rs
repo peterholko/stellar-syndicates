@@ -61,6 +61,14 @@ pub enum Command {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
         units: u32,
+        /// §TCA: ONE-CHECKBOX composition — on a successful purchase, immediately
+        /// attempt a [`Command::BookFreightOut`] of the whole lot to this owned
+        /// system. If that booking soft-rejects (unowned, unaffordable fee, …) the
+        /// goods simply stay in the warehouse and the owner gets the reject notice.
+        /// `None` = leave the lot at the Charterhouse. serde default so old clients
+        /// and pre-feature commands still parse.
+        #[serde(default)]
+        ship_to: Option<EntityId>,
     },
 
     /// Sell at market (§9, §TCA): draws ONLY from the corp's Charterhouse
@@ -86,6 +94,40 @@ pub enum Command {
         commodity: crate::cargo::Commodity,
         units: u32,
         limit_price: f64,
+    },
+
+    /// BOOK OUTBOUND FREIGHT (§TCA): hand `units` of a commodity to the Terran
+    /// Charter Authority's scheduled common carrier for delivery from the
+    /// CHARTERHOUSE WAREHOUSE to one of the corp's OWNED systems. The goods are
+    /// escrowed out of the warehouse and the fee is charged NOW (a pure credit
+    /// sink — destroyed, never refunded); the shipment then waits for the next
+    /// scheduled departure. Bookings beyond a departure's per-corp cap are not
+    /// rejected — they roll forward FIFO to later departures. INSTANT local
+    /// administration; the FREIGHTER that later carries it is a physical, raidable
+    /// hull. Soft-rejects (free, owner-only notice) if the system isn't the corp's,
+    /// the warehouse is short, or the treasury can't cover the fee.
+    BookFreightOut {
+        player_id: PlayerId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// BOOK INBOUND FREIGHT (§TCA): the reverse leg — the Authority collects
+    /// `units` from one of the corp's OWNED systems' stockpiles and carries them to
+    /// the Charterhouse warehouse. The goods are escrowed out of the stockpile
+    /// immediately (they sit "awaiting pickup" inside the shipment) and the fee is
+    /// charged now. If the system is CAPTURED before pickup the queued shipment is
+    /// forfeit to nobody — deleted, with an owner notice. `sell_on_arrival` sells
+    /// the lot at the Exchange the moment it lands at the Charterhouse, at that
+    /// tick's standing price (market price only in v1 — no limit variant).
+    BookFreightIn {
+        player_id: PlayerId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        #[serde(default)]
+        sell_on_arrival: bool,
     },
 
     /// Dispatch convoys to carry a claimed system's accumulated production to the
