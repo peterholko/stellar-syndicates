@@ -907,9 +907,11 @@ then **balance** (via the bot simulator + human playtest).
 
 ## STATUS — TCA Standing, Citations & Enforcement (Phase 2 of 2)
 
-Phase 2 is **complete**: all six parts landed on `async-automation`, one commit
-each, every checkpoint green (**sim 331 tests, server 59, client `tsc` + `vite
-build` clean**, up from the Phase 1 close of 307/57).
+Phase 2 is **complete** on `market-ux`: all six parts landed, one commit each,
+every checkpoint green (**sim 430 tests, server 63, client `tsc` + `vite build`
+clean**). See *Porting note* below — the work was authored on `async-automation`
+and carried over; the counts here are the market-ux totals, which include that
+branch's research, tactical-engine, and battle-theater tests.
 
 | Part | What landed |
 |---|---|
@@ -924,6 +926,49 @@ Nothing is stubbed. Verified live in the browser: the charter view arrives on th
 wire in good standing (tariff ×1.00, penalty 0), and the panel renders the band
 ladder, the live cost of a fallen band (×2.63 / 8.1%), and the reinstatement
 control with its cost preview. No console errors.
+
+### Porting note — authored on `async-automation`, landed on `market-ux`
+
+Both phases were written against `async-automation`, which turned out to be two
+weeks stale. All twelve commits were replayed onto `market-ux` (the live branch)
+by cherry-pick, one at a time, each with its own green checkpoint. `tca.rs` is
+byte-identical across the two branches but for one doc line; the rest of the
+delta between them is market-ux's own work.
+
+Most hunks merged clean because the two lines of work touch different regions.
+The conflicts that did arise were resolved toward market-ux's semantics in every
+case where the two disagreed about something market-ux had already decided:
+
+- **The tactical engine.** market-ux replaced abstract combat with a per-ship
+  engine (`tactical.rs`). The incident hook was placed after `apply_side_losses`,
+  which is that engine's loss applicator — an Authority hull present before the
+  exchange and absent from `self.fleets` after both sides settle is a hull this
+  engagement killed. Verified live, not assumed.
+- **The warship ladder.** `ShipKind` carries ten combat hulls on market-ux, so
+  `Freighter` made eleven, and every `Record<ShipKind, _>` in the client —
+  including battle theater's `MASS`, `KIND_LABEL`, and `SHIP_ART` — needed an
+  entry. The type system found all of them.
+- **`Delivered.system`.** market-ux's Supply-from-HQ work added a discriminator
+  distinguishing an HQ-pool delivery from a stock-into-system run. Kept, with
+  the charter `penalty` field added alongside rather than in place of it.
+- **`label(commodity)` and `svgIcon`.** market-ux's pretty names and icon helper
+  won over the ported literals and the older `uiIcon` call shape (market-ux has
+  an unrelated function by that name — a silent-wrong-render trap the
+  conflict surfaced).
+
+One market-ux commit was reverted along the way: `156da4a` ("start players with
+a 3-ship raider wing") was a playtest tweak that failed six combat tests. A
+bisect confirmed it was the sole cause. The tests were not weakened and
+`HIT_DMG_CAL` was not retuned to make them pass — the tweak was simply backed
+out.
+
+**One thing to watch.** `TCA_ENFORCEMENT_SHIPS = 6` corvettes was tuned against
+the pre-ladder combat model. Against market-ux's tactical engine and its
+Destroyer-through-Titan ladder, six corvettes is a much softer obstacle than it
+was — a proscribed corp with real warships can brush an expedition aside. The
+mechanic is intact and the number is a playtest placeholder like the rest of the
+block, but it is the one Phase 2 tunable the port meaningfully changed the
+meaning of.
 
 ### Decisions the handoff left open
 
@@ -972,9 +1017,10 @@ and any standing effect from player-versus-player combat — with
 
 ## STATUS — Charterhouse Warehouse + TCA Freight (Phase 1 of 2)
 
-Phase 1 is **complete**: all six parts landed on `async-automation`, one commit
-each, every checkpoint green (**sim 307 tests, server 57, client `tsc` + `vite
-build` clean**, up from a 278/56 baseline).
+Phase 1 is **complete** on `market-ux`: all six parts landed, one commit each,
+every checkpoint green (**sim 414 tests, server 62, client `tsc` + `vite build`
+clean** at the Phase 1 close, up from a 383/61 market-ux baseline). See
+*Porting note* under the Phase 2 STATUS.
 
 | Part | What landed |
 |---|---|
