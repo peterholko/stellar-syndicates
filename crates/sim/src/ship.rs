@@ -92,6 +92,16 @@ pub enum ShipKind {
 /// richest shipments are also the most sluggish. Tunable.
 pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 
+/// §TCA Part 5: whole cargo UNITS one Convoy hull can lift. A fleet's capacity is
+/// this × the convoys aboard, so the "capacity scales with the number of convoys"
+/// rule finally has a number. Tunable, playtest placeholder.
+///
+/// NOTE: this bounds the MANUAL load commands (`HubLoad` / `SystemLoad`) only.
+/// The auto-spawned trade convoys (`ShipProduction`, standing orders) predate any
+/// capacity rule and are deliberately left alone — retrofitting the cap there
+/// would silently change existing economy behaviour, which is not this phase's job.
+pub const CARGO_UNITS_PER_CONVOY: u32 = 250;
+
 impl ShipKind {
     /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
     /// than raiders (here ~22×), which is what makes them ponderous — the
@@ -614,6 +624,13 @@ pub enum TradeMission {
     /// system→system supply convoy; §15). Cargo is lost if the destination is no
     /// longer owned by the convoy's owner when it arrives (no gifting rivals).
     DeliverToSystem { system: EntityId },
+    /// §TCA Part 5: HAUL TO THE CHARTERHOUSE — a PLAYER-owned convoy carrying its
+    /// own cargo to the hub, where it deposits into the owner's warehouse and
+    /// (optionally) sells the lot at that tick's standing price. Unlike the legacy
+    /// `SellAtHub`, the fleet SURVIVES: it is the player's hull, so it goes Idle at
+    /// the Charterhouse ready for its next job. This is the player-owned half of
+    /// the two logistics channels; TCA freight is the other.
+    DeliverToWarehouse { sell_on_arrival: bool },
 }
 
 /// A patrolling raider's AUTONOMOUS defensive sortie (§5.1, Pillar 1): it has
@@ -721,6 +738,15 @@ pub struct Fleet {
     /// default `false` so every old snapshot loads with today's behaviour.
     #[serde(default)]
     pub engage_freight: bool,
+    /// §TCA Part 5: this hull was AUTO-SPAWNED for one trade run (a standing-order
+    /// dispatch, a production shipment, a purchase delivery) and is CONSUMED when
+    /// it arrives — exactly as every auto trade convoy always has been. A hull the
+    /// player actually owns and loaded is not disposable: it survives its delivery
+    /// and goes Idle, ready for the next job. Without this, repointing the hub
+    /// endpoint at the surviving `DeliverToWarehouse` mission would quietly turn
+    /// standing orders into a free-convoy factory. serde default `false`.
+    #[serde(default)]
+    pub disposable: bool,
 }
 
 /// serde default for `Fleet::garrison_fed` (old snapshots load fed).
@@ -762,6 +788,7 @@ impl Fleet {
             fought: false,
             loadouts: BTreeMap::new(),
             engage_freight: false,
+            disposable: false,
         }
     }
 
@@ -973,6 +1000,13 @@ impl Fleet {
             .iter()
             .map(|(k, n)| k.hull_mass() * *n as f64)
             .sum()
+    }
+
+    /// §TCA Part 5: whole cargo units this fleet can lift = `CARGO_UNITS_PER_CONVOY`
+    /// per Convoy aboard. Zero for a fleet with no cargo hull (raiders, corvettes,
+    /// scouts, colony ships) — those soft-reject a load outright.
+    pub fn cargo_capacity(&self) -> u32 {
+        self.count(ShipKind::Convoy) * CARGO_UNITS_PER_CONVOY
     }
 
     /// Cargo mass carried by the fleet (§7).

@@ -437,6 +437,11 @@ pub enum TradeEvent {
         /// for an outbound lot; back at the Charterhouse for an inbound one).
         eta: f64,
     },
+    /// §TCA Part 5: a player convoy took goods aboard at the Charterhouse
+    /// (`system` = None) or at one of the corp's own systems. Owner-only.
+    Loaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    /// §TCA Part 5: a player convoy put its hold ashore. Owner-only.
+    Unloaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
     /// §TCA: a freight shipment reached a milestone of its journey. Owner-only.
     FreightMoved {
         player: PlayerId,
@@ -499,7 +504,9 @@ impl TradeEvent {
             | TradeEvent::StockDispatched { player, .. }
             | TradeEvent::Rejected { player, .. }
             | TradeEvent::FreightBooked { player, .. }
-            | TradeEvent::FreightMoved { player, .. } => *player,
+            | TradeEvent::FreightMoved { player, .. }
+            | TradeEvent::Loaded { player, .. }
+            | TradeEvent::Unloaded { player, .. } => *player,
         }
     }
 }
@@ -586,6 +593,21 @@ pub enum TradeRejectReason {
     /// until the lift's light does. Freight already in flight carries on — it
     /// launched on information that was true when it left.
     DestinationBlockaded,
+    /// §TCA Part 5: the fleet can't do logistics right now — not the player's,
+    /// not Idle, or currently engaged in a battle. Load and unload are dockside
+    /// work; a fleet under way or under fire isn't doing it.
+    FleetUnavailable,
+    /// §TCA Part 5: the fleet is too far from the Charterhouse (or the system's
+    /// star) to move goods across the boundary.
+    OutOfLogisticsRange,
+    /// §TCA Part 5: no room. Either the fleet has no cargo hull at all (`capacity`
+    /// 0 — raiders, corvettes, scouts and colony ships carry none) or the lot
+    /// would overflow what its convoys can lift.
+    NoCargoRoom { capacity: u32 },
+    /// §TCA Part 5: the fleet is already carrying a DIFFERENT commodity. A
+    /// player convoy's hold is single-commodity (unchanged in this phase) —
+    /// unload first.
+    CargoMismatch,
 }
 
 /// Why a fleet ORDER was soft-rejected. Owner-only: the order simply never

@@ -746,6 +746,26 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     format!("Can't book {units} {com}: the Authority's freight fee is {fee:.0} credits."),
                 ),
+                sim::TradeRejectReason::FleetUnavailable => (
+                    Warn,
+                    "That fleet can't handle cargo right now — it must be YOURS, idle, and not in a fight.".to_string(),
+                ),
+                sim::TradeRejectReason::OutOfLogisticsRange => (
+                    Warn,
+                    "That fleet is too far from the dock to move cargo — bring it alongside first.".to_string(),
+                ),
+                sim::TradeRejectReason::NoCargoRoom { capacity } if capacity == 0 => (
+                    Warn,
+                    format!("That fleet has no cargo hold — only convoys haul goods (tried {units} {com})."),
+                ),
+                sim::TradeRejectReason::NoCargoRoom { capacity } => (
+                    Warn,
+                    format!("Not enough hold for {units} {com}: this fleet lifts {capacity} units."),
+                ),
+                sim::TradeRejectReason::CargoMismatch => (
+                    Warn,
+                    format!("That fleet is already carrying something else — unload before loading {com}."),
+                ),
                 sim::TradeRejectReason::DestinationBlockaded => (
                     Warn,
                     format!(

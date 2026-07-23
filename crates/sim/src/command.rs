@@ -397,6 +397,48 @@ pub enum Command {
         system_id: EntityId,
     },
 
+    // ---- §TCA Part 5: PLAYER-CONVOY LOGISTICS --------------------------------
+    // The second, player-owned logistics channel: you fly it, you load it, you
+    // take the risk, and it costs no fee. Every one of these requires the fleet to
+    // be the player's, IDLE, unengaged, and within `tca::LOGISTICS_RANGE` of the
+    // dock — loading is dockside work. All soft-reject, free, owner-only.
+    /// Move goods from the corp's CHARTERHOUSE WAREHOUSE into a fleet's hold.
+    /// Tops up an existing load of the same commodity; a hold already carrying a
+    /// DIFFERENT good soft-rejects (a player hull stays single-commodity).
+    HubLoad {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// Empty a fleet's hold into the corp's Charterhouse warehouse.
+    HubUnload { player_id: PlayerId, fleet_id: EntityId },
+
+    /// Move goods from one of the corp's OWNED systems' stockpiles into a
+    /// fleet's hold (whole units).
+    SystemLoad {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// Empty a fleet's hold into one of the corp's OWNED systems' stockpiles.
+    SystemUnload { player_id: PlayerId, fleet_id: EntityId, system: EntityId },
+
+    /// HAUL TO THE CHARTERHOUSE: send a loaded fleet of the player's to the hub on
+    /// a [`crate::ship::TradeMission::DeliverToWarehouse`] run — deposit into the
+    /// warehouse on arrival, optionally selling the lot at the standing price. The
+    /// fleet SURVIVES the delivery (it is the player's hull) and goes Idle there.
+    HaulToCharterhouse {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        #[serde(default)]
+        sell_on_arrival: bool,
+    },
+
     /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
     /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
     /// system. INSTANT local administration on the player's own fleet — a standing

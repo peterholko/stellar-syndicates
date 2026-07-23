@@ -388,6 +388,31 @@ impl GameLoop {
                         self.pending.push(Command::MarketBuy { player_id, commodity, units, ship_to });
                     }
                 }
+                ClientMsg::HubLoad { fleet_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HubLoad { player_id, fleet_id, commodity, units });
+                    }
+                }
+                ClientMsg::HubUnload { fleet_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HubUnload { player_id, fleet_id });
+                    }
+                }
+                ClientMsg::SystemLoad { fleet_id, system, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SystemLoad { player_id, fleet_id, system, commodity, units });
+                    }
+                }
+                ClientMsg::SystemUnload { fleet_id, system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SystemUnload { player_id, fleet_id, system });
+                    }
+                }
+                ClientMsg::HaulToCharterhouse { fleet_id, sell_on_arrival } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HaulToCharterhouse { player_id, fleet_id, sell_on_arrival });
+                    }
+                }
                 ClientMsg::SetEngageFreight { fleet_id, on } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetEngageFreight { player_id, fleet_id, on });

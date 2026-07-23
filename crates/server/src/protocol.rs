@@ -64,6 +64,19 @@ pub enum ClientMsg {
     /// warehouse and settles instantly at the standing price.
     MarketSell { commodity: Commodity, units: u32 },
 
+    /// §TCA Part 5: player-convoy logistics — load/unload across the Charterhouse
+    /// warehouse or an owned system's stockpile, and the haul order that sends a
+    /// loaded hull to the Charterhouse (optionally selling on arrival).
+    HubLoad { fleet_id: EntityId, commodity: Commodity, units: u32 },
+    HubUnload { fleet_id: EntityId },
+    SystemLoad { fleet_id: EntityId, system: EntityId, commodity: Commodity, units: u32 },
+    SystemUnload { fleet_id: EntityId, system: EntityId },
+    HaulToCharterhouse {
+        fleet_id: EntityId,
+        #[serde(default)]
+        sell_on_arrival: bool,
+    },
+
     /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
     /// Authority freight arriving at the strangled system. Instant local policy.
     SetEngageFreight { fleet_id: EntityId, on: bool },

@@ -3767,7 +3767,9 @@ impl World {
         for f in self.fleets.values_mut() {
             let Some(mission) = f.mission else { continue };
             let (dest_blocked, true_dest) = match mission {
-                TradeMission::SellAtHub => continue, // the hub is neutral — never blockaded
+                // The Charterhouse is neutral — never blockaded — so both hub-bound
+                // missions sail straight in.
+                TradeMission::SellAtHub | TradeMission::DeliverToWarehouse { .. } => continue,
                 TradeMission::DeliverToSystem { system } => match sys_pos.get(&system) {
                     Some(&p) => (blocked.contains(&system), p),
                     None => continue,
@@ -4295,6 +4297,31 @@ impl World {
                 // parity with the manual hub-trade family (MarketBuy/MarketSell).
                 let cargo = Cargo { commodity: *commodity, units };
                 self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+            }
+            Command::HubLoad { player_id, fleet_id, commodity, units } => {
+                self.apply_logistics_load(*player_id, *fleet_id, None, *commodity, *units, events);
+            }
+            Command::HubUnload { player_id, fleet_id } => {
+                self.apply_logistics_unload(*player_id, *fleet_id, None, events);
+            }
+            Command::SystemLoad { player_id, fleet_id, system, commodity, units } => {
+                self.apply_logistics_load(*player_id, *fleet_id, Some(*system), *commodity, *units, events);
+            }
+            Command::SystemUnload { player_id, fleet_id, system } => {
+                self.apply_logistics_unload(*player_id, *fleet_id, Some(*system), events);
+            }
+            Command::HaulToCharterhouse { player_id, fleet_id, sell_on_arrival } => {
+                // A player's own loaded hull, sent to the Charterhouse. Not
+                // light-delayed: it is a logistics assignment made at the dock,
+                // like loading itself — the RUN is what's raidable.
+                let hub = self.hub;
+                if let Some(f) = self.fleets.get_mut(fleet_id)
+                    && f.owner == *player_id
+                    && f.cargo.is_some()
+                {
+                    f.mission = Some(TradeMission::DeliverToWarehouse { sell_on_arrival: *sell_on_arrival });
+                    f.order = FleetOrder::MoveTo { dest: hub };
+                }
             }
             Command::SetEngageFreight { player_id, fleet_id, on } => {
                 if let Some(f) = self.fleets.get_mut(fleet_id)
@@ -6483,7 +6510,11 @@ impl World {
                     units: cargo.units,
                 }),
             ));
-            self.spawn_trade_convoy(player_id, pos, hub, cargo, TradeMission::SellAtHub);
+            // §TCA Part 5: a production shipment now lands in the corp's
+            // CHARTERHOUSE WAREHOUSE and sells there — the same outcome as the old
+            // SellAtHub (credits at the price on arrival), routed through the
+            // warehouse so the Exchange has exactly one source of stock.
+            self.spawn_trade_convoy(player_id, pos, hub, cargo, TradeMission::DeliverToWarehouse { sell_on_arrival: true });
         }
     }
 
@@ -7116,7 +7147,10 @@ impl World {
             };
             let dest = match mission {
                 TradeMission::DeliverHome => Endpoint::Home,
-                TradeMission::SellAtHub => Endpoint::Hub,
+                // Both hub-bound missions count toward the Hub endpoint: the legacy
+                // `SellAtHub` (grandfathered convoys still in flight) and the
+                // current `DeliverToWarehouse`.
+                TradeMission::SellAtHub | TradeMission::DeliverToWarehouse { .. } => Endpoint::Hub,
                 TradeMission::DeliverToSystem { system } => Endpoint::System { id: system },
             };
             *idx.entry((ship.owner, dest, cargo.commodity)).or_insert(0) += cargo.units;
@@ -7230,8 +7264,18 @@ impl World {
                 // Record this shipment as planned toward its destination this tick.
                 *planned.entry((*pid, order.dest, order.commodity)).or_insert(0) += units;
 
+                // NOTE (§TCA, deliberately deferred): standing-order convoys are
+                // still FREE auto-spawned hulls. Unifying them with booked TCA
+                // freight — so automation pays the same fee and rides the same
+                // timetable as a hand-booked lot — is explicitly out of scope for
+                // Phase 1. Left as-is on purpose; see the handoff's deferred list.
                 let (dest_pos, mission) = match order.dest {
-                    Endpoint::Hub => (hub, TradeMission::SellAtHub),
+                    // §TCA Part 5: a Hub rule now delivers into the corp's
+                    // CHARTERHOUSE WAREHOUSE, selling on arrival only if the rule
+                    // says so. `sell_on_arrival` defaults TRUE for every order
+                    // written before the warehouse existed, so their behaviour is
+                    // byte-for-byte what it was.
+                    Endpoint::Hub => (hub, TradeMission::DeliverToWarehouse { sell_on_arrival: order.sell_on_arrival }),
                     Endpoint::Home => (corp.home, TradeMission::DeliverHome),
                     Endpoint::System { id } => match self.systems.iter().find(|s| s.id == id) {
                         Some(s) => (s.pos, TradeMission::DeliverToSystem { system: id }),
@@ -7353,6 +7397,190 @@ impl World {
     fn alloc_shipment_id(&mut self) -> ShipmentId {
         self.next_shipment_id += 1;
         ShipmentId(self.next_shipment_id)
+    }
+
+    // ==== §TCA Part 5: PLAYER-CONVOY LOGISTICS ==============================
+
+    /// Check the shared preconditions for dockside logistics on `fleet_id`: it must
+    /// be the player's, IDLE, not caught up in a battle, and within
+    /// [`crate::tca::LOGISTICS_RANGE`] of `dock`. Returns the fleet id on success,
+    /// or emits the typed soft-reject and returns `None`.
+    fn logistics_ready(
+        &self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        dock: Vec2,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        events: &mut Vec<Event>,
+    ) -> Option<()> {
+        let Some(f) = self.fleets.get(&fleet_id) else {
+            self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::FleetUnavailable);
+            return None;
+        };
+        let engaged = self
+            .engagements
+            .values()
+            .any(|e| e.attackers.contains(&fleet_id) || e.defenders.contains(&fleet_id));
+        if f.owner != player_id || !matches!(f.order, FleetOrder::Idle) || engaged {
+            self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::FleetUnavailable);
+            return None;
+        }
+        if f.pos.distance(dock) > crate::tca::LOGISTICS_RANGE {
+            self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::OutOfLogisticsRange);
+            return None;
+        }
+        Some(())
+    }
+
+    /// How many more units of `commodity` this fleet may take aboard, or the typed
+    /// reason it may not. A player hold stays SINGLE-COMMODITY this phase.
+    fn cargo_room_for(
+        &self,
+        fleet_id: EntityId,
+        commodity: crate::cargo::Commodity,
+    ) -> Result<u32, TradeRejectReason> {
+        let f = self.fleets.get(&fleet_id).ok_or(TradeRejectReason::FleetUnavailable)?;
+        let capacity = f.cargo_capacity();
+        if capacity == 0 {
+            return Err(TradeRejectReason::NoCargoRoom { capacity });
+        }
+        match f.cargo {
+            Some(c) if c.commodity != commodity => Err(TradeRejectReason::CargoMismatch),
+            Some(c) => Ok(capacity.saturating_sub(c.units)),
+            None => Ok(capacity),
+        }
+    }
+
+    /// LOAD a fleet from the Charterhouse warehouse or an owned system's stockpile
+    /// (§TCA Part 5). `system` is `None` for the hub. Whole units only; a partial
+    /// lot is never silently taken — the request is met in full or soft-rejected.
+    fn apply_logistics_load(
+        &mut self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: Option<EntityId>,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        events: &mut Vec<Event>,
+    ) {
+        if units == 0 || !self.players.contains_key(&player_id) {
+            return;
+        }
+        // The dock: the Charterhouse, or a system the corp OWNS.
+        let dock = match system {
+            None => self.hub,
+            Some(sid) => match self.systems.iter().find(|s| s.id == sid && s.owner == Some(player_id)) {
+                Some(s) => s.pos,
+                None => {
+                    self.reject_trade(events, player_id, commodity, units, system, TradeRejectReason::NotYourSystem);
+                    return;
+                }
+            },
+        };
+        if self.logistics_ready(player_id, fleet_id, dock, commodity, units, events).is_none() {
+            return;
+        }
+        let room = match self.cargo_room_for(fleet_id, commodity) {
+            Ok(r) => r,
+            Err(reason) => {
+                self.reject_trade(events, player_id, commodity, units, system, reason);
+                return;
+            }
+        };
+        if units > room {
+            let capacity = self.fleets[&fleet_id].cargo_capacity();
+            self.reject_trade(events, player_id, commodity, units, system, TradeRejectReason::NoCargoRoom { capacity });
+            return;
+        }
+        // The SOURCE must cover the lot in full.
+        match system {
+            None => {
+                let have = self.players[&player_id].warehouse.get(&commodity).copied().unwrap_or(0);
+                if have < units {
+                    self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::InsufficientWarehouseStock { have });
+                    return;
+                }
+                if let Some(c) = self.players.get_mut(&player_id) {
+                    take_from(&mut c.warehouse, commodity, units);
+                }
+            }
+            Some(sid) => {
+                let have = self.systems.iter().find(|s| s.id == sid).and_then(|s| s.stockpile.get(&commodity).copied()).unwrap_or(0.0);
+                if have < units as f64 {
+                    self.reject_trade(events, player_id, commodity, units, system, TradeRejectReason::InsufficientSystemStock { have: have as u32 });
+                    return;
+                }
+                if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    let left = (have - units as f64).max(0.0);
+                    if left <= 0.0 {
+                        s.stockpile.remove(&commodity);
+                    } else {
+                        s.stockpile.insert(commodity, left);
+                    }
+                }
+            }
+        }
+        if let Some(f) = self.fleets.get_mut(&fleet_id) {
+            f.cargo = Some(match f.cargo {
+                Some(c) => Cargo { commodity, units: c.units + units },
+                None => Cargo { commodity, units },
+            });
+        }
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::Loaded { player: player_id, commodity, units, system }),
+        ));
+    }
+
+    /// UNLOAD a fleet's whole hold into the Charterhouse warehouse or an owned
+    /// system's stockpile (§TCA Part 5).
+    fn apply_logistics_unload(
+        &mut self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: Option<EntityId>,
+        events: &mut Vec<Event>,
+    ) {
+        if !self.players.contains_key(&player_id) {
+            return;
+        }
+        let carried = self.fleets.get(&fleet_id).and_then(|f| f.cargo);
+        let Some(cargo) = carried else {
+            return; // an empty hold: nothing to do, nothing to report
+        };
+        let dock = match system {
+            None => self.hub,
+            Some(sid) => match self.systems.iter().find(|s| s.id == sid && s.owner == Some(player_id)) {
+                Some(s) => s.pos,
+                None => {
+                    self.reject_trade(events, player_id, cargo.commodity, cargo.units, system, TradeRejectReason::NotYourSystem);
+                    return;
+                }
+            },
+        };
+        if self.logistics_ready(player_id, fleet_id, dock, cargo.commodity, cargo.units, events).is_none() {
+            return;
+        }
+        match system {
+            None => {
+                if let Some(c) = self.players.get_mut(&player_id) {
+                    *c.warehouse.entry(cargo.commodity).or_insert(0) += cargo.units;
+                }
+            }
+            Some(sid) => {
+                if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    *s.stockpile.entry(cargo.commodity).or_insert(0.0) += cargo.units as f64;
+                }
+            }
+        }
+        if let Some(f) = self.fleets.get_mut(&fleet_id) {
+            f.cargo = None;
+        }
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::Unloaded { player: player_id, commodity: cargo.commodity, units: cargo.units, system }),
+        ));
     }
 
     /// §TCA: was `system` blockaded as far as an observer at `from` can KNOW right
@@ -7847,6 +8075,8 @@ impl World {
             Some(cargo),
         );
         ship.mission = Some(mission);
+        // Every AUTO-spawned trade convoy is one-run-and-done, as it always was.
+        ship.disposable = true;
         self.fleets.insert(id, ship);
         id
     }
@@ -8003,6 +8233,62 @@ impl World {
                         }),
                     ));
                 }
+                // §TCA Part 5: a PLAYER convoy delivering to the Charterhouse. The
+                // goods land in the owner's warehouse and may be sold on the spot;
+                // the hull SURVIVES (it is the player's) and goes Idle at the hub,
+                // ready for its next job — unlike the legacy `SellAtHub`, which
+                // consumed its convoy.
+                TradeMission::DeliverToWarehouse { sell_on_arrival } => {
+                    if let Some(corp) = self.players.get_mut(&ship.owner) {
+                        *corp.warehouse.entry(cargo.commodity).or_insert(0) += cargo.units;
+                        if fought {
+                            corp.stats.cargo_protected += cargo.units as u64;
+                        }
+                    }
+                    // The `Delivered` event below is what earns the trade
+                    // throughput (via `accumulate_rankings`) — a real haul counts,
+                    // exactly as a DeliverHome does. Don't also bump it here.
+                    events.push(Event::new(
+                        now,
+                        EventPayload::Trade(TradeEvent::Delivered {
+                            player: ship.owner,
+                            commodity: cargo.commodity,
+                            units: cargo.units,
+                            // §TCA: this landed at the CHARTERHOUSE warehouse, not
+                            // at a system stockpile — `None`, like a DeliverHome.
+                            // (The timeline doesn't name a destination for
+                            // `Delivered`, so nothing reads as misleading.)
+                            system: None,
+                        }),
+                    ));
+                    if sell_on_arrival {
+                        let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
+                        if let Some(corp) = self.players.get_mut(&ship.owner) {
+                            take_from(&mut corp.warehouse, cargo.commodity, cargo.units);
+                            corp.credits += cargo.units as f64 * unit_price;
+                        }
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::Sold {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: cargo.units,
+                                unit_price,
+                            }),
+                        ));
+                    }
+                    // A PLAYER's hull lives on: empty, Idle, at the Charterhouse,
+                    // ready for its next job. An AUTO-spawned one is consumed on
+                    // arrival exactly as every auto trade convoy always has been —
+                    // otherwise a standing order would mint free convoys.
+                    if !ship.disposable {
+                        let mut ship = ship;
+                        ship.cargo = None;
+                        ship.mission = None;
+                        ship.order = FleetOrder::Idle;
+                        self.fleets.insert(id, ship);
+                    }
+                }
                 TradeMission::DeliverToSystem { system } => {
                     // Deposit into the destination system's stockpile — but ONLY if,
                     // on arrival, the destination is still the convoy owner's OR a
@@ -8052,7 +8338,10 @@ impl World {
                             let mut ship = ship;
                             ship.cargo = Some(crate::cargo::Cargo { commodity: cargo.commodity, units: excess });
                             ship.order = FleetOrder::MoveTo { dest: self.hub };
-                            ship.mission = Some(TradeMission::SellAtHub);
+                            // §TCA Part 5: onward to the Charterhouse — deposited
+                            // into the warehouse and sold there, the same outcome
+                            // as the old SellAtHub with one source of stock.
+                            ship.mission = Some(TradeMission::DeliverToWarehouse { sell_on_arrival: true });
                             let owner = ship.owner;
                             self.fleets.insert(ship.id, ship);
                             events.push(Event::new(
@@ -8082,7 +8371,7 @@ impl World {
                                 self.players.get(&owner).map(|c| (c.home, TradeMission::DeliverHome))
                             }
                             DestinationInvalidPolicy::SellAtHub => {
-                                Some((self.hub, TradeMission::SellAtHub))
+                                Some((self.hub, TradeMission::DeliverToWarehouse { sell_on_arrival: true }))
                             }
                         };
                         let action = match policy {
@@ -8523,8 +8812,8 @@ mod tests {
 
         // It fleets to the hub like any owned system → a raidable sell convoy.
         w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
-        assert!(convoy.is_some(), "the home can ship its production to the hub");
+        let convoy = w.fleets.values().find(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. })));
+        assert!(convoy.is_some(), "the home can ship its production to the Charterhouse");
     }
 
     #[test]
@@ -9300,7 +9589,7 @@ mod tests {
         assert_eq!(overflow, 30, "the excess is reported, not destroyed");
         // The SAME convoy carries the excess onward to sell at the hub.
         let ship = w.fleets.get(&sid).expect("convoy survives with the overflow");
-        assert_eq!(ship.mission, Some(TradeMission::SellAtHub), "re-routed to sell at the hub");
+        assert_eq!(ship.mission, Some(TradeMission::DeliverToWarehouse { sell_on_arrival: true }), "re-routed to sell at the Charterhouse");
         assert_eq!(ship.cargo.unwrap().units, 30, "carries exactly the unstored excess");
     }
 
@@ -13370,6 +13659,203 @@ mod tests {
         );
     }
 
+    // ==== §TCA Part 5: player-convoy logistics ==============================
+
+    /// THE PLAYER-OWNED CHANNEL, end to end: load a convoy from an owned system's
+    /// stockpile, haul it to the Charterhouse, sell on arrival — and the hull
+    /// SURVIVES, idle at the hub, ready for the next job.
+    #[test]
+    fn a_player_convoy_loads_hauls_and_sells_then_lives_on() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        let colony_pos = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
+        seed_stock(&mut w, colony, &[(Alloys, 300.0)]);
+        // Park the player's convoy alongside the colony.
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = colony_pos;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = None;
+        }
+
+        w.step(&[Command::SystemLoad { player_id: id, fleet_id: convoy, system: colony, commodity: Alloys, units: 200 }]);
+        assert_eq!(w.fleets[&convoy].cargo.map(|c| (c.commodity, c.units)), Some((Alloys, 200)), "the hold is loaded");
+        assert_eq!(sys_units(&w, colony, Alloys), 100, "…out of the system's stockpile");
+
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::HaulToCharterhouse { player_id: id, fleet_id: convoy, sell_on_arrival: true }]);
+        step_until(&mut w, 20_000, "the haul to land and clear", |w| w.players[&id].credits > credits0);
+
+        assert!(w.players[&id].credits > credits0, "the lot sold at the Charterhouse");
+        assert_eq!(wh(&w, id, Alloys), 0, "sell-on-arrival left nothing in the warehouse");
+        // THE HULL SURVIVES — this is the player's ship, not a disposable auto convoy.
+        let f = w.fleets.get(&convoy).expect("the player's convoy survives its delivery");
+        assert!(f.cargo.is_none() && f.mission.is_none(), "empty and unassigned");
+        assert!(matches!(f.order, FleetOrder::Idle), "idle at the Charterhouse");
+        assert!(f.pos.distance(w.hub) < 5.0, "…and actually there");
+        assert_eq!(w.players[&id].stats.trade_units, 200, "a real haul earns trade throughput");
+    }
+
+    /// Hub load/unload moves goods across the warehouse boundary without selling.
+    #[test]
+    fn hub_load_and_unload_cross_the_warehouse_boundary() {
+        use crate::cargo::Commodity::Fuel;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(Fuel, 120)]);
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = None;
+        }
+        w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 80 }]);
+        assert_eq!(wh(&w, id, Fuel), 40);
+        assert_eq!(w.fleets[&convoy].cargo.map(|c| c.units), Some(80));
+        w.step(&[Command::HubUnload { player_id: id, fleet_id: convoy }]);
+        assert_eq!(wh(&w, id, Fuel), 120, "the whole hold went back into the warehouse");
+        assert!(w.fleets[&convoy].cargo.is_none());
+    }
+
+    /// Every logistics refusal is FREE and typed: a fleet under way, a fleet too
+    /// far from the dock, a hull with no hold, and a hold already carrying
+    /// something else.
+    #[test]
+    fn logistics_soft_rejects_are_free_and_typed() {
+        use crate::cargo::Commodity::{Alloys, Fuel};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(Fuel, 500), (Alloys, 500)]);
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        let raider = find_ship(&w, id, ShipKind::Raider);
+        let reason_of = |ev: &[Event]| -> Option<TradeRejectReason> {
+            ev.iter().find_map(|e| match &e.payload {
+                EventPayload::Trade(TradeEvent::Rejected { reason, .. }) => Some(*reason),
+                _ => None,
+            })
+        };
+
+        // NOT IDLE (under way) → FleetUnavailable.
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.order = FleetOrder::MoveTo { dest: Vec2::new(9000.0, 0.0) };
+        }
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::FleetUnavailable)));
+
+        // TOO FAR from the dock → OutOfLogisticsRange.
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.order = FleetOrder::Idle;
+            f.pos = w.hub + Vec2::new(crate::tca::LOGISTICS_RANGE * 3.0, 0.0);
+        }
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::OutOfLogisticsRange)));
+
+        // NO HOLD (a raider) → NoCargoRoom { capacity: 0 }.
+        {
+            let f = w.fleets.get_mut(&raider).unwrap();
+            f.pos = w.hub;
+            f.order = FleetOrder::Idle;
+        }
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: raider, commodity: Fuel, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::NoCargoRoom { capacity: 0 })));
+
+        // OVER CAPACITY → NoCargoRoom with the real capacity.
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.cargo = None;
+        }
+        let cap = w.fleets[&convoy].cargo_capacity();
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: cap + 1 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::NoCargoRoom { capacity }) if capacity == cap));
+
+        // WRONG COMMODITY aboard → CargoMismatch, and nothing is disturbed.
+        w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
+        let warehouse_before = (wh(&w, id, Fuel), wh(&w, id, Alloys));
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Alloys, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::CargoMismatch)));
+        assert_eq!((wh(&w, id, Fuel), wh(&w, id, Alloys)), warehouse_before, "a refused load costs nothing");
+        assert_eq!(w.fleets[&convoy].cargo.map(|c| (c.commodity, c.units)), Some((Fuel, 10)), "the hold is untouched");
+    }
+
+    /// §15 REGRESSION: a standing order written BEFORE the warehouse existed (its
+    /// JSON has no `sell_on_arrival`) loads with the flag TRUE, so a Hub rule keeps
+    /// selling on arrival exactly as it always did.
+    #[test]
+    fn a_pre_warehouse_hub_standing_order_still_sells_on_arrival() {
+        // The old wire shape — note the absent `sell_on_arrival`.
+        let json = r#"{"id":3,"source":{"kind":"system","id":"5"},"dest":{"kind":"hub"},
+                       "commodity":"metallic_ore","trigger":{"kind":"above_threshold","threshold":3.0},
+                       "status":"active"}"#;
+        let old: StandingOrder = serde_json::from_str(json).expect("a pre-feature order still parses");
+        assert!(old.sell_on_arrival, "a pre-warehouse Hub rule keeps selling on arrival");
+        assert_eq!(old.dest, Endpoint::Hub);
+
+        // And behaviourally: such a rule's convoy sells when it lands.
+        use crate::cargo::Commodity::MetallicOre;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_stock(&mut w, colony, &[(MetallicOre, 200.0)]);
+        let mut order = old;
+        order.id = 0;
+        order.source = Endpoint::System { id: colony };
+        w.step(&[Command::SetStandingOrder { player_id: id, order }]);
+        let credits0 = w.players[&id].credits;
+        step_until(&mut w, 20_000, "the auto-dispatched lot to sell", |w| w.players[&id].credits > credits0);
+        assert_eq!(wh(&w, id, MetallicOre), 0, "it sold rather than stockpiling in the warehouse");
+    }
+
+    /// A Hub standing order with `sell_on_arrival: false` DEPOSITS instead — and
+    /// either way its auto-spawned hull is consumed, never accumulating as a free
+    /// convoy at the Charterhouse.
+    #[test]
+    fn a_hub_rule_can_stockpile_instead_of_selling_and_never_mints_hulls() {
+        use crate::cargo::Commodity::MetallicOre;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_stock(&mut w, colony, &[(MetallicOre, 200.0)]);
+        let fleets0 = w.fleets.len();
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0,
+                source: Endpoint::System { id: colony },
+                dest: Endpoint::Hub,
+                commodity: MetallicOre,
+                trigger: Trigger::AboveThreshold { threshold: 3.0 },
+                status: OrderStatus::Active,
+                next_eval_tick: 0,
+                in_flight: None,
+                sell_on_arrival: false,
+            },
+        }]);
+        let credits0 = w.players[&id].credits;
+        step_until(&mut w, 20_000, "the lot to reach the warehouse", |w| wh(w, id, MetallicOre) > 0);
+        assert!(wh(&w, id, MetallicOre) > 0, "the goods sit in the warehouse, unsold");
+        assert_eq!(w.players[&id].credits, credits0, "…and nothing was sold");
+        // The auto hull was consumed on arrival — no free-convoy factory.
+        step_until(&mut w, 20_000, "the auto hull to be consumed", |w| {
+            !w.fleets.values().any(|f| f.owner == id && f.mission.is_some())
+        });
+        assert!(w.fleets.len() <= fleets0, "a standing order never leaves a spare hull behind");
+    }
+
     // ==== §TCA Part 4: freight under fire ===================================
 
     /// Park a TCA freighter at `pos` carrying one lot per `(owner, commodity,
@@ -14691,7 +15177,7 @@ mod tests {
         // A production convoy is just a normal raidable trade convoy (Convoy kind,
         // carrying cargo, selling at the hub) — spawned at the system.
         let sys_pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub)).cloned();
+        let convoy = w.fleets.values().find(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. }))).cloned();
         let convoy = convoy.expect("ship-production should spawn a sell convoy");
         assert_eq!(convoy.flagship_kind(), ShipKind::Convoy, "production fleets in raidable convoys");
         assert!(convoy.cargo.is_some());
@@ -14734,7 +15220,7 @@ mod tests {
         w.step(&[]);
         for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
         w.step(&[Command::ShipProduction { player_id: def, system_id: sysid }]);
-        let convoy = *w.fleets.iter().find(|(_, s)| s.owner == def && s.mission == Some(TradeMission::SellAtHub)).unwrap().0;
+        let convoy = *w.fleets.iter().find(|(_, s)| s.owner == def && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. }))).unwrap().0;
 
         // Park the attacker's raider right on the production convoy and commit.
         let raider = find_ship(&w, atk, ShipKind::Raider);
@@ -14790,6 +15276,7 @@ mod tests {
                 status: OrderStatus::Active,
                 next_eval_tick: 0,
                 in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         assert_eq!(w.players[&id].standing_orders.len(), 1, "rule stored");
@@ -14837,6 +15324,7 @@ mod tests {
                 status: OrderStatus::Active,
                 next_eval_tick: 0,
                 in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
 
@@ -14851,7 +15339,7 @@ mod tests {
             let in_flight = w
                 .fleets
                 .values()
-                .filter(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub))
+                .filter(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. })))
                 .count();
             max_in_flight = max_in_flight.max(in_flight);
         }
@@ -14900,6 +15388,7 @@ mod tests {
                 status: OrderStatus::Active,
                 next_eval_tick: 0,
                 in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
 
@@ -14984,6 +15473,7 @@ mod tests {
                     status: OrderStatus::Active,
                     next_eval_tick: 0,
                     in_flight: None,
+                sell_on_arrival: true,
                 },
             }]);
             for _ in 0..(200 * crate::config::TICK_HZ) {
@@ -15020,6 +15510,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         // Invalid: source you don't own → rejected.
@@ -15031,6 +15522,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         // Invalid: MaintainAtDest with a Hub destination → rejected.
@@ -15041,6 +15533,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::MaintainAtDest { target: 5.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         assert!(w.players[&id].standing_orders.is_empty(), "invalid rules must be rejected");
@@ -15053,6 +15546,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         let rid = w.players[&id].standing_orders[0].id;
@@ -15097,6 +15591,7 @@ mod tests {
                     status: OrderStatus::Active,
                     next_eval_tick: 0,
                     in_flight: None,
+                sell_on_arrival: true,
                 },
             }]);
         }
@@ -15379,7 +15874,7 @@ mod tests {
         let (convoy, d) = doomed_supply(&mut w, id);
         assert_eq!(run_until_divert(&mut w, d), Some(DivertAction::SoldAtHub));
         let ship = w.fleets.get(&convoy).expect("re-routed convoy still flies");
-        assert!(matches!(ship.mission, Some(TradeMission::SellAtHub)), "re-tasked to sell at hub");
+        assert!(matches!(ship.mission, Some(TradeMission::DeliverToWarehouse { .. })), "re-tasked to sell at the Charterhouse");
         assert!(matches!(ship.order, FleetOrder::MoveTo { dest } if dest == hub), "heading to the hub");
     }
 
