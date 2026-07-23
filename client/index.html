@@ -1152,8 +1152,8 @@
         <button data-mtab="supply" role="tab">Supply</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="mhint" style="margin-bottom:6px">Trades your <b>HQ inventory</b> — goods held at HQ, <b>separate from your systems' stockpiles</b>. Buy delivers here; Sell ships from here. To feed a system's converters, use the <b>Supply</b> tab.</div>
-        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your HQ inventory — the tradeable pool Buy/Sell use. This is NOT a system's stockpile.">HQ</span></div>
+        <div class="mhint" style="margin-bottom:6px">Trades your <b>Charterhouse warehouse</b> — goods held here at the hub, <b>separate from your HQ and your systems' stockpiles</b>. Buys land in the warehouse; sells draw from it. Goods elsewhere must be <b>hauled here first</b> — Authority freight or your own convoys. To feed a system's converters, use the <b>Supply</b> tab.</div>
+        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your Charterhouse warehouse — the only pool Buy/Sell settle against. This is NOT your HQ inventory or a system's stockpile.">STORED</span></div>
         <div id="market-board"></div>
         <div class="composer">
           <div class="composer__row"><label>Order</label>
@@ -1162,6 +1162,7 @@
           </div>
           <div class="composer__row"><label>Qty</label><input type="number" id="mk-qty" min="1" value="50" />
             <label class="lim"><input type="checkbox" id="mk-limit-on" /> limit @</label><input type="number" id="mk-limit" step="0.1" placeholder="mkt" disabled /></div>
+          <div class="composer__row" id="mk-shipto-row"><label>Deliver</label><select id="mk-shipto" title="Buy, then hand the lot straight to Authority freight for one of your systems. If the booking can't be honoured the goods simply stay in your warehouse."></select></div>
           <div class="composer__preview" id="mk-preview"></div>
           <button class="act act--primary" id="mk-submit">Buy</button>
           <div class="mhint" id="mk-feedback"></div>
@@ -1182,21 +1183,6 @@
         <div id="mk-supply-rows" style="margin-top:8px"></div>
         <div class="mhint" id="mk-supply-feedback"></div>
       </div>
-      <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
-      <div id="market-board"></div>
-      <div class="composer">
-        <div class="composer__row"><label>Order</label>
-          <div class="seg" id="mk-side"><button data-side="buy" class="is-active">Buy</button><button data-side="sell">Sell</button></div>
-          <span class="composer__sel" id="mk-sel">—</span>
-        </div>
-        <div class="composer__row"><label>Qty</label><input type="number" id="mk-qty" min="1" value="50" />
-          <label class="lim"><input type="checkbox" id="mk-limit-on" /> limit @</label><input type="number" id="mk-limit" step="0.1" placeholder="mkt" disabled /></div>
-        <div class="composer__row" id="mk-shipto-row"><label>Deliver</label><select id="mk-shipto" title="Buy, then hand the lot straight to Authority freight for one of your systems. If the booking can't be honoured the goods simply stay in your warehouse."></select></div>
-        <div class="composer__preview" id="mk-preview"></div>
-        <button class="act act--primary" id="mk-submit">Buy</button>
-        <div class="mhint" id="mk-feedback"></div>
-      </div>
-      <div class="mkt-orders" id="market-orders"></div>
 
       <!-- §TCA Phase 2: CHARTER STANDING — a legal status, not a reputation bar. -->
       <div class="ci-sub">Your charter · Terran Charter Authority</div>

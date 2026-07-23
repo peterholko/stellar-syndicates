@@ -4687,7 +4687,10 @@ function buildMarketPanel(): void {
 function renderMarketBoard(): void {
   if (!state.market) return;
   const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
-  const heldOf = new Map((state.wallet?.inventory ?? []).map((i) => [i.commodity, i.units]));
+  // §TCA: the Exchange settles against the CHARTERHOUSE WAREHOUSE, so the held
+  // column has to be the warehouse — showing HQ inventory here would offer a
+  // player a sell the sim will soft-reject as InsufficientWarehouseStock.
+  const heldOf = new Map((state.wallet?.warehouse ?? []).map((i) => [i.commodity, i.units]));
   const stale = state.market.staleness > 0.5;
   $("market-board").innerHTML = COMMODITIES.map((c) => {
     const p = priceOf.get(c);
