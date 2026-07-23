@@ -51,15 +51,19 @@ pub struct Corporation {
     pub home_system: Option<EntityId>,
     /// Credits (the corporate treasury).
     pub credits: f64,
-    /// Goods held at home, by commodity.
-    pub inventory: BTreeMap<crate::cargo::Commodity, u32>,
     /// §TCA: goods held AT THE CHARTERHOUSE — this corp's private warehouse at the
     /// hub. The Exchange settles ONLY against this (buys deposit here; sells and
     /// sell-side limit escrow draw ONLY from here). Nothing about a trade moves
     /// goods across space; moving goods hub↔systems is the separate, explicit act
     /// of TCA freight or a player convoy. `#[serde(default)]` so every pre-feature
-    /// snapshot loads with an empty warehouse — existing goods stay in `inventory`
-    /// at home and are moved with the new channels (that IS the migration).
+    /// snapshot loads with an empty warehouse.
+    ///
+    /// There are exactly TWO places goods can sit: HERE, and a [`StarSystem`]'s
+    /// `stockpile`. The old third store — a per-corp "HQ pool" at the home anchor
+    /// — is gone: it lost its purpose when the Exchange moved onto the warehouse,
+    /// and survived only as a dead-end pocket goods could enter and never leave
+    /// except toward a system. Its inflows now land in the HOME SYSTEM's
+    /// stockpile, which is a real place the player already manages.
     ///
     /// CAPACITY-UNCHECKED by design: the warehouse is infinite until the separate
     /// leased-bay handoff lands. Every inflow path here deposits unconditionally.
@@ -318,8 +322,8 @@ const VALUATION_TICKS: u64 = 60 * TICK_HZ as u64;
 /// flood the map (the async-automation anti-spam invariant).
 const EVAL_PERIOD: u64 = 5 * TICK_HZ as u64;
 
-/// Remove `units` of `c` from a whole-unit goods map (a corp's `inventory` or
-/// `warehouse`), DROPPING the entry once it empties — so a warehouse never
+/// Remove `units` of `c` from a whole-unit goods map (a corp's `warehouse`),
+/// DROPPING the entry once it empties — so a warehouse never
 /// accumulates zero rows to clutter the wire, the timeline, or a snapshot diff.
 /// Saturating: never underflows.
 fn take_from(map: &mut BTreeMap<crate::cargo::Commodity, u32>, c: crate::cargo::Commodity, units: u32) {
@@ -328,6 +332,39 @@ fn take_from(map: &mut BTreeMap<crate::cargo::Commodity, u32>, c: crate::cargo::
         if *u == 0 {
             map.remove(&c);
         }
+    }
+}
+
+impl World {
+    /// Deposit goods into a corporation's HOME SYSTEM stockpile, clamped to the
+    /// depot's remaining headroom; returns the units that actually fit.
+    ///
+    /// This is where everything that used to land in the retired per-corp "HQ
+    /// pool" goes now. The home system is a real [`StarSystem`] the player
+    /// already manages — it produces, it has a depot cap, and it can be shipped
+    /// from — so goods that arrive here are goods the player can actually use,
+    /// rather than sitting in a pocket with one exit.
+    ///
+    /// Returns 0 (nothing deposited) if the corp has no home system, which is
+    /// only possible in a pre-feature snapshot. The CALLER decides what to do
+    /// with the remainder — never silently destroy it.
+    fn deposit_at_home_system(
+        &mut self,
+        owner: PlayerId,
+        c: crate::cargo::Commodity,
+        units: u32,
+    ) -> u32 {
+        let Some(hs) = self.players.get(&owner).and_then(|corp| corp.home_system) else {
+            return 0;
+        };
+        let Some(sys) = self.systems.iter_mut().find(|s| s.id == hs) else {
+            return 0;
+        };
+        let stored = (units as f64).min(sys.storage_headroom()).floor() as u32;
+        if stored > 0 {
+            *sys.stockpile.entry(c).or_insert(0.0) += stored as f64;
+        }
+        stored
     }
 }
 
@@ -3218,10 +3255,13 @@ impl World {
                     .map(|(_, f)| f.owner);
                 let plunder = std::mem::take(&mut self.enclaves.get_mut(&sid).unwrap().plunder);
                 if let Some(v) = victor {
-                    if let Some(corp) = self.players.get_mut(&v) {
-                        for (c, n) in &plunder {
-                            *corp.inventory.entry(*c).or_insert(0) += *n;
-                        }
+                    // Recovered plunder lands in the victor's HOME SYSTEM stockpile
+                    // (clamped to its depot). Anything that doesn't fit is left in
+                    // the wreckage rather than teleported into a pocket — a full
+                    // depot is a real constraint, and the bulletin below reports
+                    // the whole haul either way.
+                    for (c, n) in &plunder {
+                        self.deposit_at_home_system(v, *c, *n);
                     }
                     events.push(Event::new(now, EventPayload::PirateEnclaveCleared { owner: v, system: sid, pos: base_pos, plunder }));
                 }
@@ -3969,11 +4009,20 @@ impl World {
                     // convoys turn one. max() never removes an earned higher tier.
                     sys.set_tier(crate::build::StructureKind::Shipyard, sys.tier(crate::build::StructureKind::Shipyard).max(crate::build::HOME_SHIPYARD_TIER));
                 }
-                // Starting inventory: a stock of the ORIGINAL five goods to sell,
-                // plus a treasury to buy with. §economy: deliberately NOT all 12 —
-                // handing out free Machinery/Armaments would skip the industrial
-                // ladder; the Part-6 starter kit seeds the home STOCKPILE instead.
-                let inventory = [
+                // STARTING STOCK: the ORIGINAL five goods to sell, plus a treasury
+                // to buy with. §economy: deliberately NOT all 12 — handing out free
+                // Machinery/Armaments would skip the industrial ladder; the Part-6
+                // starter kit seeds the home STOCKPILE instead.
+                //
+                // These land in the hub WAREHOUSE. They used to sit in a per-corp
+                // "HQ pool" at the home anchor, which is retired; the home system's
+                // stockpile is the obvious alternative but it is already half full
+                // at spawn (provisions buffer + starter kit + fuel seed) against a
+                // 700 cap, so 600 units could not fit. The warehouse is also the
+                // honest home for "goods to sell": it is the only store the Exchange
+                // settles against, so a fresh corp can actually trade on turn one
+                // instead of finding an empty market it cannot use.
+                let warehouse = [
                     crate::cargo::Commodity::MetallicOre,
                     crate::cargo::Commodity::Volatiles,
                     crate::cargo::Commodity::Alloys,
@@ -3993,12 +4042,7 @@ impl World {
                         command_center: home,
                         home_system: Some(home_system),
                         credits: 10_000.0,
-                        inventory,
-                        // §TCA: a fresh corp starts with an EMPTY Charterhouse
-                        // warehouse — its starter goods sit at home, and it moves
-                        // them to the Exchange via freight or a convoy when it
-                        // wants to trade them.
-                        warehouse: BTreeMap::new(),
+                        warehouse,
                         // §TCA Phase 2: a fresh corp is issued a clean charter.
                         tca_standing: crate::tca::TCA_STANDING_START,
                         valuation: 10_000.0,
@@ -4347,10 +4391,12 @@ impl World {
                     }),
                 ));
             }
-            // SUPPLY FROM HQ (§economy): move goods from the corp's HQ trading
-            // inventory into an OWNED system's stockpile via a sub-light raidable
-            // convoy — the bridge that lets market-bought inputs feed a system's
-            // converters (which read sys.stockpile, not the trading pool).
+            // SUPPLY A SYSTEM (§economy): move goods from the corp's HUB WAREHOUSE
+            // into an OWNED system's stockpile via a sub-light raidable convoy —
+            // the bridge that lets market-bought inputs feed a system's converters
+            // (which read sys.stockpile). The convoy sails FROM THE HUB, because
+            // that is where the goods physically are. This is the free, raidable
+            // alternative to booking the Authority's carrier for the same leg.
             Command::StockSystem { player_id, system_id, commodity, units } => {
                 let units = *units;
                 if units == 0 {
@@ -4368,14 +4414,17 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
-                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
+                let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
                 if have < units {
-                    return; // not enough held at HQ
+                    // Async-fair: nothing spent, owner-only notice naming the
+                    // store that came up short.
+                    self.reject_trade(events, *player_id, *commodity, units, Some(*system_id),
+                        TradeRejectReason::InsufficientWarehouseStock { have });
+                    return;
                 }
-                let home = corp.home;
-                // Commit goods out of the HQ pool up front (mirror MarketSell).
+                // Commit goods out of the warehouse up front (mirror MarketSell).
                 if let Some(corp) = self.players.get_mut(player_id) {
-                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                    take_from(&mut corp.warehouse, *commodity, units);
                 }
                 events.push(Event::new(
                     self.time,
@@ -4390,7 +4439,8 @@ impl World {
                 // depot-cap / overflow-to-hub handling) on arrival. No fuel charge —
                 // parity with the manual hub-trade family (MarketBuy/MarketSell).
                 let cargo = Cargo { commodity: *commodity, units };
-                self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+                let hub = self.hub;
+                self.spawn_trade_convoy(*player_id, hub, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
             }
             Command::HubLoad { player_id, fleet_id, commodity, units } => {
                 self.apply_logistics_load(*player_id, *fleet_id, None, *commodity, *units, events);
@@ -4508,9 +4558,9 @@ impl World {
                         }
                     }
                     Side::Sell => {
-                        // §TCA: sell-side escrow draws from the CHARTERHOUSE
-                        // WAREHOUSE (the goods must already be at the Exchange),
-                        // never from home inventory.
+                        // §TCA: sell-side escrow draws from the HUB WAREHOUSE
+                        // (the goods must already be at the Exchange), never from
+                        // a system stockpile.
                         let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
                         if have < units {
                             events.push(Event::new(
@@ -7043,8 +7093,10 @@ impl World {
 
     /// Recompute every corporation's equity (§9). Slow-cadence so the figure is
     /// readable, not noisy. Net worth = liquid credits + all goods valued at the
-    /// current market price (held at home, in transit on trade convoys, and
-    /// reserved in resting sell orders) + credits escrowed by resting buy orders.
+    /// current market price (in the hub warehouse, in transit on trade convoys,
+    /// aboard Authority freight, and reserved in resting sell orders) + credits
+    /// escrowed by resting buy orders. System stockpiles are valued with the
+    /// systems themselves, not here.
     fn recompute_valuations(&mut self) {
         let prices = self.market.prices().clone();
         let value = |c: &crate::cargo::Commodity, u: u32| u as f64 * prices.get(c).copied().unwrap_or(0.0);
@@ -7079,11 +7131,11 @@ impl World {
             }
         }
         for (id, corp) in self.players.iter_mut() {
-            let inv: f64 = corp.inventory.iter().map(|(c, u)| value(c, *u)).sum();
-            // §TCA: warehouse goods held at the Charterhouse count like home goods.
+            // §TCA: goods sit in exactly two places — the hub warehouse (here) and
+            // system stockpiles (counted with the systems). The old third store is
+            // retired, so there is no separate "held at home" term any more.
             let wh: f64 = corp.warehouse.iter().map(|(c, u)| value(c, *u)).sum();
             corp.valuation = corp.credits
-                + inv
                 + wh
                 + transit.get(id).copied().unwrap_or(0.0)
                 + reserved.get(id).copied().unwrap_or(0.0)
@@ -7393,9 +7445,15 @@ impl World {
                                 .find(|s| s.id == id)
                                 .map(|s| s.stockpile.get(&order.commodity).copied().unwrap_or(0.0))
                                 .unwrap_or(0.0),
-                            Endpoint::Home => {
-                                corp.inventory.get(&order.commodity).copied().unwrap_or(0) as f64
-                            }
+                            // §TCA: "Home" is the home SYSTEM's stockpile — the
+                            // per-corp HQ pool it used to name is retired. The
+                            // variant is kept so orders saved before the change
+                            // still load and still mean "my home".
+                            Endpoint::Home => corp
+                                .home_system
+                                .and_then(|hs| self.systems.iter().find(|s| s.id == hs))
+                                .map(|s| s.stockpile.get(&order.commodity).copied().unwrap_or(0.0))
+                                .unwrap_or(0.0),
                             Endpoint::Hub => 0.0, // forbidden by validation
                         };
                         // Count both convoys already crossing AND shipments planned
@@ -8650,22 +8708,37 @@ impl World {
             let fought = ship.fought;
             match mission {
                 TradeMission::DeliverHome => {
-                    if let Some(corp) = self.players.get_mut(&ship.owner) {
-                        *corp.inventory.entry(cargo.commodity).or_insert(0) += cargo.units;
-                        if fought {
-                            corp.stats.cargo_protected += cargo.units as u64;
-                        }
+                    // §TCA: "home" is the home SYSTEM's stockpile now, clamped to
+                    // its depot like every other system delivery — so this reports
+                    // as the ordinary system arrival it has become.
+                    let home_sys = self.players.get(&ship.owner).and_then(|c| c.home_system);
+                    let stored = self.deposit_at_home_system(ship.owner, cargo.commodity, cargo.units);
+                    if fought && let Some(corp) = self.players.get_mut(&ship.owner) {
+                        corp.stats.cargo_protected += stored as u64;
                     }
-                    events.push(Event::new(
-                        now,
-                        EventPayload::Trade(TradeEvent::Delivered {
-                            player: ship.owner,
-                            commodity: cargo.commodity,
-                            units: cargo.units,
-                            system: None, // DeliverHome → the HQ trading pool
-                            to_warehouse: false,
-                        }),
-                    ));
+                    if stored > 0 {
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::Delivered {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: stored,
+                                system: home_sys,
+                            }),
+                        ));
+                    }
+                    let excess = cargo.units - stored;
+                    if excess > 0 && let Some(sid) = home_sys {
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::StorageOverflow {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: excess,
+                                system: sid,
+                            }),
+                        ));
+                    }
                 }
                 TradeMission::SellAtHub => {
                     // §TCA Phase 2: a Revoked charter's Exchange is closed to an
@@ -8728,12 +8801,10 @@ impl World {
                             player: ship.owner,
                             commodity: cargo.commodity,
                             units: cargo.units,
-                            // §TCA: this landed in the hub WAREHOUSE, not at a
-                            // system stockpile — `None` for the system, and
-                            // `to_warehouse` to tell it apart from the HQ pool a
-                            // DeliverHome fills.
+                            // §TCA: `None` = the hub WAREHOUSE. With the HQ pool
+                            // retired there are exactly two stores, so the system
+                            // id alone says which one took the lot.
                             system: None,
-                            to_warehouse: true,
                         }),
                     ));
                     // §TCA Phase 2: the sell leg obeys the LAW like a hand-typed
@@ -8808,7 +8879,6 @@ impl World {
                                     commodity: cargo.commodity,
                                     units: stored,
                                     system: Some(system), // DeliverToSystem → the system stockpile
-                                    to_warehouse: false,
                                 }),
                             ));
                             if fought
@@ -9497,11 +9567,23 @@ mod tests {
 
     /// §TCA: put goods in a corp's CHARTERHOUSE WAREHOUSE — the only source the
     /// Exchange sells from now, so most market tests need it seeded.
+    /// Put the warehouse in an EXACT known state: clears whatever a fresh corp
+    /// started with, then sets `items`. Tests that assert on warehouse totals need
+    /// a baseline they control — a joining corp is seeded with the starting stock,
+    /// so an additive helper would silently offset every expectation by it.
     fn seed_warehouse(w: &mut World, who: PlayerId, items: &[(Commodity, u32)]) {
         let c = w.players.get_mut(&who).unwrap();
+        c.warehouse.clear();
         for (com, n) in items {
             *c.warehouse.entry(*com).or_insert(0) += *n;
         }
+    }
+
+    /// Empty the warehouse — for tests whose premise is "this corp holds nothing
+    /// at the hub" (the starting stock would otherwise satisfy the very thing
+    /// they mean to prove is missing).
+    fn clear_warehouse(w: &mut World, who: PlayerId) {
+        w.players.get_mut(&who).unwrap().warehouse.clear();
     }
 
     /// How many units of `c` sit in `who`'s Charterhouse warehouse.
@@ -14011,7 +14093,7 @@ mod tests {
     }
 
     /// §TCA Part 2: a BUY settles instantly at the standing price and deposits into
-    /// the CHARTERHOUSE WAREHOUSE. No convoy is conjured, and home inventory is
+    /// the HUB WAREHOUSE. No convoy is conjured, and the home SYSTEM's stockpile is
     /// untouched — a trade never moves goods across space any more.
     #[test]
     fn market_buy_settles_into_the_warehouse_without_a_convoy() {
@@ -14019,8 +14101,12 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let credits0 = w.players[&id].credits;
-        let fuel_home0 = w.players[&id].inventory[&Fuel];
+        let home_sys = w.players[&id].home_system.expect("home system");
+        let fuel_home0 = sys_units(&w, home_sys, Fuel);
         let fleets0 = w.fleets.len();
         let price = w.market.price(Fuel);
 
@@ -14030,8 +14116,8 @@ mod tests {
         assert!((spent - 50.0 * price).abs() < 1e-6, "buy settles at the standing price");
         // The goods are AT the Charterhouse immediately…
         assert_eq!(wh(&w, id, Fuel), 50, "bought goods land in the warehouse");
-        // …home inventory is untouched, and NOTHING was launched.
-        assert_eq!(w.players[&id].inventory[&Fuel], fuel_home0, "home inventory untouched");
+        // …the home system is untouched, and NOTHING was launched.
+        assert_eq!(sys_units(&w, home_sys, Fuel), fuel_home0, "the home system's stockpile is untouched");
         assert_eq!(w.fleets.len(), fleets0, "a buy conjures no convoy");
         assert!(
             !w.fleets.values().any(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome)),
@@ -14050,7 +14136,8 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         seed_warehouse(&mut w, id, &[(MetallicOre, 100)]);
         let credits0 = w.players[&id].credits;
-        let home_ore0 = w.players[&id].inventory[&MetallicOre];
+        let home_sys = w.players[&id].home_system.expect("home system");
+        let home_ore0 = sys_units(&w, home_sys, MetallicOre);
         let fleets0 = w.fleets.len();
         let price = w.market.price(MetallicOre);
 
@@ -14058,7 +14145,7 @@ mod tests {
         assert_eq!(wh(&w, id, MetallicOre), 60, "sold units leave the warehouse");
         let gained = w.players[&id].credits - credits0;
         assert!((gained - 40.0 * price).abs() < 1e-6, "credited instantly at the standing price");
-        assert_eq!(w.players[&id].inventory[&MetallicOre], home_ore0, "home goods are not a sell source");
+        assert_eq!(sys_units(&w, home_sys, MetallicOre), home_ore0, "system goods are not a sell source");
         assert_eq!(w.fleets.len(), fleets0, "a sell conjures no convoy");
         assert!(
             !w.fleets.values().any(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub)),
@@ -14066,20 +14153,24 @@ mod tests {
         );
     }
 
-    /// §TCA Part 2: home goods are NO LONGER a valid sell source — a corp holding
-    /// plenty at home but nothing at the Charterhouse is soft-rejected, for free,
-    /// with the typed reason that tells it to ship the goods in first.
+    /// §TCA Part 2: goods sitting at a SYSTEM are not a valid sell source — the
+    /// Exchange settles only against the hub warehouse. A corp with a full
+    /// stockpile and an empty warehouse is soft-rejected, for free, with the typed
+    /// reason that tells it to ship the goods in first.
     #[test]
-    fn selling_home_goods_soft_rejects_until_they_reach_the_charterhouse() {
-        use crate::cargo::Commodity::MetallicOre;
+    fn selling_system_goods_soft_rejects_until_they_reach_the_hub() {
+        // Silicates deliberately: NOT one of the five the starter warehouse holds,
+        // so the warehouse is genuinely empty of it.
+        use crate::cargo::Commodity::Silicates;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let home_ore = w.players[&id].inventory[&MetallicOre];
-        assert!(home_ore > 0, "the starter corp does hold ore AT HOME");
+        let home_sys = w.players[&id].home_system.expect("home system");
+        seed_stock(&mut w, home_sys, &[(Silicates, 200.0)]);
+        assert_eq!(wh(&w, id, Silicates), 0, "precondition: none at the hub");
         let credits0 = w.players[&id].credits;
 
-        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: MetallicOre, units: home_ore }]);
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: Silicates, units: 200 }]);
         assert!(
             ev.iter().any(|e| matches!(
                 &e.payload,
@@ -14089,24 +14180,28 @@ mod tests {
             )),
             "an empty warehouse soft-rejects with the typed reason"
         );
-        // Costs nothing: home goods and credits both untouched.
-        assert_eq!(w.players[&id].inventory[&MetallicOre], home_ore);
+        // Costs nothing: the system's goods and the treasury are both untouched.
+        assert_eq!(sys_units(&w, home_sys, Silicates), 200);
         assert_eq!(w.players[&id].credits, credits0);
     }
 
     /// §TCA Part 2 (grandfathering): a convoy already in flight when the warehouse
-    /// rework landed — i.e. one loaded from a PRE-FEATURE snapshot — still resolves
-    /// under the OLD semantics. `DeliverHome` deposits into home inventory and
-    /// `SellAtHub` clears at the price-on-arrival, exactly as before. New code never
-    /// creates either mission (the Exchange tests above assert that side).
+    /// rework landed — i.e. one loaded from a PRE-FEATURE snapshot — still resolves.
+    /// `DeliverHome` deposits into the HOME SYSTEM's stockpile (the per-corp HQ pool
+    /// it used to fill is retired) and `SellAtHub` still clears on arrival. New code
+    /// never creates either mission (the Exchange tests above assert that side).
     #[test]
     fn in_flight_convoys_from_an_old_snapshot_still_resolve() {
         use crate::cargo::Commodity::{Fuel, MetallicOre};
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let home = w.players[&id].home;
-        let home_fuel0 = w.players[&id].inventory.get(&Fuel).copied().unwrap_or(0);
+        let home_sys = w.players[&id].home_system.expect("home system");
+        let home_fuel0 = sys_units(&w, home_sys, Fuel);
         let credits0 = w.players[&id].credits;
 
         // Forge the two legacy convoys, ARRIVED (Idle at their destination) —
@@ -14123,11 +14218,11 @@ mod tests {
 
         w.step(&[]);
 
-        // DeliverHome deposited into HOME inventory (old semantics — not the warehouse).
+        // DeliverHome deposited into the HOME SYSTEM's stockpile — not the warehouse.
         assert_eq!(
-            w.players[&id].inventory.get(&Fuel).copied().unwrap_or(0),
+            sys_units(&w, home_sys, Fuel),
             home_fuel0 + 25,
-            "a grandfathered DeliverHome still deposits at home"
+            "a grandfathered DeliverHome deposits into the home system"
         );
         assert_eq!(wh(&w, id, Fuel), 0, "…and not into the warehouse");
         // SellAtHub cleared into credits — and, because a convoy really did cross
@@ -14156,6 +14251,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let colony = near_hub_colony(&mut w, id, 1200.0);
         let colony_pos = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
         seed_stock(&mut w, colony, &[(Alloys, 300.0)]);
@@ -14198,6 +14296,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let convoy = find_ship(&w, id, ShipKind::Convoy);
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
@@ -14336,6 +14437,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let colony = near_hub_colony(&mut w, id, 1200.0);
         seed_stock(&mut w, colony, &[(MetallicOre, 200.0)]);
         let mut order = old;
@@ -15531,6 +15635,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let colony = near_hub_colony(&mut w, id, 1200.0);
         seed_stock(&mut w, colony, &[(Alloys, 200.0)]);
         w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 100, sell_on_arrival: false }]);
@@ -15686,6 +15793,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let colony = near_hub_colony(&mut w, id, 1200.0);
         // Happy path: the lot is bought AND booked in one command.
         w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 40, ship_to: Some(colony) }]);
@@ -15706,35 +15816,35 @@ mod tests {
     }
 
     #[test]
-    fn stock_system_moves_hq_inventory_into_a_system_stockpile() {
+    fn stock_system_moves_warehouse_goods_into_a_system_stockpile() {
         use crate::cargo::Commodity::Volatiles;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sys = w.players[&id].home_system.expect("home system");
-        // AddPlayer seeds the HQ trading inventory with 120 of each raw good.
-        let held0 = w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0);
-        assert!(held0 >= 100, "precondition: HQ holds >=100 volatiles (had {held0})");
+        // AddPlayer seeds the hub WAREHOUSE with 120 of each of the five raw goods.
+        let held0 = wh(&w, id, Volatiles);
+        assert!(held0 >= 100, "precondition: the warehouse holds >=100 volatiles (had {held0})");
         let ships0 = w.fleets.len();
 
         // Soft-reject cases: zero units, more than held, a system you don't own —
-        // none may debit HQ or spawn a convoy.
+        // none may debit the warehouse or spawn a convoy.
         w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 0 }]);
         w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 999_999 }]);
         w.step(&[Command::StockSystem { player_id: id, system_id: EntityId(987_654), commodity: Volatiles, units: 10 }]);
-        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0, "rejected stock must not debit HQ");
+        assert_eq!(wh(&w, id, Volatiles), held0, "rejected stock must not debit the warehouse");
         assert_eq!(w.fleets.len(), ships0, "rejected stock must not spawn a convoy");
 
-        // Valid: debits HQ now, dispatches the convoy, and routes the goods to the
-        // SYSTEM stockpile. At ~zero home→home-system distance the DeliverToSystem
-        // convoy deposits the SAME tick, so assert the OUTCOME, not a lingering ship.
+        // Valid: debits the warehouse now, dispatches a convoy FROM THE HUB, and
+        // routes the goods to the SYSTEM stockpile. Assert the OUTCOME, not a
+        // lingering ship — the crossing time depends on hub→system distance.
         let vol_at = |w: &World| w.systems.iter().find(|s| s.id == sys).and_then(|s| s.stockpile.get(&Volatiles).copied()).unwrap_or(0.0);
         let s0 = vol_at(&w);
         let overflow_of = |evs: &[Event]| evs.iter().any(|e| matches!(&e.payload,
             EventPayload::Trade(TradeEvent::StorageOverflow { system, commodity, .. })
                 if *system == sys && *commodity == Volatiles));
         let evs = w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 100 }]);
-        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0 - 100, "HQ debited by the shipped units");
+        assert_eq!(wh(&w, id, Volatiles), held0 - 100, "the warehouse is debited by the shipped units");
         assert!(evs.iter().any(|e| matches!(&e.payload,
             EventPayload::Trade(TradeEvent::StockDispatched { system, commodity, units, .. })
                 if *system == sys && *commodity == Volatiles && *units == 100)),
@@ -15742,7 +15852,7 @@ mod tests {
 
         // The goods land in the SYSTEM stockpile (single-player → never raided).
         // A big jump (≥50, unreachable by per-tick production drift) or an
-        // overflow-to-hub both prove the goods were routed to the SYSTEM, not HQ.
+        // overflow-to-hub both prove the goods reached the SYSTEM.
         let mut delivered = vol_at(&w) >= s0 + 50.0 || overflow_of(&evs);
         if !delivered {
             for _ in 0..(260 * crate::config::TICK_HZ) {
@@ -15785,6 +15895,10 @@ mod tests {
             Command::AddPlayer { id: buyer, name: "Buy".into() },
             Command::AddPlayer { id: seller, name: "Sell".into() },
         ]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, buyer);
+        clear_warehouse(&mut w, seller);
         // §TCA: sell-side escrow draws from the CHARTERHOUSE WAREHOUSE, so the
         // seller's goods must already be at the Exchange.
         seed_warehouse(&mut w, seller, &[(MetallicOre, 50)]);
@@ -18164,7 +18278,7 @@ mod tests {
                 outcome: RaidOutcome::TargetDestroyed, pos: Vec2::ZERO,
                 attacker_losses: a_loss, target_losses: d_loss,
             }),
-            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5, system: None, to_warehouse: false })),
+            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5, system: None })),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }), // dup
             Event::new(0.0, EventPayload::IntelGathered { owner: a, system: EntityId(4), defense_tier: 1, shipyard_tier: 0, pos: Vec2::ZERO }),
@@ -18389,7 +18503,9 @@ mod tests {
         w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // no packs
         let fleet = squad(&mut w, hunter, epos, ShipKind::Raider, 12, FleetOrder::Idle);
         let _ = fleet;
-        let before = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
+        // Plunder now lands in the victor's HOME SYSTEM stockpile.
+        let home_sys = w.players[&hunter].home_system.expect("home system");
+        let before = sys_units(&w, home_sys, Commodity::Alloys);
         let mut cleared = false;
         for _ in 0..(120 * crate::config::TICK_HZ) {
             let ev = w.step(&[]);
@@ -18399,8 +18515,8 @@ mod tests {
             }
         }
         assert!(cleared, "a strong war-fleet stationed at the base grinds it down and CLEARS it");
-        let after = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
-        assert!(after >= before + 40, "the victor seizes the plunder ({before} → {after})");
+        let after = sys_units(&w, home_sys, Commodity::Alloys);
+        assert!(after >= before + 40, "the victor seizes the plunder into its home system ({before} → {after})");
         assert!(!w.enclaves[&sid].active(w.time), "the cleared base goes DORMANT");
         assert_eq!(w.enclaves[&sid].tier, 1, "it will respawn WEAKER (tier 1)");
     }
@@ -18689,7 +18805,7 @@ mod tests {
 
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
-            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None, to_warehouse: false })),
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None })),
             ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0, penalty: 0.0 })),
             ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0, penalty: 0.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0, penalty: 0.0 })),

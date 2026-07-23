@@ -974,12 +974,7 @@ impl GameLoop {
             let wallet = WalletView {
                 credits: corp.credits,
                 valuation: corp.valuation,
-                inventory: corp
-                    .inventory
-                    .iter()
-                    .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
-                    .collect(),
-                // §TCA: goods at the Charterhouse — what the Exchange trades against.
+                // §TCA: goods at the hub — what the Exchange trades against.
                 warehouse: corp
                     .warehouse
                     .iter()

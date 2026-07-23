@@ -412,21 +412,12 @@ pub enum TradeEvent {
     /// `penalty` is the §TCA charter penalty fee burned on top (0 in good standing).
     Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A delivery convoy arrived and deposited its cargo. `system == None` means it
-    /// landed in the corp's HQ trading pool (a market buy); `Some(id)` means it was
+    /// landed in the corp's hub WAREHOUSE; `Some(id)` means it was
     /// stocked into THAT system's stockpile (a Supply-from-HQ run or standing order).
-    Delivered {
-        player: PlayerId,
-        commodity: Commodity,
-        units: u32,
-        system: Option<EntityId>,
-        /// §TCA: with `system == None`, WHICH hub-side pool took the lot — the
-        /// corp's HQ trading pool (a DeliverHome / market buy) or its hub
-        /// WAREHOUSE (a DeliverToWarehouse haul). They are different stores with
-        /// different uses, so the notice must not claim the wrong one. Defaults
-        /// FALSE, which is what every pre-warehouse `Delivered` meant.
-        #[serde(default)]
-        to_warehouse: bool,
-    },
+    /// A convoy arrived and deposited its cargo. Goods live in exactly two
+    /// places, and `system` says which took this lot: `Some(id)` = that system's
+    /// stockpile; `None` = the corp's warehouse at the hub.
+    Delivered { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
     /// A sell convoy was dispatched toward the hub (goods committed to the dark).
     SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
     /// A sale cleared at the Charterhouse. `penalty` is the §TCA charter penalty
@@ -627,7 +618,7 @@ pub enum BuildRejectReason {
 pub enum TradeRejectReason {
     /// The corp's CHARTERHOUSE WAREHOUSE holds fewer units than the order needs.
     /// Selling — and sell-side limit escrow — draws ONLY from the warehouse now;
-    /// goods held at home must first be moved to the Charterhouse (by TCA freight
+    /// goods held at a system must first be moved to the hub (by TCA freight
     /// or a player convoy) before they can be sold.
     InsufficientWarehouseStock { have: u32 },
     /// §TCA freight: the named system is not one the corp currently owns. The

@@ -774,7 +774,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 penalty_suffix(penalty)
             ),
         ),
-        TradeEvent::Delivered { commodity, units, system, to_warehouse, .. } => (
+        TradeEvent::Delivered { commodity, units, system, .. } => (
             Good,
             match system {
                 Some(sid) => format!(
@@ -782,12 +782,8 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     commodity_name(commodity),
                     system_name(world, sid)
                 ),
-                None if to_warehouse => format!(
-                    "Delivery arrived: +{units} {} — into your hub warehouse.",
-                    commodity_name(commodity)
-                ),
                 None => format!(
-                    "Delivery arrived: +{units} {} — into your HQ trading pool.",
+                    "Delivery arrived: +{units} {} — into your hub warehouse.",
                     commodity_name(commodity)
                 ),
             },
@@ -1198,7 +1194,6 @@ mod tests {
                     commodity: Commodity::MetallicOre,
                     units: i + 1,
                     system: None,
-                    to_warehouse: false,
                 }),
             );
             tl.ingest(&[ev], &w);

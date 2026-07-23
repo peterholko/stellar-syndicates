@@ -3116,7 +3116,7 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       // inventory the Exchange buys/sells. Tag it so a market sell "not moving" this
       // number reads as expected, not a bug.
       const nameCell = c === "fuel"
-        ? `<span class="sp-name" title="This system's operating/movement reserve — ships spend it to move. NOT the tradeable HQ inventory the Exchange buys/sells, so a market Buy/Sell never changes it.">${label(c)} <span class="dim" style="font-size:9px">· reserve</span></span>`
+        ? `<span class="sp-name" title="This system's operating/movement reserve — ships spend it to move. NOT the hub warehouse the Exchange buys/sells against, so a market Buy/Sell never changes it.">${label(c)} <span class="dim" style="font-size:9px">· reserve</span></span>`
         : `<span class="sp-name">${label(c)}</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `${nameCell}<span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
@@ -3139,14 +3139,11 @@ const SUSPEND_HINT: Record<string, string> = {
   needs_crew: "built but idle — post a crew (open its body and hire/assign workers)",
 };
 
-// §economy Supply-from-HQ: ship goods held in the corp's HQ trading pool (bought
-// at the Exchange) into THIS system's stockpile via a raidable convoy — the
+// §economy SUPPLY (Market → Supply tab): ship goods from the corp's HUB
+// WAREHOUSE into a chosen OWNED system's stockpile via a raidable convoy — the
 // bridge that lets market-bought inputs feed a system's converters, which draw
-// from the system stockpile, not the HQ pool. Returns "" when HQ holds nothing.
-// §economy Supply-from-HQ (Market → Supply tab): ship goods held in the corp's HQ
-// trading pool into a chosen OWNED system's stockpile (to feed its converters).
-// Lives ONLY in the Market panel so HQ/market inventory never appears on the
-// planet/system views. The destination <select> is static HTML — its options are
+// from the system stockpile. Lives ONLY in the Market panel, beside the Exchange
+// that fills the warehouse it ships from. The destination <select> is static HTML — its options are
 // rebuilt only when the owned-system set changes (never mid-dropdown at ~10 Hz).
 let supplyDestSig = "";
 function renderSupplyPane(): void {
@@ -3161,8 +3158,10 @@ function renderSupplyPane(): void {
   }
   const rows = $("mk-supply-rows");
   if (!owned.length) { rows.innerHTML = `<div class="mhint dim">Claim a system before you can supply one.</div>`; return; }
-  const held = (state.wallet?.inventory ?? []).filter((i) => i.units > 0);
-  if (!held.length) { rows.innerHTML = `<div class="mhint dim">No goods held at HQ. Buy on the Exchange, then supply a system here.</div>`; return; }
+  // §TCA: supply draws from the HUB WAREHOUSE — the same stock the Exchange
+  // trades against, and the only hub-side store there is.
+  const held = (state.wallet?.warehouse ?? []).filter((i) => i.units > 0);
+  if (!held.length) { rows.innerHTML = `<div class="mhint dim">Your hub warehouse is empty. Buy on the Exchange, then supply a system here.</div>`; return; }
   rows.innerHTML = held.map((i) => {
     const presets = [...new Set([10, 50, i.units])].filter((n) => n >= 1 && n <= i.units).sort((a, b) => a - b);
     const btns = presets.map((n) =>
@@ -4734,7 +4733,7 @@ function renderMarketBoard(): void {
   if (!state.market) return;
   const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
   // §TCA: the Exchange settles against the CHARTERHOUSE WAREHOUSE, so the held
-  // column has to be the warehouse — showing HQ inventory here would offer a
+  // column has to be the warehouse — showing a system stockpile here would offer a
   // player a sell the sim will soft-reject as InsufficientWarehouseStock.
   const heldOf = new Map((state.wallet?.warehouse ?? []).map((i) => [i.commodity, i.units]));
   const stale = state.market.staleness > 0.5;
@@ -4998,9 +4997,7 @@ function addTradeNews(t: TradeEvent): void {
       break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
-      : t.to_warehouse
-        ? `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`
-        : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your HQ trading pool.`;
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;

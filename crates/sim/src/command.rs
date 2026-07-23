@@ -86,7 +86,7 @@ pub enum Command {
     /// call auction — within a batch everyone clears at one price, so reacting
     /// fastest confers no edge (the anti-sniping mechanism). Resources are
     /// reserved when placed: credits for a buy, and for a sell the goods are
-    /// escrowed out of the Charterhouse WAREHOUSE (§TCA — never home inventory).
+    /// escrowed out of the hub WAREHOUSE (§TCA — never a system stockpile).
     /// A buy's fill deposits into that same warehouse.
     PlaceLimitOrder {
         player_id: PlayerId,
@@ -140,7 +140,7 @@ pub enum Command {
         system_id: EntityId,
     },
 
-    /// SUPPLY FROM HQ: move `units` of `commodity` from the corp's HQ trading
+    /// SUPPLY A SYSTEM: move `units` of `commodity` from the corp's HUB WAREHOUSE
     /// inventory into an OWNED system's stockpile, carried by a sub-light,
     /// raidable convoy. This is the bridge from the market pool (what buys fill)
     /// to a system's production stockpile (what converters/refineries consume and

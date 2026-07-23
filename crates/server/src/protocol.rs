@@ -105,9 +105,10 @@ pub enum ClientMsg {
     /// spawns raidable convoys from the system.
     ShipProduction { system_id: EntityId },
 
-    /// Supply from HQ: move goods from the corp's HQ trading inventory into an
-    /// owned system's stockpile via a raidable convoy — the bridge that lets
-    /// market-bought inputs feed a system's converters.
+    /// Supply a system: move goods from the corp's HUB WAREHOUSE into an owned
+    /// system's stockpile via a raidable convoy sailing from the hub — the bridge
+    /// that lets market-bought inputs feed a system's converters, and the free
+    /// (but interceptable) alternative to booking Authority freight.
     StockSystem { system_id: EntityId, commodity: Commodity, units: u32 },
 
     /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
@@ -310,10 +311,9 @@ pub struct WalletView {
     pub credits: f64,
     /// Equity / net worth, from the slow valuation close (§9).
     pub valuation: f64,
-    /// Goods held AT HOME.
-    pub inventory: Vec<InvSlot>,
-    /// §TCA: goods held at the CHARTERHOUSE — the only stock the Exchange trades
-    /// against. Owner-only, like the rest of the wallet.
+    /// §TCA: goods held at the WORMHOLE HUB — the only stock the Exchange trades
+    /// against, and one of exactly two places a corporation's goods can sit (the
+    /// other being each owned system's stockpile). Owner-only.
     pub warehouse: Vec<InvSlot>,
     pub orders: Vec<OrderView>,
     /// Total Fuel across all owned systems' stockpiles — the fleet's operating
