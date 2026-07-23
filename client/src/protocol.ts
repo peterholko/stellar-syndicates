@@ -411,7 +411,7 @@ export function freightFee(f: FreightView, t: FreightTermsView, unitPrice: numbe
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
 export type TradeEvent =
   | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
-  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
+  | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null; to_warehouse?: boolean }
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
   | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }

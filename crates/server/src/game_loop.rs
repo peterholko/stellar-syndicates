@@ -776,7 +776,13 @@ impl GameLoop {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
                     // §TCA: owner-only blockade policy — does this fleet engage
                     // Authority freight arriving at the system it strangles?
-                    g.engage_freight = self.world.fleets.get(&g.id).map(|f| f.engage_freight);
+                    // §TCA: the engage-freight choice is only MEANINGFUL for a
+                    // fleet holding a Blockade (that's the only order the sim
+                    // consults it under) — expose it only there, so the client
+                    // never offers a toggle that does nothing.
+                    g.engage_freight = self.world.fleets.get(&g.id).and_then(|f| {
+                        matches!(f.order, sim::FleetOrder::Blockade { .. }).then_some(f.engage_freight)
+                    });
                     // §syndicates Part 3: OWNER-ONLY garrison status — if this fleet
                     // is stationed as an ally garrison, its host + fed state.
                     if let Some(host) = self.world.garrison_host_of(g.id) {

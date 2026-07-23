@@ -1,3 +1,10 @@
+//! Integration tests for the two invariants the whole design leans on, driven
+//! across the §TCA freight machinery: (1) two runs of one seed agree byte for
+//! byte; (2) a mid-flight snapshot round-trips and keeps stepping identically;
+//! (3) a PRE-FEATURE snapshot — every field the Charterhouse/TCA work added
+//! stripped — still loads. Born as a completeness-audit probe and kept because
+//! nothing else exercises determinism through booked freight end to end.
+
 use sim::command::Command;
 use sim::config::SimConfig;
 use sim::ids::PlayerId;

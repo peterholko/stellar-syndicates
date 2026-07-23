@@ -414,7 +414,19 @@ pub enum TradeEvent {
     /// A delivery convoy arrived and deposited its cargo. `system == None` means it
     /// landed in the corp's HQ trading pool (a market buy); `Some(id)` means it was
     /// stocked into THAT system's stockpile (a Supply-from-HQ run or standing order).
-    Delivered { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    Delivered {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: Option<EntityId>,
+        /// §TCA: with `system == None`, WHICH hub-side pool took the lot — the
+        /// corp's HQ trading pool (a DeliverHome / market buy) or its hub
+        /// WAREHOUSE (a DeliverToWarehouse haul). They are different stores with
+        /// different uses, so the notice must not claim the wrong one. Defaults
+        /// FALSE, which is what every pre-warehouse `Delivered` meant.
+        #[serde(default)]
+        to_warehouse: bool,
+    },
     /// A sell convoy was dispatched toward the hub (goods committed to the dark).
     SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
     /// A sale cleared at the Charterhouse. `penalty` is the §TCA charter penalty

@@ -1770,6 +1770,13 @@ export class Renderer {
       txt = `${cargo}  ${stale}`;
       col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
       lalpha = 0.9;
+    } else if (ghost.kind === "freighter") {
+      // §TCA: an Authority hull is named, in the Authority's own steel-blue —
+      // neutral against both the own and rival palettes. Without this branch it
+      // fell through every case and drew NO label at all.
+      txt = `AUTHORITY  ${stale}`;
+      col = COL_TCA;
+      lalpha = 0.9;
     }
     sp.label.text = txt;
     sp.label.style.fill = col;

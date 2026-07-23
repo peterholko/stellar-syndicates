@@ -61,8 +61,8 @@ pub use doctrine::{
     RetreatThreshold,
 };
 pub use event::{
-    BuildRejectReason, DivertAction, Event, EventPayload, FreightStage, OrderKind, RaidOutcome,
-    TradeEvent, TradeRejectReason,
+    BuildRejectReason, DivertAction, Event, EventPayload, FreightStage, OrderKind,
+    OrderRejectReason, RaidOutcome, TradeEvent, TradeRejectReason,
 };
 pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId, SyndicateId};

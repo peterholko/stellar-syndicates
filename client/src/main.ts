@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -500,6 +500,11 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
+// §TCA: UI mirror of crates/sim/src/tca.rs::TCA_SOVEREIGN_RADIUS — keep in step.
+// Used only to HEDGE the attack/raid readout when a target's last-seen position
+// shelters in the bubble; the server judges the true position either way.
+const TCA_SOVEREIGN_RADIUS = 900;
+
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
@@ -716,7 +721,12 @@ function ownBody(g: GhostView): string {
   parts.push(orderLifecycleLine(g));
   parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
 
-  if (g.kind === "convoy") {
+  // Cargo + logistics belong to any fleet that CONTAINS convoys — mirroring the
+  // sim's `Fleet::cargo_capacity()`, which counts convoy hulls and never looks at
+  // the flagship. Keying this on `g.kind === "convoy"` hid the whole section the
+  // moment a warship escorted the lot and took over as flagship, even though the
+  // server would still have accepted every load/unload/haul command.
+  if (hauls(g)) {
     const cargo = g.cargo
       ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(label(g.cargo.commodity))}</div>`
       : `<span class="dim">empty hold</span>`;
@@ -820,6 +830,28 @@ function rivalBody(g: GhostView): string {
     parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Cargo</div>` + (g.cargo
       ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(label(g.cargo.commodity))}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
       : `<div class="sp-line dim">${icon("unknown", "sm", "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
+  } else if (g.kind === "freighter") {
+    // §TCA: an Authority freighter BROADCASTS — it is a scheduled common carrier,
+    // not a dark contact. Its MANIFEST is the two-tier surface the server already
+    // fog-gates: your own lots always, everyone else's only from inside sensor
+    // range (`revealed`). Rendering it is the whole point of shipping it.
+    const mine = (g.manifest ?? []).filter((m) => m.mine);
+    const theirs = (g.manifest ?? []).filter((m) => !m.mine);
+    const row = (m: ManifestEntryView): string =>
+      `<div class="sp-line">${chip(m.commodity as IconKey, `${fmt(m.units)} ${esc(label(m.commodity))}`, m.mine ? "Your lot — always legible to you, wherever this hull is." : "A rival's lot — legible because this freighter is inside your sensor coverage.")} <span class="dim">${m.direction === "outbound" ? "→ system" : "→ hub"}</span></div>`;
+    parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Manifest</div>`);
+    if (mine.length) parts.push(mine.map(row).join(""));
+    if (theirs.length) {
+      parts.push(theirs.map(row).join(""));
+    } else if (g.revealed) {
+      if (!mine.length) parts.push(`<div class="sp-line dim">Riding empty.</div>`);
+    } else {
+      parts.push(`<div class="sp-line dim" title="Other corporations' lots are legible only from inside your sensor coverage. Yours are always legible.">${icon("unknown", "sm")} other lots unknown — out of sensor range</div>`);
+    }
+    parts.push(
+      `<div class="sp-sec">${icon("blockade", "sm")} Sanctuary</div>` +
+      `<div class="sp-line dim" title="Destroying or intercepting an Authority hull is CITED — it costs charter standing, which prices your freight and your Exchange access. It is never forbidden, only expensive.">Attacking this is priced, not forbidden — it will be cited.</div>`,
+    );
   } else {
     const tip = g.kind === "scout"
       ? "A scout runs silent — someone is LOOKING at your space. No cargo, no weapons. You see it only because it is within your sensor range right now."
@@ -2745,37 +2777,50 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
-      // §TCA Phase 2: attacking an AUTHORITY hull is priced, not forbidden — warn
-      // with the projected band, then do exactly what the player asked.
-      if (tgt.tca && !confirmAuthorityHostility(`Attack a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
-        return;
-      }
+      // §TCA sovereignty: is the target's LAST-SEEN position inside the Authority
+      // bubble? The server judges on the TRUE position, so the order still goes —
+      // but claiming success and painting a pursuit overlay for an order the
+      // Authority will almost certainly refuse is a lie; hedge instead.
+      const hubPos = state.galaxy?.hub;
+      const believedSheltered = !!hubPos && Math.hypot(tgt.pos.x - hubPos.x, tgt.pos.y - hubPos.y) < TCA_SOVEREIGN_RADIUS;
+      const shelterNote = believedSheltered
+        ? ` <span class="warn">Its last-seen position is inside the Authority's sovereign zone — the order will be refused unless it has left the bubble.</span>`
+        : "";
       if (shift && haveStrike && net) {
         // §offensive-orders Part 1: ATTACK to DESTROY (shift+click) — a full battle,
         // a convoy's cargo is lost with it (RAID steals, ATTACK kills).
+        // §TCA Phase 2: hostility against an AUTHORITY hull is priced, not
+        // forbidden — warn with the projected band, then do what was asked. The
+        // confirm wraps only the hostile act, never a mere inspection click.
+        if (tgt.tca && !confirmAuthorityHostility(`Attack a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
+          return;
+        }
         net.send({ type: "AttackFleet", fleet_id: sel!.id, target_id: tgt.id });
         net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
-        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        if (!believedSheltered) state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
         delete state.orders[sel!.id];
         updateShipPanel();
         readout().innerHTML =
           `Attack committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b> to <b>destroy</b> it. ` +
           `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
-          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>`;
+          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>` + shelterNote;
       } else if (haveRaider && net) {
+        if (tgt.tca && !confirmAuthorityHostility(`Raid a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
+          return;
+        }
         // Direct your selected ship to raid the rival's TRUE position.
         net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
         // §FLEETS Part 3: ask for a projected engagement estimate to show at
         // commit time (computed server-side from your own view data).
         net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
-        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        if (!believedSheltered) state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
         delete state.orders[sel!.id];
         updateShipPanel();
         readout().innerHTML =
           `Raid committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b>. ` +
           `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
           `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
-          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`);
+          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`) + shelterNote;
       } else {
         // Nothing of yours selected to attack with → INSPECT the rival (panel).
         selectShip(enemy);
@@ -4781,18 +4826,24 @@ function renderComposer(): void {
     $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${label(c)}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
-    const cost = price !== undefined ? fmt(qty * price) : "?";
+    const penFrac = state.charter?.market_penalty_frac ?? 0;
+    const pen = price !== undefined ? qty * price * penFrac : 0;
+    const penNote = pen > 0.005 ? ` <span class="warn">(incl. ${fmt(pen)} Cr charter penalty)</span>` : "";
+    const cost = price !== undefined ? fmt(qty * price * (1 + penFrac)) : "?";
     const to = shipToValue();
     const dest = to ? ` → booked onto Authority freight for <b>${esc(systemName(to))}</b>` : "";
-    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your hub warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → your <b>warehouse</b>${dest}</span>`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your hub warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span>${penNote} → your <b>warehouse</b>${dest}</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
     const held = warehouseUnits(c);
-    const gain = price !== undefined ? fmt(qty * price) : "?";
+    const penFrac = state.charter?.market_penalty_frac ?? 0;
+    const pen = price !== undefined ? qty * (price ?? 0) * penFrac : 0;
+    const penNote = pen > 0.005 ? ` <span class="warn">(after ${fmt(pen)} Cr charter penalty)</span>` : "";
+    const gain = price !== undefined ? fmt(qty * price * (1 - penFrac)) : "?";
     const short = held < qty;
     $("mk-preview").innerHTML = short
       ? `<span class="warn" title="Selling draws ONLY from your hub warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
-      : `<span title="The goods are already at the Exchange, so it settles instantly at the standing price — no crossing, no price-on-arrival gamble.">Settles <b>now</b> from your warehouse ~<span class="accent">${gain} Cr</span></span>`;
+      : `<span title="The goods are already at the Exchange, so it settles instantly at the standing price — no crossing, no price-on-arrival gamble.">Settles <b>now</b> from your warehouse ~<span class="accent">${gain} Cr</span>${penNote}</span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
   // The ship-to selector is a BUY-only composition.
@@ -4863,14 +4914,19 @@ function renderFreightDesk(): void {
   }
   submit.disabled = false;
   const price = state.market?.prices.find((p) => p.commodity === c)?.price ?? 0;
-  const fee = freightFee(f, t, price, qty);
+  // §TCA Phase 2: the Authority charges base fee × the charter TARIFF — quote
+  // what will actually be debited, or a sanctioned corp commits against a
+  // number up to 3× too low (the audit's exact finding).
+  const tariff = state.charter?.tariff_mult ?? 1;
+  const fee = freightFee(f, t, price, qty) * tariff;
+  const tariffNote = tariff > 1.0001 ? ` <span class="warn">(×${tariff.toFixed(2)} charter tariff)</span>` : "";
   // Departures are exact: the timetable and the freighter's cruise are pure
   // functions of config. Show the wait, not a raw sim-time.
   const wait = Math.max(0, f.next_departure - (state.simTime ?? 0));
   const flight = dir === "outbound" ? t.secs_out : t.secs_round;
   const overCap = qty > t.cap;
   $("fr-preview").innerHTML =
-    `<span title="The fee is charged at booking and destroyed — it is never refunded, even if the lot is lost.">Fee <span class="accent">${fmt(fee)} Cr</span></span> · ` +
+    `<span title="The fee is charged at booking and destroyed — it is never refunded, even if the lot is lost.">Fee <span class="accent">${fmt(fee)} Cr</span>${tariffNote}</span> · ` +
     `departs in <b>${fmtDur(wait)}</b> · arrives ~<b>${fmtDur(wait + flight)}</b>` +
     (t.depot ? ` · <span class="dim">Depot: ${Math.round((1 - f.depot_fee_mult) * 100)}% off, ${t.cap} cap</span>` : ` · <span class="dim">${t.cap}/departure</span>`) +
     (overCap ? ` · <span class="warn" title="Not a refusal — the lot is split and rolls onto consecutive departures, first booked first served.">rides ${Math.ceil(qty / t.cap)} departures</span>` : "");
@@ -4942,7 +4998,9 @@ function addTradeNews(t: TradeEvent): void {
       break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
-      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`;
+      : t.to_warehouse
+        ? `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`
+        : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your HQ trading pool.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
@@ -4951,7 +5009,10 @@ function addTradeNews(t: TradeEvent): void {
         + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
       break;
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
-    case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`; break;
+    case "LimitFilled":
+      text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`
+        + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
     case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${label(t.commodity)} (auto, raidable).`; break;
     case "SupplyDiverted": {
       const what = t.action === "lost" ? "lost (cargo dropped)"
@@ -4982,7 +5043,10 @@ function addTradeNews(t: TradeEvent): void {
       break;
     }
     case "CharterReinstated": {
-      const band = t.after > t.before ? "" : "";
+      // Name the band the payment actually bought back into, when it moved one.
+      const from = projectedBand(state.charter ? state.charter.standing - t.before : 0);
+      const to = projectedBand(state.charter ? state.charter.standing - t.after : 0);
+      const band = to !== from ? ` Restored to <b>${esc(to)}</b>.` : "";
       text = `Paid the Authority ${fmt(t.cost)} Cr for ${t.points.toFixed(0)} standing (${t.before.toFixed(0)} → ${t.after.toFixed(0)}).${band}`;
       break;
     }
@@ -5844,6 +5908,13 @@ setHud();
 /// the haul order that sends a loaded hull to the Charterhouse. Only offered when
 /// the fleet is actually alongside a dock and idle; the sim soft-rejects anything
 /// else, but there is no point showing a button that will only ever be refused.
+/// Does this fleet lift cargo? UI mirror of the sim's `Fleet::cargo_capacity()`:
+/// convoy HULLS carry, and it never consults the flagship. An escorted lot whose
+/// flagship is a warship still hauls.
+function hauls(g: GhostView): boolean {
+  return g.kind === "convoy" || !!g.composition?.some((c) => c.kind === "convoy" && c.count > 0);
+}
+
 function logisticsSection(g: GhostView): string {
   const hub = state.galaxy?.hub;
   const near = (p: Vec2 | undefined) => p !== undefined && Math.hypot(p.x - g.pos.x, p.y - g.pos.y) <= LOGISTICS_RANGE_UI;

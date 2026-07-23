@@ -226,6 +226,20 @@ impl Timeline {
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
+                // A soft-rejected fleet ORDER (§TCA sovereignty) — owner-only,
+                // instant (your own command staff refusing to transmit): the order
+                // never installed, the fleet kept its current one, nothing was
+                // spent. Without this line the refusal is invisible and the click
+                // just seems to do nothing.
+                EventPayload::OrderRejected { owner, reason, .. } => {
+                    let text = match reason {
+                        sim::OrderRejectReason::InsideSovereignZone =>
+                            "Order refused: the target shelters inside the Authority's sovereign zone at the hub — \
+                             no engagement may open there. Your fleet holds its current order."
+                                .to_string(),
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, text);
+                }
                 // A colony ship arrived at an already-claimed system (§ships
                 // part 3) — you lost the race (or it flipped en route). OWNER-
                 // ONLY, light-delayed from the hold position; the ship is intact.
@@ -730,6 +744,17 @@ fn kind_word(k: ShipKind) -> &'static str {
 
 /// The check-in line for an economy event the recipient cares about while away,
 /// or `None` for the noisy/online-only ones we deliberately skip.
+/// §TCA Phase 2: the charter penalty burned on an Exchange settlement, attached
+/// to the trade that incurred it — a fee the player can't see is a mystery
+/// drain, not a consequence.
+fn penalty_suffix(penalty: f64) -> String {
+    if penalty > 0.005 {
+        format!(" Charter penalty burned: {penalty:.0} Cr.")
+    } else {
+        String::new()
+    }
+}
+
 fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, String)> {
     use TimelineSeverity::*;
     Some(match *te {
@@ -741,17 +766,39 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 system_name(world, source)
             ),
         ),
-        TradeEvent::Sold { commodity, units, unit_price, .. } => (
+        TradeEvent::Sold { commodity, units, unit_price, penalty, .. } => (
             Good,
-            format!("Sold {units} {} at the hub for {unit_price:.2} ea.", commodity_name(commodity)),
+            format!(
+                "Sold {units} {} at the hub for {unit_price:.2} ea.{}",
+                commodity_name(commodity),
+                penalty_suffix(penalty)
+            ),
         ),
-        TradeEvent::Delivered { commodity, units, .. } => (
+        TradeEvent::Delivered { commodity, units, system, to_warehouse, .. } => (
             Good,
-            format!("Delivery arrived: +{units} {}.", commodity_name(commodity)),
+            match system {
+                Some(sid) => format!(
+                    "Delivery arrived: +{units} {} — stocked at {}.",
+                    commodity_name(commodity),
+                    system_name(world, sid)
+                ),
+                None if to_warehouse => format!(
+                    "Delivery arrived: +{units} {} — into your hub warehouse.",
+                    commodity_name(commodity)
+                ),
+                None => format!(
+                    "Delivery arrived: +{units} {} — into your HQ trading pool.",
+                    commodity_name(commodity)
+                ),
+            },
         ),
-        TradeEvent::LimitFilled { commodity, units, unit_price, side, .. } => {
+        TradeEvent::LimitFilled { commodity, units, unit_price, side, penalty, .. } => {
             let s = format!("{side:?}").to_lowercase();
-            (Good, format!("Limit {s} filled: {units} {} @ {unit_price:.2}.", commodity_name(commodity)))
+            (Good, format!(
+                "Limit {s} filled: {units} {} @ {unit_price:.2}.{}",
+                commodity_name(commodity),
+                penalty_suffix(penalty)
+            ))
         }
         TradeEvent::SupplyDiverted { commodity, units, system, action, .. } => {
             let name = system_name(world, system);
@@ -836,9 +883,18 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     format!("Not enough hold for {units} {com}: this fleet lifts {capacity} units."),
                 ),
-                sim::TradeRejectReason::CantAfford { cost } => (
+                // `units == 0` is the reinstatement shape (no commodity involved);
+                // a real trade carries its units.
+                sim::TradeRejectReason::CantAfford { cost } if units == 0 => (
                     Warn,
                     format!("Reinstatement costs {cost:.0} credits — more than your treasury holds."),
+                ),
+                sim::TradeRejectReason::CantAfford { cost } => (
+                    Warn,
+                    format!(
+                        "Can't buy {units} {com}: it needs {cost:.0} credits (price + charter penalty) — \
+                         more than your treasury holds."
+                    ),
                 ),
                 sim::TradeRejectReason::CharterSuspended => (
                     Bad,
@@ -1142,6 +1198,7 @@ mod tests {
                     commodity: Commodity::MetallicOre,
                     units: i + 1,
                     system: None,
+                    to_warehouse: false,
                 }),
             );
             tl.ingest(&[ev], &w);

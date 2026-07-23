@@ -4258,7 +4258,12 @@ impl World {
                 // standing), and you must be able to cover both.
                 let penalty = self.exchange_penalty(*player_id, cost);
                 if corp.credits < cost + penalty {
-                    return; // can't afford
+                    // Async-fair: a buy the treasury can't cover — including one
+                    // tipped over ONLY by the charter penalty — is a typed
+                    // refusal, never a silent no-op.
+                    self.reject_trade(events, *player_id, *commodity, units, None,
+                        TradeRejectReason::CantAfford { cost: cost + penalty });
+                    return;
                 }
                 // Instant settlement at the true standing price (§9). The goods
                 // land in the corp's CHARTERHOUSE WAREHOUSE — nothing about a trade
@@ -7711,6 +7716,20 @@ impl World {
         if self.logistics_ready(player_id, fleet_id, dock, cargo.commodity, cargo.units, events).is_none() {
             return;
         }
+        // How much the dock will actually take. The WAREHOUSE is uncapped (the
+        // bays handoff adds that); a SYSTEM has a depot cap, and every sibling
+        // path clamps to its headroom — so this one does too. The excess is never
+        // destroyed: it stays in the hold, and the player is told the depot is
+        // full (build a Depot, or carry it somewhere else).
+        let stored = match system {
+            None => cargo.units,
+            Some(sid) => self
+                .systems
+                .iter()
+                .find(|s| s.id == sid)
+                .map(|s| (cargo.units as f64).min(s.storage_headroom()).floor() as u32)
+                .unwrap_or(0),
+        };
         match system {
             None => {
                 if let Some(c) = self.players.get_mut(&player_id) {
@@ -7718,18 +7737,34 @@ impl World {
                 }
             }
             Some(sid) => {
-                if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
-                    *s.stockpile.entry(cargo.commodity).or_insert(0.0) += cargo.units as f64;
+                if stored > 0
+                    && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
+                {
+                    *s.stockpile.entry(cargo.commodity).or_insert(0.0) += stored as f64;
                 }
             }
         }
+        let excess = cargo.units - stored;
         if let Some(f) = self.fleets.get_mut(&fleet_id) {
-            f.cargo = None;
+            f.cargo = (excess > 0).then_some(crate::cargo::Cargo { commodity: cargo.commodity, units: excess });
         }
-        events.push(Event::new(
-            self.time,
-            EventPayload::Trade(TradeEvent::Unloaded { player: player_id, commodity: cargo.commodity, units: cargo.units, system }),
-        ));
+        if stored > 0 {
+            events.push(Event::new(
+                self.time,
+                EventPayload::Trade(TradeEvent::Unloaded { player: player_id, commodity: cargo.commodity, units: stored, system }),
+            ));
+        }
+        if excess > 0 && let Some(sid) = system {
+            events.push(Event::new(
+                self.time,
+                EventPayload::Trade(TradeEvent::StorageOverflow {
+                    player: player_id,
+                    commodity: cargo.commodity,
+                    units: excess,
+                    system: sid,
+                }),
+            ));
+        }
     }
 
     // ==== §TCA Phase 2: INCIDENTS AND CITATIONS =============================
@@ -8444,8 +8479,16 @@ impl World {
                         self.freight_note(events, &s, s.units, stage);
                         // SELL ON ARRIVAL — the ordinary sale path, so the price
                         // walk, the event, and the ranking stats are all identical
-                        // to a hand-typed MarketSell at this tick.
+                        // to a hand-typed MarketSell at this tick. And the same
+                        // LAW: a Revoked charter's Exchange is closed to an
+                        // arriving lot exactly as to a hand-typed sell — the goods
+                        // stay in the warehouse (deposited above) and the owner is
+                        // told why no credits came.
                         if s.direction == ShipmentDir::Inbound && s.sell_on_arrival && s.units > 0 {
+                            if self.charter_of(s.owner).exchange_closed() {
+                                self.reject_trade(events, s.owner, s.commodity, s.units, None, TradeRejectReason::CharterRevoked);
+                                continue;
+                            }
                             let unit_price = self.market.execute_sell(s.commodity, s.units);
                             let gross = s.units as f64 * unit_price;
                             let penalty = self.exchange_penalty(s.owner, gross);
@@ -8620,10 +8663,26 @@ impl World {
                             commodity: cargo.commodity,
                             units: cargo.units,
                             system: None, // DeliverHome → the HQ trading pool
+                            to_warehouse: false,
                         }),
                     ));
                 }
                 TradeMission::SellAtHub => {
+                    // §TCA Phase 2: a Revoked charter's Exchange is closed to an
+                    // arriving convoy exactly as to a hand-typed sell. The goods
+                    // are never destroyed — they land in the warehouse instead
+                    // (the haul still counts; the SALE is what the law refuses).
+                    if self.charter_of(ship.owner).exchange_closed() {
+                        if let Some(corp) = self.players.get_mut(&ship.owner) {
+                            *corp.warehouse.entry(cargo.commodity).or_insert(0) += cargo.units;
+                            corp.stats.trade_units += cargo.units as u64;
+                            if fought {
+                                corp.stats.cargo_protected += cargo.units as u64;
+                            }
+                        }
+                        self.reject_trade(events, ship.owner, cargo.commodity, cargo.units, None, TradeRejectReason::CharterRevoked);
+                        continue;
+                    }
                     let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
                     let penalty = self.exchange_penalty(ship.owner, cargo.units as f64 * unit_price);
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
@@ -8669,14 +8728,22 @@ impl World {
                             player: ship.owner,
                             commodity: cargo.commodity,
                             units: cargo.units,
-                            // §TCA: this landed at the CHARTERHOUSE warehouse, not
-                            // at a system stockpile — `None`, like a DeliverHome.
-                            // (The timeline doesn't name a destination for
-                            // `Delivered`, so nothing reads as misleading.)
+                            // §TCA: this landed in the hub WAREHOUSE, not at a
+                            // system stockpile — `None` for the system, and
+                            // `to_warehouse` to tell it apart from the HQ pool a
+                            // DeliverHome fills.
                             system: None,
+                            to_warehouse: true,
                         }),
                     ));
-                    if sell_on_arrival {
+                    // §TCA Phase 2: the sell leg obeys the LAW like a hand-typed
+                    // sell — a Revoked charter's lot stays in the warehouse (it
+                    // was deposited above) and the owner is told why. Without this
+                    // gate, HubLoad → HaulToCharterhouse{sell} was a working
+                    // Exchange for an outlaw, and Revoked never actually bit.
+                    if sell_on_arrival && self.charter_of(ship.owner).exchange_closed() {
+                        self.reject_trade(events, ship.owner, cargo.commodity, cargo.units, None, TradeRejectReason::CharterRevoked);
+                    } else if sell_on_arrival {
                         let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
                         let gross = cargo.units as f64 * unit_price;
                         let penalty = self.exchange_penalty(ship.owner, gross);
@@ -8741,6 +8808,7 @@ impl World {
                                     commodity: cargo.commodity,
                                     units: stored,
                                     system: Some(system), // DeliverToSystem → the system stockpile
+                                    to_warehouse: false,
                                 }),
                             ));
                             if fought
@@ -14119,6 +14187,48 @@ mod tests {
         assert_eq!(w.players[&id].stats.trade_units, 200, "a real haul earns trade throughput");
     }
 
+    /// The audit's bypass: with the Exchange closed (Revoked/Proscribed), a
+    /// HaulToCharterhouse{sell_on_arrival} lot must NOT sell — it lands in the
+    /// warehouse unsold and the owner gets the same CharterRevoked refusal a
+    /// hand-typed sell gets. (The freight inbound and legacy SellAtHub arrival
+    /// legs carry the identical gate.)
+    #[test]
+    fn a_closed_exchange_refuses_the_sell_leg_of_an_arriving_haul() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub + Vec2::new(60.0, 0.0); // moments from the dock
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = Some(crate::cargo::Cargo { commodity: Alloys, units: 200 });
+        }
+        let credits0 = w.players[&id].credits;
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT);
+        w.step(&[Command::HaulToCharterhouse { player_id: id, fleet_id: convoy, sell_on_arrival: true }]);
+        // Pin the standing against regen while the hull crosses the last stretch.
+        let mut refused = false;
+        for _ in 0..20_000 {
+            set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT);
+            let ev = w.step(&[]);
+            refused |= ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::CharterRevoked, .. })
+            ));
+            if wh(&w, id, Alloys) == 200 {
+                break;
+            }
+        }
+        assert_eq!(wh(&w, id, Alloys), 200, "the goods land in the warehouse, unsold and undestroyed");
+        assert!(refused, "the owner is told the Exchange refused the sale");
+        assert_eq!(w.players[&id].credits, credits0, "not a credit changed hands");
+        let f = w.fleets.get(&convoy).expect("the hull still survives the refusal");
+        assert!(matches!(f.order, FleetOrder::Idle) && f.cargo.is_none(), "empty and idle at the hub");
+    }
+
     /// Hub load/unload moves goods across the warehouse boundary without selling.
     #[test]
     fn hub_load_and_unload_cross_the_warehouse_boundary() {
@@ -18054,7 +18164,7 @@ mod tests {
                 outcome: RaidOutcome::TargetDestroyed, pos: Vec2::ZERO,
                 attacker_losses: a_loss, target_losses: d_loss,
             }),
-            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5, system: None })),
+            Event::new(0.0, EventPayload::Trade(TradeEvent::Delivered { player: a, commodity: Commodity::MetallicOre, units: 5, system: None, to_warehouse: false })),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }),
             Event::new(0.0, EventPayload::SurveyCompleted { owner: a, system: EntityId(3), pos: Vec2::ZERO }), // dup
             Event::new(0.0, EventPayload::IntelGathered { owner: a, system: EntityId(4), defense_tier: 1, shipyard_tier: 0, pos: Vec2::ZERO }),
@@ -18579,7 +18689,7 @@ mod tests {
 
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
-            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None })),
+            ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None, to_warehouse: false })),
             ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0, penalty: 0.0 })),
             ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0, penalty: 0.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0, penalty: 0.0 })),
