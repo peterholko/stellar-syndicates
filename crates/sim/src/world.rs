@@ -18301,7 +18301,7 @@ mod tests {
         let run = || {
             let mut w = test_world();
             w.step(&[Command::AddPlayer { id: PlayerId(1), name: "V".into() }]);
-            let (sid, epos) = an_enclave(&w);
+            let (_sid, epos) = an_enclave(&w);
             let convoy = squad(&mut w, PlayerId(1), epos + Vec2::new(1200.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
             w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
             for _ in 0..(60 * crate::config::TICK_HZ) {

@@ -489,6 +489,7 @@ mod tests {
             s -= 0.5;
         }
     }
+
     /// The default thresholds are the documented 1 / 4 / 8 / 12 incidents.
     #[test]
     fn default_thresholds_are_the_documented_incident_counts() {
@@ -502,6 +503,7 @@ mod tests {
         assert_eq!(charter_status(after(11)), CharterStatus::Revoked);
         assert_eq!(charter_status(after(12)), CharterStatus::Proscribed);
     }
+
     /// GOOD STANDING PAYS NOTHING. This is the invariant that keeps the §economy
     /// clearing tests untouched: the penalty is penalty-only, never a base fee.
     #[test]
@@ -515,6 +517,7 @@ mod tests {
         let base = freight_fee(100, 10.0, 5000.0, false);
         assert_eq!(base * tariff_mult(TCA_STANDING_MAX), base);
     }
+
     /// Both penalties ramp linearly to their ceiling at Revoked, then CLAMP —
     /// the deeper bands answer with expeditions, not an ever-steeper bill.
     #[test]
@@ -536,6 +539,7 @@ mod tests {
             s -= 1.0;
         }
     }
+
     /// The exported display ladder matches the real derivation, so the client's
     /// labels can never drift from the law. Encodes the one non-uniform edge:
     /// `Sanctioned` BEGINS strictly below full standing, the three `_AT` bands
@@ -572,6 +576,7 @@ mod tests {
             assert!(ladder[i].1 < ladder[i - 1].1, "the lower bands are strictly separated");
         }
     }
+
     #[test]
     fn status_helpers_agree_with_the_bands() {
         use CharterStatus::*;
@@ -587,6 +592,7 @@ mod tests {
             assert!(!st.title().is_empty());
         }
     }
+
     #[test]
     fn depot_doubles_the_cap() {
         assert_eq!(shipment_cap(false), TCA_SHIPMENT_CAP);
