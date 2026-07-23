@@ -77,6 +77,10 @@ pub enum ClientMsg {
         sell_on_arrival: bool,
     },
 
+    /// §TCA Phase 2: buy charter standing back from the Authority (credits burned,
+    /// clamped to the ceiling — you pay only for points actually restored).
+    PayReinstatement { points: f64 },
+
     /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
     /// Authority freight arriving at the strangled system. Instant local policy.
     SetEngageFreight { fleet_id: EntityId, on: bool },

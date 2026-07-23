@@ -474,6 +474,9 @@ pub enum TradeEvent {
         /// for an outbound lot; back at the Charterhouse for an inbound one).
         eta: f64,
     },
+    /// §TCA Phase 2: charter standing was BOUGHT BACK from the Authority.
+    /// Owner-only. `before`/`after` let the client name the band it crossed.
+    CharterReinstated { player: PlayerId, points: f64, cost: f64, before: f64, after: f64 },
     /// §TCA Part 5: a player convoy took goods aboard at the Charterhouse
     /// (`system` = None) or at one of the corp's own systems. Owner-only.
     Loaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
@@ -543,7 +546,8 @@ impl TradeEvent {
             | TradeEvent::FreightBooked { player, .. }
             | TradeEvent::FreightMoved { player, .. }
             | TradeEvent::Loaded { player, .. }
-            | TradeEvent::Unloaded { player, .. } => *player,
+            | TradeEvent::Unloaded { player, .. }
+            | TradeEvent::CharterReinstated { player, .. } => *player,
         }
     }
 }
@@ -649,6 +653,8 @@ pub enum TradeRejectReason {
     /// freight booking from you. Shipments already queued or aboard still
     /// complete: it honors contracts it already took.
     CharterSuspended,
+    /// §TCA Phase 2: the treasury can't cover the reinstatement being bought.
+    CantAfford { cost: f64 },
     /// §TCA Phase 2: your charter is REVOKED — the Exchange is closed to you.
     /// Resting orders are grandfathered, and your warehouse is still yours to
     /// fetch from; you simply cannot trade here.

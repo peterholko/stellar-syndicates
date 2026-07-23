@@ -4412,6 +4412,49 @@ impl World {
                     f.order = FleetOrder::MoveTo { dest: hub };
                 }
             }
+            Command::PayReinstatement { player_id, points } => {
+                // §TCA Phase 2: buy standing back. INSTANT, like its `MarketBuy` /
+                // `BookFreightOut` siblings — paying the Charterhouse is a
+                // settlement, and settlement is correlation (§3), not a courier.
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                // CLAMP first, so the player is only ever charged for standing
+                // actually restored. Already at the ceiling ⇒ nothing to buy.
+                let restorable = (crate::tca::TCA_STANDING_MAX - corp.tca_standing).max(0.0);
+                let points = points.max(0.0).min(restorable);
+                if points <= 0.0 {
+                    return;
+                }
+                let cost = points * crate::tca::TCA_REINSTATE_FEE_PER_POINT;
+                if corp.credits < cost {
+                    self.reject_trade(
+                        events,
+                        *player_id,
+                        crate::cargo::Commodity::Provisions, // no commodity is involved
+                        0,
+                        None,
+                        TradeRejectReason::CantAfford { cost },
+                    );
+                    return;
+                }
+                let before = corp.tca_standing;
+                let after = before + points;
+                if let Some(c) = self.players.get_mut(player_id) {
+                    c.credits -= cost; // BURNED — a sink, like the freight fee
+                    c.tca_standing = after;
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::CharterReinstated {
+                        player: *player_id,
+                        points,
+                        cost,
+                        before,
+                        after,
+                    }),
+                ));
+            }
             Command::SetEngageFreight { player_id, fleet_id, on } => {
                 if let Some(f) = self.fleets.get_mut(fleet_id)
                     && f.owner == *player_id
@@ -14229,6 +14272,124 @@ mod tests {
             !w.fleets.values().any(|f| f.owner == id && f.mission.is_some())
         });
         assert!(w.fleets.len() <= fleets0, "a standing order never leaves a spare hull behind");
+    }
+
+    // ==== §TCA Phase 2: reinstatement ========================================
+
+    /// Buying standing back: the credits are BURNED, the purchase is CLAMPED to
+    /// the ceiling (you pay only for points actually restored), and crossing a
+    /// band boundary upward is reported so the client can say which charter you
+    /// bought back.
+    #[test]
+    fn reinstatement_burns_credits_clamps_at_the_ceiling_and_names_the_band() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+
+        // Deep in Revoked; buy back into Sanctioned.
+        set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+        assert_eq!(crate::tca::charter_status(w.players[&id].tca_standing), crate::tca::CharterStatus::Revoked);
+        let credits0 = w.players[&id].credits;
+        let points = 50.0;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points }]);
+        let (paid_points, cost, before, after) = ev
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::Trade(TradeEvent::CharterReinstated { points, cost, before, after, .. }) => {
+                    Some((*points, *cost, *before, *after))
+                }
+                _ => None,
+            })
+            .expect("a reinstatement receipt");
+        assert!((paid_points - points).abs() < 1e-9);
+        assert!((cost - points * crate::tca::TCA_REINSTATE_FEE_PER_POINT).abs() < 1e-9, "cost is points × the rate");
+        assert!((credits0 - w.players[&id].credits - cost).abs() < 1e-6, "the credits are BURNED");
+        assert!((after - before - points).abs() < 1e-9);
+        assert_eq!(
+            crate::tca::charter_status(after),
+            crate::tca::CharterStatus::Sanctioned,
+            "it bought a band back"
+        );
+
+        // CLAMP: asking for far more than the ceiling allows charges only for what
+        // was actually restored.
+        let standing1 = w.players[&id].tca_standing;
+        let restorable = crate::tca::TCA_STANDING_MAX - standing1;
+        let credits1 = w.players[&id].credits;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points: 10_000.0 }]);
+        let cost2 = ev
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::Trade(TradeEvent::CharterReinstated { cost, .. }) => Some(*cost),
+                _ => None,
+            })
+            .expect("a clamped receipt");
+        let spent = credits1 - w.players[&id].credits;
+        assert!(
+            (cost2 - restorable * crate::tca::TCA_REINSTATE_FEE_PER_POINT).abs() < 1e-3,
+            "charged only for the points actually restored"
+        );
+        assert!((spent - cost2).abs() < 1e-6);
+        assert!(w.players[&id].tca_standing <= crate::tca::TCA_STANDING_MAX + 1e-9, "never past the ceiling");
+        assert_eq!(crate::tca::charter_status(w.players[&id].tca_standing), crate::tca::CharterStatus::GoodStanding);
+
+        // At the ceiling there is nothing to buy — a no-op, not a charge.
+        let credits2 = w.players[&id].credits;
+        w.step(&[Command::PayReinstatement { player_id: id, points: 25.0 }]);
+        assert_eq!(w.players[&id].credits, credits2, "buying nothing costs nothing");
+    }
+
+    /// An unaffordable reinstatement is a FREE soft reject — nothing spent,
+    /// nothing restored, and the owner is told the price.
+    #[test]
+    fn an_unaffordable_reinstatement_is_refused_for_free() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        set_standing(&mut w, id, 0.0);
+        w.players.get_mut(&id).unwrap().credits = 1.0;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points: 50.0 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::CantAfford { .. }, .. })
+            )),
+            "an unaffordable purchase is refused with the price"
+        );
+        assert_eq!(w.players[&id].credits, 1.0, "…and costs nothing");
+        assert!(w.players[&id].tca_standing <= 0.0 + crate::tca::TCA_STANDING_REGEN_PER_SEC, "…and restores nothing");
+    }
+
+    /// PAYING UP CALLS OFF THE DOGS, end to end: a proscribed corp under an active
+    /// expedition buys its way back over the line and the squadron is recalled.
+    #[test]
+    fn paying_reinstatement_recalls_an_active_expedition() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 3000.0);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 10.0);
+        w.step(&[]);
+        assert_eq!(w.expeditions.len(), 1, "the squadron sails");
+
+        // Buy back over the proscription line.
+        let need = (crate::tca::TCA_PROSCRIBED_AT + 15.0) - w.players[&id].tca_standing;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points: need }]);
+        assert!(ev.iter().any(|e| matches!(&e.payload, EventPayload::Trade(TradeEvent::CharterReinstated { .. }))));
+        assert_ne!(
+            crate::tca::charter_status(w.players[&id].tca_standing),
+            crate::tca::CharterStatus::Proscribed,
+            "back over the line"
+        );
+        // The enforcement pass runs later in the SAME tick the payment lands, so
+        // the recall is immediate — the player sees the dogs called off at once.
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::EnforcementWithdrawn { target, recalled: true, .. } if *target == id)),
+            "paying up calls off the dogs"
+        );
+        step_until(&mut w, 40_000, "the recalled squadron to go home", |w| w.expeditions.is_empty());
     }
 
     // ==== §TCA Phase 2: enforcement expeditions ==============================

@@ -439,6 +439,18 @@ pub enum Command {
         sell_on_arrival: bool,
     },
 
+    /// §TCA Phase 2: PAY REINSTATEMENT — buy charter standing back from the
+    /// Terran Charter Authority at `TCA_REINSTATE_FEE_PER_POINT` credits a point.
+    /// The credits are BURNED (a sink, like the freight fee), and the purchase is
+    /// clamped to the ceiling — you are only ever charged for points actually
+    /// restored. INSTANT, like its siblings `MarketBuy`/`BookFreightOut`: paying
+    /// the Charterhouse is a settlement, and settlement is correlation (§3), not a
+    /// courier. Soft-rejects (free, owner-only) if the treasury can't cover it.
+    PayReinstatement {
+        player_id: PlayerId,
+        points: f64,
+    },
+
     /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
     /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
     /// system. INSTANT local administration on the player's own fleet — a standing

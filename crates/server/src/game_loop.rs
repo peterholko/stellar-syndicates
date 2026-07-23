@@ -413,6 +413,11 @@ impl GameLoop {
                         self.pending.push(Command::HaulToCharterhouse { player_id, fleet_id, sell_on_arrival });
                     }
                 }
+                ClientMsg::PayReinstatement { points } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::PayReinstatement { player_id, points });
+                    }
+                }
                 ClientMsg::SetEngageFreight { fleet_id, on } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetEngageFreight { player_id, fleet_id, on });

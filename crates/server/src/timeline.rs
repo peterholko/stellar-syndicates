@@ -836,6 +836,10 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     format!("Not enough hold for {units} {com}: this fleet lifts {capacity} units."),
                 ),
+                sim::TradeRejectReason::CantAfford { cost } => (
+                    Warn,
+                    format!("Reinstatement costs {cost:.0} credits — more than your treasury holds."),
+                ),
                 sim::TradeRejectReason::CharterSuspended => (
                     Bad,
                     format!(
@@ -864,6 +868,21 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     ),
                 ),
             }
+        }
+        // §TCA Phase 2: the reinstatement receipt — what it cost, and the band it
+        // bought you back into.
+        TradeEvent::CharterReinstated { points, cost, before, after, .. } => {
+            let from = sim::charter_status(before);
+            let to = sim::charter_status(after);
+            let crossed = if from != to {
+                format!(" — charter reinstated to {}", to.title())
+            } else {
+                String::new()
+            };
+            (
+                Good,
+                format!("Paid the Authority {cost:.0} credits for {points:.0} standing ({before:.0} → {after:.0}){crossed}."),
+            )
         }
         // §TCA: the booking receipt — what it cost and when the Authority sails.
         TradeEvent::FreightBooked { commodity, units, system, direction, fee, depart_at, eta, .. } => {
