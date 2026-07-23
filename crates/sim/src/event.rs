@@ -343,6 +343,20 @@ pub enum EventPayload {
     /// Logistics resume. Light-delayed to the owner from the system.
     BlockadeLifted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
 
+    /// §TCA Phase 2: a CITATION issued by the Terran Charter Authority. This is a
+    /// PUBLIC bulletin from the Charterhouse naming the culprit and the offense —
+    /// the reputational hit rides the same wavefront as the legal one, so every
+    /// player learns of it light-delayed from the hub. `occurred_at` is when the
+    /// offense actually happened (always earlier than the bulletin: the news had
+    /// to reach the hub first), which is what lets the UI say "as of N ago".
+    Citation {
+        culprit: PlayerId,
+        offense: crate::tca::CitationOffense,
+        /// The Charterhouse — the light source for this bulletin.
+        pos: crate::math::Vec2,
+        occurred_at: f64,
+    },
+
     /// A fleet ORDER was soft-rejected (§TCA) — owner-only and instant: the order
     /// never installed, the fleet kept doing what it was doing, and nothing was
     /// spent. Tells the player WHY so the refusal isn't a mystery.

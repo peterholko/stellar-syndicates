@@ -471,6 +471,21 @@ pub struct World {
     /// §TCA: monotonic allocator for shipment ids (0 ⇒ first id is 1).
     #[serde(default)]
     next_shipment_id: u64,
+    /// §TCA Phase 2: INCIDENTS whose light has not yet reached the Charterhouse.
+    /// Standing moves — and the public citation issues — only on arrival, so the
+    /// law propagates at c like everything else. Push order is deterministic, so
+    /// the drain is too. `#[serde(default)]` for pre-law snapshots.
+    #[serde(default)]
+    pub pending_citations: Vec<crate::tca::Citation>,
+    /// §TCA Phase 2: ENFORCEMENT EXPEDITIONS in progress, keyed by the Authority
+    /// fleet flying each one. At most one per proscribed corporation.
+    /// `#[serde(default)]` for pre-law snapshots.
+    #[serde(default)]
+    pub expeditions: BTreeMap<EntityId, crate::tca::Expedition>,
+    /// §TCA Phase 2: when each corporation's NEXT expedition becomes eligible
+    /// (sim-time). Set when one ends; absent means "eligible now".
+    #[serde(default)]
+    pub next_expedition_at: BTreeMap<PlayerId, f64>,
 }
 
 /// §explore Part 2: one in-flight survey-report leg (see
@@ -684,6 +699,9 @@ impl World {
             freight_queue: BTreeMap::new(),
             freight_runs: BTreeMap::new(),
             next_shipment_id: 0,
+            pending_citations: Vec::new(),
+            expeditions: BTreeMap::new(),
+            next_expedition_at: BTreeMap::new(),
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
@@ -1374,6 +1392,13 @@ impl World {
 
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
+
+        // 5a. §TCA Phase 2: apply every INCIDENT whose light has reached the
+        //     Charterhouse — dock the culprits and issue the public citation. After
+        //     the combat passes, so an offense committed THIS tick is queued before
+        //     it can possibly be due (a zero-distance offense at the hub lands on
+        //     the same tick, which is correct: no travel, no delay).
+        self.resolve_citations(&mut events);
 
         // 5a'. §TCA: resolve Authority FREIGHTER runs that reached the end of a leg
         //      — unload at the colony, collect the pickups waiting there and turn
@@ -2792,10 +2817,48 @@ impl World {
                 s.set_tier(crate::build::StructureKind::DefensePlatform, tac_ptiers);
                 s.defense_pool = tac_ppool;
             }
+            // §TCA Phase 2: snapshot who is HERE before the losses land, so a
+            // freighter's death can still name its culprits even when the fight
+            // takes some of them down with it. Sentinels are never culprits (the
+            // Authority does not cite itself, and pirates hold no charter).
+            let tca_hulls_before: Vec<EntityId> = defenders
+                .iter()
+                .copied()
+                .filter(|id| self.fleets.get(id).is_some_and(|f| f.owner.is_tca()))
+                .collect();
+            let culprits: std::collections::BTreeSet<PlayerId> = if tca_hulls_before.is_empty() {
+                Default::default()
+            } else {
+                attackers
+                    .iter()
+                    .filter_map(|id| self.fleets.get(id).map(|f| f.owner))
+                    .filter(|o| !o.is_sentinel())
+                    .collect()
+            };
+
             let mut atk = attackers.clone();
             let mut def = defenders.clone();
             self.apply_side_losses(&mut atk, &la, pos, events);
             self.apply_side_losses(&mut def, &lb, pos, events);
+
+            // …and record an INCIDENT for each Authority hull that just died. A
+            // RAID (Intercept) is piracy, an ATTACK is destruction; an enforcement
+            // vessel is the graver offense. Nothing is applied here — the citation
+            // travels to the Charterhouse at c first.
+            for fid in tca_hulls_before {
+                if self.fleets.contains_key(&fid) {
+                    continue; // survived
+                }
+                let enforcement = self.expeditions.contains_key(&fid);
+                let (offense, loss) = if enforcement {
+                    (crate::tca::CitationOffense::EnforcementDestroyed, crate::tca::TCA_STANDING_LOSS_ENFORCEMENT)
+                } else if raid {
+                    (crate::tca::CitationOffense::FreightRaided, crate::tca::TCA_STANDING_LOSS_PER_INCIDENT)
+                } else {
+                    (crate::tca::CitationOffense::FreightDestroyed, crate::tca::TCA_STANDING_LOSS_PER_INCIDENT)
+                };
+                self.record_incident(pos, culprits.clone(), offense, loss);
+            }
             {
                 let e = self.engagements.get_mut(eid).unwrap();
                 e.attackers = atk.clone();
@@ -7581,6 +7644,74 @@ impl World {
             self.time,
             EventPayload::Trade(TradeEvent::Unloaded { player: player_id, commodity: cargo.commodity, units: cargo.units, system }),
         ));
+    }
+
+    // ==== §TCA Phase 2: INCIDENTS AND CITATIONS =============================
+    // The law travels at c like everything else. An offense against an Authority
+    // hull changes NOTHING at the scene: the incident is queued, and only when its
+    // light reaches the Charterhouse does standing move and the public citation
+    // issue. A spree deep on the frontier therefore drags a visible light-cone of
+    // consequences toward the map's centre behind the culprit.
+
+    /// Queue an INCIDENT. Nothing is applied here — see [`Self::resolve_citations`].
+    /// A no-culprit incident (a freighter lost to something that holds no charter)
+    /// is simply not an offense, and is dropped.
+    fn record_incident(
+        &mut self,
+        pos: Vec2,
+        culprits: std::collections::BTreeSet<PlayerId>,
+        offense: crate::tca::CitationOffense,
+        loss: f64,
+    ) {
+        if culprits.is_empty() {
+            return;
+        }
+        let arrive_at = self.time + pos.distance(self.hub) / self.config.c;
+        self.pending_citations.push(crate::tca::Citation {
+            pos,
+            occurred_at: self.time,
+            arrive_at,
+            culprits,
+            offense,
+            loss,
+        });
+    }
+
+    /// Apply every incident whose light has now reached the Charterhouse: dock each
+    /// culprit the FULL flat loss (no splitting) and issue a PUBLIC citation from
+    /// the hub, which then radiates to every player at c through the ordinary
+    /// light-gating. Deterministic: the queue drains in push order.
+    fn resolve_citations(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        if self.pending_citations.iter().all(|c| c.arrive_at > now) {
+            return;
+        }
+        let mut landed: Vec<crate::tca::Citation> = Vec::new();
+        self.pending_citations.retain(|c| {
+            if c.arrive_at <= now {
+                landed.push(c.clone());
+                false
+            } else {
+                true
+            }
+        });
+        let hub = self.hub;
+        for c in landed {
+            for culprit in &c.culprits {
+                if let Some(corp) = self.players.get_mut(culprit) {
+                    corp.tca_standing -= c.loss;
+                }
+                events.push(Event::new(
+                    now,
+                    EventPayload::Citation {
+                        culprit: *culprit,
+                        offense: c.offense,
+                        pos: hub,
+                        occurred_at: c.occurred_at,
+                    },
+                ));
+            }
+        }
     }
 
     /// §TCA: was `system` blockaded as far as an observer at `from` can KNOW right
@@ -13854,6 +13985,195 @@ mod tests {
             !w.fleets.values().any(|f| f.owner == id && f.mission.is_some())
         });
         assert!(w.fleets.len() <= fleets0, "a standing order never leaves a spare hull behind");
+    }
+
+    // ==== §TCA Phase 2: incidents and citations ==============================
+
+    /// Kill an Authority freighter far from the hub and NOTHING happens at the
+    /// scene. Standing is untouched until the incident's light reaches the
+    /// Charterhouse — then, on exactly that tick, the culprit is docked and a
+    /// public citation issues.
+    #[test]
+    fn a_citation_lands_only_when_its_light_reaches_the_charterhouse() {
+        let mut w = test_world();
+        let (atk, victim) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        let dest = w.systems[0].id;
+        let freighter = freighter_at(&mut w, cc + Vec2::new(160.0, 0.0), dest, &[(victim, Commodity::Alloys, 40)]);
+        let standing0 = w.players[&atk].tca_standing;
+
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: freighter }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&freighter));
+        assert!(!w.fleets.contains_key(&freighter), "the freighter died");
+
+        // The incident is queued, and its arrival is a pure light-travel time.
+        assert_eq!(w.pending_citations.len(), 1, "the offense is in flight, not applied");
+        let c = w.pending_citations[0].clone();
+        assert!(c.culprits.contains(&atk) && c.culprits.len() == 1);
+        assert_eq!(c.offense, crate::tca::CitationOffense::FreightRaided, "an Intercept is piracy");
+        let expect_arrival = c.occurred_at + c.pos.distance(w.hub) / w.config.c;
+        assert!((c.arrive_at - expect_arrival).abs() < 1e-9, "arrival is exactly the light-travel time");
+        assert!(c.arrive_at > w.time, "the news has not arrived yet");
+
+        // Standing is UNTOUCHED (bar regen) while the light is still in flight.
+        let before_arrival = c.arrive_at;
+        while w.time < before_arrival - DT {
+            w.step(&[]);
+            assert!(
+                w.players[&atk].tca_standing >= standing0 - 1e-9,
+                "standing must not move before the light lands (t={})",
+                w.time
+            );
+        }
+        // …and drops on arrival, with a public citation event.
+        let mut cited = false;
+        for _ in 0..4 {
+            for e in w.step(&[]) {
+                if let EventPayload::Citation { culprit, offense, pos, .. } = e.payload
+                    && culprit == atk
+                {
+                    assert_eq!(offense, crate::tca::CitationOffense::FreightRaided);
+                    assert_eq!(pos, w.hub, "the bulletin issues FROM the Charterhouse");
+                    cited = true;
+                }
+            }
+            if cited {
+                break;
+            }
+        }
+        assert!(cited, "a public citation issues when the light lands");
+        assert!(
+            w.players[&atk].tca_standing < standing0 - crate::tca::TCA_STANDING_LOSS_PER_INCIDENT + 1.0,
+            "the culprit is docked the flat loss (got {})",
+            w.players[&atk].tca_standing
+        );
+        assert_eq!(
+            crate::tca::charter_status(w.players[&atk].tca_standing),
+            crate::tca::CharterStatus::Sanctioned,
+            "one kill is tuition — Sanctioned, not a battlefleet"
+        );
+        assert!(w.pending_citations.is_empty(), "the queue drained");
+    }
+
+    /// The loss is FLAT PER INCIDENT, per corporation — not per hull that showed
+    /// up, and not split between offenders. Two corps each killing an Authority
+    /// hull each pay the full price; a corp that piles two of its own fleets onto
+    /// ONE freighter is cited exactly once.
+    ///
+    /// NOTE (see the STATUS note): today the engagement model only ever admits ONE
+    /// attacker owner per engagement — reinforcement requires `e.a_owner ==
+    /// a_owner_c` — so `Citation::culprits` is a singleton in practice. The
+    /// set-of-culprits machinery is implemented as specified (each named corp pays
+    /// in full, no splitting) and will simply start mattering if multi-owner
+    /// attacker sides ever land.
+    #[test]
+    fn the_incident_loss_is_flat_per_corporation() {
+        let mut w = test_world();
+        let (a, b, victim) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let dest = w.systems[0].id;
+        let s0: BTreeMap<PlayerId, f64> = [a, b].iter().map(|p| (*p, w.players[p].tca_standing)).collect();
+
+        // A brings TWO fleets onto ONE hull; B brings one onto another.
+        let spot_a = w.players[&a].command_center + Vec2::new(400.0, 0.0);
+        let spot_b = w.players[&b].command_center + Vec2::new(400.0, 0.0);
+        let hull_a = freighter_at(&mut w, spot_a, dest, &[(victim, Commodity::Alloys, 60)]);
+        let hull_b = freighter_at(&mut w, spot_b, dest, &[(victim, Commodity::Alloys, 60)]);
+
+        let a1 = find_ship(&w, a, ShipKind::Raider);
+        // A second raider fleet for A, parked beside the first.
+        let a2 = w.alloc_entity_id();
+        w.fleets.insert(a2, Fleet::single(a2, a, ShipKind::Raider, spot_a + Vec2::new(-30.0, 0.0), FleetOrder::Idle, None));
+        {
+            let f = w.fleets.get_mut(&a1).unwrap();
+            f.pos = spot_a + Vec2::new(-30.0, 0.0);
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+        }
+        let b1 = find_ship(&w, b, ShipKind::Raider);
+        {
+            let f = w.fleets.get_mut(&b1).unwrap();
+            f.pos = spot_b + Vec2::new(-30.0, 0.0);
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+        }
+        w.step(&[
+            Command::CommitRaid { player_id: a, raider_id: a1, target_id: hull_a },
+            Command::CommitRaid { player_id: a, raider_id: a2, target_id: hull_a },
+            Command::CommitRaid { player_id: b, raider_id: b1, target_id: hull_b },
+        ]);
+        run_until(&mut w, 90, |w| !w.fleets.contains_key(&hull_a) && !w.fleets.contains_key(&hull_b));
+        assert!(!w.fleets.contains_key(&hull_a) && !w.fleets.contains_key(&hull_b), "both hulls died");
+
+        // Every queued incident names exactly the corp(s) that did it.
+        for c in &w.pending_citations {
+            assert!(!c.culprits.is_empty(), "an incident always names someone");
+            assert!(c.culprits.iter().all(|p| *p == a || *p == b), "only real corps are cited");
+            assert!(c.culprits.iter().all(|p| !p.is_sentinel()), "no sentinel is ever a culprit");
+        }
+        let due = w.pending_citations.iter().map(|c| c.arrive_at).fold(0.0_f64, f64::max);
+        while w.time <= due + DT {
+            w.step(&[]);
+        }
+        // ONE hull killed ⇒ ONE flat loss each, regardless of how many fleets the
+        // culprit brought to do it.
+        for who in [a, b] {
+            let dropped = s0[&who] - w.players[&who].tca_standing;
+            assert!(
+                (dropped - crate::tca::TCA_STANDING_LOSS_PER_INCIDENT).abs() < 0.5,
+                "{who} pays exactly one flat loss for one hull (dropped {dropped})"
+            );
+        }
+    }
+
+    /// THE AUTHORITY PROTECTS ONLY ITS OWN HULLS. Raiding a rival's convoy — the
+    /// ordinary business of the frontier — is nothing to do with it: no incident,
+    /// no citation, no standing movement, ever.
+    #[test]
+    fn raiding_a_player_convoy_is_never_an_incident() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
+        {
+            let c = w.fleets.get_mut(&convoy).unwrap();
+            c.composition.clear();
+            c.composition.insert(ShipKind::Convoy, 1);
+            c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
+        }
+        let standing0 = w.players[&atk].tca_standing;
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&convoy));
+        assert!(!w.fleets.contains_key(&convoy), "the convoy was raided");
+        // Run well past any plausible light-travel time.
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                assert!(
+                    !matches!(e.payload, EventPayload::Citation { .. }),
+                    "player-vs-player raiding must never produce a citation"
+                );
+            }
+        }
+        assert!(w.pending_citations.is_empty(), "…nor an incident");
+        assert!(
+            w.players[&atk].tca_standing >= standing0,
+            "…nor any standing loss (regen only; got {})",
+            w.players[&atk].tca_standing
+        );
     }
 
     // ==== §TCA Part 4: freight under fire ===================================

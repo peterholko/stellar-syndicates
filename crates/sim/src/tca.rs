@@ -257,6 +257,79 @@ pub fn shipment_cap(has_depot: bool) -> u32 {
     }
 }
 
+/// What a corporation is cited FOR (§TCA Phase 2). The Authority protects ONLY
+/// its own hulls — player-versus-player raiding is nothing to do with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationOffense {
+    /// An Authority freighter was RAIDED — its manifest plundered.
+    FreightRaided,
+    /// An Authority freighter was DESTROYED outright.
+    FreightDestroyed,
+    /// An Authority ENFORCEMENT vessel was destroyed. Fighting the law costs more
+    /// than robbing it.
+    EnforcementDestroyed,
+}
+
+impl CitationOffense {
+    /// The bulletin's wording for this offense.
+    pub fn title(self) -> &'static str {
+        match self {
+            CitationOffense::FreightRaided => "piracy against chartered freight",
+            CitationOffense::FreightDestroyed => "destruction of chartered freight",
+            CitationOffense::EnforcementDestroyed => "armed resistance to Authority enforcement",
+        }
+    }
+}
+
+/// AN INCIDENT IN FLIGHT (§TCA Phase 2). Nothing happens at the scene: the
+/// Authority learns of an offense only when its LIGHT reaches the Charterhouse,
+/// and only then does standing move and the public citation issue. A spree deep
+/// on the frontier therefore drags a visible light-cone of consequences toward
+/// the map's centre behind the culprit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Citation {
+    /// Where the offense happened (the light source).
+    pub pos: crate::math::Vec2,
+    /// Sim-time it happened.
+    pub occurred_at: f64,
+    /// Sim-time its light reaches the hub — when standing moves and the bulletin
+    /// issues. Precomputed at record time so the pipeline is a pure comparison.
+    pub arrive_at: f64,
+    /// Every participating corporation. Each is charged the FULL flat loss — three
+    /// corps jumping one freighter each answer for the freighter. `BTreeSet` keeps
+    /// the charge order deterministic.
+    pub culprits: std::collections::BTreeSet<PlayerId>,
+    pub offense: CitationOffense,
+    /// Standing docked from each culprit when this lands.
+    pub loss: f64,
+}
+
+/// AN ENFORCEMENT EXPEDITION (§TCA Phase 2): a scripted Authority squadron sent
+/// against a PROSCRIBED corporation. It reuses the ordinary fleet + blockade
+/// machinery through the sentinel owner — no new AI, no new combat rules, no
+/// capture and no colonization. It is fightable (destroy it and it ends early,
+/// at the cost of a graver citation) and waitable (it withdraws on its own).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Expedition {
+    /// The Authority squadron flying it.
+    pub fleet: EntityId,
+    /// The proscribed corporation it answers.
+    pub target_corp: PlayerId,
+    /// The system it takes station on.
+    pub system: EntityId,
+    /// Sim-time it launched.
+    pub since: f64,
+    /// Sim-time it first reached station (`None` while still inbound) — the clock
+    /// `TCA_ENFORCEMENT_DURATION` runs against.
+    #[serde(default)]
+    pub on_station_since: Option<f64>,
+    /// Set once it has been ordered home (recalled or time-served), so the world
+    /// doesn't re-issue the order every tick.
+    #[serde(default)]
+    pub withdrawing: bool,
+}
+
 /// Deterministic id for a queued/aboard [`Shipment`], allocated from a monotonic
 /// counter on the [`crate::world::World`]. A plain small counter (never near
 /// 2^53), so a bare JSON number is precise on the wire.

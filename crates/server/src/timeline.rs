@@ -81,6 +81,42 @@ impl Timeline {
                         self.push(p, observe, sev, text);
                     }
                 }
+                // §TCA Phase 2: a CITATION is a PUBLIC bulletin from the
+                // Charterhouse. Everyone learns it light-delayed from the hub — the
+                // reputational hit rides the same wavefront as the legal one. The
+                // culprit reads it as an indictment; everyone else reads it as
+                // intelligence about who is worth avoiding (or hiring).
+                EventPayload::Citation { culprit, offense, pos, occurred_at } => {
+                    let who = world
+                        .players
+                        .get(culprit)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| format!("{culprit}"));
+                    let lag = (e.time - *occurred_at).max(0.0);
+                    let when = if lag >= 1.0 {
+                        format!(" (the offense was {} ago)", fmt_wait(lag))
+                    } else {
+                        String::new()
+                    };
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *culprit {
+                            (
+                                TimelineSeverity::Bad,
+                                format!(
+                                    "The Terran Charter Authority has CITED your corporation for {}{when}.",
+                                    offense.title()
+                                ),
+                            )
+                        } else {
+                            (
+                                TimelineSeverity::Info,
+                                format!("Authority bulletin: {who} cited for {}{when}.", offense.title()),
+                            )
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
                 // The galaxy changed: your own claim is instant; a rival's claim is
                 // awareness that arrives light-delayed (same gate as the map).
                 EventPayload::SystemClaimed { system, owner, pos } => {
@@ -889,6 +925,67 @@ mod tests {
             Command::AddPlayer { id: b, name: "B".into() },
         ]);
         (w, a, b)
+    }
+
+    /// §TCA Phase 2: a CITATION is a PUBLIC bulletin from the Charterhouse, and
+    /// every player — culprit and bystander alike — learns it LIGHT-DELAYED from
+    /// the hub. A distant third party hears about it later than a near one, and
+    /// the culprit's own copy reads as an indictment rather than gossip.
+    #[test]
+    fn citations_are_public_and_reach_each_player_at_lightspeed() {
+        let mut w = World::new(SimConfig::for_players(11, 4));
+        let (culprit, near, far) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: culprit, name: "Outlaw".into() },
+            Command::AddPlayer { id: near, name: "Near".into() },
+            Command::AddPlayer { id: far, name: "Far".into() },
+        ]);
+        // Put the two bystanders at KNOWN, different distances from the hub.
+        let c = w.config.c;
+        let hub = w.hub;
+        w.players.get_mut(&near).unwrap().command_center = hub + Vec2::new(600.0, 0.0);
+        w.players.get_mut(&far).unwrap().command_center = hub + Vec2::new(6000.0, 0.0);
+
+        let mut tl = Timeline::new();
+        let issued = w.time;
+        tl.ingest(
+            &[sim::Event::new(
+                issued,
+                sim::EventPayload::Citation {
+                    culprit,
+                    offense: sim::tca::CitationOffense::FreightDestroyed,
+                    pos: hub,
+                    occurred_at: issued,
+                },
+            )],
+            &w,
+        );
+        let seen = |tl: &Timeline, who: PlayerId| tl.digest(who).0.len();
+
+        // Nobody has it before its light arrives.
+        tl.promote(issued);
+        for who in [culprit, near, far] {
+            assert_eq!(seen(&tl, who), 0, "no bulletin before its light arrives");
+        }
+        let near_at = issued + 600.0 / c;
+        let far_at = issued + 6000.0 / c;
+        assert!(near_at < far_at, "the test geometry must actually differ");
+
+        // The NEAR bystander is informed first, and the bulletin NAMES the culprit.
+        tl.promote(near_at + 1e-6);
+        assert_eq!(seen(&tl, near), 1, "the near bystander is informed on schedule");
+        assert_eq!(seen(&tl, far), 0, "the far bystander is still in the dark");
+        let near_text = tl.digest(near).0[0].text.clone();
+        assert!(near_text.contains("Outlaw"), "a bystander's bulletin names the culprit: {near_text}");
+
+        // …and the FAR one only once its own light lands.
+        tl.promote(far_at + 1e-6);
+        assert_eq!(seen(&tl, far), 1, "…until its light arrives");
+
+        // The culprit reads it as an indictment of THEIR corporation.
+        let mine = tl.digest(culprit).0;
+        assert_eq!(mine.len(), 1);
+        assert!(mine[0].text.contains("your corporation"), "the culprit is told plainly: {}", mine[0].text);
     }
 
     #[test]
