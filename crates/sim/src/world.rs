@@ -1393,6 +1393,13 @@ impl World {
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
 
+        // 4a'''. §TCA Phase 2: the Authority's ENFORCEMENT brain — dispatch,
+        //        station-keep, recall and stand down expeditions against proscribed
+        //        corporations. Beside `pirate_ai`, and for the same reason: it is a
+        //        scripted NPC lifecycle riding the ordinary fleet/blockade machinery,
+        //        so it must run after the combat passes settle this tick's losses.
+        self.enforcement_ai(&mut events);
+
         // 5a. §TCA Phase 2: apply every INCIDENT whose light has reached the
         //     Charterhouse — dock the culprits and issue the public citation. After
         //     the combat passes, so an offense committed THIS tick is queued before
@@ -7688,6 +7695,169 @@ impl World {
     // light reaches the Charterhouse does standing move and the public citation
     // issue. A spree deep on the frontier therefore drags a visible light-cone of
     // consequences toward the map's centre behind the culprit.
+
+    // ==== §TCA Phase 2: ENFORCEMENT EXPEDITIONS ==============================
+    // A SCRIPTED lifecycle mirroring the pirate-enclave discipline: it reuses the
+    // ordinary fleet + blockade machinery through the sentinel owner, so there is
+    // no new AI, no new combat rule, no capture and no colonization. Threshold-
+    // triggered and scheduled — never dice.
+    //
+    // The expedition is FIGHTABLE (kill it and it ends early, at the cost of a
+    // graver citation) and WAITABLE (it withdraws on its own). It costs a
+    // proscribed corporation economy-time; it can never cost them a colony.
+
+    /// The system an expedition should take station on: the target's owned system
+    /// NEAREST THE HUB — the Authority reaches for what it can reach — falling
+    /// back to their home system. `None` if the corporation holds nothing, in
+    /// which case there is simply nothing to blockade this cycle.
+    fn enforcement_target_system(&self, target: PlayerId) -> Option<EntityId> {
+        let hub = self.hub;
+        let nearest = self
+            .systems
+            .iter()
+            .filter(|s| s.owner == Some(target))
+            .min_by(|a, b| {
+                a.pos
+                    .distance_sq(hub)
+                    .partial_cmp(&b.pos.distance_sq(hub))
+                    .unwrap()
+                    .then(a.id.cmp(&b.id)) // deterministic tie-break
+            })
+            .map(|s| s.id);
+        nearest.or_else(|| {
+            self.players
+                .get(&target)
+                .and_then(|c| c.home_system)
+                .filter(|sid| self.systems.iter().any(|s| s.id == *sid && s.owner == Some(target)))
+        })
+    }
+
+    /// The Authority's enforcement brain. Pure and threshold-driven: advance the
+    /// expeditions already flying, then dispatch at most one new one per eligible
+    /// PROSCRIBED corporation (one at a time, ever).
+    fn enforcement_ai(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let hub = self.hub;
+
+        // --- 1. Advance the expeditions already in the field (id order). ---
+        let active: Vec<EntityId> = self.expeditions.keys().copied().collect();
+        for fid in active {
+            let Some(exp) = self.expeditions.get(&fid).cloned() else {
+                continue;
+            };
+            // DESTROYED — the hull is gone. The citation for killing it was queued
+            // at the wreck; here we just retire the expedition and start the clock
+            // on the next one.
+            if !self.fleets.contains_key(&fid) {
+                self.expeditions.remove(&fid);
+                self.next_expedition_at
+                    .insert(exp.target_corp, now + crate::tca::TCA_ENFORCEMENT_PERIOD);
+                continue;
+            }
+            // RECALL — the target climbed back above the proscription line. Paying
+            // up visibly calls off the dogs.
+            let still_proscribed =
+                self.charter_of(exp.target_corp) == crate::tca::CharterStatus::Proscribed;
+            if !exp.withdrawing && !still_proscribed {
+                self.order_expedition_home(fid, true, events);
+                continue;
+            }
+            if exp.withdrawing {
+                // Home again → stand down and despawn.
+                let arrived = self
+                    .fleets
+                    .get(&fid)
+                    .is_some_and(|f| f.pos.distance(hub) <= BLOCKADE_STATION_RADIUS);
+                if arrived {
+                    self.fleets.remove(&fid);
+                    self.expeditions.remove(&fid);
+                    self.next_expedition_at
+                        .insert(exp.target_corp, now + crate::tca::TCA_ENFORCEMENT_PERIOD);
+                }
+                continue;
+            }
+            // ON STATION — start (and then run) the duration clock.
+            let station = self.systems.iter().find(|s| s.id == exp.system).map(|s| s.pos);
+            let on_station = station.is_some_and(|p| {
+                self.fleets.get(&fid).is_some_and(|f| f.pos.distance(p) <= BLOCKADE_STATION_RADIUS)
+            });
+            match exp.on_station_since {
+                None if on_station => {
+                    if let Some(e) = self.expeditions.get_mut(&fid) {
+                        e.on_station_since = Some(now);
+                    }
+                }
+                Some(since) if now - since >= crate::tca::TCA_ENFORCEMENT_DURATION => {
+                    // TIME SERVED. It withdraws long before any siege clock it
+                    // started could mature into a capture — and it carries no
+                    // colony ship, so a capture was never possible anyway.
+                    self.order_expedition_home(fid, false, events);
+                }
+                _ => {}
+            }
+        }
+
+        // --- 2. Dispatch, at most one per corporation, in id order. ---
+        let candidates: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, c)| {
+                crate::tca::charter_status(c.tca_standing) == crate::tca::CharterStatus::Proscribed
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for target in candidates {
+            if self.expeditions.values().any(|e| e.target_corp == target) {
+                continue; // one at a time
+            }
+            if self.next_expedition_at.get(&target).is_some_and(|t| now < *t) {
+                continue; // still cooling down
+            }
+            let Some(system) = self.enforcement_target_system(target) else {
+                continue; // holds nothing to take station on — skip this cycle
+            };
+            let Some(station) = self.systems.iter().find(|s| s.id == system).map(|s| s.pos) else {
+                continue;
+            };
+            // The squadron: CORVETTES. They BROADCAST (raiders run dark, which
+            // would contradict an announced expedition) and they are defense-heavy,
+            // so the expedition is a durable economic obstacle rather than a
+            // slaughter — exactly the "costs time, never colonies" shape.
+            let fid = self.alloc_entity_id();
+            let mut f = Fleet::single(fid, PlayerId::TCA, ShipKind::Corvette, hub, FleetOrder::Blockade { system, station }, None);
+            f.composition.insert(ShipKind::Corvette, crate::tca::TCA_ENFORCEMENT_SHIPS);
+            self.fleets.insert(fid, f);
+            self.expeditions.insert(
+                fid,
+                crate::tca::Expedition {
+                    fleet: fid,
+                    target_corp: target,
+                    system,
+                    since: now,
+                    on_station_since: None,
+                    withdrawing: false,
+                },
+            );
+            // The ANNOUNCEMENT — public, from the hub. Its light outruns the
+            // squadron, so the warning genuinely arrives first: that IS the lead time.
+            events.push(Event::new(now, EventPayload::EnforcementDispatched { target, system, pos: hub }));
+        }
+    }
+
+    /// Turn an expedition for home (recalled, or time served) and announce it.
+    fn order_expedition_home(&mut self, fleet: EntityId, recalled: bool, events: &mut Vec<Event>) {
+        let hub = self.hub;
+        let now = self.time;
+        let Some(exp) = self.expeditions.get_mut(&fleet) else {
+            return;
+        };
+        exp.withdrawing = true;
+        let target = exp.target_corp;
+        if let Some(f) = self.fleets.get_mut(&fleet) {
+            f.order = FleetOrder::MoveTo { dest: hub };
+        }
+        events.push(Event::new(now, EventPayload::EnforcementWithdrawn { target, recalled, pos: hub }));
+    }
 
     /// §TCA Phase 2: this corporation's charter band right now (pure, derived).
     /// A corp that isn't in `players` (a sentinel) is never under the law.
@@ -14059,6 +14229,221 @@ mod tests {
             !w.fleets.values().any(|f| f.owner == id && f.mission.is_some())
         });
         assert!(w.fleets.len() <= fleets0, "a standing order never leaves a spare hull behind");
+    }
+
+    // ==== §TCA Phase 2: enforcement expeditions ==============================
+
+    /// THE SAFETY INVARIANT: an expedition ALWAYS withdraws before a siege it
+    /// started could mature into a capture. Asserted against the production config
+    /// so a future retune of either constant can't silently create an Authority
+    /// that takes colonies. (Belt and braces: it also carries no colony ship, and
+    /// a capture is mechanically impossible without one.)
+    #[test]
+    fn enforcement_withdraws_before_a_siege_could_capture() {
+        let cfg = SimConfig::for_players(1, 4);
+        let siege = SIEGE_DURATION_BATTLE_MULT * cfg.battle_target_secs;
+        assert!(
+            crate::tca::TCA_ENFORCEMENT_DURATION < siege,
+            "an expedition ({}s) must stand down before a siege matures ({siege}s) — the Authority costs \
+             economy-time, never a colony",
+            crate::tca::TCA_ENFORCEMENT_DURATION
+        );
+    }
+
+    /// The full scripted lifecycle: a PROSCRIBED corp draws exactly one squadron,
+    /// announced publicly from the hub, which flies out, takes station and
+    /// blockades — then stands down on its own and despawns at the Charterhouse.
+    #[test]
+    fn an_expedition_sails_blockades_and_stands_down() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+
+        // DISPATCH — one squadron, announced, owned by the sentinel.
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::EnforcementDispatched { target, .. } if *target == id)),
+            "the dispatch is announced publicly"
+        );
+        assert_eq!(w.expeditions.len(), 1, "exactly one expedition");
+        let fid = *w.expeditions.keys().next().unwrap();
+        let f = &w.fleets[&fid];
+        assert!(f.owner.is_tca(), "the squadron flies the Authority's flag");
+        assert_eq!(f.count(ShipKind::Corvette), crate::tca::TCA_ENFORCEMENT_SHIPS);
+        assert!(f.broadcasts(), "an announced expedition is LOUD");
+        assert_eq!(f.count(ShipKind::Colony), 0, "it carries no colony ship — capture is impossible");
+        assert!(f.pos.distance(w.hub) < 5.0, "it sails from the Charterhouse");
+        assert!(matches!(f.order, FleetOrder::Blockade { system, .. } if system == colony));
+        // Still exactly one on the next tick — never a fleet per tick.
+        w.step(&[]);
+        assert_eq!(w.expeditions.len(), 1, "one at a time, ever");
+
+        // ON STATION → the ORDINARY blockade mechanic engages, unmodified.
+        step_until(&mut w, 20_000, "the squadron to take station", |w| {
+            w.systems.iter().find(|s| s.id == colony).unwrap().blockade.is_some()
+        });
+        assert!(w.expeditions[&fid].on_station_since.is_some(), "the duration clock started");
+
+        // TIME SERVED → it turns for home and despawns there.
+        let mut stood_down = false;
+        for _ in 0..40_000 {
+            for e in w.step(&[]) {
+                if let EventPayload::EnforcementWithdrawn { target, recalled, .. } = e.payload
+                    && target == id
+                {
+                    assert!(!recalled, "this one served its time, it wasn't recalled");
+                    stood_down = true;
+                }
+            }
+            if w.expeditions.is_empty() {
+                break;
+            }
+        }
+        assert!(stood_down, "the expedition stands down of its own accord");
+        assert!(w.expeditions.is_empty() && !w.fleets.contains_key(&fid), "…and despawns at the Charterhouse");
+        assert!(
+            w.next_expedition_at.get(&id).is_some_and(|t| *t > w.time),
+            "the next one is on a cooldown, not immediate"
+        );
+    }
+
+    /// PAYING UP CALLS OFF THE DOGS: a target that climbs back above the
+    /// proscription line while a squadron is inbound sees it recalled.
+    #[test]
+    fn recovering_standing_recalls_an_inbound_expedition() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 3000.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        w.step(&[]);
+        assert_eq!(w.expeditions.len(), 1);
+        let fid = *w.expeditions.keys().next().unwrap();
+        assert!(!w.expeditions[&fid].withdrawing);
+
+        // Climb back over the line while it is still on its way out.
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT + 10.0);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::EnforcementWithdrawn { target, recalled: true, .. } if *target == id)),
+            "climbing back over the line recalls the squadron"
+        );
+        assert!(w.expeditions[&fid].withdrawing, "it is turning for home");
+        assert!(matches!(w.fleets[&fid].order, FleetOrder::MoveTo { .. }));
+        step_until(&mut w, 40_000, "the recalled squadron to stand down", |w| w.expeditions.is_empty());
+        assert!(!w.fleets.contains_key(&fid), "and it goes home");
+    }
+
+    /// A corporation that holds NOTHING has nothing to blockade — the Authority
+    /// simply skips the cycle rather than spawning a squadron with nowhere to go.
+    #[test]
+    fn a_landless_proscribed_corp_draws_no_expedition() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        // Strip every holding, including the home system.
+        for s in w.systems.iter_mut().filter(|s| s.owner == Some(id)) {
+            s.owner = None;
+        }
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+            w.step(&[]);
+            assert!(w.expeditions.is_empty(), "nothing to take station on → no squadron");
+        }
+    }
+
+    /// Destroying an expedition ends it early — and costs MORE standing than
+    /// robbing freight did. Fighting the law raises the reinstatement bill.
+    #[test]
+    fn destroying_an_expedition_ends_it_and_cites_the_heavier_offense() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 3000.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        w.step(&[]);
+        let fid = *w.expeditions.keys().next().unwrap();
+
+        // Wipe the squadron where it stands (the fight itself is ordinary
+        // Lanchester and is covered elsewhere; this test is about the aftermath).
+        let pos = w.fleets[&fid].pos;
+        w.fleets.get_mut(&fid).unwrap().composition.clear();
+        w.record_incident(
+            pos,
+            [id].into_iter().collect(),
+            crate::tca::CitationOffense::EnforcementDestroyed,
+            crate::tca::TCA_STANDING_LOSS_ENFORCEMENT,
+        );
+        w.fleets.remove(&fid);
+        let before = w.players[&id].tca_standing;
+
+        // The expedition is retired and a cooldown starts.
+        w.step(&[]);
+        assert!(w.expeditions.is_empty(), "a destroyed squadron ends the expedition");
+        assert!(w.next_expedition_at.contains_key(&id), "…and starts the cooldown");
+
+        // The citation lands and costs the HEAVIER enforcement loss.
+        let due = w.pending_citations.iter().map(|c| c.arrive_at).fold(0.0_f64, f64::max);
+        while w.time <= due + DT {
+            w.step(&[]);
+        }
+        let dropped = before - w.players[&id].tca_standing;
+        assert!(
+            dropped > crate::tca::TCA_STANDING_LOSS_PER_INCIDENT,
+            "fighting the law costs more than robbing it (dropped {dropped})"
+        );
+    }
+
+    /// SOVEREIGNTY: an expedition spawns INSIDE the Charterhouse bubble, where
+    /// nothing may engage it — but it is fair game the moment it leaves. An ambush
+    /// waiting just past the radius is legitimate play.
+    #[test]
+    fn an_expedition_is_sheltered_in_the_bubble_and_fair_game_outside_it() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 6000.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        w.step(&[]);
+        let fid = *w.expeditions.keys().next().unwrap();
+        assert!(w.in_sovereign_zone(w.fleets[&fid].pos), "it spawns inside the bubble");
+
+        // An ambusher waiting just OUTSIDE the radius, on the squadron's path.
+        let raider = find_ship(&w, id, ShipKind::Raider);
+        let ambush = Vec2::new(crate::tca::TCA_SOVEREIGN_RADIUS + 60.0, 0.0);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = ambush;
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        // While the squadron is still sheltered, the order is refused.
+        let ev = w.step(&[Command::CommitRaid { player_id: id, raider_id: raider, target_id: fid }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::OrderRejected { reason: crate::event::OrderRejectReason::InsideSovereignZone, .. }
+            )),
+            "sanctuary holds while it is inside the bubble"
+        );
+
+        // Once it clears the radius, the same order takes.
+        step_until(&mut w, 40_000, "the squadron to clear the bubble", |w| {
+            w.fleets.get(&fid).is_some_and(|f| !w.in_sovereign_zone(f.pos))
+        });
+        let ev = w.step(&[Command::CommitRaid { player_id: id, raider_id: raider, target_id: fid }]);
+        assert!(
+            !ev.iter().any(|e| matches!(&e.payload, EventPayload::OrderRejected { .. })),
+            "outside the bubble the Authority's own hulls are fair game"
+        );
+        // The order is accepted — and, like every order, it reaches the raider at
+        // lightspeed rather than instantly.
+        step_until(&mut w, 40_000, "the ambush order to reach the raider", |w| {
+            matches!(w.fleets.get(&raider).map(|f| &f.order), Some(FleetOrder::Intercept { target }) if *target == fid)
+        });
     }
 
     // ==== §TCA Phase 2: band consequences ====================================

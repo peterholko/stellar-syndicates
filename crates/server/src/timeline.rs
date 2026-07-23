@@ -117,6 +117,44 @@ impl Timeline {
                         self.push(p, observe, sev, text);
                     }
                 }
+                // §TCA Phase 2: ENFORCEMENT bulletins, public from the Charterhouse
+                // on the same light-gating as a citation. The announcement's light
+                // outruns the squadron — that IS the target's lead time.
+                EventPayload::EnforcementDispatched { target, system, pos } => {
+                    let who = world.players.get(target).map(|c| c.name.clone()).unwrap_or_else(|| format!("{target}"));
+                    let name = system_name(world, *system);
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *target {
+                            (
+                                TimelineSeverity::Bad,
+                                format!(
+                                    "AUTHORITY ENFORCEMENT DISPATCHED against your corporation — a squadron is \
+                                     under way to blockade {name}. Pay reinstatement to call it off, fight it, or wait it out."
+                                ),
+                            )
+                        } else {
+                            (TimelineSeverity::Info, format!("Authority bulletin: an enforcement squadron sails against {who} at {name}."))
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
+                EventPayload::EnforcementWithdrawn { target, recalled, pos } => {
+                    let who = world.players.get(target).map(|c| c.name.clone()).unwrap_or_else(|| format!("{target}"));
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *target {
+                            if *recalled {
+                                (TimelineSeverity::Good, "Authority enforcement RECALLED — your charter is back above the proscription line.".to_string())
+                            } else {
+                                (TimelineSeverity::Info, "The Authority's enforcement squadron has served its time and is standing down.".to_string())
+                            }
+                        } else {
+                            (TimelineSeverity::Info, format!("Authority bulletin: the enforcement squadron against {who} has stood down."))
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
                 // The galaxy changed: your own claim is instant; a rival's claim is
                 // awareness that arrives light-delayed (same gate as the map).
                 EventPayload::SystemClaimed { system, owner, pos } => {

@@ -357,6 +357,26 @@ pub enum EventPayload {
         occurred_at: f64,
     },
 
+    /// §TCA Phase 2: an ENFORCEMENT EXPEDITION was dispatched against a PROSCRIBED
+    /// corporation. A PUBLIC bulletin from the Charterhouse, exactly like a
+    /// citation — the announcement IS the lead time, since the squadron has to fly
+    /// out from the hub at sub-light while the news travels at c.
+    EnforcementDispatched {
+        target: PlayerId,
+        system: EntityId,
+        /// The Charterhouse — the light source for this bulletin.
+        pos: crate::math::Vec2,
+    },
+    /// §TCA Phase 2: an expedition stood down — time served, or the target paid
+    /// its way back above the proscription line. Public, from the hub.
+    EnforcementWithdrawn {
+        target: PlayerId,
+        /// True when the target's standing recovered (paying up calls off the dogs)
+        /// rather than the expedition simply serving out its time.
+        recalled: bool,
+        pos: crate::math::Vec2,
+    },
+
     /// A fleet ORDER was soft-rejected (§TCA) — owner-only and instant: the order
     /// never installed, the fleet kept doing what it was doing, and nothing was
     /// spent. Tells the player WHY so the refusal isn't a mystery.
