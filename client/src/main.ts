@@ -4817,6 +4817,15 @@ function shipToValue(): EntityId | null {
 /// current choice where possible.
 function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): void {
   const terms = state.freight?.terms ?? [];
+  // Same hazard the Supply pane's select documents: this runs from updateMarket
+  // on every view push (~10 Hz), and rebuilding a <select>'s options while its
+  // NATIVE dropdown is open wedges Chrome's popup — the tab appears frozen.
+  // Rebuild only when the roster actually changes, and never while the player
+  // has the select focused (the open-popup proxy); a skipped rebuild retries on
+  // the next update once they've picked.
+  const sig = terms.map((t) => `${t.system}${t.depot ? "+d" : ""}:${systemName(t.system)}`).join(",");
+  if (sel.dataset.sig === sig || document.activeElement === sel) return;
+  sel.dataset.sig = sig;
   const prev = sel.value;
   sel.innerHTML =
     (blankLabel ? `<option value="">${esc(blankLabel)}</option>` : "") +
