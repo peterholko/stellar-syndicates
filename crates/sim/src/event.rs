@@ -388,20 +388,23 @@ pub enum EventPayload {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum TradeEvent {
-    /// A market buy settled instantly at the hub; a delivery convoy is inbound.
-    Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A market buy settled instantly at the Charterhouse into the warehouse.
+    /// `penalty` is the §TCA charter penalty fee burned on top (0 in good standing).
+    Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A delivery convoy arrived and deposited its cargo. `system == None` means it
     /// landed in the corp's HQ trading pool (a market buy); `Some(id)` means it was
     /// stocked into THAT system's stockpile (a Supply-from-HQ run or standing order).
     Delivered { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
     /// A sell convoy was dispatched toward the hub (goods committed to the dark).
     SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
-    /// A sell convoy reached the hub and cleared at the price-on-arrival.
-    Sold { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A sale cleared at the Charterhouse. `penalty` is the §TCA charter penalty
+    /// fee deducted from the proceeds (0 in good standing).
+    Sold { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A limit order was placed and rests on the book.
     LimitPlaced { player: PlayerId, side: Side, commodity: Commodity, units: u32, limit_price: f64 },
     /// A limit order (partially) cleared in the batch at the uniform price.
-    LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64 },
+    /// `penalty` is the §TCA charter penalty fee on the fill (0 in good standing).
+    LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A STANDING ORDER fired (§15): the rule auto-dispatched a convoy carrying
     /// `units` of `commodity` from `source`. The "policy ran while you were away"
     /// notification — feeds the check-in timeline.
@@ -622,6 +625,14 @@ pub enum TradeRejectReason {
     /// player convoy's hold is single-commodity (unchanged in this phase) —
     /// unload first.
     CargoMismatch,
+    /// §TCA Phase 2: your charter is SUSPENDED — the Authority will take no NEW
+    /// freight booking from you. Shipments already queued or aboard still
+    /// complete: it honors contracts it already took.
+    CharterSuspended,
+    /// §TCA Phase 2: your charter is REVOKED — the Exchange is closed to you.
+    /// Resting orders are grandfathered, and your warehouse is still yours to
+    /// fetch from; you simply cannot trade here.
+    CharterRevoked,
 }
 
 /// Why a fleet ORDER was soft-rejected. Owner-only: the order simply never

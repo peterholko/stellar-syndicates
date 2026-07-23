@@ -798,6 +798,21 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     format!("Not enough hold for {units} {com}: this fleet lifts {capacity} units."),
                 ),
+                sim::TradeRejectReason::CharterSuspended => (
+                    Bad,
+                    format!(
+                        "The Authority won't book {units} {com}: your charter is SUSPENDED. \
+                         Freight already queued or aboard still completes — pay down your \
+                         citations, or haul it yourself."
+                    ),
+                ),
+                sim::TradeRejectReason::CharterRevoked => (
+                    Bad,
+                    format!(
+                        "The Exchange is closed to you: your charter is REVOKED ({units} {com} not traded). \
+                         Your warehouse is still yours to fetch from — pay reinstatement to trade again."
+                    ),
+                ),
                 sim::TradeRejectReason::CargoMismatch => (
                     Warn,
                     format!("That fleet is already carrying something else — unload before loading {com}."),
@@ -999,6 +1014,7 @@ mod tests {
                 commodity: Commodity::MetallicOre,
                 units: 12,
                 unit_price: 8.0,
+                penalty: 0.0,
             }),
         );
         tl.ingest(&[ev], &w);

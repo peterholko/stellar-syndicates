@@ -4239,9 +4239,18 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
+                // §TCA Phase 2: a REVOKED charter closes the Exchange. Free,
+                // owner-only refusal — the warehouse is still yours to fetch from.
+                if self.charter_of(*player_id).exchange_closed() {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::CharterRevoked);
+                    return;
+                }
                 let price = self.market.price(*commodity);
                 let cost = units as f64 * price;
-                if corp.credits < cost {
+                // The charter PENALTY FEE rides on top of the price (0 in good
+                // standing), and you must be able to cover both.
+                let penalty = self.exchange_penalty(*player_id, cost);
+                if corp.credits < cost + penalty {
                     return; // can't afford
                 }
                 // Instant settlement at the true standing price (§9). The goods
@@ -4249,8 +4258,9 @@ impl World {
                 // moves goods across space any more (§TCA). Getting them to a
                 // system is a separate, explicit act: TCA freight or a player convoy.
                 let unit_price = self.market.execute_buy(*commodity, units);
+                let penalty = self.exchange_penalty(*player_id, units as f64 * unit_price);
                 if let Some(corp) = self.players.get_mut(player_id) {
-                    corp.credits -= units as f64 * unit_price;
+                    corp.credits -= units as f64 * unit_price + penalty;
                     *corp.warehouse.entry(*commodity).or_insert(0) += units;
                 }
                 events.push(Event::new(
@@ -4260,6 +4270,7 @@ impl World {
                         commodity: *commodity,
                         units,
                         unit_price,
+                        penalty,
                     }),
                 ));
                 // §TCA one-checkbox composition: hand the whole lot straight to
@@ -4281,6 +4292,11 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
+                // §TCA Phase 2: a REVOKED charter closes the Exchange to selling too.
+                if self.charter_of(*player_id).exchange_closed() {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::CharterRevoked);
+                    return;
+                }
                 // §TCA: a sale draws ONLY from the CHARTERHOUSE WAREHOUSE. The goods
                 // are already AT the Exchange, so the old "commit to the crossing and
                 // take the price on arrival" dance is gone — settlement is instant,
@@ -4302,9 +4318,11 @@ impl World {
                     return;
                 }
                 let unit_price = self.market.execute_sell(*commodity, units);
+                let gross = units as f64 * unit_price;
+                let penalty = self.exchange_penalty(*player_id, gross);
                 if let Some(corp) = self.players.get_mut(player_id) {
                     take_from(&mut corp.warehouse, *commodity, units);
-                    corp.credits += units as f64 * unit_price;
+                    corp.credits += gross - penalty;
                 }
                 events.push(Event::new(
                     self.time,
@@ -4313,6 +4331,7 @@ impl World {
                         commodity: *commodity,
                         units,
                         unit_price,
+                        penalty,
                     }),
                 ));
             }
@@ -4414,6 +4433,14 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
+                // §TCA Phase 2: a REVOKED charter may place no NEW order. Orders
+                // already RESTING are grandfathered — they clear or cancel
+                // normally, a bounded one-order-deep leak that costs far less code
+                // than unwinding the book.
+                if self.charter_of(*player_id).exchange_closed() {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::CharterRevoked);
+                    return;
+                }
                 // Reserve resources up front so the order is funded when it clears.
                 match side {
                     Side::Buy => {
@@ -6911,8 +6938,13 @@ impl World {
                         // buyer's CHARTERHOUSE WAREHOUSE (§TCA — a fill is an
                         // Exchange settlement, never a crossing); news.
                         let refund = filled as f64 * (order.limit_price - price);
+                        // §TCA Phase 2: a fill is an Exchange trade, so it owes the
+                        // charter penalty too (0 in good standing). A GRANDFATHERED
+                        // order placed before revocation still clears — one order
+                        // deep is a deliberate, bounded leak — but it pays the fee.
+                        let penalty = self.exchange_penalty(order.player, filled as f64 * price);
                         if let Some(c) = self.players.get_mut(&order.player) {
-                            c.credits += refund;
+                            c.credits += refund - penalty;
                             *c.warehouse.entry(commodity).or_insert(0) += filled;
                         }
                         events.push(Event::new(
@@ -6923,12 +6955,15 @@ impl World {
                                 commodity,
                                 units: filled,
                                 unit_price: price,
+                                penalty,
                             }),
                         ));
                     }
                     Side::Sell => {
+                        let gross = filled as f64 * price;
+                        let penalty = self.exchange_penalty(order.player, gross);
                         if let Some(c) = self.players.get_mut(&order.player) {
-                            c.credits += filled as f64 * price;
+                            c.credits += gross - penalty;
                         }
                         events.push(Event::new(
                             now,
@@ -6938,6 +6973,7 @@ impl World {
                                 commodity,
                                 units: filled,
                                 unit_price: price,
+                                penalty,
                             }),
                         ));
                     }
@@ -7653,6 +7689,25 @@ impl World {
     // issue. A spree deep on the frontier therefore drags a visible light-cone of
     // consequences toward the map's centre behind the culprit.
 
+    /// §TCA Phase 2: this corporation's charter band right now (pure, derived).
+    /// A corp that isn't in `players` (a sentinel) is never under the law.
+    fn charter_of(&self, who: PlayerId) -> crate::tca::CharterStatus {
+        crate::tca::charter_status(self.standing_of(who))
+    }
+
+    /// This corporation's charter standing (full standing for anyone not a corp).
+    fn standing_of(&self, who: PlayerId) -> f64 {
+        self.players.get(&who).map(|c| c.tca_standing).unwrap_or(crate::tca::TCA_STANDING_MAX)
+    }
+
+    /// §TCA Phase 2: the EXCHANGE PENALTY FEE owed on a trade worth `value`
+    /// credits — EXACTLY ZERO in good standing, which is what keeps the §economy
+    /// clearing invariants (and their tests) untouched. Burned as a sink, never
+    /// paid to anyone.
+    fn exchange_penalty(&self, who: PlayerId, value: f64) -> f64 {
+        (value * crate::tca::market_penalty_frac(self.standing_of(who))).max(0.0)
+    }
+
     /// Queue an INCIDENT. Nothing is applied here — see [`Self::resolve_citations`].
     /// A no-culprit incident (a freighter lost to something that holds no charter)
     /// is simply not an offense, and is dropped.
@@ -7851,6 +7906,13 @@ impl World {
             self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::NotYourSystem);
             return;
         }
+        // §TCA Phase 2: a SUSPENDED charter takes no NEW booking. Shipments
+        // already queued or aboard still complete — the Authority honors contracts
+        // it already took, and that also keeps the rule set small.
+        if self.charter_of(player_id).freight_suspended() {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::CharterSuspended);
+            return;
+        }
         let has_depot = sys.tier(crate::build::StructureKind::Depot) > 0;
         let sys_stock = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
         let dist = self.hub.distance(sys.pos);
@@ -7860,7 +7922,11 @@ impl World {
             self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::DestinationBlockaded);
             return;
         }
-        let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist, has_depot);
+        // §TCA Phase 2: the TARIFF — a sanctioned corporation pays a multiple of
+        // the ordinary fee, linear in how far its standing has fallen. Exactly
+        // 1.0× in good standing, so the Phase 1 fee is unchanged for the lawful.
+        let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist, has_depot)
+            * crate::tca::tariff_mult(self.standing_of(player_id));
 
         // The SOURCE must cover the lot (warehouse outbound / stockpile inbound).
         match direction {
@@ -8168,9 +8234,11 @@ impl World {
                         // to a hand-typed MarketSell at this tick.
                         if s.direction == ShipmentDir::Inbound && s.sell_on_arrival && s.units > 0 {
                             let unit_price = self.market.execute_sell(s.commodity, s.units);
+                            let gross = s.units as f64 * unit_price;
+                            let penalty = self.exchange_penalty(s.owner, gross);
                             if let Some(corp) = self.players.get_mut(&s.owner) {
                                 take_from(&mut corp.warehouse, s.commodity, s.units);
-                                corp.credits += s.units as f64 * unit_price;
+                                corp.credits += gross - penalty;
                             }
                             events.push(Event::new(
                                 self.time,
@@ -8179,6 +8247,7 @@ impl World {
                                     commodity: s.commodity,
                                     units: s.units,
                                     unit_price,
+                                    penalty,
                                 }),
                             ));
                         }
@@ -8343,8 +8412,9 @@ impl World {
                 }
                 TradeMission::SellAtHub => {
                     let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
+                    let penalty = self.exchange_penalty(ship.owner, cargo.units as f64 * unit_price);
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
-                        corp.credits += cargo.units as f64 * unit_price;
+                        corp.credits += cargo.units as f64 * unit_price - penalty;
                         // §TCA: THIS is a real haul — a convoy crossed and delivered
                         // to the hub — so it earns trade throughput here, at the
                         // arrival site. (The `Sold` event itself no longer bumps it:
@@ -8361,6 +8431,7 @@ impl World {
                             commodity: cargo.commodity,
                             units: cargo.units,
                             unit_price,
+                            penalty,
                         }),
                     ));
                 }
@@ -8394,9 +8465,11 @@ impl World {
                     ));
                     if sell_on_arrival {
                         let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
+                        let gross = cargo.units as f64 * unit_price;
+                        let penalty = self.exchange_penalty(ship.owner, gross);
                         if let Some(corp) = self.players.get_mut(&ship.owner) {
                             take_from(&mut corp.warehouse, cargo.commodity, cargo.units);
-                            corp.credits += cargo.units as f64 * unit_price;
+                            corp.credits += gross - penalty;
                         }
                         events.push(Event::new(
                             now,
@@ -8404,6 +8477,7 @@ impl World {
                                 player: ship.owner,
                                 commodity: cargo.commodity,
                                 units: cargo.units,
+                                penalty,
                                 unit_price,
                             }),
                         ));
@@ -13987,6 +14061,180 @@ mod tests {
         assert!(w.fleets.len() <= fleets0, "a standing order never leaves a spare hull behind");
     }
 
+    // ==== §TCA Phase 2: band consequences ====================================
+
+    /// Put `who` in a chosen band by setting standing directly (the incident
+    /// pipeline is tested separately; these tests are about the CONSEQUENCES).
+    fn set_standing(w: &mut World, who: PlayerId, standing: f64) {
+        w.players.get_mut(&who).unwrap().tca_standing = standing;
+    }
+
+    /// GOOD STANDING PAYS NOTHING — the invariant the whole §economy clearing
+    /// suite rests on. A lawful corp's freight fee and trade proceeds are EXACTLY
+    /// what they were before the law existed.
+    #[test]
+    fn good_standing_is_charged_exactly_the_pre_law_amounts() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 300)]);
+
+        // A freight booking costs precisely the Phase 1 fee.
+        let price = w.market.price(Alloys);
+        let dist = w.hub.distance(w.systems.iter().find(|s| s.id == colony).unwrap().pos);
+        let expect_fee = crate::tca::freight_fee(100, price, dist, false);
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        let paid = credits0 - w.players[&id].credits;
+        assert!((paid - expect_fee).abs() < 1e-9, "lawful freight pays the untariffed fee (paid {paid}, want {expect_fee})");
+
+        // A sale credits the full proceeds — zero penalty.
+        let credits1 = w.players[&id].credits;
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 100 }]);
+        let sold = ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::Sold { units, unit_price, penalty, .. }) => Some((*units, *unit_price, *penalty)),
+            _ => None,
+        }).expect("a sale");
+        assert_eq!(sold.2, 0.0, "a lawful corp pays NO Exchange penalty");
+        let gained = w.players[&id].credits - credits1;
+        assert!((gained - sold.0 as f64 * sold.1).abs() < 1e-9, "…and receives the full proceeds");
+    }
+
+    /// SANCTIONED: freight costs the tariff multiple, and every Exchange trade
+    /// pays the penalty fee — both linear in how far standing has fallen, and both
+    /// burned as a sink (they leave the economy, they don't go to anyone).
+    #[test]
+    fn a_sanctioned_charter_pays_the_tariff_and_the_penalty() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 400)]);
+        // Squarely inside the SANCTIONED band (below full standing, above the
+        // suspension threshold) — one incident's worth of fall at the defaults.
+        let mid = crate::tca::TCA_STANDING_MAX - crate::tca::TCA_STANDING_LOSS_PER_INCIDENT * 2.0;
+        set_standing(&mut w, id, mid);
+        assert_eq!(crate::tca::charter_status(mid), crate::tca::CharterStatus::Sanctioned);
+        assert!(crate::tca::tariff_mult(mid) > 1.0 && crate::tca::market_penalty_frac(mid) > 0.0, "the band actually bites");
+
+        // FREIGHT: the fee is multiplied by the tariff.
+        let price = w.market.price(Alloys);
+        let dist = w.hub.distance(w.systems.iter().find(|s| s.id == colony).unwrap().pos);
+        let expect = crate::tca::freight_fee(100, price, dist, false) * crate::tca::tariff_mult(mid);
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        let paid = credits0 - w.players[&id].credits;
+        assert!((paid - expect).abs() < 1e-6, "freight pays the tariff (paid {paid}, want {expect})");
+        assert!(paid > crate::tca::freight_fee(100, price, dist, false), "…which is strictly more than the lawful fee");
+
+        // EXCHANGE: a sale is docked the penalty, which is BURNED (not paid out).
+        set_standing(&mut w, id, mid);
+        let credits1 = w.players[&id].credits;
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 100 }]);
+        let (units, unit_price, penalty) = ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::Sold { units, unit_price, penalty, .. }) => Some((*units, *unit_price, *penalty)),
+            _ => None,
+        }).expect("a sale");
+        let gross = units as f64 * unit_price;
+        assert!((penalty - gross * crate::tca::market_penalty_frac(mid)).abs() < 1e-9, "the penalty is the linear fraction of trade value");
+        assert!(penalty > 0.0);
+        let gained = w.players[&id].credits - credits1;
+        assert!((gained - (gross - penalty)).abs() < 1e-9, "the seller receives proceeds MINUS the penalty");
+    }
+
+    /// SUSPENDED: no NEW booking is taken — but freight already queued or aboard
+    /// completes. The Authority honors contracts it already took.
+    #[test]
+    fn a_suspended_charter_is_refused_new_freight_but_keeps_its_contracts() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 300)]);
+        // Book one lot while still lawful…
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        assert_eq!(w.freight_queue.len(), 1);
+
+        // …then fall to Suspended.
+        set_standing(&mut w, id, crate::tca::TCA_SUSPENDED_AT);
+        let credits0 = w.players[&id].credits;
+        let wh0 = wh(&w, id, Alloys);
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 50 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::CharterSuspended, .. })
+            )),
+            "a new booking is refused with the typed reason"
+        );
+        assert_eq!(w.players[&id].credits, credits0, "the refusal costs nothing");
+        assert_eq!(wh(&w, id, Alloys), wh0, "…and escrows nothing");
+
+        // The lot booked BEFORE suspension still flies and still lands.
+        set_standing(&mut w, id, crate::tca::TCA_SUSPENDED_AT);
+        step_until(&mut w, 20_000, "the honored contract to deliver", |w| sys_units(w, colony, Alloys) >= 100);
+        assert_eq!(sys_units(&w, colony, Alloys), 100, "the Authority honors the contract it took");
+    }
+
+    /// REVOKED: the Exchange is closed — market orders and NEW limit orders are
+    /// refused. Resting orders are grandfathered, and the warehouse stays
+    /// reachable: a revoked outlaw can still fetch their goods, they just can't
+    /// trade them here.
+    #[test]
+    fn a_revoked_charter_is_locked_out_of_the_exchange_but_not_its_warehouse() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(Alloys, 300)]);
+        // Rest a sell order while still lawful…
+        w.step(&[Command::PlaceLimitOrder { player_id: id, side: Side::Sell, commodity: Alloys, units: 50, limit_price: 1.0 }]);
+        assert_eq!(w.book.len(), 1, "the order rests");
+
+        set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+        let credits0 = w.players[&id].credits;
+        let wh0 = wh(&w, id, Alloys);
+        let reason_of = |ev: &[Event]| ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::Rejected { reason, .. }) => Some(*reason),
+            _ => None,
+        });
+        // Buy, sell, and a new limit order are ALL refused, free of charge.
+        for cmd in [
+            Command::MarketBuy { player_id: id, commodity: Alloys, units: 10, ship_to: None },
+            Command::MarketSell { player_id: id, commodity: Alloys, units: 10 },
+            Command::PlaceLimitOrder { player_id: id, side: Side::Sell, commodity: Alloys, units: 10, limit_price: 5.0 },
+        ] {
+            set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+            let ev = w.step(&[cmd]);
+            assert!(matches!(reason_of(&ev), Some(TradeRejectReason::CharterRevoked)), "the Exchange is closed");
+        }
+        assert_eq!(w.players[&id].credits, credits0, "every refusal costs nothing");
+        assert_eq!(wh(&w, id, Alloys), wh0);
+        assert_eq!(w.book.len(), 1, "no new order joined the book");
+
+        // The GRANDFATHERED order is still on the book and still clears.
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = None;
+        }
+        // …and the WAREHOUSE is still reachable: a revoked outlaw fetches its goods.
+        set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+        w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Alloys, units: 100 }]);
+        assert_eq!(
+            w.fleets[&convoy].cargo.map(|c| c.units),
+            Some(100),
+            "a revoked charter can still collect its own property"
+        );
+    }
+
     // ==== §TCA Phase 2: incidents and citations ==============================
 
     /// Kill an Authority freighter far from the hub and NOTHING happens at the
@@ -17786,10 +18034,10 @@ mod tests {
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
             ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None })),
-            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0 })),
-            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0 })),
-            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0 })),
-            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0 })),
+            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0, penalty: 0.0 })),
+            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0, penalty: 0.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0, penalty: 0.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0, penalty: 0.0 })),
             ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::StructureKind::Depot, tier: 1 }),
             ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
         ]);
