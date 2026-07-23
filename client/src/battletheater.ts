@@ -51,10 +51,13 @@ const SCALE = CANVAS_H / (2 * VIEW_R);
 const MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+  // §TCA: the Authority's carrier — never a combatant, but the type is total.
+  freighter: 6000,
 };
 const KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+  freighter: "Authority Freighter",
 };
 
 /// Sprite size ∝ hull_mass^0.4 (log-ish: a 40× Titan reads huge without
@@ -75,6 +78,8 @@ function spritePx(kind: ShipKind): number {
 /// code change.
 const SHIP_ART: Record<ShipKind, string> = {
   convoy: "cargo_freighter.png",
+  // §TCA: the Authority hauler reuses the freighter art; its neutral tint sets it apart.
+  freighter: "cargo_freighter.png",
   raider: "raider_attack_ship.png",
   corvette: "corvette_escort_ship.png",
   colony: "colony_ship.png",

@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -175,8 +175,13 @@ const HULL_MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+  // §TCA: the Authority's carrier (mirrors ship.rs).
+  freighter: 6000,
 };
 const CARGO_MASS_PER_UNIT = 28;
+// §TCA Part 5: mirrors `tca::LOGISTICS_RANGE` — how close a fleet must be to a
+// dock (the Charterhouse, or one of your systems) to load or unload.
+const LOGISTICS_RANGE_UI = 260;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
 
@@ -445,6 +450,32 @@ function buildShipPanel(): void {
         net.send({ type: "RefitShips", fleet_id: state.selectedShipId, ship, from, to, n });
         $("readout").innerHTML = `Refit ordered: <b>${n}× ${esc(shipKindLabel(ship))}</b> → ${to.length ? to.map((m) => MODULE_GLYPH[m]).join(" ") : "stock"} <span class="dim">(at a docked Shipyard; needs the added modules in the system ledger).</span>`;
       }
+    } else if (act === "engage-freight" && state.selectedShipId && net) {
+      net.send({ type: "SetEngageFreight", fleet_id: state.selectedShipId, on: (b as HTMLElement).dataset.on === "1" });
+    } else if ((act === "load" || act === "unload" || act === "haul") && state.selectedShipId && net) {
+      // §TCA Part 5: dockside logistics. Which dock we're at decides hub-vs-system.
+      const fleet_id = state.selectedShipId;
+      const g = state.ghosts.find((x) => x.id === fleet_id);
+      const hub = state.galaxy?.hub;
+      const nearP = (p: Vec2 | undefined) => !!g && p !== undefined && Math.hypot(p.x - g.pos.x, p.y - g.pos.y) <= LOGISTICS_RANGE_UI;
+      const atHub = nearP(hub);
+      const sys = (state.galaxy?.systems ?? []).find((sy) => {
+        const st = state.systems.find((x) => x.id === sy.id);
+        return st?.owner === state.playerId && nearP(sy.pos);
+      });
+      const root = (b as HTMLElement).closest("#ship-panel") ?? document;
+      if (act === "unload") {
+        net.send(atHub ? { type: "HubUnload", fleet_id } : sys ? { type: "SystemUnload", fleet_id, system: sys.id } : { type: "HubUnload", fleet_id });
+      } else if (act === "load") {
+        const commodity = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value as Commodity | undefined;
+        const units = Math.max(1, Math.floor(Number((root.querySelector(".lg-qty") as HTMLInputElement | null)?.value) || 0));
+        if (commodity) {
+          net.send(atHub ? { type: "HubLoad", fleet_id, commodity, units } : sys ? { type: "SystemLoad", fleet_id, system: sys.id, commodity, units } : { type: "HubLoad", fleet_id, commodity, units });
+        }
+      } else {
+        const sell = !!(root.querySelector(".lg-sell") as HTMLInputElement | null)?.checked;
+        net.send({ type: "HaulToCharterhouse", fleet_id, sell_on_arrival: sell });
+      }
     }
   });
 }
@@ -464,6 +495,7 @@ function deselectShip(): void {
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+  freighter: "Authority Freighter",
 };
 const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
@@ -685,6 +717,17 @@ function ownBody(g: GhostView): string {
       const d = g.route[g.route.length - 1];
       parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="The waypoints this convoy will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
     }
+    parts.push(logisticsSection(g));
+  }
+  // §TCA: a BLOCKADING fleet chooses whether to touch Authority freight.
+  if (g.engage_freight !== null && g.engage_freight !== undefined) {
+    const on = g.engage_freight;
+    parts.push(
+      `<div class="sp-sec">${icon("blockade", "sm")} Authority freight</div>` +
+      `<div class="sp-line"><button class="act${on ? " is-on" : ""}" data-act="engage-freight" data-on="${on ? "0" : "1"}" ` +
+      `title="While blockading, also engage Terran Charter Authority freighters arriving here. OFF: they land and unload through your blockade — a small leak, self-limiting because the Charterhouse already refuses NEW bookings to a blockaded system. ON: an arriving freighter becomes an ordinary hostile contact.">` +
+      `${on ? "Engaging" : "Ignoring"} Authority freight arriving here</button></div>`,
+    );
   }
 
   // Fleet fuel reserve (corp-wide, shared across ALL your ships) + this ship's burn
@@ -1156,17 +1199,18 @@ function buildHubPanel(): void {
 function openHubPanel(): void {
   buildHubPanel();
   $("hub-panel").innerHTML =
-    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">the shared commons</div>` +
-    `<h2>Wormhole Hub</h2></div></div>` +
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">the Terran Charter Authority</div>` +
+    `<h2>The Charterhouse</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
-    `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
-    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open Market</button>` +
-    `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
+    `<div class="pp-desc">The Authority's station at the wormhole to Sol — the body that issued your charter. Its Exchange sets the prices you read (light-delayed) across the galaxy, and your <b>warehouse</b> here is the only stock it will trade against.</div>` +
+    `<div class="pp-desc dim">Getting goods to a colony is a separate act: book the Authority's scheduled <b>freight</b>, or load one of your own convoys and fly it yourself.</div>` +
+    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open the Charterhouse</button>` +
+    `<div class="pp-note">No engagement may open inside the Authority's sovereign space — fleeing into it is sanctuary. Public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
-  readout().innerHTML = `<b>Wormhole Hub</b> selected — the market lives here. <span class="dim">Press <b>M</b> or use the panel to trade.</span>`;
+  readout().innerHTML = `<b>The Charterhouse</b> selected — Exchange, warehouse, and freight desk. <span class="dim">Press <b>M</b> or use the panel.</span>`;
 }
 function closeHubPanel(): void {
   $("hub-panel").classList.remove("is-open");
@@ -1819,6 +1863,8 @@ const SHIP_ICON: Record<ShipKind, string> = {
   // capital sheet arrives separately; see PR note).
   destroyer: "concept-fleet", cruiser: "concept-fleet", battleship: "concept-fleet",
   dreadnought: "concept-fleet", titan: "concept-fleet",
+  // §TCA: the Authority's common carrier — drawn with the hauler glyph.
+  freighter: "concept-convoy",
 };
 // One force-strip chip: a ship-class icon + the count still standing. `lost` (own,
 // exact) draws a red "−k"; a fully-wiped class dims + strikes its count. `est`
@@ -4550,6 +4596,33 @@ function buildMarketPanel(): void {
     renderComposer();
   });
   $("mk-qty").addEventListener("input", renderComposer);
+  $("mk-shipto").addEventListener("change", renderComposer);
+  // --- §TCA freight desk ---
+  const frCom = $("fr-commodity") as HTMLSelectElement;
+  frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${c}</option>`).join("");
+  $("fr-dir").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
+    if (!b?.dataset.dir) return;
+    freightDir = b.dataset.dir as ShipmentDir;
+    renderFreightDesk();
+  });
+  ["fr-system", "fr-commodity", "fr-qty", "fr-sell"].forEach((id) => {
+    $(id).addEventListener("input", renderFreightDesk);
+    $(id).addEventListener("change", renderFreightDesk);
+  });
+  $("fr-submit").addEventListener("click", () => {
+    if (!net) return;
+    const system = ($("fr-system") as HTMLSelectElement).value as EntityId;
+    if (!system) return;
+    const commodity = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
+    const units = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
+    if (freightDir === "outbound") {
+      net.send({ type: "BookFreightOut", system, commodity, units });
+    } else {
+      net.send({ type: "BookFreightIn", system, commodity, units, sell_on_arrival: ($("fr-sell") as HTMLInputElement).checked });
+    }
+    $("fr-feedback").textContent = `Booking sent: ${units} ${commodity} ${freightDir === "outbound" ? "→" : "←"} ${systemName(system)}.`;
+  });
   $("mk-limit").addEventListener("input", renderComposer);
   $("mk-submit").addEventListener("click", () => {
     if (!net) return;
@@ -4560,7 +4633,11 @@ function buildMarketPanel(): void {
     if (limitOn && limitPrice > 0) {
       net.send({ type: "PlaceLimitOrder", side: composer.side, commodity: c, units: qty, limit_price: limitPrice });
     } else {
-      net.send(composer.side === "buy" ? { type: "MarketBuy", commodity: c, units: qty } : { type: "MarketSell", commodity: c, units: qty });
+      net.send(
+        composer.side === "buy"
+          ? { type: "MarketBuy", commodity: c, units: qty, ship_to: shipToValue() }
+          : { type: "MarketSell", commodity: c, units: qty },
+      );
     }
     $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${label(c)}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
   });
@@ -4652,8 +4729,6 @@ function renderComposer(): void {
   if (!state.market) return;
   const c = composer.commodity;
   const price = state.market.prices.find((p) => p.commodity === c)?.price;
-  const stale = state.market.staleness > 0.5;
-  const px = price !== undefined ? `${stale ? "~" : ""}${price.toFixed(2)}` : "?";
   $("mk-sel").textContent = label(c);
   document.querySelectorAll<HTMLElement>("#mk-side button").forEach((b) => b.classList.toggle("is-active", b.dataset.side === composer.side));
   const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
@@ -4664,12 +4739,112 @@ function renderComposer(): void {
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
     const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods cross fogged space as a raidable delivery convoy into your HQ INVENTORY — not a system's stockpile. Use the Supply tab to ship them to a system.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} to <b>HQ</b> (raidable)</span>`;
+    const to = shipToValue();
+    const dest = to ? ` → booked onto Authority freight for <b>${esc(systemName(to))}</b>` : "";
+    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your Charterhouse warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → your <b>warehouse</b>${dest}</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
-    $("mk-preview").innerHTML = `<span title="Ships from your HQ INVENTORY (not a system's stockpile — a system's fuel/goods are unaffected); the convoy clears at the price ON ARRIVAL (not today's ${px}) and is raidable to the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} from <b>HQ</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
+    const held = warehouseUnits(c);
+    const gain = price !== undefined ? fmt(qty * price) : "?";
+    const short = held < qty;
+    $("mk-preview").innerHTML = short
+      ? `<span class="warn" title="Selling draws ONLY from your Charterhouse warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
+      : `<span title="The goods are already at the Exchange, so it settles instantly at the standing price — no crossing, no price-on-arrival gamble.">Settles <b>now</b> from your warehouse ~<span class="accent">${gain} Cr</span></span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
+  // The ship-to selector is a BUY-only composition.
+  ($("mk-shipto-row") as HTMLElement).style.display = composer.side === "buy" && !limitOn ? "flex" : "none";
+}
+
+// --- §TCA: the Charterhouse warehouse, freight desk, and shipment queue -------
+
+/// Which way the freight desk is currently booking.
+let freightDir: ShipmentDir = "outbound";
+
+/// Units of `c` in the player's Charterhouse warehouse.
+function warehouseUnits(c: Commodity): number {
+  return state.wallet?.warehouse?.find((w) => w.commodity === c)?.units ?? 0;
+}
+/// The chosen `ship_to` destination on a buy (null = leave it at the Charterhouse).
+function shipToValue(): EntityId | null {
+  const v = ($("mk-shipto") as HTMLSelectElement | null)?.value ?? "";
+  return v ? (v as EntityId) : null;
+}
+/// Fill a <select> with the player's owned freight destinations, preserving the
+/// current choice where possible.
+function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): void {
+  const terms = state.freight?.terms ?? [];
+  const prev = sel.value;
+  sel.innerHTML =
+    (blankLabel ? `<option value="">${esc(blankLabel)}</option>` : "") +
+    terms.map((t) => `<option value="${t.system}">${esc(systemName(t.system))}${t.depot ? " · Depot" : ""}</option>`).join("");
+  if (prev && terms.some((t) => String(t.system) === prev)) sel.value = prev;
+}
+
+/// The warehouse table — commodity × units, the Exchange's only stock.
+function renderWarehouse(): void {
+  const rows = (state.wallet?.warehouse ?? []).filter((w) => w.units > 0);
+  $("wh-table").innerHTML = rows.length
+    ? rows.map((w) => `<div class="ord">${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(w.commodity)}</div>`).join("")
+    : `<div class="mhint dim">Empty. Buy here, or ship goods in from a system — Authority freight or one of your own convoys.</div>`;
+}
+
+/// The freight desk: live fee, the EXACT next departure, and the ETA — all
+/// computed from server-sent terms, so the player commits with full knowledge.
+function renderFreightDesk(): void {
+  const f = state.freight;
+  if (!f) return;
+  fillSystemSelect($("fr-system") as HTMLSelectElement, null);
+  const dir = freightDir;
+  document.querySelectorAll<HTMLElement>("#fr-dir button").forEach((b) => b.classList.toggle("is-active", b.dataset.dir === dir));
+  ($("fr-sell-row") as HTMLElement).style.display = dir === "inbound" ? "flex" : "none";
+
+  const sysId = ($("fr-system") as HTMLSelectElement).value as EntityId;
+  const t = f.terms.find((x) => String(x.system) === String(sysId));
+  const c = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
+  const qty = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
+  const submit = $("fr-submit") as HTMLButtonElement;
+  if (!t) {
+    $("fr-preview").innerHTML = `<span class="dim">You hold no systems the Authority can serve.</span>`;
+    submit.disabled = true;
+    return;
+  }
+  submit.disabled = false;
+  const price = state.market?.prices.find((p) => p.commodity === c)?.price ?? 0;
+  const fee = freightFee(f, t, price, qty);
+  // Departures are exact: the timetable and the freighter's cruise are pure
+  // functions of config. Show the wait, not a raw sim-time.
+  const wait = Math.max(0, f.next_departure - (state.simTime ?? 0));
+  const flight = dir === "outbound" ? t.secs_out : t.secs_round;
+  const overCap = qty > t.cap;
+  $("fr-preview").innerHTML =
+    `<span title="The fee is charged at booking and destroyed — it is never refunded, even if the lot is lost.">Fee <span class="accent">${fmt(fee)} Cr</span></span> · ` +
+    `departs in <b>${fmtDur(wait)}</b> · arrives ~<b>${fmtDur(wait + flight)}</b>` +
+    (t.depot ? ` · <span class="dim">Depot: ${Math.round((1 - f.depot_fee_mult) * 100)}% off, ${t.cap} cap</span>` : ` · <span class="dim">${t.cap}/departure</span>`) +
+    (overCap ? ` · <span class="warn" title="Not a refusal — the lot is split and rolls onto consecutive departures, first booked first served.">rides ${Math.ceil(qty / t.cap)} departures</span>` : "");
+}
+
+/// The shipment queue — your lots, waiting at the Charterhouse or aboard a hull.
+function renderShipmentQueue(): void {
+  const ships = state.freight?.shipments ?? [];
+  $("fr-queue").innerHTML = ships.length
+    ? ships
+        .map((s) => {
+          const where = s.direction === "outbound" ? `→ ${esc(systemName(s.system))}` : `← ${esc(systemName(s.system))}`;
+          const st = s.aboard
+            ? badge("neutral", "aboard")
+            : badge("warn", "awaiting departure");
+          const sell = s.direction === "inbound" && s.sell_on_arrival ? ` <span class="dim">· sells on arrival</span>` : "";
+          return `<div class="ord">${st} ${commodityIcon(s.commodity, "sm")} <b>${s.units}</b> ${esc(s.commodity)} ${where}${sell}</div>`;
+        })
+        .join("")
+    : `<div class="mhint dim">No freight booked.</div>`;
+}
+
+/// A short duration ("2m 10s") for the freight timetable.
+function fmtDur(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
 function renderRestingOrders(): void {
@@ -4693,21 +4868,25 @@ function updateMarket(): void {
     stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
   ]);
   renderMarketBoard();
+  fillSystemSelect($("mk-shipto") as HTMLSelectElement, "keep at the Charterhouse");
   renderComposer();
   renderRestingOrders();
   renderSpecialistsPane();
   renderModulesPane();
   renderSupplyPane();
+  renderWarehouse();
+  renderFreightDesk();
+  renderShipmentQueue();
 }
 
 function addTradeNews(t: TradeEvent): void {
   const log = $("reports-log");
   let text = "";
   switch (t.event) {
-    case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
+    case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your Charterhouse warehouse.`; break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
-      : `Delivery arrived: +${t.units} ${label(t.commodity)} — added to your HQ stock (Exchange). Use “Supply from HQ” in a system to feed its converters.`;
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your Charterhouse warehouse.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
@@ -4723,8 +4902,28 @@ function addTradeNews(t: TradeEvent): void {
       break;
     }
     case "StorageOverflow":
-      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — convoy carries it on to sell at the hub (raidable).`;
+      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — carried on to sell at the Charterhouse.`;
       break;
+    // --- §TCA: freight + dockside logistics -------------------------------
+    case "Rejected": text = `⚠ ${rejectText(t)}`; break;
+    case "FreightBooked":
+      text = `Booked ${t.units} ${t.commodity} ${t.direction === "outbound" ? "→" : "←"} ${systemName(t.system)} — fee ${fmt(t.fee)} Cr, departs in ${fmtDur(Math.max(0, t.depart_at - state.simTime))}.`;
+      break;
+    case "FreightMoved": {
+      const what = `${t.units} ${t.commodity}`;
+      const where = systemName(t.system);
+      text =
+        t.stage === "departed" ? `Authority freighter away with ${what} (${where}).`
+        : t.stage === "collected_for_pickup" ? `Authority freighter collected ${what} at ${where}.`
+        : t.stage === "delivered_to_system" ? `Freight delivered: ${what} → ${where}.`
+        : t.stage === "arrived_at_warehouse" ? `Freight landed: ${what} from ${where} → your warehouse.`
+        : t.stage === "returned_undeliverable" ? `⚠ ${what} couldn't unload at ${where} — returned to your warehouse.`
+        : t.stage === "forfeited_on_capture" ? `✖ Lost ${what} awaiting pickup at ${where} — the system fell first.`
+        : `✖ ${what} destroyed with the Authority freighter carrying it (${where}).`;
+      break;
+    }
+    case "Loaded": text = `Loaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the Charterhouse"}.`; break;
+    case "Unloaded": text = `Unloaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the Charterhouse"}.`; break;
   }
   const el = document.createElement("div");
   el.className = t.event === "SupplyDiverted" && t.action === "lost" ? "report bad" : "report good";
@@ -4769,11 +4968,15 @@ function buildStandingPanel(): void {
   const syncForm = () => {
     const amt = $("so-amount") as HTMLInputElement;
     ($("so-floor-row") as HTMLElement).style.display = trig.value === "percent_surplus" ? "flex" : "none";
+    // §TCA: the sell-on-arrival choice only means anything for a Charterhouse rule.
+    const destIsHub = (($("so-dest") as HTMLSelectElement).value || "") === "hub";
+    ($("so-sell-row") as HTMLElement).style.display = destIsHub ? "flex" : "none";
     amt.title = trig.value === "above_threshold" ? "threshold (units)"
       : trig.value === "percent_surplus" ? "percent (1–100)"
       : "target level (units)";
   };
   trig.addEventListener("change", syncForm);
+  ($("so-dest") as HTMLSelectElement).addEventListener("change", syncForm);
   syncForm();
   // Remove-✕ is delegated on the PERSISTENT list root — the rows rebuild every
   // View, the listener never does (§single-click).
@@ -4800,6 +5003,9 @@ function buildStandingPanel(): void {
     const order: StandingOrder = {
       id: 0, source: { kind: "system", id: source }, dest, commodity, trigger,
       status: "active", next_eval_tick: 0, in_flight: null,
+      // §TCA: a Hub rule sells on arrival by default (today's behaviour); the
+      // Charterhouse panel exposes the stockpile-instead option.
+      sell_on_arrival: ($("so-sell") as HTMLInputElement).checked,
     };
     net.send({ type: "SetStandingOrder", order });
   });
@@ -5439,6 +5645,7 @@ function join(): void {
           state.ghosts = msg.ghosts;
           state.market = msg.market;
           state.wallet = msg.wallet;
+          state.freight = msg.freight;
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
@@ -5565,3 +5772,79 @@ nameInput.addEventListener("keydown", (e) => {
 });
 nameInput.focus();
 setHud();
+
+
+/// §TCA Part 5: dockside LOGISTICS for one of the player's own convoys — load and
+/// unload across the Charterhouse warehouse or an owned system's stockpile, and
+/// the haul order that sends a loaded hull to the Charterhouse. Only offered when
+/// the fleet is actually alongside a dock and idle; the sim soft-rejects anything
+/// else, but there is no point showing a button that will only ever be refused.
+function logisticsSection(g: GhostView): string {
+  const hub = state.galaxy?.hub;
+  const near = (p: Vec2 | undefined) => p !== undefined && Math.hypot(p.x - g.pos.x, p.y - g.pos.y) <= LOGISTICS_RANGE_UI;
+  const atHub = near(hub);
+  const sys = (state.galaxy?.systems ?? []).find((sy) => {
+    const st = state.systems.find((x) => x.id === sy.id);
+    return st?.owner === state.playerId && near(sy.pos);
+  });
+  if (!atHub && !sys) {
+    return `<div class="sp-line dim" title="Bring the fleet alongside the Charterhouse or one of your own systems to load or unload.">${icon("cargo", "sm")} Not alongside a dock.</div>`;
+  }
+  const where = atHub ? "the Charterhouse" : esc(sys!.name);
+  const rows: string[] = [`<div class="sp-sec">${icon("cargo", "sm")} Logistics · ${where}</div>`];
+  if (g.cargo) {
+    rows.push(
+      `<div class="sp-line"><button class="act" data-act="unload" title="Put the whole hold ashore at ${esc(where)}.">Unload ${fmt(g.cargo.units)} ${esc(g.cargo.commodity)}</button></div>`,
+    );
+  }
+  // Load: pick a commodity + amount from whatever the dock actually holds.
+  const stock: [string, number][] = atHub
+    ? (state.wallet?.warehouse ?? []).map((w) => [w.commodity, w.units] as [string, number])
+    : (state.systems.find((x) => x.id === sys!.id)?.stockpile ?? []).map((sl) => [sl.commodity, sl.units] as [string, number]);
+  const avail = stock.filter(([, u]) => u > 0);
+  if (avail.length) {
+    rows.push(
+      `<div class="sp-line"><select class="lg-com" data-act="noop">` +
+      avail.map(([c, u]) => `<option value="${c}">${esc(c)} (${u})</option>`).join("") +
+      `</select> <input class="lg-qty" type="number" min="1" value="50" style="width:5.5em" /> ` +
+      `<button class="act" data-act="load" title="Load whole units from ${esc(where)} into this fleet's hold. A hold stays single-commodity — unload first to switch goods.">Load</button></div>`,
+    );
+  }
+  if (g.cargo && !atHub) {
+    rows.push(
+      `<div class="sp-line"><button class="act act--primary" data-act="haul" title="Send this loaded hull to the Charterhouse. It deposits into your warehouse on arrival — and, if you tick sell, clears at that tick's standing price. The fleet SURVIVES and goes idle there.">Haul to the Charterhouse</button> ` +
+      `<label class="lim" title="Sell the lot at the Exchange the moment it lands."><input type="checkbox" class="lg-sell" /> sell on arrival</label></div>`,
+    );
+  }
+  return rows.join("");
+}
+
+
+/// §TCA: plain-language text for a soft-rejected order or booking. Every one of
+/// these costs the player NOTHING — the wording says what to do instead.
+function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
+  const com = t.commodity;
+  const where = t.system ? systemName(t.system) : null;
+  switch (t.reason.reason) {
+    case "insufficient_warehouse_stock":
+      return `Your Charterhouse warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your convoys).`;
+    case "not_your_system":
+      return `The Authority serves your own colonies only — ${where ?? "that system"} isn't yours.`;
+    case "insufficient_system_stock":
+      return `${where ?? "That system"} holds ${t.reason.have} ${com} — not enough to collect ${t.units}.`;
+    case "cannot_afford_fee":
+      return `Freight fee is ${fmt(t.reason.fee)} Cr — more than your treasury.`;
+    case "destination_blockaded":
+      return `The Charterhouse reports ${where ?? "that system"} BLOCKADED and won't book freight there.`;
+    case "fleet_unavailable":
+      return `That fleet must be yours, idle, and out of a fight to handle cargo.`;
+    case "out_of_logistics_range":
+      return `That fleet is too far from the dock — bring it alongside first.`;
+    case "no_cargo_room":
+      return t.reason.capacity === 0
+        ? `That fleet has no cargo hold — only convoys haul goods.`
+        : `Not enough hold for ${t.units} ${com}: this fleet lifts ${t.reason.capacity} units.`;
+    case "cargo_mismatch":
+      return `That hold is already carrying something else — unload before loading ${com}.`;
+  }
+}

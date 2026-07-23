@@ -403,34 +403,86 @@ The economic spine is inherited from *Stellar Charters* (corporate trade, a cent
   bargain as the rest of the game; there is deliberately **no stale-price protection** (the one
   requirement, per Pillar 2: the UI must always *show* that the price data is stale and how stale, so
   the loss reads as "I gambled on old prices," never as "the game showed me a wrong number").
-- **Orders carry full intent, including destination.** A buy is "buy *and* deliver to system X"; the
-  fill auto-spawns the delivery convoy. A sell is "ship my output to the hub *and* sell on arrival."
-  **No second login** to bridge execution and shipment.
-- **Buy/sell asymmetry (settled):** the two sides are *not* mirror images, and that asymmetry is kept.
-  A **buy** locks price instantly at the hub, then risks the goods in transit home (price-certain,
-  delivery-risky). A **sell** commits goods to the dangerous crossing *first* and clears at **whatever
-  the hub price is when the convoy arrives** — the price is **not** locked at launch. The seller
-  therefore faces *double* uncertainty (the cargo may be raided in transit *and* the final price is
-  unknown until arrival), making selling inherently riskier than buying. This is intended: it is the
-  act-on-uncertainty bargain applied to selling, it rewards market timing and information-positioning
-  (predicting the arrival price you cannot yet see), and it is simpler to build (no forward-contract /
-  price-lock machinery). The seller sees the *current* price plus a clear "final price set on arrival,
-  ~X min transit, price may move" warning at launch.
+- **Trade and haulage are separate acts (§TCA).** The Exchange settles against your **Charterhouse
+  warehouse** — a private stock you hold *at the station*. A buy deposits into it; a sell (and
+  sell-side limit escrow) draws **only** from it. Nothing about a trade moves goods across space, in
+  either direction. Both sides are therefore symmetric and price-certain: the goods are already at the
+  Exchange, so there is no crossing and no price-on-arrival gamble.
+  - This replaces the old asymmetry, in which a buy conjured a free delivery convoy home and a sell
+    committed goods to the crossing first and cleared at whatever the price was on arrival. That
+    coupling made "trading" and "hauling" one indivisible act you could not opt out of. Splitting them
+    keeps the danger (see below) while letting a player *choose* when to expose goods to the dark.
+  - Convenience is preserved as a **composition, not a coupling**: a buy carries an optional
+    "deliver to system X", which simply books Authority freight for the lot the instant it settles. One
+    checkbox — and if the booking can't be honoured, the goods just stay in the warehouse and you are
+    told why. **No second login** to bridge execution and shipment.
 
 ### Where the danger lives
 
-The danger is in the **convoy crossing to/from the hub** — the contested, raidable space — **not in
+The danger is in the **crossing to/from the Charterhouse** — the contested, raidable space — **not in
 the knowing**. Price advantage and delivery risk are deliberately **decoupled**: a great fill on goods
 that then get raided in transit is not a clean win. This decoupling is why information-relay exploits
 (e.g. a smurf at the hub relaying live prices) gain little — they buy a slightly better forecast on a
 trade you still can't speed up or deliver safely. The prize was never the price; it's the safe crossing.
+
+Since trading no longer moves anything, the crossing is now an **explicit choice with exactly two
+channels**, and choosing between them is the logistics game:
+
+| | **TCA freight** | **Your own convoy** |
+|---|---|---|
+| Who flies it | The Authority's scheduled carrier | A hull you built and loaded |
+| Cost | A fee, charged at booking and destroyed | Free (you already own the ship) |
+| Timing | Fixed timetable; capped units per departure | Whenever you like |
+| Risk | Someone else's hull — but your goods are still aboard, and it can be raided | Yours to escort, route, and lose |
+| Reward | — | Counts as **trade throughput** on the leaderboard |
+
+Neither is strictly better. Freight is the low-attention default that keeps a distracted empire
+running; flying it yourself is cheaper, faster to schedule, and the only way to escort what matters.
+
+### The Terran Charter Authority (§TCA)
+
+The **Terran Charter Authority** is the home-galaxy body on the far side of the wormhole that issued
+every corporation's charter. It operates the **Charterhouse** — the hub station and its Exchange — and
+a scheduled common-carrier **freight service** to the colonies. It is a neutral institution, not a
+player: it holds no territory, never appears in rankings, and takes no side.
+
+- **The warehouse.** Every corporation has private storage at the Charterhouse. It is the Exchange's
+  only counterparty and has no capacity limit or storage fee (v1).
+- **Scheduled freight.** Book a lot outbound (warehouse → a system you own) or inbound (a system you
+  own → warehouse, optionally sold the moment it lands). Goods are escrowed and the fee charged at
+  booking; the fee is a pure **credit sink**, destroyed rather than paid to anyone, and never refunded.
+  Departures run on a fixed timetable, one freighter per destination that has anything waiting in
+  either direction. A per-corporation cap bounds each departure — an oversized lot is never refused, it
+  simply rides several consecutive departures. A **Depot** at the destination doubles that cap and
+  discounts the fee.
+- **Freighters are real objects.** They broadcast under the Convention like any civilian hull, and they
+  can be raided (their manifest is stolen) or destroyed (everything aboard is lost). A freighter's
+  manifest is **two-tier per entry**: you always see your own lots, and anyone else's only from inside
+  sensor range. Pirates ignore Authority hulls; the enclaves prey on syndicate shipping, not on the
+  flag that hunts them.
+- **The Authority holds your goods.** If a lot can't be delivered — the system changed hands, or its
+  depot is full — the freighter carries it **back to your warehouse** rather than destroying it.
+  Deliberately friendlier than the convoy cargo-lost rule.
+- **Light-honest refusals.** The Charterhouse refuses bookings to a system it believes blockaded, on
+  its **own light-delayed knowledge**: it keeps accepting until the blockade's light reaches the hub,
+  and keeps refusing until the lift's light does. Freight already in flight carries on — it launched on
+  information that was true when it left.
+- **Sovereignty.** No engagement may *open* within the Charterhouse's sovereign radius, for either
+  party. Fleeing into it is sanctuary, by design.
+- **Standing & enforcement: Phase 2.** In this phase a freighter kill is *consequence-free*. The
+  Authority projects no force beyond the wormhole's vicinity, and protection of its own hulls is
+  retributive, not preventive. Charter standing, citations, tariffs, freight suspension, market lockout
+  and enforcement expeditions all arrive in a later phase.
 
 ### Other inherited economic structure
 
 - **Valuations update slowly** (periodic close) to keep share prices readable and prevent
   earnings-momentum noise.
 - **Standing orders** handle routine business (sell output, restock, maintain inventory) so the
-  economy runs unattended — the async promise applied to commerce.
+  economy runs unattended — the async promise applied to commerce. A rule delivering to the
+  Charterhouse now chooses whether to **sell on arrival** or bank the goods in the warehouse to trade
+  later. (Standing-order convoys remain free auto-spawned hulls in this phase; unifying them with
+  booked Authority freight is deferred.)
 
 ---
 
@@ -559,9 +611,12 @@ self-contained elaboration and one genuine endgame-balance question.
 - **Lanes & coherence (was Q3) — DECIDED:** lanes are **movement-only** (speed/fuel via the
   mass-reduction fiction, §10); the coherence/information field stays a **separate** placement-based
   system. Convoys are **locked as the largest ships**.
-- **Market: stale prices & sell-side (was Q4, in part) — DECIDED:** stale-price limit orders are
-  **accepted as-is** (no protection, but staleness must be *disclosed*); the **buy/sell asymmetry is
-  kept** (sellers clear at price-on-arrival, not a locked launch price) — both in §9.
+- **Market: stale prices & sell-side (was Q4, in part) — DECIDED, then SUPERSEDED:** stale-price limit
+  orders are still **accepted as-is** (no protection, but staleness must be *disclosed*). The old
+  **buy/sell asymmetry** (sellers clearing at price-on-arrival, not a locked launch price) has since
+  been **retired** by the Charterhouse warehouse: the Exchange settles against goods already at the
+  station, so both sides are symmetric and price-certain, and *hauling* is a separate, explicit act
+  with its own risk. See §9 and §TCA.
 - **Conquest (was the Q5 cluster) — DECIDED & SIMPLIFIED:** victory is **conquest of rival homes**;
   homes **are attackable**; the entire coherence-warfare / buildable-anchors / key-starvation cluster
   is **retired** as a solution to a non-problem (§11).

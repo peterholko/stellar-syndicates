@@ -55,6 +55,10 @@ const COL_ALLY = 0x74e08c;
 // §pirates: the neutral PIRATE faction — a menacing AMBER-ORANGE, distinct from
 // own cyan / ally green / rival salmon. "Nobody's friend."
 const COL_PIRATE = 0xe08a2c;
+// §TCA: the TERRAN CHARTER AUTHORITY — a cool institutional STEEL-BLUE, read as
+// "neutral officialdom": not yours, not a rival, not a pirate. Its freighters are
+// the only hulls that wear it.
+const COL_TCA = 0x7fa6c8;
 // §node: EXOTIC NODES — a VIOLET exotic accent, distinct from every faction hue.
 // The glyph marks a node; ownership stays on the system ring/tint.
 const COL_NODE = 0xb98cff;
@@ -1273,7 +1277,7 @@ export class Renderer {
     g.clear();
     for (const gh of state.ghosts) {
       if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
-      const color = gh.own ? COL_OWN : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
+      const color = gh.own ? COL_OWN : gh.tca ? COL_TCA : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
       const pts = gh.route.map((w) => this.worldToScreen(w));
       g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
@@ -1366,6 +1370,9 @@ export class Renderer {
       case "battleship": return this.texBattleship;
       case "dreadnought": return this.texDreadnought;
       case "titan": return this.texTitan;
+      // §TCA: the Authority freighter reuses the bulk-hauler art; its neutral
+      // TINT is what distinguishes it from a corporation's convoy.
+      case "freighter": return this.texConvoy;
     }
   }
 
@@ -1386,6 +1393,7 @@ export class Renderer {
       case "dreadnought":
       case "titan":
         return null;
+      case "freighter": return "freighter";
     }
   }
 
@@ -1709,7 +1717,7 @@ export class Renderer {
     const pip = sp.pip;
     pip.clear();
     // §syndicates: own = cyan, ALLY (light-delayed known member) = green, rival = red.
-    const pipCol = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
+    const pipCol = own ? COL_OWN : ghost.tca ? COL_TCA : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
     const half = this.fleetHitRadius(ghost); // half the MARKER's current on-screen size (formation included)
     const pipR = Math.max(3.2, Math.min(8, half * 0.14));
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
@@ -1788,7 +1796,7 @@ export class Renderer {
       const h = 12;
       const bx = halfB * 0.66;
       const by = halfB * 0.55;
-      const edge = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
+      const edge = own ? COL_OWN : ghost.tca ? COL_TCA : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
       const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
       sp.badge
         .roundRect(bx - w / 2, by - h / 2, w, h, 5)

@@ -904,3 +904,73 @@ then **balance** (via the bot simulator + human playtest).
 - **Balance is deliberately untuned** (per the design): ship speeds, galaxy size,
   `c`, and raid radii are first-pass values chosen for legible delays, not
   balance.
+
+## STATUS — Charterhouse Warehouse + TCA Freight (Phase 1 of 2)
+
+Phase 1 is **complete**: all six parts landed on `async-automation`, one commit
+each, every checkpoint green (**sim 307 tests, server 57, client `tsc` + `vite
+build` clean**, up from a 278/56 baseline).
+
+| Part | What landed |
+|---|---|
+| 1 | `sim/tca.rs` (tunables + freight data model), `PlayerId::TCA`, `ShipKind::Freighter` (non-buildable), `Corporation.warehouse`, `World.freight_queue`/`freight_runs`, valuation coverage, snapshot-compat test |
+| 2 | Warehouse-only Exchange: buys deposit, sells/limit-escrow draw only from it, no auto-convoys, typed soft-rejects, grandfathered in-flight convoys |
+| 3 | `BookFreightOut`/`BookFreightIn`, the pure tick-keyed departure scheduler, physical freighter runs, `MarketBuy { ship_to }`, owner-only notices, `FreightView` on the wire |
+| 4 | Two-tier manifest fog + view leak test, raid-steals-from-manifest / attack-destroys, pirate exclusion, light-delayed blockade refusal, `engage_freight`, the sovereignty bubble |
+| 5 | `HubLoad`/`HubUnload`/`SystemLoad`/`SystemUnload`, `TradeMission::DeliverToWarehouse`, `HaulToCharterhouse`, `Endpoint::Hub` repoint with a serde-default-true `sell_on_arrival` |
+| 6 | The Charterhouse panel (Exchange + warehouse + freight desk + shipment queue), freighter tint, convoy logistics UI, GDD §9 rewrite + §TCA section |
+
+Nothing is stubbed. A two-player smoke run was driven end to end in the browser:
+buy → warehouse → book freight → scheduled departure → freighter away, with the
+manifest correctly showing the owner their own lot at `revealed: false`.
+
+### Decisions the handoff left open (all commented at the code and tested)
+
+- **Undeliverable freight returns to the warehouse.** A lot that can't land — the
+  system changed hands, or its depot is full — rides home rather than being
+  destroyed. Freight also *respects the storage cap*, so it can't smuggle goods
+  past a limit convoys obey.
+- **TCA freight earns no `trade_units`.** That counter is a corp's own convoys
+  hauling; paying the Authority to carry goods safely shouldn't score like taking
+  the risk yourself. For the same reason an instant warehouse sale no longer
+  counts either (it moves nothing, and would otherwise be farmable risk-free).
+- **`Fleet.disposable`** distinguishes auto-spawned one-run convoys from player
+  hulls. Without it, repointing the hub endpoint at the *surviving*
+  `DeliverToWarehouse` mission would have turned standing orders into a
+  free-convoy factory.
+- **`Fleet::cargo_capacity()`** (250 units/convoy) bounds the **manual** load
+  commands only. Auto-spawned convoys predate any capacity rule and are left
+  alone — retrofitting it would silently change existing economy behaviour.
+- **Combat-order rejects** got their own `OrderRejectReason` rather than riding
+  the trade event stream, which carries a commodity a fleet order doesn't have.
+
+### Where the code contradicted the spec (flagged, not improvised around)
+
+- **`player_id_from_name` had no sentinel guard.** `ids.rs` claimed the server
+  "guards against ever colliding with" `PlayerId::PIRATE`; the function was a
+  bare FNV hash with no such check. Adding TCA made the claim matter, so the
+  guard is now real (behaviour-preserving for every name that isn't one of the
+  two exact sentinel hashes).
+- **"New code must never create `DeliverHome`/`SellAtHub`."** `SellAtHub` is now
+  created **nowhere** and survives only to resolve grandfathered convoys.
+  `DeliverHome` is *still* created — by `Endpoint::Home` standing orders and the
+  ReturnHome divert policy — because Part 5 explicitly leaves those untouched and
+  there is no "warehouse at home" to replace them. Read as scoped to the
+  hub/Exchange paths.
+- **The `raid` flag keyed on `t_kind == Convoy`**, so adding Freighter to the
+  civilian set was not enough — a freighter contact would silently have been a
+  battle rather than a steal. Fixed in Part 4.
+- **No cargo capacity existed** despite `Fleet.cargo`'s doc claiming "capacity
+  scales with the number of convoys aboard". Part 5 gives it a number.
+- **Full-world JSON is not byte-stable** (a known 1-ULP float wobble an existing
+  test already tolerates), so the snapshot-compat test asserts structurally.
+
+### Deferred to Phase 2, as specified
+
+`tca_standing`, charter statuses, citations, tariffs, freight suspension, market
+lockout, enforcement expeditions. **A freighter kill is consequence-free until
+then.** Also still deferred: warehouse capacity/storage fees, `Endpoint::Hub` as a
+standing-order *source*, unifying standing-order convoys with booked freight,
+priority departures, per-Depot-tier terms, limit-price `sell_on_arrival`,
+multi-commodity player holds, pirate predation on TCA freight. Freight insurance
+remains **rejected** (refund-on-loss duplicates goods).

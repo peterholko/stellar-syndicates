@@ -13,7 +13,9 @@ export interface Vec2 {
 export type ShipKind =
   | "convoy" | "raider" | "corvette" | "colony" | "scout"
   // §ladder: the research-gated warship ladder.
-  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan";
+  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
+  // §TCA: the Authority's common carrier — never buildable by a corporation.
+  | "freighter";
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
 // is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
@@ -320,9 +322,69 @@ export interface OrderView {
 export interface WalletView {
   credits: number;
   valuation: number; // equity / net worth (slow §9 close)
-  inventory: InvSlot[];
+  inventory: InvSlot[]; // goods held AT HOME
+  /// §TCA: goods at the CHARTERHOUSE — the only stock the Exchange trades against.
+  warehouse: InvSlot[];
   orders: OrderView[];
   fuel_total: number; // §step1 — total Fuel across owned systems (fleet reserve)
+}
+
+// --- §TCA: the Charterhouse freight desk ------------------------------------
+/// Which way a booked lot moves, relative to the Charterhouse.
+export type ShipmentDir = "outbound" | "inbound";
+
+/// One of the viewer's own lots — queued for a departure or aboard a freighter.
+export interface ShipmentView {
+  id: number;
+  system: EntityId;
+  commodity: Commodity;
+  units: number;
+  direction: ShipmentDir;
+  sell_on_arrival: boolean;
+  fee_paid: number;
+  booked_at: number;
+  aboard: boolean; // false = still queued at the Charterhouse
+}
+
+/// The Authority's terms for one owned destination. EXACT, not estimated — the
+/// timetable and the freighter's constant cruise are pure functions of config.
+export interface FreightTermsView {
+  system: EntityId;
+  distance: number;
+  depot: boolean;
+  cap: number; // max units this corp may load per departure
+  secs_out: number; // one-way flight time
+  secs_round: number; // out and back (an inbound lot's total after departure)
+}
+
+export interface FreightView {
+  next_departure: number; // sim-time of the next scheduled departure
+  period: number; // seconds between departures
+  // fee = units × (price × fee_frac + distance × fee_per_unit_dist),
+  // then × depot_fee_mult if the destination has a Depot.
+  fee_frac: number;
+  fee_per_unit_dist: number;
+  depot_fee_mult: number;
+  terms: FreightTermsView[];
+  shipments: ShipmentView[];
+}
+
+/// One entry of a freighter's manifest as this viewer may read it: their own lots
+/// always, anyone else's only from inside sensor range.
+export interface ManifestEntryView {
+  owner: PlayerId;
+  commodity: Commodity;
+  units: number;
+  direction: ShipmentDir;
+  mine: boolean;
+}
+
+/// §TCA: price a lot exactly as the sim will charge for it. Mirrors
+/// `tca::freight_fee`; the Rust test `exposed_terms_reproduce_the_charged_fee`
+/// guards the two against drifting apart.
+export function freightFee(f: FreightView, t: FreightTermsView, unitPrice: number, units: number): number {
+  const raw = units * (unitPrice * f.fee_frac + t.distance * f.fee_per_unit_dist);
+  return Math.max(0, t.depot ? raw * f.depot_fee_mult : raw);
 }
 
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
@@ -336,7 +398,34 @@ export type TradeEvent =
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
   | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
   | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
-  | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
+  | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
+  | { event: "Rejected"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null; reason: TradeRejectReason }
+  | { event: "FreightBooked"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; direction: ShipmentDir; fee: number; depart_at: number; eta: number }
+  | { event: "FreightMoved"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; stage: FreightStage }
+  | { event: "Loaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
+  | { event: "Unloaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null };
+
+/// Why an Exchange order or freight booking was soft-rejected (free, owner-only).
+export type TradeRejectReason =
+  | { reason: "insufficient_warehouse_stock"; have: number }
+  | { reason: "not_your_system" }
+  | { reason: "insufficient_system_stock"; have: number }
+  | { reason: "cannot_afford_fee"; fee: number }
+  | { reason: "destination_blockaded" }
+  | { reason: "fleet_unavailable" }
+  | { reason: "out_of_logistics_range" }
+  | { reason: "no_cargo_room"; capacity: number }
+  | { reason: "cargo_mismatch" };
+
+/// Where a freight lot got to.
+export type FreightStage =
+  | "departed"
+  | "delivered_to_system"
+  | "collected_for_pickup"
+  | "arrived_at_warehouse"
+  | "returned_undeliverable"
+  | "forfeited_on_capture"
+  | "lost_with_freighter";
 
 export type DivertAction = "lost" | "returned_home" | "sold_at_hub";
 
@@ -360,6 +449,9 @@ export interface StandingOrder {
   status: OrderStatus;
   next_eval_tick: number;
   in_flight: EntityId | null;
+  /// §TCA: for a `hub` destination, sell on arrival at the Charterhouse or just
+  /// deposit into the warehouse. Defaults TRUE server-side for legacy orders.
+  sell_on_arrival: boolean;
 }
 
 // --- Fleet doctrine (§16) — constrained combat & logistics policy. Mirrors the
@@ -504,6 +596,16 @@ export interface GhostView {
   // §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
   // drives the distinct hostile-neutral tint. Hostile to everyone.
   pirate?: boolean;
+  /// §TCA: a Terran Charter Authority FREIGHTER — the scheduled common carrier.
+  /// Drives its own neutral tint, distinct from a corporation's convoy.
+  tca?: boolean;
+  /// §TCA: the freighter's manifest as YOU may read it — your own lots always,
+  /// anyone else's only from inside sensor range. Empty for any other fleet.
+  manifest?: ManifestEntryView[];
+  /// Close enough to read this ghost's cargo/manifest (Tier 2).
+  revealed?: boolean;
+  /// §TCA: OWNER-ONLY — whether this blockading fleet engages Authority freight.
+  engage_freight?: boolean | null;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -533,7 +635,16 @@ export type ClientMsg =
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
-  | { type: "MarketBuy"; commodity: Commodity; units: number }
+  | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }
+  // §TCA: book Authority freight, and the player-convoy logistics verbs.
+  | { type: "BookFreightOut"; system: EntityId; commodity: Commodity; units: number }
+  | { type: "BookFreightIn"; system: EntityId; commodity: Commodity; units: number; sell_on_arrival: boolean }
+  | { type: "HubLoad"; fleet_id: EntityId; commodity: Commodity; units: number }
+  | { type: "HubUnload"; fleet_id: EntityId }
+  | { type: "SystemLoad"; fleet_id: EntityId; system: EntityId; commodity: Commodity; units: number }
+  | { type: "SystemUnload"; fleet_id: EntityId; system: EntityId }
+  | { type: "HaulToCharterhouse"; fleet_id: EntityId; sell_on_arrival: boolean }
+  | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "ShipProduction"; system_id: EntityId }
@@ -895,6 +1006,9 @@ export type ServerMsg =
       ghosts: GhostView[];
       market: MarketView;
       wallet: WalletView;
+      /// §TCA: the Charterhouse freight desk — timetable, per-destination terms,
+      /// and YOUR own shipment queue. Owner-only, fresh.
+      freight: FreightView;
       standing_orders: StandingOrder[];
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).

@@ -2,7 +2,7 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, FleetDoctrine, GalaxyInfo, GhostView, MarketView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+import type { AnchorView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
@@ -55,6 +55,9 @@ export interface ViewState {
   /// Sim-time of the last price-history sample, to throttle accumulation.
   lastPriceSampleAt: number;
   wallet: WalletView | null;
+  /// §TCA: the Charterhouse freight desk — timetable, per-destination terms, and
+  /// the player's OWN shipment queue. Owner-only, fresh from the View.
+  freight: FreightView | null;
   /// The player's own standing logistics orders (§15), fresh from the View.
   standingOrders: StandingOrder[];
   /// The player's own fleet doctrine (§16), fresh from the View.
@@ -133,6 +136,7 @@ export function initialState(): ViewState {
     priceHistory: {},
     lastPriceSampleAt: -1,
     wallet: null,
+    freight: null,
     standingOrders: [],
     doctrine: defaultDoctrine(),
     pendingOrders: new Map(),

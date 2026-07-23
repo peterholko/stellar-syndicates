@@ -1090,6 +1090,7 @@
             </div>
             <div class="so-row" id="so-floor-row"><label>%→keep</label><input id="so-floor" type="number" step="1" min="0" value="50" title="percent (1-100) and floor to leave behind" /></div>
             <div class="so-row"><label>To</label><select id="so-dest"></select></div>
+            <div class="so-row" id="so-sell-row"><label>On arrival</label><label class="so-check" title="Charterhouse rules only: SELL the lot at the standing price on arrival, or leave it in your warehouse to trade later."><input id="so-sell" type="checkbox" checked /> sell at the Charterhouse</label></div>
             <button id="so-add">Add standing order</button>
           </div>
           <div class="mhint dim">Rules run on the server — online or off. Each spawns a raidable convoy when it fires; at most one in flight per rule. You set policy; geography + raids do the rest.</div>
@@ -1142,7 +1143,7 @@
     <!-- HUB EXCHANGE — a galaxy-wide institution, NOT tied to any selected system,
          so it opens from the TOP NAVBAR (and M), independent of the right rail. -->
     <div id="market">
-      <div class="panel-title"><div><div class="eyebrow">the shared commons · light-delayed</div><h2>Hub Exchange</h2></div><div class="panel-title__right"><span id="market-fresh" class="badge badge--neutral"></span><button class="rail__close" id="market-close" type="button" title="Close (Esc)" aria-label="Close market">✕</button></div></div>
+      <div class="panel-title"><div><div class="eyebrow">the Terran Charter Authority · light-delayed</div><h2>The Charterhouse</h2></div><div class="panel-title__right"><span id="market-fresh" class="badge badge--neutral"></span><button class="rail__close" id="market-close" type="button" title="Close (Esc)" aria-label="Close Charterhouse">✕</button></div></div>
       <div id="market-wallet" class="stat-strip"></div>
       <div class="seg" id="market-tabs" role="tablist" style="margin: 6px 0 8px">
         <button data-mtab="exchange" class="is-active" role="tab">Exchange</button>
@@ -1181,6 +1182,44 @@
         <div id="mk-supply-rows" style="margin-top:8px"></div>
         <div class="mhint" id="mk-supply-feedback"></div>
       </div>
+      <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span>held</span></div>
+      <div id="market-board"></div>
+      <div class="composer">
+        <div class="composer__row"><label>Order</label>
+          <div class="seg" id="mk-side"><button data-side="buy" class="is-active">Buy</button><button data-side="sell">Sell</button></div>
+          <span class="composer__sel" id="mk-sel">—</span>
+        </div>
+        <div class="composer__row"><label>Qty</label><input type="number" id="mk-qty" min="1" value="50" />
+          <label class="lim"><input type="checkbox" id="mk-limit-on" /> limit @</label><input type="number" id="mk-limit" step="0.1" placeholder="mkt" disabled /></div>
+        <div class="composer__row" id="mk-shipto-row"><label>Deliver</label><select id="mk-shipto" title="Buy, then hand the lot straight to Authority freight for one of your systems. If the booking can't be honoured the goods simply stay in your warehouse."></select></div>
+        <div class="composer__preview" id="mk-preview"></div>
+        <button class="act act--primary" id="mk-submit">Buy</button>
+        <div class="mhint" id="mk-feedback"></div>
+      </div>
+      <div class="mkt-orders" id="market-orders"></div>
+
+      <!-- §TCA: the WAREHOUSE — the only stock the Exchange trades against. -->
+      <div class="ci-sub">Your warehouse · at the Charterhouse</div>
+      <div id="wh-table" class="mkt-orders"></div>
+
+      <!-- §TCA: the FREIGHT DESK — book the Authority's scheduled carrier. -->
+      <div class="ci-sub">Authority freight · scheduled service</div>
+      <div class="composer">
+        <div class="composer__row"><label>Direction</label>
+          <div class="seg" id="fr-dir"><button data-dir="outbound" class="is-active">Warehouse → system</button><button data-dir="inbound">System → warehouse</button></div>
+        </div>
+        <div class="composer__row"><label>System</label><select id="fr-system"></select></div>
+        <div class="composer__row"><label>Goods</label><select id="fr-commodity"></select>
+          <label>Qty</label><input type="number" id="fr-qty" min="1" value="100" /></div>
+        <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Exchange the moment it lands at the Charterhouse, at that tick's standing price."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
+        <div class="composer__preview" id="fr-preview"></div>
+        <button class="act act--primary" id="fr-submit">Book freight</button>
+        <div class="mhint" id="fr-feedback"></div>
+      </div>
+      <div class="ci-sub">Shipments in hand</div>
+      <div id="fr-queue" class="mkt-orders"></div>
+
+      <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
     </div>
 
     <!-- Check-in timeline + attention (§16, Layer 3) — the welcome-back digest. -->
