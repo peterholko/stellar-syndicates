@@ -469,10 +469,46 @@ player: it holds no territory, never appears in rankings, and takes no side.
   information that was true when it left.
 - **Sovereignty.** No engagement may *open* within the Charterhouse's sovereign radius, for either
   party. Fleeing into it is sanctuary, by design.
-- **Standing & enforcement: Phase 2.** In this phase a freighter kill is *consequence-free*. The
-  Authority projects no force beyond the wormhole's vicinity, and protection of its own hulls is
-  retributive, not preventive. Charter standing, citations, tariffs, freight suspension, market lockout
-  and enforcement expeditions all arrive in a later phase.
+### The law: standing, citations, and enforcement
+
+The Authority's protection of its own hulls is **retributive, not preventive** — it runs no patrols and
+posts no escorts, and the frontier stays lawless. What it does instead is *remember*, and *price*.
+
+**This is priced outlawry, not prohibition.** Every consequence below is a cost a player can knowingly
+pay. None of them is a wall. If a band ever makes attacking Authority freight strictly irrational, the
+tuning is wrong — raiding the Charterhouse's shipping is meant to stay a live, expensive option.
+
+- **Charter standing** is one number per corporation, starting at full and regenerating slowly and
+  unconditionally in *every* band — time served is time served, so nobody is ever locked out by
+  arithmetic alone. The five **charter statuses** are derived from it, never stored:
+
+  | Band | At | What it costs you |
+  |---|---|---|
+  | **Good Standing** | full | Nothing. No tariff, no fee, nothing withheld. |
+  | **Sanctioned** | below full | Freight tariff and an Exchange penalty fee, both ramping with the fall. |
+  | **Suspended** | ~4 incidents | …and no *new* freight bookings. Freight already booked still completes. |
+  | **Revoked** | ~8 incidents | …and the Exchange is closed. Resting orders are grandfathered; your warehouse is still yours to fetch from. |
+  | **Proscribed** | ~12 incidents | …and the Authority sends **enforcement expeditions**. |
+
+- **Citations arrive at c.** Killing a freighter changes *nothing* at the scene. The incident travels
+  to the Charterhouse at lightspeed; only on arrival does standing move and a **public bulletin** issue
+  naming the culprit — which then radiates outward to every player at c. A spree deep on the frontier
+  drags a visible light-cone of consequences toward the map's centre behind you. The reputational hit
+  and the legal one ride the same wavefront.
+- **The Authority protects only its own hulls.** Raiding a *rival's* convoy is ordinary frontier
+  business and produces no citation, ever.
+- **Enforcement expeditions** are scripted, announced, and survivable: a squadron sails from the hub to
+  blockade a proscribed corporation's nearest holding, using the ordinary blockade mechanic unmodified.
+  The announcement's light outruns the sub-light squadron, so the warning genuinely arrives first —
+  that *is* the lead time. It can be fought (destroying it ends it early, at the cost of a graver
+  citation), waited out (it stands down on its own), or **called off by paying up**. It costs a
+  proscribed corporation economy-time; it can never cost them a colony.
+- **Reinstatement** buys standing back at a fixed price per point, burned as a sink. Paying visibly
+  calls off an inbound expedition — the most direct expression of the whole design: the law is a bill,
+  and you may settle it.
+
+Deliberately *not* built: privateering / letters of marque, syndicate-shared standing, TCA bounties or
+escorts, and any standing effect from player-versus-player combat.
 
 ### Other inherited economic structure
 

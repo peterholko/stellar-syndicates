@@ -357,6 +357,27 @@ export interface FreightTermsView {
   secs_round: number; // out and back (an inbound lot's total after departure)
 }
 
+/// §TCA Phase 2: the five charter bands, worsening in order.
+export type CharterStatus = "good_standing" | "sanctioned" | "suspended" | "revoked" | "proscribed";
+
+/// The viewer's OWN charter standing with the Authority. Owner-only — rivals
+/// learn of your offenses from public citations, never from your record.
+export interface CharterView {
+  standing: number;
+  max_standing: number;
+  status: CharterStatus;
+  /// Human title of the band ("Good Standing" … "Proscribed").
+  title: string;
+  /// (title, the standing at which the band begins as standing falls). Server-
+  /// supplied so the thresholds are never duplicated here.
+  ladder: [string, number][];
+  /// Freight-fee multiplier now applied (1.0 in good standing).
+  tariff_mult: number;
+  /// Exchange penalty fee now applied, as a fraction of trade value (0 when lawful).
+  market_penalty_frac: number;
+  reinstate_cost_per_point: number;
+}
+
 export interface FreightView {
   next_departure: number; // sim-time of the next scheduled departure
   period: number; // seconds between departures
@@ -389,12 +410,12 @@ export function freightFee(f: FreightView, t: FreightTermsView, unitPrice: numbe
 
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
 export type TradeEvent =
-  | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
-  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
-  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
+  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
   | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
   | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
@@ -403,7 +424,8 @@ export type TradeEvent =
   | { event: "FreightBooked"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; direction: ShipmentDir; fee: number; depart_at: number; eta: number }
   | { event: "FreightMoved"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; stage: FreightStage }
   | { event: "Loaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
-  | { event: "Unloaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null };
+  | { event: "Unloaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
+  | { event: "CharterReinstated"; player: PlayerId; points: number; cost: number; before: number; after: number };
 
 /// Why an Exchange order or freight booking was soft-rejected (free, owner-only).
 export type TradeRejectReason =
@@ -415,7 +437,10 @@ export type TradeRejectReason =
   | { reason: "fleet_unavailable" }
   | { reason: "out_of_logistics_range" }
   | { reason: "no_cargo_room"; capacity: number }
-  | { reason: "cargo_mismatch" };
+  | { reason: "cargo_mismatch" }
+  | { reason: "charter_suspended" }
+  | { reason: "charter_revoked" }
+  | { reason: "cant_afford"; cost: number };
 
 /// Where a freight lot got to.
 export type FreightStage =
@@ -645,6 +670,7 @@ export type ClientMsg =
   | { type: "SystemUnload"; fleet_id: EntityId; system: EntityId }
   | { type: "HaulToCharterhouse"; fleet_id: EntityId; sell_on_arrival: boolean }
   | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
+  | { type: "PayReinstatement"; points: number }
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "ShipProduction"; system_id: EntityId }
@@ -1009,6 +1035,8 @@ export type ServerMsg =
       /// §TCA: the Charterhouse freight desk — timetable, per-destination terms,
       /// and YOUR own shipment queue. Owner-only, fresh.
       freight: FreightView;
+      /// §TCA Phase 2: YOUR charter standing and band. Owner-only.
+      charter: CharterView;
       standing_orders: StandingOrder[];
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).

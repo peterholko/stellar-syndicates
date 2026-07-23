@@ -182,6 +182,10 @@ const CARGO_MASS_PER_UNIT = 28;
 // §TCA Part 5: mirrors `tca::LOGISTICS_RANGE` — how close a fleet must be to a
 // dock (the Charterhouse, or one of your systems) to load or unload.
 const LOGISTICS_RANGE_UI = 260;
+// §TCA Phase 2: mirrors `tca::TCA_STANDING_LOSS_PER_INCIDENT` — used only for the
+// client-side "projected status" preview on hostile orders. A forecast, never a
+// promise: the real citation lands when its light reaches the Charterhouse.
+const TCA_INCIDENT_LOSS_UI = 10;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
 
@@ -451,7 +455,11 @@ function buildShipPanel(): void {
         $("readout").innerHTML = `Refit ordered: <b>${n}× ${esc(shipKindLabel(ship))}</b> → ${to.length ? to.map((m) => MODULE_GLYPH[m]).join(" ") : "stock"} <span class="dim">(at a docked Shipyard; needs the added modules in the system ledger).</span>`;
       }
     } else if (act === "engage-freight" && state.selectedShipId && net) {
-      net.send({ type: "SetEngageFreight", fleet_id: state.selectedShipId, on: (b as HTMLElement).dataset.on === "1" });
+      const turningOn = (b as HTMLElement).dataset.on === "1";
+      if (turningOn && !confirmAuthorityHostility("Engage Authority freight arriving at this blockade?")) {
+        return;
+      }
+      net.send({ type: "SetEngageFreight", fleet_id: state.selectedShipId, on: turningOn });
     } else if ((act === "load" || act === "unload" || act === "haul") && state.selectedShipId && net) {
       // §TCA Part 5: dockside logistics. Which dock we're at decides hub-vs-system.
       const fleet_id = state.selectedShipId;
@@ -844,13 +852,29 @@ function updateShipPanel(): void {
     return;
   }
   const own = g.own;
-  const eyebrow = own ? "your fleet" : g.kind === "raider" ? "dark contact" : "rival contact";
-  const ownTag = own ? badge("accent", "yours") : badge("negative", "rival");
+  // §TCA: an Authority hull is named for what it IS — a scheduled common carrier,
+  // or an enforcement warship. Both fly the same flag; only one is a threat, and
+  // both are neutral rather than "rival".
+  const eyebrow = own
+    ? "your fleet"
+    : g.tca
+      ? "Terran Charter Authority"
+      : g.pirate
+        ? "pirate contact"
+        : g.kind === "raider"
+          ? "dark contact"
+          : "rival contact";
+  const title = g.tca
+    ? g.kind === "freighter"
+      ? "Authority Freighter"
+      : "Authority Enforcement"
+    : shipKindLabel(g.kind);
+  const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
   const stale = g.age >= 8;
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${svgIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${svgIcon(g.kind === "convoy" || g.kind === "freighter" ? "concept-convoy" : "concept-fleet", "md")} ${esc(title)}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -2721,6 +2745,11 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
+      // §TCA Phase 2: attacking an AUTHORITY hull is priced, not forbidden — warn
+      // with the projected band, then do exactly what the player asked.
+      if (tgt.tca && !confirmAuthorityHostility(`Attack a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
+        return;
+      }
       if (shift && haveStrike && net) {
         // §offensive-orders Part 1: ATTACK to DESTROY (shift+click) — a full battle,
         // a convoy's cargo is lost with it (RAID steals, ATTACK kills).
@@ -4596,6 +4625,16 @@ function buildMarketPanel(): void {
     renderComposer();
   });
   $("mk-qty").addEventListener("input", renderComposer);
+  // §TCA Phase 2: the reinstatement control. The rows rebuild every View, so both
+  // listeners are delegated on the persistent panel root (§single-click).
+  $("market").addEventListener("input", (e) => {
+    if ((e.target as HTMLElement).id === "ch-points") syncReinstateCost();
+  });
+  $("market").addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).id !== "ch-pay" || !net) return;
+    const points = Math.max(1, Math.floor(Number(($("ch-points") as HTMLInputElement).value) || 0));
+    net.send({ type: "PayReinstatement", points });
+  });
   $("mk-shipto").addEventListener("change", renderComposer);
   // --- §TCA freight desk ---
   const frCom = $("fr-commodity") as HTMLSelectElement;
@@ -4874,6 +4913,7 @@ function updateMarket(): void {
   renderSpecialistsPane();
   renderModulesPane();
   renderSupplyPane();
+  renderCharter();
   renderWarehouse();
   renderFreightDesk();
   renderShipmentQueue();
@@ -4883,14 +4923,20 @@ function addTradeNews(t: TradeEvent): void {
   const log = $("reports-log");
   let text = "";
   switch (t.event) {
-    case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your Charterhouse warehouse.`; break;
+    case "Bought":
+      text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your Charterhouse warehouse.`
+        + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
       : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your Charterhouse warehouse.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
-    case "Sold": text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
+    case "Sold":
+      text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`
+        + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
     case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`; break;
     case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${label(t.commodity)} (auto, raidable).`; break;
@@ -4920,6 +4966,11 @@ function addTradeNews(t: TradeEvent): void {
         : t.stage === "returned_undeliverable" ? `⚠ ${what} couldn't unload at ${where} — returned to your warehouse.`
         : t.stage === "forfeited_on_capture" ? `✖ Lost ${what} awaiting pickup at ${where} — the system fell first.`
         : `✖ ${what} destroyed with the Authority freighter carrying it (${where}).`;
+      break;
+    }
+    case "CharterReinstated": {
+      const band = t.after > t.before ? "" : "";
+      text = `Paid the Authority ${fmt(t.cost)} Cr for ${t.points.toFixed(0)} standing (${t.before.toFixed(0)} → ${t.after.toFixed(0)}).${band}`;
       break;
     }
     case "Loaded": text = `Loaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the Charterhouse"}.`; break;
@@ -5646,6 +5697,7 @@ function join(): void {
           state.market = msg.market;
           state.wallet = msg.wallet;
           state.freight = msg.freight;
+          state.charter = msg.charter;
           state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
@@ -5846,5 +5898,101 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
         : `Not enough hold for ${t.units} ${com}: this fleet lifts ${t.reason.capacity} units.`;
     case "cargo_mismatch":
       return `That hold is already carrying something else — unload before loading ${com}.`;
+    case "charter_suspended":
+      return `Your charter is SUSPENDED — the Authority takes no new freight. Freight already booked still completes; pay reinstatement, or haul it yourself.`;
+    case "charter_revoked":
+      return `Your charter is REVOKED — the Exchange is closed to you. Your warehouse is still yours to fetch from; pay reinstatement to trade again.`;
+    case "cant_afford":
+      return `Reinstatement costs ${fmt(t.reason.cost)} credits — more than your treasury.`;
   }
+}
+
+
+// --- §TCA Phase 2: the charter status block ----------------------------------
+
+/// The charter chip + band ladder + (when it bites) the live cost of the band,
+/// and the reinstatement control. Rendered as a LEGAL STATUS — a ladder of named
+/// bands with their thresholds — rather than a reputation bar, because that is
+/// what it is: priced outlawry, with the price written down.
+function renderCharter(): void {
+  const ch = state.charter;
+  if (!ch) {
+    $("charter-block").innerHTML = "";
+    return;
+  }
+  const tone =
+    ch.status === "good_standing" ? "positive"
+    : ch.status === "sanctioned" ? "neutral"
+    : ch.status === "suspended" ? "warn"
+    : "negative";
+  const rows = ch.ladder
+    .map(([title, at], i) => {
+      const active = title === ch.title;
+      // The first row is the ceiling ("at 100"); the rest read as "below/at N".
+      const bound = i === 0 ? `at ${at.toFixed(0)}` : i === 1 ? `below ${at.toFixed(0)}` : `at ${at.toFixed(0)}`;
+      return `<div class="ord${active ? " is-active" : ""}"${active ? ' style="font-weight:600"' : ""}>` +
+        `${active ? "▸ " : "· "}${esc(title)} <span class="dim">${bound}</span></div>`;
+    })
+    .join("");
+  // What the band is costing right now — shown only when it actually bites.
+  const bites = ch.tariff_mult > 1.0 || ch.market_penalty_frac > 0;
+  const cost = bites
+    ? `<div class="mhint">Freight tariff <b>×${ch.tariff_mult.toFixed(2)}</b> · Exchange penalty ` +
+      `<b>${(ch.market_penalty_frac * 100).toFixed(1)}%</b> of trade value.</div>`
+    : `<div class="mhint dim">In good standing you pay no tariff and no Exchange penalty.</div>`;
+  const shortfall = Math.max(0, ch.max_standing - ch.standing);
+  const pay = shortfall > 0
+    ? `<div class="composer__row"><label>Reinstate</label>` +
+      `<input type="number" id="ch-points" min="1" step="1" value="${Math.ceil(Math.min(shortfall, 20))}" style="width:6em" />` +
+      `<button class="act" id="ch-pay" title="Buy charter standing back from the Authority. The credits are burned, and you are only ever charged for points actually restored.">Pay</button>` +
+      `<span class="dim" id="ch-cost"></span></div>`
+    : "";
+  $("charter-block").innerHTML =
+    `<div class="sp-line">${badge(tone, esc(ch.title))} <b>${ch.standing.toFixed(0)}</b><span class="dim">/${ch.max_standing.toFixed(0)}</span></div>` +
+    `<div class="mkt-orders">${rows}</div>` +
+    cost +
+    pay;
+  if (shortfall > 0) syncReinstateCost();
+}
+
+/// Live cost preview for the reinstatement control.
+function syncReinstateCost(): void {
+  const ch = state.charter;
+  const inp = $("ch-points") as HTMLInputElement | null;
+  const out = $("ch-cost");
+  if (!ch || !inp || !out) return;
+  const want = Math.max(0, Math.floor(Number(inp.value) || 0));
+  const restorable = Math.max(0, ch.max_standing - ch.standing);
+  const points = Math.min(want, restorable);
+  out.textContent = `${fmt(points * ch.reinstate_cost_per_point)} Cr for ${points.toFixed(0)} pts`;
+}
+
+/// §TCA Phase 2: the projected band after `loss` more standing — the client-side
+/// forecast behind the "this will be cited" confirmations. A PREVIEW, not a
+/// promise: the citation only lands when its light reaches the Charterhouse, and
+/// standing regenerates in the meantime.
+function projectedBand(loss: number): string {
+  const ch = state.charter;
+  if (!ch) return "unknown";
+  const after = ch.standing - loss;
+  // Walk the server-supplied ladder: the first row whose threshold we are at or
+  // below names the band (row 1, Sanctioned, is a strict "below").
+  let title = ch.ladder[0][0];
+  for (let i = 1; i < ch.ladder.length; i++) {
+    const [name, at] = ch.ladder[i];
+    const hit = i === 1 ? after < at : after <= at;
+    if (hit) title = name;
+  }
+  return title;
+}
+
+/// Confirm a hostile act against an Authority hull. NEVER a hard block — the
+/// whole design is priced outlawry, so the player is told the price and then
+/// allowed to pay it.
+function confirmAuthorityHostility(what: string): boolean {
+  const band = projectedBand(TCA_INCIDENT_LOSS_UI);
+  return window.confirm(
+    `${what}\n\nThis will be CITED by the Terran Charter Authority once its light reaches the Charterhouse.\n` +
+      `Projected charter status: ${band}.\n\nProceed?`,
+  );
 }

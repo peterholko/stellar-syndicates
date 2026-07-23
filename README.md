@@ -905,6 +905,71 @@ then **balance** (via the bot simulator + human playtest).
   `c`, and raid radii are first-pass values chosen for legible delays, not
   balance.
 
+## STATUS — TCA Standing, Citations & Enforcement (Phase 2 of 2)
+
+Phase 2 is **complete**: all six parts landed on `async-automation`, one commit
+each, every checkpoint green (**sim 331 tests, server 59, client `tsc` + `vite
+build` clean**, up from the Phase 1 close of 307/57).
+
+| Part | What landed |
+|---|---|
+| 1 | The TCA law tunable block, `Corporation.tca_standing`, the pure derived `CharterStatus`, unconditional regen, owner-only `CharterView` + leak test |
+| 2 | Incidents recorded at the wreck, citations applied when their light reaches the hub, public bulletins radiating from the Charterhouse at c |
+| 3 | Freight tariff, Exchange penalty fee, `Suspended` freight refusal, `Revoked` Exchange lockout with grandfathered resting orders |
+| 4 | Scripted enforcement expeditions — dispatch, announce, blockade, recall, stand down — on the existing blockade machinery |
+| 5 | `PayReinstatement`: clamped, burned, receipted, and it calls off an active expedition in the same tick |
+| 6 | Charter chip + band ladder, live tariff/penalty, reinstatement control, "this will be cited" confirms, Authority hull naming, GDD law section |
+
+Nothing is stubbed. Verified live in the browser: the charter view arrives on the
+wire in good standing (tariff ×1.00, penalty 0), and the panel renders the band
+ladder, the live cost of a fallen band (×2.63 / 8.1%), and the reinstatement
+control with its cost preview. No console errors.
+
+### Decisions the handoff left open
+
+- **Corvette** is the enforcement hull, and the reason is load-bearing: raiders
+  run DARK, which would contradict an *announced* expedition, while corvettes
+  broadcast. Their defense-heavy profile also makes the squadron a durable
+  economic obstacle rather than a slaughter — the "costs time, never colonies"
+  shape. Blockade establishment needs no raider aboard (that gate is only on the
+  player command), so the existing machinery accepts it unmodified.
+- **`PayReinstatement` is instant**, not light-delayed. The handoff said "no
+  special-casing"; every other economic command here (`MarketBuy`,
+  `BookFreightOut`) is already instant because settlement is correlation (§3).
+  Treating a payment to the Charterhouse as a courier run would have been the
+  special case.
+- **The penalty ramp clamps at Revoked** rather than escalating forever — the
+  deeper bands answer with expeditions, not an ever-steeper bill.
+- **Combat-order rejects** kept the Phase 1 `OrderRejectReason` split from the
+  trade event stream.
+
+### Where Phase 1 code contradicted this spec (flagged, not improvised around)
+
+- **`Citation::culprits` is a singleton in practice.** The handoff specifies
+  culprits as "the participating attacker corporations from the engagement", each
+  paying in full. But the engagement model only ever admits ONE attacker owner —
+  reinforcement requires `e.a_owner == a_owner_c`, and allies don't join an
+  attacker side either. So two rival corps jumping the same freighter form two
+  separate engagements, and only the one that lands the kill is cited. The
+  set-of-culprits machinery is built exactly as specified and will start mattering
+  if multi-owner attacker sides ever land; the test asserts what IS reachable (one
+  flat loss per corp per hull, however many fleets it brought).
+- **Raid and destruction coincide.** Phase 1's seizure only fires when the target
+  is emptied, so "raided" and "destroyed" are the same moment for a freighter. The
+  two offenses are therefore distinguished by the ORDER given (`Intercept` =
+  piracy, `Attack` = destruction) rather than by whether cargo survived.
+- **The band ladder's inclusivity is not uniform** — `Sanctioned` begins strictly
+  below full standing while the three `_AT` bands include their threshold. The
+  exported display ladder documents this and a test pins the two together.
+
+### Deferred, as specified
+
+Privateering / letters of marque; witnessed-vs-anonymous incidents;
+syndicate-shared or averaged standing; charter-archetype-differentiated terms; TCA
+bounties, escorts or patrols (the Authority's protection stays retributive only);
+and any standing effect from player-versus-player combat — with
+`raiding_a_player_convoy_is_never_an_incident` asserting that last one directly.
+
 ## STATUS — Charterhouse Warehouse + TCA Freight (Phase 1 of 2)
 
 Phase 1 is **complete**: all six parts landed on `async-automation`, one commit
