@@ -743,7 +743,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
         ),
         TradeEvent::Sold { commodity, units, unit_price, .. } => (
             Good,
-            format!("Sold {units} {} at the Charterhouse for {unit_price:.2} ea.", commodity_name(commodity)),
+            format!("Sold {units} {} at the hub for {unit_price:.2} ea.", commodity_name(commodity)),
         ),
         TradeEvent::Delivered { commodity, units, .. } => (
             Good,
@@ -767,7 +767,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
                 sim::DivertAction::SoldAtHub => (
                     Warn,
-                    format!("Supply to {name} re-routed to sell at the Charterhouse ({units} {com}) — system lost."),
+                    format!("Supply to {name} re-routed to sell at the hub ({units} {com}) — system lost."),
                 ),
             }
         }
@@ -778,7 +778,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
             (
                 Warn,
                 format!(
-                    "Depot full at {name}: {units} {} couldn't be stored — re-routed to sell at the Charterhouse. Ship goods out or build a Depot.",
+                    "Depot full at {name}: {units} {} couldn't be stored — re-routed to sell at the hub. Ship goods out or build a Depot.",
                     commodity_name(commodity)
                 ),
             )
@@ -793,11 +793,11 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     match &where_ {
                         Some(name) => format!(
-                            "Can't ship {units} {com} to {name}: your Charterhouse warehouse holds {have}."
+                            "Can't ship {units} {com} to {name}: your hub warehouse holds {have}."
                         ),
                         None => format!(
-                            "Can't sell {units} {com}: your Charterhouse warehouse holds {have}. \
-                             Ship goods to the Charterhouse first (Authority freight or a convoy)."
+                            "Can't sell {units} {com}: your hub warehouse holds {have}. \
+                             Ship goods to the hub first (Authority freight or a convoy)."
                         ),
                     },
                 ),
@@ -862,7 +862,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 sim::TradeRejectReason::DestinationBlockaded => (
                     Warn,
                     format!(
-                        "The Charterhouse won't book {units} {com} to {} — it reports the system BLOCKADED. \
+                        "The Authority won't book {units} {com} to {} — it reports the system BLOCKADED. \
                          Break the blockade, or move the goods yourself.",
                         where_.unwrap_or_else(|| "that system".into())
                     ),
@@ -914,13 +914,13 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 }
                 sim::FreightStage::ArrivedAtWarehouse => (
                     Good,
-                    format!("Authority freight landed {units} {com} from {name} in your Charterhouse warehouse."),
+                    format!("Authority freight landed {units} {com} from {name} in your hub warehouse."),
                 ),
                 sim::FreightStage::ReturnedUndeliverable => (
                     Warn,
                     format!(
                         "Authority freight couldn't unload {units} {com} at {name} — it's no longer yours, \
-                         or its depot is full. The lot is back in your Charterhouse warehouse."
+                         or its depot is full. The lot is back in your hub warehouse."
                     ),
                 ),
                 sim::FreightStage::ForfeitedOnCapture => (
@@ -976,9 +976,9 @@ fn raid_entry(
         }
         RaidOutcome::Escaped => {
             if i_attack {
-                (Info, "Your quarry escaped to the Charterhouse.".to_string())
+                (Info, "Your quarry escaped to the hub.".to_string())
             } else {
-                (Good, "Your convoy reached the Charterhouse safely.".to_string())
+                (Good, "Your convoy reached the hub safely.".to_string())
             }
         }
     }

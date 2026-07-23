@@ -733,7 +733,7 @@ function ownBody(g: GhostView): string {
     parts.push(
       `<div class="sp-sec">${icon("blockade", "sm")} Authority freight</div>` +
       `<div class="sp-line"><button class="act${on ? " is-on" : ""}" data-act="engage-freight" data-on="${on ? "0" : "1"}" ` +
-      `title="While blockading, also engage Terran Charter Authority freighters arriving here. OFF: they land and unload through your blockade — a small leak, self-limiting because the Charterhouse already refuses NEW bookings to a blockaded system. ON: an arriving freighter becomes an ordinary hostile contact.">` +
+      `title="While blockading, also engage Terran Charter Authority freighters arriving here. OFF: they land and unload through your blockade — a small leak, self-limiting because the Authority already refuses NEW bookings to a blockaded system. ON: an arriving freighter becomes an ordinary hostile contact.">` +
       `${on ? "Engaging" : "Ignoring"} Authority freight arriving here</button></div>`,
     );
   }
@@ -1224,17 +1224,17 @@ function openHubPanel(): void {
   buildHubPanel();
   $("hub-panel").innerHTML =
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">the Terran Charter Authority</div>` +
-    `<h2>The Charterhouse</h2></div></div>` +
+    `<h2>Wormhole Hub</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
     `<div class="pp-desc">The Authority's station at the wormhole to Sol — the body that issued your charter. Its Exchange sets the prices you read (light-delayed) across the galaxy, and your <b>warehouse</b> here is the only stock it will trade against.</div>` +
     `<div class="pp-desc dim">Getting goods to a colony is a separate act: book the Authority's scheduled <b>freight</b>, or load one of your own convoys and fly it yourself.</div>` +
-    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open the Charterhouse</button>` +
+    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open the Market</button>` +
     `<div class="pp-note">No engagement may open inside the Authority's sovereign space — fleeing into it is sanctuary. Public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
-  readout().innerHTML = `<b>The Charterhouse</b> selected — Exchange, warehouse, and freight desk. <span class="dim">Press <b>M</b> or use the panel.</span>`;
+  readout().innerHTML = `<b>Wormhole Hub</b> selected — Exchange, warehouse, and freight desk. <span class="dim">Press <b>M</b> or use the panel.</span>`;
 }
 function closeHubPanel(): void {
   $("hub-panel").classList.remove("is-open");
@@ -4549,11 +4549,12 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-type MarketTab = "exchange" | "specialists" | "modules" | "supply";
+type MarketTab = "exchange" | "charter" | "specialists" | "modules" | "supply";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
+  ($("market-pane-charter") as HTMLElement).hidden = tab !== "charter";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
   ($("market-pane-supply") as HTMLElement).hidden = tab !== "supply";
@@ -4638,7 +4639,7 @@ function buildMarketPanel(): void {
   $("mk-shipto").addEventListener("change", renderComposer);
   // --- §TCA freight desk ---
   const frCom = $("fr-commodity") as HTMLSelectElement;
-  frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${c}</option>`).join("");
+  frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
   $("fr-dir").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
     if (!b?.dataset.dir) return;
@@ -4783,14 +4784,14 @@ function renderComposer(): void {
     const cost = price !== undefined ? fmt(qty * price) : "?";
     const to = shipToValue();
     const dest = to ? ` → booked onto Authority freight for <b>${esc(systemName(to))}</b>` : "";
-    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your Charterhouse warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → your <b>warehouse</b>${dest}</span>`;
+    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your hub warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → your <b>warehouse</b>${dest}</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
     const held = warehouseUnits(c);
     const gain = price !== undefined ? fmt(qty * price) : "?";
     const short = held < qty;
     $("mk-preview").innerHTML = short
-      ? `<span class="warn" title="Selling draws ONLY from your Charterhouse warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
+      ? `<span class="warn" title="Selling draws ONLY from your hub warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
       : `<span title="The goods are already at the Exchange, so it settles instantly at the standing price — no crossing, no price-on-arrival gamble.">Settles <b>now</b> from your warehouse ~<span class="accent">${gain} Cr</span></span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
@@ -4910,7 +4911,7 @@ function updateMarket(): void {
     stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
   ]);
   renderMarketBoard();
-  fillSystemSelect($("mk-shipto") as HTMLSelectElement, "keep at the Charterhouse");
+  fillSystemSelect($("mk-shipto") as HTMLSelectElement, "keep at the hub");
   renderComposer();
   renderRestingOrders();
   renderSpecialistsPane();
@@ -4927,12 +4928,12 @@ function addTradeNews(t: TradeEvent): void {
   let text = "";
   switch (t.event) {
     case "Bought":
-      text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your Charterhouse warehouse.`
+      text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your hub warehouse.`
         + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
       break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
-      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your Charterhouse warehouse.`;
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
@@ -4951,7 +4952,7 @@ function addTradeNews(t: TradeEvent): void {
       break;
     }
     case "StorageOverflow":
-      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — carried on to sell at the Charterhouse.`;
+      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — carried on to sell at the hub.`;
       break;
     // --- §TCA: freight + dockside logistics -------------------------------
     case "Rejected": text = `⚠ ${rejectText(t)}`; break;
@@ -4976,8 +4977,8 @@ function addTradeNews(t: TradeEvent): void {
       text = `Paid the Authority ${fmt(t.cost)} Cr for ${t.points.toFixed(0)} standing (${t.before.toFixed(0)} → ${t.after.toFixed(0)}).${band}`;
       break;
     }
-    case "Loaded": text = `Loaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the Charterhouse"}.`; break;
-    case "Unloaded": text = `Unloaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the Charterhouse"}.`; break;
+    case "Loaded": text = `Loaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
+    case "Unloaded": text = `Unloaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
   }
   const el = document.createElement("div");
   el.className = t.event === "SupplyDiverted" && t.action === "lost" ? "report bad" : "report good";
@@ -5843,9 +5844,9 @@ function logisticsSection(g: GhostView): string {
     return st?.owner === state.playerId && near(sy.pos);
   });
   if (!atHub && !sys) {
-    return `<div class="sp-line dim" title="Bring the fleet alongside the Charterhouse or one of your own systems to load or unload.">${icon("cargo", "sm")} Not alongside a dock.</div>`;
+    return `<div class="sp-line dim" title="Bring the fleet alongside the Wormhole Hub or one of your own systems to load or unload.">${icon("cargo", "sm")} Not alongside a dock.</div>`;
   }
-  const where = atHub ? "the Charterhouse" : esc(sys!.name);
+  const where = atHub ? "the hub" : esc(sys!.name);
   const rows: string[] = [`<div class="sp-sec">${icon("cargo", "sm")} Logistics · ${where}</div>`];
   if (g.cargo) {
     rows.push(
@@ -5867,7 +5868,7 @@ function logisticsSection(g: GhostView): string {
   }
   if (g.cargo && !atHub) {
     rows.push(
-      `<div class="sp-line"><button class="act act--primary" data-act="haul" title="Send this loaded hull to the Charterhouse. It deposits into your warehouse on arrival — and, if you tick sell, clears at that tick's standing price. The fleet SURVIVES and goes idle there.">Haul to the Charterhouse</button> ` +
+      `<div class="sp-line"><button class="act act--primary" data-act="haul" title="Send this loaded hull to the Wormhole Hub. It deposits into your warehouse on arrival — and, if you tick sell, clears at that tick's standing price. The fleet SURVIVES and goes idle there.">Haul to the hub</button> ` +
       `<label class="lim" title="Sell the lot at the Exchange the moment it lands."><input type="checkbox" class="lg-sell" /> sell on arrival</label></div>`,
     );
   }
@@ -5882,7 +5883,7 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
   const where = t.system ? systemName(t.system) : null;
   switch (t.reason.reason) {
     case "insufficient_warehouse_stock":
-      return `Your Charterhouse warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your convoys).`;
+      return `Your hub warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your convoys).`;
     case "not_your_system":
       return `The Authority serves your own colonies only — ${where ?? "that system"} isn't yours.`;
     case "insufficient_system_stock":
@@ -5890,7 +5891,7 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
     case "cannot_afford_fee":
       return `Freight fee is ${fmt(t.reason.fee)} Cr — more than your treasury.`;
     case "destination_blockaded":
-      return `The Charterhouse reports ${where ?? "that system"} BLOCKADED and won't book freight there.`;
+      return `The Authority reports ${where ?? "that system"} BLOCKADED and won't book freight there.`;
     case "fleet_unavailable":
       return `That fleet must be yours, idle, and out of a fight to handle cargo.`;
     case "out_of_logistics_range":
@@ -5995,7 +5996,7 @@ function projectedBand(loss: number): string {
 function confirmAuthorityHostility(what: string): boolean {
   const band = projectedBand(TCA_INCIDENT_LOSS_UI);
   return window.confirm(
-    `${what}\n\nThis will be CITED by the Terran Charter Authority once its light reaches the Charterhouse.\n` +
+    `${what}\n\nThis will be CITED by the Terran Charter Authority once its light reaches the Wormhole Hub.\n` +
       `Projected charter status: ${band}.\n\nProceed?`,
   );
 }
