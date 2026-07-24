@@ -893,7 +893,18 @@ impl GameLoop {
                 .collect();
             let reports_sig = sig_of(&battle_reports.iter().map(|r| r.id).collect::<Vec<_>>());
             let captures_sig = sig_of(&capture_reports.iter().map(|r| r.id).collect::<Vec<_>>());
-            let standing_sig = sig_of(&corp.standing_orders);
+            // Signature over the USER-VISIBLE fields only — deliberately not the
+            // whole struct: `next_eval_tick` is anti-spam bookkeeping the sim
+            // bumps every evaluation period per active rule, and hashing it
+            // would re-send the "change-gated" list every few seconds forever
+            // (the client renders none of it; its own list signature skips it too).
+            let standing_sig = sig_of(
+                &corp
+                    .standing_orders
+                    .iter()
+                    .map(|o| (o.id, &o.source, &o.dest, o.commodity, &o.trigger, &o.status, o.in_flight, o.sell_on_arrival))
+                    .collect::<Vec<_>>(),
+            );
             sections.insert(player_id, SectionData {
                 standing: corp.standing_orders.clone(),
                 standing_sig,
@@ -1246,30 +1257,30 @@ fn send_sections(
     info: &mut ConnInfo,
 ) {
     let sent = &info.sent;
-    let standing = (sent.standing_sig != Some(sec.standing_sig)).then(|| sec.standing.clone());
-    let reports = (sent.reports_sig != Some(sec.reports_sig)).then(|| sec.reports.clone());
-    let captures = (sent.captures_sig != Some(sec.captures_sig)).then(|| sec.captures.clone());
-    let ranks = (sent.rankings_sig != Some(rankings_sig)).then(|| rankings.to_vec());
-    if standing.is_none() && reports.is_none() && captures.is_none() && ranks.is_none() {
+    let send_standing = sent.standing_sig != Some(sec.standing_sig);
+    let send_reports = sent.reports_sig != Some(sec.reports_sig);
+    let send_captures = sent.captures_sig != Some(sec.captures_sig);
+    let send_ranks = sent.rankings_sig != Some(rankings_sig);
+    if !(send_standing || send_reports || send_captures || send_ranks) {
         return;
     }
     let msg = ServerMsg::Sections {
-        standing_orders: standing.clone(),
-        battle_reports: reports.clone(),
-        capture_reports: captures.clone(),
-        rankings: ranks.clone(),
+        standing_orders: send_standing.then(|| sec.standing.clone()),
+        battle_reports: send_reports.then(|| sec.reports.clone()),
+        capture_reports: send_captures.then(|| sec.captures.clone()),
+        rankings: send_ranks.then(|| rankings.to_vec()),
     };
     if info.outbound.try_send(msg).is_ok() {
-        if standing.is_some() {
+        if send_standing {
             info.sent.standing_sig = Some(sec.standing_sig);
         }
-        if reports.is_some() {
+        if send_reports {
             info.sent.reports_sig = Some(sec.reports_sig);
         }
-        if captures.is_some() {
+        if send_captures {
             info.sent.captures_sig = Some(sec.captures_sig);
         }
-        if ranks.is_some() {
+        if send_ranks {
             info.sent.rankings_sig = Some(rankings_sig);
         }
     }

@@ -6017,7 +6017,12 @@ function join(): void {
               light_frontier_tick: u.light_frontier_tick,
               outcome: u.outcome ?? base.outcome ?? null,
             };
-            recs = recs.filter((r) => r.id !== u.id).concat([next]);
+            // Replace IN PLACE; append only a genuinely new record. Moving an
+            // updated record to the tail would reorder the array, and
+            // recordForReport's first-position-match join could then bind an
+            // aftermath report to the WRONG battle at a twice-contested site
+            // (the old full-set View kept the server's stable BTreeMap order).
+            recs = prev ? recs.map((r) => (r.id === u.id ? next : r)) : recs.concat([next]);
           }
           state.battleRecords = recs;
           // Keep an open replay live without waiting for the next View's refresh
