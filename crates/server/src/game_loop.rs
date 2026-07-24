@@ -10,7 +10,7 @@
 //!      from M3: the delayed/fogged view);
 //!   4. hands events and periodic snapshots to the off-hot-path persistence task.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
@@ -25,7 +25,7 @@ use crate::protocol::{
     ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
-use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
+use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
 use crate::timeline::Timeline;
 use crate::view::{self, PositionHistory, PriceHistory};
 
@@ -104,6 +104,15 @@ struct GameLoop {
     snapshot_every: u64,
     /// Publishes server/ops status for the `/status` endpoint (meta channel).
     status_tx: watch::Sender<ServerStatus>,
+    /// Connections with an engagement-estimate rollout currently running on a
+    /// blocking thread. One in flight per connection — repeat clicks are dropped
+    /// rather than piling up blocking tasks. Cleared when the task reports done
+    /// via `estimate_done_tx`.
+    estimate_inflight: HashSet<ConnId>,
+    /// A completed rollout signals its connection id here so the loop can clear
+    /// the in-flight flag (the estimate itself is sent to the client directly
+    /// from the blocking task, never routed back through the loop).
+    estimate_done_tx: mpsc::UnboundedSender<ConnId>,
 }
 
 impl GameLoop {
@@ -112,6 +121,7 @@ impl GameLoop {
         persistence: PersistenceHandle,
         snapshot_every: u64,
         status_tx: watch::Sender<ServerStatus>,
+        estimate_done_tx: mpsc::UnboundedSender<ConnId>,
     ) -> Self {
         let history = PositionHistory::for_world(&world);
         let prices = PriceHistory::for_world(&world);
@@ -128,6 +138,8 @@ impl GameLoop {
             persistence,
             snapshot_every: snapshot_every.max(1),
             status_tx,
+            estimate_inflight: HashSet::new(),
+            estimate_done_tx,
         }
     }
 
@@ -184,6 +196,7 @@ impl GameLoop {
                 player_id,
                 name,
                 outbound,
+                view_tx,
             } => {
                 let newly_online = self.sessions.insert(
                     conn_id,
@@ -191,6 +204,7 @@ impl GameLoop {
                         player_id,
                         name: name.clone(),
                         outbound,
+                        view_tx,
                     },
                 );
                 // Greet this connection immediately with its identity, clock,
@@ -550,20 +564,34 @@ impl GameLoop {
                     }
                 }
                 ClientMsg::EstimateEngagement { attacker, target } => {
-                    // A read-only QUERY (§FLEETS Part 3): compute the projection
-                    // from this player's OWN view and reply immediately. Touches
-                    // no authoritative state.
-                    if let Some(player_id) = self.sessions.player_of(conn_id)
+                    // A read-only QUERY (§FLEETS Part 3): project from this
+                    // player's OWN view. Touches no authoritative state. The CHEAP
+                    // read-out runs here on the loop; the EXPENSIVE 32-rollout
+                    // Monte Carlo is handed to a blocking thread so a burst of
+                    // estimate clicks can never stall the tick. One in flight per
+                    // connection — repeat clicks drop until the current one lands.
+                    if !self.estimate_inflight.contains(&conn_id)
+                        && let Some(player_id) = self.sessions.player_of(conn_id)
                         && let Some(corp) = self.world.players.get(&player_id)
                     {
                         let cc = corp.command_center;
                         let c = self.world.config.c;
                         let now = self.world.time;
                         let arrays = self.world.array_sensor_sources(player_id);
-                        if let Some(est) = crate::estimate::estimate_engagement(
+                        if let Some(inputs) = crate::estimate::prepare_estimate(
                             &self.world, &self.history, player_id, cc, c, now, &arrays, attacker, target,
-                        ) {
-                            self.sessions.send_to_conn(conn_id, ServerMsg::EngagementEstimate(est));
+                        ) && let Some(outbound) = self.sessions.outbound_of(conn_id)
+                        {
+                            self.estimate_inflight.insert(conn_id);
+                            let done_tx = self.estimate_done_tx.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let est = crate::estimate::run_estimate(inputs);
+                                // Deliver straight to the connection's own stream;
+                                // then free it to request another (best-effort —
+                                // if either end is gone the connection is closing).
+                                let _ = outbound.try_send(ServerMsg::EngagementEstimate(est));
+                                let _ = done_tx.send(conn_id);
+                            });
                         }
                     }
                 }
@@ -1134,10 +1162,11 @@ impl GameLoop {
 
         for (_conn_id, info) in self.sessions.iter_conns() {
             if let Some(view) = views.get(&info.player_id) {
-                // Non-blocking: never let one slow client stall the loop; a full
-                // queue means the client is behind, so dropping this stale view
-                // is correct — the next supersedes it.
-                let _ = info.outbound.try_send(view.clone());
+                // Last-write-wins: overwrite this connection's latest-View slot.
+                // A slow client simply never sees the frames it fell behind on —
+                // the writer always emits the freshest, never a stale backlog.
+                // (Err only if the writer task is already gone; harmless.)
+                let _ = info.view_tx.send(Some(view.clone()));
             }
             if let Some(reps) = reports.get(&info.player_id) {
                 for r in reps {
@@ -1335,7 +1364,11 @@ pub async fn run(
     status_tx: watch::Sender<ServerStatus>,
     mut rx: mpsc::UnboundedReceiver<GameInput>,
 ) {
-    let mut game = GameLoop::new(world, persistence, snapshot_every, status_tx);
+    // Off-thread engagement-estimate rollouts report completion here so the loop
+    // can clear the connection's in-flight flag (unbounded, but each in-flight
+    // estimate emits exactly one id, and there is at most one per connection).
+    let (estimate_done_tx, mut estimate_done_rx) = mpsc::unbounded_channel::<ConnId>();
+    let mut game = GameLoop::new(world, persistence, snapshot_every, status_tx, estimate_done_tx);
 
     let mut ticker = interval(Duration::from_secs_f64(DT));
     // If we ever fall behind, skip missed ticks rather than bursting to catch
@@ -1355,6 +1388,12 @@ pub async fn run(
                     // All senders dropped: nothing can ever drive the game again.
                     None => break,
                 }
+            }
+            // A blocking estimate rollout finished — free its connection to
+            // request another. (`estimate_done_tx` also lives in `game`, so this
+            // channel never closes on its own; the loop exits via `rx` above.)
+            Some(conn_id) = estimate_done_rx.recv() => {
+                game.estimate_inflight.remove(&conn_id);
             }
         }
     }

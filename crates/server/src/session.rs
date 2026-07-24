@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use sim::PlayerId;
 
@@ -37,10 +37,12 @@ pub struct ServerStatus {
 /// Per-connection identifier, unique for the lifetime of the process.
 pub type ConnId = u64;
 
-/// Bounded capacity of each connection's outbound queue. At the ~10 Hz
-/// broadcast rate this is several seconds of buffered frames; a client too slow
-/// to keep up has its *stale* frames dropped rather than growing memory without
-/// bound (each Tick supersedes the last, so dropping old ones is correct).
+/// Bounded capacity of each connection's outbound queue. This now carries only
+/// the low-volume DISCRETE messages (Welcome, Report, Timeline, CommandSignal,
+/// EngagementEstimate, GalaxyUpdate, Trade, Error) — the high-frequency per-tick
+/// View rides its own last-write-wins [`watch`] channel instead, so a slow
+/// client can never accumulate a backlog of stale views here. 64 is ample
+/// headroom for the discrete traffic.
 pub const OUTBOUND_CAPACITY: usize = 64;
 
 /// Everything the loop needs to know about one live connection.
@@ -49,10 +51,14 @@ pub struct ConnInfo {
     /// Held per-connection for the player roster surfaced in M3+ views.
     #[allow(dead_code)]
     pub name: String,
-    /// The connection's private outbound stream. The loop pushes this player's
-    /// filtered view here; a writer task forwards it to the socket. Bounded so a
+    /// The connection's private stream of DISCRETE messages. Bounded so a
     /// stalled client cannot make the server leak memory.
     pub outbound: mpsc::Sender<ServerMsg>,
+    /// The connection's LATEST per-player View, last-write-wins. A briefly
+    /// stalled client that recovers jumps straight to the current world instead
+    /// of replaying a queue of superseded frames (the old bounded mpsc dropped
+    /// the *newest* view and kept the stale backlog — exactly backwards).
+    pub view_tx: watch::Sender<Option<ServerMsg>>,
 }
 
 /// Messages a connection sends to the authoritative loop.
@@ -64,6 +70,7 @@ pub enum GameInput {
         player_id: PlayerId,
         name: String,
         outbound: mpsc::Sender<ServerMsg>,
+        view_tx: watch::Sender<Option<ServerMsg>>,
     },
     /// A connection has closed.
     Disconnect { conn_id: ConnId },
@@ -132,6 +139,13 @@ impl Sessions {
     #[allow(dead_code)]
     pub fn player_of(&self, conn_id: ConnId) -> Option<PlayerId> {
         self.conns.get(&conn_id).map(|c| c.player_id)
+    }
+
+    /// A clone of one connection's discrete-message sender, for handing to an
+    /// off-thread task (e.g. an engagement-estimate rollout) that will deliver a
+    /// reply itself. `None` if the connection has since dropped.
+    pub fn outbound_of(&self, conn_id: ConnId) -> Option<mpsc::Sender<ServerMsg>> {
+        self.conns.get(&conn_id).map(|c| c.outbound.clone())
     }
 
     /// Send a message to one specific connection. Non-blocking: if the

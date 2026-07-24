@@ -31,10 +31,31 @@ fn comp_to_view(comp: &std::collections::BTreeMap<sim::ShipKind, u32>) -> Vec<Co
     comp.iter().filter(|(_, n)| **n > 0).map(|(k, n)| CompCount { kind: *k, count: *n }).collect()
 }
 
+/// The owned, `Send + 'static` inputs to the Monte Carlo rollouts — everything
+/// [`prepare_estimate`] reads out of the world/view (cheap, borrows `&World`)
+/// packaged so the expensive [`run_estimate`] step (32 headless rollouts) can be
+/// handed to `spawn_blocking` off the authoritative loop thread.
+pub struct EstimateInputs {
+    setup: sim::tactical::ProjSetup,
+    base_seed: u64,
+    attacker: sim::EntityId,
+    target: sim::EntityId,
+    target_known: bool,
+    target_count_class: sim::CountClass,
+    composition_age: f64,
+    defenses_age: Option<f64>,
+    platform_tiers: Option<u32>,
+}
+
 /// Project the engagement `attacker` (one of `viewer`'s fleets) vs `target`,
 /// from `viewer`'s command center at `cc`. Returns `None` if the attacker isn't
 /// the viewer's or the target isn't currently observable at all.
-#[allow(clippy::too_many_arguments)]
+///
+/// This is [`prepare_estimate`] followed immediately by [`run_estimate`]; the
+/// two-step form exists so the server can run the rollouts off-thread. Tests and
+/// any synchronous caller use this wrapper — the result is identical. (The live
+/// server path uses the split form, so this is only exercised under `cfg(test)`.)
+#[allow(clippy::too_many_arguments, dead_code)]
 pub fn estimate_engagement(
     world: &World,
     history: &PositionHistory,
@@ -46,6 +67,25 @@ pub fn estimate_engagement(
     attacker: sim::EntityId,
     target: sim::EntityId,
 ) -> Option<EngagementEstimate> {
+    prepare_estimate(world, history, viewer, cc, c, now, arrays, attacker, target).map(run_estimate)
+}
+
+/// The CHEAP, read-only half: read this observer's fogged view and build the
+/// owned rollout inputs. Borrows `&World`/`&PositionHistory`, so it runs on the
+/// loop thread; it touches no authoritative state (the fog-leak invariants live
+/// here). Returns `None` on the same conditions [`estimate_engagement`] did.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_estimate(
+    world: &World,
+    history: &PositionHistory,
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+    arrays: &[(Vec2, f64)],
+    attacker: sim::EntityId,
+    target: sim::EntityId,
+) -> Option<EstimateInputs> {
     // Own fleet — EXACT (the player owns it, so it's fair to know it precisely),
     // carrying its current damage pools.
     let own_fleet = world.fleets.get(&attacker)?;
@@ -139,28 +179,45 @@ pub fn estimate_engagement(
     // Deterministic per (galaxy, attacker, target): the readout is stable
     // between refreshes; the spread comes from the k derived rollout seeds.
     let base_seed = world.config.seed ^ attacker.0.rotate_left(17) ^ target.0.rotate_left(41);
-    let dist = sim::tactical::project_distribution(&setup, base_seed, 32);
-    let band = |b: &[sim::tactical::LossBand]| -> Vec<crate::protocol::LossRange> {
-        b.iter().map(|x| crate::protocol::LossRange { kind: x.kind, lo: x.lo, hi: x.hi }).collect()
-    };
-
-    Some(EngagementEstimate {
+    Some(EstimateInputs {
+        setup,
+        base_seed,
         attacker,
         target,
-        own_losses: comp_to_view(&dist.median.a_losses),
-        target_losses: comp_to_view(&dist.median.d_losses),
-        own_survivors: comp_to_view(&dist.median.a_survivors),
-        target_survivors: comp_to_view(&dist.median.d_survivors),
         target_known,
         target_count_class: ghost.count_class,
         composition_age,
         defenses_age,
         platform_tiers,
+    })
+}
+
+/// The EXPENSIVE half: k=32 seeded headless rollouts of the real tactical engine
+/// over the prepared inputs. Owns all its data (no borrows), so the server hands
+/// this to `spawn_blocking` — a burst of estimate clicks can't stall the tick.
+pub fn run_estimate(inp: EstimateInputs) -> EngagementEstimate {
+    let dist = sim::tactical::project_distribution(&inp.setup, inp.base_seed, 32);
+    let band = |b: &[sim::tactical::LossBand]| -> Vec<crate::protocol::LossRange> {
+        b.iter().map(|x| crate::protocol::LossRange { kind: x.kind, lo: x.lo, hi: x.hi }).collect()
+    };
+
+    EngagementEstimate {
+        attacker: inp.attacker,
+        target: inp.target,
+        own_losses: comp_to_view(&dist.median.a_losses),
+        target_losses: comp_to_view(&dist.median.d_losses),
+        own_survivors: comp_to_view(&dist.median.a_survivors),
+        target_survivors: comp_to_view(&dist.median.d_survivors),
+        target_known: inp.target_known,
+        target_count_class: inp.target_count_class,
+        composition_age: inp.composition_age,
+        defenses_age: inp.defenses_age,
+        platform_tiers: inp.platform_tiers,
         win_pct: Some(dist.a_win_pct),
         runs: Some(dist.runs),
         own_loss_bands: band(&dist.a_bands),
         target_loss_bands: band(&dist.d_bands),
-    })
+    }
 }
 
 #[cfg(test)]
