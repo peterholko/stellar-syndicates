@@ -70,15 +70,59 @@ function flushPressGuard(): void {
 }
 window.addEventListener("pointerup", () => setTimeout(flushPressGuard, 0), true);
 window.addEventListener("pointercancel", () => setTimeout(flushPressGuard, 0), true);
-/// True → a press is currently down inside `rootId`, so the caller must NOT
-/// rebuild its DOM now; the render is queued and re-runs after the press.
+
+// The same hazard one step earlier: HOVER. A panel that rebuilds on every View
+// recreates its buttons ~10×/s, and a brand-new node has no `:hover` until the
+// browser's next hit-test — so the hover border on whatever the cursor rests on
+// blinks off and on. That is the flicker. `setHtml` below removes the common
+// case (a rebuild that changes nothing shouldn't touch the DOM at all); this
+// guard covers the rest, holding a rebuild that WOULD destroy the control under
+// the cursor until the cursor leaves it. Deliberately narrow: only while
+// pointing AT a control, so live numbers elsewhere in the panel keep ticking.
+const hoverGuard = { target: null as EventTarget | null, deferred: new Map<string, () => void>() };
+const HOVER_CONTROLS = "button,select,input,textarea,a,[data-body],[data-bp-row],[data-act],[role=tab]";
+function hoveringControl(rootId: string): boolean {
+  const t = hoverGuard.target;
+  return t instanceof Element && $(rootId).contains(t) && !!t.closest(HOVER_CONTROLS);
+}
+window.addEventListener("pointermove", (e) => {
+  hoverGuard.target = e.target;
+  if (!hoverGuard.deferred.size) return;
+  for (const [rootId, render] of [...hoverGuard.deferred]) {
+    if (hoveringControl(rootId)) continue; // still on it — keep holding
+    hoverGuard.deferred.delete(rootId);
+    render();
+  }
+}, true);
+
+/// True → `rootId` must NOT rebuild its DOM right now, because a press is down
+/// inside it (the pressed node must survive to pointerup) or the cursor is
+/// resting on one of its controls (destroying it would drop `:hover`). Either
+/// way the render is queued and re-runs the moment the guard lifts.
 function renderDeferred(rootId: string, render: () => void): boolean {
   const t = pressGuard.target;
   if (t instanceof Node && $(rootId).contains(t)) {
     pressGuard.deferred.set(rootId, render);
     return true;
   }
+  if (hoveringControl(rootId)) {
+    hoverGuard.deferred.set(rootId, render);
+    return true;
+  }
   return false;
+}
+
+/// Write `html` into `el` only when it actually differs from the last thing we
+/// wrote there. An identical rewrite looks like a no-op but isn't: it destroys
+/// and recreates every descendant, dropping `:hover`, focus, and scroll on
+/// whatever the player was pointing at. The last string is cached per element
+/// (rather than read back from `innerHTML`) so the check costs a comparison,
+/// not a DOM serialization.
+const lastHtmlWritten = new WeakMap<HTMLElement, string>();
+function setHtml(el: HTMLElement, html: string): void {
+  if (lastHtmlWritten.get(el) === html) return;
+  lastHtmlWritten.set(el, html);
+  el.innerHTML = html;
 }
 
 // --- Renderer --------------------------------------------------------------
@@ -1556,7 +1600,7 @@ function updateSysviewManage(): void {
     garrisonHost,
     queue,
   ].filter((s) => s.trim() !== "");
-  $("svm-body").innerHTML = sections.join(`<div class="svm-div"></div>`);
+  setHtml($("svm-body"), sections.join(`<div class="svm-div"></div>`));
 }
 
 let planetPanelBuilt = false;
@@ -1770,7 +1814,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
   }
 
-  $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${manage}${note}</div>`;
+  setHtml($("planet-panel"), head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${manage}${note}</div>`);
   $("planet-panel").classList.add("is-open");
 }
 
@@ -3790,12 +3834,12 @@ let shipQty = 1; // ship builder quantity
 // chrome, dock, and dimensions (`.build-shell` in the CSS). The two panels are
 // siblings, never open together (opening one closes the other via closeBuildPanel).
 function panelShellHtml(el: HTMLElement, eyebrow: string, title: string, chips: string, listHtml: string, detailHtml: string, footHtml: string): void {
-  el.innerHTML =
+  setHtml(el,
     `<div class="bp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2></div></div>` +
     `<button class="pp-close" data-bp="close" title="Close" aria-label="Close">✕</button></div>` +
     `<div class="bp-pools">${chips}</div>` +
     `<div class="bp-body"><div class="bp-list">${listHtml}</div><div class="bp-detail">${detailHtml}</div></div>` +
-    footHtml;
+    footHtml);
   el.classList.add("is-open");
 }
 function buildBuildPanel(): void {
