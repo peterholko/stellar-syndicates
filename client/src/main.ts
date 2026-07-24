@@ -4966,7 +4966,7 @@ function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): vo
 function renderWarehouse(): void {
   const rows = (state.wallet?.warehouse ?? []).filter((w) => w.units > 0);
   $("wh-table").innerHTML = rows.length
-    ? rows.map((w) => `<div class="ord">${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(w.commodity)}</div>`).join("")
+    ? rows.map((w) => `<div class="ord">${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(label(w.commodity))}</div>`).join("")
     : `<div class="mhint dim">Empty. Buy here, or ship goods in from a system — Authority freight or one of your own convoys.</div>`;
 }
 
@@ -5021,7 +5021,7 @@ function renderShipmentQueue(): void {
             ? badge("neutral", "aboard")
             : badge("warn", "awaiting departure");
           const sell = s.direction === "inbound" && s.sell_on_arrival ? ` <span class="dim">· sells on arrival</span>` : "";
-          return `<div class="ord">${st} ${commodityIcon(s.commodity, "sm")} <b>${s.units}</b> ${esc(s.commodity)} ${where}${sell}</div>`;
+          return `<div class="ord">${st} ${commodityIcon(s.commodity, "sm")} <b>${s.units}</b> ${esc(label(s.commodity))} ${where}${sell}</div>`;
         })
         .join("")
     : `<div class="mhint dim">No freight booked.</div>`;
@@ -5124,10 +5124,10 @@ function addTradeNews(t: TradeEvent): void {
     // --- §TCA: freight + dockside logistics -------------------------------
     case "Rejected": text = `⚠ ${rejectText(t)}`; break;
     case "FreightBooked":
-      text = `Booked ${t.units} ${t.commodity} ${t.direction === "outbound" ? "→" : "←"} ${systemName(t.system)} — fee ${fmt(t.fee)} Cr, departs in ${fmtDur(Math.max(0, t.depart_at - state.simTime))}.`;
+      text = `Booked ${t.units} ${label(t.commodity)} ${t.direction === "outbound" ? "→" : "←"} ${systemName(t.system)} — fee ${fmt(t.fee)} Cr, departs in ${fmtDur(Math.max(0, t.depart_at - state.simTime))}.`;
       break;
     case "FreightMoved": {
-      const what = `${t.units} ${t.commodity}`;
+      const what = `${t.units} ${label(t.commodity)}`;
       const where = systemName(t.system);
       text =
         t.stage === "departed" ? `Authority freighter away with ${what} (${where}).`
@@ -5147,8 +5147,8 @@ function addTradeNews(t: TradeEvent): void {
       text = `Paid the Authority ${fmt(t.cost)} Cr for ${t.points.toFixed(0)} standing (${t.before.toFixed(0)} → ${t.after.toFixed(0)}).${band}`;
       break;
     }
-    case "Loaded": text = `Loaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
-    case "Unloaded": text = `Unloaded ${t.units} ${t.commodity} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
+    case "Loaded": text = `Loaded ${t.units} ${label(t.commodity)} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
+    case "Unloaded": text = `Unloaded ${t.units} ${label(t.commodity)} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
   }
   const el = document.createElement("div");
   el.className = t.event === "SupplyDiverted" && t.action === "lost" ? "report bad" : "report good";
@@ -6139,7 +6139,7 @@ function logisticsSection(g: GhostView): string {
   const rows: string[] = [`<div class="sp-sec">${icon("cargo", "sm")} Logistics · ${where}</div>`];
   if (g.cargo) {
     rows.push(
-      `<div class="sp-line"><button class="act" data-act="unload" title="Put the whole hold ashore at ${esc(where)}.">Unload ${fmt(g.cargo.units)} ${esc(g.cargo.commodity)}</button></div>`,
+      `<div class="sp-line"><button class="act" data-act="unload" title="Put the whole hold ashore at ${esc(where)}.">Unload ${fmt(g.cargo.units)} ${esc(label(g.cargo.commodity))}</button></div>`,
     );
   }
   // Load: pick a commodity + amount from whatever the dock actually holds.
