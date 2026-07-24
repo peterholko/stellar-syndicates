@@ -483,10 +483,17 @@ function scanWithdraw(rec: BattleRecordView): [number, number] {
 
 function bindRecord(rec: BattleRecordView): void {
   if (st && st.rec.id === rec.id) {
-    // Same battle, possibly NEW data (fresh light extended the rounds, or the
-    // record object was replaced) — invalidate the active window so tracks,
-    // the FX schedule, AND the withdraw flags rebuild against the new truth.
-    if (st.rec !== rec) {
+    // Same battle — but the View handler hands us a FRESH record object every
+    // ~100 ms (JSON.parse identity), so compare CONTENT, not identity. Only real
+    // new truth (light extended the rounds, or the outcome/frontier landed)
+    // invalidates the active window so tracks, the FX schedule, AND the withdraw
+    // flags rebuild. Identity-comparison here rebuilt them all at 10 Hz for the
+    // life of an open replay.
+    if (
+      st.rec.rounds.length !== rec.rounds.length ||
+      st.rec.light_frontier_tick !== rec.light_frontier_tick ||
+      st.rec.outcome !== rec.outcome
+    ) {
       st.windowKey = "";
       st.withdrawFrom = scanWithdraw(rec);
     }

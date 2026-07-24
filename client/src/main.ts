@@ -873,6 +873,12 @@ function updateShipPanel(): void {
   if (renderDeferred("ship-panel", updateShipPanel)) return; // §single-click
   if (!state.selectedShipId) return;
   const root = $("ship-panel");
+  // §perf/wedge: while the player is working the dockside load controls — the
+  // native <select> popup open, or typing a quantity — DON'T rebuild the panel.
+  // A 10 Hz rebuild wipes the typed qty and wedges the <select> (the Deliver-
+  // dropdown bug family). The rebuild retries on the next View once they're done.
+  const ae = document.activeElement;
+  if (ae instanceof HTMLElement && root.contains(ae) && (ae.classList.contains("lg-com") || ae.classList.contains("lg-qty"))) return;
   const g = state.ghosts.find((x) => x.id === state.selectedShipId);
   if (!g) {
     // No longer observable (passed beyond your sensors/light, or — a rival —
@@ -925,7 +931,20 @@ function updateShipPanel(): void {
     : `<div class="stat" title="${esc(uncTip)}"><dt>Position</dt><dd>±${fmt(g.uncertainty)} su</dd></div>`;
   const strip = statStrip([ageCell, headingCell(g), posCell]);
 
+  // Preserve an in-progress dockside load selection/qty across the rebuild (the
+  // fresh <input> would otherwise snap back to its default 50, the fresh <select>
+  // to its first option) — the panel still rebuilds ~10 Hz to keep the age live.
+  const prevQty = (root.querySelector(".lg-qty") as HTMLInputElement | null)?.value;
+  const prevCom = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value;
   root.innerHTML = head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`;
+  if (prevQty !== undefined) {
+    const q = root.querySelector(".lg-qty") as HTMLInputElement | null;
+    if (q) q.value = prevQty;
+  }
+  if (prevCom) {
+    const c = root.querySelector(".lg-com") as HTMLSelectElement | null;
+    if (c && [...c.options].some((o) => o.value === prevCom)) c.value = prevCom;
+  }
 }
 
 // --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
@@ -1409,6 +1428,7 @@ function openBodyPanelById(bodyId: string): void {
 function closeSysviewManage(): void {
   $("sysview-manage").classList.remove("is-open");
 }
+let lastSysviewManageSig = "";
 function updateSysviewManage(): void {
   if (renderDeferred("sysview-manage", updateSysviewManage)) return; // §single-click
   const sid = viewedSystemId();
@@ -1430,6 +1450,14 @@ function updateSysviewManage(): void {
   const slotsEl = $("svm-slots");
   slotsEl.textContent = `SLOTS ${sUsed}/${sTotal}`;
   slotsEl.classList.toggle("is-warn", sTotal > 0 && sUsed >= sTotal);
+
+  // §perf: the svm-body sections (stockpile/build/workforce/blockade) are built
+  // and re-parsed on every View at 10 Hz. Skip when the owner-only dynamic slice
+  // is unchanged; a 1 s simTime heartbeat keeps build/siege ETAs ticking at their
+  // whole-second cadence. (Header title/slots above stay live every call.)
+  const svmSig = JSON.stringify([sid, dyn, Math.floor(state.simTime)]);
+  if (svmSig === lastSysviewManageSig && $("svm-body").innerHTML) return;
+  lastSysviewManageSig = svmSig;
 
   // Stockpile + depot cap (the "ship it or it idles" pressure).
   const cap = dyn.storage_cap ?? 0;
@@ -1875,9 +1903,11 @@ function openBattlePanel(id: number): void {
 // fleets: full composition + the three verbs with echo countdowns; rivals:
 // whatever the site-reveal already granted). Own engaged fleets are reachable
 // here even though their map markers are suppressed.
+let lastOngoingBattleSig = "";
 function openOngoingBattlePanel(id: string): void {
   buildBattlePanel();
   openOngoingBattleId = id;
+  lastOngoingBattleSig = ""; // force a fresh paint on open
   updateOngoingBattlePanel();
   $("battle-panel").classList.add("is-open");
 }
@@ -1977,6 +2007,24 @@ function updateOngoingBattlePanel(): void {
   }
   battleForceHW.set(id, hw);
 
+  // §perf: the high-water accumulation ABOVE must run every View (never miss a
+  // peak), but the chip/withdraw/countdown DOM below was rebuilt at 10 Hz. Gate the
+  // rebuild on a content signature; the 1 s Math.floor(now) heartbeat keeps the
+  // "raging / as-of / order-lag" countdowns ticking at their whole-second cadence
+  // AND is the safety net so nothing the signature omits can stay stale beyond 1 s.
+  const obSig = JSON.stringify([
+    [...hw.own.entries()].sort(),
+    [...hw.rivalPeak.entries()].sort(),
+    [...ownNow.entries()].sort(),
+    rivalFleets.map((g) => [g.id, g.count_class]),
+    ownFleets.map((g) => g.id),
+    b.own, b.participants.length,
+    state.battleRecords.some((r) => r.id === b.id),
+    Math.floor(now),
+  ]);
+  if (obSig === lastOngoingBattleSig && panel.innerHTML) return;
+  lastOngoingBattleSig = obSig;
+
   // OWN force strip: one chip per ship CLASS still standing (exact, own light),
   // each carrying its running losses (peak − now) as a red "−k". Kinds sorted for
   // a stable order. A wiped class stays visible (dim, struck) so the toll shows.
@@ -2059,6 +2107,7 @@ let bvLive = false; // pinned to the arriving light frontier (a running battle)
 let bvAccum = 0; // fractional-round playback accumulator
 let bvLastTs = 0;
 let bvLoopRunning = false;
+let lastBattleViewerSig = ""; // §perf: skip identical 10 Hz viewer rebuilds
 const BV_ROUND_SECS = 0.55; // wall-seconds per round at 1× playback
 
 const bvRecordFor = (id: string): BattleRecordView | undefined => state.battleRecords.find((r) => r.id === id);
@@ -2116,6 +2165,7 @@ function openBattleViewer(id: string): void {
   bvPlaying = !running && frontier > 0; // auto-play a concluded replay from the top
   bvAccum = 0;
   bvLastTs = 0;
+  lastBattleViewerSig = ""; // force a fresh paint on (re)open
   renderBattleViewer();
   if (!bvLoopRunning) {
     bvLoopRunning = true;
@@ -2338,6 +2388,15 @@ function renderBattleViewer(): void {
   const frontier = rec.rounds.length - 1;
   if (bvLive && frontier >= 0) bvRound = Math.min(bvRound, frontier); // the chase advances; never snap-jump
   bvRound = Math.max(0, Math.min(bvRound, Math.max(0, frontier)));
+
+  // §perf: this rebuilds the whole overlay AND re-mounts the WebGL canvas; it ran
+  // 10x/s off the View while a replay was open. Skip when nothing that affects the
+  // render changed — the 1 s liveSimTime() heartbeat keeps the "light reached you
+  // N ago" line ticking at its whole-second cadence; new light (rounds.length),
+  // scrubbing/playback (bvRound/bvPlaying/bvSpeed) and the outcome all invalidate.
+  const bvSig = JSON.stringify([openBattleViewerId, rec.rounds.length, rec.outcome, bvRound, bvPlaying, bvSpeed, Math.floor(liveSimTime())]);
+  if (bvSig === lastBattleViewerSig && $("battle-viewer").childElementCount) return;
+  lastBattleViewerSig = bvSig;
 
   const head =
     `<div class="pp-head"><div class="panel-title"><div>` +
@@ -3150,7 +3209,10 @@ function renderSupplyPane(): void {
   const owned = (state.systems ?? []).filter((s) => s.owner === state.playerId);
   const sel = $("mk-supply-dest") as HTMLSelectElement;
   const sig = owned.map((s) => s.id).join(",");
-  if (sig !== supplyDestSig) {
+  // Never rebuild the options while the native dropdown is open (activeElement) —
+  // rebuilding a <select> mid-popup wedges Chrome's list, the fixed Deliver bug.
+  // A skipped rebuild retries on the next update once the player has picked.
+  if (sig !== supplyDestSig && document.activeElement !== sel) {
     supplyDestSig = sig;
     const prev = sel.value;
     sel.innerHTML = owned.map((s) => `<option value="${esc(s.id)}">${esc(systemName(s.id))}</option>`).join("");
@@ -4232,10 +4294,25 @@ function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
   return (dyn?.stockpile ?? []).filter((s) => s.commodity !== "fuel" && s.units >= 1);
 }
 
+let lastSystemTabSig = "";
 function updateSystemTab(): void {
   if (!systemTabBuilt) return;
   if (renderDeferred("tab-system", updateSystemTab)) return; // §single-click
   const root = $("tab-system");
+  // §perf: the rail panel (incl. its star concept <img>) rebuilt on every View at
+  // 10 Hz. Skip when nothing it shows changed — it reads the selected system's
+  // dynamic slice, the owned-holdings rail, and syndicate/research affordances; a
+  // 1 s simTime heartbeat keeps any siege/build ETA ticking at whole-second cadence.
+  const stSig = JSON.stringify([
+    state.selectedSystemId,
+    state.systems,
+    state.syndicate,
+    state.research?.programmes.map((p) => p.state) ?? null,
+    state.anchors.length,
+    Math.floor(state.simTime),
+  ]);
+  if (stSig === lastSystemTabSig && root.innerHTML) return;
+  lastSystemTabSig = stSig;
   const rail = ownedSystemsRail();
   const sid = state.selectedSystemId;
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
@@ -4962,9 +5039,30 @@ function renderRestingOrders(): void {
     : "";
 }
 
+let lastMarketSig = "";
 function updateMarket(): void {
   if (renderDeferred("market", updateMarket)) return; // §single-click
   if (!state.market || !state.wallet) return;
+  // §perf: the whole 11-pane cascade (incl. the hidden panes + ~25 <img>s) ran on
+  // every View at 10 Hz. Skip it when nothing it renders has changed. Two guards:
+  //  (1) never rebuild while the player is editing a field/dropdown in the panel
+  //      (wipes a half-typed qty / wedges a <select>);
+  //  (2) a content signature over the discrete inputs, plus a 1 s simTime heartbeat
+  //      so the freshness badge / equity / sparklines / freight countdown still
+  //      tick at their (whole-second) display cadence. Continuously-varying fields
+  //      (staleness, equity, ticker drift) are deliberately excluded from the sig
+  //      and refreshed by that heartbeat, never per-100 ms.
+  const mp = $("market");
+  const ae = document.activeElement;
+  if (ae && mp.contains(ae) && (ae.tagName === "INPUT" || ae.tagName === "SELECT")) return;
+  const sig = JSON.stringify([
+    state.wallet.credits, state.wallet.warehouse, state.wallet.fuel_total,
+    state.charter, state.freight,
+    state.systems.map((s) => [s.id, s.owner]),
+    marketTab, Math.floor(state.simTime),
+  ]);
+  if (sig === lastMarketSig && mp.querySelector("#market-board")?.childElementCount) return;
+  lastMarketSig = sig;
   const stale = state.market.staleness;
   const fresh = $("market-fresh");
   fresh.className = "badge " + (stale > 0.5 ? "badge--warn" : "badge--positive");
@@ -5136,6 +5234,7 @@ function buildStandingPanel(): void {
   });
 }
 
+let lastStandingListSig = "";
 function updateStandingPanel(): void {
   if (!standingBuilt) return;
   if (renderDeferred("standing", updateStandingPanel)) return; // §single-click
@@ -5146,9 +5245,11 @@ function updateStandingPanel(): void {
   // Key includes the ally set so the dest list rebuilds when an alliance forms/ends.
   const ownedKey = owned.map((s) => s.id).join(",") + "|" + allies.map((s) => s.id).join(",");
   const srcSel = $("so-source") as HTMLSelectElement;
-  if (srcSel.dataset.key !== ownedKey) {
+  const destSel = $("so-dest") as HTMLSelectElement;
+  // Skip the rebuild while EITHER native dropdown is open, or Chrome's popup
+  // wedges the tab (the fixed Deliver-dropdown bug); it retries next update.
+  if (srcSel.dataset.key !== ownedKey && document.activeElement !== srcSel && document.activeElement !== destSel) {
     srcSel.dataset.key = ownedKey;
-    const destSel = $("so-dest") as HTMLSelectElement;
     const prevSrc = srcSel.value, prevDest = destSel.value;
     // Source is always your OWN system; destinations add hub/home + your depots +
     // ally systems (§syndicates Part 3 AID).
@@ -5166,6 +5267,12 @@ function updateStandingPanel(): void {
 
   const list = $("standing-list");
   const orders = state.standingOrders;
+  // §perf: the list is effectively static between edits — rebuild it only when an
+  // order's shown fields change (id/status/in-flight/route/trigger), not at 10 Hz
+  // (which churned garbage and risked resetting #standing-list's scroll).
+  const listSig = JSON.stringify(orders.map((o) => [o.id, o.status, o.in_flight, o.commodity, o.source, o.dest, o.trigger]));
+  if (listSig === lastStandingListSig && list.innerHTML) return;
+  lastStandingListSig = listSig;
   if (!orders.length) {
     list.innerHTML = `<span class="dim">No standing orders yet — set one below. They run on the server while you're away.</span>`;
     return;
@@ -5680,6 +5787,10 @@ function buildCheckinPanel(): void {
 
 function updateCheckinPanel(): void {
   if (!checkinBuilt) return;
+  // §perf: the modal is closed most of the session — skip the inbox recompute +
+  // innerHTML rebuild entirely while hidden. openCheckin() re-renders on open and
+  // the Timeline handler sets state.timeline before calling us, so nothing is lost.
+  if ($("checkin").style.display === "none") return;
   if (renderDeferred("checkin", updateCheckinPanel)) return; // §single-click (the ✕ toggle sits inside)
   // DECISION INBOX first (the primary surface — "what deserves a decision").
   renderInbox();
@@ -5700,6 +5811,50 @@ function updateCheckinPanel(): void {
 
 // --- Networking ------------------------------------------------------------
 let net: Net | null = null;
+
+// §perf: coalesce the per-View panel refreshes. Views arrive at ~10 Hz, but if the
+// main thread stalls (a GC pause, a background tab that just refocused) the queued
+// backlog is delivered in a burst — and re-running the whole DOM-refresh pipeline
+// once per queued message turns one hiccup into a multi-frame freeze. Instead we
+// stash the work on a single rAF: a burst collapses to ONE refresh reading the
+// latest state, and background tabs (where rAF doesn't fire) skip panel work
+// entirely until refocus. State ingestion + the ongoing-battle high-water tally
+// still run inline on every View (see the View handler), so no data is lost.
+let viewRefreshRaf = 0;
+function scheduleViewRefresh(): void {
+  if (viewRefreshRaf) return; // already queued — the pending frame reads latest state
+  viewRefreshRaf = requestAnimationFrame(() => {
+    viewRefreshRaf = 0;
+    applyViewRefresh();
+  });
+}
+function applyViewRefresh(): void {
+  // Refresh only the currently-visible rail tab — hidden tabs don't churn (they
+  // re-render on show via setRailTab). Each updater also guards itself.
+  if ($("rail").classList.contains("is-open")) {
+    if (railTab === "system") updateSystemTab();
+    else if (railTab === "logistics") updateStandingPanel();
+    else if (railTab === "doctrine") updateDoctrinePanel();
+    else if (railTab === "rankings") updateRankingsPanel();
+  }
+  // The selected-ship panel keeps the information AGE ticking (and handles a
+  // contact passing out of view) while it's open.
+  if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
+  // §syndicates: refresh the alliance roster/invites if the panel is open
+  // (guarded by a signature so a half-typed name survives).
+  if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
+  // §research R6: refresh the Programme Boards if open (coarse signature).
+  if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
+  // §management-home: inside the System View, refresh the management column +
+  // the structure markers (setSystemDynamic is idempotent; the panels self-guard).
+  updateSysviewDynamic();
+  // §battle-records: keep an open replay viewer live — rounds grow, the light
+  // frontier advances, the outcome may arrive (guards itself).
+  refreshOpenBattleViewer();
+  // The Market is a navbar overlay now — refresh it when open.
+  if ($("market").classList.contains("is-open")) updateMarket();
+  updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
+}
 
 function join(): void {
   const name = nameInput.value.trim();
@@ -5794,35 +5949,14 @@ function join(): void {
           // Accumulate observed prices every View (fog-safe history for the
           // sparklines), even when the Market tab is closed.
           recordPriceHistory();
-          // Refresh only the currently-visible rail tab — hidden tabs don't churn
-          // (they re-render on show via setRailTab). Each updater also guards itself.
-          if ($("rail").classList.contains("is-open")) {
-            if (railTab === "system") updateSystemTab();
-            else if (railTab === "logistics") updateStandingPanel();
-            else if (railTab === "doctrine") updateDoctrinePanel();
-            else if (railTab === "rankings") updateRankingsPanel();
-          }
-          // The selected-ship panel keeps the information AGE ticking (and handles a
-          // contact passing out of view) while it's open.
-          if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
-          // §syndicates: refresh the alliance roster/invites if the panel is open
-          // (guarded by a signature so a half-typed name survives).
-          if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
-          // §research R6: refresh the Programme Boards if open (coarse signature —
-          // the progress bar animates ~1 Hz, node states update as they change).
-          if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
-          // §management-home: inside the System View, refresh the management
-          // column + the structure markers (a cached no-op unless tiers changed).
-          updateSysviewDynamic();
-          // §one-battle-one-icon: keep an open ongoing-battle panel live (elapsed,
-          // echo countdowns, running composition; auto-closes when it concludes).
+          // §one-battle-one-icon: keep an open ongoing-battle panel live. This runs
+          // INLINE on every View (not coalesced): it accumulates a per-View high-
+          // water tally of forces (peaks in a View skipped by coalescing would be
+          // lost); its own DOM rebuild is signature-gated, so this stays cheap.
           if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
-          // §battle-records: keep an open replay viewer live — rounds grow, the
-          // light frontier advances, the outcome may arrive (guards itself).
-          refreshOpenBattleViewer();
-          // The Market is a navbar overlay now — refresh it when open.
-          if ($("market").classList.contains("is-open")) updateMarket();
-          updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
+          // Everything else the View drives is a pure/idempotent refresh — coalesce
+          // it onto one rAF so a queued burst collapses to a single DOM pass.
+          scheduleViewRefresh();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
