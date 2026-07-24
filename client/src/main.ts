@@ -1817,6 +1817,7 @@ function buildBattlePanel(): void {
     const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.act === "close") {
+      if (openOngoingBattleId) battleForceHW.delete(openOngoingBattleId); // §perf: drop the loss tally
       openOngoingBattleId = null;
       renderer.selectedBattleMarkerId = null; // §aftermath-select: drop the ring
       $("battle-panel").classList.remove("is-open");
@@ -1832,6 +1833,7 @@ function buildBattlePanel(): void {
       const fleet = el.dataset.fleet;
       if (fleet) { net.send({ type: "Withdraw", fleet_id: fleet }); if (openOngoingBattleId) updateOngoingBattlePanel(); }
     } else if (el.dataset.act === "doctrine") {
+      if (openOngoingBattleId) battleForceHW.delete(openOngoingBattleId); // §perf: drop the loss tally
       openOngoingBattleId = null;
       $("battle-panel").classList.remove("is-open");
       openRail("doctrine");
@@ -5917,6 +5919,9 @@ function join(): void {
           if (state.galaxy) state.galaxy = { ...state.galaxy, systems: msg.systems };
           break;
         case "View":
+          // §perf: a new authoritative View — bump the renderer's state version so
+          // its dirty-gated galaxy geometry (systems/anchors) rebuilds this frame.
+          renderer.stateVersion++;
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
           state.commandCenter = msg.command_center;
