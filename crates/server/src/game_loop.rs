@@ -205,6 +205,9 @@ impl GameLoop {
                         name: name.clone(),
                         outbound,
                         view_tx,
+                        // Fresh delivery cursors: this connection's first broadcast
+                        // sends full state (records, sections) — reconnect-safe.
+                        sent: Default::default(),
                     },
                 );
                 // Greet this connection immediately with its identity, clock,
@@ -736,6 +739,9 @@ impl GameLoop {
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
         let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
+        // §perf Part A: per-player battle-record specs (what each player MAY see
+        // right now) — diffed per CONNECTION against its delivery cursor below.
+        let mut record_specs: HashMap<PlayerId, Vec<view::RecordSpec>> = HashMap::new();
         for player_id in self.sessions.online_players() {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
@@ -1042,8 +1048,12 @@ impl GameLoop {
                     coverage.push((f.pos, self.world.config.sensor_range * f.sensor_mult()));
                 }
             }
-            let battle_records =
-                view::battle_record_views_named(&self.world.battle_records, player_id, cc, c, now, &coverage, &|corp| {
+            // §perf Part A: records no longer ride the View. Enumerate what this
+            // player MAY see (cheap — no round materialization); the send loop
+            // below diffs each of their connections' cursors against this and
+            // ships only the increments, on the reliable discrete lane.
+            let specs =
+                view::visible_record_specs(&self.world.battle_records, player_id, cc, c, now, &coverage, &|corp| {
                     // §ladder B4: resolve a side's christened Titan name.
                     self.world
                         .players
@@ -1052,6 +1062,7 @@ impl GameLoop {
                         .and_then(|sid| self.world.syndicates.get(&sid))
                         .and_then(|s| s.flagship_name.clone())
                 });
+            record_specs.insert(player_id, specs);
             // §TCA: the Charterhouse freight desk. Terms for every system this
             // player owns (the only valid destinations), plus their OWN lots.
             let freight = crate::protocol::FreightView {
@@ -1131,7 +1142,6 @@ impl GameLoop {
                     battles,
                     battle_reports,
                     capture_reports,
-                    battle_records,
                     syndicate,
                     syndicate_invites,
                     research,
@@ -1160,13 +1170,18 @@ impl GameLoop {
             }
         }
 
-        for (_conn_id, info) in self.sessions.iter_conns() {
+        for (_conn_id, info) in self.sessions.iter_conns_mut() {
             if let Some(view) = views.get(&info.player_id) {
                 // Last-write-wins: overwrite this connection's latest-View slot.
                 // A slow client simply never sees the frames it fell behind on —
                 // the writer always emits the freshest, never a stale backlog.
                 // (Err only if the writer task is already gone; harmless.)
                 let _ = info.view_tx.send(Some(view.clone()));
+            }
+            // §perf Part A: this connection's battle-record increments, on the
+            // RELIABLE lane (cursor committed only when the send succeeds).
+            if let Some(specs) = record_specs.get(&info.player_id) {
+                send_record_deltas(&self.world.battle_records, specs, info);
             }
             if let Some(reps) = reports.get(&info.player_id) {
                 for r in reps {
@@ -1176,6 +1191,80 @@ impl GameLoop {
             if let Some(tl) = timelines.get(&info.player_id) {
                 let _ = info.outbound.try_send(tl.clone());
             }
+        }
+    }
+}
+
+/// §perf Part A: diff one connection's delivery cursors against what its player
+/// may see right now, and send exactly the increments. Everything visible-related
+/// was already decided upstream (specs come from the light/fidelity filter); this
+/// function only decides HOW MUCH of it this connection still needs.
+///
+/// Delivery is atomic per broadcast: cursors/removals are committed only when
+/// `try_send` succeeds, so a full queue (stalled client) retries next broadcast
+/// and can never silently lose an increment.
+fn send_record_deltas(
+    records: &std::collections::BTreeMap<sim::EntityId, sim::BattleRecord>,
+    specs: &[view::RecordSpec],
+    info: &mut ConnInfo,
+) {
+    use crate::protocol::BattleRecordUpdate;
+    use crate::session::RecordCursor;
+
+    let mut updates: Vec<BattleRecordUpdate> = Vec::new();
+    // Cursor writes staged here, applied only if the send lands.
+    let mut staged: Vec<(sim::EntityId, RecordCursor)> = Vec::new();
+    for spec in specs {
+        let Some(r) = records.get(&spec.id) else { continue };
+        let participant = matches!(spec.fidelity, crate::protocol::BattleFidelity::Participant);
+        let cur = info.sent.records.get(&spec.id);
+        let is_new = cur.is_none();
+        let names_changed = cur.is_some_and(|c| c.names != spec.names);
+        // Never regress: if the cursor is somehow ahead (it can't be for a fixed
+        // command center — arrival is strictly increasing), send nothing extra.
+        let from = cur.map_or(0, |c| c.rounds_sent).min(spec.arrived_len);
+        let new_rounds = if spec.arrived_len > from {
+            view::record_rounds_range(r, from, spec.arrived_len, participant)
+        } else {
+            Vec::new()
+        };
+        let send_outcome = spec.outcome.is_some() && !cur.is_some_and(|c| c.outcome_sent);
+        if is_new || names_changed || !new_rounds.is_empty() || send_outcome {
+            updates.push(BattleRecordUpdate {
+                id: spec.id,
+                header: (is_new || names_changed).then(|| view::record_header(r, spec)),
+                new_rounds,
+                light_frontier_tick: spec.frontier_tick,
+                outcome: if send_outcome { spec.outcome } else { None },
+            });
+            staged.push((
+                spec.id,
+                RecordCursor {
+                    rounds_sent: spec.arrived_len.max(cur.map_or(0, |c| c.rounds_sent)),
+                    outcome_sent: send_outcome || cur.is_some_and(|c| c.outcome_sent),
+                    names: spec.names.clone(),
+                },
+            ));
+        }
+    }
+    // Records this connection holds that are no longer visible to its player:
+    // pruned server-side, or a bucket viewer's coverage of the site lapsed.
+    // Exactly the entries that vanished from the old full-set View; if coverage
+    // resumes, the empty cursor re-sends the record in full — as before.
+    let visible: std::collections::HashSet<sim::EntityId> = specs.iter().map(|s| s.id).collect();
+    let removed: Vec<sim::EntityId> =
+        info.sent.records.keys().filter(|id| !visible.contains(id)).copied().collect();
+
+    if updates.is_empty() && removed.is_empty() {
+        return;
+    }
+    let msg = ServerMsg::BattleRecords { updates, removed: removed.clone() };
+    if info.outbound.try_send(msg).is_ok() {
+        for (id, cursor) in staged {
+            info.sent.records.insert(id, cursor);
+        }
+        for id in removed {
+            info.sent.records.remove(&id);
         }
     }
 }

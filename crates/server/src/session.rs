@@ -18,7 +18,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tokio::sync::{mpsc, watch};
 
-use sim::PlayerId;
+use sim::{EntityId, PlayerId};
 
 use crate::protocol::{ClientMsg, ServerMsg};
 
@@ -45,6 +45,39 @@ pub type ConnId = u64;
 /// headroom for the discrete traffic.
 pub const OUTBOUND_CAPACITY: usize = 64;
 
+/// §perf Part A: one record's DELIVERY cursor for one connection — how much of
+/// it this connection has already been sent. Pure bookkeeping about delivery,
+/// never about visibility: what MAY be sent is decided upstream by the view
+/// filter (light + fidelity); the cursor only prevents re-sending it.
+pub struct RecordCursor {
+    /// Rounds already delivered (the record's arrived prefix only ever grows).
+    pub rounds_sent: usize,
+    /// The outcome has been delivered (sent exactly once, when its light lands).
+    pub outcome_sent: bool,
+    /// Flagship names as last sent — the one mutable header field (a christening
+    /// mid-record re-sends the small header).
+    pub names: [Option<String>; 2],
+}
+
+/// §perf Part A/B: everything this CONNECTION has already been sent of the
+/// change-gated sections. Lives (and dies) with the connection — a reconnect
+/// starts empty, so a fresh socket naturally receives full state again.
+/// Cursors/signatures are committed ONLY after a successful `try_send`, so a
+/// full outbound queue means "retry next broadcast", never silent loss.
+#[derive(Default)]
+pub struct ConnSentState {
+    /// Per-record delivery cursors (records currently known to this connection).
+    pub records: HashMap<EntityId, RecordCursor>,
+    /// Signature of the standing-orders list as last sent.
+    pub standing_sig: Option<u64>,
+    /// Signature of the retained battle-reports list as last sent.
+    pub reports_sig: Option<u64>,
+    /// Signature of the retained capture-reports list as last sent.
+    pub captures_sig: Option<u64>,
+    /// Signature of the published rankings as last sent.
+    pub rankings_sig: Option<u64>,
+}
+
 /// Everything the loop needs to know about one live connection.
 pub struct ConnInfo {
     pub player_id: PlayerId,
@@ -59,6 +92,8 @@ pub struct ConnInfo {
     /// of replaying a queue of superseded frames (the old bounded mpsc dropped
     /// the *newest* view and kept the stale backlog — exactly backwards).
     pub view_tx: watch::Sender<Option<ServerMsg>>,
+    /// §perf: what this connection has already been sent (delta bookkeeping).
+    pub sent: ConnSentState,
 }
 
 /// Messages a connection sends to the authoritative loop.
@@ -170,6 +205,12 @@ impl Sessions {
     /// per-player message every broadcast tick.
     pub fn iter_conns(&self) -> impl Iterator<Item = (&ConnId, &ConnInfo)> {
         self.conns.iter()
+    }
+
+    /// §perf: mutable iteration for the broadcast loop — the per-connection
+    /// delta sender advances each connection's delivery cursors in place.
+    pub fn iter_conns_mut(&mut self) -> impl Iterator<Item = (&ConnId, &mut ConnInfo)> {
+        self.conns.iter_mut()
     }
 }
 

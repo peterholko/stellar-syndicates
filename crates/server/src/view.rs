@@ -34,7 +34,7 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BattleFidelity, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -1010,11 +1010,36 @@ pub fn battle_record_views(
     battle_record_views_named(records, viewer, cc, c, now, coverage, &|_| None)
 }
 
-/// §ladder B4: the full builder — `flagship_of(corp)` resolves a side's
-/// christened Titan name (participant fidelity only, Titan fielded only).
-/// The plain [`battle_record_views`] wrapper passes a no-name lookup.
+/// §perf Part A: what a viewer may see of one record RIGHT NOW — the cheap
+/// per-broadcast enumeration (no round materialization, no keyframe clones).
+/// The per-connection delta sender diffs these against its delivery cursor and
+/// materializes ONLY the new slice. Every field here is derived by exactly the
+/// same light/fidelity gates [`battle_record_views_named`] applies — the spec is
+/// the record view's shape, not a second visibility rule.
+pub struct RecordSpec {
+    pub id: EntityId,
+    pub fidelity: BattleFidelity,
+    pub own_side: Option<u8>,
+    /// How many rounds' light has arrived (a prefix — rounds are tick-ascending,
+    /// and `arrival` is strictly increasing, so the prefix only ever grows for a
+    /// fixed command center).
+    pub arrived_len: usize,
+    /// Newest arrived round tick (`started_tick` while none have arrived).
+    pub frontier_tick: u64,
+    /// The outcome, iff the FINAL round's light has arrived.
+    pub outcome: Option<sim::RaidOutcome>,
+    /// The christened flagship names as this viewer may see them right now
+    /// (participant-only, Titan fielded only) — the one header field that can
+    /// change after a record opens, so the cursor watches it for a re-send.
+    pub names: [Option<String>; 2],
+}
+
+/// §perf Part A: enumerate the records a viewer can observe, with their arrived
+/// prefix lengths. The gates are IDENTICAL to [`battle_record_views_named`]:
+/// a record exists only once its start light arrived; participant > covering
+/// third party > none; nothing beyond the light frontier is ever counted.
 #[allow(clippy::too_many_arguments)]
-pub fn battle_record_views_named(
+pub fn visible_record_specs(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
@@ -1022,7 +1047,7 @@ pub fn battle_record_views_named(
     now: f64,
     coverage: &[(Vec2, f64)],
     flagship_of: &dyn Fn(PlayerId) -> Option<String>,
-) -> Vec<BattleRecordView> {
+) -> Vec<RecordSpec> {
     let mut out = Vec::new();
     for r in records.values() {
         let delay = r.pos.distance(cc) / c;
@@ -1047,63 +1072,132 @@ pub fn battle_record_views_named(
             continue; // no access — nothing beyond the news/wreck they already get
         };
         let participant = matches!(fidelity, BattleFidelity::Participant);
-        let side_view = |s: usize| SideRecordView {
-            corp: r.sides[s].corp,
-            // Owner-only law: posture rides ONLY the viewer's own side.
-            posture: (own_side == Some(s as u8)).then_some(r.sides[s].posture),
-            platform_tiers: r.sides[s].platform_tiers,
-            initial: record_counts(&r.sides[s].initial, participant),
-            // §modules B5: fits ride PARTICIPANT fidelity only (fog-safe — a
-            // distant bucket observer never learns what a side was carrying).
-            loadouts: if participant {
-                r.sides[s].initial_loadouts.iter()
-                    .flat_map(|(k, m)| m.iter().map(move |(key, n)| LoadoutStack {
-                        kind: *k,
-                        modules: sim::Loadout::from_key(key).modules().to_vec(),
-                        n: *n,
-                    }))
-                    .collect()
-            } else {
-                Vec::new()
-            },
-            // §ladder B4: the christened Titan name — PARTICIPANT fidelity
-            // only, and only when this side actually fielded one. This is the
-            // ONLY channel a rival ever meets the name through (never buckets).
-            flagship_name: (participant
-                && r.sides[s].initial.get(&sim::ShipKind::Titan).copied().unwrap_or(0) > 0)
-                .then(|| flagship_of(r.sides[s].corp))
-                .flatten(),
-        };
         // The ARRIVED round prefix (rounds are tick-ascending → stop at the frontier).
-        let mut rounds = Vec::new();
+        let mut arrived_len = 0;
         let mut frontier = r.started_tick;
         for rr in &r.rounds {
             if !arrived(rr.tick) {
                 break;
             }
             frontier = rr.tick;
-            rounds.push(record_round(rr, participant));
+            arrived_len += 1;
         }
         // The outcome is known only once the FINAL round's light has arrived.
         let outcome = r
             .ended_tick
             .filter(|t| arrived(*t))
             .and_then(|_| r.outcome.as_ref().map(|o| o.outcome));
-        out.push(BattleRecordView {
+        let name_of = |s: usize| {
+            (participant && r.sides[s].initial.get(&sim::ShipKind::Titan).copied().unwrap_or(0) > 0)
+                .then(|| flagship_of(r.sides[s].corp))
+                .flatten()
+        };
+        out.push(RecordSpec {
             id: r.id,
-            pos: r.pos,
-            system: r.system,
-            started_at: r.started_tick as f64 * sim::DT,
-            raid: r.raid,
             fidelity,
             own_side,
-            sides: [side_view(0), side_view(1)],
-            rounds,
-            light_frontier_tick: frontier,
+            arrived_len,
+            frontier_tick: frontier,
             outcome,
+            names: [name_of(0), name_of(1)],
         });
     }
     out
+}
+
+/// §perf Part A: materialize one record's per-viewer HEADER (everything but the
+/// rounds) at the spec's fidelity. The per-side filtering is the original
+/// `side_view` logic, verbatim: posture rides only the viewer's own side, fits +
+/// flagship names ride participant fidelity only.
+pub fn record_header(r: &sim::BattleRecord, spec: &RecordSpec) -> BattleRecordHeader {
+    let participant = matches!(spec.fidelity, BattleFidelity::Participant);
+    let side_view = |s: usize| SideRecordView {
+        corp: r.sides[s].corp,
+        // Owner-only law: posture rides ONLY the viewer's own side.
+        posture: (spec.own_side == Some(s as u8)).then_some(r.sides[s].posture),
+        platform_tiers: r.sides[s].platform_tiers,
+        initial: record_counts(&r.sides[s].initial, participant),
+        // §modules B5: fits ride PARTICIPANT fidelity only (fog-safe — a
+        // distant bucket observer never learns what a side was carrying).
+        loadouts: if participant {
+            r.sides[s].initial_loadouts.iter()
+                .flat_map(|(k, m)| m.iter().map(move |(key, n)| LoadoutStack {
+                    kind: *k,
+                    modules: sim::Loadout::from_key(key).modules().to_vec(),
+                    n: *n,
+                }))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        // §ladder B4: the christened Titan name — PARTICIPANT fidelity only,
+        // and only when this side actually fielded one (precomputed in the spec).
+        flagship_name: spec.names[s].clone(),
+    };
+    BattleRecordHeader {
+        pos: r.pos,
+        system: r.system,
+        started_at: r.started_tick as f64 * sim::DT,
+        raid: r.raid,
+        fidelity: spec.fidelity,
+        own_side: spec.own_side,
+        sides: [side_view(0), side_view(1)],
+    }
+}
+
+/// §perf Part A: materialize the round slice `[from, to)` at the given fidelity.
+/// The caller's `to` comes from a [`RecordSpec::arrived_len`], which is already
+/// light-bounded — this function never re-derives (and so can never widen) the
+/// light gate; it only converts already-arrived rounds to wire form.
+pub fn record_rounds_range(
+    r: &sim::BattleRecord,
+    from: usize,
+    to: usize,
+    participant: bool,
+) -> Vec<RoundRecordView> {
+    let to = to.min(r.rounds.len());
+    let from = from.min(to);
+    r.rounds[from..to].iter().map(|rr| record_round(rr, participant)).collect()
+}
+
+/// §ladder B4: the full builder — `flagship_of(corp)` resolves a side's
+/// christened Titan name (participant fidelity only, Titan fielded only).
+/// The plain [`battle_record_views`] wrapper passes a no-name lookup.
+///
+/// §perf Part A: rebuilt on the spec/header/rounds helpers the incremental
+/// delivery path uses, so the two paths cannot drift: this function IS
+/// "header + full arrived prefix" — exactly what a fresh connection receives.
+#[allow(clippy::too_many_arguments)]
+pub fn battle_record_views_named(
+    records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+    coverage: &[(Vec2, f64)],
+    flagship_of: &dyn Fn(PlayerId) -> Option<String>,
+) -> Vec<BattleRecordView> {
+    visible_record_specs(records, viewer, cc, c, now, coverage, flagship_of)
+        .into_iter()
+        .filter_map(|spec| {
+            let r = records.get(&spec.id)?;
+            let participant = matches!(spec.fidelity, BattleFidelity::Participant);
+            let h = record_header(r, &spec);
+            Some(BattleRecordView {
+                id: spec.id,
+                pos: h.pos,
+                system: h.system,
+                started_at: h.started_at,
+                raid: h.raid,
+                fidelity: h.fidelity,
+                own_side: h.own_side,
+                sides: h.sides,
+                rounds: record_rounds_range(r, 0, spec.arrived_len, participant),
+                light_frontier_tick: spec.frontier_tick,
+                outcome: spec.outcome,
+            })
+        })
+        .collect()
 }
 
 /// §TCA — THE TWO-TIER MANIFEST RULE. An Authority freighter's hull broadcasts

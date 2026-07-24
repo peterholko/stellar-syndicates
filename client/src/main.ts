@@ -15,7 +15,7 @@ const state: ViewState = initialState();
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
 // Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 6;
+const EXPECTED_PROTOCOL_VERSION = 7;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -5888,6 +5888,11 @@ function join(): void {
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
           state.galaxy = msg.galaxy;
+          // §perf Part A: a fresh connection re-streams every record from an
+          // empty server-side cursor — drop what the OLD connection held so a
+          // record pruned while we were away can't linger (the client-only
+          // §theater demo record is the one deliberate survivor).
+          state.battleRecords = state.battleRecords.filter((r) => r.id === "demo-battle");
           state.link = "online";
           // Swap from the join screen to the galaxy view.
           joinScreen.style.display = "none";
@@ -5937,13 +5942,8 @@ function join(): void {
           state.battles = msg.battles;
           state.battleReports = msg.battle_reports;
           state.captureReports = msg.capture_reports;
-          // §battle-records: replay timelines. The scripted §theater demo
-          // record (a client-only debug rig) survives server view replaces.
-          {
-            const demo = state.battleRecords.find((r) => r.id === "demo-battle");
-            state.battleRecords = msg.battle_records ?? [];
-            if (demo) state.battleRecords.push(demo);
-          }
+          // (§perf Part A: battle records no longer ride the View — they stream
+          // incrementally via the "BattleRecords" message below.)
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];
@@ -5968,6 +5968,37 @@ function join(): void {
           state.lastViewWallMs = performance.now();
           state.link = "online";
           break;
+        case "BattleRecords": {
+          // §perf Part A: merge record INCREMENTS into the held store. Each
+          // updated record becomes a NEW object (append-rounds via spread), so
+          // the phase-1 content compares (viewer signature, theater bindRecord)
+          // fire exactly as they did when the View replaced the whole array.
+          // Untouched records keep their identity — no churn. The client-only
+          // §theater demo record is never named by the server, so it survives.
+          let recs = state.battleRecords;
+          for (const id of msg.removed ?? []) recs = recs.filter((r) => r.id !== id);
+          for (const u of msg.updates ?? []) {
+            const prev = recs.find((r) => r.id === u.id);
+            // A new record arrives WITH a header; a header on an existing record
+            // is a refresh (flagship christened) that keeps the held rounds.
+            const base: BattleRecordView | undefined = u.header
+              ? { id: u.id, ...u.header, rounds: prev?.rounds ?? [], light_frontier_tick: u.light_frontier_tick, outcome: prev?.outcome ?? null }
+              : prev;
+            if (!base) continue; // increment for a record we never got — drop safely
+            const next: BattleRecordView = {
+              ...base,
+              rounds: u.new_rounds?.length ? [...base.rounds, ...u.new_rounds] : base.rounds,
+              light_frontier_tick: u.light_frontier_tick,
+              outcome: u.outcome ?? base.outcome ?? null,
+            };
+            recs = recs.filter((r) => r.id !== u.id).concat([next]);
+          }
+          state.battleRecords = recs;
+          // Keep an open replay live without waiting for the next View's refresh
+          // (cheap — it signature-guards itself).
+          refreshOpenBattleViewer();
+          break;
+        }
         case "CommandSignal": {
           // Your order is crossing space to your ship (the violet comet); you'll
           // see the ship react on the map when its light arrives. Replace any

@@ -28,7 +28,7 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -1225,6 +1225,39 @@ pub struct BattleRecordView {
     pub outcome: Option<RaidOutcome>,
 }
 
+/// §perf Part A: a record's per-viewer HEADER — everything except the rounds.
+/// Sent once per record per connection (and again only if a christened flagship
+/// name changes); the rounds then stream incrementally as their light arrives.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleRecordHeader {
+    pub pos: Vec2,
+    pub system: Option<EntityId>,
+    pub started_at: f64,
+    pub raid: bool,
+    pub fidelity: BattleFidelity,
+    pub own_side: Option<u8>,
+    pub sides: [SideRecordView; 2],
+}
+
+/// §perf Part A: one record's INCREMENT for one connection — only what that
+/// connection hasn't received yet. `header` is present when the record is new to
+/// the connection (or its header changed); `new_rounds` appends to what the
+/// client already holds; `outcome` is sent exactly once, when its light arrives.
+/// Everything inside is filtered per-viewer exactly as [`BattleRecordView`] was —
+/// the cursor changes WHEN data ships, never WHAT a viewer may see.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleRecordUpdate {
+    pub id: EntityId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<BattleRecordHeader>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub new_rounds: Vec<RoundRecordView>,
+    /// The viewer's current light frontier for this record (always fresh).
+    pub light_frontier_tick: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<RaidOutcome>,
+}
+
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
 /// is light-gated by the view filter — it is `None` to a player until the light
 /// of the claim event has reached their command center (a rival's presence must
@@ -1447,12 +1480,6 @@ pub enum ServerMsg {
         /// participant in and has LEARNED of (per-participant, light-delayed) —
         /// the capture aftermath markers + results. Retained (reconnect-safe).
         capture_reports: Vec<CaptureReportView>,
-        /// §battle-records Part A2: the light-gated, fidelity-tiered REPLAY of
-        /// every battle this viewer can observe — running and recent. Each
-        /// carries only its arrived-round prefix at the viewer's fidelity
-        /// (participant = full, third-party-covering-the-site = bucket spine).
-        /// A viewer with no access to a battle simply gets no entry for it.
-        battle_records: Vec<BattleRecordView>,
         /// §syndicates Part 1: the viewer's OWN syndicate roster (fresh private
         /// state, like the wallet), or `None` if unaffiliated. Never a rival's.
         /// Boxed so this (already the largest) View variant stays lean; serde is
@@ -1472,6 +1499,23 @@ pub enum ServerMsg {
         /// sim's `world.rankings`; between closes it holds steady (no live leak).
         #[serde(default)]
         rankings: Vec<RankingRow>,
+    },
+
+    /// §perf Part A: incremental battle-record delivery (was: every record's full
+    /// arrived prefix re-shipped inside every View). Rides the RELIABLE discrete
+    /// lane (the bounded mpsc, like Timeline/Report) — the View's watch channel is
+    /// last-write-wins and may drop frames for a slow client, which would lose a
+    /// delta forever. The per-connection cursor advances only when the send
+    /// succeeds, so a full queue simply retries next broadcast. `removed` names
+    /// records this connection should drop: pruned server-side, or (bucket
+    /// fidelity) the viewer's sensor coverage of the site lapsed — exactly the
+    /// records that vanished from the old full-set View. A record that becomes
+    /// visible again is re-sent in full (fresh cursor), as before.
+    BattleRecords {
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        updates: Vec<BattleRecordUpdate>,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        removed: Vec<EntityId>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.

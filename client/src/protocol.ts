@@ -963,6 +963,31 @@ export interface BattleRecordView {
   outcome: RaidOutcome | null; // present once the final round's light arrived
 }
 
+// §perf Part A: a record's HEADER — everything except the rounds. Arrives once
+// per record per connection (again only if a flagship christening changes it);
+// the rounds then stream incrementally as their light arrives.
+export interface BattleRecordHeader {
+  pos: Vec2;
+  system: EntityId | null;
+  started_at: number;
+  raid: boolean;
+  fidelity: BattleFidelity;
+  own_side: number | null;
+  sides: [SideRecordView, SideRecordView];
+}
+
+// §perf Part A: one record's INCREMENT — only what this connection hasn't
+// received yet. The client appends `new_rounds` to its held copy (creating a
+// NEW record object, so content-compares fire), refreshes the frontier, and
+// sets the outcome when it lands.
+export interface BattleRecordUpdate {
+  id: EntityId;
+  header?: BattleRecordHeader;
+  new_rounds?: RoundRecordView[];
+  light_frontier_tick: number;
+  outcome?: RaidOutcome;
+}
+
 // §battle-aftermath: a RETAINED concluded battle this player PARTICIPATED in —
 // present only once their conclusion light arrived (`learned_at`). Powers the
 // aftermath map marker + battle-results panel; survives reconnects (server
@@ -1046,10 +1071,6 @@ export type ServerMsg =
       battle_reports: BattleReportView[];
       /// §contestable-territory Part 2: retained capture reports (per-participant).
       capture_reports: CaptureReportView[];
-      /// §battle-records Part A: the light-gated, fidelity-tiered replay of every
-      /// battle this viewer can observe (running + recent). Arrived-round prefix
-      /// only; a viewer with no access to a battle gets no entry.
-      battle_records: BattleRecordView[];
       /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
       syndicate?: SyndicateView | null;
       /// §syndicates Part 1: pending invitations the viewer may accept.
@@ -1060,6 +1081,15 @@ export type ServerMsg =
       /// §research R6: the viewer's OWN research picture (owner-only; null if
       /// unaffiliated — research is a syndicate institution).
       research?: ResearchView | null;
+    }
+  | {
+      // §perf Part A: incremental battle-record delivery on the reliable lane —
+      // `updates` are per-record increments (append rounds, land the outcome);
+      // `removed` names records to drop (pruned, or bucket-coverage lapsed). A
+      // record that becomes visible again arrives fresh with a full header.
+      type: "BattleRecords";
+      updates?: BattleRecordUpdate[];
+      removed?: EntityId[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }
