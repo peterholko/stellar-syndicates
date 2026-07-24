@@ -260,6 +260,10 @@ impl GameLoop {
                             // What can be built + each recipe's cost/time (§step1).
                             build_options: build_options(),
                         },
+                        // §perf Part B: the two static tables that used to ride
+                        // every 10 Hz View — sent once here instead.
+                        charter_ladder: sim::tca::status_ladder().to_vec(),
+                        research_catalog: research_catalog(),
                     },
                 );
                 // Welcome-back: the check-in digest of what became observable while
@@ -999,7 +1003,7 @@ impl GameLoop {
                 max_standing: sim::tca::TCA_STANDING_MAX,
                 status: sim::charter_status(standing),
                 title: sim::charter_status(standing).title(),
-                ladder: sim::tca::status_ladder().to_vec(),
+                // (§perf Part B: the static ladder rides Welcome now.)
                 tariff_mult: sim::tca::tariff_mult(standing),
                 market_penalty_frac: sim::tca::market_penalty_frac(standing),
                 reinstate_cost_per_point: sim::tca::TCA_REINSTATE_FEE_PER_POINT,
@@ -1371,9 +1375,29 @@ fn gate_progress(
     }
 }
 
+/// §perf Part B: the STATIC programme catalog — names, blurbs, board topology,
+/// costs. The same constant table for every client (public rulebook, no one's
+/// progress), sent once in Welcome.
+fn research_catalog() -> Vec<crate::protocol::ProgrammeInfo> {
+    sim::research::visible_ids()
+        .filter_map(|id| {
+            let p = sim::research::programme(id)?;
+            Some(crate::protocol::ProgrammeInfo {
+                id: id.to_string(),
+                field: p.field.slug().to_string(),
+                school: p.school.map(|s| s.slug().to_string()),
+                tier: p.tier,
+                name: p.name.to_string(),
+                blurb: p.blurb.to_string(),
+                cost: sim::research::cost_of(id),
+            })
+        })
+        .collect()
+}
+
 /// §research R6: build the viewer's OWN syndicate research picture (owner-only).
 fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::ResearchView {
-    use crate::protocol::{AcademyRow, ActiveResearchView, ProgrammeView, ResearchView};
+    use crate::protocol::{AcademyRow, ActiveResearchView, ProgrammeDynView, ResearchView};
     let syn = &world.syndicates[&sid];
     let rs = &syn.research;
     let now = world.time;
@@ -1413,6 +1437,7 @@ fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::
     });
 
     // The whole visible tree, each node tagged with the viewer's state + gate.
+    // §perf Part B: DYNAMIC slice only — the static catalog rode Welcome once.
     let programmes = sim::research::visible_ids()
         .filter_map(|id| {
             let p = sim::research::programme(id)?;
@@ -1428,17 +1453,7 @@ fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::
                 "locked"
             };
             let gate = if state == "locked" { gate_progress(p, rs, &metric, now) } else { None };
-            Some(ProgrammeView {
-                id: id.to_string(),
-                field: p.field.slug().to_string(),
-                school: p.school.map(|s| s.slug().to_string()),
-                tier: p.tier,
-                name: p.name.to_string(),
-                blurb: p.blurb.to_string(),
-                state: state.to_string(),
-                cost: sim::research::cost_of(id),
-                gate,
-            })
+            Some(ProgrammeDynView { id: id.to_string(), state: state.to_string(), gate })
         })
         .collect();
 

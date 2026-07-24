@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -5814,6 +5814,23 @@ function updateCheckinPanel(): void {
 // --- Networking ------------------------------------------------------------
 let net: Net | null = null;
 
+// §perf Part B: join the View's DYNAMIC research slice onto the static Welcome
+// catalog, rebuilding the full per-node shape the research panel reads. Joined
+// by id (both lists come from the same visible_ids order, but the join never
+// relies on that). A dyn entry without a catalog row is dropped — it cannot be
+// rendered without name/board metadata (and can only mean a server/client
+// catalog drift, which the protocol-version check already warns about).
+function mergeResearch(dyn: ResearchDynView): ResearchView {
+  const cat = new Map(state.researchCatalog.map((p) => [p.id, p]));
+  const programmes: ProgrammeView[] = [];
+  for (const d of dyn.programmes) {
+    const p = cat.get(d.id);
+    if (!p) continue;
+    programmes.push({ ...p, state: d.state, gate: d.gate ?? null });
+  }
+  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes };
+}
+
 // §perf: coalesce the per-View panel refreshes. Views arrive at ~10 Hz, but if the
 // main thread stalls (a GC pause, a background tab that just refocused) the queued
 // backlog is delivered in a burst — and re-running the whole DOM-refresh pipeline
@@ -5888,6 +5905,9 @@ function join(): void {
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
           state.galaxy = msg.galaxy;
+          // §perf Part B: the static tables that used to ride every View.
+          state.charterLadder = msg.charter_ladder;
+          state.researchCatalog = msg.research_catalog;
           // §perf Part A: a fresh connection re-streams every record from an
           // empty server-side cursor — drop what the OLD connection held so a
           // record pruned while we were away can't linger (the client-only
@@ -5947,7 +5967,9 @@ function join(): void {
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
           state.rankings = msg.rankings ?? [];
-          state.research = msg.research ?? null;
+          // §perf Part B: the wire carries only the DYNAMIC research slice —
+          // join it onto the static Welcome catalog for the panel's full shape.
+          state.research = msg.research ? mergeResearch(msg.research) : null;
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
@@ -6176,7 +6198,7 @@ function renderCharter(): void {
     : ch.status === "sanctioned" ? "neutral"
     : ch.status === "suspended" ? "warn"
     : "negative";
-  const rows = ch.ladder
+  const rows = state.charterLadder
     .map(([title, at], i) => {
       const active = title === ch.title;
       // The first row is the ceiling ("at 100"); the rest read as "below/at N".
@@ -6226,11 +6248,14 @@ function projectedBand(loss: number): string {
   const ch = state.charter;
   if (!ch) return "unknown";
   const after = ch.standing - loss;
-  // Walk the server-supplied ladder: the first row whose threshold we are at or
-  // below names the band (row 1, Sanctioned, is a strict "below").
-  let title = ch.ladder[0][0];
-  for (let i = 1; i < ch.ladder.length; i++) {
-    const [name, at] = ch.ladder[i];
+  // Walk the server-supplied ladder (static, from Welcome): the first row whose
+  // threshold we are at or below names the band (row 1, Sanctioned, is a strict
+  // "below").
+  const ladder = state.charterLadder;
+  if (!ladder.length) return "unknown";
+  let title = ladder[0][0];
+  for (let i = 1; i < ladder.length; i++) {
+    const [name, at] = ladder[i];
     const hit = i === 1 ? after < at : after <= at;
     if (hit) title = name;
   }

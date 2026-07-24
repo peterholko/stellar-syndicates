@@ -60,6 +60,11 @@ export interface ViewState {
   freight: FreightView | null;
   /// §TCA Phase 2: the player's OWN charter standing and band.
   charter: CharterView | null;
+  /// §perf Part B: the static charter band ladder — arrives once in Welcome.
+  charterLadder: [string, number][];
+  /// §perf Part B: the static research programme catalog — arrives once in
+  /// Welcome; the View's dynamic research slice joins onto it by id.
+  researchCatalog: import("./protocol").ProgrammeInfo[];
   /// The player's own standing logistics orders (§15), fresh from the View.
   standingOrders: StandingOrder[];
   /// The player's own fleet doctrine (§16), fresh from the View.
@@ -140,6 +145,8 @@ export function initialState(): ViewState {
     wallet: null,
     freight: null,
     charter: null,
+    charterLadder: [],
+    researchCatalog: [],
     standingOrders: [],
     doctrine: defaultDoctrine(),
     pendingOrders: new Map(),

@@ -367,9 +367,8 @@ export interface CharterView {
   status: CharterStatus;
   /// Human title of the band ("Good Standing" … "Proscribed").
   title: string;
-  /// (title, the standing at which the band begins as standing falls). Server-
-  /// supplied so the thresholds are never duplicated here.
-  ladder: [string, number][];
+  // (§perf Part B: the static band `ladder` now arrives once in Welcome —
+  // state.charterLadder — instead of inside every 10 Hz View.)
   /// Freight-fee multiplier now applied (1.0 in good standing).
   tariff_mult: number;
   /// Exchange penalty fee now applied, as a fraction of trade value (0 when lawful).
@@ -757,6 +756,8 @@ export interface SyndicateInviteView {
 }
 
 // §research R6: the viewer's OWN syndicate research picture (owner-only).
+// This is the client-side MERGED shape the panel reads — the wire now carries
+// only the dynamic slice (ResearchDynView); the static catalog rides Welcome.
 export interface ResearchView {
   active: ActiveResearchView | null;
   queue: string[];
@@ -764,6 +765,28 @@ export interface ResearchView {
   stalled: boolean;
   academies: AcademyRow[];
   programmes: ProgrammeView[];
+}
+
+// §perf Part B: the wire's research payload — dynamic slice only. The client
+// joins `programmes` onto the static catalog (Welcome's research_catalog) by id.
+export interface ResearchDynView {
+  active: ActiveResearchView | null;
+  queue: string[];
+  rate: number;
+  stalled: boolean;
+  academies: AcademyRow[];
+  programmes: { id: string; state: string; gate?: GateProgressView | null }[];
+}
+
+// §perf Part B: one programme's STATIC catalog entry (Welcome.research_catalog).
+export interface ProgrammeInfo {
+  id: string;
+  field: string;
+  school: string | null;
+  tier: number;
+  name: string;
+  blurb: string;
+  cost: number;
 }
 export interface ActiveResearchView {
   id: string;
@@ -1045,6 +1068,9 @@ export type ServerMsg =
       tick: number;
       sim_time: number;
       galaxy: GalaxyInfo;
+      // §perf Part B: static tables, sent once (were inside every 10 Hz View).
+      charter_ladder: [string, number][];
+      research_catalog: ProgrammeInfo[];
     }
   | {
       type: "View";
@@ -1079,8 +1105,9 @@ export type ServerMsg =
       /// snapshotted on the ledger close (holds steady between closes).
       rankings?: RankingRow[];
       /// §research R6: the viewer's OWN research picture (owner-only; null if
-      /// unaffiliated — research is a syndicate institution).
-      research?: ResearchView | null;
+      /// unaffiliated — research is a syndicate institution). §perf Part B: the
+      /// DYNAMIC slice only — the client joins it onto Welcome's catalog.
+      research?: ResearchDynView | null;
     }
   | {
       // §perf Part A: incremental battle-record delivery on the reliable lane —

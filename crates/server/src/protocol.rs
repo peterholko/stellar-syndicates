@@ -333,9 +333,8 @@ pub struct CharterView {
     pub status: sim::CharterStatus,
     /// Human title of the band, for the status chip.
     pub title: &'static str,
-    /// The band ladder's thresholds, so the client can draw the ladder without
-    /// duplicating the constants: (title, standing at/below which it applies).
-    pub ladder: Vec<(&'static str, f64)>,
+    // (§perf Part B: the static band LADDER moved to Welcome — it is a constant
+    // table and had been re-sent inside every 10 Hz View.)
     /// Freight-fee multiplier currently applied (1.0 in good standing).
     pub tariff_mult: f64,
     /// Exchange penalty fee currently applied, as a fraction of trade value
@@ -949,8 +948,9 @@ pub struct ResearchView {
     pub stalled: bool,
     /// The per-Academy contribution rows (shown factor chains).
     pub academies: Vec<AcademyRow>,
-    /// The whole visible catalog with per-node state + gate progress.
-    pub programmes: Vec<ProgrammeView>,
+    /// §perf Part B: the DYNAMIC per-node slice only (state + gate) — the static
+    /// catalog (names/blurbs/topology/cost) went once in Welcome.
+    pub programmes: Vec<ProgrammeDynView>,
 }
 
 /// §research R6: the active programme banner data.
@@ -980,9 +980,11 @@ pub struct AcademyRow {
     pub supplied: bool,
 }
 
-/// §research R6: one programme node on a board, at the viewer's state.
+/// §perf Part B: one programme's STATIC catalog entry — names, blurbs, board
+/// topology, cost. The same constant table for everyone (the game's rulebook,
+/// not anyone's progress), sent ONCE in Welcome instead of per-member at 10 Hz.
 #[derive(Debug, Clone, Serialize)]
-pub struct ProgrammeView {
+pub struct ProgrammeInfo {
     pub id: String,
     /// Field slug ("propulsion" …) — the board this node lives on.
     pub field: String,
@@ -991,11 +993,20 @@ pub struct ProgrammeView {
     pub tier: u8,
     pub name: String,
     pub blurb: String,
-    /// One of: "completed" | "active" | "queued" | "available" | "locked".
-    pub state: String,
     /// Cost in throughput-seconds (the ETA denominator context).
     pub cost: f64,
+}
+
+/// §research R6 / §perf Part B: one programme node's DYNAMIC slice — the
+/// viewer's state + gate progress. The client joins it onto the static
+/// [`ProgrammeInfo`] catalog by id.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgrammeDynView {
+    pub id: String,
+    /// One of: "completed" | "active" | "queued" | "available" | "locked".
+    pub state: String,
     /// For a LOCKED node whose tier carries a verb/metric gate: the progress bar.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateProgressView>,
 }
 
@@ -1414,6 +1425,14 @@ pub enum ServerMsg {
         tick: u64,
         sim_time: f64,
         galaxy: GalaxyInfo,
+        /// §perf Part B: the charter band ladder — a static constant table
+        /// (title, standing at/below which it applies), sent once here instead
+        /// of inside every 10 Hz View.
+        charter_ladder: Vec<(&'static str, f64)>,
+        /// §perf Part B: the static research programme catalog (names, blurbs,
+        /// board topology, costs) — the game's public rulebook, identical for
+        /// everyone. The View carries only the per-node dynamic slice.
+        research_catalog: Vec<ProgrammeInfo>,
     },
 
     /// The public star chart CHANGED after this client's Welcome: a join past
