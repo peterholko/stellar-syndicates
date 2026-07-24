@@ -81,6 +81,80 @@ impl Timeline {
                         self.push(p, observe, sev, text);
                     }
                 }
+                // §TCA Phase 2: a CITATION is a PUBLIC bulletin from the
+                // Charterhouse. Everyone learns it light-delayed from the hub — the
+                // reputational hit rides the same wavefront as the legal one. The
+                // culprit reads it as an indictment; everyone else reads it as
+                // intelligence about who is worth avoiding (or hiring).
+                EventPayload::Citation { culprit, offense, pos, occurred_at } => {
+                    let who = world
+                        .players
+                        .get(culprit)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| format!("{culprit}"));
+                    let lag = (e.time - *occurred_at).max(0.0);
+                    let when = if lag >= 1.0 {
+                        format!(" (the offense was {} ago)", fmt_wait(lag))
+                    } else {
+                        String::new()
+                    };
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *culprit {
+                            (
+                                TimelineSeverity::Bad,
+                                format!(
+                                    "The Terran Charter Authority has CITED your corporation for {}{when}.",
+                                    offense.title()
+                                ),
+                            )
+                        } else {
+                            (
+                                TimelineSeverity::Info,
+                                format!("Authority bulletin: {who} cited for {}{when}.", offense.title()),
+                            )
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
+                // §TCA Phase 2: ENFORCEMENT bulletins, public from the Charterhouse
+                // on the same light-gating as a citation. The announcement's light
+                // outruns the squadron — that IS the target's lead time.
+                EventPayload::EnforcementDispatched { target, system, pos } => {
+                    let who = world.players.get(target).map(|c| c.name.clone()).unwrap_or_else(|| format!("{target}"));
+                    let name = system_name(world, *system);
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *target {
+                            (
+                                TimelineSeverity::Bad,
+                                format!(
+                                    "AUTHORITY ENFORCEMENT DISPATCHED against your corporation — a squadron is \
+                                     under way to blockade {name}. Pay reinstatement to call it off, fight it, or wait it out."
+                                ),
+                            )
+                        } else {
+                            (TimelineSeverity::Info, format!("Authority bulletin: an enforcement squadron sails against {who} at {name}."))
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
+                EventPayload::EnforcementWithdrawn { target, recalled, pos } => {
+                    let who = world.players.get(target).map(|c| c.name.clone()).unwrap_or_else(|| format!("{target}"));
+                    for (&p, corp) in &world.players {
+                        let observe = e.time + pos.distance(corp.command_center) / c;
+                        let (sev, text) = if p == *target {
+                            if *recalled {
+                                (TimelineSeverity::Good, "Authority enforcement RECALLED — your charter is back above the proscription line.".to_string())
+                            } else {
+                                (TimelineSeverity::Info, "The Authority's enforcement squadron has served its time and is standing down.".to_string())
+                            }
+                        } else {
+                            (TimelineSeverity::Info, format!("Authority bulletin: the enforcement squadron against {who} has stood down."))
+                        };
+                        self.push(p, observe, sev, text);
+                    }
+                }
                 // The galaxy changed: your own claim is instant; a rival's claim is
                 // awareness that arrives light-delayed (same gate as the map).
                 EventPayload::SystemClaimed { system, owner, pos } => {
@@ -137,6 +211,10 @@ impl Timeline {
                             "Can't build {} at {name}: needs Shipyard tier {required} there.",
                             build_label(*what)
                         ),
+                        sim::BuildRejectReason::NotBuildable => format!(
+                            "Can't build {} at {name}: it isn't a corporation-buildable hull.",
+                            build_label(*what)
+                        ),
                         sim::BuildRejectReason::NeedsResearch => format!(
                             "Can't build {} at {name}: its hull hasn't been researched — complete the Line programme on the Hulls board.",
                             build_label(*what)
@@ -145,6 +223,20 @@ impl Timeline {
                             "Can't build {} at {name}: your syndicate already fields its Titan — one flagship per syndicate (rebuild only after it is lost).",
                             build_label(*what)
                         ),
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, text);
+                }
+                // A soft-rejected fleet ORDER (§TCA sovereignty) — owner-only,
+                // instant (your own command staff refusing to transmit): the order
+                // never installed, the fleet kept its current one, nothing was
+                // spent. Without this line the refusal is invisible and the click
+                // just seems to do nothing.
+                EventPayload::OrderRejected { owner, reason, .. } => {
+                    let text = match reason {
+                        sim::OrderRejectReason::InsideSovereignZone =>
+                            "Order refused: the target shelters inside the Authority's sovereign zone at the hub — \
+                             no engagement may open there. Your fleet holds its current order."
+                                .to_string(),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
@@ -573,6 +665,7 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
                 sim::ShipKind::Scout => "scout",
+                sim::ShipKind::Freighter => "freighter",
                 sim::ShipKind::Destroyer => "destroyer",
                 sim::ShipKind::Cruiser => "cruiser",
                 sim::ShipKind::Battleship => "battleship",
@@ -583,6 +676,12 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
         }
         None => "your fleet".to_string(),
     }
+}
+
+/// An ABSOLUTE sim-time as a mission-clock stamp ("T+7:20") — used for the §TCA
+/// freight timetable, whose departure and arrival instants are exact.
+fn fmt_clock(t: f64) -> String {
+    format!("T+{}", fmt_wait(t))
 }
 
 /// Format a wait in seconds as `M:SS` for the echo countdown label.
@@ -598,6 +697,9 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
+        // §TCA: never appears in a real build event (the Freighter is TCA-only),
+        // but the match must be total — a defensive label.
+        sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "an Authority Freighter",
         sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
         sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "a Destroyer",
         sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "a Cruiser",
@@ -631,6 +733,7 @@ fn kind_word(k: ShipKind) -> &'static str {
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
         ShipKind::Scout => "scout",
+        ShipKind::Freighter => "freighter",
         ShipKind::Destroyer => "destroyer",
         ShipKind::Cruiser => "cruiser",
         ShipKind::Battleship => "battleship",
@@ -641,6 +744,17 @@ fn kind_word(k: ShipKind) -> &'static str {
 
 /// The check-in line for an economy event the recipient cares about while away,
 /// or `None` for the noisy/online-only ones we deliberately skip.
+/// §TCA Phase 2: the charter penalty burned on an Exchange settlement, attached
+/// to the trade that incurred it — a fee the player can't see is a mystery
+/// drain, not a consequence.
+fn penalty_suffix(penalty: f64) -> String {
+    if penalty > 0.005 {
+        format!(" Charter penalty burned: {penalty:.0} Cr.")
+    } else {
+        String::new()
+    }
+}
+
 fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, String)> {
     use TimelineSeverity::*;
     Some(match *te {
@@ -652,17 +766,35 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 system_name(world, source)
             ),
         ),
-        TradeEvent::Sold { commodity, units, unit_price, .. } => (
+        TradeEvent::Sold { commodity, units, unit_price, penalty, .. } => (
             Good,
-            format!("Sold {units} {} at the hub for {unit_price:.2} ea.", commodity_name(commodity)),
+            format!(
+                "Sold {units} {} at the hub for {unit_price:.2} ea.{}",
+                commodity_name(commodity),
+                penalty_suffix(penalty)
+            ),
         ),
-        TradeEvent::Delivered { commodity, units, .. } => (
+        TradeEvent::Delivered { commodity, units, system, .. } => (
             Good,
-            format!("Delivery arrived: +{units} {}.", commodity_name(commodity)),
+            match system {
+                Some(sid) => format!(
+                    "Delivery arrived: +{units} {} — stocked at {}.",
+                    commodity_name(commodity),
+                    system_name(world, sid)
+                ),
+                None => format!(
+                    "Delivery arrived: +{units} {} — into your hub warehouse.",
+                    commodity_name(commodity)
+                ),
+            },
         ),
-        TradeEvent::LimitFilled { commodity, units, unit_price, side, .. } => {
+        TradeEvent::LimitFilled { commodity, units, unit_price, side, penalty, .. } => {
             let s = format!("{side:?}").to_lowercase();
-            (Good, format!("Limit {s} filled: {units} {} @ {unit_price:.2}.", commodity_name(commodity)))
+            (Good, format!(
+                "Limit {s} filled: {units} {} @ {unit_price:.2}.{}",
+                commodity_name(commodity),
+                penalty_suffix(penalty)
+            ))
         }
         TradeEvent::SupplyDiverted { commodity, units, system, action, .. } => {
             let name = system_name(world, system);
@@ -693,6 +825,165 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     commodity_name(commodity)
                 ),
             )
+        }
+        // A SOFT-REJECTED Exchange order or freight booking (§9, §TCA) — owner-only,
+        // instant, and free: nothing was spent. Names the reason so the fix is obvious.
+        TradeEvent::Rejected { commodity, units, system, reason, .. } => {
+            let com = commodity_name(commodity);
+            let where_ = system.map(|s| system_name(world, s));
+            match reason {
+                sim::TradeRejectReason::InsufficientWarehouseStock { have } => (
+                    Warn,
+                    match &where_ {
+                        Some(name) => format!(
+                            "Can't ship {units} {com} to {name}: your hub warehouse holds {have}."
+                        ),
+                        None => format!(
+                            "Can't sell {units} {com}: your hub warehouse holds {have}. \
+                             Ship goods to the hub first (Authority freight or a convoy)."
+                        ),
+                    },
+                ),
+                sim::TradeRejectReason::NotYourSystem => (
+                    Warn,
+                    format!(
+                        "Authority freight refused {units} {com}: {} isn't yours. The Charter \
+                         Authority serves your own colonies only.",
+                        where_.unwrap_or_else(|| "that system".into())
+                    ),
+                ),
+                sim::TradeRejectReason::InsufficientSystemStock { have } => (
+                    Warn,
+                    format!(
+                        "Can't collect {units} {com} from {}: its stockpile holds {have}.",
+                        where_.unwrap_or_else(|| "that system".into())
+                    ),
+                ),
+                sim::TradeRejectReason::CannotAffordFee { fee } => (
+                    Warn,
+                    format!("Can't book {units} {com}: the Authority's freight fee is {fee:.0} credits."),
+                ),
+                sim::TradeRejectReason::FleetUnavailable => (
+                    Warn,
+                    "That fleet can't handle cargo right now — it must be YOURS, idle, and not in a fight.".to_string(),
+                ),
+                sim::TradeRejectReason::OutOfLogisticsRange => (
+                    Warn,
+                    "That fleet is too far from the dock to move cargo — bring it alongside first.".to_string(),
+                ),
+                sim::TradeRejectReason::NoCargoRoom { capacity } if capacity == 0 => (
+                    Warn,
+                    format!("That fleet has no cargo hold — only convoys haul goods (tried {units} {com})."),
+                ),
+                sim::TradeRejectReason::NoCargoRoom { capacity } => (
+                    Warn,
+                    format!("Not enough hold for {units} {com}: this fleet lifts {capacity} units."),
+                ),
+                // `units == 0` is the reinstatement shape (no commodity involved);
+                // a real trade carries its units.
+                sim::TradeRejectReason::CantAfford { cost } if units == 0 => (
+                    Warn,
+                    format!("Reinstatement costs {cost:.0} credits — more than your treasury holds."),
+                ),
+                sim::TradeRejectReason::CantAfford { cost } => (
+                    Warn,
+                    format!(
+                        "Can't buy {units} {com}: it needs {cost:.0} credits (price + charter penalty) — \
+                         more than your treasury holds."
+                    ),
+                ),
+                sim::TradeRejectReason::CharterSuspended => (
+                    Bad,
+                    format!(
+                        "The Authority won't book {units} {com}: your charter is SUSPENDED. \
+                         Freight already queued or aboard still completes — pay down your \
+                         citations, or haul it yourself."
+                    ),
+                ),
+                sim::TradeRejectReason::CharterRevoked => (
+                    Bad,
+                    format!(
+                        "The Exchange is closed to you: your charter is REVOKED ({units} {com} not traded). \
+                         Your warehouse is still yours to fetch from — pay reinstatement to trade again."
+                    ),
+                ),
+                sim::TradeRejectReason::CargoMismatch => (
+                    Warn,
+                    format!("That fleet is already carrying something else — unload before loading {com}."),
+                ),
+                sim::TradeRejectReason::DestinationBlockaded => (
+                    Warn,
+                    format!(
+                        "The Authority won't book {units} {com} to {} — it reports the system BLOCKADED. \
+                         Break the blockade, or move the goods yourself.",
+                        where_.unwrap_or_else(|| "that system".into())
+                    ),
+                ),
+            }
+        }
+        // §TCA Phase 2: the reinstatement receipt — what it cost, and the band it
+        // bought you back into.
+        TradeEvent::CharterReinstated { points, cost, before, after, .. } => {
+            let from = sim::charter_status(before);
+            let to = sim::charter_status(after);
+            let crossed = if from != to {
+                format!(" — charter reinstated to {}", to.title())
+            } else {
+                String::new()
+            };
+            (
+                Good,
+                format!("Paid the Authority {cost:.0} credits for {points:.0} standing ({before:.0} → {after:.0}){crossed}."),
+            )
+        }
+        // §TCA: the booking receipt — what it cost and when the Authority sails.
+        TradeEvent::FreightBooked { commodity, units, system, direction, fee, depart_at, eta, .. } => {
+            let name = system_name(world, system);
+            let (verb, dest) = match direction {
+                sim::ShipmentDir::Outbound => ("Booked", format!("to {name}")),
+                sim::ShipmentDir::Inbound => ("Booked pickup of", format!("from {name}")),
+            };
+            (
+                Good,
+                format!(
+                    "{verb} {units} {} {dest} — fee {fee:.0}cr, departs {}, arrives {}.",
+                    commodity_name(commodity),
+                    fmt_clock(depart_at),
+                    fmt_clock(eta)
+                ),
+            )
+        }
+        // §TCA: freight progress. Only the outcomes a player would want in an
+        // away-digest; the routine "departed" tick stays out of it.
+        TradeEvent::FreightMoved { commodity, units, system, stage, .. } => {
+            let name = system_name(world, system);
+            let com = commodity_name(commodity);
+            match stage {
+                sim::FreightStage::Departed => return None,
+                sim::FreightStage::CollectedForPickup => return None,
+                sim::FreightStage::DeliveredToSystem => {
+                    (Good, format!("Authority freight delivered {units} {com} to {name}."))
+                }
+                sim::FreightStage::ArrivedAtWarehouse => (
+                    Good,
+                    format!("Authority freight landed {units} {com} from {name} in your hub warehouse."),
+                ),
+                sim::FreightStage::ReturnedUndeliverable => (
+                    Warn,
+                    format!(
+                        "Authority freight couldn't unload {units} {com} at {name} — it's no longer yours, \
+                         or its depot is full. The lot is back in your hub warehouse."
+                    ),
+                ),
+                sim::FreightStage::ForfeitedOnCapture => (
+                    Bad,
+                    format!("Lost {units} {com} awaiting pickup at {name} — the system fell before the Authority collected it."),
+                ),
+                sim::FreightStage::LostWithFreighter => (
+                    Bad,
+                    format!("{units} {com} destroyed with the Authority freighter carrying it (to/from {name})."),
+                ),
+            }
         }
         // Online-only / low-signal news (manual buys, dispatch-started, resting
         // placements) stays out of the away-digest.
@@ -760,6 +1051,67 @@ mod tests {
         (w, a, b)
     }
 
+    /// §TCA Phase 2: a CITATION is a PUBLIC bulletin from the Charterhouse, and
+    /// every player — culprit and bystander alike — learns it LIGHT-DELAYED from
+    /// the hub. A distant third party hears about it later than a near one, and
+    /// the culprit's own copy reads as an indictment rather than gossip.
+    #[test]
+    fn citations_are_public_and_reach_each_player_at_lightspeed() {
+        let mut w = World::new(SimConfig::for_players(11, 4));
+        let (culprit, near, far) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: culprit, name: "Outlaw".into() },
+            Command::AddPlayer { id: near, name: "Near".into() },
+            Command::AddPlayer { id: far, name: "Far".into() },
+        ]);
+        // Put the two bystanders at KNOWN, different distances from the hub.
+        let c = w.config.c;
+        let hub = w.hub;
+        w.players.get_mut(&near).unwrap().command_center = hub + Vec2::new(600.0, 0.0);
+        w.players.get_mut(&far).unwrap().command_center = hub + Vec2::new(6000.0, 0.0);
+
+        let mut tl = Timeline::new();
+        let issued = w.time;
+        tl.ingest(
+            &[sim::Event::new(
+                issued,
+                sim::EventPayload::Citation {
+                    culprit,
+                    offense: sim::tca::CitationOffense::FreightDestroyed,
+                    pos: hub,
+                    occurred_at: issued,
+                },
+            )],
+            &w,
+        );
+        let seen = |tl: &Timeline, who: PlayerId| tl.digest(who).0.len();
+
+        // Nobody has it before its light arrives.
+        tl.promote(issued);
+        for who in [culprit, near, far] {
+            assert_eq!(seen(&tl, who), 0, "no bulletin before its light arrives");
+        }
+        let near_at = issued + 600.0 / c;
+        let far_at = issued + 6000.0 / c;
+        assert!(near_at < far_at, "the test geometry must actually differ");
+
+        // The NEAR bystander is informed first, and the bulletin NAMES the culprit.
+        tl.promote(near_at + 1e-6);
+        assert_eq!(seen(&tl, near), 1, "the near bystander is informed on schedule");
+        assert_eq!(seen(&tl, far), 0, "the far bystander is still in the dark");
+        let near_text = tl.digest(near).0[0].text.clone();
+        assert!(near_text.contains("Outlaw"), "a bystander's bulletin names the culprit: {near_text}");
+
+        // …and the FAR one only once its own light lands.
+        tl.promote(far_at + 1e-6);
+        assert_eq!(seen(&tl, far), 1, "…until its light arrives");
+
+        // The culprit reads it as an indictment of THEIR corporation.
+        let mine = tl.digest(culprit).0;
+        assert_eq!(mine.len(), 1);
+        assert!(mine[0].text.contains("your corporation"), "the culprit is told plainly: {}", mine[0].text);
+    }
+
     #[test]
     fn own_economy_news_is_observable_immediately() {
         let (w, a, _b) = world_with_two();
@@ -771,6 +1123,7 @@ mod tests {
                 commodity: Commodity::MetallicOre,
                 units: 12,
                 unit_price: 8.0,
+                penalty: 0.0,
             }),
         );
         tl.ingest(&[ev], &w);

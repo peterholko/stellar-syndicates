@@ -750,8 +750,9 @@ Everything that touches the outside world lives outside it.
 ### 1. Build & run the server
 
 ```bash
-# from the repo root
-cargo run -p server
+# from the repo root — use --release for playtesting (the debug build is
+# several times slower on the per-tick serialization path and can stutter)
+cargo run --release -p server
 ```
 
 The server listens on `:8080` (HTTP + WebSocket at `/ws`). With no `DATABASE_URL`
@@ -904,3 +905,184 @@ then **balance** (via the bot simulator + human playtest).
 - **Balance is deliberately untuned** (per the design): ship speeds, galaxy size,
   `c`, and raid radii are first-pass values chosen for legible delays, not
   balance.
+
+## STATUS — TCA Standing, Citations & Enforcement (Phase 2 of 2)
+
+Phase 2 is **complete** on `market-ux`: all six parts landed, one commit each,
+every checkpoint green (**sim 430 tests, server 63, client `tsc` + `vite build`
+clean**). See *Porting note* below — the work was authored on `async-automation`
+and carried over; the counts here are the market-ux totals, which include that
+branch's research, tactical-engine, and battle-theater tests.
+
+| Part | What landed |
+|---|---|
+| 1 | The TCA law tunable block, `Corporation.tca_standing`, the pure derived `CharterStatus`, unconditional regen, owner-only `CharterView` + leak test |
+| 2 | Incidents recorded at the wreck, citations applied when their light reaches the hub, public bulletins radiating from the Charterhouse at c |
+| 3 | Freight tariff, Exchange penalty fee, `Suspended` freight refusal, `Revoked` Exchange lockout with grandfathered resting orders |
+| 4 | Scripted enforcement expeditions — dispatch, announce, blockade, recall, stand down — on the existing blockade machinery |
+| 5 | `PayReinstatement`: clamped, burned, receipted, and it calls off an active expedition in the same tick |
+| 6 | Charter chip + band ladder, live tariff/penalty, reinstatement control, "this will be cited" confirms, Authority hull naming, GDD law section |
+
+Nothing is stubbed. Verified live in the browser: the charter view arrives on the
+wire in good standing (tariff ×1.00, penalty 0), and the panel renders the band
+ladder, the live cost of a fallen band (×2.63 / 8.1%), and the reinstatement
+control with its cost preview. No console errors.
+
+### Porting note — authored on `async-automation`, landed on `market-ux`
+
+Both phases were written against `async-automation`, which turned out to be two
+weeks stale. All twelve commits were replayed onto `market-ux` (the live branch)
+by cherry-pick, one at a time, each with its own green checkpoint. `tca.rs` is
+byte-identical across the two branches but for one doc line; the rest of the
+delta between them is market-ux's own work.
+
+Most hunks merged clean because the two lines of work touch different regions.
+The conflicts that did arise were resolved toward market-ux's semantics in every
+case where the two disagreed about something market-ux had already decided:
+
+- **The tactical engine.** market-ux replaced abstract combat with a per-ship
+  engine (`tactical.rs`). The incident hook was placed after `apply_side_losses`,
+  which is that engine's loss applicator — an Authority hull present before the
+  exchange and absent from `self.fleets` after both sides settle is a hull this
+  engagement killed. Verified live, not assumed.
+- **The warship ladder.** `ShipKind` carries ten combat hulls on market-ux, so
+  `Freighter` made eleven, and every `Record<ShipKind, _>` in the client —
+  including battle theater's `MASS`, `KIND_LABEL`, and `SHIP_ART` — needed an
+  entry. The type system found all of them.
+- **`Delivered.system`.** market-ux's Supply-from-HQ work added a discriminator
+  distinguishing an HQ-pool delivery from a stock-into-system run. Kept, with
+  the charter `penalty` field added alongside rather than in place of it.
+- **`label(commodity)` and `svgIcon`.** market-ux's pretty names and icon helper
+  won over the ported literals and the older `uiIcon` call shape (market-ux has
+  an unrelated function by that name — a silent-wrong-render trap the
+  conflict surfaced).
+
+One market-ux commit was reverted along the way: `156da4a` ("start players with
+a 3-ship raider wing") was a playtest tweak that failed six combat tests. A
+bisect confirmed it was the sole cause. The tests were not weakened and
+`HIT_DMG_CAL` was not retuned to make them pass — the tweak was simply backed
+out.
+
+**One thing to watch.** `TCA_ENFORCEMENT_SHIPS = 6` corvettes was tuned against
+the pre-ladder combat model. Against market-ux's tactical engine and its
+Destroyer-through-Titan ladder, six corvettes is a much softer obstacle than it
+was — a proscribed corp with real warships can brush an expedition aside. The
+mechanic is intact and the number is a playtest placeholder like the rest of the
+block, but it is the one Phase 2 tunable the port meaningfully changed the
+meaning of.
+
+### Decisions the handoff left open
+
+- **Corvette** is the enforcement hull, and the reason is load-bearing: raiders
+  run DARK, which would contradict an *announced* expedition, while corvettes
+  broadcast. Their defense-heavy profile also makes the squadron a durable
+  economic obstacle rather than a slaughter — the "costs time, never colonies"
+  shape. Blockade establishment needs no raider aboard (that gate is only on the
+  player command), so the existing machinery accepts it unmodified.
+- **`PayReinstatement` is instant**, not light-delayed. The handoff said "no
+  special-casing"; every other economic command here (`MarketBuy`,
+  `BookFreightOut`) is already instant because settlement is correlation (§3).
+  Treating a payment to the Charterhouse as a courier run would have been the
+  special case.
+- **The penalty ramp clamps at Revoked** rather than escalating forever — the
+  deeper bands answer with expeditions, not an ever-steeper bill.
+- **Combat-order rejects** kept the Phase 1 `OrderRejectReason` split from the
+  trade event stream.
+
+### Where Phase 1 code contradicted this spec (flagged, not improvised around)
+
+- **`Citation::culprits` is a singleton in practice.** The handoff specifies
+  culprits as "the participating attacker corporations from the engagement", each
+  paying in full. But the engagement model only ever admits ONE attacker owner —
+  reinforcement requires `e.a_owner == a_owner_c`, and allies don't join an
+  attacker side either. So two rival corps jumping the same freighter form two
+  separate engagements, and only the one that lands the kill is cited. The
+  set-of-culprits machinery is built exactly as specified and will start mattering
+  if multi-owner attacker sides ever land; the test asserts what IS reachable (one
+  flat loss per corp per hull, however many fleets it brought).
+- **Raid and destruction coincide.** Phase 1's seizure only fires when the target
+  is emptied, so "raided" and "destroyed" are the same moment for a freighter. The
+  two offenses are therefore distinguished by the ORDER given (`Intercept` =
+  piracy, `Attack` = destruction) rather than by whether cargo survived.
+- **The band ladder's inclusivity is not uniform** — `Sanctioned` begins strictly
+  below full standing while the three `_AT` bands include their threshold. The
+  exported display ladder documents this and a test pins the two together.
+
+### Deferred, as specified
+
+Privateering / letters of marque; witnessed-vs-anonymous incidents;
+syndicate-shared or averaged standing; charter-archetype-differentiated terms; TCA
+bounties, escorts or patrols (the Authority's protection stays retributive only);
+and any standing effect from player-versus-player combat — with
+`raiding_a_player_convoy_is_never_an_incident` asserting that last one directly.
+
+## STATUS — Charterhouse Warehouse + TCA Freight (Phase 1 of 2)
+
+Phase 1 is **complete** on `market-ux`: all six parts landed, one commit each,
+every checkpoint green (**sim 414 tests, server 62, client `tsc` + `vite build`
+clean** at the Phase 1 close, up from a 383/61 market-ux baseline). See
+*Porting note* under the Phase 2 STATUS.
+
+| Part | What landed |
+|---|---|
+| 1 | `sim/tca.rs` (tunables + freight data model), `PlayerId::TCA`, `ShipKind::Freighter` (non-buildable), `Corporation.warehouse`, `World.freight_queue`/`freight_runs`, valuation coverage, snapshot-compat test |
+| 2 | Warehouse-only Exchange: buys deposit, sells/limit-escrow draw only from it, no auto-convoys, typed soft-rejects, grandfathered in-flight convoys |
+| 3 | `BookFreightOut`/`BookFreightIn`, the pure tick-keyed departure scheduler, physical freighter runs, `MarketBuy { ship_to }`, owner-only notices, `FreightView` on the wire |
+| 4 | Two-tier manifest fog + view leak test, raid-steals-from-manifest / attack-destroys, pirate exclusion, light-delayed blockade refusal, `engage_freight`, the sovereignty bubble |
+| 5 | `HubLoad`/`HubUnload`/`SystemLoad`/`SystemUnload`, `TradeMission::DeliverToWarehouse`, `HaulToCharterhouse`, `Endpoint::Hub` repoint with a serde-default-true `sell_on_arrival` |
+| 6 | The Charterhouse panel (Exchange + warehouse + freight desk + shipment queue), freighter tint, convoy logistics UI, GDD §9 rewrite + §TCA section |
+
+Nothing is stubbed. A two-player smoke run was driven end to end in the browser:
+buy → warehouse → book freight → scheduled departure → freighter away, with the
+manifest correctly showing the owner their own lot at `revealed: false`.
+
+### Decisions the handoff left open (all commented at the code and tested)
+
+- **Undeliverable freight returns to the warehouse.** A lot that can't land — the
+  system changed hands, or its depot is full — rides home rather than being
+  destroyed. Freight also *respects the storage cap*, so it can't smuggle goods
+  past a limit convoys obey.
+- **TCA freight earns no `trade_units`.** That counter is a corp's own convoys
+  hauling; paying the Authority to carry goods safely shouldn't score like taking
+  the risk yourself. For the same reason an instant warehouse sale no longer
+  counts either (it moves nothing, and would otherwise be farmable risk-free).
+- **`Fleet.disposable`** distinguishes auto-spawned one-run convoys from player
+  hulls. Without it, repointing the hub endpoint at the *surviving*
+  `DeliverToWarehouse` mission would have turned standing orders into a
+  free-convoy factory.
+- **`Fleet::cargo_capacity()`** (250 units/convoy) bounds the **manual** load
+  commands only. Auto-spawned convoys predate any capacity rule and are left
+  alone — retrofitting it would silently change existing economy behaviour.
+- **Combat-order rejects** got their own `OrderRejectReason` rather than riding
+  the trade event stream, which carries a commodity a fleet order doesn't have.
+
+### Where the code contradicted the spec (flagged, not improvised around)
+
+- **`player_id_from_name` had no sentinel guard.** `ids.rs` claimed the server
+  "guards against ever colliding with" `PlayerId::PIRATE`; the function was a
+  bare FNV hash with no such check. Adding TCA made the claim matter, so the
+  guard is now real (behaviour-preserving for every name that isn't one of the
+  two exact sentinel hashes).
+- **"New code must never create `DeliverHome`/`SellAtHub`."** `SellAtHub` is now
+  created **nowhere** and survives only to resolve grandfathered convoys.
+  `DeliverHome` is *still* created — by `Endpoint::Home` standing orders and the
+  ReturnHome divert policy — because Part 5 explicitly leaves those untouched and
+  there is no "warehouse at home" to replace them. Read as scoped to the
+  hub/Exchange paths.
+- **The `raid` flag keyed on `t_kind == Convoy`**, so adding Freighter to the
+  civilian set was not enough — a freighter contact would silently have been a
+  battle rather than a steal. Fixed in Part 4.
+- **No cargo capacity existed** despite `Fleet.cargo`'s doc claiming "capacity
+  scales with the number of convoys aboard". Part 5 gives it a number.
+- **Full-world JSON is not byte-stable** (a known 1-ULP float wobble an existing
+  test already tolerates), so the snapshot-compat test asserts structurally.
+
+### Deferred to Phase 2, as specified
+
+`tca_standing`, charter statuses, citations, tariffs, freight suspension, market
+lockout, enforcement expeditions. **A freighter kill is consequence-free until
+then.** Also still deferred: warehouse capacity/storage fees, `Endpoint::Hub` as a
+standing-order *source*, unifying standing-order convoys with booked freight,
+priority departures, per-Depot-tier terms, limit-price `sell_on_arrival`,
+multi-commodity player holds, pirate predation on TCA freight. Freight insurance
+remains **rejected** (refund-on-loss duplicates goods).

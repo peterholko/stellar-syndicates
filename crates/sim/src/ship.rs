@@ -74,12 +74,33 @@ pub enum ShipKind {
     /// answer is the wolfpack torpedo Raider, unless its 45 points went to PD
     /// or Dreadnought screens (the puzzle the budgets exist to pose).
     Titan,
+    /// THE AUTHORITY FREIGHTER (§TCA): the scheduled common-carrier hull the
+    /// TERRAN CHARTER AUTHORITY runs between the Charterhouse and the colonies.
+    /// Owned ONLY by the [`crate::ids::PlayerId::TCA`] sentinel — NOT buildable by
+    /// any corporation ([`Self::is_buildable`] is false), so it sits outside the
+    /// warship ladder entirely. Broadcasts like a convoy (a declared common
+    /// carrier), carries no attack, is slower and chunkier than a convoy, and
+    /// hauls a MULTI-owner manifest that lives on the [`crate::tca::FreightRun`],
+    /// not in `Fleet.cargo`. In a hostile world it is just a fat civilian hull:
+    /// raidable and destroyable like any convoy (Phase 1 makes a freighter kill
+    /// consequence-free; the law arrives in Phase 2).
+    Freighter,
 }
 
 /// Mass added per unit of cargo carried. A fully-loaded convoy is meaningfully
 /// heavier than an empty one, so it accelerates noticeably worse (a = F/m) — your
 /// richest shipments are also the most sluggish. Tunable.
 pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
+
+/// §TCA Part 5: whole cargo UNITS one Convoy hull can lift. A fleet's capacity is
+/// this × the convoys aboard, so the "capacity scales with the number of convoys"
+/// rule finally has a number. Tunable, playtest placeholder.
+///
+/// NOTE: this bounds the MANUAL load commands (`HubLoad` / `SystemLoad`) only.
+/// The auto-spawned trade convoys (`ShipProduction`, standing orders) predate any
+/// capacity rule and are deliberately left alone — retrofitting the cap there
+/// would silently change existing economy behaviour, which is not this phase's job.
+pub const CARGO_UNITS_PER_CONVOY: u32 = 250;
 
 impl ShipKind {
     /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
@@ -101,6 +122,7 @@ impl ShipKind {
             ShipKind::Battleship => 8_000.0,
             ShipKind::Dreadnought => 16_000.0,
             ShipKind::Titan => 32_000.0,
+            ShipKind::Freighter => 6000.0, // chunkier than a convoy — a bulk carrier
         }
     }
 
@@ -134,6 +156,7 @@ impl ShipKind {
             ShipKind::Battleship => 36.0,
             ShipKind::Dreadnought => 29.0,
             ShipKind::Titan => 23.0, // the slowest hull flying — presence, not pursuit
+            ShipKind::Freighter => 32.0, // slower than a convoy — a laden common carrier
         }
     }
 
@@ -157,6 +180,7 @@ impl ShipKind {
                 | ShipKind::Battleship
                 | ShipKind::Dreadnought
                 | ShipKind::Titan
+                | ShipKind::Freighter
         )
     }
 
@@ -194,6 +218,7 @@ impl ShipKind {
             ShipKind::Battleship => 8.0,
             ShipKind::Dreadnought => 12.0,
             ShipKind::Titan => 24.0,
+            ShipKind::Freighter => 0.0, // an unarmed common carrier
         }
     }
 
@@ -212,6 +237,7 @@ impl ShipKind {
             ShipKind::Battleship => 12.0,
             ShipKind::Dreadnought => 26.0,
             ShipKind::Titan => 44.0,
+            ShipKind::Freighter => 1.0, // a fat civilian hull, like a convoy
         }
     }
 
@@ -244,6 +270,15 @@ impl ShipKind {
     /// defense weight (`defense × [`crate::combat::HULL_PER_DEFENSE`]`) with a
     /// small floor. §tactical: battle HP is [`ShipKind::hull_mass`], not this —
     /// this stays the cross-kind score currency. Tunable via the combat block.
+    /// Whether a CORPORATION can build this kind (§TCA). Everything on the ladder
+    /// is buildable EXCEPT the Authority [`Self::Freighter`], which only the TCA
+    /// sentinel ever mints — it is excluded from every BUILDABLE menu and the
+    /// `BuildShip` handler soft-rejects it (`recipe_for`/`required_shipyard_tier`
+    /// never see it).
+    pub fn is_buildable(self) -> bool {
+        !matches!(self, ShipKind::Freighter)
+    }
+
     pub fn hull(self) -> f64 {
         (self.defense_weight() * crate::combat::HULL_PER_DEFENSE).max(crate::combat::HULL_MIN)
     }
@@ -256,7 +291,8 @@ impl ShipKind {
             ShipKind::Corvette => 2,
             ShipKind::Raider => 2,
             ShipKind::Scout => 1,
-            ShipKind::Convoy | ShipKind::Colony => 0,
+            // §TCA: the Authority's carrier fits no modules — it is not a warship.
+            ShipKind::Convoy | ShipKind::Colony | ShipKind::Freighter => 0,
             ShipKind::Destroyer => 3,
             ShipKind::Cruiser => 4,
             ShipKind::Battleship => 4,
@@ -288,6 +324,8 @@ pub fn fitting_points(kind: ShipKind) -> u32 {
         ShipKind::Battleship => 18,
         ShipKind::Dreadnought => 28,
         ShipKind::Titan => 45,
+        // §TCA: not a warship — no slots, so no fitting budget either.
+        ShipKind::Freighter => 0,
     }
 }
 
@@ -355,7 +393,7 @@ pub fn is_siege_anchor(kind: ShipKind) -> bool {
 /// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A
 /// fleet-of-one resolves to that ship's own kind, so nothing changes for the
 /// N=1 world. Highest precedence first.
-pub const FLAGSHIP_PRECEDENCE: [ShipKind; 10] = [
+pub const FLAGSHIP_PRECEDENCE: [ShipKind; 11] = [
     // §ladder: a capital OUTRANKS everything — a fleet with a Titan IS the
     // Titan (its name, its sprite, its label), down the ladder from there.
     ShipKind::Titan,
@@ -365,6 +403,9 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 10] = [
     ShipKind::Destroyer,
     ShipKind::Colony,
     ShipKind::Convoy,
+    // A freighter fleet is pure freighters (never mixed with player ships), so its
+    // rank here only names how a lone Authority hull is drawn — a hauler.
+    ShipKind::Freighter,
     ShipKind::Corvette,
     ShipKind::Raider,
     ShipKind::Scout,
@@ -372,7 +413,7 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 10] = [
 
 /// All ship kinds, in a fixed deterministic order (composition iteration,
 /// damage-pool distribution, report ordering). Kept in sync with [`ShipKind`].
-pub const ALL_SHIP_KINDS: [ShipKind; 10] = [
+pub const ALL_SHIP_KINDS: [ShipKind; 11] = [
     ShipKind::Convoy,
     ShipKind::Raider,
     ShipKind::Corvette,
@@ -383,6 +424,7 @@ pub const ALL_SHIP_KINDS: [ShipKind; 10] = [
     ShipKind::Battleship,
     ShipKind::Dreadnought,
     ShipKind::Titan,
+    ShipKind::Freighter,
 ];
 
 /// The fastest flying speed across every ship kind — the single number the
@@ -582,6 +624,13 @@ pub enum TradeMission {
     /// system→system supply convoy; §15). Cargo is lost if the destination is no
     /// longer owned by the convoy's owner when it arrives (no gifting rivals).
     DeliverToSystem { system: EntityId },
+    /// §TCA Part 5: HAUL TO THE CHARTERHOUSE — a PLAYER-owned convoy carrying its
+    /// own cargo to the hub, where it deposits into the owner's warehouse and
+    /// (optionally) sells the lot at that tick's standing price. Unlike the legacy
+    /// `SellAtHub`, the fleet SURVIVES: it is the player's hull, so it goes Idle at
+    /// the Charterhouse ready for its next job. This is the player-owned half of
+    /// the two logistics channels; TCA freight is the other.
+    DeliverToWarehouse { sell_on_arrival: bool },
 }
 
 /// A patrolling raider's AUTONOMOUS defensive sortie (§5.1, Pillar 1): it has
@@ -680,6 +729,24 @@ pub struct Fleet {
     /// no field → all-unfitted → zero migration.
     #[serde(default)]
     pub loadouts: crate::combat::LoadoutMap,
+    /// §TCA: while this fleet BLOCKADES a system, also engage Terran Charter
+    /// Authority FREIGHTERS that arrive there. Off by default — a blockade
+    /// strangles a rival's own logistics without picking a fight with the
+    /// chartering power, and in Phase 1 that choice is free (the law arrives in
+    /// Phase 2). When on, an arriving freighter becomes an ordinary hostile
+    /// contact and the existing raid-vs-battle logic decides the rest. serde
+    /// default `false` so every old snapshot loads with today's behaviour.
+    #[serde(default)]
+    pub engage_freight: bool,
+    /// §TCA Part 5: this hull was AUTO-SPAWNED for one trade run (a standing-order
+    /// dispatch, a production shipment, a purchase delivery) and is CONSUMED when
+    /// it arrives — exactly as every auto trade convoy always has been. A hull the
+    /// player actually owns and loaded is not disposable: it survives its delivery
+    /// and goes Idle, ready for the next job. Without this, repointing the hub
+    /// endpoint at the surviving `DeliverToWarehouse` mission would quietly turn
+    /// standing orders into a free-convoy factory. serde default `false`.
+    #[serde(default)]
+    pub disposable: bool,
 }
 
 /// serde default for `Fleet::garrison_fed` (old snapshots load fed).
@@ -720,6 +787,8 @@ impl Fleet {
             garrison_fed: true,
             fought: false,
             loadouts: BTreeMap::new(),
+            engage_freight: false,
+            disposable: false,
         }
     }
 
@@ -931,6 +1000,13 @@ impl Fleet {
             .iter()
             .map(|(k, n)| k.hull_mass() * *n as f64)
             .sum()
+    }
+
+    /// §TCA Part 5: whole cargo units this fleet can lift = `CARGO_UNITS_PER_CONVOY`
+    /// per Convoy aboard. Zero for a fleet with no cargo hull (raiders, corvettes,
+    /// scouts, colony ships) — those soft-reject a load outright.
+    pub fn cargo_capacity(&self) -> u32 {
+        self.count(ShipKind::Convoy) * CARGO_UNITS_PER_CONVOY
     }
 
     /// Cargo mass carried by the fleet (§7).

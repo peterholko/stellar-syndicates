@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
-use sim::PlayerId;
+use sim::{EntityId, PlayerId};
 
 use crate::protocol::{ClientMsg, ServerMsg};
 
@@ -37,11 +37,46 @@ pub struct ServerStatus {
 /// Per-connection identifier, unique for the lifetime of the process.
 pub type ConnId = u64;
 
-/// Bounded capacity of each connection's outbound queue. At the ~10 Hz
-/// broadcast rate this is several seconds of buffered frames; a client too slow
-/// to keep up has its *stale* frames dropped rather than growing memory without
-/// bound (each Tick supersedes the last, so dropping old ones is correct).
+/// Bounded capacity of each connection's outbound queue. This now carries only
+/// the low-volume DISCRETE messages (Welcome, Report, Timeline, CommandSignal,
+/// EngagementEstimate, GalaxyUpdate, Trade, Error) — the high-frequency per-tick
+/// View rides its own last-write-wins [`watch`] channel instead, so a slow
+/// client can never accumulate a backlog of stale views here. 64 is ample
+/// headroom for the discrete traffic.
 pub const OUTBOUND_CAPACITY: usize = 64;
+
+/// §perf Part A: one record's DELIVERY cursor for one connection — how much of
+/// it this connection has already been sent. Pure bookkeeping about delivery,
+/// never about visibility: what MAY be sent is decided upstream by the view
+/// filter (light + fidelity); the cursor only prevents re-sending it.
+pub struct RecordCursor {
+    /// Rounds already delivered (the record's arrived prefix only ever grows).
+    pub rounds_sent: usize,
+    /// The outcome has been delivered (sent exactly once, when its light lands).
+    pub outcome_sent: bool,
+    /// Flagship names as last sent — the one mutable header field (a christening
+    /// mid-record re-sends the small header).
+    pub names: [Option<String>; 2],
+}
+
+/// §perf Part A/B: everything this CONNECTION has already been sent of the
+/// change-gated sections. Lives (and dies) with the connection — a reconnect
+/// starts empty, so a fresh socket naturally receives full state again.
+/// Cursors/signatures are committed ONLY after a successful `try_send`, so a
+/// full outbound queue means "retry next broadcast", never silent loss.
+#[derive(Default)]
+pub struct ConnSentState {
+    /// Per-record delivery cursors (records currently known to this connection).
+    pub records: HashMap<EntityId, RecordCursor>,
+    /// Signature of the standing-orders list as last sent.
+    pub standing_sig: Option<u64>,
+    /// Signature of the retained battle-reports list as last sent.
+    pub reports_sig: Option<u64>,
+    /// Signature of the retained capture-reports list as last sent.
+    pub captures_sig: Option<u64>,
+    /// Signature of the published rankings as last sent.
+    pub rankings_sig: Option<u64>,
+}
 
 /// Everything the loop needs to know about one live connection.
 pub struct ConnInfo {
@@ -49,10 +84,16 @@ pub struct ConnInfo {
     /// Held per-connection for the player roster surfaced in M3+ views.
     #[allow(dead_code)]
     pub name: String,
-    /// The connection's private outbound stream. The loop pushes this player's
-    /// filtered view here; a writer task forwards it to the socket. Bounded so a
+    /// The connection's private stream of DISCRETE messages. Bounded so a
     /// stalled client cannot make the server leak memory.
     pub outbound: mpsc::Sender<ServerMsg>,
+    /// The connection's LATEST per-player View, last-write-wins. A briefly
+    /// stalled client that recovers jumps straight to the current world instead
+    /// of replaying a queue of superseded frames (the old bounded mpsc dropped
+    /// the *newest* view and kept the stale backlog — exactly backwards).
+    pub view_tx: watch::Sender<Option<ServerMsg>>,
+    /// §perf: what this connection has already been sent (delta bookkeeping).
+    pub sent: ConnSentState,
 }
 
 /// Messages a connection sends to the authoritative loop.
@@ -64,6 +105,7 @@ pub enum GameInput {
         player_id: PlayerId,
         name: String,
         outbound: mpsc::Sender<ServerMsg>,
+        view_tx: watch::Sender<Option<ServerMsg>>,
     },
     /// A connection has closed.
     Disconnect { conn_id: ConnId },
@@ -134,6 +176,13 @@ impl Sessions {
         self.conns.get(&conn_id).map(|c| c.player_id)
     }
 
+    /// A clone of one connection's discrete-message sender, for handing to an
+    /// off-thread task (e.g. an engagement-estimate rollout) that will deliver a
+    /// reply itself. `None` if the connection has since dropped.
+    pub fn outbound_of(&self, conn_id: ConnId) -> Option<mpsc::Sender<ServerMsg>> {
+        self.conns.get(&conn_id).map(|c| c.outbound.clone())
+    }
+
     /// Send a message to one specific connection. Non-blocking: if the
     /// connection's queue is full (a stalled client) the message is dropped.
     pub fn send_to_conn(&self, conn_id: ConnId, msg: ServerMsg) {
@@ -156,6 +205,12 @@ impl Sessions {
     /// per-player message every broadcast tick.
     pub fn iter_conns(&self) -> impl Iterator<Item = (&ConnId, &ConnInfo)> {
         self.conns.iter()
+    }
+
+    /// §perf: mutable iteration for the broadcast loop — the per-connection
+    /// delta sender advances each connection's delivery cursors in place.
+    pub fn iter_conns_mut(&mut self) -> impl Iterator<Item = (&ConnId, &mut ConnInfo)> {
+        self.conns.iter_mut()
     }
 }
 

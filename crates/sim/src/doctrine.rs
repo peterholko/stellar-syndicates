@@ -147,7 +147,7 @@ pub enum DestinationInvalidPolicy {
     #[default]
     Drop,
     /// Re-route the convoy home (still raidable on the return leg); deposits into
-    /// home inventory on arrival.
+    /// the home system's stockpile on arrival.
     ReturnHome,
     /// Re-route the convoy to the hub (still raidable); sells at the
     /// price-on-arrival.

@@ -20,8 +20,9 @@ use std::time::Duration;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
+use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{interval, timeout, MissedTickBehavior};
 use tracing::{debug, warn};
 
@@ -45,14 +46,39 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, handle))
 }
 
+/// Serialize one `ServerMsg` and write it to the socket. `Ok(())` means the
+/// connection is still healthy (a serialization failure is logged and skipped,
+/// not fatal); `Err(())` means the socket send failed and the writer must stop.
+async fn write_msg(
+    ws_tx: &mut SplitSink<WebSocket, Message>,
+    msg: &ServerMsg,
+) -> Result<(), ()> {
+    let json = match serde_json::to_string(msg) {
+        Ok(j) => j,
+        Err(e) => {
+            warn!(error = %e, "failed to serialise ServerMsg");
+            return Ok(());
+        }
+    };
+    ws_tx
+        .send(Message::Text(Utf8Bytes::from(json)))
+        .await
+        .map_err(|_| ())
+}
+
 async fn handle_socket(socket: WebSocket, handle: GameHandle) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let conn_id = handle.next_conn_id();
 
-    // This connection's private, bounded outbound stream.
+    // This connection's private, bounded stream of DISCRETE messages.
     let (out_tx, mut out_rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
+    // The connection's LATEST View, last-write-wins: a stalled client that
+    // recovers skips straight to the current world instead of draining a backlog
+    // of stale frames. Seeded empty until the first broadcast.
+    let (view_tx, mut view_rx) = watch::channel::<Option<ServerMsg>>(None);
 
-    // Writer task: forward queued ServerMsgs and emit keepalive pings.
+    // Writer task: forward the latest View + queued discrete messages, and emit
+    // keepalive pings.
     let mut writer = tokio::spawn(async move {
         let mut ping = interval(PING_INTERVAL);
         ping.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -60,15 +86,21 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
         ping.tick().await;
         loop {
             tokio::select! {
+                // Latest View — borrow_and_update() hands us only the newest
+                // value, so any frames the loop pushed while we were busy writing
+                // collapse into this one send.
+                changed = view_rx.changed() => match changed {
+                    Ok(()) => {
+                        let latest = view_rx.borrow_and_update().clone();
+                        if let Some(msg) = latest {
+                            if write_msg(&mut ws_tx, &msg).await.is_err() { break; }
+                        }
+                    }
+                    Err(_) => break, // view sender dropped: connection closing
+                },
                 maybe = out_rx.recv() => match maybe {
                     Some(msg) => {
-                        let json = match serde_json::to_string(&msg) {
-                            Ok(j) => j,
-                            Err(e) => { warn!(error = %e, "failed to serialise ServerMsg"); continue; }
-                        };
-                        if ws_tx.send(Message::Text(Utf8Bytes::from(json))).await.is_err() {
-                            break;
-                        }
+                        if write_msg(&mut ws_tx, &msg).await.is_err() { break; }
                     }
                     None => break, // outbound sender dropped: connection closing
                 },
@@ -127,6 +159,7 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
                             player_id,
                             name: trimmed.to_string(),
                             outbound: out_tx.clone(),
+                            view_tx: view_tx.clone(),
                         });
                     }
                     Ok(other) => {

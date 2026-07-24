@@ -10,7 +10,7 @@
 //!      from M3: the delayed/fogged view);
 //!   4. hands events and periodic snapshots to the off-hot-path persistence task.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
@@ -25,7 +25,7 @@ use crate::protocol::{
     ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
-use crate::session::{ConnInfo, GameInput, ServerStatus, Sessions};
+use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
 use crate::timeline::Timeline;
 use crate::view::{self, PositionHistory, PriceHistory};
 
@@ -104,6 +104,15 @@ struct GameLoop {
     snapshot_every: u64,
     /// Publishes server/ops status for the `/status` endpoint (meta channel).
     status_tx: watch::Sender<ServerStatus>,
+    /// Connections with an engagement-estimate rollout currently running on a
+    /// blocking thread. One in flight per connection — repeat clicks are dropped
+    /// rather than piling up blocking tasks. Cleared when the task reports done
+    /// via `estimate_done_tx`.
+    estimate_inflight: HashSet<ConnId>,
+    /// A completed rollout signals its connection id here so the loop can clear
+    /// the in-flight flag (the estimate itself is sent to the client directly
+    /// from the blocking task, never routed back through the loop).
+    estimate_done_tx: mpsc::UnboundedSender<ConnId>,
 }
 
 impl GameLoop {
@@ -112,6 +121,7 @@ impl GameLoop {
         persistence: PersistenceHandle,
         snapshot_every: u64,
         status_tx: watch::Sender<ServerStatus>,
+        estimate_done_tx: mpsc::UnboundedSender<ConnId>,
     ) -> Self {
         let history = PositionHistory::for_world(&world);
         let prices = PriceHistory::for_world(&world);
@@ -128,6 +138,8 @@ impl GameLoop {
             persistence,
             snapshot_every: snapshot_every.max(1),
             status_tx,
+            estimate_inflight: HashSet::new(),
+            estimate_done_tx,
         }
     }
 
@@ -184,6 +196,7 @@ impl GameLoop {
                 player_id,
                 name,
                 outbound,
+                view_tx,
             } => {
                 let newly_online = self.sessions.insert(
                     conn_id,
@@ -191,6 +204,10 @@ impl GameLoop {
                         player_id,
                         name: name.clone(),
                         outbound,
+                        view_tx,
+                        // Fresh delivery cursors: this connection's first broadcast
+                        // sends full state (records, sections) — reconnect-safe.
+                        sent: Default::default(),
                     },
                 );
                 // Greet this connection immediately with its identity, clock,
@@ -243,6 +260,10 @@ impl GameLoop {
                             // What can be built + each recipe's cost/time (§step1).
                             build_options: build_options(),
                         },
+                        // §perf Part B: the two static tables that used to ride
+                        // every 10 Hz View — sent once here instead.
+                        charter_ladder: sim::tca::status_ladder().to_vec(),
+                        research_catalog: research_catalog(),
                     },
                 );
                 // Welcome-back: the check-in digest of what became observable while
@@ -383,9 +404,54 @@ impl GameLoop {
                         self.pending.push(Command::RecallRaid { player_id, raider_id });
                     }
                 }
-                ClientMsg::MarketBuy { commodity, units } => {
+                ClientMsg::MarketBuy { commodity, units, ship_to } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MarketBuy { player_id, commodity, units });
+                        self.pending.push(Command::MarketBuy { player_id, commodity, units, ship_to });
+                    }
+                }
+                ClientMsg::HubLoad { fleet_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HubLoad { player_id, fleet_id, commodity, units });
+                    }
+                }
+                ClientMsg::HubUnload { fleet_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HubUnload { player_id, fleet_id });
+                    }
+                }
+                ClientMsg::SystemLoad { fleet_id, system, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SystemLoad { player_id, fleet_id, system, commodity, units });
+                    }
+                }
+                ClientMsg::SystemUnload { fleet_id, system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SystemUnload { player_id, fleet_id, system });
+                    }
+                }
+                ClientMsg::HaulToCharterhouse { fleet_id, sell_on_arrival } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HaulToCharterhouse { player_id, fleet_id, sell_on_arrival });
+                    }
+                }
+                ClientMsg::PayReinstatement { points } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::PayReinstatement { player_id, points });
+                    }
+                }
+                ClientMsg::SetEngageFreight { fleet_id, on } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetEngageFreight { player_id, fleet_id, on });
+                    }
+                }
+                ClientMsg::BookFreightOut { system, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BookFreightOut { player_id, system, commodity, units });
+                    }
+                }
+                ClientMsg::BookFreightIn { system, commodity, units, sell_on_arrival } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BookFreightIn { player_id, system, commodity, units, sell_on_arrival });
                     }
                 }
                 ClientMsg::MarketSell { commodity, units } => {
@@ -505,20 +571,34 @@ impl GameLoop {
                     }
                 }
                 ClientMsg::EstimateEngagement { attacker, target } => {
-                    // A read-only QUERY (§FLEETS Part 3): compute the projection
-                    // from this player's OWN view and reply immediately. Touches
-                    // no authoritative state.
-                    if let Some(player_id) = self.sessions.player_of(conn_id)
+                    // A read-only QUERY (§FLEETS Part 3): project from this
+                    // player's OWN view. Touches no authoritative state. The CHEAP
+                    // read-out runs here on the loop; the EXPENSIVE 32-rollout
+                    // Monte Carlo is handed to a blocking thread so a burst of
+                    // estimate clicks can never stall the tick. One in flight per
+                    // connection — repeat clicks drop until the current one lands.
+                    if !self.estimate_inflight.contains(&conn_id)
+                        && let Some(player_id) = self.sessions.player_of(conn_id)
                         && let Some(corp) = self.world.players.get(&player_id)
                     {
                         let cc = corp.command_center;
                         let c = self.world.config.c;
                         let now = self.world.time;
                         let arrays = self.world.array_sensor_sources(player_id);
-                        if let Some(est) = crate::estimate::estimate_engagement(
+                        if let Some(inputs) = crate::estimate::prepare_estimate(
                             &self.world, &self.history, player_id, cc, c, now, &arrays, attacker, target,
-                        ) {
-                            self.sessions.send_to_conn(conn_id, ServerMsg::EngagementEstimate(est));
+                        ) && let Some(outbound) = self.sessions.outbound_of(conn_id)
+                        {
+                            self.estimate_inflight.insert(conn_id);
+                            let done_tx = self.estimate_done_tx.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let est = crate::estimate::run_estimate(inputs);
+                                // Deliver straight to the connection's own stream;
+                                // then free it to request another (best-effort —
+                                // if either end is gone the connection is closing).
+                                let _ = outbound.try_send(ServerMsg::EngagementEstimate(est));
+                                let _ = done_tx.send(conn_id);
+                            });
                         }
                     }
                 }
@@ -663,6 +743,14 @@ impl GameLoop {
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
         let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
+        // §perf Part A: per-player battle-record specs (what each player MAY see
+        // right now) — diffed per CONNECTION against its delivery cursor below.
+        let mut record_specs: HashMap<PlayerId, Vec<view::RecordSpec>> = HashMap::new();
+        // §perf Part B: per-player slow-moving sections + their content
+        // signatures — sent per connection only when a signature changed.
+        let mut sections: HashMap<PlayerId, SectionData> = HashMap::new();
+        // The published rankings are identical for everyone: one signature.
+        let rankings_sig = sig_of(&self.world.rankings);
         for player_id in self.sessions.online_players() {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
@@ -729,6 +817,15 @@ impl GameLoop {
             for g in ghosts.iter_mut() {
                 if g.own {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                    // §TCA: owner-only blockade policy — does this fleet engage
+                    // Authority freight arriving at the system it strangles?
+                    // §TCA: the engage-freight choice is only MEANINGFUL for a
+                    // fleet holding a Blockade (that's the only order the sim
+                    // consults it under) — expose it only there, so the client
+                    // never offers a toggle that does nothing.
+                    g.engage_freight = self.world.fleets.get(&g.id).and_then(|f| {
+                        matches!(f.order, sim::FleetOrder::Blockade { .. }).then_some(f.engage_freight)
+                    });
                     // §syndicates Part 3: OWNER-ONLY garrison status — if this fleet
                     // is stationed as an ally garrison, its host + fed state.
                     if let Some(host) = self.world.garrison_host_of(g.id) {
@@ -748,10 +845,21 @@ impl GameLoop {
                 // the ghost) is a syndicate member as THIS viewer knows it
                 // (light-delayed membership; `known_ally` returns false for own).
                 g.ally = self.world.known_ally(player_id, g.owner, now);
+                // §TCA: an Authority freighter's MANIFEST is two-tier PER ENTRY —
+                // your own lots are always yours to see (they're your property),
+                // everyone else's only from inside sensor range (`revealed`, the
+                // same Tier-2 gate that governs a convoy's cargo). A distant rival
+                // sees the hull go by and learns nothing about who ships what.
+                if let Some(run) = self.world.freight_runs.get(&g.id) {
+                    g.manifest = crate::view::visible_manifest(run, player_id, g.revealed);
+                }
             }
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-
             // participant — the scheduler holds them keyed by recipient.
+            // §perf Part B: these ride the change-gated Sections lane now; the
+            // retained sets change only by membership (entries are immutable
+            // once delivered), so an id signature detects every change.
             let battle_reports: Vec<crate::protocol::BattleReportView> = self
                 .reports
                 .retained_for(player_id)
@@ -783,6 +891,28 @@ impl GameLoop {
                     plunder: r.plunder.clone(),
                 })
                 .collect();
+            let reports_sig = sig_of(&battle_reports.iter().map(|r| r.id).collect::<Vec<_>>());
+            let captures_sig = sig_of(&capture_reports.iter().map(|r| r.id).collect::<Vec<_>>());
+            // Signature over the USER-VISIBLE fields only — deliberately not the
+            // whole struct: `next_eval_tick` is anti-spam bookkeeping the sim
+            // bumps every evaluation period per active rule, and hashing it
+            // would re-send the "change-gated" list every few seconds forever
+            // (the client renders none of it; its own list signature skips it too).
+            let standing_sig = sig_of(
+                &corp
+                    .standing_orders
+                    .iter()
+                    .map(|o| (o.id, &o.source, &o.dest, o.commodity, &o.trigger, &o.status, o.in_flight, o.sell_on_arrival))
+                    .collect::<Vec<_>>(),
+            );
+            sections.insert(player_id, SectionData {
+                standing: corp.standing_orders.clone(),
+                standing_sig,
+                reports: battle_reports,
+                reports_sig,
+                captures: capture_reports,
+                captures_sig,
+            });
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             // §syndicates Part 2: each syndicate ally's relayable scout intel (their
             // command center is the relay source). The View chain-light-delays each
@@ -895,11 +1025,26 @@ impl GameLoop {
 
             // The player's own wallet — fresh (their local treasury + holdings +
             // resting limit orders).
+            // §TCA Phase 2: the player's own charter standing. The BAND is always
+            // derived (never stored), so this can't desync from the sim.
+            let standing = corp.tca_standing;
+            let charter = crate::protocol::CharterView {
+                standing,
+                max_standing: sim::tca::TCA_STANDING_MAX,
+                status: sim::charter_status(standing),
+                title: sim::charter_status(standing).title(),
+                // (§perf Part B: the static ladder rides Welcome now.)
+                tariff_mult: sim::tca::tariff_mult(standing),
+                market_penalty_frac: sim::tca::market_penalty_frac(standing),
+                reinstate_cost_per_point: sim::tca::TCA_REINSTATE_FEE_PER_POINT,
+            };
+
             let wallet = WalletView {
                 credits: corp.credits,
                 valuation: corp.valuation,
-                inventory: corp
-                    .inventory
+                // §TCA: goods at the hub — what the Exchange trades against.
+                warehouse: corp
+                    .warehouse
                     .iter()
                     .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
                     .collect(),
@@ -937,8 +1082,12 @@ impl GameLoop {
                     coverage.push((f.pos, self.world.config.sensor_range * f.sensor_mult()));
                 }
             }
-            let battle_records =
-                view::battle_record_views_named(&self.world.battle_records, player_id, cc, c, now, &coverage, &|corp| {
+            // §perf Part A: records no longer ride the View. Enumerate what this
+            // player MAY see (cheap — no round materialization); the send loop
+            // below diffs each of their connections' cursors against this and
+            // ships only the increments, on the reliable discrete lane.
+            let specs =
+                view::visible_record_specs(&self.world.battle_records, player_id, cc, c, now, &coverage, &|corp| {
                     // §ladder B4: resolve a side's christened Titan name.
                     self.world
                         .players
@@ -947,6 +1096,51 @@ impl GameLoop {
                         .and_then(|sid| self.world.syndicates.get(&sid))
                         .and_then(|s| s.flagship_name.clone())
                 });
+            record_specs.insert(player_id, specs);
+            // §TCA: the Charterhouse freight desk. Terms for every system this
+            // player owns (the only valid destinations), plus their OWN lots.
+            let freight = crate::protocol::FreightView {
+                next_departure: self.world.next_freight_departure(),
+                period: self.world.freight_period_secs(),
+                fee_frac: sim::tca::TCA_FREIGHT_FEE_FRAC,
+                fee_per_unit_dist: sim::tca::TCA_FREIGHT_FEE_PER_UNIT_DIST,
+                depot_fee_mult: sim::tca::TCA_DEPOT_FEE_MULT,
+                terms: self
+                    .world
+                    .systems
+                    .iter()
+                    .filter(|s| s.owner == Some(player_id))
+                    .map(|s| {
+                        let distance = hub.distance(s.pos);
+                        let depot = s.tier(sim::StructureKind::Depot) > 0;
+                        let secs_out = sim::World::freight_flight_secs(distance);
+                        crate::protocol::FreightTermsView {
+                            system: s.id,
+                            distance,
+                            depot,
+                            cap: sim::tca::shipment_cap(depot),
+                            secs_out,
+                            secs_round: secs_out * 2.0,
+                        }
+                    })
+                    .collect(),
+                shipments: self
+                    .world
+                    .shipments_of(player_id)
+                    .into_iter()
+                    .map(|(s, aboard)| crate::protocol::ShipmentView {
+                        id: s.id.0,
+                        system: s.system,
+                        commodity: s.commodity,
+                        units: s.units,
+                        direction: s.direction,
+                        sell_on_arrival: s.sell_on_arrival,
+                        fee_paid: s.fee_paid,
+                        booked_at: s.booked_at,
+                        aboard,
+                    })
+                    .collect(),
+            };
 
             views.insert(
                 player_id,
@@ -959,9 +1153,8 @@ impl GameLoop {
                     ghosts,
                     market,
                     wallet,
-                    // The player's own standing orders (fresh — private policy, not
-                    // light-gated), so the client can list/edit them.
-                    standing_orders: corp.standing_orders.clone(),
+                    charter,
+                    freight,
                     // The player's own fleet doctrine (fresh private policy).
                     doctrine: corp.doctrine,
                     // The player's own in-flight order lifecycles (§order-lifecycle)
@@ -978,15 +1171,9 @@ impl GameLoop {
                         })
                         .collect(),
                     battles,
-                    battle_reports,
-                    capture_reports,
-                    battle_records,
                     syndicate,
                     syndicate_invites,
                     research,
-                    // §rankings: the published leaderboard — public, identical for
-                    // every player, a verbatim copy of the sim's last ledger close.
-                    rankings: self.world.rankings.clone(),
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);
@@ -1009,12 +1196,22 @@ impl GameLoop {
             }
         }
 
-        for (_conn_id, info) in self.sessions.iter_conns() {
+        for (_conn_id, info) in self.sessions.iter_conns_mut() {
             if let Some(view) = views.get(&info.player_id) {
-                // Non-blocking: never let one slow client stall the loop; a full
-                // queue means the client is behind, so dropping this stale view
-                // is correct — the next supersedes it.
-                let _ = info.outbound.try_send(view.clone());
+                // Last-write-wins: overwrite this connection's latest-View slot.
+                // A slow client simply never sees the frames it fell behind on —
+                // the writer always emits the freshest, never a stale backlog.
+                // (Err only if the writer task is already gone; harmless.)
+                let _ = info.view_tx.send(Some(view.clone()));
+            }
+            // §perf Part A: this connection's battle-record increments, on the
+            // RELIABLE lane (cursor committed only when the send succeeds).
+            if let Some(specs) = record_specs.get(&info.player_id) {
+                send_record_deltas(&self.world.battle_records, specs, info);
+            }
+            // §perf Part B: the change-gated slow sections, same reliable lane.
+            if let Some(sec) = sections.get(&info.player_id) {
+                send_sections(sec, rankings_sig, &self.world.rankings, info);
             }
             if let Some(reps) = reports.get(&info.player_id) {
                 for r in reps {
@@ -1024,6 +1221,141 @@ impl GameLoop {
             if let Some(tl) = timelines.get(&info.player_id) {
                 let _ = info.outbound.try_send(tl.clone());
             }
+        }
+    }
+}
+
+/// §perf Part B: one player's slow-moving sections for this broadcast, with
+/// their content signatures (computed once per player, compared per connection).
+struct SectionData {
+    standing: Vec<sim::StandingOrder>,
+    standing_sig: u64,
+    reports: Vec<crate::protocol::BattleReportView>,
+    reports_sig: u64,
+    captures: Vec<crate::protocol::CaptureReportView>,
+    captures_sig: u64,
+}
+
+/// §perf Part B: a cheap content signature — the serialized JSON hashed. Used on
+/// small, slow-moving payloads only (standing orders, report id lists, the
+/// ~20-row rankings), never on the big per-tick state.
+fn sig_of<T: serde::Serialize>(v: &T) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(v).unwrap_or_default().hash(&mut h);
+    h.finish()
+}
+
+/// §perf Part B: send this connection whichever sections changed since it last
+/// received them (a present field REPLACES the client copy; absent = unchanged).
+/// Signatures are committed only when the send succeeds — a full queue retries
+/// next broadcast, never silently losing a once-per-change section.
+fn send_sections(
+    sec: &SectionData,
+    rankings_sig: u64,
+    rankings: &[sim::RankingRow],
+    info: &mut ConnInfo,
+) {
+    let sent = &info.sent;
+    let send_standing = sent.standing_sig != Some(sec.standing_sig);
+    let send_reports = sent.reports_sig != Some(sec.reports_sig);
+    let send_captures = sent.captures_sig != Some(sec.captures_sig);
+    let send_ranks = sent.rankings_sig != Some(rankings_sig);
+    if !(send_standing || send_reports || send_captures || send_ranks) {
+        return;
+    }
+    let msg = ServerMsg::Sections {
+        standing_orders: send_standing.then(|| sec.standing.clone()),
+        battle_reports: send_reports.then(|| sec.reports.clone()),
+        capture_reports: send_captures.then(|| sec.captures.clone()),
+        rankings: send_ranks.then(|| rankings.to_vec()),
+    };
+    if info.outbound.try_send(msg).is_ok() {
+        if send_standing {
+            info.sent.standing_sig = Some(sec.standing_sig);
+        }
+        if send_reports {
+            info.sent.reports_sig = Some(sec.reports_sig);
+        }
+        if send_captures {
+            info.sent.captures_sig = Some(sec.captures_sig);
+        }
+        if send_ranks {
+            info.sent.rankings_sig = Some(rankings_sig);
+        }
+    }
+}
+
+/// §perf Part A: diff one connection's delivery cursors against what its player
+/// may see right now, and send exactly the increments. Everything visible-related
+/// was already decided upstream (specs come from the light/fidelity filter); this
+/// function only decides HOW MUCH of it this connection still needs.
+///
+/// Delivery is atomic per broadcast: cursors/removals are committed only when
+/// `try_send` succeeds, so a full queue (stalled client) retries next broadcast
+/// and can never silently lose an increment.
+fn send_record_deltas(
+    records: &std::collections::BTreeMap<sim::EntityId, sim::BattleRecord>,
+    specs: &[view::RecordSpec],
+    info: &mut ConnInfo,
+) {
+    use crate::protocol::BattleRecordUpdate;
+    use crate::session::RecordCursor;
+
+    let mut updates: Vec<BattleRecordUpdate> = Vec::new();
+    // Cursor writes staged here, applied only if the send lands.
+    let mut staged: Vec<(sim::EntityId, RecordCursor)> = Vec::new();
+    for spec in specs {
+        let Some(r) = records.get(&spec.id) else { continue };
+        let participant = matches!(spec.fidelity, crate::protocol::BattleFidelity::Participant);
+        let cur = info.sent.records.get(&spec.id);
+        let is_new = cur.is_none();
+        let names_changed = cur.is_some_and(|c| c.names != spec.names);
+        // Never regress: if the cursor is somehow ahead (it can't be for a fixed
+        // command center — arrival is strictly increasing), send nothing extra.
+        let from = cur.map_or(0, |c| c.rounds_sent).min(spec.arrived_len);
+        let new_rounds = if spec.arrived_len > from {
+            view::record_rounds_range(r, from, spec.arrived_len, participant)
+        } else {
+            Vec::new()
+        };
+        let send_outcome = spec.outcome.is_some() && !cur.is_some_and(|c| c.outcome_sent);
+        if is_new || names_changed || !new_rounds.is_empty() || send_outcome {
+            updates.push(BattleRecordUpdate {
+                id: spec.id,
+                header: (is_new || names_changed).then(|| view::record_header(r, spec)),
+                new_rounds,
+                light_frontier_tick: spec.frontier_tick,
+                outcome: if send_outcome { spec.outcome } else { None },
+            });
+            staged.push((
+                spec.id,
+                RecordCursor {
+                    rounds_sent: spec.arrived_len.max(cur.map_or(0, |c| c.rounds_sent)),
+                    outcome_sent: send_outcome || cur.is_some_and(|c| c.outcome_sent),
+                    names: spec.names.clone(),
+                },
+            ));
+        }
+    }
+    // Records this connection holds that are no longer visible to its player:
+    // pruned server-side, or a bucket viewer's coverage of the site lapsed.
+    // Exactly the entries that vanished from the old full-set View; if coverage
+    // resumes, the empty cursor re-sends the record in full — as before.
+    let visible: std::collections::HashSet<sim::EntityId> = specs.iter().map(|s| s.id).collect();
+    let removed: Vec<sim::EntityId> =
+        info.sent.records.keys().filter(|id| !visible.contains(id)).copied().collect();
+
+    if updates.is_empty() && removed.is_empty() {
+        return;
+    }
+    let msg = ServerMsg::BattleRecords { updates, removed: removed.clone() };
+    if info.outbound.try_send(msg).is_ok() {
+        for (id, cursor) in staged {
+            info.sent.records.insert(id, cursor);
+        }
+        for id in removed {
+            info.sent.records.remove(&id);
         }
     }
 }
@@ -1130,9 +1462,29 @@ fn gate_progress(
     }
 }
 
+/// §perf Part B: the STATIC programme catalog — names, blurbs, board topology,
+/// costs. The same constant table for every client (public rulebook, no one's
+/// progress), sent once in Welcome.
+fn research_catalog() -> Vec<crate::protocol::ProgrammeInfo> {
+    sim::research::visible_ids()
+        .filter_map(|id| {
+            let p = sim::research::programme(id)?;
+            Some(crate::protocol::ProgrammeInfo {
+                id: id.to_string(),
+                field: p.field.slug().to_string(),
+                school: p.school.map(|s| s.slug().to_string()),
+                tier: p.tier,
+                name: p.name.to_string(),
+                blurb: p.blurb.to_string(),
+                cost: sim::research::cost_of(id),
+            })
+        })
+        .collect()
+}
+
 /// §research R6: build the viewer's OWN syndicate research picture (owner-only).
 fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::ResearchView {
-    use crate::protocol::{AcademyRow, ActiveResearchView, ProgrammeView, ResearchView};
+    use crate::protocol::{AcademyRow, ActiveResearchView, ProgrammeDynView, ResearchView};
     let syn = &world.syndicates[&sid];
     let rs = &syn.research;
     let now = world.time;
@@ -1172,6 +1524,7 @@ fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::
     });
 
     // The whole visible tree, each node tagged with the viewer's state + gate.
+    // §perf Part B: DYNAMIC slice only — the static catalog rode Welcome once.
     let programmes = sim::research::visible_ids()
         .filter_map(|id| {
             let p = sim::research::programme(id)?;
@@ -1187,17 +1540,7 @@ fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::
                 "locked"
             };
             let gate = if state == "locked" { gate_progress(p, rs, &metric, now) } else { None };
-            Some(ProgrammeView {
-                id: id.to_string(),
-                field: p.field.slug().to_string(),
-                school: p.school.map(|s| s.slug().to_string()),
-                tier: p.tier,
-                name: p.name.to_string(),
-                blurb: p.blurb.to_string(),
-                state: state.to_string(),
-                cost: sim::research::cost_of(id),
-                gate,
-            })
+            Some(ProgrammeDynView { id: id.to_string(), state: state.to_string(), gate })
         })
         .collect();
 
@@ -1212,7 +1555,11 @@ pub async fn run(
     status_tx: watch::Sender<ServerStatus>,
     mut rx: mpsc::UnboundedReceiver<GameInput>,
 ) {
-    let mut game = GameLoop::new(world, persistence, snapshot_every, status_tx);
+    // Off-thread engagement-estimate rollouts report completion here so the loop
+    // can clear the connection's in-flight flag (unbounded, but each in-flight
+    // estimate emits exactly one id, and there is at most one per connection).
+    let (estimate_done_tx, mut estimate_done_rx) = mpsc::unbounded_channel::<ConnId>();
+    let mut game = GameLoop::new(world, persistence, snapshot_every, status_tx, estimate_done_tx);
 
     let mut ticker = interval(Duration::from_secs_f64(DT));
     // If we ever fall behind, skip missed ticks rather than bursting to catch
@@ -1232,6 +1579,12 @@ pub async fn run(
                     // All senders dropped: nothing can ever drive the game again.
                     None => break,
                 }
+            }
+            // A blocking estimate rollout finished — free its connection to
+            // request another. (`estimate_done_tx` also lives in `game`, so this
+            // channel never closes on its own; the loop exits via `rx` above.)
+            Some(conn_id) = estimate_done_rx.recv() => {
+                game.estimate_inflight.remove(&conn_id);
             }
         }
     }

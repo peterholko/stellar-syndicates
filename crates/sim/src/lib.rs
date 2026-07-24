@@ -40,6 +40,7 @@ pub mod specialist;
 pub mod standing;
 pub mod syndicate;
 pub mod tactical;
+pub mod tca;
 pub mod world;
 
 pub use body::{Body, BodyKind};
@@ -60,7 +61,8 @@ pub use doctrine::{
     RetreatThreshold,
 };
 pub use event::{
-    BuildRejectReason, DivertAction, Event, EventPayload, OrderKind, RaidOutcome, TradeEvent,
+    BuildRejectReason, DivertAction, Event, EventPayload, FreightStage, OrderKind,
+    OrderRejectReason, RaidOutcome, TradeEvent, TradeRejectReason,
 };
 pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
 pub use ids::{EntityId, PlayerId, SyndicateId};
@@ -78,6 +80,7 @@ pub use ship::{
     TradeMission, TransitMode, ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
+pub use tca::{charter_status, CharterStatus, FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
 pub use syndicate::{
     syndicate_cap, DoctrineFit, Syndicate, SYNDICATE_MAX_FITS, SYNDICATE_MAX_FRAC,
     SYNDICATE_MIN_CAP,

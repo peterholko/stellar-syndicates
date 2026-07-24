@@ -343,6 +343,50 @@ pub enum EventPayload {
     /// Logistics resume. Light-delayed to the owner from the system.
     BlockadeLifted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
 
+    /// §TCA Phase 2: a CITATION issued by the Terran Charter Authority. This is a
+    /// PUBLIC bulletin from the Charterhouse naming the culprit and the offense —
+    /// the reputational hit rides the same wavefront as the legal one, so every
+    /// player learns of it light-delayed from the hub. `occurred_at` is when the
+    /// offense actually happened (always earlier than the bulletin: the news had
+    /// to reach the hub first), which is what lets the UI say "as of N ago".
+    Citation {
+        culprit: PlayerId,
+        offense: crate::tca::CitationOffense,
+        /// The Charterhouse — the light source for this bulletin.
+        pos: crate::math::Vec2,
+        occurred_at: f64,
+    },
+
+    /// §TCA Phase 2: an ENFORCEMENT EXPEDITION was dispatched against a PROSCRIBED
+    /// corporation. A PUBLIC bulletin from the Charterhouse, exactly like a
+    /// citation — the announcement IS the lead time, since the squadron has to fly
+    /// out from the hub at sub-light while the news travels at c.
+    EnforcementDispatched {
+        target: PlayerId,
+        system: EntityId,
+        /// The Charterhouse — the light source for this bulletin.
+        pos: crate::math::Vec2,
+    },
+    /// §TCA Phase 2: an expedition stood down — time served, or the target paid
+    /// its way back above the proscription line. Public, from the hub.
+    EnforcementWithdrawn {
+        target: PlayerId,
+        /// True when the target's standing recovered (paying up calls off the dogs)
+        /// rather than the expedition simply serving out its time.
+        recalled: bool,
+        pos: crate::math::Vec2,
+    },
+
+    /// A fleet ORDER was soft-rejected (§TCA) — owner-only and instant: the order
+    /// never installed, the fleet kept doing what it was doing, and nothing was
+    /// spent. Tells the player WHY so the refusal isn't a mystery.
+    OrderRejected {
+        owner: PlayerId,
+        fleet: EntityId,
+        target: EntityId,
+        reason: OrderRejectReason,
+    },
+
     /// A besieged system was CAPTURED (§contestable-territory Part 2): a colony
     /// ship arrived while defenses were suppressed and the siege clock had run,
     /// so the system FLIPPED from `old_owner` to `new_owner`. Both learn it
@@ -364,20 +408,26 @@ pub enum EventPayload {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum TradeEvent {
-    /// A market buy settled instantly at the hub; a delivery convoy is inbound.
-    Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A market buy settled instantly at the Charterhouse into the warehouse.
+    /// `penalty` is the §TCA charter penalty fee burned on top (0 in good standing).
+    Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A delivery convoy arrived and deposited its cargo. `system == None` means it
-    /// landed in the corp's HQ trading pool (a market buy); `Some(id)` means it was
+    /// landed in the corp's hub WAREHOUSE; `Some(id)` means it was
     /// stocked into THAT system's stockpile (a Supply-from-HQ run or standing order).
+    /// A convoy arrived and deposited its cargo. Goods live in exactly two
+    /// places, and `system` says which took this lot: `Some(id)` = that system's
+    /// stockpile; `None` = the corp's warehouse at the hub.
     Delivered { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
     /// A sell convoy was dispatched toward the hub (goods committed to the dark).
     SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
-    /// A sell convoy reached the hub and cleared at the price-on-arrival.
-    Sold { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64 },
+    /// A sale cleared at the Charterhouse. `penalty` is the §TCA charter penalty
+    /// fee deducted from the proceeds (0 in good standing).
+    Sold { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A limit order was placed and rests on the book.
     LimitPlaced { player: PlayerId, side: Side, commodity: Commodity, units: u32, limit_price: f64 },
     /// A limit order (partially) cleared in the batch at the uniform price.
-    LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64 },
+    /// `penalty` is the §TCA charter penalty fee on the fill (0 in good standing).
+    LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
     /// A STANDING ORDER fired (§15): the rule auto-dispatched a convoy carrying
     /// `units` of `commodity` from `source`. The "policy ran while you were away"
     /// notification — feeds the check-in timeline.
@@ -398,6 +448,74 @@ pub enum TradeEvent {
     /// corp's trading inventory toward `system`'s stockpile (sub-light, raidable).
     /// Arrival is reported by the usual `Delivered` (deposited) / `StorageOverflow`.
     StockDispatched { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
+    /// An Exchange order or freight booking was SOFT-REJECTED (§9, §TCA) — owner-
+    /// only and instant (your own administration): nothing was spent, the request
+    /// simply couldn't be honored. Names WHY, so the fix is obvious. `system` is
+    /// the destination/origin a freight booking concerned; `None` for a plain
+    /// Exchange order, which concerns only the Charterhouse.
+    Rejected {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: Option<EntityId>,
+        reason: TradeRejectReason,
+    },
+    /// §TCA: a freight booking was ACCEPTED — goods escrowed, fee charged (and
+    /// destroyed). Owner-only. `depart_at` and `eta` are DETERMINISTIC forecasts
+    /// (the departure phase and the freighter's constant cruise are pure functions
+    /// of the config), so the client can show them before the player commits.
+    FreightBooked {
+        player: PlayerId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        direction: crate::tca::ShipmentDir,
+        fee: f64,
+        /// Sim-time of the scheduled departure this lot is forecast to ride.
+        depart_at: f64,
+        /// Sim-time the goods are forecast to reach their destination (the system
+        /// for an outbound lot; back at the Charterhouse for an inbound one).
+        eta: f64,
+    },
+    /// §TCA Phase 2: charter standing was BOUGHT BACK from the Authority.
+    /// Owner-only. `before`/`after` let the client name the band it crossed.
+    CharterReinstated { player: PlayerId, points: f64, cost: f64, before: f64, after: f64 },
+    /// §TCA Part 5: a player convoy took goods aboard at the Charterhouse
+    /// (`system` = None) or at one of the corp's own systems. Owner-only.
+    Loaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    /// §TCA Part 5: a player convoy put its hold ashore. Owner-only.
+    Unloaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    /// §TCA: a freight shipment reached a milestone of its journey. Owner-only.
+    FreightMoved {
+        player: PlayerId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        stage: FreightStage,
+    },
+}
+
+/// Where a §TCA freight shipment got to — the owner-only progress notices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreightStage {
+    /// Loaded aboard an Authority freighter that has left the Charterhouse.
+    Departed,
+    /// Unloaded into the destination system's stockpile.
+    DeliveredToSystem,
+    /// Collected from the origin system and aboard for the run home.
+    CollectedForPickup,
+    /// Landed in the owner's Charterhouse warehouse.
+    ArrivedAtWarehouse,
+    /// Could not be delivered (the system is no longer the owner's, or its depot
+    /// had no room), so the Authority carried it back to the owner's warehouse.
+    /// Friendlier than the convoy cargo-lost rule, and deliberately so.
+    ReturnedUndeliverable,
+    /// The origin system was lost before pickup, so the queued lot is gone — to
+    /// nobody. The captor gets nothing; the fee is not refunded.
+    ForfeitedOnCapture,
+    /// The lot was destroyed with the freighter carrying it.
+    LostWithFreighter,
 }
 
 /// What became of an automated supply convoy whose destination was no longer
@@ -426,7 +544,13 @@ impl TradeEvent {
             | TradeEvent::AutoDispatched { player, .. }
             | TradeEvent::SupplyDiverted { player, .. }
             | TradeEvent::StorageOverflow { player, .. }
-            | TradeEvent::StockDispatched { player, .. } => *player,
+            | TradeEvent::StockDispatched { player, .. }
+            | TradeEvent::Rejected { player, .. }
+            | TradeEvent::FreightBooked { player, .. }
+            | TradeEvent::FreightMoved { player, .. }
+            | TradeEvent::Loaded { player, .. }
+            | TradeEvent::Unloaded { player, .. }
+            | TradeEvent::CharterReinstated { player, .. } => *player,
         }
     }
 }
@@ -470,12 +594,84 @@ pub enum BuildRejectReason {
     /// The system's Shipyard tier is below what this ship kind needs
     /// (§buildings step 3: Convoy ≥ 1, Raider ≥ 2).
     NeedsShipyard { required: u32 },
+    /// The requested ship kind is not buildable by a corporation (§TCA — the
+    /// Authority Freighter is TCA-only). Should never reach a real client (it is
+    /// absent from every BUILDABLE menu); a defensive soft-reject for a malformed
+    /// or legacy command.
+    NotBuildable,
     /// §ladder: the hull's research programme (UnlockHull) isn't completed —
     /// capitals are prizes on the Line ladder, not catalog items.
     NeedsResearch,
     /// §ladder B4: the syndicate already FIELDS (or is building) its one Titan
     /// — the singleton flagship. Rebuild is allowed only after it is lost.
     TitanFielded,
+}
+
+/// Why an Exchange order (§9) or a freight booking (§TCA) was SOFT-REJECTED.
+/// Owner-only detail for the timeline notice. The async-fair rule: a rejected
+/// request costs NOTHING — no debit, no escrow, no shipment, no partial state —
+/// and it is never a hard error to the client.
+///
+/// (No `Eq`: `CannotAffordFee` carries the f64 fee it couldn't pay.)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum TradeRejectReason {
+    /// The corp's CHARTERHOUSE WAREHOUSE holds fewer units than the order needs.
+    /// Selling — and sell-side limit escrow — draws ONLY from the warehouse now;
+    /// goods held at a system must first be moved to the hub (by TCA freight
+    /// or a player convoy) before they can be sold.
+    InsufficientWarehouseStock { have: u32 },
+    /// §TCA freight: the named system is not one the corp currently owns. The
+    /// Authority serves a corporation's OWN colonies only — it will not deliver to
+    /// (or collect from) a rival's ground.
+    NotYourSystem,
+    /// §TCA freight: the corp's stockpile AT THE ORIGIN SYSTEM is short of the
+    /// units an inbound booking asked to collect.
+    InsufficientSystemStock { have: u32 },
+    /// §TCA freight: the treasury can't cover the freight fee. The fee is charged
+    /// in full at booking or not at all — no partial lots.
+    CannotAffordFee { fee: f64 },
+    /// §TCA freight: the Charterhouse won't book to or from a BLOCKADED system.
+    /// This is the Authority acting on its OWN light-delayed knowledge: it starts
+    /// refusing only once the blockade's light reaches the hub, and keeps refusing
+    /// until the lift's light does. Freight already in flight carries on — it
+    /// launched on information that was true when it left.
+    DestinationBlockaded,
+    /// §TCA Part 5: the fleet can't do logistics right now — not the player's,
+    /// not Idle, or currently engaged in a battle. Load and unload are dockside
+    /// work; a fleet under way or under fire isn't doing it.
+    FleetUnavailable,
+    /// §TCA Part 5: the fleet is too far from the Charterhouse (or the system's
+    /// star) to move goods across the boundary.
+    OutOfLogisticsRange,
+    /// §TCA Part 5: no room. Either the fleet has no cargo hull at all (`capacity`
+    /// 0 — raiders, corvettes, scouts and colony ships carry none) or the lot
+    /// would overflow what its convoys can lift.
+    NoCargoRoom { capacity: u32 },
+    /// §TCA Part 5: the fleet is already carrying a DIFFERENT commodity. A
+    /// player convoy's hold is single-commodity (unchanged in this phase) —
+    /// unload first.
+    CargoMismatch,
+    /// §TCA Phase 2: your charter is SUSPENDED — the Authority will take no NEW
+    /// freight booking from you. Shipments already queued or aboard still
+    /// complete: it honors contracts it already took.
+    CharterSuspended,
+    /// §TCA Phase 2: the treasury can't cover the reinstatement being bought.
+    CantAfford { cost: f64 },
+    /// §TCA Phase 2: your charter is REVOKED — the Exchange is closed to you.
+    /// Resting orders are grandfathered, and your warehouse is still yours to
+    /// fetch from; you simply cannot trade here.
+    CharterRevoked,
+}
+
+/// Why a fleet ORDER was soft-rejected. Owner-only: the order simply never
+/// installs, nothing is spent, and the client is never hard-errored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum OrderRejectReason {
+    /// §TCA: the target shelters inside the CHARTERHOUSE SOVEREIGNTY BUBBLE, where
+    /// no engagement may open. Fleeing into the bubble is sanctuary, by design.
+    InsideSovereignZone,
 }
 
 impl Event {

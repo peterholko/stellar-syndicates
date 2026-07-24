@@ -51,10 +51,13 @@ const SCALE = CANVAS_H / (2 * VIEW_R);
 const MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+  // §TCA: the Authority's carrier — never a combatant, but the type is total.
+  freighter: 6000,
 };
 const KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+  freighter: "Authority Freighter",
 };
 
 /// Sprite size ∝ hull_mass^0.4 (log-ish: a 40× Titan reads huge without
@@ -75,6 +78,8 @@ function spritePx(kind: ShipKind): number {
 /// code change.
 const SHIP_ART: Record<ShipKind, string> = {
   convoy: "cargo_freighter.png",
+  // §TCA: the Authority hauler reuses the freighter art; its neutral tint sets it apart.
+  freighter: "cargo_freighter.png",
   raider: "raider_attack_ship.png",
   corvette: "corvette_escort_ship.png",
   colony: "colony_ship.png",
@@ -478,10 +483,17 @@ function scanWithdraw(rec: BattleRecordView): [number, number] {
 
 function bindRecord(rec: BattleRecordView): void {
   if (st && st.rec.id === rec.id) {
-    // Same battle, possibly NEW data (fresh light extended the rounds, or the
-    // record object was replaced) — invalidate the active window so tracks,
-    // the FX schedule, AND the withdraw flags rebuild against the new truth.
-    if (st.rec !== rec) {
+    // Same battle — but the View handler hands us a FRESH record object every
+    // ~100 ms (JSON.parse identity), so compare CONTENT, not identity. Only real
+    // new truth (light extended the rounds, or the outcome/frontier landed)
+    // invalidates the active window so tracks, the FX schedule, AND the withdraw
+    // flags rebuild. Identity-comparison here rebuilt them all at 10 Hz for the
+    // life of an open replay.
+    if (
+      st.rec.rounds.length !== rec.rounds.length ||
+      st.rec.light_frontier_tick !== rec.light_frontier_tick ||
+      st.rec.outcome !== rec.outcome
+    ) {
       st.windowKey = "";
       st.withdrawFrom = scanWithdraw(rec);
     }

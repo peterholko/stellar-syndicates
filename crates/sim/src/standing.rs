@@ -77,6 +77,19 @@ pub struct StandingOrder {
     /// any). The rule will not dispatch again until this convoy leaves the world.
     #[serde(default)]
     pub in_flight: Option<EntityId>,
+    /// §TCA Part 5: for a rule delivering to [`Endpoint::Hub`], whether the convoy
+    /// SELLS its cargo on arrival at the Charterhouse or simply deposits it into
+    /// the corp's warehouse to trade later. Meaningless for the other endpoints.
+    /// `#[serde(default = ...)]` = **true**, so every order written before the
+    /// warehouse existed keeps today's sell-on-arrival behaviour byte-for-byte.
+    #[serde(default = "default_true")]
+    pub sell_on_arrival: bool,
+}
+
+/// serde default for [`StandingOrder::sell_on_arrival`] — pre-warehouse orders
+/// sold on arrival, so that is what they keep doing.
+fn default_true() -> bool {
+    true
 }
 
 impl Endpoint {

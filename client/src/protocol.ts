@@ -13,7 +13,9 @@ export interface Vec2 {
 export type ShipKind =
   | "convoy" | "raider" | "corvette" | "colony" | "scout"
   // §ladder: the research-gated warship ladder.
-  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan";
+  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
+  // §TCA: the Authority's common carrier — never buildable by a corporation.
+  | "freighter";
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
 // is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
@@ -320,23 +322,133 @@ export interface OrderView {
 export interface WalletView {
   credits: number;
   valuation: number; // equity / net worth (slow §9 close)
-  inventory: InvSlot[];
+  /// §TCA: goods at the CHARTERHOUSE — the only stock the Exchange trades against.
+  warehouse: InvSlot[];
   orders: OrderView[];
   fuel_total: number; // §step1 — total Fuel across owned systems (fleet reserve)
 }
 
+// --- §TCA: the Charterhouse freight desk ------------------------------------
+/// Which way a booked lot moves, relative to the Charterhouse.
+export type ShipmentDir = "outbound" | "inbound";
+
+/// One of the viewer's own lots — queued for a departure or aboard a freighter.
+export interface ShipmentView {
+  id: number;
+  system: EntityId;
+  commodity: Commodity;
+  units: number;
+  direction: ShipmentDir;
+  sell_on_arrival: boolean;
+  fee_paid: number;
+  booked_at: number;
+  aboard: boolean; // false = still queued at the Charterhouse
+}
+
+/// The Authority's terms for one owned destination. EXACT, not estimated — the
+/// timetable and the freighter's constant cruise are pure functions of config.
+export interface FreightTermsView {
+  system: EntityId;
+  distance: number;
+  depot: boolean;
+  cap: number; // max units this corp may load per departure
+  secs_out: number; // one-way flight time
+  secs_round: number; // out and back (an inbound lot's total after departure)
+}
+
+/// §TCA Phase 2: the five charter bands, worsening in order.
+export type CharterStatus = "good_standing" | "sanctioned" | "suspended" | "revoked" | "proscribed";
+
+/// The viewer's OWN charter standing with the Authority. Owner-only — rivals
+/// learn of your offenses from public citations, never from your record.
+export interface CharterView {
+  standing: number;
+  max_standing: number;
+  status: CharterStatus;
+  /// Human title of the band ("Good Standing" … "Proscribed").
+  title: string;
+  // (§perf Part B: the static band `ladder` now arrives once in Welcome —
+  // state.charterLadder — instead of inside every 10 Hz View.)
+  /// Freight-fee multiplier now applied (1.0 in good standing).
+  tariff_mult: number;
+  /// Exchange penalty fee now applied, as a fraction of trade value (0 when lawful).
+  market_penalty_frac: number;
+  reinstate_cost_per_point: number;
+}
+
+export interface FreightView {
+  next_departure: number; // sim-time of the next scheduled departure
+  period: number; // seconds between departures
+  // fee = units × (price × fee_frac + distance × fee_per_unit_dist),
+  // then × depot_fee_mult if the destination has a Depot.
+  fee_frac: number;
+  fee_per_unit_dist: number;
+  depot_fee_mult: number;
+  terms: FreightTermsView[];
+  shipments: ShipmentView[];
+}
+
+/// One entry of a freighter's manifest as this viewer may read it: their own lots
+/// always, anyone else's only from inside sensor range.
+export interface ManifestEntryView {
+  owner: PlayerId;
+  commodity: Commodity;
+  units: number;
+  direction: ShipmentDir;
+  mine: boolean;
+}
+
+/// §TCA: price a lot exactly as the sim will charge for it. Mirrors
+/// `tca::freight_fee`; the Rust test `exposed_terms_reproduce_the_charged_fee`
+/// guards the two against drifting apart.
+export function freightFee(f: FreightView, t: FreightTermsView, unitPrice: number, units: number): number {
+  const raw = units * (unitPrice * f.fee_frac + t.distance * f.fee_per_unit_dist);
+  return Math.max(0, t.depot ? raw * f.depot_fee_mult : raw);
+}
+
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
 export type TradeEvent =
-  | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "Bought"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "Delivered"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "SellDispatched"; player: PlayerId; commodity: Commodity; units: number }
-  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number }
+  | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
-  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number }
+  | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
   | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
   | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
-  | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId };
+  | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
+  | { event: "Rejected"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null; reason: TradeRejectReason }
+  | { event: "FreightBooked"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; direction: ShipmentDir; fee: number; depart_at: number; eta: number }
+  | { event: "FreightMoved"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; stage: FreightStage }
+  | { event: "Loaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
+  | { event: "Unloaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
+  | { event: "CharterReinstated"; player: PlayerId; points: number; cost: number; before: number; after: number };
+
+/// Why an Exchange order or freight booking was soft-rejected (free, owner-only).
+export type TradeRejectReason =
+  | { reason: "insufficient_warehouse_stock"; have: number }
+  | { reason: "not_your_system" }
+  | { reason: "insufficient_system_stock"; have: number }
+  | { reason: "cannot_afford_fee"; fee: number }
+  | { reason: "destination_blockaded" }
+  | { reason: "fleet_unavailable" }
+  | { reason: "out_of_logistics_range" }
+  | { reason: "no_cargo_room"; capacity: number }
+  | { reason: "cargo_mismatch" }
+  | { reason: "charter_suspended" }
+  | { reason: "charter_revoked" }
+  | { reason: "cant_afford"; cost: number };
+
+/// Where a freight lot got to.
+export type FreightStage =
+  | "departed"
+  | "delivered_to_system"
+  | "collected_for_pickup"
+  | "arrived_at_warehouse"
+  | "returned_undeliverable"
+  | "forfeited_on_capture"
+  | "lost_with_freighter";
 
 export type DivertAction = "lost" | "returned_home" | "sold_at_hub";
 
@@ -360,6 +472,9 @@ export interface StandingOrder {
   status: OrderStatus;
   next_eval_tick: number;
   in_flight: EntityId | null;
+  /// §TCA: for a `hub` destination, sell on arrival at the Charterhouse or just
+  /// deposit into the warehouse. Defaults TRUE server-side for legacy orders.
+  sell_on_arrival: boolean;
 }
 
 // --- Fleet doctrine (§16) — constrained combat & logistics policy. Mirrors the
@@ -504,6 +619,16 @@ export interface GhostView {
   // §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
   // drives the distinct hostile-neutral tint. Hostile to everyone.
   pirate?: boolean;
+  /// §TCA: a Terran Charter Authority FREIGHTER — the scheduled common carrier.
+  /// Drives its own neutral tint, distinct from a corporation's convoy.
+  tca?: boolean;
+  /// §TCA: the freighter's manifest as YOU may read it — your own lots always,
+  /// anyone else's only from inside sensor range. Empty for any other fleet.
+  manifest?: ManifestEntryView[];
+  /// Close enough to read this ghost's cargo/manifest (Tier 2).
+  revealed?: boolean;
+  /// §TCA: OWNER-ONLY — whether this blockading fleet engages Authority freight.
+  engage_freight?: boolean | null;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -533,7 +658,17 @@ export type ClientMsg =
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
-  | { type: "MarketBuy"; commodity: Commodity; units: number }
+  | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }
+  // §TCA: book Authority freight, and the player-convoy logistics verbs.
+  | { type: "BookFreightOut"; system: EntityId; commodity: Commodity; units: number }
+  | { type: "BookFreightIn"; system: EntityId; commodity: Commodity; units: number; sell_on_arrival: boolean }
+  | { type: "HubLoad"; fleet_id: EntityId; commodity: Commodity; units: number }
+  | { type: "HubUnload"; fleet_id: EntityId }
+  | { type: "SystemLoad"; fleet_id: EntityId; system: EntityId; commodity: Commodity; units: number }
+  | { type: "SystemUnload"; fleet_id: EntityId; system: EntityId }
+  | { type: "HaulToCharterhouse"; fleet_id: EntityId; sell_on_arrival: boolean }
+  | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
+  | { type: "PayReinstatement"; points: number }
   | { type: "MarketSell"; commodity: Commodity; units: number }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "ShipProduction"; system_id: EntityId }
@@ -621,6 +756,8 @@ export interface SyndicateInviteView {
 }
 
 // §research R6: the viewer's OWN syndicate research picture (owner-only).
+// This is the client-side MERGED shape the panel reads — the wire now carries
+// only the dynamic slice (ResearchDynView); the static catalog rides Welcome.
 export interface ResearchView {
   active: ActiveResearchView | null;
   queue: string[];
@@ -628,6 +765,28 @@ export interface ResearchView {
   stalled: boolean;
   academies: AcademyRow[];
   programmes: ProgrammeView[];
+}
+
+// §perf Part B: the wire's research payload — dynamic slice only. The client
+// joins `programmes` onto the static catalog (Welcome's research_catalog) by id.
+export interface ResearchDynView {
+  active: ActiveResearchView | null;
+  queue: string[];
+  rate: number;
+  stalled: boolean;
+  academies: AcademyRow[];
+  programmes: { id: string; state: string; gate?: GateProgressView | null }[];
+}
+
+// §perf Part B: one programme's STATIC catalog entry (Welcome.research_catalog).
+export interface ProgrammeInfo {
+  id: string;
+  field: string;
+  school: string | null;
+  tier: number;
+  name: string;
+  blurb: string;
+  cost: number;
 }
 export interface ActiveResearchView {
   id: string;
@@ -827,6 +986,31 @@ export interface BattleRecordView {
   outcome: RaidOutcome | null; // present once the final round's light arrived
 }
 
+// §perf Part A: a record's HEADER — everything except the rounds. Arrives once
+// per record per connection (again only if a flagship christening changes it);
+// the rounds then stream incrementally as their light arrives.
+export interface BattleRecordHeader {
+  pos: Vec2;
+  system: EntityId | null;
+  started_at: number;
+  raid: boolean;
+  fidelity: BattleFidelity;
+  own_side: number | null;
+  sides: [SideRecordView, SideRecordView];
+}
+
+// §perf Part A: one record's INCREMENT — only what this connection hasn't
+// received yet. The client appends `new_rounds` to its held copy (creating a
+// NEW record object, so content-compares fire), refreshes the frontier, and
+// sets the outcome when it lands.
+export interface BattleRecordUpdate {
+  id: EntityId;
+  header?: BattleRecordHeader;
+  new_rounds?: RoundRecordView[];
+  light_frontier_tick: number;
+  outcome?: RaidOutcome;
+}
+
 // §battle-aftermath: a RETAINED concluded battle this player PARTICIPATED in —
 // present only once their conclusion light arrived (`learned_at`). Powers the
 // aftermath map marker + battle-results panel; survives reconnects (server
@@ -884,6 +1068,9 @@ export type ServerMsg =
       tick: number;
       sim_time: number;
       galaxy: GalaxyInfo;
+      // §perf Part B: static tables, sent once (were inside every 10 Hz View).
+      charter_ladder: [string, number][];
+      research_catalog: ProgrammeInfo[];
     }
   | {
       type: "View";
@@ -895,30 +1082,44 @@ export type ServerMsg =
       ghosts: GhostView[];
       market: MarketView;
       wallet: WalletView;
-      standing_orders: StandingOrder[];
+      /// §TCA: the Charterhouse freight desk — timetable, per-destination terms,
+      /// and YOUR own shipment queue. Owner-only, fresh.
+      freight: FreightView;
+      /// §TCA Phase 2: YOUR charter standing and band. Owner-only.
+      charter: CharterView;
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
       // §battles-take-time — ongoing battles visible to this player (light-gated).
       battles: BattleView[];
-      /// §battle-aftermath: retained concluded-battle reports (owner-only).
-      battle_reports: BattleReportView[];
-      /// §contestable-territory Part 2: retained capture reports (per-participant).
-      capture_reports: CaptureReportView[];
-      /// §battle-records Part A: the light-gated, fidelity-tiered replay of every
-      /// battle this viewer can observe (running + recent). Arrived-round prefix
-      /// only; a viewer with no access to a battle gets no entry.
-      battle_records: BattleRecordView[];
       /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
       syndicate?: SyndicateView | null;
       /// §syndicates Part 1: pending invitations the viewer may accept.
       syndicate_invites?: SyndicateInviteView[];
-      /// §rankings: the PUBLISHED leaderboard — public, same for every player,
-      /// snapshotted on the ledger close (holds steady between closes).
-      rankings?: RankingRow[];
       /// §research R6: the viewer's OWN research picture (owner-only; null if
-      /// unaffiliated — research is a syndicate institution).
-      research?: ResearchView | null;
+      /// unaffiliated — research is a syndicate institution). §perf Part B: the
+      /// DYNAMIC slice only — the client joins it onto Welcome's catalog.
+      research?: ResearchDynView | null;
+      // (§perf Part B: standing_orders / battle_reports / capture_reports /
+      // rankings moved to the change-gated "Sections" message.)
+    }
+  | {
+      // §perf Part B: the slow-moving sections, sent only when their content
+      // changed. A present field REPLACES the held copy; absent = unchanged.
+      type: "Sections";
+      standing_orders?: StandingOrder[];
+      battle_reports?: BattleReportView[];
+      capture_reports?: CaptureReportView[];
+      rankings?: RankingRow[];
+    }
+  | {
+      // §perf Part A: incremental battle-record delivery on the reliable lane —
+      // `updates` are per-record increments (append rounds, land the outcome);
+      // `removed` names records to drop (pruned, or bucket-coverage lapsed). A
+      // record that becomes visible again arrives fresh with a full header.
+      type: "BattleRecords";
+      updates?: BattleRecordUpdate[];
+      removed?: EntityId[];
     }
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }

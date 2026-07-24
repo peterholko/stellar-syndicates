@@ -28,7 +28,7 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -49,13 +49,54 @@ pub enum ClientMsg {
     /// Recall a raider (break off, return home). May arrive too late (§8).
     RecallRaid { raider_id: EntityId },
 
-    /// Buy at market on the hub Exchange (§9): instant settlement, then a
-    /// delivery convoy carries the goods home.
-    MarketBuy { commodity: Commodity, units: u32 },
+    /// Buy at the Charterhouse Exchange (§9, §TCA): instant settlement into the
+    /// corp's warehouse. `ship_to` optionally hands the lot straight to Authority
+    /// freight for one of the corp's owned systems (the one-checkbox composition);
+    /// serde default so older clients still parse.
+    MarketBuy {
+        commodity: Commodity,
+        units: u32,
+        #[serde(default)]
+        ship_to: Option<EntityId>,
+    },
 
-    /// Sell at market (§9): a convoy carries the goods to the hub and clears at
-    /// the price-on-arrival.
+    /// Sell at the Charterhouse Exchange (§9, §TCA): draws from the corp's
+    /// warehouse and settles instantly at the standing price.
     MarketSell { commodity: Commodity, units: u32 },
+
+    /// §TCA Part 5: player-convoy logistics — load/unload across the Charterhouse
+    /// warehouse or an owned system's stockpile, and the haul order that sends a
+    /// loaded hull to the Charterhouse (optionally selling on arrival).
+    HubLoad { fleet_id: EntityId, commodity: Commodity, units: u32 },
+    HubUnload { fleet_id: EntityId },
+    SystemLoad { fleet_id: EntityId, system: EntityId, commodity: Commodity, units: u32 },
+    SystemUnload { fleet_id: EntityId, system: EntityId },
+    HaulToCharterhouse {
+        fleet_id: EntityId,
+        #[serde(default)]
+        sell_on_arrival: bool,
+    },
+
+    /// §TCA Phase 2: buy charter standing back from the Authority (credits burned,
+    /// clamped to the ceiling — you pay only for points actually restored).
+    PayReinstatement { points: f64 },
+
+    /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
+    /// Authority freight arriving at the strangled system. Instant local policy.
+    SetEngageFreight { fleet_id: EntityId, on: bool },
+
+    /// §TCA: book OUTBOUND Authority freight — warehouse → an owned system.
+    BookFreightOut { system: EntityId, commodity: Commodity, units: u32 },
+
+    /// §TCA: book INBOUND Authority freight — an owned system → the warehouse,
+    /// optionally sold at the Exchange the moment it lands.
+    BookFreightIn {
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        #[serde(default)]
+        sell_on_arrival: bool,
+    },
 
     /// Place a resting limit order; it clears in the periodic batch (§9).
     PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
@@ -64,9 +105,10 @@ pub enum ClientMsg {
     /// spawns raidable convoys from the system.
     ShipProduction { system_id: EntityId },
 
-    /// Supply from HQ: move goods from the corp's HQ trading inventory into an
-    /// owned system's stockpile via a raidable convoy — the bridge that lets
-    /// market-bought inputs feed a system's converters.
+    /// Supply a system: move goods from the corp's HUB WAREHOUSE into an owned
+    /// system's stockpile via a raidable convoy sailing from the hub — the bridge
+    /// that lets market-bought inputs feed a system's converters, and the free
+    /// (but interceptable) alternative to booking Authority freight.
     StockSystem { system_id: EntityId, commodity: Commodity, units: u32 },
 
     /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
@@ -269,11 +311,111 @@ pub struct WalletView {
     pub credits: f64,
     /// Equity / net worth, from the slow valuation close (§9).
     pub valuation: f64,
-    pub inventory: Vec<InvSlot>,
+    /// §TCA: goods held at the WORMHOLE HUB — the only stock the Exchange trades
+    /// against, and one of exactly two places a corporation's goods can sit (the
+    /// other being each owned system's stockpile). Owner-only.
+    pub warehouse: Vec<InvSlot>,
     pub orders: Vec<OrderView>,
     /// Total Fuel across all owned systems' stockpiles — the fleet's operating
     /// reserve (§step1 part 2). Owner-only (summed from owned systems only).
     pub fuel_total: f64,
+}
+
+/// §TCA Phase 2: the viewer's own CHARTER STANDING with the Authority, and the
+/// band it derives. OWNER-ONLY — your legal standing is between you and the
+/// Charterhouse; rivals learn of your offenses only from the PUBLIC citations
+/// that travel at lightspeed, never by reading your record.
+#[derive(Debug, Clone, Serialize)]
+pub struct CharterView {
+    pub standing: f64,
+    pub max_standing: f64,
+    /// The derived band ("good_standing" … "proscribed").
+    pub status: sim::CharterStatus,
+    /// Human title of the band, for the status chip.
+    pub title: &'static str,
+    // (§perf Part B: the static band LADDER moved to Welcome — it is a constant
+    // table and had been re-sent inside every 10 Hz View.)
+    /// Freight-fee multiplier currently applied (1.0 in good standing).
+    pub tariff_mult: f64,
+    /// Exchange penalty fee currently applied, as a fraction of trade value
+    /// (0.0 in good standing — good-standing players pay nothing).
+    pub market_penalty_frac: f64,
+    /// Credits per standing point to buy back through reinstatement.
+    pub reinstate_cost_per_point: f64,
+}
+
+/// §TCA: one entry of an Authority freighter's MANIFEST, as a viewer may read it.
+/// The hull broadcasts under the Convention, but the manifest is TWO-TIER, per
+/// entry: the entry's OWNER always sees their own lot (it is their property), and
+/// anyone else sees it only from inside sensor range — the same rule that governs
+/// a convoy's cargo. So a rival watching a freighter go by learns nothing about
+/// who is shipping what until they get close enough to look.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ManifestEntryView {
+    pub owner: PlayerId,
+    pub commodity: Commodity,
+    pub units: u32,
+    pub direction: sim::ShipmentDir,
+    /// True when this entry is the viewer's own lot.
+    pub mine: bool,
+}
+
+/// §TCA: one of the viewer's freight shipments — queued for a departure or
+/// already aboard an Authority freighter. OWNER-ONLY: a player sees only their
+/// own lots, never anyone else's.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ShipmentView {
+    pub id: u64,
+    /// The destination (outbound) or origin (inbound) system.
+    pub system: EntityId,
+    pub commodity: Commodity,
+    pub units: u32,
+    pub direction: sim::ShipmentDir,
+    pub sell_on_arrival: bool,
+    pub fee_paid: f64,
+    pub booked_at: f64,
+    /// `false` = still queued at the Charterhouse; `true` = aboard a freighter.
+    pub aboard: bool,
+}
+
+/// §TCA: the Authority's freight TERMS for one of the viewer's owned systems —
+/// everything the client needs to price and time a booking BEFORE committing.
+/// Deterministic: the departure phase and the freighter's constant cruise are
+/// pure functions of the config, so these are exact, not estimates.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct FreightTermsView {
+    pub system: EntityId,
+    /// Charterhouse → system distance (sim units).
+    pub distance: f64,
+    /// Whether the system has a Depot (bigger cap, discounted fee).
+    pub depot: bool,
+    /// Max units this corp may load to this destination per departure.
+    pub cap: u32,
+    /// Flight time one way (seconds) — add to a departure for the outbound ETA.
+    pub secs_out: f64,
+    /// Flight time out AND back (seconds) — an inbound lot's total after departure.
+    pub secs_round: f64,
+}
+
+/// §TCA: the Charterhouse freight desk — the timetable, the fee formula's inputs,
+/// the viewer's own shipment queue. Owner-only.
+#[derive(Debug, Clone, Serialize)]
+pub struct FreightView {
+    /// Sim-time of the next scheduled departure (exact).
+    pub next_departure: f64,
+    /// Seconds between departures.
+    pub period: f64,
+    /// Fee = units × (price × `fee_frac` + distance × `fee_per_unit_dist`),
+    /// then × `depot_fee_mult` if the destination has a Depot. Exposed as inputs
+    /// (not a per-commodity table) so the client prices any lot live off the
+    /// ticker; `freight_view_terms_price_a_lot_exactly` guards the contract.
+    pub fee_frac: f64,
+    pub fee_per_unit_dist: f64,
+    pub depot_fee_mult: f64,
+    /// Terms for each system the viewer currently owns (the valid destinations).
+    pub terms: Vec<FreightTermsView>,
+    /// The viewer's own lots, queued and aboard.
+    pub shipments: Vec<ShipmentView>,
 }
 
 /// Which side of a raid the recipient is on.
@@ -806,8 +948,9 @@ pub struct ResearchView {
     pub stalled: bool,
     /// The per-Academy contribution rows (shown factor chains).
     pub academies: Vec<AcademyRow>,
-    /// The whole visible catalog with per-node state + gate progress.
-    pub programmes: Vec<ProgrammeView>,
+    /// §perf Part B: the DYNAMIC per-node slice only (state + gate) — the static
+    /// catalog (names/blurbs/topology/cost) went once in Welcome.
+    pub programmes: Vec<ProgrammeDynView>,
 }
 
 /// §research R6: the active programme banner data.
@@ -837,9 +980,11 @@ pub struct AcademyRow {
     pub supplied: bool,
 }
 
-/// §research R6: one programme node on a board, at the viewer's state.
+/// §perf Part B: one programme's STATIC catalog entry — names, blurbs, board
+/// topology, cost. The same constant table for everyone (the game's rulebook,
+/// not anyone's progress), sent ONCE in Welcome instead of per-member at 10 Hz.
 #[derive(Debug, Clone, Serialize)]
-pub struct ProgrammeView {
+pub struct ProgrammeInfo {
     pub id: String,
     /// Field slug ("propulsion" …) — the board this node lives on.
     pub field: String,
@@ -848,11 +993,20 @@ pub struct ProgrammeView {
     pub tier: u8,
     pub name: String,
     pub blurb: String,
-    /// One of: "completed" | "active" | "queued" | "available" | "locked".
-    pub state: String,
     /// Cost in throughput-seconds (the ETA denominator context).
     pub cost: f64,
+}
+
+/// §research R6 / §perf Part B: one programme node's DYNAMIC slice — the
+/// viewer's state + gate progress. The client joins it onto the static
+/// [`ProgrammeInfo`] catalog by id.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgrammeDynView {
+    pub id: String,
+    /// One of: "completed" | "active" | "queued" | "available" | "locked".
+    pub state: String,
     /// For a LOCKED node whose tier carries a verb/metric gate: the progress bar.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateProgressView>,
 }
 
@@ -1082,6 +1236,39 @@ pub struct BattleRecordView {
     pub outcome: Option<RaidOutcome>,
 }
 
+/// §perf Part A: a record's per-viewer HEADER — everything except the rounds.
+/// Sent once per record per connection (and again only if a christened flagship
+/// name changes); the rounds then stream incrementally as their light arrives.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleRecordHeader {
+    pub pos: Vec2,
+    pub system: Option<EntityId>,
+    pub started_at: f64,
+    pub raid: bool,
+    pub fidelity: BattleFidelity,
+    pub own_side: Option<u8>,
+    pub sides: [SideRecordView; 2],
+}
+
+/// §perf Part A: one record's INCREMENT for one connection — only what that
+/// connection hasn't received yet. `header` is present when the record is new to
+/// the connection (or its header changed); `new_rounds` appends to what the
+/// client already holds; `outcome` is sent exactly once, when its light arrives.
+/// Everything inside is filtered per-viewer exactly as [`BattleRecordView`] was —
+/// the cursor changes WHEN data ships, never WHAT a viewer may see.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleRecordUpdate {
+    pub id: EntityId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<BattleRecordHeader>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub new_rounds: Vec<RoundRecordView>,
+    /// The viewer's current light frontier for this record (always fresh).
+    pub light_frontier_tick: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<RaidOutcome>,
+}
+
 /// A home anchor as a player perceives it. `pos` is static geography; `owner`
 /// is light-gated by the view filter — it is `None` to a player until the light
 /// of the claim event has reached their command center (a rival's presence must
@@ -1202,6 +1389,24 @@ pub struct GhostView {
     /// drives the distinct hostile-neutral tint. Hostile to everyone.
     #[serde(default)]
     pub pirate: bool,
+    /// §TCA: this fleet is a Terran Charter Authority FREIGHTER — the scheduled
+    /// common carrier. Drives its own neutral tint, distinct from a corp convoy.
+    #[serde(default)]
+    pub tca: bool,
+    /// §TCA: the freighter's MANIFEST as this viewer may read it — their own lots
+    /// always, everyone else's only from inside sensor range. Empty for any other
+    /// fleet, and empty for a freighter a distant rival is merely watching.
+    #[serde(default)]
+    pub manifest: Vec<ManifestEntryView>,
+    /// Whether this ghost is close enough for the viewer to read its manifest /
+    /// cargo (Tier 2). Set by the view filter; the game loop uses it to decide
+    /// whether a rival's freight entries may be shown.
+    #[serde(default)]
+    pub revealed: bool,
+    /// §TCA: OWNER-ONLY — whether this (blockading) fleet is set to engage
+    /// Authority freight. `None` on anyone else's ghost, like `posture`.
+    #[serde(default)]
+    pub engage_freight: Option<bool>,
 }
 
 /// Messages pushed by the server to a single player's connection.
@@ -1220,6 +1425,14 @@ pub enum ServerMsg {
         tick: u64,
         sim_time: f64,
         galaxy: GalaxyInfo,
+        /// §perf Part B: the charter band ladder — a static constant table
+        /// (title, standing at/below which it applies), sent once here instead
+        /// of inside every 10 Hz View.
+        charter_ladder: Vec<(&'static str, f64)>,
+        /// §perf Part B: the static research programme catalog (names, blurbs,
+        /// board topology, costs) — the game's public rulebook, identical for
+        /// everyone. The View carries only the per-node dynamic slice.
+        research_catalog: Vec<ProgrammeInfo>,
     },
 
     /// The public star chart CHANGED after this client's Welcome: a join past
@@ -1252,10 +1465,14 @@ pub enum ServerMsg {
         market: MarketView,
         /// The player's own credits + holdings (fresh).
         wallet: WalletView,
-        /// The player's own standing logistics orders (§15) — fresh (own private
-        /// policy, not light-gated, like the wallet). Lets the client list/edit them
-        /// and show what's running automatically.
-        standing_orders: Vec<StandingOrder>,
+        /// §TCA Phase 2: the player's OWN charter standing and band. Owner-only —
+        /// rivals learn of offenses only through public citations, never by
+        /// reading a corporation's record.
+        charter: CharterView,
+        /// §TCA: the Charterhouse freight desk — timetable, terms per owned
+        /// destination, and the player's OWN shipment queue. Owner-only, fresh
+        /// (it is the player's own administration, like the wallet).
+        freight: FreightView,
         /// The player's own fleet doctrine (§16) — fresh private policy (like the
         /// wallet), so the client can display and edit it.
         doctrine: FleetDoctrine,
@@ -1267,23 +1484,6 @@ pub enum ServerMsg {
         /// Ongoing BATTLES visible to this player (§battles-take-time) — strictly
         /// light-gated; a third-party observer sees them only by their own light.
         battles: Vec<BattleView>,
-        /// §battle-aftermath: CONCLUDED battles this player PARTICIPATED in and
-        /// has LEARNED of (their conclusion light provably arrived — see
-        /// `learned_at`). Strictly per-participant: a non-participant's view
-        /// never carries a battle they weren't in. Retained server-side
-        /// (last [`crate::reports::BATTLE_REPORTS_KEPT`]), so markers/results
-        /// survive reconnects.
-        battle_reports: Vec<BattleReportView>,
-        /// §contestable-territory Part 2: CONCLUDED captures this player was a
-        /// participant in and has LEARNED of (per-participant, light-delayed) —
-        /// the capture aftermath markers + results. Retained (reconnect-safe).
-        capture_reports: Vec<CaptureReportView>,
-        /// §battle-records Part A2: the light-gated, fidelity-tiered REPLAY of
-        /// every battle this viewer can observe — running and recent. Each
-        /// carries only its arrived-round prefix at the viewer's fidelity
-        /// (participant = full, third-party-covering-the-site = bucket spine).
-        /// A viewer with no access to a battle simply gets no entry for it.
-        battle_records: Vec<BattleRecordView>,
         /// §syndicates Part 1: the viewer's OWN syndicate roster (fresh private
         /// state, like the wallet), or `None` if unaffiliated. Never a rival's.
         /// Boxed so this (already the largest) View variant stays lean; serde is
@@ -1298,11 +1498,45 @@ pub enum ServerMsg {
         /// lean; serde is transparent through the `Box`.
         #[serde(default)]
         research: Option<Box<ResearchView>>,
-        /// §rankings: the PUBLISHED leaderboard — the same snapshot for every player
-        /// (public by design), taken on the ledger close. A verbatim copy of the
-        /// sim's `world.rankings`; between closes it holds steady (no live leak).
-        #[serde(default)]
-        rankings: Vec<RankingRow>,
+    },
+
+    /// §perf Part B: the SLOW-MOVING per-player sections that used to ride every
+    /// 10 Hz View — standing orders, retained battle/capture reports, and the
+    /// published rankings. Sent per connection ONLY when a section's content
+    /// changed (signature-gated, the timeline_sent pattern), on the RELIABLE
+    /// discrete lane (the View's watch channel may drop frames for a slow
+    /// client, which would lose a once-per-change section forever). A present
+    /// field REPLACES the client's copy; an absent field means "unchanged". A
+    /// fresh connection's first broadcast carries all four (empty signatures).
+    Sections {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        standing_orders: Option<Vec<StandingOrder>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        battle_reports: Option<Vec<BattleReportView>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        capture_reports: Option<Vec<CaptureReportView>>,
+        /// §rankings: the PUBLISHED leaderboard — the same snapshot for every
+        /// player (public by design), taken on the ledger close; it only changes
+        /// on a close, which is exactly when it re-sends.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rankings: Option<Vec<RankingRow>>,
+    },
+
+    /// §perf Part A: incremental battle-record delivery (was: every record's full
+    /// arrived prefix re-shipped inside every View). Rides the RELIABLE discrete
+    /// lane (the bounded mpsc, like Timeline/Report) — the View's watch channel is
+    /// last-write-wins and may drop frames for a slow client, which would lose a
+    /// delta forever. The per-connection cursor advances only when the send
+    /// succeeds, so a full queue simply retries next broadcast. `removed` names
+    /// records this connection should drop: pruned server-side, or (bucket
+    /// fidelity) the viewer's sensor coverage of the site lapsed — exactly the
+    /// records that vanished from the old full-set View. A record that becomes
+    /// visible again is re-sent in full (fresh cursor), as before.
+    BattleRecords {
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        updates: Vec<BattleRecordUpdate>,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        removed: Vec<EntityId>,
     },
 
     /// A delayed raid report (§8) — arrives on the recipient's own clock.
@@ -1355,6 +1589,13 @@ pub fn player_id_from_name(name: &str) -> PlayerId {
     for byte in name.trim().to_lowercase().bytes() {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    // Guard the reserved NEUTRAL sentinel ids (PIRATE, TCA): a real name that
+    // happened to hash onto one would be mistaken for the faction that owns pirate
+    // packs / Authority freighters. A 1-in-2^64 event, but the sentinels' whole
+    // safety rests on "no corporation ever has this id", so we make it certain.
+    while hash == PlayerId::PIRATE.0 || hash == PlayerId::TCA.0 {
+        hash = hash.wrapping_add(1);
     }
     PlayerId(hash)
 }

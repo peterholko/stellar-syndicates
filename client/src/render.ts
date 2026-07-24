@@ -55,6 +55,10 @@ const COL_ALLY = 0x74e08c;
 // §pirates: the neutral PIRATE faction — a menacing AMBER-ORANGE, distinct from
 // own cyan / ally green / rival salmon. "Nobody's friend."
 const COL_PIRATE = 0xe08a2c;
+// §TCA: the TERRAN CHARTER AUTHORITY — a cool institutional STEEL-BLUE, read as
+// "neutral officialdom": not yours, not a rival, not a pirate. Its freighters are
+// the only hulls that wear it.
+const COL_TCA = 0x7fa6c8;
 // §node: EXOTIC NODES — a VIOLET exotic accent, distinct from every faction hue.
 // The glyph marks a node; ownership stays on the system ring/tint.
 const COL_NODE = 0xb98cff;
@@ -107,6 +111,20 @@ interface GhostSprite {
   badge: Graphics; // fleet count pill (exact Σ, or the fog size bucket)
   badgeText: Text; // the number / bucket label drawn on the badge
   seen: boolean;
+}
+
+// §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
+// system's geometry (glow, ownership rings, blockade/enclave/node dashes,
+// selection ring, dot fallback) exactly as the old per-frame Graphics did; the
+// label + three optional tag texts are pooled and toggled by visibility. Reused
+// across frames via clear()+redraw, so the drawn result is identical with zero
+// per-frame allocation.
+interface SystemGfx {
+  g: Graphics;
+  label: Text;
+  blockade: Text; // "⛔ BLOCKADE" tag
+  enclave: Text; // "☠ ENCLAVE T‹n›" tag
+  node: Text; // "◈" dormant glyph OR "◈ TITLE" awakened tag
 }
 
 // Ship sprites are top-down with the nose at -y; the heading convention here points
@@ -229,6 +247,19 @@ export class Renderer {
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
+  // §perf: persistent Graphics/Text reused across frames (clear()+redraw instead
+  // of removeChildren()+new every frame). Eliminates the per-frame allocation
+  // churn — the drawn output is identical, only the object churn is gone.
+  private orderGfx = new Graphics(); // convoy order lines (pooled)
+  private anchorGfx = new Graphics(); // anchor circles (pooled)
+  private ccGfx = new Graphics(); // command-center pulse (pooled)
+  private homeText: Text | null = null; // the viewer's "HOME" seat label (pooled)
+  private bgGfx: Graphics | null = null; // hub glow rings (pooled)
+  private hubText: Text | null = null; // the "HUB" label (pooled)
+  // §perf: pooled per-system draw objects, keyed by system id. Rebuilt only when
+  // geometry is dirty (camera / new View / selection) or an animated system is
+  // present — never allocated per frame.
+  private systemGfx = new Map<string, SystemGfx>();
   private interceptGfx = new Graphics(); // soft intercept-estimate zones
   // §battle-aftermath: concluded-battle markers (owner-only UI chrome) — under
   // the ghosts (a marker never hides a ship), over bodies/estimates.
@@ -301,6 +332,20 @@ export class Renderer {
   /// transform changes, not every frame; this flags it for redraw.
   private viewDirty = false;
 
+  // §perf: dirty-gating. `stateVersion` is bumped by main.ts each time a new View
+  // is applied; the static galaxy geometry (systems/anchors) is rebuilt only when
+  // the camera moved (viewDirty), the state changed, or the selection changed —
+  // and, for the systems layer, when an animated system (rival breath / blockade
+  // pulse) is on screen. Idle frames with none of these do no geometry work.
+  stateVersion = 0;
+  private lastStateVersion = -1;
+  private lastSelShip: string | null = null;
+  private lastSelSystem: string | null = null;
+  private lastSelMarker: number | null = null;
+  /// True after a rebuild in which some system drew a per-frame pulse (rival
+  /// breath / blockade), so the systems layer keeps redrawing to animate it.
+  private systemsAnimating = false;
+
   async init(mount: HTMLElement): Promise<void> {
     await this.app.init({
       background: "#05070d",
@@ -327,6 +372,15 @@ export class Renderer {
       this.signalsLayer,
     );
     this.aftermathLayer.addChild(this.aftermathGfx);
+    // §perf: pooled persistent graphics for the order + anchor + command-center
+    // layers (drawn via clear()+redraw, never re-allocated per frame). Child order
+    // preserves the old draw order: anchor circles, then HOME label, then the
+    // command-center pulse on top.
+    this.orderLayer.addChild(this.orderGfx);
+    this.homeText = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
+    this.homeText.anchor.set(0.5, 1);
+    this.homeText.visible = false;
+    this.anchorsLayer.addChild(this.anchorGfx, this.homeText, this.ccGfx);
     // Stage: persistent starfield (bottom) · galaxy scene · system scene (top,
     // hidden until entered). The HUD/breadcrumb/panels are DOM (the "hudRoot"),
     // and persist across both scenes.
@@ -433,6 +487,9 @@ export class Renderer {
         if (tex) this.starTex.set(t.slug, tex);
       }),
     );
+    // §perf: the star icons drive the (dirty-gated) systems layer — force one
+    // rebuild so they replace the dot fallbacks even if the player is idle.
+    this.viewDirty = true;
   }
 
   get canvas(): HTMLCanvasElement {
@@ -575,6 +632,19 @@ export class Renderer {
     this.systemBodies.clear();
     this.hubSprite?.destroy();
     this.hubSprite = null;
+    // §perf: drop the pooled per-system draw objects — a new galaxy has fresh
+    // system ids; they're recreated lazily on the next (forced) rebuild.
+    this.systemsLayer.removeChildren();
+    for (const e of this.systemGfx.values()) {
+      e.g.destroy();
+      e.label.destroy();
+      e.blockade.destroy();
+      e.enclave.destroy();
+      e.node.destroy();
+    }
+    this.systemGfx.clear();
+    this.systemsAnimating = false;
+    this.viewDirty = true; // force a full systems rebuild against the new galaxy
     this.recompute();
   }
 
@@ -608,9 +678,17 @@ export class Renderer {
   }
 
   private drawBackground(): void {
-    this.bg.removeChildren();
     if (!this.galaxy) return;
-    const g = new Graphics();
+    // §perf: pooled Graphics + Text, created once and redrawn in place (was:
+    // removeChildren() + new Graphics/Text every time this ran).
+    if (!this.bgGfx) {
+      this.bgGfx = new Graphics();
+      this.hubText = new Text({ text: "HUB", style: new TextStyle({ fill: COL_HUB, fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: 2 }) });
+      this.hubText.anchor.set(0.5, 0);
+      this.bg.addChild(this.bgGfx, this.hubText);
+    }
+    const g = this.bgGfx;
+    g.clear();
     // (No galaxy radial rings: they implied discrete "zones" that don't exist —
     // radial variation is a CONTINUOUS frontier gradient, not stepped, so the
     // rings marked nothing. The hub landmark stays.)
@@ -618,11 +696,31 @@ export class Renderer {
     g.circle(hub.x, hub.y, 11).fill({ color: COL_HUB, alpha: 0.18 });
     g.circle(hub.x, hub.y, 6).fill({ color: COL_HUB, alpha: 0.4 });
     g.circle(hub.x, hub.y, 2.5).fill({ color: 0xffffff, alpha: 0.9 });
-    this.bg.addChild(g);
-    const label = new Text({ text: "HUB", style: new TextStyle({ fill: COL_HUB, fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: 2 }) });
-    label.anchor.set(0.5, 0);
-    label.position.set(hub.x, hub.y + 13);
-    this.bg.addChild(label);
+    this.hubText!.position.set(hub.x, hub.y + 13);
+  }
+
+  /// §perf: get-or-create the pooled draw objects for a system id. Created once
+  /// and reused across frames (clear()+redraw the Graphics, re-set the texts) so
+  /// drawSystems never allocates per frame. Anchors + the constant text styles are
+  /// set here; per-frame content/fill/position/alpha are set in drawSystems.
+  private ensureSystemGfx(id: string): SystemGfx {
+    let e = this.systemGfx.get(id);
+    if (!e) {
+      const mono = "ui-monospace, monospace";
+      e = {
+        g: new Graphics(),
+        label: new Text({ text: "", style: new TextStyle({ fontFamily: mono, fontSize: 8 }) }),
+        blockade: new Text({ text: "", style: new TextStyle({ fill: COL_THREAT, fontFamily: mono, fontSize: 8, fontWeight: "700" }) }),
+        enclave: new Text({ text: "", style: new TextStyle({ fill: COL_PIRATE, fontFamily: mono, fontSize: 8, fontWeight: "700" }) }),
+        node: new Text({ text: "", style: new TextStyle({ fontFamily: mono, fontSize: 8, fontWeight: "700" }) }),
+      };
+      e.label.anchor.set(0, 0.5);
+      e.blockade.anchor.set(0.5, 1);
+      e.enclave.anchor.set(0.5, 1);
+      e.node.anchor.set(0.5, 1);
+      this.systemGfx.set(id, e);
+    }
+    return e;
   }
 
   /// Draw star systems with their resource geology and (light-gated) ownership.
@@ -630,16 +728,34 @@ export class Renderer {
   /// out-produces the core (§4); the ring shows ownership — cyan (yours), red (a
   /// rival, once their claim's light has reached you), or dim (unclaimed). Your
   /// own systems also surface their accumulated production.
-  private drawSystems(state: ViewState): void {
-    this.systemsLayer.removeChildren();
+  ///
+  /// §perf: pooled per system (SystemGfx), rebuilt only when geometry is dirty
+  /// (camera / new View / selection) OR a system is animating a pulse (rival
+  /// breath / blockade). When neither holds the whole layer is skipped — systems
+  /// are at fixed world positions, so their screen geometry is unchanged. The
+  /// drawn output is identical; only the per-frame object churn is gone.
+  private drawSystems(state: ViewState, geomDirty: boolean): void {
     if (!this.galaxy) return;
+    if (!geomDirty && !this.systemsAnimating) return;
+    const now = performance.now();
     const dynById = new Map(state.systems.map((s) => [s.id, s]));
     // BIG stars first, SMALL stars last (on top): when two systems sit close, a
     // visually larger neighbor must never bury a small star — its home ring and
     // disk stay visible and aimable (nearest-center picking then just works).
     const ordered = [...this.galaxy.systems]
       .sort((a, b) => this.starDiameters(b).rendered - this.starDiameters(a).rendered);
+    let animating = false;
+    // Detach the pooled children (NOT destroyed), re-added in sort order below so
+    // the z-order (and any zoom-driven re-sort) stays exactly as before.
+    this.systemsLayer.removeChildren();
     for (const sys of ordered) {
+      const e = this.ensureSystemGfx(sys.id);
+      const g = e.g;
+      g.clear();
+      e.label.visible = true;
+      e.blockade.visible = false;
+      e.enclave.visible = false;
+      e.node.visible = false;
       const s = this.worldToScreen(sys.pos);
       const dyn = dynById.get(sys.id);
       const owner = dyn?.owner ?? null;
@@ -665,7 +781,6 @@ export class Renderer {
       const { base: bodyD, rendered } = this.starDiameters(sys);
       const extra = (rendered - bodyD) / 2;
 
-      const g = new Graphics();
       g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 }); // geology value-glow
 
       // Ownership treatment — own and rival are a matched pair (halo + bold ring),
@@ -686,10 +801,11 @@ export class Renderer {
         // DOUBLE ring — unmistakable as hostile-held, and clearly distinct from the
         // fast-pulsing raider-threat marker (slower cadence, static rings, sized to
         // the system body, softer COL_OTHER hue vs. the alert COL_THREAT red).
-        const breath = 0.5 + 0.5 * Math.sin(performance.now() / 1100);
+        const breath = 0.5 + 0.5 * Math.sin(now / 1100);
         g.circle(s.x, s.y, 13 + extra).fill({ color: COL_OTHER, alpha: 0.05 + 0.07 * breath });
         g.circle(s.x, s.y, 9.5 + extra).stroke({ width: 1, color: COL_OTHER, alpha: 0.4 });
         g.circle(s.x, s.y, 7 + extra).stroke({ width: 2, color: COL_OTHER, alpha: 0.98 });
+        animating = true; // the breath halo pulses every frame
       }
       if (selected) {
         g.circle(s.x, s.y, (owner !== null ? 12 : glow + 4) + extra).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
@@ -721,7 +837,6 @@ export class Renderer {
         const dotCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_SYSTEM;
         g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
       }
-      this.systemsLayer.addChild(g);
 
       // Label: name; your own systems also show their top stockpiled good.
       let txt = sys.name;
@@ -730,11 +845,11 @@ export class Renderer {
         txt = `${sys.name}  ◆${top.units} ${label(top.commodity)}`;
       }
       const col = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : 0x55657f;
-      const t = new Text({ text: txt, style: new TextStyle({ fill: col, fontFamily: "ui-monospace, monospace", fontSize: 8 }) });
-      t.anchor.set(0, 0.5);
+      const t = e.label;
+      t.text = txt;
+      t.style.fill = col;
       t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
       t.alpha = mine ? 0.95 : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
-      this.systemsLayer.addChild(t);
 
       // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
       // dashed ring around a besieged system + a "⛔ BLOCKADE" tag. Participant-
@@ -742,7 +857,7 @@ export class Renderer {
       // system besieged) and the besieger (their blockade), never a third party.
       if (dyn?.blockade) {
         const half = rendered / 2;
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 500);
+        const pulse = 0.5 + 0.5 * Math.sin(now / 500);
         const rr = Math.max(15, half + 6) + extra;
         const seg = 22;
         for (let i = 0; i < seg; i += 2) {
@@ -752,11 +867,12 @@ export class Renderer {
             .lineTo(s.x + Math.cos(a1) * rr, s.y + Math.sin(a1) * rr);
         }
         g.stroke({ width: 1.6, color: COL_THREAT, alpha: 0.4 + 0.4 * pulse });
-        const bt = new Text({ text: dyn.blockade.by_me ? "⛔ BLOCKADING" : "⛔ BLOCKADE", style: new TextStyle({ fill: COL_THREAT, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
-        bt.anchor.set(0.5, 1);
+        const bt = e.blockade;
+        bt.text = dyn.blockade.by_me ? "⛔ BLOCKADING" : "⛔ BLOCKADE";
         bt.position.set(s.x, s.y - rr - 2);
         bt.alpha = 0.7 + 0.3 * pulse;
-        this.systemsLayer.addChild(bt);
+        bt.visible = true;
+        animating = true; // the blockade ring + tag pulse every frame
       }
       // §pirates: a SCOUTED enclave base — an amber dashed ring + "☠ ENCLAVE T‹n›"
       // tag. Owner-only knowledge (your own scout snapshot); the base is DARK to
@@ -772,11 +888,11 @@ export class Renderer {
             .lineTo(s.x + Math.cos(a1) * rr, s.y + Math.sin(a1) * rr);
         }
         g.stroke({ width: 1.4, color: COL_PIRATE, alpha: 0.7 });
-        const pt = new Text({ text: `☠ ENCLAVE T${dyn.intel.enclave_tier}`, style: new TextStyle({ fill: COL_PIRATE, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
-        pt.anchor.set(0.5, 1);
+        const pt = e.enclave;
+        pt.text = `☠ ENCLAVE T${dyn.intel.enclave_tier}`;
         pt.position.set(s.x, s.y - rr - 2);
         pt.alpha = 0.9;
-        this.systemsLayer.addChild(pt);
+        pt.visible = true;
       }
       // §node: an EXOTIC NODE badge. DORMANT before the awakening time → a dim "◈"
       // telegraph so players see WHERE nodes will awaken from t=0. AWAKENED → a
@@ -789,19 +905,23 @@ export class Renderer {
         const half = rendered / 2;
         const holderCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_NODE;
         if (!nd.awakened) {
-          const gl = new Text({ text: "◈", style: new TextStyle({ fill: COL_NODE, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "700" }) });
-          gl.anchor.set(0.5, 1);
+          const gl = e.node;
+          gl.text = "◈";
+          gl.style.fill = COL_NODE;
+          gl.style.fontSize = 9;
           gl.position.set(s.x, s.y - Math.max(12, half + 4) - extra);
           gl.alpha = 0.45;
-          this.systemsLayer.addChild(gl);
+          gl.visible = true;
         } else {
           const rr = Math.max(16, half + 7) + extra;
           g.circle(s.x, s.y, rr).stroke({ width: 1.5, color: COL_NODE, alpha: 0.8 });
-          const nt = new Text({ text: `◈ ${nd.title.toUpperCase()}`, style: new TextStyle({ fill: holderCol, fontFamily: "ui-monospace, monospace", fontSize: 8, fontWeight: "700" }) });
-          nt.anchor.set(0.5, 1);
+          const nt = e.node;
+          nt.text = `◈ ${nd.title.toUpperCase()}`;
+          nt.style.fill = holderCol;
+          nt.style.fontSize = 8;
           nt.position.set(s.x, s.y - rr - 2);
           nt.alpha = 0.95;
-          this.systemsLayer.addChild(nt);
+          nt.visible = true;
           // HOLDER-ONLY region ring (region_radius > 0 only for the owner).
           if (nd.region_radius > 0) {
             const reg = nd.region_radius * this.scale;
@@ -820,7 +940,11 @@ export class Renderer {
           }
         }
       }
+      // Re-attach in sort order (big → small): the geometry, then the label, then
+      // the three optional tags. Invisible tags render nothing.
+      this.systemsLayer.addChild(g, e.label, e.blockade, e.enclave, e.node);
     }
+    this.systemsAnimating = animating;
   }
 
   /// §size-hierarchy: a system's star VISIBLE diameter — `base` at normal zoom
@@ -850,44 +974,48 @@ export class Renderer {
   }
 
   private drawAnchors(state: ViewState): void {
-    this.anchorsLayer.removeChildren();
-    if (!this.galaxy) return;
-    for (const a of state.anchors) {
-      const own = a.owner !== null && a.owner === state.playerId;
-      const s = this.worldToScreen(a.pos);
-      // A command base now coincides with the owner's HOME STAR SYSTEM, which is
-      // drawn as an owned cyan/red system (+ the command-center pulse for your own).
-      // So skip the redundant anchor circle when a system sits here — no more
-      // "mystery circle." Only draw a glyph for a base in OPEN space (e.g. a
-      // command center relocated away from its home system, a future mechanic).
-      const atSystem = this.galaxy.systems.some(
-        (sys) => Math.abs(sys.pos.x - a.pos.x) < 1 && Math.abs(sys.pos.y - a.pos.y) < 1,
-      );
-      if (!atSystem) {
-        const g = new Graphics();
-        const color = own ? COL_ANCHOR_OWN : COL_ANCHOR_OTHER;
-        if (a.owner) {
-          g.circle(s.x, s.y, own ? 9 : 6).fill({ color, alpha: own ? 0.22 : 0.14 });
-          g.circle(s.x, s.y, 3).fill({ color, alpha: 0.9 });
-        } else {
-          g.circle(s.x, s.y, 4).stroke({ width: 1, color: 0x3a4660, alpha: 0.7 });
-        }
-        this.anchorsLayer.addChild(g);
-      }
-      // Name your own command seat "HOME" (above the home system's own label —
-      // riding the star's rendered rim, so it clears the grown disk at deep zoom).
-      if (own) {
-        const homeSys = this.galaxy.systems.find(
+    // §perf: pooled anchorGfx (clear+redraw) + a single pooled HOME text, instead
+    // of removeChildren()+new Graphics/Text every frame. A corp has exactly one
+    // command seat, so one HOME text is repositioned and shown/hidden.
+    const g = this.anchorGfx;
+    g.clear();
+    let homeShown = false;
+    if (this.galaxy) {
+      for (const a of state.anchors) {
+        const own = a.owner !== null && a.owner === state.playerId;
+        const s = this.worldToScreen(a.pos);
+        // A command base now coincides with the owner's HOME STAR SYSTEM, which is
+        // drawn as an owned cyan/red system (+ the command-center pulse for your own).
+        // So skip the redundant anchor circle when a system sits here — no more
+        // "mystery circle." Only draw a glyph for a base in OPEN space (e.g. a
+        // command center relocated away from its home system, a future mechanic).
+        const atSystem = this.galaxy.systems.some(
           (sys) => Math.abs(sys.pos.x - a.pos.x) < 1 && Math.abs(sys.pos.y - a.pos.y) < 1,
         );
-        const dm = homeSys ? this.starDiameters(homeSys) : null;
-        const extra = dm ? (dm.rendered - dm.base) / 2 : 0; // deep-zoom growth only — normal zoom identical
-        const t = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
-        t.anchor.set(0.5, 1);
-        t.position.set(s.x, s.y - 13 - extra);
-        this.anchorsLayer.addChild(t);
+        if (!atSystem) {
+          const color = own ? COL_ANCHOR_OWN : COL_ANCHOR_OTHER;
+          if (a.owner) {
+            g.circle(s.x, s.y, own ? 9 : 6).fill({ color, alpha: own ? 0.22 : 0.14 });
+            g.circle(s.x, s.y, 3).fill({ color, alpha: 0.9 });
+          } else {
+            g.circle(s.x, s.y, 4).stroke({ width: 1, color: 0x3a4660, alpha: 0.7 });
+          }
+        }
+        // Name your own command seat "HOME" (above the home system's own label —
+        // riding the star's rendered rim, so it clears the grown disk at deep zoom).
+        if (own && this.homeText) {
+          const homeSys = this.galaxy.systems.find(
+            (sys) => Math.abs(sys.pos.x - a.pos.x) < 1 && Math.abs(sys.pos.y - a.pos.y) < 1,
+          );
+          const dm = homeSys ? this.starDiameters(homeSys) : null;
+          const extra = dm ? (dm.rendered - dm.base) / 2 : 0; // deep-zoom growth only — normal zoom identical
+          this.homeText.position.set(s.x, s.y - 13 - extra);
+          this.homeText.visible = true;
+          homeShown = true;
+        }
       }
     }
+    if (this.homeText && !homeShown) this.homeText.visible = false;
   }
 
   /// Soft, fuzzy INTERCEPT ESTIMATES for committed raids (§8, §14.1). A CRUDE
@@ -897,15 +1025,17 @@ export class Renderer {
   /// (translucent, soft, concentric) precisely so it reads as "best guess, about
   /// here," the way a sensor circle reads as a soft boundary — honest uncertainty,
   /// not a precise promise.
-  private drawIntercepts(state: ViewState): void {
+  private drawIntercepts(state: ViewState, ghostById: Map<string, GhostView>): void {
     const g = this.interceptGfx;
     g.clear();
     const live = new Set<string>();
     if (this.galaxy) {
       const raiderSpeed = Math.max(this.galaxy.raider_speed || 100, 1);
       for (const [raiderId, targetId] of Object.entries(state.raids)) {
-        const r = state.ghosts.find((x) => x.id === raiderId);
-        const t = state.ghosts.find((x) => x.id === targetId);
+        // §perf: O(1) lookup from the shared ghost map (was two O(n) find()s per
+        // raid per frame).
+        const r = ghostById.get(raiderId);
+        const t = ghostById.get(targetId);
         if (!r || !t) continue; // a ship left the view — no guess to draw
 
         // Constant-velocity intercept: ETA ≈ range / cruise speed (§14.1, no
@@ -935,8 +1065,15 @@ export class Renderer {
         live.add(raiderId);
       }
     }
+    // §perf: destroy + drop stale intercept labels (was: hidden forever, so the
+    // map + their text textures grew unboundedly over a session). The lazy getter
+    // recreates one on demand the next time that raider commits a raid.
     for (const [id, label] of this.interceptLabels) {
-      if (!live.has(id)) label.visible = false;
+      if (!live.has(id)) {
+        this.signalsLayer.removeChild(label);
+        label.destroy();
+        this.interceptLabels.delete(id);
+      }
     }
   }
 
@@ -1186,13 +1323,14 @@ export class Renderer {
 
   /// The command center: the player's vantage, with a pulsing ring.
   private drawCommandCenter(state: ViewState): void {
+    // §perf: pooled ccGfx (clear+redraw). Runs every frame — the pulse animates.
+    const g = this.ccGfx;
+    g.clear();
     if (!state.commandCenter) return;
     const s = this.worldToScreen(state.commandCenter);
-    const g = new Graphics();
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 600);
     g.circle(s.x, s.y, 14 + pulse * 4).stroke({ width: 1, color: COL_OWN, alpha: 0.25 + 0.25 * pulse });
     g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.9 });
-    this.anchorsLayer.addChild(g);
   }
 
   /// Sensor coverage: a soft bubble around each of the player's assets — their
@@ -1232,6 +1370,7 @@ export class Renderer {
       }
     }
     const st = SENSOR_COVERAGE;
+    const vb = { w: this.viewW, h: this.viewH }; // §perf: viewport for dash clipping
     for (const c of sources) {
       const s = this.worldToScreen(c);
       const rPx = c.r * this.scale;
@@ -1244,7 +1383,7 @@ export class Renderer {
         // DEFAULT: a whisper of fill (separate committed path) under a faint DASHED
         // boundary — a quiet ambient hint, not a hard border.
         if (st.fillAlpha > 0) g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: st.fillAlpha });
-        dashedCircle(g, s.x, s.y, rPx, st.dashOn, st.dashOff);
+        dashedCircle(g, s.x, s.y, rPx, st.dashOn, st.dashOff, vb);
         g.stroke({ width: 1, color: COL_SENSOR, alpha: st.outlineAlpha });
       }
     }
@@ -1259,7 +1398,7 @@ export class Renderer {
         if (sys) {
           const s = this.worldToScreen(sys.pos);
           const rPx = state.galaxy.defense_platform_radius * this.scale;
-          dashedCircle(g, s.x, s.y, rPx, 10, 8);
+          dashedCircle(g, s.x, s.y, rPx, 10, 8, vb);
           g.stroke({ width: 1.2, color: COL_OWN, alpha: 0.22 });
         }
       }
@@ -1273,7 +1412,7 @@ export class Renderer {
     g.clear();
     for (const gh of state.ghosts) {
       if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
-      const color = gh.own ? COL_OWN : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
+      const color = gh.own ? COL_OWN : gh.tca ? COL_TCA : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
       const pts = gh.route.map((w) => this.worldToScreen(w));
       g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
@@ -1284,17 +1423,19 @@ export class Renderer {
   }
 
   private drawOrders(state: ViewState, ghostById: Map<string, { x: number; y: number }>): void {
-    this.orderLayer.removeChildren();
+    // §perf: one pooled Graphics, cleared + redrawn (was: a new Graphics per order
+    // per frame). Each order commits its own path via stroke(), so the combined
+    // output is identical. Runs every frame — order lines follow the moving ghosts.
+    const g = this.orderGfx;
+    g.clear();
     for (const [shipId, dest] of Object.entries(state.orders)) {
       const from = ghostById.get(shipId);
       if (!from) continue;
       const to = this.worldToScreen(dest);
-      const g = new Graphics();
       // Dashed line from the ghost to its commanded destination.
       dashedLine(g, from.x, from.y, to.x, to.y, 6, 5);
       g.stroke({ width: 1, color: COL_OWN, alpha: 0.45 });
       g.circle(to.x, to.y, 3).stroke({ width: 1, color: COL_OWN, alpha: 0.7 });
-      this.orderLayer.addChild(g);
     }
   }
 
@@ -1366,6 +1507,9 @@ export class Renderer {
       case "battleship": return this.texBattleship;
       case "dreadnought": return this.texDreadnought;
       case "titan": return this.texTitan;
+      // §TCA: the Authority freighter reuses the bulk-hauler art; its neutral
+      // TINT is what distinguishes it from a corporation's convoy.
+      case "freighter": return this.texConvoy;
     }
   }
 
@@ -1386,6 +1530,7 @@ export class Renderer {
       case "dreadnought":
       case "titan":
         return null;
+      case "freighter": return "freighter";
     }
   }
 
@@ -1709,7 +1854,7 @@ export class Renderer {
     const pip = sp.pip;
     pip.clear();
     // §syndicates: own = cyan, ALLY (light-delayed known member) = green, rival = red.
-    const pipCol = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
+    const pipCol = own ? COL_OWN : ghost.tca ? COL_TCA : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
     const half = this.fleetHitRadius(ghost); // half the MARKER's current on-screen size (formation included)
     const pipR = Math.max(3.2, Math.min(8, half * 0.14));
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
@@ -1762,6 +1907,13 @@ export class Renderer {
       txt = `${cargo}  ${stale}`;
       col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
       lalpha = 0.9;
+    } else if (ghost.kind === "freighter") {
+      // §TCA: an Authority hull is named, in the Authority's own steel-blue —
+      // neutral against both the own and rival palettes. Without this branch it
+      // fell through every case and drew NO label at all.
+      txt = `AUTHORITY  ${stale}`;
+      col = COL_TCA;
+      lalpha = 0.9;
     }
     sp.label.text = txt;
     sp.label.style.fill = col;
@@ -1788,7 +1940,7 @@ export class Renderer {
       const h = 12;
       const bx = halfB * 0.66;
       const by = halfB * 0.55;
-      const edge = own ? COL_OWN : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
+      const edge = own ? COL_OWN : ghost.tca ? COL_TCA : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
       const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
       sp.badge
         .roundRect(bx - w / 2, by - h / 2, w, h, 5)
@@ -1817,6 +1969,16 @@ export class Renderer {
     const { drawGalaxy, drawSystem } = this.tickTransition();
 
     if (drawGalaxy) {
+      // §perf: the static systems/anchors geometry is "dirty" only when the camera
+      // moved, a new View arrived (stateVersion, bumped by main.ts), or the
+      // selection changed. On idle frames with none of these (and no animating
+      // system), drawSystems skips its rebuild entirely — the objects are pooled
+      // and their screen geometry is unchanged.
+      const geomDirty = this.viewDirty
+        || this.stateVersion !== this.lastStateVersion
+        || state.selectedShipId !== this.lastSelShip
+        || state.selectedSystemId !== this.lastSelSystem
+        || this.selectedBattleMarkerId !== this.lastSelMarker;
       // Redraw the world-anchored background (rings + hub) when the camera moved.
       if (this.viewDirty) {
         this.drawBackground();
@@ -1825,13 +1987,17 @@ export class Renderer {
       const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 
       this.drawSensorCoverage(state, dt);
-      this.drawSystems(state);
+      this.drawSystems(state, geomDirty);
       this.drawHubBody();
       this.drawRoutes(state);
       this.drawAnchors(state);
       this.drawCommandCenter(state);
 
       for (const sp of this.ghosts.values()) sp.seen = false;
+      // §perf: one ghost-by-id map built per frame, shared by the draw paths that
+      // used to each run their own O(n) find() (drawIntercepts).
+      const ghostById = new Map<string, GhostView>();
+      for (const gh of state.ghosts) ghostById.set(gh.id, gh);
       const screenById = new Map<string, { x: number; y: number }>();
       // §one-battle-one-icon: a fleet ENGAGED in a visible battle has its whole
       // map marker SUPPRESSED (sprite, heading hint, uncertainty cone, ownership
@@ -1866,11 +2032,17 @@ export class Renderer {
       }
 
       this.drawOrders(state, screenById);
-      this.drawIntercepts(state);
+      this.drawIntercepts(state, ghostById);
       this.drawBattles(state);
       this.drawAftermath(state);
       this.drawCaptures(state);
       this.drawSignals(state, dt);
+      // §perf: record what this frame's geometry was drawn against, so the next
+      // frame can decide whether a rebuild is needed.
+      this.lastStateVersion = this.stateVersion;
+      this.lastSelShip = state.selectedShipId;
+      this.lastSelSystem = state.selectedSystemId;
+      this.lastSelMarker = this.selectedBattleMarkerId;
     }
 
     if (drawSystem) {
@@ -1981,12 +2153,23 @@ function arrowhead(g: Graphics, x: number, y: number, dx: number, dy: number, si
 // A dashed circle (screen px), for the platform protection ring and the DEFAULT
 // (unselected) sensor-coverage boundary. Constant screen-px dashes read
 // consistently across zoom; distinct from the solid/pulsing threat & selection rings.
-function dashedCircle(g: Graphics, cx: number, cy: number, r: number, dash: number, gap: number): void {
+function dashedCircle(g: Graphics, cx: number, cy: number, r: number, dash: number, gap: number, bounds?: { w: number; h: number }): void {
   if (r < 4) return;
   const step = (dash + gap) / r; // radians per dash+gap
+  // §perf: when the circle is far larger than the viewport (deep zoom — a single
+  // sensor bubble tessellated ~2,500 dashes, nearly all off-screen), skip the
+  // dashes whose start point lies outside the viewport by more than one dash. The
+  // arc spans only `dash` px, so a generous margin never drops a visible dash —
+  // the drawn result is identical, the off-screen tessellation is not emitted.
+  const m = dash + gap + 8;
+  const minX = -m, maxX = bounds ? bounds.w + m : Infinity;
+  const minY = -m, maxY = bounds ? bounds.h + m : Infinity;
   for (let a = 0; a < Math.PI * 2; a += step) {
+    const sx = cx + Math.cos(a) * r;
+    const sy = cy + Math.sin(a) * r;
+    if (bounds && (sx < minX || sx > maxX || sy < minY || sy > maxY)) continue;
     const b = Math.min(a + dash / r, Math.PI * 2);
-    g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    g.moveTo(sx, sy);
     // Approximate the arc with a couple of segments (short dashes → fine).
     const mid = (a + b) / 2;
     g.lineTo(cx + Math.cos(mid) * r, cy + Math.sin(mid) * r);

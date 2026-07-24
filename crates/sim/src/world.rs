@@ -17,7 +17,7 @@ use crate::config::{SimConfig, DT, TICK_HZ};
 use crate::doctrine::{
     DestinationInvalidPolicy, EngagementPolicy, EscortPolicy, FleetDoctrine,
 };
-use crate::event::{DivertAction, Event, EventPayload, RaidOutcome, TradeEvent};
+use crate::event::{DivertAction, Event, EventPayload, FreightStage, RaidOutcome, TradeEvent, TradeRejectReason};
 use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem};
 use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
@@ -26,6 +26,7 @@ use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 use crate::syndicate::{syndicate_cap, Syndicate};
+use crate::tca::{FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
 use crate::pirate::{self, Enclave};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
@@ -50,8 +51,33 @@ pub struct Corporation {
     pub home_system: Option<EntityId>,
     /// Credits (the corporate treasury).
     pub credits: f64,
-    /// Goods held at home, by commodity.
-    pub inventory: BTreeMap<crate::cargo::Commodity, u32>,
+    /// §TCA: goods held AT THE CHARTERHOUSE — this corp's private warehouse at the
+    /// hub. The Exchange settles ONLY against this (buys deposit here; sells and
+    /// sell-side limit escrow draw ONLY from here). Nothing about a trade moves
+    /// goods across space; moving goods hub↔systems is the separate, explicit act
+    /// of TCA freight or a player convoy. `#[serde(default)]` so every pre-feature
+    /// snapshot loads with an empty warehouse.
+    ///
+    /// There are exactly TWO places goods can sit: HERE, and a [`StarSystem`]'s
+    /// `stockpile`. The old third store — a per-corp "HQ pool" at the home anchor
+    /// — is gone: it lost its purpose when the Exchange moved onto the warehouse,
+    /// and survived only as a dead-end pocket goods could enter and never leave
+    /// except toward a system. Its inflows now land in the HOME SYSTEM's
+    /// stockpile, which is a real place the player already manages.
+    ///
+    /// CAPACITY-UNCHECKED by design: the warehouse is infinite until the separate
+    /// leased-bay handoff lands. Every inflow path here deposits unconditionally.
+    #[serde(default)]
+    pub warehouse: BTreeMap<crate::cargo::Commodity, u32>,
+    /// §TCA Phase 2: CHARTER STANDING with the Terran Charter Authority. Starts
+    /// (and regenerates back) to [`crate::tca::TCA_STANDING_START`]; each incident
+    /// against an Authority hull decrements it once the citation's light reaches
+    /// the hub. The BAND (`CharterStatus`) is always derived from this by
+    /// [`crate::tca::charter_status`] and never stored, so there is no cached copy
+    /// to desync. `#[serde(default = …)]` so every pre-law snapshot loads in GOOD
+    /// STANDING — nobody is retroactively an outlaw.
+    #[serde(default = "default_tca_standing")]
+    pub tca_standing: f64,
     /// Equity / net worth, recomputed on a slow cadence (§9) to avoid
     /// share-price noise: credits + goods (held, in-transit, and reserved in
     /// resting orders) at market value + buy-order escrow.
@@ -150,6 +176,13 @@ struct PendingOrder {
     /// The order flavor, for the lifecycle panel/digest.
     #[serde(default = "default_order_kind")]
     kind: crate::event::OrderKind,
+}
+
+/// serde default for [`Corporation::tca_standing`] (§TCA Phase 2) — a pre-law
+/// snapshot loads every corporation in GOOD STANDING; nobody is retroactively an
+/// outlaw.
+fn default_tca_standing() -> f64 {
+    crate::tca::TCA_STANDING_START
 }
 
 fn default_order_kind() -> crate::event::OrderKind {
@@ -289,6 +322,52 @@ const VALUATION_TICKS: u64 = 60 * TICK_HZ as u64;
 /// flood the map (the async-automation anti-spam invariant).
 const EVAL_PERIOD: u64 = 5 * TICK_HZ as u64;
 
+/// Remove `units` of `c` from a whole-unit goods map (a corp's `warehouse`),
+/// DROPPING the entry once it empties — so a warehouse never
+/// accumulates zero rows to clutter the wire, the timeline, or a snapshot diff.
+/// Saturating: never underflows.
+fn take_from(map: &mut BTreeMap<crate::cargo::Commodity, u32>, c: crate::cargo::Commodity, units: u32) {
+    if let Some(u) = map.get_mut(&c) {
+        *u = u.saturating_sub(units);
+        if *u == 0 {
+            map.remove(&c);
+        }
+    }
+}
+
+impl World {
+    /// Deposit goods into a corporation's HOME SYSTEM stockpile, clamped to the
+    /// depot's remaining headroom; returns the units that actually fit.
+    ///
+    /// This is where everything that used to land in the retired per-corp "HQ
+    /// pool" goes now. The home system is a real [`StarSystem`] the player
+    /// already manages — it produces, it has a depot cap, and it can be shipped
+    /// from — so goods that arrive here are goods the player can actually use,
+    /// rather than sitting in a pocket with one exit.
+    ///
+    /// Returns 0 (nothing deposited) if the corp has no home system, which is
+    /// only possible in a pre-feature snapshot. The CALLER decides what to do
+    /// with the remainder — never silently destroy it.
+    fn deposit_at_home_system(
+        &mut self,
+        owner: PlayerId,
+        c: crate::cargo::Commodity,
+        units: u32,
+    ) -> u32 {
+        let Some(hs) = self.players.get(&owner).and_then(|corp| corp.home_system) else {
+            return 0;
+        };
+        let Some(sys) = self.systems.iter_mut().find(|s| s.id == hs) else {
+            return 0;
+        };
+        let stored = (units as f64).min(sys.storage_headroom()).floor() as u32;
+        if stored > 0 {
+            *sys.stockpile.entry(c).or_insert(0.0) += stored as f64;
+        }
+        stored
+    }
+}
+
 /// The order that resumes a saved patrol route after a defensive sortie (or idles
 /// if the route was empty).
 fn resume_patrol(route: Vec<Vec2>) -> FleetOrder {
@@ -415,6 +494,35 @@ pub struct World {
     /// recipient's `surveyed` set (permanent). `#[serde(default)]` for old snaps.
     #[serde(default)]
     pub pending_survey_reports: Vec<SurveyReport>,
+    /// §TCA: booked freight SHIPMENTS awaiting a departure — escrowed (goods have
+    /// left the warehouse / a system stockpile) but not yet aboard a freighter.
+    /// Keyed by [`crate::tca::ShipmentId`]; the scheduler drains it FIFO per
+    /// corp+destination. `#[serde(default)]` so pre-feature snapshots load empty.
+    #[serde(default)]
+    pub freight_queue: BTreeMap<crate::tca::ShipmentId, crate::tca::Shipment>,
+    /// §TCA: in-flight freighter RUNS, keyed by the freighter fleet id. The
+    /// multi-owner manifest rides here (never in `Fleet.cargo`). `#[serde(default)]`
+    /// so pre-feature snapshots load with no runs.
+    #[serde(default)]
+    pub freight_runs: BTreeMap<EntityId, crate::tca::FreightRun>,
+    /// §TCA: monotonic allocator for shipment ids (0 ⇒ first id is 1).
+    #[serde(default)]
+    next_shipment_id: u64,
+    /// §TCA Phase 2: INCIDENTS whose light has not yet reached the Charterhouse.
+    /// Standing moves — and the public citation issues — only on arrival, so the
+    /// law propagates at c like everything else. Push order is deterministic, so
+    /// the drain is too. `#[serde(default)]` for pre-law snapshots.
+    #[serde(default)]
+    pub pending_citations: Vec<crate::tca::Citation>,
+    /// §TCA Phase 2: ENFORCEMENT EXPEDITIONS in progress, keyed by the Authority
+    /// fleet flying each one. At most one per proscribed corporation.
+    /// `#[serde(default)]` for pre-law snapshots.
+    #[serde(default)]
+    pub expeditions: BTreeMap<EntityId, crate::tca::Expedition>,
+    /// §TCA Phase 2: when each corporation's NEXT expedition becomes eligible
+    /// (sim-time). Set when one ends; absent means "eligible now".
+    #[serde(default)]
+    pub next_expedition_at: BTreeMap<PlayerId, f64>,
 }
 
 /// §explore Part 2: one in-flight survey-report leg (see
@@ -625,6 +733,12 @@ impl World {
             band_lo: 0.0,
             band_hi: 0.0,
             pending_survey_reports: Vec::new(),
+            freight_queue: BTreeMap::new(),
+            freight_runs: BTreeMap::new(),
+            next_shipment_id: 0,
+            pending_citations: Vec::new(),
+            expeditions: BTreeMap::new(),
+            next_expedition_at: BTreeMap::new(),
         };
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
@@ -1316,6 +1430,26 @@ impl World {
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
 
+        // 4a'''. §TCA Phase 2: the Authority's ENFORCEMENT brain — dispatch,
+        //        station-keep, recall and stand down expeditions against proscribed
+        //        corporations. Beside `pirate_ai`, and for the same reason: it is a
+        //        scripted NPC lifecycle riding the ordinary fleet/blockade machinery,
+        //        so it must run after the combat passes settle this tick's losses.
+        self.enforcement_ai(&mut events);
+
+        // 5a. §TCA Phase 2: apply every INCIDENT whose light has reached the
+        //     Charterhouse — dock the culprits and issue the public citation. After
+        //     the combat passes, so an offense committed THIS tick is queued before
+        //     it can possibly be due (a zero-distance offense at the hub lands on
+        //     the same tick, which is correct: no travel, no delay).
+        self.resolve_citations(&mut events);
+
+        // 5a'. §TCA: resolve Authority FREIGHTER runs that reached the end of a leg
+        //      — unload at the colony, collect the pickups waiting there and turn
+        //      for home, or land the whole manifest in its owners' Charterhouse
+        //      warehouses. Alongside the convoy arrivals, on the same cadence.
+        self.resolve_freight_arrivals(&mut events);
+
         // 5b. Accrue production at every claimed system (§5.1 continuous progress)
         //     — happens whether or not the owner is logged in.
         self.accrue_production(&mut events);
@@ -1365,6 +1499,17 @@ impl World {
         //    batch cadence (the uniform-price call auction, §9).
         self.tick += 1;
         self.time += DT;
+
+        // §TCA Phase 2: CHARTER STANDING regenerates, unconditionally and at the
+        // same rate in EVERY band. Time served is time served — the Authority's
+        // memory fades whether or not you are currently proscribed, so no player
+        // is ever permanently locked out by arithmetic alone. Deterministic (a
+        // fixed rate × dt), clamped to the ceiling.
+        for corp in self.players.values_mut() {
+            corp.tca_standing = (corp.tca_standing + crate::tca::TCA_STANDING_REGEN_PER_SEC * DT)
+                .min(crate::tca::TCA_STANDING_MAX);
+        }
+
         if self.tick.is_multiple_of(MARKET_UPDATE_TICKS) {
             self.market.drift(&mut self.rng);
         }
@@ -1373,6 +1518,12 @@ impl World {
         }
         if self.tick.is_multiple_of(VALUATION_TICKS) {
             self.recompute_valuations();
+        }
+        // §TCA: the Authority's SCHEDULED DEPARTURE — one freighter per destination
+        // that has freight waiting in either direction. On the tick cadence like the
+        // other periodic passes, so the timetable is exact and previewable.
+        if self.tick.is_multiple_of(Self::freight_depart_ticks()) {
+            self.depart_freight(&mut events);
         }
 
         // §rankings: tally THIS tick's events into the cumulative counters (cheap —
@@ -2055,7 +2206,8 @@ impl World {
         // rule — and the owner is told (light-delayed from the wreck).
         members.retain(|id| self.fleets.get(id).is_some_and(|f| !f.is_empty()));
         let mut lost: Vec<Event> = Vec::new();
-        self.fleets.retain(|_, f| {
+        let mut wrecked: Vec<EntityId> = Vec::new();
+        self.fleets.retain(|id, f| {
             if f.is_empty() {
                 if !f.passengers.is_empty() {
                     lost.push(Event::new(
@@ -2070,12 +2222,31 @@ impl World {
                         EventPayload::ModulesLost { owner: f.owner, manifest: f.modules.clone(), pos: f.pos },
                     ));
                 }
+                wrecked.push(*id);
                 false
             } else {
                 true
             }
         });
         events.extend(lost);
+        // §TCA: a destroyed Authority FREIGHTER takes its whole manifest down with
+        // it — every shipper aboard is told, and the run is cleaned up so no orphan
+        // survives the hull. (What a raider managed to seize was already loaded
+        // onto it above; from the shipper's side the lot is gone either way.)
+        for id in wrecked {
+            self.scuttle_freight_run(id, events);
+        }
+    }
+
+    /// Retire the freight run a destroyed/removed freighter was flying (§TCA):
+    /// every lot aboard is lost, with an owner-only notice each.
+    fn scuttle_freight_run(&mut self, fleet: EntityId, events: &mut Vec<Event>) {
+        let Some(run) = self.freight_runs.remove(&fleet) else {
+            return;
+        };
+        for s in run.shipments.values().copied() {
+            self.freight_note(events, &s, s.units, FreightStage::LostWithFreighter);
+        }
     }
 
     /// Resolve BATTLES this tick (§battles-take-time). Combat is deterministic
@@ -2163,7 +2334,7 @@ impl World {
         // Contacts: an attacker on Intercept OR Attack within reach of a rival
         // target. The `is_attack` flag (an Attack order) forces a FULL battle on
         // contact even against a convoy (destroy, not raid) — see the raid flag.
-        let contacts: Vec<(EntityId, EntityId, bool)> = self
+        let mut contacts: Vec<(EntityId, EntityId, bool)> = self
             .fleets
             .iter()
             .filter_map(|(rid, ship)| {
@@ -2176,6 +2347,12 @@ impl World {
                     && ship.owner != t.owner
                     && !self.are_allied(ship.owner, t.owner)
                     && ship.pos.distance(t.pos) <= CONTACT_RADIUS
+                    // §TCA SOVEREIGNTY: no engagement may OPEN inside the
+                    // Charterhouse bubble — for EITHER party. Fleeing into it is
+                    // sanctuary, and you cannot shoot out of it either. (A battle
+                    // already running is positionally anchored and unaffected.)
+                    && !self.in_sovereign_zone(t.pos)
+                    && !self.in_sovereign_zone(ship.pos)
                 {
                     Some((*rid, target, is_attack))
                 } else {
@@ -2183,6 +2360,29 @@ impl World {
                 }
             })
             .collect();
+
+        // §TCA: a BLOCKADER set to engage Authority freight treats a freighter
+        // arriving at the strangled system as an ordinary hostile contact — no new
+        // combat rules, and the fleet keeps holding its station order. Off by
+        // default, so the freighter otherwise lands and unloads through the
+        // blockade (a small leak, self-limiting: new bookings are already refused).
+        let freight_contacts: Vec<(EntityId, EntityId, bool)> = self
+            .fleets
+            .iter()
+            .filter(|(_, f)| f.engage_freight && matches!(f.order, FleetOrder::Blockade { .. }))
+            .flat_map(|(bid, blocker)| {
+                self.fleets
+                    .iter()
+                    .filter(move |(_, t)| {
+                        t.owner.is_tca()
+                            && t.contains(ShipKind::Freighter)
+                            && blocker.pos.distance(t.pos) <= BLOCKADE_STATION_RADIUS
+                    })
+                    .map(move |(tid, _)| (*bid, *tid, false))
+            })
+            .filter(|(_, tid, _)| self.fleets.get(tid).is_some_and(|t| !self.in_sovereign_zone(t.pos)))
+            .collect();
+        contacts.extend(freight_contacts);
 
         for (aid, tid, is_attack) in contacts {
             let a_owner_c = self.fleets.get(&aid).map(|f| f.owner);
@@ -2240,13 +2440,19 @@ impl World {
             // platform + nearby friendly corvette screens.
             let (Some(att), Some(tgt)) = (self.fleets.get(&aid), self.fleets.get(&tid)) else { continue };
             let (a_owner, d_owner, t_kind, t_pos) = (att.owner, tgt.owner, tgt.flagship_kind(), tgt.pos);
-            let civilian = matches!(t_kind, ShipKind::Convoy | ShipKind::Colony);
+            // §TCA: an Authority freighter is a civilian hull like a convoy — a
+            // contact on it is a cargo RAID by default (an explicit Attack still
+            // escalates to destruction).
+            let civilian = matches!(t_kind, ShipKind::Convoy | ShipKind::Colony | ShipKind::Freighter);
             let mut defenders = vec![tid];
             let mut platform_system = None;
             // A convoy contact is a cargo RAID by default — UNLESS this is an
             // explicit ATTACK order (destroy, cargo lost) or the convoy is defended
             // (fighting the escort/platform is a battle). Everything armed is a battle.
-            let mut raid = !is_attack && t_kind == ShipKind::Convoy;
+            // §TCA: an Authority freighter is raided for its manifest exactly as a
+            // convoy is raided for its cargo — STEAL, not destroy, unless the
+            // aggressor explicitly ordered an Attack.
+            let mut raid = !is_attack && matches!(t_kind, ShipKind::Convoy | ShipKind::Freighter);
             if civilian {
                 // Pull in EVERY covering friendly corvette fleet (escort/garrison).
                 let screens: Vec<EntityId> = self
@@ -2600,7 +2806,25 @@ impl World {
             if raid {
                 let dead_cargo: Option<Cargo> = defenders
                     .iter()
-                    .find_map(|id| self.fleets.get(id).filter(|f| f.count(ShipKind::Convoy) > 0 && lb.per_kind.get(&ShipKind::Convoy).copied().unwrap_or(0) >= f.count(ShipKind::Convoy)).and_then(|f| f.cargo));
+                    .find_map(|id| self.fleets.get(id).filter(|f| f.count(ShipKind::Convoy) > 0 && lb.per_kind.get(&ShipKind::Convoy).copied().unwrap_or(0) >= f.count(ShipKind::Convoy)).and_then(|f| f.cargo))
+                    // §TCA: …or an Authority FREIGHTER dying with a multi-owner
+                    // manifest. A raider's hold takes ONE commodity (`Fleet.cargo`
+                    // is single-commodity), so it seizes the first manifest entry's
+                    // good — entries in stable shipment-id order — plus every other
+                    // entry of that same good. The rest is lost with the hull.
+                    .or_else(|| {
+                        defenders.iter().find_map(|id| {
+                            let f = self.fleets.get(id)?;
+                            let aboard = f.count(ShipKind::Freighter);
+                            if aboard == 0 || lb.per_kind.get(&ShipKind::Freighter).copied().unwrap_or(0) < aboard {
+                                return None;
+                            }
+                            let run = self.freight_runs.get(id)?;
+                            let commodity = run.shipments.values().next()?.commodity;
+                            let units: u32 = run.shipments.values().filter(|s| s.commodity == commodity).map(|s| s.units).sum();
+                            (units > 0).then_some(Cargo { commodity, units })
+                        })
+                    });
                 if let Some(cargo) = dead_cargo {
                     // Load the loot onto the (first empty-handed) attacker and note
                     // WHO seized it — the borrow of the fleet ends with the closure.
@@ -2637,10 +2861,48 @@ impl World {
                 s.set_tier(crate::build::StructureKind::DefensePlatform, tac_ptiers);
                 s.defense_pool = tac_ppool;
             }
+            // §TCA Phase 2: snapshot who is HERE before the losses land, so a
+            // freighter's death can still name its culprits even when the fight
+            // takes some of them down with it. Sentinels are never culprits (the
+            // Authority does not cite itself, and pirates hold no charter).
+            let tca_hulls_before: Vec<EntityId> = defenders
+                .iter()
+                .copied()
+                .filter(|id| self.fleets.get(id).is_some_and(|f| f.owner.is_tca()))
+                .collect();
+            let culprits: std::collections::BTreeSet<PlayerId> = if tca_hulls_before.is_empty() {
+                Default::default()
+            } else {
+                attackers
+                    .iter()
+                    .filter_map(|id| self.fleets.get(id).map(|f| f.owner))
+                    .filter(|o| !o.is_sentinel())
+                    .collect()
+            };
+
             let mut atk = attackers.clone();
             let mut def = defenders.clone();
             self.apply_side_losses(&mut atk, &la, pos, events);
             self.apply_side_losses(&mut def, &lb, pos, events);
+
+            // …and record an INCIDENT for each Authority hull that just died. A
+            // RAID (Intercept) is piracy, an ATTACK is destruction; an enforcement
+            // vessel is the graver offense. Nothing is applied here — the citation
+            // travels to the Charterhouse at c first.
+            for fid in tca_hulls_before {
+                if self.fleets.contains_key(&fid) {
+                    continue; // survived
+                }
+                let enforcement = self.expeditions.contains_key(&fid);
+                let (offense, loss) = if enforcement {
+                    (crate::tca::CitationOffense::EnforcementDestroyed, crate::tca::TCA_STANDING_LOSS_ENFORCEMENT)
+                } else if raid {
+                    (crate::tca::CitationOffense::FreightRaided, crate::tca::TCA_STANDING_LOSS_PER_INCIDENT)
+                } else {
+                    (crate::tca::CitationOffense::FreightDestroyed, crate::tca::TCA_STANDING_LOSS_PER_INCIDENT)
+                };
+                self.record_incident(pos, culprits.clone(), offense, loss);
+            }
             {
                 let e = self.engagements.get_mut(eid).unwrap();
                 e.attackers = atk.clone();
@@ -2954,7 +3216,20 @@ impl World {
         let convoys: Vec<(EntityId, Vec2)> = self
             .fleets
             .iter()
-            .filter(|(_, f)| !f.owner.is_pirate() && f.flagship_kind() == ShipKind::Convoy && f.broadcasts() && !covered(f.pos) && !shielded.contains(&f.owner))
+            // §TCA v1: the enclaves prey on SYNDICATE shipping, not on the flag that
+            // hunts them — pirate packs never target an Authority hull. (The Convoy
+            // flagship filter already excludes freighters incidentally; this states
+            // the rule outright so a future retarget can't reintroduce it by accident.
+            // Revisit post-playtest.) The `shielded` term is market-ux's new-player
+            // pirate grace and is preserved alongside it.
+            .filter(|(_, f)| {
+                !f.owner.is_pirate()
+                    && !f.owner.is_tca()
+                    && f.flagship_kind() == ShipKind::Convoy
+                    && f.broadcasts()
+                    && !covered(f.pos)
+                    && !shielded.contains(&f.owner)
+            })
             .map(|(id, f)| (*id, f.pos))
             .collect();
         let epos: BTreeMap<EntityId, Vec2> =
@@ -2980,10 +3255,13 @@ impl World {
                     .map(|(_, f)| f.owner);
                 let plunder = std::mem::take(&mut self.enclaves.get_mut(&sid).unwrap().plunder);
                 if let Some(v) = victor {
-                    if let Some(corp) = self.players.get_mut(&v) {
-                        for (c, n) in &plunder {
-                            *corp.inventory.entry(*c).or_insert(0) += *n;
-                        }
+                    // Recovered plunder lands in the victor's HOME SYSTEM stockpile
+                    // (clamped to its depot). Anything that doesn't fit is left in
+                    // the wreckage rather than teleported into a pocket — a full
+                    // depot is a real constraint, and the bulletin below reports
+                    // the whole haul either way.
+                    for (c, n) in &plunder {
+                        self.deposit_at_home_system(v, *c, *n);
                     }
                     events.push(Event::new(now, EventPayload::PirateEnclaveCleared { owner: v, system: sid, pos: base_pos, plunder }));
                 }
@@ -3560,6 +3838,12 @@ impl World {
                     events.push(Event::new(now, EventPayload::BlockadeEstablished { by, owner, system: sys.id, pos: sys.pos }));
                 }
                 (true, false) => {
+                    // §TCA: remember the window that just closed, so a distant
+                    // observer (the Charterhouse) can still answer "blockaded at
+                    // retarded time T?" until the LIFT's light reaches it.
+                    if let Some(b) = sys.blockade {
+                        sys.blockade_prev = Some((b.since, now));
+                    }
                     sys.blockade = None;
                     if let Some(owner) = sys.owner {
                         events.push(Event::new(now, EventPayload::BlockadeLifted { owner, system: sys.id, pos: sys.pos }));
@@ -3593,7 +3877,9 @@ impl World {
         for f in self.fleets.values_mut() {
             let Some(mission) = f.mission else { continue };
             let (dest_blocked, true_dest) = match mission {
-                TradeMission::SellAtHub => continue, // the hub is neutral — never blockaded
+                // The Charterhouse is neutral — never blockaded — so both hub-bound
+                // missions sail straight in.
+                TradeMission::SellAtHub | TradeMission::DeliverToWarehouse { .. } => continue,
                 TradeMission::DeliverToSystem { system } => match sys_pos.get(&system) {
                     Some(&p) => (blocked.contains(&system), p),
                     None => continue,
@@ -3723,11 +4009,20 @@ impl World {
                     // convoys turn one. max() never removes an earned higher tier.
                     sys.set_tier(crate::build::StructureKind::Shipyard, sys.tier(crate::build::StructureKind::Shipyard).max(crate::build::HOME_SHIPYARD_TIER));
                 }
-                // Starting inventory: a stock of the ORIGINAL five goods to sell,
-                // plus a treasury to buy with. §economy: deliberately NOT all 12 —
-                // handing out free Machinery/Armaments would skip the industrial
-                // ladder; the Part-6 starter kit seeds the home STOCKPILE instead.
-                let inventory = [
+                // STARTING STOCK: the ORIGINAL five goods to sell, plus a treasury
+                // to buy with. §economy: deliberately NOT all 12 — handing out free
+                // Machinery/Armaments would skip the industrial ladder; the Part-6
+                // starter kit seeds the home STOCKPILE instead.
+                //
+                // These land in the hub WAREHOUSE. They used to sit in a per-corp
+                // "HQ pool" at the home anchor, which is retired; the home system's
+                // stockpile is the obvious alternative but it is already half full
+                // at spawn (provisions buffer + starter kit + fuel seed) against a
+                // 700 cap, so 600 units could not fit. The warehouse is also the
+                // honest home for "goods to sell": it is the only store the Exchange
+                // settles against, so a fresh corp can actually trade on turn one
+                // instead of finding an empty market it cannot use.
+                let warehouse = [
                     crate::cargo::Commodity::MetallicOre,
                     crate::cargo::Commodity::Volatiles,
                     crate::cargo::Commodity::Alloys,
@@ -3747,7 +4042,9 @@ impl World {
                         command_center: home,
                         home_system: Some(home_system),
                         credits: 10_000.0,
-                        inventory,
+                        warehouse,
+                        // §TCA Phase 2: a fresh corp is issued a clean charter.
+                        tca_standing: crate::tca::TCA_STANDING_START,
                         valuation: 10_000.0,
                         standing_orders: Vec::new(),
                         next_standing_id: 0,
@@ -3920,6 +4217,21 @@ impl World {
                 if self.are_allied(*player_id, target.owner) {
                     return;
                 }
+                // §TCA SOVEREIGNTY: no engagement may be opened against something
+                // sheltering in the Charterhouse bubble. Soft-reject, owner-only —
+                // the fleet keeps its current order and nothing is spent.
+                if self.in_sovereign_zone(target.pos) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::OrderRejected {
+                            owner: *player_id,
+                            fleet: *raider_id,
+                            target: *target_id,
+                            reason: crate::event::OrderRejectReason::InsideSovereignZone,
+                        },
+                    ));
+                    return;
+                }
                 let target_pos = target.pos;
                 // The raider must exist and be the player's.
                 let Some(raider) = self.fleets.get(raider_id) else {
@@ -3969,6 +4281,7 @@ impl World {
                 player_id,
                 commodity,
                 units,
+                ship_to,
             } => {
                 let units = *units;
                 if units == 0 {
@@ -3977,16 +4290,34 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
-                let home = corp.home;
+                // §TCA Phase 2: a REVOKED charter closes the Exchange. Free,
+                // owner-only refusal — the warehouse is still yours to fetch from.
+                if self.charter_of(*player_id).exchange_closed() {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::CharterRevoked);
+                    return;
+                }
                 let price = self.market.price(*commodity);
                 let cost = units as f64 * price;
-                if corp.credits < cost {
-                    return; // can't afford
+                // The charter PENALTY FEE rides on top of the price (0 in good
+                // standing), and you must be able to cover both.
+                let penalty = self.exchange_penalty(*player_id, cost);
+                if corp.credits < cost + penalty {
+                    // Async-fair: a buy the treasury can't cover — including one
+                    // tipped over ONLY by the charter penalty — is a typed
+                    // refusal, never a silent no-op.
+                    self.reject_trade(events, *player_id, *commodity, units, None,
+                        TradeRejectReason::CantAfford { cost: cost + penalty });
+                    return;
                 }
-                // Instant settlement at the true standing price (§9).
+                // Instant settlement at the true standing price (§9). The goods
+                // land in the corp's CHARTERHOUSE WAREHOUSE — nothing about a trade
+                // moves goods across space any more (§TCA). Getting them to a
+                // system is a separate, explicit act: TCA freight or a player convoy.
                 let unit_price = self.market.execute_buy(*commodity, units);
+                let penalty = self.exchange_penalty(*player_id, units as f64 * unit_price);
                 if let Some(corp) = self.players.get_mut(player_id) {
-                    corp.credits -= units as f64 * unit_price;
+                    corp.credits -= units as f64 * unit_price + penalty;
+                    *corp.warehouse.entry(*commodity).or_insert(0) += units;
                 }
                 events.push(Event::new(
                     self.time,
@@ -3995,11 +4326,15 @@ impl World {
                         commodity: *commodity,
                         units,
                         unit_price,
+                        penalty,
                     }),
                 ));
-                // Delivery convoy carries the goods home (raidable in transit).
-                let cargo = Cargo { commodity: *commodity, units };
-                self.spawn_trade_convoy(*player_id, self.hub, home, cargo, TradeMission::DeliverHome);
+                // §TCA one-checkbox composition: hand the whole lot straight to
+                // the Authority for delivery. If the booking soft-rejects, the
+                // goods simply stay in the warehouse and the owner is told why.
+                if let Some(dest) = *ship_to {
+                    self.book_freight(*player_id, dest, *commodity, units, ShipmentDir::Outbound, false, events);
+                }
             }
             Command::MarketSell {
                 player_id,
@@ -4013,30 +4348,55 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
-                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
-                if have < units {
-                    return; // not enough goods
+                // §TCA Phase 2: a REVOKED charter closes the Exchange to selling too.
+                if self.charter_of(*player_id).exchange_closed() {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::CharterRevoked);
+                    return;
                 }
-                let home = corp.home;
-                // Commit goods to the crossing FIRST — price is decided on arrival.
+                // §TCA: a sale draws ONLY from the CHARTERHOUSE WAREHOUSE. The goods
+                // are already AT the Exchange, so the old "commit to the crossing and
+                // take the price on arrival" dance is gone — settlement is instant,
+                // like a buy. Home goods are no longer a valid sell source: move them
+                // to the Charterhouse first (freight or a convoy).
+                let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
+                if have < units {
+                    // Async-fair soft reject: nothing spent, owner-only notice.
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::Trade(TradeEvent::Rejected {
+                            player: *player_id,
+                            commodity: *commodity,
+                            units,
+                            system: None,
+                            reason: crate::event::TradeRejectReason::InsufficientWarehouseStock { have },
+                        }),
+                    ));
+                    return;
+                }
+                let unit_price = self.market.execute_sell(*commodity, units);
+                let gross = units as f64 * unit_price;
+                let penalty = self.exchange_penalty(*player_id, gross);
                 if let Some(corp) = self.players.get_mut(player_id) {
-                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                    take_from(&mut corp.warehouse, *commodity, units);
+                    corp.credits += gross - penalty;
                 }
                 events.push(Event::new(
                     self.time,
-                    EventPayload::Trade(TradeEvent::SellDispatched {
+                    EventPayload::Trade(TradeEvent::Sold {
                         player: *player_id,
                         commodity: *commodity,
                         units,
+                        unit_price,
+                        penalty,
                     }),
                 ));
-                let cargo = Cargo { commodity: *commodity, units };
-                self.spawn_trade_convoy(*player_id, home, self.hub, cargo, TradeMission::SellAtHub);
             }
-            // SUPPLY FROM HQ (§economy): move goods from the corp's HQ trading
-            // inventory into an OWNED system's stockpile via a sub-light raidable
-            // convoy — the bridge that lets market-bought inputs feed a system's
-            // converters (which read sys.stockpile, not the trading pool).
+            // SUPPLY A SYSTEM (§economy): move goods from the corp's HUB WAREHOUSE
+            // into an OWNED system's stockpile via a sub-light raidable convoy —
+            // the bridge that lets market-bought inputs feed a system's converters
+            // (which read sys.stockpile). The convoy sails FROM THE HUB, because
+            // that is where the goods physically are. This is the free, raidable
+            // alternative to booking the Authority's carrier for the same leg.
             Command::StockSystem { player_id, system_id, commodity, units } => {
                 let units = *units;
                 if units == 0 {
@@ -4054,14 +4414,17 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
-                let have = corp.inventory.get(commodity).copied().unwrap_or(0);
+                let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
                 if have < units {
-                    return; // not enough held at HQ
+                    // Async-fair: nothing spent, owner-only notice naming the
+                    // store that came up short.
+                    self.reject_trade(events, *player_id, *commodity, units, Some(*system_id),
+                        TradeRejectReason::InsufficientWarehouseStock { have });
+                    return;
                 }
-                let home = corp.home;
-                // Commit goods out of the HQ pool up front (mirror MarketSell).
+                // Commit goods out of the warehouse up front (mirror MarketSell).
                 if let Some(corp) = self.players.get_mut(player_id) {
-                    corp.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                    take_from(&mut corp.warehouse, *commodity, units);
                 }
                 events.push(Event::new(
                     self.time,
@@ -4076,7 +4439,89 @@ impl World {
                 // depot-cap / overflow-to-hub handling) on arrival. No fuel charge —
                 // parity with the manual hub-trade family (MarketBuy/MarketSell).
                 let cargo = Cargo { commodity: *commodity, units };
-                self.spawn_trade_convoy(*player_id, home, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+                let hub = self.hub;
+                self.spawn_trade_convoy(*player_id, hub, dest, cargo, TradeMission::DeliverToSystem { system: *system_id });
+            }
+            Command::HubLoad { player_id, fleet_id, commodity, units } => {
+                self.apply_logistics_load(*player_id, *fleet_id, None, *commodity, *units, events);
+            }
+            Command::HubUnload { player_id, fleet_id } => {
+                self.apply_logistics_unload(*player_id, *fleet_id, None, events);
+            }
+            Command::SystemLoad { player_id, fleet_id, system, commodity, units } => {
+                self.apply_logistics_load(*player_id, *fleet_id, Some(*system), *commodity, *units, events);
+            }
+            Command::SystemUnload { player_id, fleet_id, system } => {
+                self.apply_logistics_unload(*player_id, *fleet_id, Some(*system), events);
+            }
+            Command::HaulToCharterhouse { player_id, fleet_id, sell_on_arrival } => {
+                // A player's own loaded hull, sent to the Charterhouse. Not
+                // light-delayed: it is a logistics assignment made at the dock,
+                // like loading itself — the RUN is what's raidable.
+                let hub = self.hub;
+                if let Some(f) = self.fleets.get_mut(fleet_id)
+                    && f.owner == *player_id
+                    && f.cargo.is_some()
+                {
+                    f.mission = Some(TradeMission::DeliverToWarehouse { sell_on_arrival: *sell_on_arrival });
+                    f.order = FleetOrder::MoveTo { dest: hub };
+                }
+            }
+            Command::PayReinstatement { player_id, points } => {
+                // §TCA Phase 2: buy standing back. INSTANT, like its `MarketBuy` /
+                // `BookFreightOut` siblings — paying the Charterhouse is a
+                // settlement, and settlement is correlation (§3), not a courier.
+                let Some(corp) = self.players.get(player_id) else {
+                    return;
+                };
+                // CLAMP first, so the player is only ever charged for standing
+                // actually restored. Already at the ceiling ⇒ nothing to buy.
+                let restorable = (crate::tca::TCA_STANDING_MAX - corp.tca_standing).max(0.0);
+                let points = points.max(0.0).min(restorable);
+                if points <= 0.0 {
+                    return;
+                }
+                let cost = points * crate::tca::TCA_REINSTATE_FEE_PER_POINT;
+                if corp.credits < cost {
+                    self.reject_trade(
+                        events,
+                        *player_id,
+                        crate::cargo::Commodity::Provisions, // no commodity is involved
+                        0,
+                        None,
+                        TradeRejectReason::CantAfford { cost },
+                    );
+                    return;
+                }
+                let before = corp.tca_standing;
+                let after = before + points;
+                if let Some(c) = self.players.get_mut(player_id) {
+                    c.credits -= cost; // BURNED — a sink, like the freight fee
+                    c.tca_standing = after;
+                }
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::Trade(TradeEvent::CharterReinstated {
+                        player: *player_id,
+                        points,
+                        cost,
+                        before,
+                        after,
+                    }),
+                ));
+            }
+            Command::SetEngageFreight { player_id, fleet_id, on } => {
+                if let Some(f) = self.fleets.get_mut(fleet_id)
+                    && f.owner == *player_id
+                {
+                    f.engage_freight = *on;
+                }
+            }
+            Command::BookFreightOut { player_id, system, commodity, units } => {
+                self.book_freight(*player_id, *system, *commodity, *units, ShipmentDir::Outbound, false, events);
+            }
+            Command::BookFreightIn { player_id, system, commodity, units, sell_on_arrival } => {
+                self.book_freight(*player_id, *system, *commodity, *units, ShipmentDir::Inbound, *sell_on_arrival, events);
             }
             Command::PlaceLimitOrder {
                 player_id,
@@ -4093,6 +4538,14 @@ impl World {
                 let Some(corp) = self.players.get(player_id) else {
                     return;
                 };
+                // §TCA Phase 2: a REVOKED charter may place no NEW order. Orders
+                // already RESTING are grandfathered — they clear or cancel
+                // normally, a bounded one-order-deep leak that costs far less code
+                // than unwinding the book.
+                if self.charter_of(*player_id).exchange_closed() {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::CharterRevoked);
+                    return;
+                }
                 // Reserve resources up front so the order is funded when it clears.
                 match side {
                     Side::Buy => {
@@ -4105,11 +4558,25 @@ impl World {
                         }
                     }
                     Side::Sell => {
-                        if corp.inventory.get(commodity).copied().unwrap_or(0) < units {
+                        // §TCA: sell-side escrow draws from the HUB WAREHOUSE
+                        // (the goods must already be at the Exchange), never from
+                        // a system stockpile.
+                        let have = corp.warehouse.get(commodity).copied().unwrap_or(0);
+                        if have < units {
+                            events.push(Event::new(
+                                self.time,
+                                EventPayload::Trade(TradeEvent::Rejected {
+                                    player: *player_id,
+                                    commodity: *commodity,
+                                    units,
+                                    system: None,
+                                    reason: crate::event::TradeRejectReason::InsufficientWarehouseStock { have },
+                                }),
+                            ));
                             return;
                         }
                         if let Some(c) = self.players.get_mut(player_id) {
-                            c.inventory.entry(*commodity).and_modify(|u| *u -= units);
+                            take_from(&mut c.warehouse, *commodity, units);
                         }
                     }
                 }
@@ -4526,6 +4993,21 @@ impl World {
                 if self.are_allied(*player_id, target.owner) {
                     return;
                 }
+                // §TCA SOVEREIGNTY: no engagement may be opened against something
+                // sheltering in the Charterhouse bubble. Soft-reject, owner-only —
+                // the fleet keeps its current order and nothing is spent.
+                if self.in_sovereign_zone(target.pos) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::OrderRejected {
+                            owner: *player_id,
+                            fleet: *fleet_id,
+                            target: *target_id,
+                            reason: crate::event::OrderRejectReason::InsideSovereignZone,
+                        },
+                    ));
+                    return;
+                }
                 let target_pos = target.pos;
                 // The attacker must exist, be the player's, and CONTAIN ≥1 raider
                 // (strike capability — consistent with BlockadeSystem; a corvette/
@@ -4696,6 +5178,23 @@ impl World {
     /// that resolves at `tick + build_ticks`. Determinism: pure, runs in command
     /// phase so the debit is visible to this tick's accrual + standing orders.
     fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
+        // §TCA: a corporation can never build an Authority Freighter (it is TCA-only
+        // and absent from every BUILDABLE menu). Soft-reject BEFORE any recipe lookup
+        // — no debit, no job — so `recipe_for`/`required_shipyard_tier` never see it.
+        if let crate::build::BuildKind::Ship { ship } = what
+            && !ship.is_buildable()
+        {
+            events.push(Event::new(
+                self.time,
+                EventPayload::BuildRejected {
+                    owner: player_id,
+                    system: system_id,
+                    what,
+                    reason: crate::event::BuildRejectReason::NotBuildable,
+                },
+            ));
+            return;
+        }
         let recipe = crate::build::recipe_for(what);
         // §research R4a: the build's COST + TIME tuners, by kind (neutral 1.0 until
         // researched). Read here (before any `sys` borrow) so `self` is free.
@@ -6206,7 +6705,11 @@ impl World {
                     units: cargo.units,
                 }),
             ));
-            self.spawn_trade_convoy(player_id, pos, hub, cargo, TradeMission::SellAtHub);
+            // §TCA Part 5: a production shipment now lands in the corp's
+            // CHARTERHOUSE WAREHOUSE and sells there — the same outcome as the old
+            // SellAtHub (credits at the price on arrival), routed through the
+            // warehouse so the Exchange has exactly one source of stock.
+            self.spawn_trade_convoy(player_id, pos, hub, cargo, TradeMission::DeliverToWarehouse { sell_on_arrival: true });
         }
     }
 
@@ -6536,11 +7039,18 @@ impl World {
                 };
                 match order.side {
                     Side::Buy => {
-                        // Refund the over-reservation; goods cross home; news.
+                        // Refund the over-reservation; the matched goods land in the
+                        // buyer's CHARTERHOUSE WAREHOUSE (§TCA — a fill is an
+                        // Exchange settlement, never a crossing); news.
                         let refund = filled as f64 * (order.limit_price - price);
-                        let home = self.players.get(&order.player).map(|c| c.home);
+                        // §TCA Phase 2: a fill is an Exchange trade, so it owes the
+                        // charter penalty too (0 in good standing). A GRANDFATHERED
+                        // order placed before revocation still clears — one order
+                        // deep is a deliberate, bounded leak — but it pays the fee.
+                        let penalty = self.exchange_penalty(order.player, filled as f64 * price);
                         if let Some(c) = self.players.get_mut(&order.player) {
-                            c.credits += refund;
+                            c.credits += refund - penalty;
+                            *c.warehouse.entry(commodity).or_insert(0) += filled;
                         }
                         events.push(Event::new(
                             now,
@@ -6550,16 +7060,15 @@ impl World {
                                 commodity,
                                 units: filled,
                                 unit_price: price,
+                                penalty,
                             }),
                         ));
-                        if let Some(home) = home {
-                            let cargo = Cargo { commodity, units: filled };
-                            self.spawn_trade_convoy(order.player, self.hub, home, cargo, TradeMission::DeliverHome);
-                        }
                     }
                     Side::Sell => {
+                        let gross = filled as f64 * price;
+                        let penalty = self.exchange_penalty(order.player, gross);
                         if let Some(c) = self.players.get_mut(&order.player) {
-                            c.credits += filled as f64 * price;
+                            c.credits += gross - penalty;
                         }
                         events.push(Event::new(
                             now,
@@ -6569,6 +7078,7 @@ impl World {
                                 commodity,
                                 units: filled,
                                 unit_price: price,
+                                penalty,
                             }),
                         ));
                     }
@@ -6583,8 +7093,10 @@ impl World {
 
     /// Recompute every corporation's equity (§9). Slow-cadence so the figure is
     /// readable, not noisy. Net worth = liquid credits + all goods valued at the
-    /// current market price (held at home, in transit on trade convoys, and
-    /// reserved in resting sell orders) + credits escrowed by resting buy orders.
+    /// current market price (in the hub warehouse, in transit on trade convoys,
+    /// aboard Authority freight, and reserved in resting sell orders) + credits
+    /// escrowed by resting buy orders. System stockpiles are valued with the
+    /// systems themselves, not here.
     fn recompute_valuations(&mut self) {
         let prices = self.market.prices().clone();
         let value = |c: &crate::cargo::Commodity, u: u32| u as f64 * prices.get(c).copied().unwrap_or(0.0);
@@ -6605,12 +7117,29 @@ impl World {
             };
             *reserved.entry(o.player).or_insert(0.0) += v;
         }
+        // §TCA: goods escrowed in FREIGHT — queued shipments (left the warehouse /
+        // a stockpile, awaiting a departure) and shipments aboard a freighter's
+        // manifest. Valued at market like any in-transit convoy cargo, so a
+        // corp's net worth doesn't blink while its goods ride the Authority's hulls.
+        let mut freight: BTreeMap<PlayerId, f64> = BTreeMap::new();
+        for sh in self.freight_queue.values() {
+            *freight.entry(sh.owner).or_insert(0.0) += value(&sh.commodity, sh.units);
+        }
+        for run in self.freight_runs.values() {
+            for sh in run.shipments.values() {
+                *freight.entry(sh.owner).or_insert(0.0) += value(&sh.commodity, sh.units);
+            }
+        }
         for (id, corp) in self.players.iter_mut() {
-            let inv: f64 = corp.inventory.iter().map(|(c, u)| value(c, *u)).sum();
+            // §TCA: goods sit in exactly two places — the hub warehouse (here) and
+            // system stockpiles (counted with the systems). The old third store is
+            // retired, so there is no separate "held at home" term any more.
+            let wh: f64 = corp.warehouse.iter().map(|(c, u)| value(c, *u)).sum();
             corp.valuation = corp.credits
-                + inv
+                + wh
                 + transit.get(id).copied().unwrap_or(0.0)
-                + reserved.get(id).copied().unwrap_or(0.0);
+                + reserved.get(id).copied().unwrap_or(0.0)
+                + freight.get(id).copied().unwrap_or(0.0);
             // §rankings RECOVERY: a major loss (a captured system) since the last
             // close stamps this fresh, post-loss valuation as the trough to climb
             // back from. Measured at the close so it reflects the settled loss.
@@ -6643,12 +7172,15 @@ impl World {
                     TradeEvent::Delivered { player, units, .. } => {
                         self.bump_stats(player, |s| s.trade_units += units as u64);
                     }
-                    // A hub SALE is both throughput AND market revenue.
+                    // A SALE is market REVENUE only. §TCA: it is no longer trade
+                    // THROUGHPUT — a Charterhouse sale settles against the warehouse
+                    // and hauls nothing, so counting it would both misreport the
+                    // "units your convoys delivered" counter and make throughput
+                    // farmable risk-free by buying and selling on the spot. The
+                    // convoy paths that DO haul goods to the hub bump `trade_units`
+                    // at their own arrival site (see `resolve_trade_arrivals`).
                     TradeEvent::Sold { player, units, unit_price, .. } => {
-                        self.bump_stats(player, |s| {
-                            s.trade_units += units as u64;
-                            s.market_revenue += units as f64 * unit_price;
-                        });
+                        self.bump_stats(player, |s| s.market_revenue += units as f64 * unit_price);
                     }
                     // MARKET PROFIT cost side (immediate buy).
                     TradeEvent::Bought { player, units, unit_price, .. } => {
@@ -6821,7 +7353,10 @@ impl World {
             };
             let dest = match mission {
                 TradeMission::DeliverHome => Endpoint::Home,
-                TradeMission::SellAtHub => Endpoint::Hub,
+                // Both hub-bound missions count toward the Hub endpoint: the legacy
+                // `SellAtHub` (grandfathered convoys still in flight) and the
+                // current `DeliverToWarehouse`.
+                TradeMission::SellAtHub | TradeMission::DeliverToWarehouse { .. } => Endpoint::Hub,
                 TradeMission::DeliverToSystem { system } => Endpoint::System { id: system },
             };
             *idx.entry((ship.owner, dest, cargo.commodity)).or_insert(0) += cargo.units;
@@ -6910,9 +7445,15 @@ impl World {
                                 .find(|s| s.id == id)
                                 .map(|s| s.stockpile.get(&order.commodity).copied().unwrap_or(0.0))
                                 .unwrap_or(0.0),
-                            Endpoint::Home => {
-                                corp.inventory.get(&order.commodity).copied().unwrap_or(0) as f64
-                            }
+                            // §TCA: "Home" is the home SYSTEM's stockpile — the
+                            // per-corp HQ pool it used to name is retired. The
+                            // variant is kept so orders saved before the change
+                            // still load and still mean "my home".
+                            Endpoint::Home => corp
+                                .home_system
+                                .and_then(|hs| self.systems.iter().find(|s| s.id == hs))
+                                .map(|s| s.stockpile.get(&order.commodity).copied().unwrap_or(0.0))
+                                .unwrap_or(0.0),
                             Endpoint::Hub => 0.0, // forbidden by validation
                         };
                         // Count both convoys already crossing AND shipments planned
@@ -6935,8 +7476,18 @@ impl World {
                 // Record this shipment as planned toward its destination this tick.
                 *planned.entry((*pid, order.dest, order.commodity)).or_insert(0) += units;
 
+                // NOTE (§TCA, deliberately deferred): standing-order convoys are
+                // still FREE auto-spawned hulls. Unifying them with booked TCA
+                // freight — so automation pays the same fee and rides the same
+                // timetable as a hand-booked lot — is explicitly out of scope for
+                // Phase 1. Left as-is on purpose; see the handoff's deferred list.
                 let (dest_pos, mission) = match order.dest {
-                    Endpoint::Hub => (hub, TradeMission::SellAtHub),
+                    // §TCA Part 5: a Hub rule now delivers into the corp's
+                    // CHARTERHOUSE WAREHOUSE, selling on arrival only if the rule
+                    // says so. `sell_on_arrival` defaults TRUE for every order
+                    // written before the warehouse existed, so their behaviour is
+                    // byte-for-byte what it was.
+                    Endpoint::Hub => (hub, TradeMission::DeliverToWarehouse { sell_on_arrival: order.sell_on_arrival }),
                     Endpoint::Home => (corp.home, TradeMission::DeliverHome),
                     Endpoint::System { id } => match self.systems.iter().find(|s| s.id == id) {
                         Some(s) => (s.pos, TradeMission::DeliverToSystem { system: id }),
@@ -7030,6 +7581,996 @@ impl World {
     }
 
     /// Spawn a raidable trade convoy that resolves its mission on arrival.
+    // ==== §TCA SCHEDULED FREIGHT ==========================================
+    // The Authority's common carrier. Everything here is PURE and keyed off the
+    // tick counter (never a float clock comparison), and every iteration runs in
+    // stable id order, so the whole service is byte-for-byte deterministic.
+
+    /// The departure period in TICKS. The schedule is keyed off the tick counter so
+    /// "is this a departure?" is exact integer arithmetic, never a float compare.
+    fn freight_depart_ticks() -> u64 {
+        (crate::tca::TCA_DEPARTURE_PERIOD * TICK_HZ as f64).round().max(1.0) as u64
+    }
+
+    /// The next scheduled departure strictly AFTER `tick`, as `(tick, sim-time)`.
+    /// A pure function of the config — which is what lets the client preview the
+    /// exact departure instant before the player commits to a booking.
+    fn next_departure_after(&self, tick: u64) -> (u64, f64) {
+        let p = Self::freight_depart_ticks();
+        let t = (tick / p + 1) * p;
+        (t, t as f64 * DT)
+    }
+
+    /// One-way freighter flight time over `dist` (constant cruise, §14.1).
+    fn freight_leg_secs(dist: f64) -> f64 {
+        dist / ShipKind::Freighter.max_speed()
+    }
+
+    fn alloc_shipment_id(&mut self) -> ShipmentId {
+        self.next_shipment_id += 1;
+        ShipmentId(self.next_shipment_id)
+    }
+
+    // ==== §TCA Part 5: PLAYER-CONVOY LOGISTICS ==============================
+
+    /// Check the shared preconditions for dockside logistics on `fleet_id`: it must
+    /// be the player's, IDLE, not caught up in a battle, and within
+    /// [`crate::tca::LOGISTICS_RANGE`] of `dock`. Returns the fleet id on success,
+    /// or emits the typed soft-reject and returns `None`.
+    fn logistics_ready(
+        &self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        dock: Vec2,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        events: &mut Vec<Event>,
+    ) -> Option<()> {
+        let Some(f) = self.fleets.get(&fleet_id) else {
+            self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::FleetUnavailable);
+            return None;
+        };
+        let engaged = self
+            .engagements
+            .values()
+            .any(|e| e.attackers.contains(&fleet_id) || e.defenders.contains(&fleet_id));
+        if f.owner != player_id || !matches!(f.order, FleetOrder::Idle) || engaged {
+            self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::FleetUnavailable);
+            return None;
+        }
+        if f.pos.distance(dock) > crate::tca::LOGISTICS_RANGE {
+            self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::OutOfLogisticsRange);
+            return None;
+        }
+        Some(())
+    }
+
+    /// How many more units of `commodity` this fleet may take aboard, or the typed
+    /// reason it may not. A player hold stays SINGLE-COMMODITY this phase.
+    fn cargo_room_for(
+        &self,
+        fleet_id: EntityId,
+        commodity: crate::cargo::Commodity,
+    ) -> Result<u32, TradeRejectReason> {
+        let f = self.fleets.get(&fleet_id).ok_or(TradeRejectReason::FleetUnavailable)?;
+        let capacity = f.cargo_capacity();
+        if capacity == 0 {
+            return Err(TradeRejectReason::NoCargoRoom { capacity });
+        }
+        match f.cargo {
+            Some(c) if c.commodity != commodity => Err(TradeRejectReason::CargoMismatch),
+            Some(c) => Ok(capacity.saturating_sub(c.units)),
+            None => Ok(capacity),
+        }
+    }
+
+    /// LOAD a fleet from the Charterhouse warehouse or an owned system's stockpile
+    /// (§TCA Part 5). `system` is `None` for the hub. Whole units only; a partial
+    /// lot is never silently taken — the request is met in full or soft-rejected.
+    fn apply_logistics_load(
+        &mut self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: Option<EntityId>,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        events: &mut Vec<Event>,
+    ) {
+        if units == 0 || !self.players.contains_key(&player_id) {
+            return;
+        }
+        // The dock: the Charterhouse, or a system the corp OWNS.
+        let dock = match system {
+            None => self.hub,
+            Some(sid) => match self.systems.iter().find(|s| s.id == sid && s.owner == Some(player_id)) {
+                Some(s) => s.pos,
+                None => {
+                    self.reject_trade(events, player_id, commodity, units, system, TradeRejectReason::NotYourSystem);
+                    return;
+                }
+            },
+        };
+        if self.logistics_ready(player_id, fleet_id, dock, commodity, units, events).is_none() {
+            return;
+        }
+        let room = match self.cargo_room_for(fleet_id, commodity) {
+            Ok(r) => r,
+            Err(reason) => {
+                self.reject_trade(events, player_id, commodity, units, system, reason);
+                return;
+            }
+        };
+        if units > room {
+            let capacity = self.fleets[&fleet_id].cargo_capacity();
+            self.reject_trade(events, player_id, commodity, units, system, TradeRejectReason::NoCargoRoom { capacity });
+            return;
+        }
+        // The SOURCE must cover the lot in full.
+        match system {
+            None => {
+                let have = self.players[&player_id].warehouse.get(&commodity).copied().unwrap_or(0);
+                if have < units {
+                    self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::InsufficientWarehouseStock { have });
+                    return;
+                }
+                if let Some(c) = self.players.get_mut(&player_id) {
+                    take_from(&mut c.warehouse, commodity, units);
+                }
+            }
+            Some(sid) => {
+                let have = self.systems.iter().find(|s| s.id == sid).and_then(|s| s.stockpile.get(&commodity).copied()).unwrap_or(0.0);
+                if have < units as f64 {
+                    self.reject_trade(events, player_id, commodity, units, system, TradeRejectReason::InsufficientSystemStock { have: have as u32 });
+                    return;
+                }
+                if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
+                    let left = (have - units as f64).max(0.0);
+                    if left <= 0.0 {
+                        s.stockpile.remove(&commodity);
+                    } else {
+                        s.stockpile.insert(commodity, left);
+                    }
+                }
+            }
+        }
+        if let Some(f) = self.fleets.get_mut(&fleet_id) {
+            f.cargo = Some(match f.cargo {
+                Some(c) => Cargo { commodity, units: c.units + units },
+                None => Cargo { commodity, units },
+            });
+        }
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::Loaded { player: player_id, commodity, units, system }),
+        ));
+    }
+
+    /// UNLOAD a fleet's whole hold into the Charterhouse warehouse or an owned
+    /// system's stockpile (§TCA Part 5).
+    fn apply_logistics_unload(
+        &mut self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: Option<EntityId>,
+        events: &mut Vec<Event>,
+    ) {
+        if !self.players.contains_key(&player_id) {
+            return;
+        }
+        let carried = self.fleets.get(&fleet_id).and_then(|f| f.cargo);
+        let Some(cargo) = carried else {
+            return; // an empty hold: nothing to do, nothing to report
+        };
+        let dock = match system {
+            None => self.hub,
+            Some(sid) => match self.systems.iter().find(|s| s.id == sid && s.owner == Some(player_id)) {
+                Some(s) => s.pos,
+                None => {
+                    self.reject_trade(events, player_id, cargo.commodity, cargo.units, system, TradeRejectReason::NotYourSystem);
+                    return;
+                }
+            },
+        };
+        if self.logistics_ready(player_id, fleet_id, dock, cargo.commodity, cargo.units, events).is_none() {
+            return;
+        }
+        // How much the dock will actually take. The WAREHOUSE is uncapped (the
+        // bays handoff adds that); a SYSTEM has a depot cap, and every sibling
+        // path clamps to its headroom — so this one does too. The excess is never
+        // destroyed: it stays in the hold, and the player is told the depot is
+        // full (build a Depot, or carry it somewhere else).
+        let stored = match system {
+            None => cargo.units,
+            Some(sid) => self
+                .systems
+                .iter()
+                .find(|s| s.id == sid)
+                .map(|s| (cargo.units as f64).min(s.storage_headroom()).floor() as u32)
+                .unwrap_or(0),
+        };
+        match system {
+            None => {
+                if let Some(c) = self.players.get_mut(&player_id) {
+                    *c.warehouse.entry(cargo.commodity).or_insert(0) += cargo.units;
+                }
+            }
+            Some(sid) => {
+                if stored > 0
+                    && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
+                {
+                    *s.stockpile.entry(cargo.commodity).or_insert(0.0) += stored as f64;
+                }
+            }
+        }
+        let excess = cargo.units - stored;
+        if let Some(f) = self.fleets.get_mut(&fleet_id) {
+            f.cargo = (excess > 0).then_some(crate::cargo::Cargo { commodity: cargo.commodity, units: excess });
+        }
+        if stored > 0 {
+            events.push(Event::new(
+                self.time,
+                EventPayload::Trade(TradeEvent::Unloaded { player: player_id, commodity: cargo.commodity, units: stored, system }),
+            ));
+        }
+        if excess > 0 && let Some(sid) = system {
+            events.push(Event::new(
+                self.time,
+                EventPayload::Trade(TradeEvent::StorageOverflow {
+                    player: player_id,
+                    commodity: cargo.commodity,
+                    units: excess,
+                    system: sid,
+                }),
+            ));
+        }
+    }
+
+    // ==== §TCA Phase 2: INCIDENTS AND CITATIONS =============================
+    // The law travels at c like everything else. An offense against an Authority
+    // hull changes NOTHING at the scene: the incident is queued, and only when its
+    // light reaches the Charterhouse does standing move and the public citation
+    // issue. A spree deep on the frontier therefore drags a visible light-cone of
+    // consequences toward the map's centre behind the culprit.
+
+    // ==== §TCA Phase 2: ENFORCEMENT EXPEDITIONS ==============================
+    // A SCRIPTED lifecycle mirroring the pirate-enclave discipline: it reuses the
+    // ordinary fleet + blockade machinery through the sentinel owner, so there is
+    // no new AI, no new combat rule, no capture and no colonization. Threshold-
+    // triggered and scheduled — never dice.
+    //
+    // The expedition is FIGHTABLE (kill it and it ends early, at the cost of a
+    // graver citation) and WAITABLE (it withdraws on its own). It costs a
+    // proscribed corporation economy-time; it can never cost them a colony.
+
+    /// The system an expedition should take station on: the target's owned system
+    /// NEAREST THE HUB — the Authority reaches for what it can reach — falling
+    /// back to their home system. `None` if the corporation holds nothing, in
+    /// which case there is simply nothing to blockade this cycle.
+    fn enforcement_target_system(&self, target: PlayerId) -> Option<EntityId> {
+        let hub = self.hub;
+        let nearest = self
+            .systems
+            .iter()
+            .filter(|s| s.owner == Some(target))
+            .min_by(|a, b| {
+                a.pos
+                    .distance_sq(hub)
+                    .partial_cmp(&b.pos.distance_sq(hub))
+                    .unwrap()
+                    .then(a.id.cmp(&b.id)) // deterministic tie-break
+            })
+            .map(|s| s.id);
+        nearest.or_else(|| {
+            self.players
+                .get(&target)
+                .and_then(|c| c.home_system)
+                .filter(|sid| self.systems.iter().any(|s| s.id == *sid && s.owner == Some(target)))
+        })
+    }
+
+    /// The Authority's enforcement brain. Pure and threshold-driven: advance the
+    /// expeditions already flying, then dispatch at most one new one per eligible
+    /// PROSCRIBED corporation (one at a time, ever).
+    fn enforcement_ai(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let hub = self.hub;
+
+        // --- 1. Advance the expeditions already in the field (id order). ---
+        let active: Vec<EntityId> = self.expeditions.keys().copied().collect();
+        for fid in active {
+            let Some(exp) = self.expeditions.get(&fid).cloned() else {
+                continue;
+            };
+            // DESTROYED — the hull is gone. The citation for killing it was queued
+            // at the wreck; here we just retire the expedition and start the clock
+            // on the next one.
+            if !self.fleets.contains_key(&fid) {
+                self.expeditions.remove(&fid);
+                self.next_expedition_at
+                    .insert(exp.target_corp, now + crate::tca::TCA_ENFORCEMENT_PERIOD);
+                continue;
+            }
+            // RECALL — the target climbed back above the proscription line. Paying
+            // up visibly calls off the dogs.
+            let still_proscribed =
+                self.charter_of(exp.target_corp) == crate::tca::CharterStatus::Proscribed;
+            if !exp.withdrawing && !still_proscribed {
+                self.order_expedition_home(fid, true, events);
+                continue;
+            }
+            if exp.withdrawing {
+                // Home again → stand down and despawn.
+                let arrived = self
+                    .fleets
+                    .get(&fid)
+                    .is_some_and(|f| f.pos.distance(hub) <= BLOCKADE_STATION_RADIUS);
+                if arrived {
+                    self.fleets.remove(&fid);
+                    self.expeditions.remove(&fid);
+                    self.next_expedition_at
+                        .insert(exp.target_corp, now + crate::tca::TCA_ENFORCEMENT_PERIOD);
+                }
+                continue;
+            }
+            // ON STATION — start (and then run) the duration clock.
+            let station = self.systems.iter().find(|s| s.id == exp.system).map(|s| s.pos);
+            let on_station = station.is_some_and(|p| {
+                self.fleets.get(&fid).is_some_and(|f| f.pos.distance(p) <= BLOCKADE_STATION_RADIUS)
+            });
+            match exp.on_station_since {
+                None if on_station => {
+                    if let Some(e) = self.expeditions.get_mut(&fid) {
+                        e.on_station_since = Some(now);
+                    }
+                }
+                Some(since) if now - since >= crate::tca::TCA_ENFORCEMENT_DURATION => {
+                    // TIME SERVED. It withdraws long before any siege clock it
+                    // started could mature into a capture — and it carries no
+                    // colony ship, so a capture was never possible anyway.
+                    self.order_expedition_home(fid, false, events);
+                }
+                _ => {}
+            }
+        }
+
+        // --- 2. Dispatch, at most one per corporation, in id order. ---
+        let candidates: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, c)| {
+                crate::tca::charter_status(c.tca_standing) == crate::tca::CharterStatus::Proscribed
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for target in candidates {
+            if self.expeditions.values().any(|e| e.target_corp == target) {
+                continue; // one at a time
+            }
+            if self.next_expedition_at.get(&target).is_some_and(|t| now < *t) {
+                continue; // still cooling down
+            }
+            let Some(system) = self.enforcement_target_system(target) else {
+                continue; // holds nothing to take station on — skip this cycle
+            };
+            let Some(station) = self.systems.iter().find(|s| s.id == system).map(|s| s.pos) else {
+                continue;
+            };
+            // The squadron: CORVETTES. They BROADCAST (raiders run dark, which
+            // would contradict an announced expedition) and they are defense-heavy,
+            // so the expedition is a durable economic obstacle rather than a
+            // slaughter — exactly the "costs time, never colonies" shape.
+            let fid = self.alloc_entity_id();
+            let mut f = Fleet::single(fid, PlayerId::TCA, ShipKind::Corvette, hub, FleetOrder::Blockade { system, station }, None);
+            f.composition.insert(ShipKind::Corvette, crate::tca::TCA_ENFORCEMENT_SHIPS);
+            self.fleets.insert(fid, f);
+            self.expeditions.insert(
+                fid,
+                crate::tca::Expedition {
+                    fleet: fid,
+                    target_corp: target,
+                    system,
+                    since: now,
+                    on_station_since: None,
+                    withdrawing: false,
+                },
+            );
+            // The ANNOUNCEMENT — public, from the hub. Its light outruns the
+            // squadron, so the warning genuinely arrives first: that IS the lead time.
+            events.push(Event::new(now, EventPayload::EnforcementDispatched { target, system, pos: hub }));
+        }
+    }
+
+    /// Turn an expedition for home (recalled, or time served) and announce it.
+    fn order_expedition_home(&mut self, fleet: EntityId, recalled: bool, events: &mut Vec<Event>) {
+        let hub = self.hub;
+        let now = self.time;
+        let Some(exp) = self.expeditions.get_mut(&fleet) else {
+            return;
+        };
+        exp.withdrawing = true;
+        let target = exp.target_corp;
+        if let Some(f) = self.fleets.get_mut(&fleet) {
+            f.order = FleetOrder::MoveTo { dest: hub };
+        }
+        events.push(Event::new(now, EventPayload::EnforcementWithdrawn { target, recalled, pos: hub }));
+    }
+
+    /// §TCA Phase 2: this corporation's charter band right now (pure, derived).
+    /// A corp that isn't in `players` (a sentinel) is never under the law.
+    fn charter_of(&self, who: PlayerId) -> crate::tca::CharterStatus {
+        crate::tca::charter_status(self.standing_of(who))
+    }
+
+    /// This corporation's charter standing (full standing for anyone not a corp).
+    fn standing_of(&self, who: PlayerId) -> f64 {
+        self.players.get(&who).map(|c| c.tca_standing).unwrap_or(crate::tca::TCA_STANDING_MAX)
+    }
+
+    /// §TCA Phase 2: the EXCHANGE PENALTY FEE owed on a trade worth `value`
+    /// credits — EXACTLY ZERO in good standing, which is what keeps the §economy
+    /// clearing invariants (and their tests) untouched. Burned as a sink, never
+    /// paid to anyone.
+    fn exchange_penalty(&self, who: PlayerId, value: f64) -> f64 {
+        (value * crate::tca::market_penalty_frac(self.standing_of(who))).max(0.0)
+    }
+
+    /// Queue an INCIDENT. Nothing is applied here — see [`Self::resolve_citations`].
+    /// A no-culprit incident (a freighter lost to something that holds no charter)
+    /// is simply not an offense, and is dropped.
+    fn record_incident(
+        &mut self,
+        pos: Vec2,
+        culprits: std::collections::BTreeSet<PlayerId>,
+        offense: crate::tca::CitationOffense,
+        loss: f64,
+    ) {
+        if culprits.is_empty() {
+            return;
+        }
+        let arrive_at = self.time + pos.distance(self.hub) / self.config.c;
+        self.pending_citations.push(crate::tca::Citation {
+            pos,
+            occurred_at: self.time,
+            arrive_at,
+            culprits,
+            offense,
+            loss,
+        });
+    }
+
+    /// Apply every incident whose light has now reached the Charterhouse: dock each
+    /// culprit the FULL flat loss (no splitting) and issue a PUBLIC citation from
+    /// the hub, which then radiates to every player at c through the ordinary
+    /// light-gating. Deterministic: the queue drains in push order.
+    fn resolve_citations(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        if self.pending_citations.iter().all(|c| c.arrive_at > now) {
+            return;
+        }
+        let mut landed: Vec<crate::tca::Citation> = Vec::new();
+        self.pending_citations.retain(|c| {
+            if c.arrive_at <= now {
+                landed.push(c.clone());
+                false
+            } else {
+                true
+            }
+        });
+        let hub = self.hub;
+        for c in landed {
+            for culprit in &c.culprits {
+                if let Some(corp) = self.players.get_mut(culprit) {
+                    corp.tca_standing -= c.loss;
+                }
+                events.push(Event::new(
+                    now,
+                    EventPayload::Citation {
+                        culprit: *culprit,
+                        offense: c.offense,
+                        pos: hub,
+                        occurred_at: c.occurred_at,
+                    },
+                ));
+            }
+        }
+    }
+
+    /// §TCA: was `system` blockaded as far as an observer at `from` can KNOW right
+    /// now? The observer reads the system as it was at RETARDED time
+    /// `now - dist/c`, so a fresh blockade isn't known until its light arrives, and
+    /// a lifted one still looks blockaded until the lift's light does. Used by the
+    /// Charterhouse to accept or refuse freight bookings on its own honest,
+    /// light-delayed knowledge — never on instant omniscience.
+    pub fn believed_blockaded(&self, system: EntityId, from: Vec2, now: f64) -> bool {
+        let Some(sys) = self.systems.iter().find(|s| s.id == system) else {
+            return false;
+        };
+        let seen_at = now - sys.pos.distance(from) / self.config.c;
+        if let Some(b) = sys.blockade
+            && seen_at >= b.since
+        {
+            return true;
+        }
+        // Still inside the window a since-lifted blockade occupied.
+        if let Some((since, lifted)) = sys.blockade_prev
+            && seen_at >= since
+            && seen_at < lifted
+        {
+            return true;
+        }
+        false
+    }
+
+    /// §TCA: is `p` inside the CHARTERHOUSE SOVEREIGNTY BUBBLE, where no
+    /// engagement may open?
+    fn in_sovereign_zone(&self, p: Vec2) -> bool {
+        p.distance(self.hub) <= crate::tca::TCA_SOVEREIGN_RADIUS
+    }
+
+    // --- §TCA public read surface (the client's booking preview) --------------
+    // All EXACT, not estimates: the timetable and the freighter's constant cruise
+    // are pure functions of the config, so the client can show a player precisely
+    // when their goods sail and land before they commit a credit.
+
+    /// Sim-time of the next scheduled freight departure.
+    pub fn next_freight_departure(&self) -> f64 {
+        self.next_departure_after(self.tick).1
+    }
+
+    /// Seconds between scheduled freight departures.
+    pub fn freight_period_secs(&self) -> f64 {
+        Self::freight_depart_ticks() as f64 * DT
+    }
+
+    /// One-way freighter flight time over `dist` (seconds).
+    pub fn freight_flight_secs(dist: f64) -> f64 {
+        Self::freight_leg_secs(dist)
+    }
+
+    /// Every freight lot belonging to `who`, in shipment-id order, paired with
+    /// whether it is ABOARD a freighter (`true`) or still queued (`false`).
+    /// Owner-scoped by construction — it never returns anyone else's lots.
+    pub fn shipments_of(&self, who: PlayerId) -> Vec<(Shipment, bool)> {
+        let mut out: Vec<(Shipment, bool)> = self
+            .freight_queue
+            .values()
+            .filter(|s| s.owner == who)
+            .map(|s| (*s, false))
+            .chain(
+                self.freight_runs
+                    .values()
+                    .flat_map(|r| r.shipments.values())
+                    .filter(|s| s.owner == who)
+                    .map(|s| (*s, true)),
+            )
+            .collect();
+        out.sort_by_key(|(s, _)| s.id);
+        out
+    }
+
+    /// Push an owner-only freight progress notice.
+    fn freight_note(&self, events: &mut Vec<Event>, s: &Shipment, units: u32, stage: FreightStage) {
+        if units == 0 {
+            return;
+        }
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::FreightMoved {
+                player: s.owner,
+                system: s.system,
+                commodity: s.commodity,
+                units,
+                stage,
+            }),
+        ));
+    }
+
+    /// Push an owner-only soft-reject for an Exchange order or freight booking.
+    fn reject_trade(
+        &self,
+        events: &mut Vec<Event>,
+        player: PlayerId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        system: Option<EntityId>,
+        reason: TradeRejectReason,
+    ) {
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::Rejected { player, commodity, units, system, reason }),
+        ));
+    }
+
+    /// BOOK a freight shipment (§TCA) — the shared body of `BookFreightOut` /
+    /// `BookFreightIn`. Escrows the goods out of their source, charges the fee (a
+    /// pure sink — destroyed, never refunded), and queues the lot for the next
+    /// departure it fits on. Async-fair: every failure path costs NOTHING and
+    /// emits an owner-only typed reason.
+    ///
+    /// The per-departure CAP never rejects — a lot larger than a corp's allowance
+    /// simply rides several consecutive departures (it is split at load time), so
+    /// a big shipper is slowed, never refused.
+    fn book_freight(
+        &mut self,
+        player_id: PlayerId,
+        system_id: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        direction: ShipmentDir,
+        sell_on_arrival: bool,
+        events: &mut Vec<Event>,
+    ) {
+        if units == 0 || !self.players.contains_key(&player_id) {
+            return;
+        }
+        // The Authority serves a corporation's OWN colonies only.
+        let Some(sys) = self.systems.iter().find(|s| s.id == system_id) else {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::NotYourSystem);
+            return;
+        };
+        if sys.owner != Some(player_id) {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::NotYourSystem);
+            return;
+        }
+        // §TCA Phase 2: a SUSPENDED charter takes no NEW booking. Shipments
+        // already queued or aboard still complete — the Authority honors contracts
+        // it already took, and that also keeps the rule set small.
+        if self.charter_of(player_id).freight_suspended() {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::CharterSuspended);
+            return;
+        }
+        let has_depot = sys.tier(crate::build::StructureKind::Depot) > 0;
+        let sys_stock = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
+        let dist = self.hub.distance(sys.pos);
+        // The Charterhouse won't book to or from a system it BELIEVES blockaded —
+        // on its own light-delayed knowledge, both starting and stopping late.
+        if self.believed_blockaded(system_id, self.hub, self.time) {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::DestinationBlockaded);
+            return;
+        }
+        // §TCA Phase 2: the TARIFF — a sanctioned corporation pays a multiple of
+        // the ordinary fee, linear in how far its standing has fallen. Exactly
+        // 1.0× in good standing, so the Phase 1 fee is unchanged for the lawful.
+        let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist, has_depot)
+            * crate::tca::tariff_mult(self.standing_of(player_id));
+
+        // The SOURCE must cover the lot (warehouse outbound / stockpile inbound).
+        match direction {
+            ShipmentDir::Outbound => {
+                let have = self.players[&player_id].warehouse.get(&commodity).copied().unwrap_or(0);
+                if have < units {
+                    self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::InsufficientWarehouseStock { have });
+                    return;
+                }
+            }
+            ShipmentDir::Inbound => {
+                if sys_stock < units as f64 {
+                    self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::InsufficientSystemStock { have: sys_stock as u32 });
+                    return;
+                }
+            }
+        }
+        if self.players[&player_id].credits < fee {
+            self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::CannotAffordFee { fee });
+            return;
+        }
+
+        // Forecast the departure this lot rides: everything of ours already queued
+        // for this destination and direction goes first (FIFO), a cap's worth per
+        // scheduled departure.
+        let cap = crate::tca::shipment_cap(has_depot).max(1);
+        let ahead: u32 = self
+            .freight_queue
+            .values()
+            .filter(|s| s.owner == player_id && s.system == system_id && s.direction == direction)
+            .map(|s| s.units)
+            .sum();
+        let (_, first_dep) = self.next_departure_after(self.tick);
+        let period_secs = Self::freight_depart_ticks() as f64 * DT;
+        let depart_at = first_dep + (ahead / cap) as f64 * period_secs;
+        let leg = Self::freight_leg_secs(dist);
+        let eta = match direction {
+            // Out to the colony…
+            ShipmentDir::Outbound => depart_at + leg,
+            // …or out to collect it and back to the Charterhouse.
+            ShipmentDir::Inbound => depart_at + 2.0 * leg,
+        };
+
+        // COMMIT — debit the fee (destroyed), escrow the goods, queue the lot.
+        if let Some(corp) = self.players.get_mut(&player_id) {
+            corp.credits -= fee;
+            if direction == ShipmentDir::Outbound {
+                take_from(&mut corp.warehouse, commodity, units);
+            }
+        }
+        if direction == ShipmentDir::Inbound
+            && let Some(s) = self.systems.iter_mut().find(|s| s.id == system_id)
+        {
+            let left = (s.stockpile.get(&commodity).copied().unwrap_or(0.0) - units as f64).max(0.0);
+            if left <= 0.0 {
+                s.stockpile.remove(&commodity);
+            } else {
+                s.stockpile.insert(commodity, left);
+            }
+        }
+        let id = self.alloc_shipment_id();
+        self.freight_queue.insert(
+            id,
+            Shipment {
+                id,
+                owner: player_id,
+                system: system_id,
+                direction,
+                commodity,
+                units,
+                fee_paid: fee,
+                booked_at: self.time,
+                sell_on_arrival: direction == ShipmentDir::Inbound && sell_on_arrival,
+            },
+        );
+        events.push(Event::new(
+            self.time,
+            EventPayload::Trade(TradeEvent::FreightBooked {
+                player: player_id,
+                system: system_id,
+                commodity,
+                units,
+                direction,
+                fee,
+                depart_at,
+                eta,
+            }),
+        ));
+    }
+
+    /// Queued INBOUND lots whose origin system the owner no longer holds are
+    /// FORFEIT — to nobody. The captor gets nothing (the goods were already out of
+    /// the stockpile, in the Authority's care), the fee is not refunded, and the
+    /// owner gets a notice. Swept on the departure cadence.
+    fn forfeit_lost_pickups(&mut self, events: &mut Vec<Event>) {
+        let lost: Vec<ShipmentId> = self
+            .freight_queue
+            .iter()
+            .filter(|(_, s)| {
+                s.direction == ShipmentDir::Inbound
+                    && self.systems.iter().find(|sys| sys.id == s.system).map(|sys| sys.owner) != Some(Some(s.owner))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in lost {
+            let s = self.freight_queue.remove(&id).expect("just listed");
+            self.freight_note(events, &s, s.units, FreightStage::ForfeitedOnCapture);
+        }
+    }
+
+    /// Draw queued shipments of `direction` for `dest` onto a manifest, FIFO
+    /// (ascending shipment id) and capped per corporation. A lot bigger than the
+    /// remaining allowance is SPLIT: the part that fits rides now under a fresh id,
+    /// the remainder keeps its original (older) id and so keeps its place at the
+    /// head of the queue for the next departure.
+    fn load_shipments(
+        &mut self,
+        dest: EntityId,
+        direction: ShipmentDir,
+        cap: u32,
+        manifest: &mut Vec<ShipmentId>,
+        aboard: &mut BTreeMap<ShipmentId, Shipment>,
+    ) {
+        // BTreeMap iteration is ascending id — exactly FIFO booking order.
+        let queued: Vec<ShipmentId> = self
+            .freight_queue
+            .iter()
+            .filter(|(_, s)| s.system == dest && s.direction == direction)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut used: BTreeMap<PlayerId, u32> = BTreeMap::new();
+        for sid in queued {
+            let s = self.freight_queue[&sid];
+            let spent = used.entry(s.owner).or_insert(0);
+            let room = cap.saturating_sub(*spent);
+            if room == 0 {
+                continue;
+            }
+            let take = room.min(s.units);
+            if take == s.units {
+                let sh = self.freight_queue.remove(&sid).expect("just listed");
+                manifest.push(sid);
+                aboard.insert(sid, sh);
+            } else {
+                // Partial lift: the fitting part sails under a fresh id.
+                let share = s.fee_paid * (take as f64 / s.units as f64);
+                let new_id = self.alloc_shipment_id();
+                let mut part = s;
+                part.id = new_id;
+                part.units = take;
+                part.fee_paid = share;
+                manifest.push(new_id);
+                aboard.insert(new_id, part);
+                if let Some(rem) = self.freight_queue.get_mut(&sid) {
+                    rem.units -= take;
+                    rem.fee_paid -= share;
+                }
+            }
+            *spent += take;
+        }
+    }
+
+    /// THE SCHEDULED DEPARTURE (§TCA): at every multiple of the departure period,
+    /// each destination with anything queued in EITHER direction gets exactly one
+    /// Authority freighter out of the Charterhouse. Outbound lots load now; the
+    /// same hull collects that destination's inbound lots when it arrives. Never
+    /// launches an empty run with nothing to do at either end.
+    fn depart_freight(&mut self, events: &mut Vec<Event>) {
+        self.forfeit_lost_pickups(events);
+        let dests: std::collections::BTreeSet<EntityId> =
+            self.freight_queue.values().map(|s| s.system).collect();
+        for dest in dests {
+            let Some(sys) = self.systems.iter().find(|s| s.id == dest) else {
+                continue;
+            };
+            let dest_pos = sys.pos;
+            let cap = crate::tca::shipment_cap(sys.tier(crate::build::StructureKind::Depot) > 0).max(1);
+            let mut manifest: Vec<ShipmentId> = Vec::new();
+            let mut aboard: BTreeMap<ShipmentId, Shipment> = BTreeMap::new();
+            self.load_shipments(dest, ShipmentDir::Outbound, cap, &mut manifest, &mut aboard);
+            // Nothing to carry AND nothing to collect there → no hull is sent.
+            let pickup_waiting = self
+                .freight_queue
+                .values()
+                .any(|s| s.system == dest && s.direction == ShipmentDir::Inbound);
+            if aboard.is_empty() && !pickup_waiting {
+                continue;
+            }
+            let fid = self.alloc_entity_id();
+            self.fleets.insert(
+                fid,
+                Fleet::single(fid, PlayerId::TCA, ShipKind::Freighter, self.hub, FleetOrder::MoveTo { dest: dest_pos }, None),
+            );
+            for sid in &manifest {
+                let s = aboard[sid];
+                self.freight_note(events, &s, s.units, FreightStage::Departed);
+            }
+            self.freight_runs.insert(fid, FreightRun { fleet: fid, dest, leg: RunLeg::Outbound, manifest, shipments: aboard });
+        }
+    }
+
+    /// Resolve freighter runs that reached the end of a leg (§TCA).
+    ///
+    /// At the DESTINATION: every outbound lot whose owner still holds the system
+    /// unloads into its stockpile (bounded by the depot's headroom). Anything that
+    /// can't land — the system changed hands, or the depot is full — STAYS ABOARD
+    /// and rides home to the owner's warehouse. The Authority holds your goods; it
+    /// never destroys them (deliberately friendlier than the convoy cargo-lost
+    /// rule). The hull then collects that destination's queued inbound lots and
+    /// turns for the Charterhouse.
+    ///
+    /// At the CHARTERHOUSE: everything aboard lands in its owner's warehouse, and
+    /// any inbound lot flagged `sell_on_arrival` is sold immediately at that tick's
+    /// standing price through the ordinary sale path. The run and hull are retired.
+    fn resolve_freight_arrivals(&mut self, events: &mut Vec<Event>) {
+        let arrived: Vec<EntityId> = self
+            .freight_runs
+            .keys()
+            .copied()
+            .filter(|fid| self.fleets.get(fid).is_some_and(|f| matches!(f.order, FleetOrder::Idle)))
+            .collect();
+        for fid in arrived {
+            let leg = self.freight_runs[&fid].leg;
+            match leg {
+                RunLeg::Outbound => {
+                    let dest = self.freight_runs[&fid].dest;
+                    let manifest = self.freight_runs[&fid].manifest.clone();
+                    // UNLOAD, in load order so the depot's headroom is shared FIFO.
+                    let mut delivered: Vec<ShipmentId> = Vec::new();
+                    for sid in manifest {
+                        let Some(s) = self.freight_runs[&fid].shipments.get(&sid).copied() else {
+                            continue;
+                        };
+                        if s.direction != ShipmentDir::Outbound {
+                            continue;
+                        }
+                        let Some(sys) = self.systems.iter_mut().find(|x| x.id == dest) else {
+                            continue;
+                        };
+                        if sys.owner != Some(s.owner) {
+                            continue; // no longer yours — it rides home
+                        }
+                        // Whole units, bounded by the depot's remaining headroom.
+                        let room = sys.storage_headroom().floor().max(0.0) as u32;
+                        let take = room.min(s.units);
+                        if take > 0 {
+                            *sys.stockpile.entry(s.commodity).or_insert(0.0) += take as f64;
+                        }
+                        self.freight_note(events, &s, take, FreightStage::DeliveredToSystem);
+                        if take == s.units {
+                            delivered.push(sid);
+                        } else if let Some(r) = self.freight_runs.get_mut(&fid)
+                            && let Some(rem) = r.shipments.get_mut(&sid)
+                        {
+                            rem.units -= take; // the rest rides home
+                        }
+                    }
+                    if let Some(r) = self.freight_runs.get_mut(&fid) {
+                        for sid in &delivered {
+                            r.shipments.remove(sid);
+                        }
+                        r.manifest.retain(|s| !delivered.contains(s));
+                    }
+                    // COLLECT this destination's inbound lots (same per-corp cap),
+                    // dropping any whose origin the owner lost since booking.
+                    self.forfeit_lost_pickups(events);
+                    let cap = self
+                        .systems
+                        .iter()
+                        .find(|s| s.id == dest)
+                        .map(|s| crate::tca::shipment_cap(s.tier(crate::build::StructureKind::Depot) > 0).max(1))
+                        .unwrap_or(crate::tca::TCA_SHIPMENT_CAP);
+                    let mut manifest = Vec::new();
+                    let mut aboard = BTreeMap::new();
+                    self.load_shipments(dest, ShipmentDir::Inbound, cap, &mut manifest, &mut aboard);
+                    for sid in &manifest {
+                        let s = aboard[sid];
+                        self.freight_note(events, &s, s.units, FreightStage::CollectedForPickup);
+                    }
+                    if let Some(r) = self.freight_runs.get_mut(&fid) {
+                        r.manifest.extend(manifest);
+                        r.shipments.extend(aboard);
+                        r.leg = RunLeg::Returning;
+                    }
+                    let hub = self.hub;
+                    if let Some(f) = self.fleets.get_mut(&fid) {
+                        f.order = FleetOrder::MoveTo { dest: hub };
+                    }
+                }
+                RunLeg::Returning => {
+                    let run = self.freight_runs.remove(&fid).expect("just listed");
+                    self.fleets.remove(&fid);
+                    // Deterministic: shipment-id order.
+                    for s in run.shipments.values().copied() {
+                        if let Some(corp) = self.players.get_mut(&s.owner) {
+                            *corp.warehouse.entry(s.commodity).or_insert(0) += s.units;
+                        }
+                        let stage = match s.direction {
+                            ShipmentDir::Inbound => FreightStage::ArrivedAtWarehouse,
+                            ShipmentDir::Outbound => FreightStage::ReturnedUndeliverable,
+                        };
+                        self.freight_note(events, &s, s.units, stage);
+                        // SELL ON ARRIVAL — the ordinary sale path, so the price
+                        // walk, the event, and the ranking stats are all identical
+                        // to a hand-typed MarketSell at this tick. And the same
+                        // LAW: a Revoked charter's Exchange is closed to an
+                        // arriving lot exactly as to a hand-typed sell — the goods
+                        // stay in the warehouse (deposited above) and the owner is
+                        // told why no credits came.
+                        if s.direction == ShipmentDir::Inbound && s.sell_on_arrival && s.units > 0 {
+                            if self.charter_of(s.owner).exchange_closed() {
+                                self.reject_trade(events, s.owner, s.commodity, s.units, None, TradeRejectReason::CharterRevoked);
+                                continue;
+                            }
+                            let unit_price = self.market.execute_sell(s.commodity, s.units);
+                            let gross = s.units as f64 * unit_price;
+                            let penalty = self.exchange_penalty(s.owner, gross);
+                            if let Some(corp) = self.players.get_mut(&s.owner) {
+                                take_from(&mut corp.warehouse, s.commodity, s.units);
+                                corp.credits += gross - penalty;
+                            }
+                            events.push(Event::new(
+                                self.time,
+                                EventPayload::Trade(TradeEvent::Sold {
+                                    player: s.owner,
+                                    commodity: s.commodity,
+                                    units: s.units,
+                                    unit_price,
+                                    penalty,
+                                }),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn spawn_trade_convoy(
         &mut self,
         owner: PlayerId,
@@ -7048,6 +8589,8 @@ impl World {
             Some(cargo),
         );
         ship.mission = Some(mission);
+        // Every AUTO-spawned trade convoy is one-run-and-done, as it always was.
+        ship.disposable = true;
         self.fleets.insert(id, ship);
         id
     }
@@ -7165,26 +8708,63 @@ impl World {
             let fought = ship.fought;
             match mission {
                 TradeMission::DeliverHome => {
-                    if let Some(corp) = self.players.get_mut(&ship.owner) {
-                        *corp.inventory.entry(cargo.commodity).or_insert(0) += cargo.units;
-                        if fought {
-                            corp.stats.cargo_protected += cargo.units as u64;
-                        }
+                    // §TCA: "home" is the home SYSTEM's stockpile now, clamped to
+                    // its depot like every other system delivery — so this reports
+                    // as the ordinary system arrival it has become.
+                    let home_sys = self.players.get(&ship.owner).and_then(|c| c.home_system);
+                    let stored = self.deposit_at_home_system(ship.owner, cargo.commodity, cargo.units);
+                    if fought && let Some(corp) = self.players.get_mut(&ship.owner) {
+                        corp.stats.cargo_protected += stored as u64;
                     }
-                    events.push(Event::new(
-                        now,
-                        EventPayload::Trade(TradeEvent::Delivered {
-                            player: ship.owner,
-                            commodity: cargo.commodity,
-                            units: cargo.units,
-                            system: None, // DeliverHome → the HQ trading pool
-                        }),
-                    ));
+                    if stored > 0 {
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::Delivered {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: stored,
+                                system: home_sys,
+                            }),
+                        ));
+                    }
+                    let excess = cargo.units - stored;
+                    if excess > 0 && let Some(sid) = home_sys {
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::StorageOverflow {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: excess,
+                                system: sid,
+                            }),
+                        ));
+                    }
                 }
                 TradeMission::SellAtHub => {
+                    // §TCA Phase 2: a Revoked charter's Exchange is closed to an
+                    // arriving convoy exactly as to a hand-typed sell. The goods
+                    // are never destroyed — they land in the warehouse instead
+                    // (the haul still counts; the SALE is what the law refuses).
+                    if self.charter_of(ship.owner).exchange_closed() {
+                        if let Some(corp) = self.players.get_mut(&ship.owner) {
+                            *corp.warehouse.entry(cargo.commodity).or_insert(0) += cargo.units;
+                            corp.stats.trade_units += cargo.units as u64;
+                            if fought {
+                                corp.stats.cargo_protected += cargo.units as u64;
+                            }
+                        }
+                        self.reject_trade(events, ship.owner, cargo.commodity, cargo.units, None, TradeRejectReason::CharterRevoked);
+                        continue;
+                    }
                     let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
+                    let penalty = self.exchange_penalty(ship.owner, cargo.units as f64 * unit_price);
                     if let Some(corp) = self.players.get_mut(&ship.owner) {
-                        corp.credits += cargo.units as f64 * unit_price;
+                        corp.credits += cargo.units as f64 * unit_price - penalty;
+                        // §TCA: THIS is a real haul — a convoy crossed and delivered
+                        // to the hub — so it earns trade throughput here, at the
+                        // arrival site. (The `Sold` event itself no longer bumps it:
+                        // an instant warehouse sale moves nothing.)
+                        corp.stats.trade_units += cargo.units as u64;
                         if fought {
                             corp.stats.cargo_protected += cargo.units as u64;
                         }
@@ -7196,8 +8776,74 @@ impl World {
                             commodity: cargo.commodity,
                             units: cargo.units,
                             unit_price,
+                            penalty,
                         }),
                     ));
+                }
+                // §TCA Part 5: a PLAYER convoy delivering to the Charterhouse. The
+                // goods land in the owner's warehouse and may be sold on the spot;
+                // the hull SURVIVES (it is the player's) and goes Idle at the hub,
+                // ready for its next job — unlike the legacy `SellAtHub`, which
+                // consumed its convoy.
+                TradeMission::DeliverToWarehouse { sell_on_arrival } => {
+                    if let Some(corp) = self.players.get_mut(&ship.owner) {
+                        *corp.warehouse.entry(cargo.commodity).or_insert(0) += cargo.units;
+                        if fought {
+                            corp.stats.cargo_protected += cargo.units as u64;
+                        }
+                    }
+                    // The `Delivered` event below is what earns the trade
+                    // throughput (via `accumulate_rankings`) — a real haul counts,
+                    // exactly as a DeliverHome does. Don't also bump it here.
+                    events.push(Event::new(
+                        now,
+                        EventPayload::Trade(TradeEvent::Delivered {
+                            player: ship.owner,
+                            commodity: cargo.commodity,
+                            units: cargo.units,
+                            // §TCA: `None` = the hub WAREHOUSE. With the HQ pool
+                            // retired there are exactly two stores, so the system
+                            // id alone says which one took the lot.
+                            system: None,
+                        }),
+                    ));
+                    // §TCA Phase 2: the sell leg obeys the LAW like a hand-typed
+                    // sell — a Revoked charter's lot stays in the warehouse (it
+                    // was deposited above) and the owner is told why. Without this
+                    // gate, HubLoad → HaulToCharterhouse{sell} was a working
+                    // Exchange for an outlaw, and Revoked never actually bit.
+                    if sell_on_arrival && self.charter_of(ship.owner).exchange_closed() {
+                        self.reject_trade(events, ship.owner, cargo.commodity, cargo.units, None, TradeRejectReason::CharterRevoked);
+                    } else if sell_on_arrival {
+                        let unit_price = self.market.execute_sell(cargo.commodity, cargo.units);
+                        let gross = cargo.units as f64 * unit_price;
+                        let penalty = self.exchange_penalty(ship.owner, gross);
+                        if let Some(corp) = self.players.get_mut(&ship.owner) {
+                            take_from(&mut corp.warehouse, cargo.commodity, cargo.units);
+                            corp.credits += gross - penalty;
+                        }
+                        events.push(Event::new(
+                            now,
+                            EventPayload::Trade(TradeEvent::Sold {
+                                player: ship.owner,
+                                commodity: cargo.commodity,
+                                units: cargo.units,
+                                penalty,
+                                unit_price,
+                            }),
+                        ));
+                    }
+                    // A PLAYER's hull lives on: empty, Idle, at the Charterhouse,
+                    // ready for its next job. An AUTO-spawned one is consumed on
+                    // arrival exactly as every auto trade convoy always has been —
+                    // otherwise a standing order would mint free convoys.
+                    if !ship.disposable {
+                        let mut ship = ship;
+                        ship.cargo = None;
+                        ship.mission = None;
+                        ship.order = FleetOrder::Idle;
+                        self.fleets.insert(id, ship);
+                    }
                 }
                 TradeMission::DeliverToSystem { system } => {
                     // Deposit into the destination system's stockpile — but ONLY if,
@@ -7248,7 +8894,10 @@ impl World {
                             let mut ship = ship;
                             ship.cargo = Some(crate::cargo::Cargo { commodity: cargo.commodity, units: excess });
                             ship.order = FleetOrder::MoveTo { dest: self.hub };
-                            ship.mission = Some(TradeMission::SellAtHub);
+                            // §TCA Part 5: onward to the Charterhouse — deposited
+                            // into the warehouse and sold there, the same outcome
+                            // as the old SellAtHub with one source of stock.
+                            ship.mission = Some(TradeMission::DeliverToWarehouse { sell_on_arrival: true });
                             let owner = ship.owner;
                             self.fleets.insert(ship.id, ship);
                             events.push(Event::new(
@@ -7278,7 +8927,7 @@ impl World {
                                 self.players.get(&owner).map(|c| (c.home, TradeMission::DeliverHome))
                             }
                             DestinationInvalidPolicy::SellAtHub => {
-                                Some((self.hub, TradeMission::SellAtHub))
+                                Some((self.hub, TradeMission::DeliverToWarehouse { sell_on_arrival: true }))
                             }
                         };
                         let action = match policy {
@@ -7511,7 +9160,7 @@ impl World {
         // longer used for its route, but kept available for future picket setups.
         let _ = nearest;
         let raider_id = self.alloc_entity_id();
-        let mut raider_fleet = Fleet::single(
+        let raider_fleet = Fleet::single(
             raider_id,
             owner,
             ShipKind::Raider,
@@ -7523,8 +9172,6 @@ impl World {
             },
             None, // raiders carry no cargo
         );
-        // TESTING: start with a 3-ship raider wing (Fleet::single seeds one).
-        raider_fleet.add(ShipKind::Raider, 2);
         self.fleets.insert(raider_id, raider_fleet);
         events.push(Event::new(
             self.time,
@@ -7592,6 +9239,63 @@ mod tests {
         }
     }
 
+    /// §TCA Phase 2: charter standing REGENERATES unconditionally, at the same
+    /// rate in every band, and clamps at the ceiling. Time served is time served:
+    /// nobody is permanently locked out by arithmetic alone.
+    #[test]
+    fn charter_standing_regenerates_in_every_band_and_clamps() {
+        let mut w = test_world();
+        let (clean, outlaw) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: clean, name: "Clean".into() },
+            Command::AddPlayer { id: outlaw, name: "Outlaw".into() },
+        ]);
+        // A fresh charter starts at full standing, in good standing.
+        assert_eq!(w.players[&clean].tca_standing, crate::tca::TCA_STANDING_START);
+        assert_eq!(crate::tca::charter_status(w.players[&clean].tca_standing), crate::tca::CharterStatus::GoodStanding);
+
+        // Drive one corp deep into Proscribed and run a while.
+        w.players.get_mut(&outlaw).unwrap().tca_standing = crate::tca::TCA_PROSCRIBED_AT - 5.0;
+        let ticks = 20 * crate::config::TICK_HZ as u64;
+        for _ in 0..ticks {
+            w.step(&[]);
+        }
+        let secs = ticks as f64 * DT;
+        let expect = crate::tca::TCA_PROSCRIBED_AT - 5.0 + crate::tca::TCA_STANDING_REGEN_PER_SEC * secs;
+        assert!(
+            (w.players[&outlaw].tca_standing - expect).abs() < 1e-6,
+            "regen applies in the WORST band too (got {}, want {expect})",
+            w.players[&outlaw].tca_standing
+        );
+        // The clean corp is pinned at the ceiling, never above it.
+        assert_eq!(w.players[&clean].tca_standing, crate::tca::TCA_STANDING_MAX, "regen clamps at the ceiling");
+    }
+    /// §TCA Phase 2 (snapshot compatibility): a PRE-LAW snapshot has no
+    /// `tca_standing` at all — every corporation must load in GOOD STANDING.
+    /// Nobody is retroactively an outlaw.
+    #[test]
+    fn a_pre_law_snapshot_loads_every_corp_in_good_standing() {
+        let mut w = test_world();
+        let id = PlayerId(4);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // A corp that HAD fallen…
+        w.players.get_mut(&id).unwrap().tca_standing = 5.0;
+        let json = serde_json::to_string(&w).unwrap();
+
+        // …but whose snapshot predates the law entirely.
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for (_pid, corp) in v.get_mut("players").unwrap().as_object_mut().unwrap().iter_mut() {
+            corp.as_object_mut().unwrap().remove("tca_standing");
+        }
+        let stripped = serde_json::to_string(&v).unwrap();
+        assert!(!stripped.contains("tca_standing"));
+
+        let old: World = serde_json::from_str(&stripped).unwrap();
+        for corp in old.players.values() {
+            assert_eq!(corp.tca_standing, crate::tca::TCA_STANDING_START);
+            assert_eq!(crate::tca::charter_status(corp.tca_standing), crate::tca::CharterStatus::GoodStanding);
+        }
+    }
     #[test]
     fn clock_advances_one_dt_per_step() {
         let mut w = test_world();
@@ -7664,8 +9368,8 @@ mod tests {
 
         // It fleets to the hub like any owned system → a raidable sell convoy.
         w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
-        assert!(convoy.is_some(), "the home can ship its production to the hub");
+        let convoy = w.fleets.values().find(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. })));
+        assert!(convoy.is_some(), "the home can ship its production to the Charterhouse");
     }
 
     #[test]
@@ -7773,6 +9477,154 @@ mod tests {
         for (c, n) in items {
             *s.stockpile.entry(*c).or_insert(0.0) += *n;
         }
+    }
+
+    /// §TCA Part 1: a corporation can NEVER mint an Authority Freighter.
+    /// `BuildShip` soft-rejects it (NotBuildable) BEFORE any stockpile/slot/
+    /// shipyard check, no job is enqueued, and no Freighter fleet ever appears —
+    /// even after the world runs on. The freighter is a TCA-sentinel-only hull,
+    /// sitting outside the warship ladder entirely.
+    #[test]
+    fn freighter_is_never_buildable_by_a_corporation() {
+        // The buildability predicate itself: everything on the ladder but the Freighter.
+        for k in crate::ship::ALL_SHIP_KINDS {
+            assert_eq!(k.is_buildable(), k != ShipKind::Freighter, "{k:?}");
+        }
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        // Pile the home high so NO ordinary reason (stockpile, slot, shipyard)
+        // could explain a refusal — only the buildability guard can.
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 900.0), (Commodity::Machinery, 400.0), (Commodity::Polymers, 400.0)]);
+        let ev = w.step(&[Command::BuildShip {
+            player_id: id,
+            system_id: home,
+            ship_kind: ShipKind::Freighter,
+            join: None,
+            loadout: Default::default(),
+        }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::BuildRejected { owner, reason: crate::event::BuildRejectReason::NotBuildable, .. } if *owner == id
+            )),
+            "BuildShip{{Freighter}} soft-rejects as NotBuildable"
+        );
+        assert!(!ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "no build started");
+        assert!(
+            w.build_queue.iter().all(|j| !matches!(j.what, crate::build::BuildKind::Ship { ship: ShipKind::Freighter })),
+            "no freighter job enqueued"
+        );
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert!(
+            !w.fleets.values().any(|f| f.contains(ShipKind::Freighter)),
+            "no Freighter fleet is ever minted by a corporation build"
+        );
+    }
+
+    /// §TCA Part 1 (snapshot compatibility): a PRE-FEATURE snapshot — one that
+    /// predates the warehouse + freight fields — still loads. We simulate it by
+    /// serializing a live world, DELETING the new keys (`warehouse` on each corp;
+    /// `freight_queue`/`freight_runs`/`next_shipment_id` on the world), and loading
+    /// the result: every `#[serde(default)]` fills in empty, and the world is intact.
+    #[test]
+    fn pre_feature_snapshot_without_warehouse_or_freight_still_loads() {
+        let mut w = test_world();
+        let id = PlayerId(11);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        for _ in 0..10 {
+            w.step(&[]);
+        }
+        let json = serde_json::to_string(&w).unwrap();
+        let reloaded: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.players.len(), w.players.len());
+        assert!(reloaded.freight_queue.is_empty() && reloaded.freight_runs.is_empty());
+
+        // STRIP the new keys to forge a genuine pre-feature snapshot.
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("freight_queue");
+        obj.remove("freight_runs");
+        obj.remove("next_shipment_id");
+        for (_pid, corp) in obj.get_mut("players").unwrap().as_object_mut().unwrap().iter_mut() {
+            corp.as_object_mut().unwrap().remove("warehouse");
+        }
+        let stripped = serde_json::to_string(&v).unwrap();
+        assert!(!stripped.contains("warehouse"), "the forged snapshot has no warehouse key");
+        assert!(!stripped.contains("freight_queue"), "…and no freight_queue key");
+
+        let old: World = serde_json::from_str(&stripped).unwrap();
+        assert!(old.freight_queue.is_empty() && old.freight_runs.is_empty());
+        for corp in old.players.values() {
+            assert!(corp.warehouse.is_empty(), "a pre-feature corp loads with an empty warehouse");
+        }
+        assert_eq!(old.players.len(), w.players.len());
+        assert_eq!(old.tick, w.tick);
+    }
+
+    /// §TCA: put goods in a corp's CHARTERHOUSE WAREHOUSE — the only source the
+    /// Exchange sells from now, so most market tests need it seeded.
+    /// Put the warehouse in an EXACT known state: clears whatever a fresh corp
+    /// started with, then sets `items`. Tests that assert on warehouse totals need
+    /// a baseline they control — a joining corp is seeded with the starting stock,
+    /// so an additive helper would silently offset every expectation by it.
+    fn seed_warehouse(w: &mut World, who: PlayerId, items: &[(Commodity, u32)]) {
+        let c = w.players.get_mut(&who).unwrap();
+        c.warehouse.clear();
+        for (com, n) in items {
+            *c.warehouse.entry(*com).or_insert(0) += *n;
+        }
+    }
+
+    /// Empty the warehouse — for tests whose premise is "this corp holds nothing
+    /// at the hub" (the starting stock would otherwise satisfy the very thing
+    /// they mean to prove is missing).
+    fn clear_warehouse(w: &mut World, who: PlayerId) {
+        w.players.get_mut(&who).unwrap().warehouse.clear();
+    }
+
+    /// How many units of `c` sit in `who`'s Charterhouse warehouse.
+    fn wh(w: &World, who: PlayerId, c: Commodity) -> u32 {
+        w.players[&who].warehouse.get(&c).copied().unwrap_or(0)
+    }
+
+    /// §TCA test rig: hand `owner` a colony parked `dist` from the Charterhouse.
+    /// A SHORT freight leg keeps the round-trip tests quick (the real geometry is
+    /// exercised by the fee/ETA maths, which are pure). Never the home system, so
+    /// the home bootstrap's staffing can't pollute the stockpile assertions.
+    fn near_hub_colony(w: &mut World, owner: PlayerId, dist: f64) -> EntityId {
+        // `owner` need not be a registered corp — rival-ownership tests hand a
+        // system to a bare id that never joined.
+        let home = w.players.get(&owner).and_then(|c| c.home_system);
+        let sys = w
+            .systems
+            .iter_mut()
+            .find(|s| s.owner.is_none() && Some(s.id) != home)
+            .expect("an unowned system exists");
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.pos = Vec2::new(dist, 0.0);
+        sys.id
+    }
+
+    /// Step until `f` holds, or panic after `max` ticks (keeps a stuck freight test
+    /// from hanging while still being timing-robust).
+    fn step_until(w: &mut World, max: u64, what: &str, mut f: impl FnMut(&World) -> bool) {
+        for _ in 0..max {
+            if f(w) {
+                return;
+            }
+            w.step(&[]);
+        }
+        panic!("timed out waiting for: {what}");
+    }
+
+    /// Units of `c` in a system's stockpile, rounded down to whole units.
+    fn sys_units(w: &World, sys: EntityId, c: Commodity) -> u32 {
+        w.systems.iter().find(|s| s.id == sys).unwrap().stockpile.get(&c).copied().unwrap_or(0.0) as u32
     }
 
     #[test]
@@ -8305,7 +10157,7 @@ mod tests {
         assert_eq!(overflow, 30, "the excess is reported, not destroyed");
         // The SAME convoy carries the excess onward to sell at the hub.
         let ship = w.fleets.get(&sid).expect("convoy survives with the overflow");
-        assert_eq!(ship.mission, Some(TradeMission::SellAtHub), "re-routed to sell at the hub");
+        assert_eq!(ship.mission, Some(TradeMission::DeliverToWarehouse { sell_on_arrival: true }), "re-routed to sell at the Charterhouse");
         assert_eq!(ship.cargo.unwrap().units, 30, "carries exactly the unstored excess");
     }
 
@@ -12240,93 +14092,1759 @@ mod tests {
         assert_battle_consistent(&w, outcome, raider, convoy);
     }
 
+    /// §TCA Part 2: a BUY settles instantly at the standing price and deposits into
+    /// the HUB WAREHOUSE. No convoy is conjured, and the home SYSTEM's stockpile is
+    /// untouched — a trade never moves goods across space any more.
     #[test]
-    fn market_buy_settles_now_and_delivers_later() {
+    fn market_buy_settles_into_the_warehouse_without_a_convoy() {
         use crate::cargo::Commodity::Fuel;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
         let credits0 = w.players[&id].credits;
-        let fuel0 = w.players[&id].inventory[&Fuel];
+        let home_sys = w.players[&id].home_system.expect("home system");
+        let fuel_home0 = sys_units(&w, home_sys, Fuel);
+        let fleets0 = w.fleets.len();
         let price = w.market.price(Fuel);
 
-        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 50 }]);
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 50, ship_to: None }]);
         // Instant settlement: credits debited now (≈ 50 × price).
         let spent = credits0 - w.players[&id].credits;
-        assert!((spent - 50.0 * price).abs() < 1e-6, "buy should settle at the standing price");
-        // A delivery convoy spawned at the hub, carrying the goods.
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome));
-        assert!(convoy.is_some(), "buy should spawn a delivery convoy");
-        assert!(convoy.unwrap().pos.distance(w.hub) < 5.0, "delivery convoy starts at the hub");
-        // Inventory not yet increased (goods still in transit).
-        assert_eq!(w.players[&id].inventory[&Fuel], fuel0);
-
-        // Run until the convoy reaches home and deposits the goods.
-        for _ in 0..(220 * crate::config::TICK_HZ) {
-            w.step(&[]);
-            if w.players[&id].inventory[&Fuel] == fuel0 + 50 {
-                return;
-            }
-        }
-        panic!("delivery convoy never arrived");
+        assert!((spent - 50.0 * price).abs() < 1e-6, "buy settles at the standing price");
+        // The goods are AT the Charterhouse immediately…
+        assert_eq!(wh(&w, id, Fuel), 50, "bought goods land in the warehouse");
+        // …the home system is untouched, and NOTHING was launched.
+        assert_eq!(sys_units(&w, home_sys, Fuel), fuel_home0, "the home system's stockpile is untouched");
+        assert_eq!(w.fleets.len(), fleets0, "a buy conjures no convoy");
+        assert!(
+            !w.fleets.values().any(|s| s.owner == id && s.mission == Some(TradeMission::DeliverHome)),
+            "no DeliverHome convoy is ever created by the Exchange"
+        );
     }
 
+    /// §TCA Part 2: a SELL draws ONLY from the warehouse and settles instantly —
+    /// the goods are already at the Exchange, so there is no crossing and no
+    /// price-on-arrival gamble.
     #[test]
-    fn market_sell_commits_goods_and_clears_on_arrival() {
+    fn market_sell_draws_from_the_warehouse_and_settles_now() {
         use crate::cargo::Commodity::MetallicOre;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(MetallicOre, 100)]);
         let credits0 = w.players[&id].credits;
-        let ore0 = w.players[&id].inventory[&MetallicOre];
+        let home_sys = w.players[&id].home_system.expect("home system");
+        let home_ore0 = sys_units(&w, home_sys, MetallicOre);
+        let fleets0 = w.fleets.len();
+        let price = w.market.price(MetallicOre);
 
         w.step(&[Command::MarketSell { player_id: id, commodity: MetallicOre, units: 40 }]);
-        // Goods committed to the crossing now; credits unchanged until arrival.
-        assert_eq!(w.players[&id].inventory[&MetallicOre], ore0 - 40);
-        assert_eq!(w.players[&id].credits, credits0);
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub));
-        assert!(convoy.is_some(), "sell should spawn a convoy toward the hub");
+        assert_eq!(wh(&w, id, MetallicOre), 60, "sold units leave the warehouse");
+        let gained = w.players[&id].credits - credits0;
+        assert!((gained - 40.0 * price).abs() < 1e-6, "credited instantly at the standing price");
+        assert_eq!(sys_units(&w, home_sys, MetallicOre), home_ore0, "system goods are not a sell source");
+        assert_eq!(w.fleets.len(), fleets0, "a sell conjures no convoy");
+        assert!(
+            !w.fleets.values().any(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub)),
+            "no SellAtHub convoy is ever created by the Exchange"
+        );
+    }
 
-        // Run until it reaches the hub and clears at the price-on-arrival.
-        for _ in 0..(260 * crate::config::TICK_HZ) {
-            w.step(&[]);
-            if w.players[&id].credits > credits0 {
-                return; // sold at arrival, credited
+    /// §TCA Part 2: goods sitting at a SYSTEM are not a valid sell source — the
+    /// Exchange settles only against the hub warehouse. A corp with a full
+    /// stockpile and an empty warehouse is soft-rejected, for free, with the typed
+    /// reason that tells it to ship the goods in first.
+    #[test]
+    fn selling_system_goods_soft_rejects_until_they_reach_the_hub() {
+        // Silicates deliberately: NOT one of the five the starter warehouse holds,
+        // so the warehouse is genuinely empty of it.
+        use crate::cargo::Commodity::Silicates;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home_sys = w.players[&id].home_system.expect("home system");
+        seed_stock(&mut w, home_sys, &[(Silicates, 200.0)]);
+        assert_eq!(wh(&w, id, Silicates), 0, "precondition: none at the hub");
+        let credits0 = w.players[&id].credits;
+
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: Silicates, units: 200 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected {
+                    player, reason: crate::event::TradeRejectReason::InsufficientWarehouseStock { have: 0 }, ..
+                }) if *player == id
+            )),
+            "an empty warehouse soft-rejects with the typed reason"
+        );
+        // Costs nothing: the system's goods and the treasury are both untouched.
+        assert_eq!(sys_units(&w, home_sys, Silicates), 200);
+        assert_eq!(w.players[&id].credits, credits0);
+    }
+
+    /// §TCA Part 2 (grandfathering): a convoy already in flight when the warehouse
+    /// rework landed — i.e. one loaded from a PRE-FEATURE snapshot — still resolves.
+    /// `DeliverHome` deposits into the HOME SYSTEM's stockpile (the per-corp HQ pool
+    /// it used to fill is retired) and `SellAtHub` still clears on arrival. New code
+    /// never creates either mission (the Exchange tests above assert that side).
+    #[test]
+    fn in_flight_convoys_from_an_old_snapshot_still_resolve() {
+        use crate::cargo::Commodity::{Fuel, MetallicOre};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
+        let home = w.players[&id].home;
+        let home_sys = w.players[&id].home_system.expect("home system");
+        let home_fuel0 = sys_units(&w, home_sys, Fuel);
+        let credits0 = w.players[&id].credits;
+
+        // Forge the two legacy convoys, ARRIVED (Idle at their destination) —
+        // exactly the shape an old snapshot's in-flight convoy loads with.
+        for (mission, pos, cargo) in [
+            (TradeMission::DeliverHome, home, Cargo { commodity: Fuel, units: 25 }),
+            (TradeMission::SellAtHub, w.hub, Cargo { commodity: MetallicOre, units: 30 }),
+        ] {
+            let fid = w.alloc_entity_id();
+            let mut f = Fleet::single(fid, id, ShipKind::Convoy, pos, FleetOrder::Idle, Some(cargo));
+            f.mission = Some(mission);
+            w.fleets.insert(fid, f);
+        }
+
+        w.step(&[]);
+
+        // DeliverHome deposited into the HOME SYSTEM's stockpile — not the warehouse.
+        assert_eq!(
+            sys_units(&w, home_sys, Fuel),
+            home_fuel0 + 25,
+            "a grandfathered DeliverHome deposits into the home system"
+        );
+        assert_eq!(wh(&w, id, Fuel), 0, "…and not into the warehouse");
+        // SellAtHub cleared into credits — and, because a convoy really did cross
+        // and deliver, it earns trade THROUGHPUT at the arrival site (25 delivered
+        // home + 30 carried to the hub), unlike an instant warehouse sale.
+        assert!(w.players[&id].credits > credits0, "a grandfathered SellAtHub still clears");
+        assert_eq!(
+            w.players[&id].stats.trade_units, 55,
+            "hauled goods earn throughput: 25 delivered home + 30 sold at the hub"
+        );
+        // Both convoys are consumed.
+        assert!(
+            !w.fleets.values().any(|f| f.owner == id && f.mission.is_some()),
+            "both legacy convoys resolved and left the world"
+        );
+    }
+
+    // ==== §TCA Part 5: player-convoy logistics ==============================
+
+    /// THE PLAYER-OWNED CHANNEL, end to end: load a convoy from an owned system's
+    /// stockpile, haul it to the Charterhouse, sell on arrival — and the hull
+    /// SURVIVES, idle at the hub, ready for the next job.
+    #[test]
+    fn a_player_convoy_loads_hauls_and_sells_then_lives_on() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        let colony_pos = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
+        seed_stock(&mut w, colony, &[(Alloys, 300.0)]);
+        // Park the player's convoy alongside the colony.
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = colony_pos;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = None;
+        }
+
+        w.step(&[Command::SystemLoad { player_id: id, fleet_id: convoy, system: colony, commodity: Alloys, units: 200 }]);
+        assert_eq!(w.fleets[&convoy].cargo.map(|c| (c.commodity, c.units)), Some((Alloys, 200)), "the hold is loaded");
+        assert_eq!(sys_units(&w, colony, Alloys), 100, "…out of the system's stockpile");
+
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::HaulToCharterhouse { player_id: id, fleet_id: convoy, sell_on_arrival: true }]);
+        step_until(&mut w, 20_000, "the haul to land and clear", |w| w.players[&id].credits > credits0);
+
+        assert!(w.players[&id].credits > credits0, "the lot sold at the Charterhouse");
+        assert_eq!(wh(&w, id, Alloys), 0, "sell-on-arrival left nothing in the warehouse");
+        // THE HULL SURVIVES — this is the player's ship, not a disposable auto convoy.
+        let f = w.fleets.get(&convoy).expect("the player's convoy survives its delivery");
+        assert!(f.cargo.is_none() && f.mission.is_none(), "empty and unassigned");
+        assert!(matches!(f.order, FleetOrder::Idle), "idle at the Charterhouse");
+        assert!(f.pos.distance(w.hub) < 5.0, "…and actually there");
+        assert_eq!(w.players[&id].stats.trade_units, 200, "a real haul earns trade throughput");
+    }
+
+    /// The audit's bypass: with the Exchange closed (Revoked/Proscribed), a
+    /// HaulToCharterhouse{sell_on_arrival} lot must NOT sell — it lands in the
+    /// warehouse unsold and the owner gets the same CharterRevoked refusal a
+    /// hand-typed sell gets. (The freight inbound and legacy SellAtHub arrival
+    /// legs carry the identical gate.)
+    #[test]
+    fn a_closed_exchange_refuses_the_sell_leg_of_an_arriving_haul() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub + Vec2::new(60.0, 0.0); // moments from the dock
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = Some(crate::cargo::Cargo { commodity: Alloys, units: 200 });
+        }
+        let credits0 = w.players[&id].credits;
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT);
+        w.step(&[Command::HaulToCharterhouse { player_id: id, fleet_id: convoy, sell_on_arrival: true }]);
+        // Pin the standing against regen while the hull crosses the last stretch.
+        let mut refused = false;
+        for _ in 0..20_000 {
+            set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT);
+            let ev = w.step(&[]);
+            refused |= ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::CharterRevoked, .. })
+            ));
+            if wh(&w, id, Alloys) == 200 {
+                break;
             }
         }
-        panic!("sell convoy never cleared");
+        assert_eq!(wh(&w, id, Alloys), 200, "the goods land in the warehouse, unsold and undestroyed");
+        assert!(refused, "the owner is told the Exchange refused the sale");
+        assert_eq!(w.players[&id].credits, credits0, "not a credit changed hands");
+        let f = w.fleets.get(&convoy).expect("the hull still survives the refusal");
+        assert!(matches!(f.order, FleetOrder::Idle) && f.cargo.is_none(), "empty and idle at the hub");
+    }
+
+    /// Hub load/unload moves goods across the warehouse boundary without selling.
+    #[test]
+    fn hub_load_and_unload_cross_the_warehouse_boundary() {
+        use crate::cargo::Commodity::Fuel;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(Fuel, 120)]);
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = None;
+        }
+        w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 80 }]);
+        assert_eq!(wh(&w, id, Fuel), 40);
+        assert_eq!(w.fleets[&convoy].cargo.map(|c| c.units), Some(80));
+        w.step(&[Command::HubUnload { player_id: id, fleet_id: convoy }]);
+        assert_eq!(wh(&w, id, Fuel), 120, "the whole hold went back into the warehouse");
+        assert!(w.fleets[&convoy].cargo.is_none());
+    }
+
+    /// Every logistics refusal is FREE and typed: a fleet under way, a fleet too
+    /// far from the dock, a hull with no hold, and a hold already carrying
+    /// something else.
+    #[test]
+    fn logistics_soft_rejects_are_free_and_typed() {
+        use crate::cargo::Commodity::{Alloys, Fuel};
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(Fuel, 500), (Alloys, 500)]);
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        let raider = find_ship(&w, id, ShipKind::Raider);
+        let reason_of = |ev: &[Event]| -> Option<TradeRejectReason> {
+            ev.iter().find_map(|e| match &e.payload {
+                EventPayload::Trade(TradeEvent::Rejected { reason, .. }) => Some(*reason),
+                _ => None,
+            })
+        };
+
+        // NOT IDLE (under way) → FleetUnavailable.
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.order = FleetOrder::MoveTo { dest: Vec2::new(9000.0, 0.0) };
+        }
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::FleetUnavailable)));
+
+        // TOO FAR from the dock → OutOfLogisticsRange.
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.order = FleetOrder::Idle;
+            f.pos = w.hub + Vec2::new(crate::tca::LOGISTICS_RANGE * 3.0, 0.0);
+        }
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::OutOfLogisticsRange)));
+
+        // NO HOLD (a raider) → NoCargoRoom { capacity: 0 }.
+        {
+            let f = w.fleets.get_mut(&raider).unwrap();
+            f.pos = w.hub;
+            f.order = FleetOrder::Idle;
+        }
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: raider, commodity: Fuel, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::NoCargoRoom { capacity: 0 })));
+
+        // OVER CAPACITY → NoCargoRoom with the real capacity.
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.cargo = None;
+        }
+        let cap = w.fleets[&convoy].cargo_capacity();
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: cap + 1 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::NoCargoRoom { capacity }) if capacity == cap));
+
+        // WRONG COMMODITY aboard → CargoMismatch, and nothing is disturbed.
+        w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
+        let warehouse_before = (wh(&w, id, Fuel), wh(&w, id, Alloys));
+        let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Alloys, units: 10 }]);
+        assert!(matches!(reason_of(&ev), Some(TradeRejectReason::CargoMismatch)));
+        assert_eq!((wh(&w, id, Fuel), wh(&w, id, Alloys)), warehouse_before, "a refused load costs nothing");
+        assert_eq!(w.fleets[&convoy].cargo.map(|c| (c.commodity, c.units)), Some((Fuel, 10)), "the hold is untouched");
+    }
+
+    /// §15 REGRESSION: a standing order written BEFORE the warehouse existed (its
+    /// JSON has no `sell_on_arrival`) loads with the flag TRUE, so a Hub rule keeps
+    /// selling on arrival exactly as it always did.
+    #[test]
+    fn a_pre_warehouse_hub_standing_order_still_sells_on_arrival() {
+        // The old wire shape — note the absent `sell_on_arrival`.
+        let json = r#"{"id":3,"source":{"kind":"system","id":"5"},"dest":{"kind":"hub"},
+                       "commodity":"metallic_ore","trigger":{"kind":"above_threshold","threshold":3.0},
+                       "status":"active"}"#;
+        let old: StandingOrder = serde_json::from_str(json).expect("a pre-feature order still parses");
+        assert!(old.sell_on_arrival, "a pre-warehouse Hub rule keeps selling on arrival");
+        assert_eq!(old.dest, Endpoint::Hub);
+
+        // And behaviourally: such a rule's convoy sells when it lands.
+        use crate::cargo::Commodity::MetallicOre;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_stock(&mut w, colony, &[(MetallicOre, 200.0)]);
+        let mut order = old;
+        order.id = 0;
+        order.source = Endpoint::System { id: colony };
+        w.step(&[Command::SetStandingOrder { player_id: id, order }]);
+        let credits0 = w.players[&id].credits;
+        step_until(&mut w, 20_000, "the auto-dispatched lot to sell", |w| w.players[&id].credits > credits0);
+        assert_eq!(wh(&w, id, MetallicOre), 0, "it sold rather than stockpiling in the warehouse");
+    }
+
+    /// A Hub standing order with `sell_on_arrival: false` DEPOSITS instead — and
+    /// either way its auto-spawned hull is consumed, never accumulating as a free
+    /// convoy at the Charterhouse.
+    #[test]
+    fn a_hub_rule_can_stockpile_instead_of_selling_and_never_mints_hulls() {
+        use crate::cargo::Commodity::MetallicOre;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_stock(&mut w, colony, &[(MetallicOre, 200.0)]);
+        let fleets0 = w.fleets.len();
+        w.step(&[Command::SetStandingOrder {
+            player_id: id,
+            order: StandingOrder {
+                id: 0,
+                source: Endpoint::System { id: colony },
+                dest: Endpoint::Hub,
+                commodity: MetallicOre,
+                trigger: Trigger::AboveThreshold { threshold: 3.0 },
+                status: OrderStatus::Active,
+                next_eval_tick: 0,
+                in_flight: None,
+                sell_on_arrival: false,
+            },
+        }]);
+        let credits0 = w.players[&id].credits;
+        step_until(&mut w, 20_000, "the lot to reach the warehouse", |w| wh(w, id, MetallicOre) > 0);
+        assert!(wh(&w, id, MetallicOre) > 0, "the goods sit in the warehouse, unsold");
+        assert_eq!(w.players[&id].credits, credits0, "…and nothing was sold");
+        // The auto hull was consumed on arrival — no free-convoy factory.
+        step_until(&mut w, 20_000, "the auto hull to be consumed", |w| {
+            !w.fleets.values().any(|f| f.owner == id && f.mission.is_some())
+        });
+        assert!(w.fleets.len() <= fleets0, "a standing order never leaves a spare hull behind");
+    }
+
+    // ==== §TCA Phase 2: reinstatement ========================================
+
+    /// Buying standing back: the credits are BURNED, the purchase is CLAMPED to
+    /// the ceiling (you pay only for points actually restored), and crossing a
+    /// band boundary upward is reported so the client can say which charter you
+    /// bought back.
+    #[test]
+    fn reinstatement_burns_credits_clamps_at_the_ceiling_and_names_the_band() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+
+        // Deep in Revoked; buy back into Sanctioned.
+        set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+        assert_eq!(crate::tca::charter_status(w.players[&id].tca_standing), crate::tca::CharterStatus::Revoked);
+        let credits0 = w.players[&id].credits;
+        let points = 50.0;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points }]);
+        let (paid_points, cost, before, after) = ev
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::Trade(TradeEvent::CharterReinstated { points, cost, before, after, .. }) => {
+                    Some((*points, *cost, *before, *after))
+                }
+                _ => None,
+            })
+            .expect("a reinstatement receipt");
+        assert!((paid_points - points).abs() < 1e-9);
+        assert!((cost - points * crate::tca::TCA_REINSTATE_FEE_PER_POINT).abs() < 1e-9, "cost is points × the rate");
+        assert!((credits0 - w.players[&id].credits - cost).abs() < 1e-6, "the credits are BURNED");
+        assert!((after - before - points).abs() < 1e-9);
+        assert_eq!(
+            crate::tca::charter_status(after),
+            crate::tca::CharterStatus::Sanctioned,
+            "it bought a band back"
+        );
+
+        // CLAMP: asking for far more than the ceiling allows charges only for what
+        // was actually restored.
+        let standing1 = w.players[&id].tca_standing;
+        let restorable = crate::tca::TCA_STANDING_MAX - standing1;
+        let credits1 = w.players[&id].credits;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points: 10_000.0 }]);
+        let cost2 = ev
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::Trade(TradeEvent::CharterReinstated { cost, .. }) => Some(*cost),
+                _ => None,
+            })
+            .expect("a clamped receipt");
+        let spent = credits1 - w.players[&id].credits;
+        assert!(
+            (cost2 - restorable * crate::tca::TCA_REINSTATE_FEE_PER_POINT).abs() < 1e-3,
+            "charged only for the points actually restored"
+        );
+        assert!((spent - cost2).abs() < 1e-6);
+        assert!(w.players[&id].tca_standing <= crate::tca::TCA_STANDING_MAX + 1e-9, "never past the ceiling");
+        assert_eq!(crate::tca::charter_status(w.players[&id].tca_standing), crate::tca::CharterStatus::GoodStanding);
+
+        // At the ceiling there is nothing to buy — a no-op, not a charge.
+        let credits2 = w.players[&id].credits;
+        w.step(&[Command::PayReinstatement { player_id: id, points: 25.0 }]);
+        assert_eq!(w.players[&id].credits, credits2, "buying nothing costs nothing");
+    }
+
+    /// An unaffordable reinstatement is a FREE soft reject — nothing spent,
+    /// nothing restored, and the owner is told the price.
+    #[test]
+    fn an_unaffordable_reinstatement_is_refused_for_free() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        set_standing(&mut w, id, 0.0);
+        w.players.get_mut(&id).unwrap().credits = 1.0;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points: 50.0 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::CantAfford { .. }, .. })
+            )),
+            "an unaffordable purchase is refused with the price"
+        );
+        assert_eq!(w.players[&id].credits, 1.0, "…and costs nothing");
+        assert!(w.players[&id].tca_standing <= 0.0 + crate::tca::TCA_STANDING_REGEN_PER_SEC, "…and restores nothing");
+    }
+
+    /// PAYING UP CALLS OFF THE DOGS, end to end: a proscribed corp under an active
+    /// expedition buys its way back over the line and the squadron is recalled.
+    #[test]
+    fn paying_reinstatement_recalls_an_active_expedition() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 3000.0);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 10.0);
+        w.step(&[]);
+        assert_eq!(w.expeditions.len(), 1, "the squadron sails");
+
+        // Buy back over the proscription line.
+        let need = (crate::tca::TCA_PROSCRIBED_AT + 15.0) - w.players[&id].tca_standing;
+        let ev = w.step(&[Command::PayReinstatement { player_id: id, points: need }]);
+        assert!(ev.iter().any(|e| matches!(&e.payload, EventPayload::Trade(TradeEvent::CharterReinstated { .. }))));
+        assert_ne!(
+            crate::tca::charter_status(w.players[&id].tca_standing),
+            crate::tca::CharterStatus::Proscribed,
+            "back over the line"
+        );
+        // The enforcement pass runs later in the SAME tick the payment lands, so
+        // the recall is immediate — the player sees the dogs called off at once.
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::EnforcementWithdrawn { target, recalled: true, .. } if *target == id)),
+            "paying up calls off the dogs"
+        );
+        step_until(&mut w, 40_000, "the recalled squadron to go home", |w| w.expeditions.is_empty());
+    }
+
+    // ==== §TCA Phase 2: enforcement expeditions ==============================
+
+    /// THE SAFETY INVARIANT: an expedition ALWAYS withdraws before a siege it
+    /// started could mature into a capture. Asserted against the production config
+    /// so a future retune of either constant can't silently create an Authority
+    /// that takes colonies. (Belt and braces: it also carries no colony ship, and
+    /// a capture is mechanically impossible without one.)
+    #[test]
+    fn enforcement_withdraws_before_a_siege_could_capture() {
+        let cfg = SimConfig::for_players(1, 4);
+        let siege = SIEGE_DURATION_BATTLE_MULT * cfg.battle_target_secs;
+        assert!(
+            crate::tca::TCA_ENFORCEMENT_DURATION < siege,
+            "an expedition ({}s) must stand down before a siege matures ({siege}s) — the Authority costs \
+             economy-time, never a colony",
+            crate::tca::TCA_ENFORCEMENT_DURATION
+        );
+    }
+
+    /// The full scripted lifecycle: a PROSCRIBED corp draws exactly one squadron,
+    /// announced publicly from the hub, which flies out, takes station and
+    /// blockades — then stands down on its own and despawns at the Charterhouse.
+    #[test]
+    fn an_expedition_sails_blockades_and_stands_down() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+
+        // DISPATCH — one squadron, announced, owned by the sentinel.
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::EnforcementDispatched { target, .. } if *target == id)),
+            "the dispatch is announced publicly"
+        );
+        assert_eq!(w.expeditions.len(), 1, "exactly one expedition");
+        let fid = *w.expeditions.keys().next().unwrap();
+        let f = &w.fleets[&fid];
+        assert!(f.owner.is_tca(), "the squadron flies the Authority's flag");
+        assert_eq!(f.count(ShipKind::Corvette), crate::tca::TCA_ENFORCEMENT_SHIPS);
+        assert!(f.broadcasts(), "an announced expedition is LOUD");
+        assert_eq!(f.count(ShipKind::Colony), 0, "it carries no colony ship — capture is impossible");
+        assert!(f.pos.distance(w.hub) < 5.0, "it sails from the Charterhouse");
+        assert!(matches!(f.order, FleetOrder::Blockade { system, .. } if system == colony));
+        // Still exactly one on the next tick — never a fleet per tick.
+        w.step(&[]);
+        assert_eq!(w.expeditions.len(), 1, "one at a time, ever");
+
+        // ON STATION → the ORDINARY blockade mechanic engages, unmodified.
+        step_until(&mut w, 20_000, "the squadron to take station", |w| {
+            w.systems.iter().find(|s| s.id == colony).unwrap().blockade.is_some()
+        });
+        assert!(w.expeditions[&fid].on_station_since.is_some(), "the duration clock started");
+
+        // TIME SERVED → it turns for home and despawns there.
+        let mut stood_down = false;
+        for _ in 0..40_000 {
+            for e in w.step(&[]) {
+                if let EventPayload::EnforcementWithdrawn { target, recalled, .. } = e.payload
+                    && target == id
+                {
+                    assert!(!recalled, "this one served its time, it wasn't recalled");
+                    stood_down = true;
+                }
+            }
+            if w.expeditions.is_empty() {
+                break;
+            }
+        }
+        assert!(stood_down, "the expedition stands down of its own accord");
+        assert!(w.expeditions.is_empty() && !w.fleets.contains_key(&fid), "…and despawns at the Charterhouse");
+        assert!(
+            w.next_expedition_at.get(&id).is_some_and(|t| *t > w.time),
+            "the next one is on a cooldown, not immediate"
+        );
+    }
+
+    /// PAYING UP CALLS OFF THE DOGS: a target that climbs back above the
+    /// proscription line while a squadron is inbound sees it recalled.
+    #[test]
+    fn recovering_standing_recalls_an_inbound_expedition() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 3000.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        w.step(&[]);
+        assert_eq!(w.expeditions.len(), 1);
+        let fid = *w.expeditions.keys().next().unwrap();
+        assert!(!w.expeditions[&fid].withdrawing);
+
+        // Climb back over the line while it is still on its way out.
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT + 10.0);
+        let ev = w.step(&[]);
+        assert!(
+            ev.iter().any(|e| matches!(&e.payload, EventPayload::EnforcementWithdrawn { target, recalled: true, .. } if *target == id)),
+            "climbing back over the line recalls the squadron"
+        );
+        assert!(w.expeditions[&fid].withdrawing, "it is turning for home");
+        assert!(matches!(w.fleets[&fid].order, FleetOrder::MoveTo { .. }));
+        step_until(&mut w, 40_000, "the recalled squadron to stand down", |w| w.expeditions.is_empty());
+        assert!(!w.fleets.contains_key(&fid), "and it goes home");
+    }
+
+    /// A corporation that holds NOTHING has nothing to blockade — the Authority
+    /// simply skips the cycle rather than spawning a squadron with nowhere to go.
+    #[test]
+    fn a_landless_proscribed_corp_draws_no_expedition() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        // Strip every holding, including the home system.
+        for s in w.systems.iter_mut().filter(|s| s.owner == Some(id)) {
+            s.owner = None;
+        }
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+            w.step(&[]);
+            assert!(w.expeditions.is_empty(), "nothing to take station on → no squadron");
+        }
+    }
+
+    /// Destroying an expedition ends it early — and costs MORE standing than
+    /// robbing freight did. Fighting the law raises the reinstatement bill.
+    #[test]
+    fn destroying_an_expedition_ends_it_and_cites_the_heavier_offense() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 3000.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        w.step(&[]);
+        let fid = *w.expeditions.keys().next().unwrap();
+
+        // Wipe the squadron where it stands (the fight itself is ordinary
+        // Lanchester and is covered elsewhere; this test is about the aftermath).
+        let pos = w.fleets[&fid].pos;
+        w.fleets.get_mut(&fid).unwrap().composition.clear();
+        w.record_incident(
+            pos,
+            [id].into_iter().collect(),
+            crate::tca::CitationOffense::EnforcementDestroyed,
+            crate::tca::TCA_STANDING_LOSS_ENFORCEMENT,
+        );
+        w.fleets.remove(&fid);
+        let before = w.players[&id].tca_standing;
+
+        // The expedition is retired and a cooldown starts.
+        w.step(&[]);
+        assert!(w.expeditions.is_empty(), "a destroyed squadron ends the expedition");
+        assert!(w.next_expedition_at.contains_key(&id), "…and starts the cooldown");
+
+        // The citation lands and costs the HEAVIER enforcement loss.
+        let due = w.pending_citations.iter().map(|c| c.arrive_at).fold(0.0_f64, f64::max);
+        while w.time <= due + DT {
+            w.step(&[]);
+        }
+        let dropped = before - w.players[&id].tca_standing;
+        assert!(
+            dropped > crate::tca::TCA_STANDING_LOSS_PER_INCIDENT,
+            "fighting the law costs more than robbing it (dropped {dropped})"
+        );
+    }
+
+    /// SOVEREIGNTY: an expedition spawns INSIDE the Charterhouse bubble, where
+    /// nothing may engage it — but it is fair game the moment it leaves. An ambush
+    /// waiting just past the radius is legitimate play.
+    #[test]
+    fn an_expedition_is_sheltered_in_the_bubble_and_fair_game_outside_it() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Outlaw".into() }]);
+        let _colony = near_hub_colony(&mut w, id, 6000.0);
+        set_standing(&mut w, id, crate::tca::TCA_PROSCRIBED_AT - 5.0);
+        w.step(&[]);
+        let fid = *w.expeditions.keys().next().unwrap();
+        assert!(w.in_sovereign_zone(w.fleets[&fid].pos), "it spawns inside the bubble");
+
+        // An ambusher waiting just OUTSIDE the radius, on the squadron's path.
+        let raider = find_ship(&w, id, ShipKind::Raider);
+        let ambush = Vec2::new(crate::tca::TCA_SOVEREIGN_RADIUS + 60.0, 0.0);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = ambush;
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        // While the squadron is still sheltered, the order is refused.
+        let ev = w.step(&[Command::CommitRaid { player_id: id, raider_id: raider, target_id: fid }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::OrderRejected { reason: crate::event::OrderRejectReason::InsideSovereignZone, .. }
+            )),
+            "sanctuary holds while it is inside the bubble"
+        );
+
+        // Once it clears the radius, the same order takes.
+        step_until(&mut w, 40_000, "the squadron to clear the bubble", |w| {
+            w.fleets.get(&fid).is_some_and(|f| !w.in_sovereign_zone(f.pos))
+        });
+        let ev = w.step(&[Command::CommitRaid { player_id: id, raider_id: raider, target_id: fid }]);
+        assert!(
+            !ev.iter().any(|e| matches!(&e.payload, EventPayload::OrderRejected { .. })),
+            "outside the bubble the Authority's own hulls are fair game"
+        );
+        // The order is accepted — and, like every order, it reaches the raider at
+        // lightspeed rather than instantly.
+        step_until(&mut w, 40_000, "the ambush order to reach the raider", |w| {
+            matches!(w.fleets.get(&raider).map(|f| &f.order), Some(FleetOrder::Intercept { target }) if *target == fid)
+        });
+    }
+
+    // ==== §TCA Phase 2: band consequences ====================================
+
+    /// Put `who` in a chosen band by setting standing directly (the incident
+    /// pipeline is tested separately; these tests are about the CONSEQUENCES).
+    fn set_standing(w: &mut World, who: PlayerId, standing: f64) {
+        w.players.get_mut(&who).unwrap().tca_standing = standing;
+    }
+
+    /// GOOD STANDING PAYS NOTHING — the invariant the whole §economy clearing
+    /// suite rests on. A lawful corp's freight fee and trade proceeds are EXACTLY
+    /// what they were before the law existed.
+    #[test]
+    fn good_standing_is_charged_exactly_the_pre_law_amounts() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 300)]);
+
+        // A freight booking costs precisely the Phase 1 fee.
+        let price = w.market.price(Alloys);
+        let dist = w.hub.distance(w.systems.iter().find(|s| s.id == colony).unwrap().pos);
+        let expect_fee = crate::tca::freight_fee(100, price, dist, false);
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        let paid = credits0 - w.players[&id].credits;
+        assert!((paid - expect_fee).abs() < 1e-9, "lawful freight pays the untariffed fee (paid {paid}, want {expect_fee})");
+
+        // A sale credits the full proceeds — zero penalty.
+        let credits1 = w.players[&id].credits;
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 100 }]);
+        let sold = ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::Sold { units, unit_price, penalty, .. }) => Some((*units, *unit_price, *penalty)),
+            _ => None,
+        }).expect("a sale");
+        assert_eq!(sold.2, 0.0, "a lawful corp pays NO Exchange penalty");
+        let gained = w.players[&id].credits - credits1;
+        assert!((gained - sold.0 as f64 * sold.1).abs() < 1e-9, "…and receives the full proceeds");
+    }
+
+    /// SANCTIONED: freight costs the tariff multiple, and every Exchange trade
+    /// pays the penalty fee — both linear in how far standing has fallen, and both
+    /// burned as a sink (they leave the economy, they don't go to anyone).
+    #[test]
+    fn a_sanctioned_charter_pays_the_tariff_and_the_penalty() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 400)]);
+        // Squarely inside the SANCTIONED band (below full standing, above the
+        // suspension threshold) — one incident's worth of fall at the defaults.
+        let mid = crate::tca::TCA_STANDING_MAX - crate::tca::TCA_STANDING_LOSS_PER_INCIDENT * 2.0;
+        set_standing(&mut w, id, mid);
+        assert_eq!(crate::tca::charter_status(mid), crate::tca::CharterStatus::Sanctioned);
+        assert!(crate::tca::tariff_mult(mid) > 1.0 && crate::tca::market_penalty_frac(mid) > 0.0, "the band actually bites");
+
+        // FREIGHT: the fee is multiplied by the tariff.
+        let price = w.market.price(Alloys);
+        let dist = w.hub.distance(w.systems.iter().find(|s| s.id == colony).unwrap().pos);
+        let expect = crate::tca::freight_fee(100, price, dist, false) * crate::tca::tariff_mult(mid);
+        let credits0 = w.players[&id].credits;
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        let paid = credits0 - w.players[&id].credits;
+        assert!((paid - expect).abs() < 1e-6, "freight pays the tariff (paid {paid}, want {expect})");
+        assert!(paid > crate::tca::freight_fee(100, price, dist, false), "…which is strictly more than the lawful fee");
+
+        // EXCHANGE: a sale is docked the penalty, which is BURNED (not paid out).
+        set_standing(&mut w, id, mid);
+        let credits1 = w.players[&id].credits;
+        let ev = w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 100 }]);
+        let (units, unit_price, penalty) = ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::Sold { units, unit_price, penalty, .. }) => Some((*units, *unit_price, *penalty)),
+            _ => None,
+        }).expect("a sale");
+        let gross = units as f64 * unit_price;
+        assert!((penalty - gross * crate::tca::market_penalty_frac(mid)).abs() < 1e-9, "the penalty is the linear fraction of trade value");
+        assert!(penalty > 0.0);
+        let gained = w.players[&id].credits - credits1;
+        assert!((gained - (gross - penalty)).abs() < 1e-9, "the seller receives proceeds MINUS the penalty");
+    }
+
+    /// SUSPENDED: no NEW booking is taken — but freight already queued or aboard
+    /// completes. The Authority honors contracts it already took.
+    #[test]
+    fn a_suspended_charter_is_refused_new_freight_but_keeps_its_contracts() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 300)]);
+        // Book one lot while still lawful…
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        assert_eq!(w.freight_queue.len(), 1);
+
+        // …then fall to Suspended.
+        set_standing(&mut w, id, crate::tca::TCA_SUSPENDED_AT);
+        let credits0 = w.players[&id].credits;
+        let wh0 = wh(&w, id, Alloys);
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 50 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::CharterSuspended, .. })
+            )),
+            "a new booking is refused with the typed reason"
+        );
+        assert_eq!(w.players[&id].credits, credits0, "the refusal costs nothing");
+        assert_eq!(wh(&w, id, Alloys), wh0, "…and escrows nothing");
+
+        // The lot booked BEFORE suspension still flies and still lands.
+        set_standing(&mut w, id, crate::tca::TCA_SUSPENDED_AT);
+        step_until(&mut w, 20_000, "the honored contract to deliver", |w| sys_units(w, colony, Alloys) >= 100);
+        assert_eq!(sys_units(&w, colony, Alloys), 100, "the Authority honors the contract it took");
+    }
+
+    /// REVOKED: the Exchange is closed — market orders and NEW limit orders are
+    /// refused. Resting orders are grandfathered, and the warehouse stays
+    /// reachable: a revoked outlaw can still fetch their goods, they just can't
+    /// trade them here.
+    #[test]
+    fn a_revoked_charter_is_locked_out_of_the_exchange_but_not_its_warehouse() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        seed_warehouse(&mut w, id, &[(Alloys, 300)]);
+        // Rest a sell order while still lawful…
+        w.step(&[Command::PlaceLimitOrder { player_id: id, side: Side::Sell, commodity: Alloys, units: 50, limit_price: 1.0 }]);
+        assert_eq!(w.book.len(), 1, "the order rests");
+
+        set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+        let credits0 = w.players[&id].credits;
+        let wh0 = wh(&w, id, Alloys);
+        let reason_of = |ev: &[Event]| ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::Rejected { reason, .. }) => Some(*reason),
+            _ => None,
+        });
+        // Buy, sell, and a new limit order are ALL refused, free of charge.
+        for cmd in [
+            Command::MarketBuy { player_id: id, commodity: Alloys, units: 10, ship_to: None },
+            Command::MarketSell { player_id: id, commodity: Alloys, units: 10 },
+            Command::PlaceLimitOrder { player_id: id, side: Side::Sell, commodity: Alloys, units: 10, limit_price: 5.0 },
+        ] {
+            set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+            let ev = w.step(&[cmd]);
+            assert!(matches!(reason_of(&ev), Some(TradeRejectReason::CharterRevoked)), "the Exchange is closed");
+        }
+        assert_eq!(w.players[&id].credits, credits0, "every refusal costs nothing");
+        assert_eq!(wh(&w, id, Alloys), wh0);
+        assert_eq!(w.book.len(), 1, "no new order joined the book");
+
+        // The GRANDFATHERED order is still on the book and still clears.
+        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = w.hub;
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+            f.cargo = None;
+        }
+        // …and the WAREHOUSE is still reachable: a revoked outlaw fetches its goods.
+        set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
+        w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Alloys, units: 100 }]);
+        assert_eq!(
+            w.fleets[&convoy].cargo.map(|c| c.units),
+            Some(100),
+            "a revoked charter can still collect its own property"
+        );
+    }
+
+    // ==== §TCA Phase 2: incidents and citations ==============================
+
+    /// Kill an Authority freighter far from the hub and NOTHING happens at the
+    /// scene. Standing is untouched until the incident's light reaches the
+    /// Charterhouse — then, on exactly that tick, the culprit is docked and a
+    /// public citation issues.
+    #[test]
+    fn a_citation_lands_only_when_its_light_reaches_the_charterhouse() {
+        let mut w = test_world();
+        let (atk, victim) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        let dest = w.systems[0].id;
+        let freighter = freighter_at(&mut w, cc + Vec2::new(160.0, 0.0), dest, &[(victim, Commodity::Alloys, 40)]);
+        let standing0 = w.players[&atk].tca_standing;
+
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: freighter }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&freighter));
+        assert!(!w.fleets.contains_key(&freighter), "the freighter died");
+
+        // The incident is queued, and its arrival is a pure light-travel time.
+        assert_eq!(w.pending_citations.len(), 1, "the offense is in flight, not applied");
+        let c = w.pending_citations[0].clone();
+        assert!(c.culprits.contains(&atk) && c.culprits.len() == 1);
+        assert_eq!(c.offense, crate::tca::CitationOffense::FreightRaided, "an Intercept is piracy");
+        let expect_arrival = c.occurred_at + c.pos.distance(w.hub) / w.config.c;
+        assert!((c.arrive_at - expect_arrival).abs() < 1e-9, "arrival is exactly the light-travel time");
+        assert!(c.arrive_at > w.time, "the news has not arrived yet");
+
+        // Standing is UNTOUCHED (bar regen) while the light is still in flight.
+        let before_arrival = c.arrive_at;
+        while w.time < before_arrival - DT {
+            w.step(&[]);
+            assert!(
+                w.players[&atk].tca_standing >= standing0 - 1e-9,
+                "standing must not move before the light lands (t={})",
+                w.time
+            );
+        }
+        // …and drops on arrival, with a public citation event.
+        let mut cited = false;
+        for _ in 0..4 {
+            for e in w.step(&[]) {
+                if let EventPayload::Citation { culprit, offense, pos, .. } = e.payload
+                    && culprit == atk
+                {
+                    assert_eq!(offense, crate::tca::CitationOffense::FreightRaided);
+                    assert_eq!(pos, w.hub, "the bulletin issues FROM the Charterhouse");
+                    cited = true;
+                }
+            }
+            if cited {
+                break;
+            }
+        }
+        assert!(cited, "a public citation issues when the light lands");
+        assert!(
+            w.players[&atk].tca_standing < standing0 - crate::tca::TCA_STANDING_LOSS_PER_INCIDENT + 1.0,
+            "the culprit is docked the flat loss (got {})",
+            w.players[&atk].tca_standing
+        );
+        assert_eq!(
+            crate::tca::charter_status(w.players[&atk].tca_standing),
+            crate::tca::CharterStatus::Sanctioned,
+            "one kill is tuition — Sanctioned, not a battlefleet"
+        );
+        assert!(w.pending_citations.is_empty(), "the queue drained");
+    }
+
+    /// The loss is FLAT PER INCIDENT, per corporation — not per hull that showed
+    /// up, and not split between offenders. Two corps each killing an Authority
+    /// hull each pay the full price; a corp that piles two of its own fleets onto
+    /// ONE freighter is cited exactly once.
+    ///
+    /// NOTE (see the STATUS note): today the engagement model only ever admits ONE
+    /// attacker owner per engagement — reinforcement requires `e.a_owner ==
+    /// a_owner_c` — so `Citation::culprits` is a singleton in practice. The
+    /// set-of-culprits machinery is implemented as specified (each named corp pays
+    /// in full, no splitting) and will simply start mattering if multi-owner
+    /// attacker sides ever land.
+    #[test]
+    fn the_incident_loss_is_flat_per_corporation() {
+        let mut w = test_world();
+        let (a, b, victim) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let dest = w.systems[0].id;
+        let s0: BTreeMap<PlayerId, f64> = [a, b].iter().map(|p| (*p, w.players[p].tca_standing)).collect();
+
+        // A brings TWO fleets onto ONE hull; B brings one onto another.
+        let spot_a = w.players[&a].command_center + Vec2::new(400.0, 0.0);
+        let spot_b = w.players[&b].command_center + Vec2::new(400.0, 0.0);
+        let hull_a = freighter_at(&mut w, spot_a, dest, &[(victim, Commodity::Alloys, 60)]);
+        let hull_b = freighter_at(&mut w, spot_b, dest, &[(victim, Commodity::Alloys, 60)]);
+
+        let a1 = find_ship(&w, a, ShipKind::Raider);
+        // A second raider fleet for A, parked beside the first.
+        let a2 = w.alloc_entity_id();
+        w.fleets.insert(a2, Fleet::single(a2, a, ShipKind::Raider, spot_a + Vec2::new(-30.0, 0.0), FleetOrder::Idle, None));
+        {
+            let f = w.fleets.get_mut(&a1).unwrap();
+            f.pos = spot_a + Vec2::new(-30.0, 0.0);
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+        }
+        let b1 = find_ship(&w, b, ShipKind::Raider);
+        {
+            let f = w.fleets.get_mut(&b1).unwrap();
+            f.pos = spot_b + Vec2::new(-30.0, 0.0);
+            f.vel = Vec2::ZERO;
+            f.order = FleetOrder::Idle;
+        }
+        w.step(&[
+            Command::CommitRaid { player_id: a, raider_id: a1, target_id: hull_a },
+            Command::CommitRaid { player_id: a, raider_id: a2, target_id: hull_a },
+            Command::CommitRaid { player_id: b, raider_id: b1, target_id: hull_b },
+        ]);
+        run_until(&mut w, 90, |w| !w.fleets.contains_key(&hull_a) && !w.fleets.contains_key(&hull_b));
+        assert!(!w.fleets.contains_key(&hull_a) && !w.fleets.contains_key(&hull_b), "both hulls died");
+
+        // Every queued incident names exactly the corp(s) that did it.
+        for c in &w.pending_citations {
+            assert!(!c.culprits.is_empty(), "an incident always names someone");
+            assert!(c.culprits.iter().all(|p| *p == a || *p == b), "only real corps are cited");
+            assert!(c.culprits.iter().all(|p| !p.is_sentinel()), "no sentinel is ever a culprit");
+        }
+        let due = w.pending_citations.iter().map(|c| c.arrive_at).fold(0.0_f64, f64::max);
+        while w.time <= due + DT {
+            w.step(&[]);
+        }
+        // ONE hull killed ⇒ ONE flat loss each, regardless of how many fleets the
+        // culprit brought to do it.
+        for who in [a, b] {
+            let dropped = s0[&who] - w.players[&who].tca_standing;
+            assert!(
+                (dropped - crate::tca::TCA_STANDING_LOSS_PER_INCIDENT).abs() < 0.5,
+                "{who} pays exactly one flat loss for one hull (dropped {dropped})"
+            );
+        }
+    }
+
+    /// THE AUTHORITY PROTECTS ONLY ITS OWN HULLS. Raiding a rival's convoy — the
+    /// ordinary business of the frontier — is nothing to do with it: no incident,
+    /// no citation, no standing movement, ever.
+    #[test]
+    fn raiding_a_player_convoy_is_never_an_incident() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
+        {
+            let c = w.fleets.get_mut(&convoy).unwrap();
+            c.composition.clear();
+            c.composition.insert(ShipKind::Convoy, 1);
+            c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
+        }
+        let standing0 = w.players[&atk].tca_standing;
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&convoy));
+        assert!(!w.fleets.contains_key(&convoy), "the convoy was raided");
+        // Run well past any plausible light-travel time.
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                assert!(
+                    !matches!(e.payload, EventPayload::Citation { .. }),
+                    "player-vs-player raiding must never produce a citation"
+                );
+            }
+        }
+        assert!(w.pending_citations.is_empty(), "…nor an incident");
+        assert!(
+            w.players[&atk].tca_standing >= standing0,
+            "…nor any standing loss (regen only; got {})",
+            w.players[&atk].tca_standing
+        );
+    }
+
+    // ==== §TCA Part 4: freight under fire ===================================
+
+    /// Park a TCA freighter at `pos` carrying one lot per `(owner, commodity,
+    /// units)` — the shape the scheduler produces, built directly so combat tests
+    /// don't have to fly a whole round trip first.
+    fn freighter_at(w: &mut World, pos: Vec2, dest: EntityId, lots: &[(PlayerId, Commodity, u32)]) -> EntityId {
+        let fid = w.alloc_entity_id();
+        // IN TRANSIT (a distant MoveTo), not Idle — an Idle freighter would be
+        // treated as ARRIVED by the arrivals pass and unload on the spot. This is
+        // the state a freighter is actually in when someone jumps it.
+        w.fleets.insert(
+            fid,
+            Fleet::single(fid, PlayerId::TCA, ShipKind::Freighter, pos, FleetOrder::MoveTo { dest: pos + Vec2::new(20_000.0, 0.0) }, None),
+        );
+        let mut shipments = BTreeMap::new();
+        let mut manifest = Vec::new();
+        for (owner, commodity, units) in lots {
+            let id = w.alloc_shipment_id();
+            manifest.push(id);
+            shipments.insert(
+                id,
+                crate::tca::Shipment {
+                    id,
+                    owner: *owner,
+                    system: dest,
+                    direction: ShipmentDir::Outbound,
+                    commodity: *commodity,
+                    units: *units,
+                    fee_paid: 1.0,
+                    booked_at: 0.0,
+                    sell_on_arrival: false,
+                },
+            );
+        }
+        w.freight_runs.insert(fid, crate::tca::FreightRun { fleet: fid, dest, leg: RunLeg::Outbound, manifest, shipments });
+        fid
+    }
+
+    /// A RAID on an Authority freighter steals out of the MANIFEST (not
+    /// `Fleet.cargo`, which a freighter never uses) — a raider's hold takes one
+    /// commodity's worth — and the run is cleaned up with the hull, every shipper
+    /// aboard told their lot is gone.
+    #[test]
+    fn a_raid_on_a_freighter_seizes_from_the_manifest() {
+        let mut w = test_world();
+        let (atk, victim) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        let dest = w.systems[0].id;
+        // Two lots of the SAME good plus one of another — the raider takes the
+        // first entry's commodity (stable id order) and every entry of that good.
+        let freighter = freighter_at(
+            &mut w,
+            cc + Vec2::new(160.0, 0.0),
+            dest,
+            &[(victim, Commodity::Alloys, 30), (victim, Commodity::Fuel, 50), (atk, Commodity::Alloys, 20)],
+        );
+
+        w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: freighter }]);
+        let mut lost = 0u32;
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::Trade(TradeEvent::FreightMoved { units, stage: crate::event::FreightStage::LostWithFreighter, .. }) = e.payload {
+                    lost += units;
+                }
+            }
+            if !w.fleets.contains_key(&freighter) {
+                break;
+            }
+        }
+        assert!(!w.fleets.contains_key(&freighter), "the raid destroys the freighter");
+        // Alloys entries (30 + 20 = 50) came off; the Fuel lot went down with it.
+        let seized = w.fleets.get(&raider).and_then(|f| f.cargo);
+        assert_eq!(seized.map(|c| (c.commodity, c.units)), Some((Commodity::Alloys, 50)), "the raider's hold takes one commodity's worth");
+        assert!(w.freight_runs.get(&freighter).is_none(), "the run is cleaned up with the hull — no orphan");
+        assert_eq!(lost, 100, "every shipper aboard is told their whole lot is gone");
+    }
+
+    /// An ATTACK destroys a freighter outright — nothing is seized, the entire
+    /// manifest is lost, and the run is retired.
+    #[test]
+    fn an_attack_on_a_freighter_destroys_the_whole_manifest() {
+        let mut w = test_world();
+        let (atk, victim) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+        ]);
+        let cc = w.players[&atk].command_center;
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = cc + Vec2::new(120.0, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        let dest = w.systems[0].id;
+        let freighter = freighter_at(&mut w, cc + Vec2::new(160.0, 0.0), dest, &[(victim, Commodity::Alloys, 30)]);
+
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: raider, target_id: freighter }]);
+        run_until(&mut w, 30, |w| !w.fleets.contains_key(&freighter));
+        assert!(!w.fleets.contains_key(&freighter), "the attack destroys the freighter");
+        assert!(w.fleets.get(&raider).and_then(|f| f.cargo).is_none(), "ATTACK destroys the manifest — nothing seized");
+        assert!(w.freight_runs.is_empty(), "the run is retired with the hull");
+    }
+
+    /// §TCA v1: pirate packs never hunt the Authority — the enclaves prey on
+    /// syndicate shipping, not on the flag that hunts them.
+    #[test]
+    fn pirates_never_target_authority_freight() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Park a freighter INSIDE an enclave's hunt radius (2600) but clear of the
+        // base's own platform-equivalent defenses (1300) — so the only thing that
+        // could touch it is a pack choosing it as prey.
+        let epos = w
+            .enclaves
+            .keys()
+            .find_map(|sid| w.systems.iter().find(|s| s.id == *sid).map(|s| s.pos))
+            .expect("a seeded enclave");
+        let dest = w.systems[0].id;
+        let freighter = freighter_at(&mut w, epos + Vec2::new(2000.0, 0.0), dest, &[(id, Commodity::Alloys, 40)]);
+
+        for _ in 0..(200 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(
+                !w.fleets.values().any(|f| f.owner.is_pirate() && matches!(f.order, FleetOrder::Intercept { target } if target == freighter)),
+                "a pirate pack must never commit against an Authority hull"
+            );
+            if !w.fleets.contains_key(&freighter) {
+                panic!("the freighter was destroyed — pirates engaged the Authority");
+            }
+        }
+    }
+
+    /// The Charterhouse refuses bookings on its OWN light-delayed knowledge of a
+    /// blockade: it keeps accepting until the ONSET light arrives, and keeps
+    /// refusing until the LIFT light does. Both window edges are checked.
+    #[test]
+    fn booking_refusal_follows_the_blockade_at_lightspeed() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        let c = w.config.c;
+        let lag = 1200.0 / c; // hub <- colony light delay
+
+        // A blockade begins at t = 100.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+            s.blockade = Some(crate::galaxy::Blockade { by: PlayerId(2), since: 100.0, siege_since: None });
+        }
+        // Just BEFORE the onset light lands, the hub still knows nothing.
+        assert!(!w.believed_blockaded(colony, w.hub, 100.0 + lag - 1e-6), "the hub cannot know before the light arrives");
+        assert!(w.believed_blockaded(colony, w.hub, 100.0 + lag + 1e-6), "…and knows the instant it does");
+
+        // The blockade lifts at t = 300: the hub keeps refusing until THAT light lands.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+            s.blockade = None;
+            s.blockade_prev = Some((100.0, 300.0));
+        }
+        assert!(w.believed_blockaded(colony, w.hub, 300.0 + lag - 1e-6), "still believed blockaded until the lift light lands");
+        assert!(!w.believed_blockaded(colony, w.hub, 300.0 + lag + 1e-6), "…and accepted again the instant it does");
+
+        // And the refusal is a real, free soft-reject at the booking desk.
+        seed_warehouse(&mut w, id, &[(Commodity::Alloys, 50)]);
+        {
+            // Started long enough ago that its light has certainly reached the hub.
+            let since = w.time - lag - 10.0;
+            let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+            s.blockade = Some(crate::galaxy::Blockade { by: PlayerId(2), since, siege_since: None });
+            s.blockade_prev = None;
+        }
+        let credits0 = w.players[&id].credits;
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Commodity::Alloys, units: 50 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::DestinationBlockaded, .. })
+            )),
+            "a blockaded destination is refused with the typed reason"
+        );
+        assert_eq!(wh(&w, id, Commodity::Alloys), 50, "the goods stay put");
+        assert_eq!(w.players[&id].credits, credits0, "and it costs nothing");
+    }
+
+    /// `engage_freight` decides whether a blockader touches arriving Authority
+    /// freight. OFF (the default) the freighter passes through untouched; ON it
+    /// becomes an ordinary hostile contact.
+    #[test]
+    fn engage_freight_decides_whether_a_blockader_touches_a_freighter() {
+        let outcome = |engage: bool| -> bool {
+            let mut w = test_world();
+            let (blk_owner, victim) = (PlayerId(1), PlayerId(2));
+            w.step(&[
+                Command::AddPlayer { id: blk_owner, name: "Blk".into() },
+                Command::AddPlayer { id: victim, name: "Vic".into() },
+            ]);
+            let colony = near_hub_colony(&mut w, victim, 3000.0);
+            let station = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
+            // The blockading fleet, on station.
+            let blk = find_ship(&w, blk_owner, ShipKind::Raider);
+            {
+                let f = w.fleets.get_mut(&blk).unwrap();
+                f.pos = station;
+                f.vel = Vec2::ZERO;
+                f.order = FleetOrder::Blockade { system: colony, station };
+            }
+            w.step(&[Command::SetEngageFreight { player_id: blk_owner, fleet_id: blk, on: engage }]);
+            assert_eq!(w.fleets[&blk].engage_freight, engage, "the toggle sticks");
+            // An Authority freighter arrives on station.
+            let freighter = freighter_at(&mut w, station, colony, &[(victim, Commodity::Alloys, 40)]);
+            for _ in 0..(60 * crate::config::TICK_HZ) {
+                w.step(&[]);
+                if !w.fleets.contains_key(&freighter) {
+                    return true; // engaged and destroyed
+                }
+            }
+            w.engagements.values().any(|e| e.defenders.contains(&freighter))
+        };
+        assert!(!outcome(false), "OFF: the freighter lands and unloads through the blockade");
+        assert!(outcome(true), "ON: the freighter is engaged as an ordinary hostile contact");
+    }
+
+    /// §TCA SOVEREIGNTY: inside the Charterhouse bubble no engagement may OPEN —
+    /// an Intercept/Attack order against a target sheltering there soft-rejects,
+    /// and a contact never forms. Fleeing into the bubble is sanctuary, by design.
+    #[test]
+    fn the_charterhouse_bubble_is_sanctuary() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        // Both parked deep inside the bubble, well within contact range.
+        let inside = crate::tca::TCA_SOVEREIGN_RADIUS * 0.5;
+        {
+            let r = w.fleets.get_mut(&raider).unwrap();
+            r.pos = Vec2::new(inside, 0.0);
+            r.vel = Vec2::ZERO;
+            r.order = FleetOrder::Idle;
+        }
+        {
+            let c = w.fleets.get_mut(&convoy).unwrap();
+            c.pos = Vec2::new(inside + 10.0, 0.0);
+            c.vel = Vec2::ZERO;
+            c.order = FleetOrder::Idle;
+        }
+        // The ORDER itself is refused, with the typed reason, costing nothing.
+        let ev = w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::OrderRejected { owner, reason: crate::event::OrderRejectReason::InsideSovereignZone, .. } if *owner == atk
+            )),
+            "an intercept into the bubble soft-rejects with the typed reason"
+        );
+        assert!(!matches!(w.fleets[&raider].order, FleetOrder::Intercept { .. }), "the order never installed");
+        // And even if an order were somehow already standing, no contact opens.
+        w.fleets.get_mut(&raider).unwrap().order = FleetOrder::Intercept { target: convoy };
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            assert!(w.engagements.is_empty(), "no engagement may OPEN inside the sovereignty bubble");
+            assert!(w.fleets.contains_key(&convoy), "the sheltering fleet is never destroyed there");
+        }
+    }
+
+    // ==== §TCA Part 3: scheduled Authority freight ==========================
+
+    /// THE WHOLE ROUND TRIP: buy at the Exchange, hand the lot to the Authority,
+    /// watch a real freighter carry it to the colony and unload, then book the
+    /// return leg with sell-on-arrival and see it collected, landed in the
+    /// warehouse, and cleared at the Exchange.
+    #[test]
+    fn freight_round_trip_delivers_collects_and_sells() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 100)]);
+        let credits_after_buy = w.players[&id].credits;
+
+        // --- BOOK OUT: goods leave the warehouse, the fee is charged now. ---
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        let booked = ev.iter().find_map(|e| match &e.payload {
+            EventPayload::Trade(TradeEvent::FreightBooked { fee, depart_at, eta, .. }) => Some((*fee, *depart_at, *eta)),
+            _ => None,
+        });
+        let (fee, depart_at, eta) = booked.expect("a booking receipt");
+        assert!(fee > 0.0, "the Authority charges for the lift");
+        assert!(eta > depart_at, "the lot arrives after it departs");
+        assert_eq!(wh(&w, id, Alloys), 0, "the lot is escrowed out of the warehouse");
+        assert!((w.players[&id].credits - (credits_after_buy - fee)).abs() < 1e-9, "the fee is a pure sink");
+        assert_eq!(w.freight_queue.len(), 1, "one lot waits for the next departure");
+
+        // --- DEPARTURE: one Authority freighter, owned by the TCA sentinel. ---
+        step_until(&mut w, 4000, "the scheduled departure", |w| !w.freight_runs.is_empty());
+        assert!(w.freight_queue.is_empty(), "the queue drained onto the hull");
+        let fid = *w.freight_runs.keys().next().unwrap();
+        let f = &w.fleets[&fid];
+        assert!(f.owner.is_tca(), "the hull belongs to the Authority, not a corporation");
+        assert!(f.contains(ShipKind::Freighter));
+        assert!(f.cargo.is_none(), "the manifest rides on the RUN, never in Fleet.cargo");
+        assert_eq!(w.freight_runs[&fid].shipments.values().next().unwrap().units, 100);
+        // A TCA hull is never a corporation asset.
+        assert!(!w.players.contains_key(&PlayerId::TCA), "the Authority is not a corporation");
+
+        // --- DELIVERY into the colony's stockpile; the hull turns for home. ---
+        step_until(&mut w, 4000, "delivery into the colony stockpile", |w| sys_units(w, colony, Alloys) >= 100);
+        assert_eq!(w.freight_runs[&fid].leg, crate::tca::RunLeg::Returning, "the hull turns for the Charterhouse");
+        assert!(w.freight_runs[&fid].shipments.is_empty(), "nothing undelivered rides home");
+
+        // --- BOOK IN with sell-on-arrival: the goods leave the stockpile now. ---
+        let credits_before_return = w.players[&id].credits;
+        w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 100, sell_on_arrival: true }]);
+        assert_eq!(sys_units(&w, colony, Alloys), 0, "the lot is escrowed out of the stockpile");
+
+        // --- A later freighter collects it and brings it home, and it SELLS. ---
+        step_until(&mut w, 12_000, "the pickup to land and clear", |w| {
+            w.freight_queue.is_empty() && w.freight_runs.is_empty() && w.players[&id].credits > credits_before_return
+        });
+        assert_eq!(wh(&w, id, Alloys), 0, "sell-on-arrival left nothing in the warehouse");
+        assert!(w.players[&id].credits > credits_before_return, "the lot cleared at the Exchange");
+        assert!(!w.fleets.values().any(|f| f.owner.is_tca()), "the freighter is retired at the Charterhouse");
+    }
+
+    /// Same seed, same commands ⇒ same world, byte-for-byte — across the whole
+    /// freight machine (booking, the scheduler, a physical run, and unloading).
+    #[test]
+    fn freight_is_deterministic_across_identical_runs() {
+        use crate::cargo::Commodity::Alloys;
+        let script = |w: &mut World| {
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let colony = near_hub_colony(w, id, 1200.0);
+            seed_warehouse(w, id, &[(Alloys, 500)]);
+            w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 250 }]);
+            for _ in 0..6000 {
+                w.step(&[]);
+            }
+            w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 40, sell_on_arrival: true }]);
+            for _ in 0..6000 {
+                w.step(&[]);
+            }
+        };
+        let mut a = test_world();
+        let mut b = test_world();
+        script(&mut a);
+        script(&mut b);
+        // The run actually happened (so the comparison means something).
+        assert!(a.players[&PlayerId(1)].stats.market_revenue > 0.0 || a.tick > 0);
+        assert_eq!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+    }
+
+    /// The per-departure CAP never REJECTS a booking — an oversized lot is split
+    /// and rolls forward onto consecutive departures, FIFO.
+    #[test]
+    fn freight_cap_rolls_a_big_lot_onto_later_departures() {
+        use crate::cargo::Commodity::Alloys;
+        let cap = crate::tca::TCA_SHIPMENT_CAP;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        // One and a half caps in ONE booking (kept under the colony's 700-unit
+        // storage cap so THIS test isolates the departure cap), and the credits
+        // to pay for it.
+        let lot = cap + cap / 2;
+        seed_warehouse(&mut w, id, &[(Alloys, lot)]);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: lot }]);
+        assert!(
+            !ev.iter().any(|e| matches!(&e.payload, EventPayload::Trade(TradeEvent::Rejected { .. }))),
+            "an oversized lot is never rejected — it queues"
+        );
+        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), lot);
+
+        // First departure lifts exactly one cap; the rest keeps its place.
+        step_until(&mut w, 4000, "the first departure", |w| !w.freight_runs.is_empty());
+        let first: u32 = w.freight_runs.values().flat_map(|r| r.shipments.values()).map(|s| s.units).sum();
+        assert_eq!(first, cap, "one departure lifts exactly one cap per corp");
+        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), lot - cap, "the remainder waits");
+
+        // Everything eventually lands at the colony — nothing is lost to the cap.
+        step_until(&mut w, 40_000, "the whole lot to arrive", |w| sys_units(w, colony, Alloys) >= lot);
+        assert!(w.freight_queue.is_empty(), "the queue drained completely");
+    }
+
+    /// A DEPOT at the destination both doubles the per-departure cap and discounts
+    /// the fee — the flat v1 terms.
+    #[test]
+    fn a_depot_doubles_the_lift_and_discounts_the_fee() {
+        use crate::cargo::Commodity::Alloys;
+        let cap = crate::tca::TCA_SHIPMENT_CAP;
+        let fee_of = |depot: bool| {
+            let mut w = test_world();
+            let id = PlayerId(1);
+            w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+            let colony = near_hub_colony(&mut w, id, 1200.0);
+            if depot {
+                let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
+                s.set_tier(crate::build::StructureKind::Depot, 1);
+            }
+            seed_warehouse(&mut w, id, &[(Alloys, cap * 2)]);
+            w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+            let ev = w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: cap * 2 }]);
+            let fee = ev
+                .iter()
+                .find_map(|e| match &e.payload {
+                    EventPayload::Trade(TradeEvent::FreightBooked { fee, .. }) => Some(*fee),
+                    _ => None,
+                })
+                .expect("a booking receipt");
+            step_until(&mut w, 4000, "the first departure", |w| !w.freight_runs.is_empty());
+            let lifted: u32 = w.freight_runs.values().flat_map(|r| r.shipments.values()).map(|s| s.units).sum();
+            (fee, lifted)
+        };
+        let (plain_fee, plain_lift) = fee_of(false);
+        let (depot_fee, depot_lift) = fee_of(true);
+        assert_eq!(plain_lift, cap, "no depot: one cap per departure");
+        assert_eq!(depot_lift, cap * 2, "a depot doubles the per-departure lift");
+        assert!(
+            (depot_fee - plain_fee * crate::tca::TCA_DEPOT_FEE_MULT).abs() < 1e-6,
+            "a depot discounts the fee (plain {plain_fee}, depot {depot_fee})"
+        );
+    }
+
+    /// A queued PICKUP whose origin system falls before collection is forfeit — to
+    /// NOBODY. The captor gets nothing and the fee is not refunded.
+    #[test]
+    fn a_queued_pickup_is_forfeit_when_the_system_falls() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_stock(&mut w, colony, &[(Alloys, 200.0)]);
+        w.step(&[Command::BookFreightIn { player_id: id, system: colony, commodity: Alloys, units: 100, sell_on_arrival: false }]);
+        assert_eq!(w.freight_queue.len(), 1);
+
+        // The system changes hands before a freighter ever gets there.
+        let rival = PlayerId(2);
+        w.systems.iter_mut().find(|s| s.id == colony).unwrap().owner = Some(rival);
+
+        let mut forfeited = false;
+        for _ in 0..8000 {
+            for e in w.step(&[]) {
+                if let EventPayload::Trade(TradeEvent::FreightMoved { player, units, stage: crate::event::FreightStage::ForfeitedOnCapture, .. }) = e.payload
+                    && player == id
+                {
+                    assert_eq!(units, 100);
+                    forfeited = true;
+                }
+            }
+            if forfeited {
+                break;
+            }
+        }
+        assert!(forfeited, "the queued pickup is forfeit with an owner notice");
+        assert!(w.freight_queue.is_empty(), "the lot is gone from the queue");
+        assert_eq!(wh(&w, id, Alloys), 0, "forfeit means gone — not returned");
+        // The captor gains nothing: the goods left the stockpile at booking.
+        assert_eq!(sys_units(&w, colony, Alloys), 100, "only the un-booked remainder is there to capture");
+    }
+
+    /// If the destination is no longer the shipper's when the freighter arrives, the
+    /// lot is NOT lost — the Authority holds it and carries it back to the owner's
+    /// Charterhouse warehouse. Deliberately friendlier than the convoy rule.
+    #[test]
+    fn undeliverable_freight_returns_to_the_warehouse() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 100)]);
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
+        step_until(&mut w, 4000, "the departure", |w| !w.freight_runs.is_empty());
+
+        // Lose the colony while the lot is in flight.
+        w.systems.iter_mut().find(|s| s.id == colony).unwrap().owner = Some(PlayerId(2));
+
+        step_until(&mut w, 12_000, "the lot to come home", |w| wh(w, id, Alloys) == 100);
+        assert_eq!(sys_units(&w, colony, Alloys), 0, "the new owner is not gifted the cargo");
+        assert!(w.freight_runs.is_empty() && !w.fleets.values().any(|f| f.owner.is_tca()), "the run is retired");
+    }
+
+    /// A FULL DEPOT bounces what won't fit: the Authority unloads up to the
+    /// system's remaining headroom and carries the rest back to the owner's
+    /// warehouse. Goods are never destroyed and never silently vanish.
+    ///
+    /// (The handoff didn't specify freight-vs-storage-cap; respecting the cap keeps
+    /// freight from being a way to smuggle goods past a limit convoys obey, and
+    /// reuses the "the Authority holds your goods" return rule rather than
+    /// inventing a second overflow mechanism.)
+    #[test]
+    fn freight_respects_the_storage_cap_and_returns_the_overflow() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        let cap_units = w.systems.iter().find(|s| s.id == colony).unwrap().storage_cap();
+        // Pre-fill the depot to 60 units short of full, then ship 200.
+        seed_stock(&mut w, colony, &[(Alloys, cap_units - 60.0)]);
+        seed_warehouse(&mut w, id, &[(Alloys, 200)]);
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 200 }]);
+
+        step_until(&mut w, 20_000, "the overflow to come home", |w| wh(w, id, Alloys) > 0 && w.freight_runs.is_empty());
+        // 60 landed, 140 came back — nothing created, nothing destroyed.
+        assert_eq!(sys_units(&w, colony, Alloys), cap_units as u32, "the depot filled exactly to its cap");
+        assert_eq!(wh(&w, id, Alloys), 140, "the overflow is back in the Charterhouse warehouse");
+    }
+
+    /// §TCA fog: the shipment queue is OWNER-ONLY. `shipments_of` — the one read
+    /// the View is built from — never returns another corporation's lots, whether
+    /// they are queued at the Charterhouse or aboard a shared freighter's manifest.
+    #[test]
+    fn the_shipment_queue_is_owner_scoped() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        // BOTH corps ship to their own colony, and both lots ride the SAME hull.
+        let shared = near_hub_colony(&mut w, a, 1200.0);
+        seed_warehouse(&mut w, a, &[(Alloys, 60)]);
+        seed_warehouse(&mut w, b, &[(Alloys, 90)]);
+        w.step(&[Command::BookFreightOut { player_id: a, system: shared, commodity: Alloys, units: 60 }]);
+        // B books to the same destination by briefly holding it — the point is one
+        // manifest carrying two owners' lots.
+        w.systems.iter_mut().find(|s| s.id == shared).unwrap().owner = Some(b);
+        w.step(&[Command::BookFreightOut { player_id: b, system: shared, commodity: Alloys, units: 90 }]);
+
+        let queued_a = w.shipments_of(a);
+        let queued_b = w.shipments_of(b);
+        assert_eq!(queued_a.len(), 1);
+        assert_eq!(queued_b.len(), 1);
+        assert!(queued_a.iter().all(|(s, _)| s.owner == a), "A sees only A's lots");
+        assert!(queued_b.iter().all(|(s, _)| s.owner == b), "B sees only B's lots");
+        assert_eq!(queued_a[0].0.units, 60);
+        assert_eq!(queued_b[0].0.units, 90);
+
+        // Once ABOARD one shared freighter, the split still holds.
+        step_until(&mut w, 4000, "the departure", |w| !w.freight_runs.is_empty());
+        assert_eq!(w.freight_runs.len(), 1, "one hull serves the destination");
+        assert_eq!(w.freight_runs.values().next().unwrap().shipments.len(), 2, "two owners aboard");
+        for (who, other) in [(a, b), (b, a)] {
+            let mine = w.shipments_of(who);
+            assert!(mine.iter().all(|(s, aboard)| s.owner == who && *aboard), "{who} sees only their own aboard lot");
+            assert!(!mine.iter().any(|(s, _)| s.owner == other), "no cross-owner leak");
+        }
+    }
+
+    /// Freight to a system the corp does NOT own is refused, for free, with the
+    /// typed reason — the Authority serves your own colonies only.
+    #[test]
+    fn freight_to_a_rivals_system_is_refused_for_free() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let rival_sys = near_hub_colony(&mut w, PlayerId(2), 1200.0);
+        seed_warehouse(&mut w, id, &[(Alloys, 100)]);
+        let credits0 = w.players[&id].credits;
+        let ev = w.step(&[Command::BookFreightOut { player_id: id, system: rival_sys, commodity: Alloys, units: 100 }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { player, reason: TradeRejectReason::NotYourSystem, .. }) if *player == id
+            )),
+            "booking to a rival's system is refused with the typed reason"
+        );
+        assert_eq!(wh(&w, id, Alloys), 100, "the goods stay put");
+        assert_eq!(w.players[&id].credits, credits0, "and it costs nothing");
+        assert!(w.freight_queue.is_empty());
+    }
+
+    /// `MarketBuy { ship_to }` is ONE checkbox: buy, then hand the lot straight to
+    /// the Authority. If the booking can't be honored the goods simply stay in the
+    /// warehouse and the owner is told why.
+    #[test]
+    fn market_buy_ship_to_books_freight_or_leaves_the_lot_in_the_warehouse() {
+        use crate::cargo::Commodity::Fuel;
+        let mut w = test_world();
+        let id = PlayerId(1);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, id);
+        let colony = near_hub_colony(&mut w, id, 1200.0);
+        // Happy path: the lot is bought AND booked in one command.
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 40, ship_to: Some(colony) }]);
+        assert_eq!(wh(&w, id, Fuel), 0, "the whole lot went straight onto the freight queue");
+        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), 40);
+
+        // Sad path: a rival's system — the goods stay bought, and stay put.
+        let rival_sys = near_hub_colony(&mut w, PlayerId(2), 1500.0);
+        let ev = w.step(&[Command::MarketBuy { player_id: id, commodity: Fuel, units: 25, ship_to: Some(rival_sys) }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                &e.payload,
+                EventPayload::Trade(TradeEvent::Rejected { reason: TradeRejectReason::NotYourSystem, .. })
+            )),
+            "the failed leg reports why"
+        );
+        assert_eq!(wh(&w, id, Fuel), 25, "the purchase stands; the lot simply stays at the Charterhouse");
     }
 
     #[test]
-    fn stock_system_moves_hq_inventory_into_a_system_stockpile() {
+    fn stock_system_moves_warehouse_goods_into_a_system_stockpile() {
         use crate::cargo::Commodity::Volatiles;
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let sys = w.players[&id].home_system.expect("home system");
-        // AddPlayer seeds the HQ trading inventory with 120 of each raw good.
-        let held0 = w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0);
-        assert!(held0 >= 100, "precondition: HQ holds >=100 volatiles (had {held0})");
+        // AddPlayer seeds the hub WAREHOUSE with 120 of each of the five raw goods.
+        let held0 = wh(&w, id, Volatiles);
+        assert!(held0 >= 100, "precondition: the warehouse holds >=100 volatiles (had {held0})");
         let ships0 = w.fleets.len();
 
         // Soft-reject cases: zero units, more than held, a system you don't own —
-        // none may debit HQ or spawn a convoy.
+        // none may debit the warehouse or spawn a convoy.
         w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 0 }]);
         w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 999_999 }]);
         w.step(&[Command::StockSystem { player_id: id, system_id: EntityId(987_654), commodity: Volatiles, units: 10 }]);
-        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0, "rejected stock must not debit HQ");
+        assert_eq!(wh(&w, id, Volatiles), held0, "rejected stock must not debit the warehouse");
         assert_eq!(w.fleets.len(), ships0, "rejected stock must not spawn a convoy");
 
-        // Valid: debits HQ now, dispatches the convoy, and routes the goods to the
-        // SYSTEM stockpile. At ~zero home→home-system distance the DeliverToSystem
-        // convoy deposits the SAME tick, so assert the OUTCOME, not a lingering ship.
+        // Valid: debits the warehouse now, dispatches a convoy FROM THE HUB, and
+        // routes the goods to the SYSTEM stockpile. Assert the OUTCOME, not a
+        // lingering ship — the crossing time depends on hub→system distance.
         let vol_at = |w: &World| w.systems.iter().find(|s| s.id == sys).and_then(|s| s.stockpile.get(&Volatiles).copied()).unwrap_or(0.0);
         let s0 = vol_at(&w);
         let overflow_of = |evs: &[Event]| evs.iter().any(|e| matches!(&e.payload,
             EventPayload::Trade(TradeEvent::StorageOverflow { system, commodity, .. })
                 if *system == sys && *commodity == Volatiles));
         let evs = w.step(&[Command::StockSystem { player_id: id, system_id: sys, commodity: Volatiles, units: 100 }]);
-        assert_eq!(w.players[&id].inventory.get(&Volatiles).copied().unwrap_or(0), held0 - 100, "HQ debited by the shipped units");
+        assert_eq!(wh(&w, id, Volatiles), held0 - 100, "the warehouse is debited by the shipped units");
         assert!(evs.iter().any(|e| matches!(&e.payload,
             EventPayload::Trade(TradeEvent::StockDispatched { system, commodity, units, .. })
                 if *system == sys && *commodity == Volatiles && *units == 100)),
@@ -12334,7 +15852,7 @@ mod tests {
 
         // The goods land in the SYSTEM stockpile (single-player → never raided).
         // A big jump (≥50, unreachable by per-tick production drift) or an
-        // overflow-to-hub both prove the goods were routed to the SYSTEM, not HQ.
+        // overflow-to-hub both prove the goods reached the SYSTEM.
         let mut delivered = vol_at(&w) >= s0 + 50.0 || overflow_of(&evs);
         if !delivered {
             for _ in 0..(260 * crate::config::TICK_HZ) {
@@ -12355,15 +15873,16 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let ships0 = w.fleets.len();
-        // Sell more than held → ignored (no convoy, inventory unchanged).
-        let alloys0 = w.players[&id].inventory[&Alloys];
+        // Sell more than the WAREHOUSE holds → soft-rejected, nothing spent.
+        seed_warehouse(&mut w, id, &[(Alloys, 10)]);
         w.step(&[Command::MarketSell { player_id: id, commodity: Alloys, units: 99_999 }]);
-        assert_eq!(w.players[&id].inventory[&Alloys], alloys0);
+        assert_eq!(wh(&w, id, Alloys), 10, "a rejected sell leaves the warehouse intact");
         assert_eq!(w.fleets.len(), ships0, "rejected sell must not spawn a convoy");
         // Buy beyond the treasury → ignored.
         let credits0 = w.players[&id].credits;
-        w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000 }]);
+        w.step(&[Command::MarketBuy { player_id: id, commodity: Alloys, units: 10_000_000, ship_to: None }]);
         assert_eq!(w.players[&id].credits, credits0);
+        assert_eq!(wh(&w, id, Alloys), 10, "a rejected buy deposits nothing");
         assert_eq!(w.fleets.len(), ships0, "rejected buy must not spawn a convoy");
     }
 
@@ -12376,17 +15895,24 @@ mod tests {
             Command::AddPlayer { id: buyer, name: "Buy".into() },
             Command::AddPlayer { id: seller, name: "Sell".into() },
         ]);
+        // Start from an empty hub warehouse so the assertions below read as
+        // absolute totals rather than deltas off the starting stock.
+        clear_warehouse(&mut w, buyer);
+        clear_warehouse(&mut w, seller);
+        // §TCA: sell-side escrow draws from the CHARTERHOUSE WAREHOUSE, so the
+        // seller's goods must already be at the Exchange.
+        seed_warehouse(&mut w, seller, &[(MetallicOre, 50)]);
         let buyer_credits0 = w.players[&buyer].credits;
         let seller_credits0 = w.players[&seller].credits;
-        let seller_ore0 = w.players[&seller].inventory[&MetallicOre];
+        let seller_ore0 = wh(&w, seller, MetallicOre);
 
         // A crossing pair: buyer pays up to 9, seller wants at least 7.
         w.step(&[
             Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: MetallicOre, units: 50, limit_price: 7.0 },
             Command::PlaceLimitOrder { player_id: buyer, side: Side::Buy, commodity: MetallicOre, units: 50, limit_price: 9.0 },
         ]);
-        // Reservations taken at placement.
-        assert_eq!(w.players[&seller].inventory[&MetallicOre], seller_ore0 - 50);
+        // Reservations taken at placement — out of the warehouse.
+        assert_eq!(wh(&w, seller, MetallicOre), seller_ore0 - 50);
         assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 9.0)).abs() < 1e-6);
         assert_eq!(w.book.len(), 2);
 
@@ -12405,8 +15931,13 @@ mod tests {
         // paid 50×7; buyer's over-reservation (50×2) is refunded → net 50×7.
         assert!((w.players[&seller].credits - (seller_credits0 + 50.0 * 7.0)).abs() < 1e-6, "seller paid at uniform price");
         assert!((w.players[&buyer].credits - (buyer_credits0 - 50.0 * 7.0)).abs() < 1e-6, "buyer settled at uniform price (over-reservation refunded)");
-        // The buyer's matched goods cross home as a delivery convoy.
-        assert!(w.fleets.values().any(|s| s.owner == buyer && s.mission == Some(TradeMission::DeliverHome)));
+        // §TCA: the buyer's matched goods land in their Charterhouse warehouse —
+        // a fill is an Exchange settlement, never a crossing.
+        assert_eq!(wh(&w, buyer, MetallicOre), 50, "the fill deposits into the buyer's warehouse");
+        assert!(
+            !w.fleets.values().any(|s| s.owner == buyer && s.mission == Some(TradeMission::DeliverHome)),
+            "a limit fill conjures no delivery convoy"
+        );
     }
 
     #[test]
@@ -12418,6 +15949,7 @@ mod tests {
             Command::AddPlayer { id: buyer, name: "Buy".into() },
             Command::AddPlayer { id: seller, name: "Sell".into() },
         ]);
+        seed_warehouse(&mut w, seller, &[(Fuel, 30)]); // §TCA: escrow comes from the warehouse
         // Buyer pays up to 6, seller wants 9 — they do NOT cross.
         w.step(&[
             Command::PlaceLimitOrder { player_id: seller, side: Side::Sell, commodity: Fuel, units: 30, limit_price: 9.0 },
@@ -12983,7 +16515,7 @@ mod tests {
         // A production convoy is just a normal raidable trade convoy (Convoy kind,
         // carrying cargo, selling at the hub) — spawned at the system.
         let sys_pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
-        let convoy = w.fleets.values().find(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub)).cloned();
+        let convoy = w.fleets.values().find(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. }))).cloned();
         let convoy = convoy.expect("ship-production should spawn a sell convoy");
         assert_eq!(convoy.flagship_kind(), ShipKind::Convoy, "production fleets in raidable convoys");
         assert!(convoy.cargo.is_some());
@@ -13026,7 +16558,7 @@ mod tests {
         w.step(&[]);
         for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
         w.step(&[Command::ShipProduction { player_id: def, system_id: sysid }]);
-        let convoy = *w.fleets.iter().find(|(_, s)| s.owner == def && s.mission == Some(TradeMission::SellAtHub)).unwrap().0;
+        let convoy = *w.fleets.iter().find(|(_, s)| s.owner == def && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. }))).unwrap().0;
 
         // Park the attacker's raider right on the production convoy and commit.
         let raider = find_ship(&w, atk, ShipKind::Raider);
@@ -13082,6 +16614,7 @@ mod tests {
                 status: OrderStatus::Active,
                 next_eval_tick: 0,
                 in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         assert_eq!(w.players[&id].standing_orders.len(), 1, "rule stored");
@@ -13129,6 +16662,7 @@ mod tests {
                 status: OrderStatus::Active,
                 next_eval_tick: 0,
                 in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
 
@@ -13143,7 +16677,7 @@ mod tests {
             let in_flight = w
                 .fleets
                 .values()
-                .filter(|s| s.owner == id && s.mission == Some(TradeMission::SellAtHub))
+                .filter(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. })))
                 .count();
             max_in_flight = max_in_flight.max(in_flight);
         }
@@ -13192,6 +16726,7 @@ mod tests {
                 status: OrderStatus::Active,
                 next_eval_tick: 0,
                 in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
 
@@ -13276,6 +16811,7 @@ mod tests {
                     status: OrderStatus::Active,
                     next_eval_tick: 0,
                     in_flight: None,
+                sell_on_arrival: true,
                 },
             }]);
             for _ in 0..(200 * crate::config::TICK_HZ) {
@@ -13312,6 +16848,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         // Invalid: source you don't own → rejected.
@@ -13323,6 +16860,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         // Invalid: MaintainAtDest with a Hub destination → rejected.
@@ -13333,6 +16871,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::MaintainAtDest { target: 5.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         assert!(w.players[&id].standing_orders.is_empty(), "invalid rules must be rejected");
@@ -13345,6 +16884,7 @@ mod tests {
                 commodity: crate::cargo::Commodity::MetallicOre,
                 trigger: Trigger::AboveThreshold { threshold: 1.0 },
                 status: OrderStatus::Active, next_eval_tick: 0, in_flight: None,
+                sell_on_arrival: true,
             },
         }]);
         let rid = w.players[&id].standing_orders[0].id;
@@ -13389,6 +16929,7 @@ mod tests {
                     status: OrderStatus::Active,
                     next_eval_tick: 0,
                     in_flight: None,
+                sell_on_arrival: true,
                 },
             }]);
         }
@@ -13671,7 +17212,7 @@ mod tests {
         let (convoy, d) = doomed_supply(&mut w, id);
         assert_eq!(run_until_divert(&mut w, d), Some(DivertAction::SoldAtHub));
         let ship = w.fleets.get(&convoy).expect("re-routed convoy still flies");
-        assert!(matches!(ship.mission, Some(TradeMission::SellAtHub)), "re-tasked to sell at hub");
+        assert!(matches!(ship.mission, Some(TradeMission::DeliverToWarehouse { .. })), "re-tasked to sell at the Charterhouse");
         assert!(matches!(ship.order, FleetOrder::MoveTo { dest } if dest == hub), "heading to the hub");
     }
 
@@ -14962,7 +18503,9 @@ mod tests {
         w.enclaves.get_mut(&sid).unwrap().next_launch_at = f64::INFINITY; // no packs
         let fleet = squad(&mut w, hunter, epos, ShipKind::Raider, 12, FleetOrder::Idle);
         let _ = fleet;
-        let before = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
+        // Plunder now lands in the victor's HOME SYSTEM stockpile.
+        let home_sys = w.players[&hunter].home_system.expect("home system");
+        let before = sys_units(&w, home_sys, Commodity::Alloys);
         let mut cleared = false;
         for _ in 0..(120 * crate::config::TICK_HZ) {
             let ev = w.step(&[]);
@@ -14972,8 +18515,8 @@ mod tests {
             }
         }
         assert!(cleared, "a strong war-fleet stationed at the base grinds it down and CLEARS it");
-        let after = w.players[&hunter].inventory.get(&Commodity::Alloys).copied().unwrap_or(0);
-        assert!(after >= before + 40, "the victor seizes the plunder ({before} → {after})");
+        let after = sys_units(&w, home_sys, Commodity::Alloys);
+        assert!(after >= before + 40, "the victor seizes the plunder into its home system ({before} → {after})");
         assert!(!w.enclaves[&sid].active(w.time), "the cleared base goes DORMANT");
         assert_eq!(w.enclaves[&sid].tier, 1, "it will respawn WEAKER (tier 1)");
     }
@@ -14984,7 +18527,7 @@ mod tests {
         let run = || {
             let mut w = test_world();
             w.step(&[Command::AddPlayer { id: PlayerId(1), name: "V".into() }]);
-            let (sid, epos) = an_enclave(&w);
+            let (_sid, epos) = an_enclave(&w);
             let convoy = squad(&mut w, PlayerId(1), epos + Vec2::new(1200.0, 0.0), ShipKind::Convoy, 1, FleetOrder::Idle);
             w.fleets.get_mut(&convoy).unwrap().cargo = Some(crate::cargo::Cargo { commodity: Commodity::MetallicOre, units: 20 });
             for _ in 0..(60 * crate::config::TICK_HZ) {
@@ -15263,16 +18806,19 @@ mod tests {
         // Trade throughput + market profit.
         w.accumulate_rankings(&[
             ev(EventPayload::Trade(TradeEvent::Delivered { player: p1, commodity: Commodity::MetallicOre, units: 10, system: None })),
-            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0 })),
-            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0 })),
-            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0 })),
-            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0 })),
+            ev(EventPayload::Trade(TradeEvent::Sold { player: p1, commodity: Commodity::MetallicOre, units: 4, unit_price: 5.0, penalty: 0.0 })),
+            ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0, penalty: 0.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0, penalty: 0.0 })),
+            ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0, penalty: 0.0 })),
             ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::StructureKind::Depot, tier: 1 }),
             ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
         ]);
         {
             let s = &w.players[&p1].stats;
-            assert_eq!(s.trade_units, 14, "delivered 10 + sold 4");
+            // §TCA: only the DELIVERY hauls goods. A `Sold` is market revenue, not
+            // throughput (an instant Charterhouse sale moves nothing); the convoy
+            // paths that really haul bump throughput at their arrival site instead.
+            assert_eq!(s.trade_units, 10, "delivered 10; the sale hauled nothing");
             assert_eq!(s.market_revenue, 4.0 * 5.0 + 3.0 * 2.0);
             assert_eq!(s.market_spend, 2.0 * 3.0 + 1.0 * 4.0);
             assert_eq!(s.market_profit(), 26.0 - 10.0);

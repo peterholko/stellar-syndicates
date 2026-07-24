@@ -53,18 +53,29 @@ pub enum Command {
         raider_id: EntityId,
     },
 
-    /// Buy at market on the hub Exchange (§9): instant settlement at the true
-    /// standing price (credits debited now), then a delivery convoy carries the
-    /// goods hub → home (raidable in transit). Price-certain, delivery-risky.
+    /// Buy at market on the CHARTERHOUSE Exchange (§9, §TCA): instant settlement at
+    /// the true standing price (credits debited now); the goods land in the corp's
+    /// Charterhouse WAREHOUSE. Nothing crosses space — moving goods out to a system
+    /// is the separate, explicit act of TCA freight or a player convoy.
     MarketBuy {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
         units: u32,
+        /// §TCA: ONE-CHECKBOX composition — on a successful purchase, immediately
+        /// attempt a [`Command::BookFreightOut`] of the whole lot to this owned
+        /// system. If that booking soft-rejects (unowned, unaffordable fee, …) the
+        /// goods simply stay in the warehouse and the owner gets the reject notice.
+        /// `None` = leave the lot at the Charterhouse. serde default so old clients
+        /// and pre-feature commands still parse.
+        #[serde(default)]
+        ship_to: Option<EntityId>,
     },
 
-    /// Sell at market (§9): commit goods to the crossing FIRST — a convoy carries
-    /// them home → hub and sells at the price-on-arrival (not a locked launch
-    /// price). The seller faces double uncertainty (raid + unknown final price).
+    /// Sell at market (§9, §TCA): draws ONLY from the corp's Charterhouse
+    /// WAREHOUSE and settles instantly at the standing price — the goods are
+    /// already at the Exchange, so there is no crossing and no price-on-arrival
+    /// gamble. Home goods are not a valid source: ship them to the Charterhouse
+    /// first. Soft-rejects (free, owner-only notice) if the warehouse is short.
     MarketSell {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
@@ -74,13 +85,49 @@ pub enum Command {
     /// Place a resting limit order (§9). It clears in the periodic uniform-price
     /// call auction — within a batch everyone clears at one price, so reacting
     /// fastest confers no edge (the anti-sniping mechanism). Resources are
-    /// reserved when placed (credits for a buy, goods for a sell).
+    /// reserved when placed: credits for a buy, and for a sell the goods are
+    /// escrowed out of the hub WAREHOUSE (§TCA — never a system stockpile).
+    /// A buy's fill deposits into that same warehouse.
     PlaceLimitOrder {
         player_id: PlayerId,
         side: crate::market::Side,
         commodity: crate::cargo::Commodity,
         units: u32,
         limit_price: f64,
+    },
+
+    /// BOOK OUTBOUND FREIGHT (§TCA): hand `units` of a commodity to the Terran
+    /// Charter Authority's scheduled common carrier for delivery from the
+    /// CHARTERHOUSE WAREHOUSE to one of the corp's OWNED systems. The goods are
+    /// escrowed out of the warehouse and the fee is charged NOW (a pure credit
+    /// sink — destroyed, never refunded); the shipment then waits for the next
+    /// scheduled departure. Bookings beyond a departure's per-corp cap are not
+    /// rejected — they roll forward FIFO to later departures. INSTANT local
+    /// administration; the FREIGHTER that later carries it is a physical, raidable
+    /// hull. Soft-rejects (free, owner-only notice) if the system isn't the corp's,
+    /// the warehouse is short, or the treasury can't cover the fee.
+    BookFreightOut {
+        player_id: PlayerId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// BOOK INBOUND FREIGHT (§TCA): the reverse leg — the Authority collects
+    /// `units` from one of the corp's OWNED systems' stockpiles and carries them to
+    /// the Charterhouse warehouse. The goods are escrowed out of the stockpile
+    /// immediately (they sit "awaiting pickup" inside the shipment) and the fee is
+    /// charged now. If the system is CAPTURED before pickup the queued shipment is
+    /// forfeit to nobody — deleted, with an owner notice. `sell_on_arrival` sells
+    /// the lot at the Exchange the moment it lands at the Charterhouse, at that
+    /// tick's standing price (market price only in v1 — no limit variant).
+    BookFreightIn {
+        player_id: PlayerId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+        #[serde(default)]
+        sell_on_arrival: bool,
     },
 
     /// Dispatch convoys to carry a claimed system's accumulated production to the
@@ -93,7 +140,7 @@ pub enum Command {
         system_id: EntityId,
     },
 
-    /// SUPPLY FROM HQ: move `units` of `commodity` from the corp's HQ trading
+    /// SUPPLY A SYSTEM: move `units` of `commodity` from the corp's HUB WAREHOUSE
     /// inventory into an OWNED system's stockpile, carried by a sub-light,
     /// raidable convoy. This is the bridge from the market pool (what buys fill)
     /// to a system's production stockpile (what converters/refineries consume and
@@ -348,6 +395,73 @@ pub enum Command {
         player_id: PlayerId,
         fleet_id: EntityId,
         system_id: EntityId,
+    },
+
+    // ---- §TCA Part 5: PLAYER-CONVOY LOGISTICS --------------------------------
+    // The second, player-owned logistics channel: you fly it, you load it, you
+    // take the risk, and it costs no fee. Every one of these requires the fleet to
+    // be the player's, IDLE, unengaged, and within `tca::LOGISTICS_RANGE` of the
+    // dock — loading is dockside work. All soft-reject, free, owner-only.
+    /// Move goods from the corp's CHARTERHOUSE WAREHOUSE into a fleet's hold.
+    /// Tops up an existing load of the same commodity; a hold already carrying a
+    /// DIFFERENT good soft-rejects (a player hull stays single-commodity).
+    HubLoad {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// Empty a fleet's hold into the corp's Charterhouse warehouse.
+    HubUnload { player_id: PlayerId, fleet_id: EntityId },
+
+    /// Move goods from one of the corp's OWNED systems' stockpiles into a
+    /// fleet's hold (whole units).
+    SystemLoad {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+
+    /// Empty a fleet's hold into one of the corp's OWNED systems' stockpiles.
+    SystemUnload { player_id: PlayerId, fleet_id: EntityId, system: EntityId },
+
+    /// HAUL TO THE CHARTERHOUSE: send a loaded fleet of the player's to the hub on
+    /// a [`crate::ship::TradeMission::DeliverToWarehouse`] run — deposit into the
+    /// warehouse on arrival, optionally selling the lot at the standing price. The
+    /// fleet SURVIVES the delivery (it is the player's hull) and goes Idle there.
+    HaulToCharterhouse {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        #[serde(default)]
+        sell_on_arrival: bool,
+    },
+
+    /// §TCA Phase 2: PAY REINSTATEMENT — buy charter standing back from the
+    /// Terran Charter Authority at `TCA_REINSTATE_FEE_PER_POINT` credits a point.
+    /// The credits are BURNED (a sink, like the freight fee), and the purchase is
+    /// clamped to the ceiling — you are only ever charged for points actually
+    /// restored. INSTANT, like its siblings `MarketBuy`/`BookFreightOut`: paying
+    /// the Charterhouse is a settlement, and settlement is correlation (§3), not a
+    /// courier. Soft-rejects (free, owner-only) if the treasury can't cover it.
+    PayReinstatement {
+        player_id: PlayerId,
+        points: f64,
+    },
+
+    /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
+    /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
+    /// system. INSTANT local administration on the player's own fleet — a standing
+    /// policy like [`Command::SetFleetPosture`], not a real-time order, so it can
+    /// be flipped without disturbing the blockade the fleet is holding. Off by
+    /// default: a blockade strangles a rival's logistics without picking a fight
+    /// with the chartering power. Soft-reject if not the player's fleet.
+    SetEngageFreight {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        on: bool,
     },
 
     /// SURVEY a system's exact geology (§explore Part 2 — the scout's second

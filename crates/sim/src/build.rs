@@ -361,6 +361,13 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Battleship } => &BATTLESHIP_RECIPE,
         BuildKind::Ship { ship: ShipKind::Dreadnought } => &DREADNOUGHT_RECIPE,
         BuildKind::Ship { ship: ShipKind::Titan } => &TITAN_RECIPE,
+        // The Authority Freighter (§TCA) is TCA-only and never buildable: the
+        // `BuildShip` handler soft-rejects it (via `ShipKind::is_buildable`) BEFORE
+        // any recipe lookup, and no `BuildJob` for one can ever be enqueued, so this
+        // arm is genuinely unreachable — it exists only for match exhaustiveness.
+        BuildKind::Ship { ship: ShipKind::Freighter } => {
+            unreachable!("Freighter is TCA-only and never buildable — apply_build guards it")
+        }
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
         BuildKind::Module { module } => module_recipe(module),
         BuildKind::Upgrade { upgrade } => match upgrade {
@@ -477,6 +484,9 @@ pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
         ShipKind::Battleship => 4,
         ShipKind::Dreadnought => 5,
         ShipKind::Titan => 6,
+        // §TCA: no shipyard tier can EVER build an Authority freighter — a
+        // belt-and-suspenders backstop behind `ShipKind::is_buildable`.
+        ShipKind::Freighter => u32::MAX,
     }
 }
 

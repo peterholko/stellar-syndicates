@@ -3,7 +3,7 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -15,7 +15,7 @@ const state: ViewState = initialState();
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
 // Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 6;
+const EXPECTED_PROTOCOL_VERSION = 7;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -70,15 +70,59 @@ function flushPressGuard(): void {
 }
 window.addEventListener("pointerup", () => setTimeout(flushPressGuard, 0), true);
 window.addEventListener("pointercancel", () => setTimeout(flushPressGuard, 0), true);
-/// True → a press is currently down inside `rootId`, so the caller must NOT
-/// rebuild its DOM now; the render is queued and re-runs after the press.
+
+// The same hazard one step earlier: HOVER. A panel that rebuilds on every View
+// recreates its buttons ~10×/s, and a brand-new node has no `:hover` until the
+// browser's next hit-test — so the hover border on whatever the cursor rests on
+// blinks off and on. That is the flicker. `setHtml` below removes the common
+// case (a rebuild that changes nothing shouldn't touch the DOM at all); this
+// guard covers the rest, holding a rebuild that WOULD destroy the control under
+// the cursor until the cursor leaves it. Deliberately narrow: only while
+// pointing AT a control, so live numbers elsewhere in the panel keep ticking.
+const hoverGuard = { target: null as EventTarget | null, deferred: new Map<string, () => void>() };
+const HOVER_CONTROLS = "button,select,input,textarea,a,[data-body],[data-bp-row],[data-act],[role=tab]";
+function hoveringControl(rootId: string): boolean {
+  const t = hoverGuard.target;
+  return t instanceof Element && $(rootId).contains(t) && !!t.closest(HOVER_CONTROLS);
+}
+window.addEventListener("pointermove", (e) => {
+  hoverGuard.target = e.target;
+  if (!hoverGuard.deferred.size) return;
+  for (const [rootId, render] of [...hoverGuard.deferred]) {
+    if (hoveringControl(rootId)) continue; // still on it — keep holding
+    hoverGuard.deferred.delete(rootId);
+    render();
+  }
+}, true);
+
+/// True → `rootId` must NOT rebuild its DOM right now, because a press is down
+/// inside it (the pressed node must survive to pointerup) or the cursor is
+/// resting on one of its controls (destroying it would drop `:hover`). Either
+/// way the render is queued and re-runs the moment the guard lifts.
 function renderDeferred(rootId: string, render: () => void): boolean {
   const t = pressGuard.target;
   if (t instanceof Node && $(rootId).contains(t)) {
     pressGuard.deferred.set(rootId, render);
     return true;
   }
+  if (hoveringControl(rootId)) {
+    hoverGuard.deferred.set(rootId, render);
+    return true;
+  }
   return false;
+}
+
+/// Write `html` into `el` only when it actually differs from the last thing we
+/// wrote there. An identical rewrite looks like a no-op but isn't: it destroys
+/// and recreates every descendant, dropping `:hover`, focus, and scroll on
+/// whatever the player was pointing at. The last string is cached per element
+/// (rather than read back from `innerHTML`) so the check costs a comparison,
+/// not a DOM serialization.
+const lastHtmlWritten = new WeakMap<HTMLElement, string>();
+function setHtml(el: HTMLElement, html: string): void {
+  if (lastHtmlWritten.get(el) === html) return;
+  lastHtmlWritten.set(el, html);
+  el.innerHTML = html;
 }
 
 // --- Renderer --------------------------------------------------------------
@@ -175,8 +219,17 @@ const HULL_MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+  // §TCA: the Authority's carrier (mirrors ship.rs).
+  freighter: 6000,
 };
 const CARGO_MASS_PER_UNIT = 28;
+// §TCA Part 5: mirrors `tca::LOGISTICS_RANGE` — how close a fleet must be to a
+// dock (the Charterhouse, or one of your systems) to load or unload.
+const LOGISTICS_RANGE_UI = 260;
+// §TCA Phase 2: mirrors `tca::TCA_STANDING_LOSS_PER_INCIDENT` — used only for the
+// client-side "projected status" preview on hostile orders. A forecast, never a
+// promise: the real citation lands when its light reaches the Charterhouse.
+const TCA_INCIDENT_LOSS_UI = 10;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
 
@@ -445,6 +498,36 @@ function buildShipPanel(): void {
         net.send({ type: "RefitShips", fleet_id: state.selectedShipId, ship, from, to, n });
         $("readout").innerHTML = `Refit ordered: <b>${n}× ${esc(shipKindLabel(ship))}</b> → ${to.length ? to.map((m) => MODULE_GLYPH[m]).join(" ") : "stock"} <span class="dim">(at a docked Shipyard; needs the added modules in the system ledger).</span>`;
       }
+    } else if (act === "engage-freight" && state.selectedShipId && net) {
+      const turningOn = (b as HTMLElement).dataset.on === "1";
+      if (turningOn && !confirmAuthorityHostility("Engage Authority freight arriving at this blockade?")) {
+        return;
+      }
+      net.send({ type: "SetEngageFreight", fleet_id: state.selectedShipId, on: turningOn });
+    } else if ((act === "load" || act === "unload" || act === "haul") && state.selectedShipId && net) {
+      // §TCA Part 5: dockside logistics. Which dock we're at decides hub-vs-system.
+      const fleet_id = state.selectedShipId;
+      const g = state.ghosts.find((x) => x.id === fleet_id);
+      const hub = state.galaxy?.hub;
+      const nearP = (p: Vec2 | undefined) => !!g && p !== undefined && Math.hypot(p.x - g.pos.x, p.y - g.pos.y) <= LOGISTICS_RANGE_UI;
+      const atHub = nearP(hub);
+      const sys = (state.galaxy?.systems ?? []).find((sy) => {
+        const st = state.systems.find((x) => x.id === sy.id);
+        return st?.owner === state.playerId && nearP(sy.pos);
+      });
+      const root = (b as HTMLElement).closest("#ship-panel") ?? document;
+      if (act === "unload") {
+        net.send(atHub ? { type: "HubUnload", fleet_id } : sys ? { type: "SystemUnload", fleet_id, system: sys.id } : { type: "HubUnload", fleet_id });
+      } else if (act === "load") {
+        const commodity = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value as Commodity | undefined;
+        const units = Math.max(1, Math.floor(Number((root.querySelector(".lg-qty") as HTMLInputElement | null)?.value) || 0));
+        if (commodity) {
+          net.send(atHub ? { type: "HubLoad", fleet_id, commodity, units } : sys ? { type: "SystemLoad", fleet_id, system: sys.id, commodity, units } : { type: "HubLoad", fleet_id, commodity, units });
+        }
+      } else {
+        const sell = !!(root.querySelector(".lg-sell") as HTMLInputElement | null)?.checked;
+        net.send({ type: "HaulToCharterhouse", fleet_id, sell_on_arrival: sell });
+      }
     }
   });
 }
@@ -461,9 +544,15 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
+// §TCA: UI mirror of crates/sim/src/tca.rs::TCA_SOVEREIGN_RADIUS — keep in step.
+// Used only to HEDGE the attack/raid readout when a target's last-seen position
+// shelters in the bubble; the server judges the true position either way.
+const TCA_SOVEREIGN_RADIUS = 900;
+
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+  freighter: "Authority Freighter",
 };
 const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
@@ -676,7 +765,12 @@ function ownBody(g: GhostView): string {
   parts.push(orderLifecycleLine(g));
   parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
 
-  if (g.kind === "convoy") {
+  // Cargo + logistics belong to any fleet that CONTAINS convoys — mirroring the
+  // sim's `Fleet::cargo_capacity()`, which counts convoy hulls and never looks at
+  // the flagship. Keying this on `g.kind === "convoy"` hid the whole section the
+  // moment a warship escorted the lot and took over as flagship, even though the
+  // server would still have accepted every load/unload/haul command.
+  if (hauls(g)) {
     const cargo = g.cargo
       ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(label(g.cargo.commodity))}</div>`
       : `<span class="dim">empty hold</span>`;
@@ -685,6 +779,17 @@ function ownBody(g: GhostView): string {
       const d = g.route[g.route.length - 1];
       parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="The waypoints this convoy will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
     }
+    parts.push(logisticsSection(g));
+  }
+  // §TCA: a BLOCKADING fleet chooses whether to touch Authority freight.
+  if (g.engage_freight !== null && g.engage_freight !== undefined) {
+    const on = g.engage_freight;
+    parts.push(
+      `<div class="sp-sec">${icon("blockade", "sm")} Authority freight</div>` +
+      `<div class="sp-line"><button class="act${on ? " is-on" : ""}" data-act="engage-freight" data-on="${on ? "0" : "1"}" ` +
+      `title="While blockading, also engage Terran Charter Authority freighters arriving here. OFF: they land and unload through your blockade — a small leak, self-limiting because the Authority already refuses NEW bookings to a blockaded system. ON: an arriving freighter becomes an ordinary hostile contact.">` +
+      `${on ? "Engaging" : "Ignoring"} Authority freight arriving here</button></div>`,
+    );
   }
 
   // Fleet fuel reserve (corp-wide, shared across ALL your ships) + this ship's burn
@@ -769,6 +874,28 @@ function rivalBody(g: GhostView): string {
     parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Cargo</div>` + (g.cargo
       ? `<div class="sp-line">${chip(g.cargo.commodity as IconKey, `${fmt(g.cargo.units)} ${esc(label(g.cargo.commodity))}`, "Cargo — visible because this convoy is inside your sensor coverage.")}</div>`
       : `<div class="sp-line dim">${icon("unknown", "sm", "Cargo unknown — this convoy is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
+  } else if (g.kind === "freighter") {
+    // §TCA: an Authority freighter BROADCASTS — it is a scheduled common carrier,
+    // not a dark contact. Its MANIFEST is the two-tier surface the server already
+    // fog-gates: your own lots always, everyone else's only from inside sensor
+    // range (`revealed`). Rendering it is the whole point of shipping it.
+    const mine = (g.manifest ?? []).filter((m) => m.mine);
+    const theirs = (g.manifest ?? []).filter((m) => !m.mine);
+    const row = (m: ManifestEntryView): string =>
+      `<div class="sp-line">${chip(m.commodity as IconKey, `${fmt(m.units)} ${esc(label(m.commodity))}`, m.mine ? "Your lot — always legible to you, wherever this hull is." : "A rival's lot — legible because this freighter is inside your sensor coverage.")} <span class="dim">${m.direction === "outbound" ? "→ system" : "→ hub"}</span></div>`;
+    parts.push(`<div class="sp-sec">${icon("cargo", "sm")} Manifest</div>`);
+    if (mine.length) parts.push(mine.map(row).join(""));
+    if (theirs.length) {
+      parts.push(theirs.map(row).join(""));
+    } else if (g.revealed) {
+      if (!mine.length) parts.push(`<div class="sp-line dim">Riding empty.</div>`);
+    } else {
+      parts.push(`<div class="sp-line dim" title="Other corporations' lots are legible only from inside your sensor coverage. Yours are always legible.">${icon("unknown", "sm")} other lots unknown — out of sensor range</div>`);
+    }
+    parts.push(
+      `<div class="sp-sec">${icon("blockade", "sm")} Sanctuary</div>` +
+      `<div class="sp-line dim" title="Destroying or intercepting an Authority hull is CITED — it costs charter standing, which prices your freight and your Exchange access. It is never forbidden, only expensive.">Attacking this is priced, not forbidden — it will be cited.</div>`,
+    );
   } else {
     const tip = g.kind === "scout"
       ? "A scout runs silent — someone is LOOKING at your space. No cargo, no weapons. You see it only because it is within your sensor range right now."
@@ -790,6 +917,12 @@ function updateShipPanel(): void {
   if (renderDeferred("ship-panel", updateShipPanel)) return; // §single-click
   if (!state.selectedShipId) return;
   const root = $("ship-panel");
+  // §perf/wedge: while the player is working the dockside load controls — the
+  // native <select> popup open, or typing a quantity — DON'T rebuild the panel.
+  // A 10 Hz rebuild wipes the typed qty and wedges the <select> (the Deliver-
+  // dropdown bug family). The rebuild retries on the next View once they're done.
+  const ae = document.activeElement;
+  if (ae instanceof HTMLElement && root.contains(ae) && (ae.classList.contains("lg-com") || ae.classList.contains("lg-qty"))) return;
   const g = state.ghosts.find((x) => x.id === state.selectedShipId);
   if (!g) {
     // No longer observable (passed beyond your sensors/light, or — a rival —
@@ -801,13 +934,29 @@ function updateShipPanel(): void {
     return;
   }
   const own = g.own;
-  const eyebrow = own ? "your fleet" : g.kind === "raider" ? "dark contact" : "rival contact";
-  const ownTag = own ? badge("accent", "yours") : badge("negative", "rival");
+  // §TCA: an Authority hull is named for what it IS — a scheduled common carrier,
+  // or an enforcement warship. Both fly the same flag; only one is a threat, and
+  // both are neutral rather than "rival".
+  const eyebrow = own
+    ? "your fleet"
+    : g.tca
+      ? "Terran Charter Authority"
+      : g.pirate
+        ? "pirate contact"
+        : g.kind === "raider"
+          ? "dark contact"
+          : "rival contact";
+  const title = g.tca
+    ? g.kind === "freighter"
+      ? "Authority Freighter"
+      : "Authority Enforcement"
+    : shipKindLabel(g.kind);
+  const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
   const stale = g.age >= 8;
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${svgIcon(g.kind === "convoy" ? "concept-convoy" : "concept-fleet", "md")} ${esc(shipKindLabel(g.kind))}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2>${svgIcon(g.kind === "convoy" || g.kind === "freighter" ? "concept-convoy" : "concept-fleet", "md")} ${esc(title)}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -826,7 +975,20 @@ function updateShipPanel(): void {
     : `<div class="stat" title="${esc(uncTip)}"><dt>Position</dt><dd>±${fmt(g.uncertainty)} su</dd></div>`;
   const strip = statStrip([ageCell, headingCell(g), posCell]);
 
+  // Preserve an in-progress dockside load selection/qty across the rebuild (the
+  // fresh <input> would otherwise snap back to its default 50, the fresh <select>
+  // to its first option) — the panel still rebuilds ~10 Hz to keep the age live.
+  const prevQty = (root.querySelector(".lg-qty") as HTMLInputElement | null)?.value;
+  const prevCom = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value;
   root.innerHTML = head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`;
+  if (prevQty !== undefined) {
+    const q = root.querySelector(".lg-qty") as HTMLInputElement | null;
+    if (q) q.value = prevQty;
+  }
+  if (prevCom) {
+    const c = root.querySelector(".lg-com") as HTMLSelectElement | null;
+    if (c && [...c.options].some((o) => o.value === prevCom)) c.value = prevCom;
+  }
 }
 
 // --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
@@ -1156,17 +1318,18 @@ function buildHubPanel(): void {
 function openHubPanel(): void {
   buildHubPanel();
   $("hub-panel").innerHTML =
-    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">the shared commons</div>` +
+    `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">the Terran Charter Authority</div>` +
     `<h2>Wormhole Hub</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>` +
     `<img class="hub-art" src="/art/wormhole_hub_concept.png" alt="" />` +
     `<div class="pp-body">` +
-    `<div class="pp-desc">The neutral trade station at the wormhole to Sol — every corporation's goods cross here, and its Exchange sets the prices you read (light-delayed) across the galaxy.</div>` +
-    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open Market</button>` +
-    `<div class="pp-note">Convoys within its safe radius escape raids; the hub itself is neutral ground — public geography, ungated by fog.</div>` +
+    `<div class="pp-desc">The Authority's station at the wormhole to Sol — the body that issued your charter. Its Exchange sets the prices you read (light-delayed) across the galaxy, and your <b>warehouse</b> here is the only stock it will trade against.</div>` +
+    `<div class="pp-desc dim">Getting goods to a colony is a separate act: book the Authority's scheduled <b>freight</b>, or load one of your own convoys and fly it yourself.</div>` +
+    `<button class="act act--primary" data-act="market">${svgIcon("concept-market-exchange", "sm")} Open the Market</button>` +
+    `<div class="pp-note">No engagement may open inside the Authority's sovereign space — fleeing into it is sanctuary. Public geography, ungated by fog.</div>` +
     `</div>`;
   $("hub-panel").classList.add("is-open");
-  readout().innerHTML = `<b>Wormhole Hub</b> selected — the market lives here. <span class="dim">Press <b>M</b> or use the panel to trade.</span>`;
+  readout().innerHTML = `<b>Wormhole Hub</b> selected — Exchange, warehouse, and freight desk. <span class="dim">Press <b>M</b> or use the panel.</span>`;
 }
 function closeHubPanel(): void {
   $("hub-panel").classList.remove("is-open");
@@ -1309,6 +1472,7 @@ function openBodyPanelById(bodyId: string): void {
 function closeSysviewManage(): void {
   $("sysview-manage").classList.remove("is-open");
 }
+let lastSysviewManageSig = "";
 function updateSysviewManage(): void {
   if (renderDeferred("sysview-manage", updateSysviewManage)) return; // §single-click
   const sid = viewedSystemId();
@@ -1330,6 +1494,14 @@ function updateSysviewManage(): void {
   const slotsEl = $("svm-slots");
   slotsEl.textContent = `SLOTS ${sUsed}/${sTotal}`;
   slotsEl.classList.toggle("is-warn", sTotal > 0 && sUsed >= sTotal);
+
+  // §perf: the svm-body sections (stockpile/build/workforce/blockade) are built
+  // and re-parsed on every View at 10 Hz. Skip when the owner-only dynamic slice
+  // is unchanged; a 1 s simTime heartbeat keeps build/siege ETAs ticking at their
+  // whole-second cadence. (Header title/slots above stay live every call.)
+  const svmSig = JSON.stringify([sid, dyn, Math.floor(state.simTime)]);
+  if (svmSig === lastSysviewManageSig && $("svm-body").innerHTML) return;
+  lastSysviewManageSig = svmSig;
 
   // Stockpile + depot cap (the "ship it or it idles" pressure).
   const cap = dyn.storage_cap ?? 0;
@@ -1428,7 +1600,7 @@ function updateSysviewManage(): void {
     garrisonHost,
     queue,
   ].filter((s) => s.trim() !== "");
-  $("svm-body").innerHTML = sections.join(`<div class="svm-div"></div>`);
+  setHtml($("svm-body"), sections.join(`<div class="svm-div"></div>`));
 }
 
 let planetPanelBuilt = false;
@@ -1642,7 +1814,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
   }
 
-  $("planet-panel").innerHTML = head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${manage}${note}</div>`;
+  setHtml($("planet-panel"), head + `<div class="pp-body">${kindLine}<div class="pp-desc" style="margin-top:8px">${esc(d.description)}</div>${deps}${manage}${note}</div>`);
   $("planet-panel").classList.add("is-open");
 }
 
@@ -1689,6 +1861,7 @@ function buildBattlePanel(): void {
     const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
     if (!el) return;
     if (el.dataset.act === "close") {
+      if (openOngoingBattleId) battleForceHW.delete(openOngoingBattleId); // §perf: drop the loss tally
       openOngoingBattleId = null;
       renderer.selectedBattleMarkerId = null; // §aftermath-select: drop the ring
       $("battle-panel").classList.remove("is-open");
@@ -1704,6 +1877,7 @@ function buildBattlePanel(): void {
       const fleet = el.dataset.fleet;
       if (fleet) { net.send({ type: "Withdraw", fleet_id: fleet }); if (openOngoingBattleId) updateOngoingBattlePanel(); }
     } else if (el.dataset.act === "doctrine") {
+      if (openOngoingBattleId) battleForceHW.delete(openOngoingBattleId); // §perf: drop the loss tally
       openOngoingBattleId = null;
       $("battle-panel").classList.remove("is-open");
       openRail("doctrine");
@@ -1775,9 +1949,11 @@ function openBattlePanel(id: number): void {
 // fleets: full composition + the three verbs with echo countdowns; rivals:
 // whatever the site-reveal already granted). Own engaged fleets are reachable
 // here even though their map markers are suppressed.
+let lastOngoingBattleSig = "";
 function openOngoingBattlePanel(id: string): void {
   buildBattlePanel();
   openOngoingBattleId = id;
+  lastOngoingBattleSig = ""; // force a fresh paint on open
   updateOngoingBattlePanel();
   $("battle-panel").classList.add("is-open");
 }
@@ -1819,6 +1995,8 @@ const SHIP_ICON: Record<ShipKind, string> = {
   // capital sheet arrives separately; see PR note).
   destroyer: "concept-fleet", cruiser: "concept-fleet", battleship: "concept-fleet",
   dreadnought: "concept-fleet", titan: "concept-fleet",
+  // §TCA: the Authority's common carrier — drawn with the hauler glyph.
+  freighter: "concept-convoy",
 };
 // One force-strip chip: a ship-class icon + the count still standing. `lost` (own,
 // exact) draws a red "−k"; a fully-wiped class dims + strikes its count. `est`
@@ -1874,6 +2052,24 @@ function updateOngoingBattlePanel(): void {
     if (prev === undefined || COUNT_CLASS_ORD[g.count_class] > COUNT_CLASS_ORD[prev]) hw.rivalPeak.set(g.id, g.count_class);
   }
   battleForceHW.set(id, hw);
+
+  // §perf: the high-water accumulation ABOVE must run every View (never miss a
+  // peak), but the chip/withdraw/countdown DOM below was rebuilt at 10 Hz. Gate the
+  // rebuild on a content signature; the 1 s Math.floor(now) heartbeat keeps the
+  // "raging / as-of / order-lag" countdowns ticking at their whole-second cadence
+  // AND is the safety net so nothing the signature omits can stay stale beyond 1 s.
+  const obSig = JSON.stringify([
+    [...hw.own.entries()].sort(),
+    [...hw.rivalPeak.entries()].sort(),
+    [...ownNow.entries()].sort(),
+    rivalFleets.map((g) => [g.id, g.count_class]),
+    ownFleets.map((g) => g.id),
+    b.own, b.participants.length,
+    state.battleRecords.some((r) => r.id === b.id),
+    Math.floor(now),
+  ]);
+  if (obSig === lastOngoingBattleSig && panel.innerHTML) return;
+  lastOngoingBattleSig = obSig;
 
   // OWN force strip: one chip per ship CLASS still standing (exact, own light),
   // each carrying its running losses (peak − now) as a red "−k". Kinds sorted for
@@ -1957,6 +2153,7 @@ let bvLive = false; // pinned to the arriving light frontier (a running battle)
 let bvAccum = 0; // fractional-round playback accumulator
 let bvLastTs = 0;
 let bvLoopRunning = false;
+let lastBattleViewerSig = ""; // §perf: skip identical 10 Hz viewer rebuilds
 const BV_ROUND_SECS = 0.55; // wall-seconds per round at 1× playback
 
 const bvRecordFor = (id: string): BattleRecordView | undefined => state.battleRecords.find((r) => r.id === id);
@@ -2014,6 +2211,7 @@ function openBattleViewer(id: string): void {
   bvPlaying = !running && frontier > 0; // auto-play a concluded replay from the top
   bvAccum = 0;
   bvLastTs = 0;
+  lastBattleViewerSig = ""; // force a fresh paint on (re)open
   renderBattleViewer();
   if (!bvLoopRunning) {
     bvLoopRunning = true;
@@ -2236,6 +2434,15 @@ function renderBattleViewer(): void {
   const frontier = rec.rounds.length - 1;
   if (bvLive && frontier >= 0) bvRound = Math.min(bvRound, frontier); // the chase advances; never snap-jump
   bvRound = Math.max(0, Math.min(bvRound, Math.max(0, frontier)));
+
+  // §perf: this rebuilds the whole overlay AND re-mounts the WebGL canvas; it ran
+  // 10x/s off the View while a replay was open. Skip when nothing that affects the
+  // render changed — the 1 s liveSimTime() heartbeat keeps the "light reached you
+  // N ago" line ticking at its whole-second cadence; new light (rounds.length),
+  // scrubbing/playback (bvRound/bvPlaying/bvSpeed) and the outcome all invalidate.
+  const bvSig = JSON.stringify([openBattleViewerId, rec.rounds.length, rec.outcome, bvRound, bvPlaying, bvSpeed, Math.floor(liveSimTime())]);
+  if (bvSig === lastBattleViewerSig && $("battle-viewer").childElementCount) return;
+  lastBattleViewerSig = bvSig;
 
   const head =
     `<div class="pp-head"><div class="panel-title"><div>` +
@@ -2675,32 +2882,50 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
+      // §TCA sovereignty: is the target's LAST-SEEN position inside the Authority
+      // bubble? The server judges on the TRUE position, so the order still goes —
+      // but claiming success and painting a pursuit overlay for an order the
+      // Authority will almost certainly refuse is a lie; hedge instead.
+      const hubPos = state.galaxy?.hub;
+      const believedSheltered = !!hubPos && Math.hypot(tgt.pos.x - hubPos.x, tgt.pos.y - hubPos.y) < TCA_SOVEREIGN_RADIUS;
+      const shelterNote = believedSheltered
+        ? ` <span class="warn">Its last-seen position is inside the Authority's sovereign zone — the order will be refused unless it has left the bubble.</span>`
+        : "";
       if (shift && haveStrike && net) {
         // §offensive-orders Part 1: ATTACK to DESTROY (shift+click) — a full battle,
         // a convoy's cargo is lost with it (RAID steals, ATTACK kills).
+        // §TCA Phase 2: hostility against an AUTHORITY hull is priced, not
+        // forbidden — warn with the projected band, then do what was asked. The
+        // confirm wraps only the hostile act, never a mere inspection click.
+        if (tgt.tca && !confirmAuthorityHostility(`Attack a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
+          return;
+        }
         net.send({ type: "AttackFleet", fleet_id: sel!.id, target_id: tgt.id });
         net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
-        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        if (!believedSheltered) state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
         delete state.orders[sel!.id];
         updateShipPanel();
         readout().innerHTML =
           `Attack committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b> to <b>destroy</b> it. ` +
           `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
-          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>`;
+          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>` + shelterNote;
       } else if (haveRaider && net) {
+        if (tgt.tca && !confirmAuthorityHostility(`Raid a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
+          return;
+        }
         // Direct your selected ship to raid the rival's TRUE position.
         net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
         // §FLEETS Part 3: ask for a projected engagement estimate to show at
         // commit time (computed server-side from your own view data).
         net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
-        state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
+        if (!believedSheltered) state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
         delete state.orders[sel!.id];
         updateShipPanel();
         readout().innerHTML =
           `Raid committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b>. ` +
           `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
           `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
-          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`);
+          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`) + shelterNote;
       } else {
         // Nothing of yours selected to attack with → INSPECT the rival (panel).
         selectShip(enemy);
@@ -2996,7 +3221,7 @@ function productionReadout(dyn: SystemStateView | undefined): string {
       // inventory the Exchange buys/sells. Tag it so a market sell "not moving" this
       // number reads as expected, not a bug.
       const nameCell = c === "fuel"
-        ? `<span class="sp-name" title="This system's operating/movement reserve — ships spend it to move. NOT the tradeable HQ inventory the Exchange buys/sells, so a market Buy/Sell never changes it.">${label(c)} <span class="dim" style="font-size:9px">· reserve</span></span>`
+        ? `<span class="sp-name" title="This system's operating/movement reserve — ships spend it to move. NOT the hub warehouse the Exchange buys/sells against, so a market Buy/Sell never changes it.">${label(c)} <span class="dim" style="font-size:9px">· reserve</span></span>`
         : `<span class="sp-name">${label(c)}</span>`;
       return `<div class="sys-prod"><span class="dep-ico">${commodityIcon(c, "md")}</span>` +
         `${nameCell}<span class="sp-stock">${fmt(stockOf.get(c) ?? 0)}</span>${rate}</div>`;
@@ -3019,21 +3244,21 @@ const SUSPEND_HINT: Record<string, string> = {
   needs_crew: "built but idle — post a crew (open its body and hire/assign workers)",
 };
 
-// §economy Supply-from-HQ: ship goods held in the corp's HQ trading pool (bought
-// at the Exchange) into THIS system's stockpile via a raidable convoy — the
+// §economy SUPPLY (Market → Supply tab): ship goods from the corp's HUB
+// WAREHOUSE into a chosen OWNED system's stockpile via a raidable convoy — the
 // bridge that lets market-bought inputs feed a system's converters, which draw
-// from the system stockpile, not the HQ pool. Returns "" when HQ holds nothing.
-// §economy Supply-from-HQ (Market → Supply tab): ship goods held in the corp's HQ
-// trading pool into a chosen OWNED system's stockpile (to feed its converters).
-// Lives ONLY in the Market panel so HQ/market inventory never appears on the
-// planet/system views. The destination <select> is static HTML — its options are
+// from the system stockpile. Lives ONLY in the Market panel, beside the Exchange
+// that fills the warehouse it ships from. The destination <select> is static HTML — its options are
 // rebuilt only when the owned-system set changes (never mid-dropdown at ~10 Hz).
 let supplyDestSig = "";
 function renderSupplyPane(): void {
   const owned = (state.systems ?? []).filter((s) => s.owner === state.playerId);
   const sel = $("mk-supply-dest") as HTMLSelectElement;
   const sig = owned.map((s) => s.id).join(",");
-  if (sig !== supplyDestSig) {
+  // Never rebuild the options while the native dropdown is open (activeElement) —
+  // rebuilding a <select> mid-popup wedges Chrome's list, the fixed Deliver bug.
+  // A skipped rebuild retries on the next update once the player has picked.
+  if (sig !== supplyDestSig && document.activeElement !== sel) {
     supplyDestSig = sig;
     const prev = sel.value;
     sel.innerHTML = owned.map((s) => `<option value="${esc(s.id)}">${esc(systemName(s.id))}</option>`).join("");
@@ -3041,8 +3266,10 @@ function renderSupplyPane(): void {
   }
   const rows = $("mk-supply-rows");
   if (!owned.length) { rows.innerHTML = `<div class="mhint dim">Claim a system before you can supply one.</div>`; return; }
-  const held = (state.wallet?.inventory ?? []).filter((i) => i.units > 0);
-  if (!held.length) { rows.innerHTML = `<div class="mhint dim">No goods held at HQ. Buy on the Exchange, then supply a system here.</div>`; return; }
+  // §TCA: supply draws from the HUB WAREHOUSE — the same stock the Exchange
+  // trades against, and the only hub-side store there is.
+  const held = (state.wallet?.warehouse ?? []).filter((i) => i.units > 0);
+  if (!held.length) { rows.innerHTML = `<div class="mhint dim">Your hub warehouse is empty. Buy on the Exchange, then supply a system here.</div>`; return; }
   rows.innerHTML = held.map((i) => {
     const presets = [...new Set([10, 50, i.units])].filter((n) => n >= 1 && n <= i.units).sort((a, b) => a - b);
     const btns = presets.map((n) =>
@@ -3607,12 +3834,12 @@ let shipQty = 1; // ship builder quantity
 // chrome, dock, and dimensions (`.build-shell` in the CSS). The two panels are
 // siblings, never open together (opening one closes the other via closeBuildPanel).
 function panelShellHtml(el: HTMLElement, eyebrow: string, title: string, chips: string, listHtml: string, detailHtml: string, footHtml: string): void {
-  el.innerHTML =
+  setHtml(el,
     `<div class="bp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2></div></div>` +
     `<button class="pp-close" data-bp="close" title="Close" aria-label="Close">✕</button></div>` +
     `<div class="bp-pools">${chips}</div>` +
     `<div class="bp-body"><div class="bp-list">${listHtml}</div><div class="bp-detail">${detailHtml}</div></div>` +
-    footHtml;
+    footHtml);
   el.classList.add("is-open");
 }
 function buildBuildPanel(): void {
@@ -4113,10 +4340,25 @@ function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
   return (dyn?.stockpile ?? []).filter((s) => s.commodity !== "fuel" && s.units >= 1);
 }
 
+let lastSystemTabSig = "";
 function updateSystemTab(): void {
   if (!systemTabBuilt) return;
   if (renderDeferred("tab-system", updateSystemTab)) return; // §single-click
   const root = $("tab-system");
+  // §perf: the rail panel (incl. its star concept <img>) rebuilt on every View at
+  // 10 Hz. Skip when nothing it shows changed — it reads the selected system's
+  // dynamic slice, the owned-holdings rail, and syndicate/research affordances; a
+  // 1 s simTime heartbeat keeps any siege/build ETA ticking at whole-second cadence.
+  const stSig = JSON.stringify([
+    state.selectedSystemId,
+    state.systems,
+    state.syndicate,
+    state.research?.programmes.map((p) => p.state) ?? null,
+    state.anchors.length,
+    Math.floor(state.simTime),
+  ]);
+  if (stSig === lastSystemTabSig && root.innerHTML) return;
+  lastSystemTabSig = stSig;
   const rail = ownedSystemsRail();
   const sid = state.selectedSystemId;
   const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
@@ -4474,11 +4716,12 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-type MarketTab = "exchange" | "specialists" | "modules" | "supply";
+type MarketTab = "exchange" | "charter" | "specialists" | "modules" | "supply";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
+  ($("market-pane-charter") as HTMLElement).hidden = tab !== "charter";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
   ($("market-pane-supply") as HTMLElement).hidden = tab !== "supply";
@@ -4550,6 +4793,43 @@ function buildMarketPanel(): void {
     renderComposer();
   });
   $("mk-qty").addEventListener("input", renderComposer);
+  // §TCA Phase 2: the reinstatement control. The rows rebuild every View, so both
+  // listeners are delegated on the persistent panel root (§single-click).
+  $("market").addEventListener("input", (e) => {
+    if ((e.target as HTMLElement).id === "ch-points") syncReinstateCost();
+  });
+  $("market").addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).id !== "ch-pay" || !net) return;
+    const points = Math.max(1, Math.floor(Number(($("ch-points") as HTMLInputElement).value) || 0));
+    net.send({ type: "PayReinstatement", points });
+  });
+  $("mk-shipto").addEventListener("change", renderComposer);
+  // --- §TCA freight desk ---
+  const frCom = $("fr-commodity") as HTMLSelectElement;
+  frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
+  $("fr-dir").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
+    if (!b?.dataset.dir) return;
+    freightDir = b.dataset.dir as ShipmentDir;
+    renderFreightDesk();
+  });
+  ["fr-system", "fr-commodity", "fr-qty", "fr-sell"].forEach((id) => {
+    $(id).addEventListener("input", renderFreightDesk);
+    $(id).addEventListener("change", renderFreightDesk);
+  });
+  $("fr-submit").addEventListener("click", () => {
+    if (!net) return;
+    const system = ($("fr-system") as HTMLSelectElement).value as EntityId;
+    if (!system) return;
+    const commodity = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
+    const units = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
+    if (freightDir === "outbound") {
+      net.send({ type: "BookFreightOut", system, commodity, units });
+    } else {
+      net.send({ type: "BookFreightIn", system, commodity, units, sell_on_arrival: ($("fr-sell") as HTMLInputElement).checked });
+    }
+    $("fr-feedback").textContent = `Booking sent: ${units} ${commodity} ${freightDir === "outbound" ? "→" : "←"} ${systemName(system)}.`;
+  });
   $("mk-limit").addEventListener("input", renderComposer);
   $("mk-submit").addEventListener("click", () => {
     if (!net) return;
@@ -4560,7 +4840,11 @@ function buildMarketPanel(): void {
     if (limitOn && limitPrice > 0) {
       net.send({ type: "PlaceLimitOrder", side: composer.side, commodity: c, units: qty, limit_price: limitPrice });
     } else {
-      net.send(composer.side === "buy" ? { type: "MarketBuy", commodity: c, units: qty } : { type: "MarketSell", commodity: c, units: qty });
+      net.send(
+        composer.side === "buy"
+          ? { type: "MarketBuy", commodity: c, units: qty, ship_to: shipToValue() }
+          : { type: "MarketSell", commodity: c, units: qty },
+      );
     }
     $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${label(c)}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
   });
@@ -4571,7 +4855,10 @@ function buildMarketPanel(): void {
 function renderMarketBoard(): void {
   if (!state.market) return;
   const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
-  const heldOf = new Map((state.wallet?.inventory ?? []).map((i) => [i.commodity, i.units]));
+  // §TCA: the Exchange settles against the CHARTERHOUSE WAREHOUSE, so the held
+  // column has to be the warehouse — showing a system stockpile here would offer a
+  // player a sell the sim will soft-reject as InsufficientWarehouseStock.
+  const heldOf = new Map((state.wallet?.warehouse ?? []).map((i) => [i.commodity, i.units]));
   const stale = state.market.staleness > 0.5;
   $("market-board").innerHTML = COMMODITIES.map((c) => {
     const p = priceOf.get(c);
@@ -4652,8 +4939,6 @@ function renderComposer(): void {
   if (!state.market) return;
   const c = composer.commodity;
   const price = state.market.prices.find((p) => p.commodity === c)?.price;
-  const stale = state.market.staleness > 0.5;
-  const px = price !== undefined ? `${stale ? "~" : ""}${price.toFixed(2)}` : "?";
   $("mk-sel").textContent = label(c);
   document.querySelectorAll<HTMLElement>("#mk-side button").forEach((b) => b.classList.toggle("is-active", b.dataset.side === composer.side));
   const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
@@ -4663,13 +4948,133 @@ function renderComposer(): void {
     $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${label(c)}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
-    const cost = price !== undefined ? fmt(qty * price) : "?";
-    $("mk-preview").innerHTML = `<span title="Settles instantly; the goods cross fogged space as a raidable delivery convoy into your HQ INVENTORY — not a system's stockpile. Use the Supply tab to ship them to a system.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span> → ${icon("convoy", "sm")} to <b>HQ</b> (raidable)</span>`;
+    const penFrac = state.charter?.market_penalty_frac ?? 0;
+    const pen = price !== undefined ? qty * price * penFrac : 0;
+    const penNote = pen > 0.005 ? ` <span class="warn">(incl. ${fmt(pen)} Cr charter penalty)</span>` : "";
+    const cost = price !== undefined ? fmt(qty * price * (1 + penFrac)) : "?";
+    const to = shipToValue();
+    const dest = to ? ` → booked onto Authority freight for <b>${esc(systemName(to))}</b>` : "";
+    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your hub warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span>${penNote} → your <b>warehouse</b>${dest}</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
-    $("mk-preview").innerHTML = `<span title="Ships from your HQ INVENTORY (not a system's stockpile — a system's fuel/goods are unaffected); the convoy clears at the price ON ARRIVAL (not today's ${px}) and is raidable to the hub — double uncertainty: price + delivery.">${icon("convoy", "sm")} from <b>HQ</b> → clears at price <b>on arrival</b> · <b>raidable</b></span>`;
+    const held = warehouseUnits(c);
+    const penFrac = state.charter?.market_penalty_frac ?? 0;
+    const pen = price !== undefined ? qty * (price ?? 0) * penFrac : 0;
+    const penNote = pen > 0.005 ? ` <span class="warn">(after ${fmt(pen)} Cr charter penalty)</span>` : "";
+    const gain = price !== undefined ? fmt(qty * price * (1 - penFrac)) : "?";
+    const short = held < qty;
+    $("mk-preview").innerHTML = short
+      ? `<span class="warn" title="Selling draws ONLY from your hub warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
+      : `<span title="The goods are already at the Exchange, so it settles instantly at the standing price — no crossing, no price-on-arrival gamble.">Settles <b>now</b> from your warehouse ~<span class="accent">${gain} Cr</span>${penNote}</span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
+  // The ship-to selector is a BUY-only composition.
+  ($("mk-shipto-row") as HTMLElement).style.display = composer.side === "buy" && !limitOn ? "flex" : "none";
+}
+
+// --- §TCA: the Charterhouse warehouse, freight desk, and shipment queue -------
+
+/// Which way the freight desk is currently booking.
+let freightDir: ShipmentDir = "outbound";
+
+/// Units of `c` in the player's Charterhouse warehouse.
+function warehouseUnits(c: Commodity): number {
+  return state.wallet?.warehouse?.find((w) => w.commodity === c)?.units ?? 0;
+}
+/// The chosen `ship_to` destination on a buy (null = leave it at the Charterhouse).
+function shipToValue(): EntityId | null {
+  const v = ($("mk-shipto") as HTMLSelectElement | null)?.value ?? "";
+  return v ? (v as EntityId) : null;
+}
+/// Fill a <select> with the player's owned freight destinations, preserving the
+/// current choice where possible.
+function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): void {
+  const terms = state.freight?.terms ?? [];
+  // Same hazard the Supply pane's select documents: this runs from updateMarket
+  // on every view push (~10 Hz), and rebuilding a <select>'s options while its
+  // NATIVE dropdown is open wedges Chrome's popup — the tab appears frozen.
+  // Rebuild only when the roster actually changes, and never while the player
+  // has the select focused (the open-popup proxy); a skipped rebuild retries on
+  // the next update once they've picked.
+  const sig = terms.map((t) => `${t.system}${t.depot ? "+d" : ""}:${systemName(t.system)}`).join(",");
+  if (sel.dataset.sig === sig || document.activeElement === sel) return;
+  sel.dataset.sig = sig;
+  const prev = sel.value;
+  sel.innerHTML =
+    (blankLabel ? `<option value="">${esc(blankLabel)}</option>` : "") +
+    terms.map((t) => `<option value="${t.system}">${esc(systemName(t.system))}${t.depot ? " · Depot" : ""}</option>`).join("");
+  if (prev && terms.some((t) => String(t.system) === prev)) sel.value = prev;
+}
+
+/// The warehouse table — commodity × units, the Exchange's only stock.
+function renderWarehouse(): void {
+  const rows = (state.wallet?.warehouse ?? []).filter((w) => w.units > 0);
+  $("wh-table").innerHTML = rows.length
+    ? rows.map((w) => `<div class="ord">${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(label(w.commodity))}</div>`).join("")
+    : `<div class="mhint dim">Empty. Buy here, or ship goods in from a system — Authority freight or one of your own convoys.</div>`;
+}
+
+/// The freight desk: live fee, the EXACT next departure, and the ETA — all
+/// computed from server-sent terms, so the player commits with full knowledge.
+function renderFreightDesk(): void {
+  const f = state.freight;
+  if (!f) return;
+  fillSystemSelect($("fr-system") as HTMLSelectElement, null);
+  const dir = freightDir;
+  document.querySelectorAll<HTMLElement>("#fr-dir button").forEach((b) => b.classList.toggle("is-active", b.dataset.dir === dir));
+  ($("fr-sell-row") as HTMLElement).style.display = dir === "inbound" ? "flex" : "none";
+
+  const sysId = ($("fr-system") as HTMLSelectElement).value as EntityId;
+  const t = f.terms.find((x) => String(x.system) === String(sysId));
+  const c = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
+  const qty = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
+  const submit = $("fr-submit") as HTMLButtonElement;
+  if (!t) {
+    $("fr-preview").innerHTML = `<span class="dim">You hold no systems the Authority can serve.</span>`;
+    submit.disabled = true;
+    return;
+  }
+  submit.disabled = false;
+  const price = state.market?.prices.find((p) => p.commodity === c)?.price ?? 0;
+  // §TCA Phase 2: the Authority charges base fee × the charter TARIFF — quote
+  // what will actually be debited, or a sanctioned corp commits against a
+  // number up to 3× too low (the audit's exact finding).
+  const tariff = state.charter?.tariff_mult ?? 1;
+  const fee = freightFee(f, t, price, qty) * tariff;
+  const tariffNote = tariff > 1.0001 ? ` <span class="warn">(×${tariff.toFixed(2)} charter tariff)</span>` : "";
+  // Departures are exact: the timetable and the freighter's cruise are pure
+  // functions of config. Show the wait, not a raw sim-time.
+  const wait = Math.max(0, f.next_departure - (state.simTime ?? 0));
+  const flight = dir === "outbound" ? t.secs_out : t.secs_round;
+  const overCap = qty > t.cap;
+  $("fr-preview").innerHTML =
+    `<span title="The fee is charged at booking and destroyed — it is never refunded, even if the lot is lost.">Fee <span class="accent">${fmt(fee)} Cr</span>${tariffNote}</span> · ` +
+    `departs in <b>${fmtDur(wait)}</b> · arrives ~<b>${fmtDur(wait + flight)}</b>` +
+    (t.depot ? ` · <span class="dim">Depot: ${Math.round((1 - f.depot_fee_mult) * 100)}% off, ${t.cap} cap</span>` : ` · <span class="dim">${t.cap}/departure</span>`) +
+    (overCap ? ` · <span class="warn" title="Not a refusal — the lot is split and rolls onto consecutive departures, first booked first served.">rides ${Math.ceil(qty / t.cap)} departures</span>` : "");
+}
+
+/// The shipment queue — your lots, waiting at the Charterhouse or aboard a hull.
+function renderShipmentQueue(): void {
+  const ships = state.freight?.shipments ?? [];
+  $("fr-queue").innerHTML = ships.length
+    ? ships
+        .map((s) => {
+          const where = s.direction === "outbound" ? `→ ${esc(systemName(s.system))}` : `← ${esc(systemName(s.system))}`;
+          const st = s.aboard
+            ? badge("neutral", "aboard")
+            : badge("warn", "awaiting departure");
+          const sell = s.direction === "inbound" && s.sell_on_arrival ? ` <span class="dim">· sells on arrival</span>` : "";
+          return `<div class="ord">${st} ${commodityIcon(s.commodity, "sm")} <b>${s.units}</b> ${esc(label(s.commodity))} ${where}${sell}</div>`;
+        })
+        .join("")
+    : `<div class="mhint dim">No freight booked.</div>`;
+}
+
+/// A short duration ("2m 10s") for the freight timetable.
+function fmtDur(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
 function renderRestingOrders(): void {
@@ -4680,9 +5085,30 @@ function renderRestingOrders(): void {
     : "";
 }
 
+let lastMarketSig = "";
 function updateMarket(): void {
   if (renderDeferred("market", updateMarket)) return; // §single-click
   if (!state.market || !state.wallet) return;
+  // §perf: the whole 11-pane cascade (incl. the hidden panes + ~25 <img>s) ran on
+  // every View at 10 Hz. Skip it when nothing it renders has changed. Two guards:
+  //  (1) never rebuild while the player is editing a field/dropdown in the panel
+  //      (wipes a half-typed qty / wedges a <select>);
+  //  (2) a content signature over the discrete inputs, plus a 1 s simTime heartbeat
+  //      so the freshness badge / equity / sparklines / freight countdown still
+  //      tick at their (whole-second) display cadence. Continuously-varying fields
+  //      (staleness, equity, ticker drift) are deliberately excluded from the sig
+  //      and refreshed by that heartbeat, never per-100 ms.
+  const mp = $("market");
+  const ae = document.activeElement;
+  if (ae && mp.contains(ae) && (ae.tagName === "INPUT" || ae.tagName === "SELECT")) return;
+  const sig = JSON.stringify([
+    state.wallet.credits, state.wallet.warehouse, state.wallet.fuel_total,
+    state.charter, state.freight,
+    state.systems.map((s) => [s.id, s.owner]),
+    marketTab, Math.floor(state.simTime),
+  ]);
+  if (sig === lastMarketSig && mp.querySelector("#market-board")?.childElementCount) return;
+  lastMarketSig = sig;
   const stale = state.market.staleness;
   const fresh = $("market-fresh");
   fresh.className = "badge " + (stale > 0.5 ? "badge--warn" : "badge--positive");
@@ -4693,27 +5119,41 @@ function updateMarket(): void {
     stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
   ]);
   renderMarketBoard();
+  fillSystemSelect($("mk-shipto") as HTMLSelectElement, "keep at the hub");
   renderComposer();
   renderRestingOrders();
   renderSpecialistsPane();
   renderModulesPane();
   renderSupplyPane();
+  renderCharter();
+  renderWarehouse();
+  renderFreightDesk();
+  renderShipmentQueue();
 }
 
 function addTradeNews(t: TradeEvent): void {
   const log = $("reports-log");
   let text = "";
   switch (t.event) {
-    case "Bought": text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — delivery convoy inbound (raidable).`; break;
+    case "Bought":
+      text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your hub warehouse.`
+        + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
-      : `Delivery arrived: +${t.units} ${label(t.commodity)} — added to your HQ stock (Exchange). Use “Supply from HQ” in a system to feed its converters.`;
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
-    case "Sold": text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`; break;
+    case "Sold":
+      text = `Sold ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} on arrival.`
+        + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
     case "LimitPlaced": text = `Limit ${t.side} ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} resting on the book.`; break;
-    case "LimitFilled": text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`; break;
+    case "LimitFilled":
+      text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`
+        + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
     case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${label(t.commodity)} (auto, raidable).`; break;
     case "SupplyDiverted": {
       const what = t.action === "lost" ? "lost (cargo dropped)"
@@ -4723,8 +5163,36 @@ function addTradeNews(t: TradeEvent): void {
       break;
     }
     case "StorageOverflow":
-      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — convoy carries it on to sell at the hub (raidable).`;
+      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — carried on to sell at the hub.`;
       break;
+    // --- §TCA: freight + dockside logistics -------------------------------
+    case "Rejected": text = `⚠ ${rejectText(t)}`; break;
+    case "FreightBooked":
+      text = `Booked ${t.units} ${label(t.commodity)} ${t.direction === "outbound" ? "→" : "←"} ${systemName(t.system)} — fee ${fmt(t.fee)} Cr, departs in ${fmtDur(Math.max(0, t.depart_at - state.simTime))}.`;
+      break;
+    case "FreightMoved": {
+      const what = `${t.units} ${label(t.commodity)}`;
+      const where = systemName(t.system);
+      text =
+        t.stage === "departed" ? `Authority freighter away with ${what} (${where}).`
+        : t.stage === "collected_for_pickup" ? `Authority freighter collected ${what} at ${where}.`
+        : t.stage === "delivered_to_system" ? `Freight delivered: ${what} → ${where}.`
+        : t.stage === "arrived_at_warehouse" ? `Freight landed: ${what} from ${where} → your warehouse.`
+        : t.stage === "returned_undeliverable" ? `⚠ ${what} couldn't unload at ${where} — returned to your warehouse.`
+        : t.stage === "forfeited_on_capture" ? `✖ Lost ${what} awaiting pickup at ${where} — the system fell first.`
+        : `✖ ${what} destroyed with the Authority freighter carrying it (${where}).`;
+      break;
+    }
+    case "CharterReinstated": {
+      // Name the band the payment actually bought back into, when it moved one.
+      const from = projectedBand(state.charter ? state.charter.standing - t.before : 0);
+      const to = projectedBand(state.charter ? state.charter.standing - t.after : 0);
+      const band = to !== from ? ` Restored to <b>${esc(to)}</b>.` : "";
+      text = `Paid the Authority ${fmt(t.cost)} Cr for ${t.points.toFixed(0)} standing (${t.before.toFixed(0)} → ${t.after.toFixed(0)}).${band}`;
+      break;
+    }
+    case "Loaded": text = `Loaded ${t.units} ${label(t.commodity)} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
+    case "Unloaded": text = `Unloaded ${t.units} ${label(t.commodity)} at ${t.system ? systemName(t.system) : "the hub"}.`; break;
   }
   const el = document.createElement("div");
   el.className = t.event === "SupplyDiverted" && t.action === "lost" ? "report bad" : "report good";
@@ -4769,11 +5237,15 @@ function buildStandingPanel(): void {
   const syncForm = () => {
     const amt = $("so-amount") as HTMLInputElement;
     ($("so-floor-row") as HTMLElement).style.display = trig.value === "percent_surplus" ? "flex" : "none";
+    // §TCA: the sell-on-arrival choice only means anything for a Charterhouse rule.
+    const destIsHub = (($("so-dest") as HTMLSelectElement).value || "") === "hub";
+    ($("so-sell-row") as HTMLElement).style.display = destIsHub ? "flex" : "none";
     amt.title = trig.value === "above_threshold" ? "threshold (units)"
       : trig.value === "percent_surplus" ? "percent (1–100)"
       : "target level (units)";
   };
   trig.addEventListener("change", syncForm);
+  ($("so-dest") as HTMLSelectElement).addEventListener("change", syncForm);
   syncForm();
   // Remove-✕ is delegated on the PERSISTENT list root — the rows rebuild every
   // View, the listener never does (§single-click).
@@ -4800,11 +5272,15 @@ function buildStandingPanel(): void {
     const order: StandingOrder = {
       id: 0, source: { kind: "system", id: source }, dest, commodity, trigger,
       status: "active", next_eval_tick: 0, in_flight: null,
+      // §TCA: a Hub rule sells on arrival by default (today's behaviour); the
+      // Charterhouse panel exposes the stockpile-instead option.
+      sell_on_arrival: ($("so-sell") as HTMLInputElement).checked,
     };
     net.send({ type: "SetStandingOrder", order });
   });
 }
 
+let lastStandingListSig = "";
 function updateStandingPanel(): void {
   if (!standingBuilt) return;
   if (renderDeferred("standing", updateStandingPanel)) return; // §single-click
@@ -4815,9 +5291,11 @@ function updateStandingPanel(): void {
   // Key includes the ally set so the dest list rebuilds when an alliance forms/ends.
   const ownedKey = owned.map((s) => s.id).join(",") + "|" + allies.map((s) => s.id).join(",");
   const srcSel = $("so-source") as HTMLSelectElement;
-  if (srcSel.dataset.key !== ownedKey) {
+  const destSel = $("so-dest") as HTMLSelectElement;
+  // Skip the rebuild while EITHER native dropdown is open, or Chrome's popup
+  // wedges the tab (the fixed Deliver-dropdown bug); it retries next update.
+  if (srcSel.dataset.key !== ownedKey && document.activeElement !== srcSel && document.activeElement !== destSel) {
     srcSel.dataset.key = ownedKey;
-    const destSel = $("so-dest") as HTMLSelectElement;
     const prevSrc = srcSel.value, prevDest = destSel.value;
     // Source is always your OWN system; destinations add hub/home + your depots +
     // ally systems (§syndicates Part 3 AID).
@@ -4835,6 +5313,12 @@ function updateStandingPanel(): void {
 
   const list = $("standing-list");
   const orders = state.standingOrders;
+  // §perf: the list is effectively static between edits — rebuild it only when an
+  // order's shown fields change (id/status/in-flight/route/trigger), not at 10 Hz
+  // (which churned garbage and risked resetting #standing-list's scroll).
+  const listSig = JSON.stringify(orders.map((o) => [o.id, o.status, o.in_flight, o.commodity, o.source, o.dest, o.trigger]));
+  if (listSig === lastStandingListSig && list.innerHTML) return;
+  lastStandingListSig = listSig;
   if (!orders.length) {
     list.innerHTML = `<span class="dim">No standing orders yet — set one below. They run on the server while you're away.</span>`;
     return;
@@ -5349,6 +5833,10 @@ function buildCheckinPanel(): void {
 
 function updateCheckinPanel(): void {
   if (!checkinBuilt) return;
+  // §perf: the modal is closed most of the session — skip the inbox recompute +
+  // innerHTML rebuild entirely while hidden. openCheckin() re-renders on open and
+  // the Timeline handler sets state.timeline before calling us, so nothing is lost.
+  if ($("checkin").style.display === "none") return;
   if (renderDeferred("checkin", updateCheckinPanel)) return; // §single-click (the ✕ toggle sits inside)
   // DECISION INBOX first (the primary surface — "what deserves a decision").
   renderInbox();
@@ -5369,6 +5857,67 @@ function updateCheckinPanel(): void {
 
 // --- Networking ------------------------------------------------------------
 let net: Net | null = null;
+
+// §perf Part B: join the View's DYNAMIC research slice onto the static Welcome
+// catalog, rebuilding the full per-node shape the research panel reads. Joined
+// by id (both lists come from the same visible_ids order, but the join never
+// relies on that). A dyn entry without a catalog row is dropped — it cannot be
+// rendered without name/board metadata (and can only mean a server/client
+// catalog drift, which the protocol-version check already warns about).
+function mergeResearch(dyn: ResearchDynView): ResearchView {
+  const cat = new Map(state.researchCatalog.map((p) => [p.id, p]));
+  const programmes: ProgrammeView[] = [];
+  for (const d of dyn.programmes) {
+    const p = cat.get(d.id);
+    if (!p) continue;
+    programmes.push({ ...p, state: d.state, gate: d.gate ?? null });
+  }
+  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes };
+}
+
+// §perf: coalesce the per-View panel refreshes. Views arrive at ~10 Hz, but if the
+// main thread stalls (a GC pause, a background tab that just refocused) the queued
+// backlog is delivered in a burst — and re-running the whole DOM-refresh pipeline
+// once per queued message turns one hiccup into a multi-frame freeze. Instead we
+// stash the work on a single rAF: a burst collapses to ONE refresh reading the
+// latest state, and background tabs (where rAF doesn't fire) skip panel work
+// entirely until refocus. State ingestion + the ongoing-battle high-water tally
+// still run inline on every View (see the View handler), so no data is lost.
+let viewRefreshRaf = 0;
+function scheduleViewRefresh(): void {
+  if (viewRefreshRaf) return; // already queued — the pending frame reads latest state
+  viewRefreshRaf = requestAnimationFrame(() => {
+    viewRefreshRaf = 0;
+    applyViewRefresh();
+  });
+}
+function applyViewRefresh(): void {
+  // Refresh only the currently-visible rail tab — hidden tabs don't churn (they
+  // re-render on show via setRailTab). Each updater also guards itself.
+  if ($("rail").classList.contains("is-open")) {
+    if (railTab === "system") updateSystemTab();
+    else if (railTab === "logistics") updateStandingPanel();
+    else if (railTab === "doctrine") updateDoctrinePanel();
+    else if (railTab === "rankings") updateRankingsPanel();
+  }
+  // The selected-ship panel keeps the information AGE ticking (and handles a
+  // contact passing out of view) while it's open.
+  if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
+  // §syndicates: refresh the alliance roster/invites if the panel is open
+  // (guarded by a signature so a half-typed name survives).
+  if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
+  // §research R6: refresh the Programme Boards if open (coarse signature).
+  if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
+  // §management-home: inside the System View, refresh the management column +
+  // the structure markers (setSystemDynamic is idempotent; the panels self-guard).
+  updateSysviewDynamic();
+  // §battle-records: keep an open replay viewer live — rounds grow, the light
+  // frontier advances, the outcome may arrive (guards itself).
+  refreshOpenBattleViewer();
+  // The Market is a navbar overlay now — refresh it when open.
+  if ($("market").classList.contains("is-open")) updateMarket();
+  updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
+}
 
 function join(): void {
   const name = nameInput.value.trim();
@@ -5400,6 +5949,21 @@ function join(): void {
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
           state.galaxy = msg.galaxy;
+          // §perf Part B: the static tables that used to ride every View.
+          state.charterLadder = msg.charter_ladder;
+          state.researchCatalog = msg.research_catalog;
+          // §perf Part A: a fresh connection re-streams every record from an
+          // empty server-side cursor — drop what the OLD connection held so a
+          // record pruned while we were away can't linger (the client-only
+          // §theater demo record is the one deliberate survivor).
+          state.battleRecords = state.battleRecords.filter((r) => r.id === "demo-battle");
+          // §perf Part B: the change-gated sections re-stream in full on a fresh
+          // connection (empty server-side signatures) — reset the held copies so
+          // nothing stale survives a reconnect.
+          state.standingOrders = [];
+          state.battleReports = [];
+          state.captureReports = [];
+          state.rankings = [];
           state.link = "online";
           // Swap from the join screen to the galaxy view.
           joinScreen.style.display = "none";
@@ -5431,6 +5995,9 @@ function join(): void {
           if (state.galaxy) state.galaxy = { ...state.galaxy, systems: msg.systems };
           break;
         case "View":
+          // §perf: a new authoritative View — bump the renderer's state version so
+          // its dirty-gated galaxy geometry (systems/anchors) rebuilds this frame.
+          renderer.stateVersion++;
           state.tick = msg.tick;
           state.simTime = msg.sim_time;
           state.commandCenter = msg.command_center;
@@ -5439,63 +6006,85 @@ function join(): void {
           state.ghosts = msg.ghosts;
           state.market = msg.market;
           state.wallet = msg.wallet;
-          state.standingOrders = msg.standing_orders;
+          state.freight = msg.freight;
+          state.charter = msg.charter;
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
-          state.battleReports = msg.battle_reports;
-          state.captureReports = msg.capture_reports;
-          // §battle-records: replay timelines. The scripted §theater demo
-          // record (a client-only debug rig) survives server view replaces.
-          {
-            const demo = state.battleRecords.find((r) => r.id === "demo-battle");
-            state.battleRecords = msg.battle_records ?? [];
-            if (demo) state.battleRecords.push(demo);
-          }
+          // (§perf Part A/B: battle records stream via "BattleRecords";
+          // standing orders / reports / rankings arrive via "Sections" — both
+          // on the reliable lane, only when changed. State keeps the last copy.)
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
-          state.rankings = msg.rankings ?? [];
-          state.research = msg.research ?? null;
+          // §perf Part B: the wire carries only the DYNAMIC research slice —
+          // join it onto the static Welcome catalog for the panel's full shape.
+          state.research = msg.research ? mergeResearch(msg.research) : null;
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
           // Accumulate observed prices every View (fog-safe history for the
           // sparklines), even when the Market tab is closed.
           recordPriceHistory();
-          // Refresh only the currently-visible rail tab — hidden tabs don't churn
-          // (they re-render on show via setRailTab). Each updater also guards itself.
-          if ($("rail").classList.contains("is-open")) {
-            if (railTab === "system") updateSystemTab();
-            else if (railTab === "logistics") updateStandingPanel();
-            else if (railTab === "doctrine") updateDoctrinePanel();
-            else if (railTab === "rankings") updateRankingsPanel();
-          }
-          // The selected-ship panel keeps the information AGE ticking (and handles a
-          // contact passing out of view) while it's open.
-          if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
-          // §syndicates: refresh the alliance roster/invites if the panel is open
-          // (guarded by a signature so a half-typed name survives).
-          if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
-          // §research R6: refresh the Programme Boards if open (coarse signature —
-          // the progress bar animates ~1 Hz, node states update as they change).
-          if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
-          // §management-home: inside the System View, refresh the management
-          // column + the structure markers (a cached no-op unless tiers changed).
-          updateSysviewDynamic();
-          // §one-battle-one-icon: keep an open ongoing-battle panel live (elapsed,
-          // echo countdowns, running composition; auto-closes when it concludes).
+          // §one-battle-one-icon: keep an open ongoing-battle panel live. This runs
+          // INLINE on every View (not coalesced): it accumulates a per-View high-
+          // water tally of forces (peaks in a View skipped by coalescing would be
+          // lost); its own DOM rebuild is signature-gated, so this stays cheap.
           if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
-          // §battle-records: keep an open replay viewer live — rounds grow, the
-          // light frontier advances, the outcome may arrive (guards itself).
-          refreshOpenBattleViewer();
-          // The Market is a navbar overlay now — refresh it when open.
-          if ($("market").classList.contains("is-open")) updateMarket();
-          updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
+          // Everything else the View drives is a pure/idempotent refresh — coalesce
+          // it onto one rAF so a queued burst collapses to a single DOM pass.
+          scheduleViewRefresh();
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
           state.lastViewWallMs = performance.now();
           state.link = "online";
           break;
+        case "BattleRecords": {
+          // §perf Part A: merge record INCREMENTS into the held store. Each
+          // updated record becomes a NEW object (append-rounds via spread), so
+          // the phase-1 content compares (viewer signature, theater bindRecord)
+          // fire exactly as they did when the View replaced the whole array.
+          // Untouched records keep their identity — no churn. The client-only
+          // §theater demo record is never named by the server, so it survives.
+          let recs = state.battleRecords;
+          for (const id of msg.removed ?? []) recs = recs.filter((r) => r.id !== id);
+          for (const u of msg.updates ?? []) {
+            const prev = recs.find((r) => r.id === u.id);
+            // A new record arrives WITH a header; a header on an existing record
+            // is a refresh (flagship christened) that keeps the held rounds.
+            const base: BattleRecordView | undefined = u.header
+              ? { id: u.id, ...u.header, rounds: prev?.rounds ?? [], light_frontier_tick: u.light_frontier_tick, outcome: prev?.outcome ?? null }
+              : prev;
+            if (!base) continue; // increment for a record we never got — drop safely
+            const next: BattleRecordView = {
+              ...base,
+              rounds: u.new_rounds?.length ? [...base.rounds, ...u.new_rounds] : base.rounds,
+              light_frontier_tick: u.light_frontier_tick,
+              outcome: u.outcome ?? base.outcome ?? null,
+            };
+            // Replace IN PLACE; append only a genuinely new record. Moving an
+            // updated record to the tail would reorder the array, and
+            // recordForReport's first-position-match join could then bind an
+            // aftermath report to the WRONG battle at a twice-contested site
+            // (the old full-set View kept the server's stable BTreeMap order).
+            recs = prev ? recs.map((r) => (r.id === u.id ? next : r)) : recs.concat([next]);
+          }
+          state.battleRecords = recs;
+          // Keep an open replay live without waiting for the next View's refresh
+          // (cheap — it signature-guards itself).
+          refreshOpenBattleViewer();
+          break;
+        }
+        case "Sections": {
+          // §perf Part B: a slow-moving section changed — replace the held copy.
+          // Absent fields are UNCHANGED (keep the last value); the panels read
+          // state as always and refresh on the coalesced View cadence.
+          if (msg.standing_orders) state.standingOrders = msg.standing_orders;
+          if (msg.battle_reports) state.battleReports = msg.battle_reports;
+          if (msg.capture_reports) state.captureReports = msg.capture_reports;
+          if (msg.rankings) state.rankings = msg.rankings;
+          scheduleViewRefresh();
+          break;
+        }
         case "CommandSignal": {
           // Your order is crossing space to your ship (the violet comet); you'll
           // see the ship react on the map when its light arrives. Replace any
@@ -5565,3 +6154,185 @@ nameInput.addEventListener("keydown", (e) => {
 });
 nameInput.focus();
 setHud();
+
+
+/// §TCA Part 5: dockside LOGISTICS for one of the player's own convoys — load and
+/// unload across the Charterhouse warehouse or an owned system's stockpile, and
+/// the haul order that sends a loaded hull to the Charterhouse. Only offered when
+/// the fleet is actually alongside a dock and idle; the sim soft-rejects anything
+/// else, but there is no point showing a button that will only ever be refused.
+/// Does this fleet lift cargo? UI mirror of the sim's `Fleet::cargo_capacity()`:
+/// convoy HULLS carry, and it never consults the flagship. An escorted lot whose
+/// flagship is a warship still hauls.
+function hauls(g: GhostView): boolean {
+  return g.kind === "convoy" || !!g.composition?.some((c) => c.kind === "convoy" && c.count > 0);
+}
+
+function logisticsSection(g: GhostView): string {
+  const hub = state.galaxy?.hub;
+  const near = (p: Vec2 | undefined) => p !== undefined && Math.hypot(p.x - g.pos.x, p.y - g.pos.y) <= LOGISTICS_RANGE_UI;
+  const atHub = near(hub);
+  const sys = (state.galaxy?.systems ?? []).find((sy) => {
+    const st = state.systems.find((x) => x.id === sy.id);
+    return st?.owner === state.playerId && near(sy.pos);
+  });
+  if (!atHub && !sys) {
+    return `<div class="sp-line dim" title="Bring the fleet alongside the Wormhole Hub or one of your own systems to load or unload.">${icon("cargo", "sm")} Not alongside a dock.</div>`;
+  }
+  const where = atHub ? "the hub" : esc(sys!.name);
+  const rows: string[] = [`<div class="sp-sec">${icon("cargo", "sm")} Logistics · ${where}</div>`];
+  if (g.cargo) {
+    rows.push(
+      `<div class="sp-line"><button class="act" data-act="unload" title="Put the whole hold ashore at ${esc(where)}.">Unload ${fmt(g.cargo.units)} ${esc(label(g.cargo.commodity))}</button></div>`,
+    );
+  }
+  // Load: pick a commodity + amount from whatever the dock actually holds.
+  const stock: [string, number][] = atHub
+    ? (state.wallet?.warehouse ?? []).map((w) => [w.commodity, w.units] as [string, number])
+    : (state.systems.find((x) => x.id === sys!.id)?.stockpile ?? []).map((sl) => [sl.commodity, sl.units] as [string, number]);
+  const avail = stock.filter(([, u]) => u > 0);
+  if (avail.length) {
+    rows.push(
+      `<div class="sp-line"><select class="lg-com" data-act="noop">` +
+      avail.map(([c, u]) => `<option value="${c}">${esc(c)} (${u})</option>`).join("") +
+      `</select> <input class="lg-qty" type="number" min="1" value="50" style="width:5.5em" /> ` +
+      `<button class="act" data-act="load" title="Load whole units from ${esc(where)} into this fleet's hold. A hold stays single-commodity — unload first to switch goods.">Load</button></div>`,
+    );
+  }
+  if (g.cargo && !atHub) {
+    rows.push(
+      `<div class="sp-line"><button class="act act--primary" data-act="haul" title="Send this loaded hull to the Wormhole Hub. It deposits into your warehouse on arrival — and, if you tick sell, clears at that tick's standing price. The fleet SURVIVES and goes idle there.">Haul to the hub</button> ` +
+      `<label class="lim" title="Sell the lot at the Exchange the moment it lands."><input type="checkbox" class="lg-sell" /> sell on arrival</label></div>`,
+    );
+  }
+  return rows.join("");
+}
+
+
+/// §TCA: plain-language text for a soft-rejected order or booking. Every one of
+/// these costs the player NOTHING — the wording says what to do instead.
+function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
+  const com = t.commodity;
+  const where = t.system ? systemName(t.system) : null;
+  switch (t.reason.reason) {
+    case "insufficient_warehouse_stock":
+      return `Your hub warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your convoys).`;
+    case "not_your_system":
+      return `The Authority serves your own colonies only — ${where ?? "that system"} isn't yours.`;
+    case "insufficient_system_stock":
+      return `${where ?? "That system"} holds ${t.reason.have} ${com} — not enough to collect ${t.units}.`;
+    case "cannot_afford_fee":
+      return `Freight fee is ${fmt(t.reason.fee)} Cr — more than your treasury.`;
+    case "destination_blockaded":
+      return `The Authority reports ${where ?? "that system"} BLOCKADED and won't book freight there.`;
+    case "fleet_unavailable":
+      return `That fleet must be yours, idle, and out of a fight to handle cargo.`;
+    case "out_of_logistics_range":
+      return `That fleet is too far from the dock — bring it alongside first.`;
+    case "no_cargo_room":
+      return t.reason.capacity === 0
+        ? `That fleet has no cargo hold — only convoys haul goods.`
+        : `Not enough hold for ${t.units} ${com}: this fleet lifts ${t.reason.capacity} units.`;
+    case "cargo_mismatch":
+      return `That hold is already carrying something else — unload before loading ${com}.`;
+    case "charter_suspended":
+      return `Your charter is SUSPENDED — the Authority takes no new freight. Freight already booked still completes; pay reinstatement, or haul it yourself.`;
+    case "charter_revoked":
+      return `Your charter is REVOKED — the Exchange is closed to you. Your warehouse is still yours to fetch from; pay reinstatement to trade again.`;
+    case "cant_afford":
+      return `Reinstatement costs ${fmt(t.reason.cost)} credits — more than your treasury.`;
+  }
+}
+
+
+// --- §TCA Phase 2: the charter status block ----------------------------------
+
+/// The charter chip + band ladder + (when it bites) the live cost of the band,
+/// and the reinstatement control. Rendered as a LEGAL STATUS — a ladder of named
+/// bands with their thresholds — rather than a reputation bar, because that is
+/// what it is: priced outlawry, with the price written down.
+function renderCharter(): void {
+  const ch = state.charter;
+  if (!ch) {
+    $("charter-block").innerHTML = "";
+    return;
+  }
+  const tone =
+    ch.status === "good_standing" ? "positive"
+    : ch.status === "sanctioned" ? "neutral"
+    : ch.status === "suspended" ? "warn"
+    : "negative";
+  const rows = state.charterLadder
+    .map(([title, at], i) => {
+      const active = title === ch.title;
+      // The first row is the ceiling ("at 100"); the rest read as "below/at N".
+      const bound = i === 0 ? `at ${at.toFixed(0)}` : i === 1 ? `below ${at.toFixed(0)}` : `at ${at.toFixed(0)}`;
+      return `<div class="ord${active ? " is-active" : ""}"${active ? ' style="font-weight:600"' : ""}>` +
+        `${active ? "▸ " : "· "}${esc(title)} <span class="dim">${bound}</span></div>`;
+    })
+    .join("");
+  // What the band is costing right now — shown only when it actually bites.
+  const bites = ch.tariff_mult > 1.0 || ch.market_penalty_frac > 0;
+  const cost = bites
+    ? `<div class="mhint">Freight tariff <b>×${ch.tariff_mult.toFixed(2)}</b> · Exchange penalty ` +
+      `<b>${(ch.market_penalty_frac * 100).toFixed(1)}%</b> of trade value.</div>`
+    : `<div class="mhint dim">In good standing you pay no tariff and no Exchange penalty.</div>`;
+  const shortfall = Math.max(0, ch.max_standing - ch.standing);
+  const pay = shortfall > 0
+    ? `<div class="composer__row"><label>Reinstate</label>` +
+      `<input type="number" id="ch-points" min="1" step="1" value="${Math.ceil(Math.min(shortfall, 20))}" style="width:6em" />` +
+      `<button class="act" id="ch-pay" title="Buy charter standing back from the Authority. The credits are burned, and you are only ever charged for points actually restored.">Pay</button>` +
+      `<span class="dim" id="ch-cost"></span></div>`
+    : "";
+  $("charter-block").innerHTML =
+    `<div class="sp-line">${badge(tone, esc(ch.title))} <b>${ch.standing.toFixed(0)}</b><span class="dim">/${ch.max_standing.toFixed(0)}</span></div>` +
+    `<div class="mkt-orders">${rows}</div>` +
+    cost +
+    pay;
+  if (shortfall > 0) syncReinstateCost();
+}
+
+/// Live cost preview for the reinstatement control.
+function syncReinstateCost(): void {
+  const ch = state.charter;
+  const inp = $("ch-points") as HTMLInputElement | null;
+  const out = $("ch-cost");
+  if (!ch || !inp || !out) return;
+  const want = Math.max(0, Math.floor(Number(inp.value) || 0));
+  const restorable = Math.max(0, ch.max_standing - ch.standing);
+  const points = Math.min(want, restorable);
+  out.textContent = `${fmt(points * ch.reinstate_cost_per_point)} Cr for ${points.toFixed(0)} pts`;
+}
+
+/// §TCA Phase 2: the projected band after `loss` more standing — the client-side
+/// forecast behind the "this will be cited" confirmations. A PREVIEW, not a
+/// promise: the citation only lands when its light reaches the Charterhouse, and
+/// standing regenerates in the meantime.
+function projectedBand(loss: number): string {
+  const ch = state.charter;
+  if (!ch) return "unknown";
+  const after = ch.standing - loss;
+  // Walk the server-supplied ladder (static, from Welcome): the first row whose
+  // threshold we are at or below names the band (row 1, Sanctioned, is a strict
+  // "below").
+  const ladder = state.charterLadder;
+  if (!ladder.length) return "unknown";
+  let title = ladder[0][0];
+  for (let i = 1; i < ladder.length; i++) {
+    const [name, at] = ladder[i];
+    const hit = i === 1 ? after < at : after <= at;
+    if (hit) title = name;
+  }
+  return title;
+}
+
+/// Confirm a hostile act against an Authority hull. NEVER a hard block — the
+/// whole design is priced outlawry, so the player is told the price and then
+/// allowed to pay it.
+function confirmAuthorityHostility(what: string): boolean {
+  const band = projectedBand(TCA_INCIDENT_LOSS_UI);
+  return window.confirm(
+    `${what}\n\nThis will be CITED by the Terran Charter Authority once its light reaches the Wormhole Hub.\n` +
+      `Projected charter status: ${band}.\n\nProceed?`,
+  );
+}
