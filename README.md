@@ -750,8 +750,9 @@ Everything that touches the outside world lives outside it.
 ### 1. Build & run the server
 
 ```bash
-# from the repo root
-cargo run -p server
+# from the repo root — use --release for playtesting (the debug build is
+# several times slower on the per-tick serialization path and can stutter)
+cargo run --release -p server
 ```
 
 The server listens on `:8080` (HTTP + WebSocket at `/ws`). With no `DATABASE_URL`

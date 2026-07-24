@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "stellar-server",
-      "runtimeExecutable": "target/debug/server",
+      "runtimeExecutable": "target/release/server",
       "runtimeArgs": [],
       "port": 8080
     },
