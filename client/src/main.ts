@@ -5913,6 +5913,13 @@ function join(): void {
           // record pruned while we were away can't linger (the client-only
           // §theater demo record is the one deliberate survivor).
           state.battleRecords = state.battleRecords.filter((r) => r.id === "demo-battle");
+          // §perf Part B: the change-gated sections re-stream in full on a fresh
+          // connection (empty server-side signatures) — reset the held copies so
+          // nothing stale survives a reconnect.
+          state.standingOrders = [];
+          state.battleReports = [];
+          state.captureReports = [];
+          state.rankings = [];
           state.link = "online";
           // Swap from the join screen to the galaxy view.
           joinScreen.style.display = "none";
@@ -5957,16 +5964,13 @@ function join(): void {
           state.wallet = msg.wallet;
           state.freight = msg.freight;
           state.charter = msg.charter;
-          state.standingOrders = msg.standing_orders;
           state.doctrine = msg.doctrine;
           state.battles = msg.battles;
-          state.battleReports = msg.battle_reports;
-          state.captureReports = msg.capture_reports;
-          // (§perf Part A: battle records no longer ride the View — they stream
-          // incrementally via the "BattleRecords" message below.)
+          // (§perf Part A/B: battle records stream via "BattleRecords";
+          // standing orders / reports / rankings arrive via "Sections" — both
+          // on the reliable lane, only when changed. State keeps the last copy.)
           state.syndicate = msg.syndicate ?? null;
           state.syndicateInvites = msg.syndicate_invites ?? [];
-          state.rankings = msg.rankings ?? [];
           // §perf Part B: the wire carries only the DYNAMIC research slice —
           // join it onto the static Welcome catalog for the panel's full shape.
           state.research = msg.research ? mergeResearch(msg.research) : null;
@@ -6019,6 +6023,17 @@ function join(): void {
           // Keep an open replay live without waiting for the next View's refresh
           // (cheap — it signature-guards itself).
           refreshOpenBattleViewer();
+          break;
+        }
+        case "Sections": {
+          // §perf Part B: a slow-moving section changed — replace the held copy.
+          // Absent fields are UNCHANGED (keep the last value); the panels read
+          // state as always and refresh on the coalesced View cadence.
+          if (msg.standing_orders) state.standingOrders = msg.standing_orders;
+          if (msg.battle_reports) state.battleReports = msg.battle_reports;
+          if (msg.capture_reports) state.captureReports = msg.capture_reports;
+          if (msg.rankings) state.rankings = msg.rankings;
+          scheduleViewRefresh();
           break;
         }
         case "CommandSignal": {

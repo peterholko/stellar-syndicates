@@ -1473,10 +1473,6 @@ pub enum ServerMsg {
         /// destination, and the player's OWN shipment queue. Owner-only, fresh
         /// (it is the player's own administration, like the wallet).
         freight: FreightView,
-        /// The player's own standing logistics orders (§15) — fresh (own private
-        /// policy, not light-gated, like the wallet). Lets the client list/edit them
-        /// and show what's running automatically.
-        standing_orders: Vec<StandingOrder>,
         /// The player's own fleet doctrine (§16) — fresh private policy (like the
         /// wallet), so the client can display and edit it.
         doctrine: FleetDoctrine,
@@ -1488,17 +1484,6 @@ pub enum ServerMsg {
         /// Ongoing BATTLES visible to this player (§battles-take-time) — strictly
         /// light-gated; a third-party observer sees them only by their own light.
         battles: Vec<BattleView>,
-        /// §battle-aftermath: CONCLUDED battles this player PARTICIPATED in and
-        /// has LEARNED of (their conclusion light provably arrived — see
-        /// `learned_at`). Strictly per-participant: a non-participant's view
-        /// never carries a battle they weren't in. Retained server-side
-        /// (last [`crate::reports::BATTLE_REPORTS_KEPT`]), so markers/results
-        /// survive reconnects.
-        battle_reports: Vec<BattleReportView>,
-        /// §contestable-territory Part 2: CONCLUDED captures this player was a
-        /// participant in and has LEARNED of (per-participant, light-delayed) —
-        /// the capture aftermath markers + results. Retained (reconnect-safe).
-        capture_reports: Vec<CaptureReportView>,
         /// §syndicates Part 1: the viewer's OWN syndicate roster (fresh private
         /// state, like the wallet), or `None` if unaffiliated. Never a rival's.
         /// Boxed so this (already the largest) View variant stays lean; serde is
@@ -1513,11 +1498,28 @@ pub enum ServerMsg {
         /// lean; serde is transparent through the `Box`.
         #[serde(default)]
         research: Option<Box<ResearchView>>,
-        /// §rankings: the PUBLISHED leaderboard — the same snapshot for every player
-        /// (public by design), taken on the ledger close. A verbatim copy of the
-        /// sim's `world.rankings`; between closes it holds steady (no live leak).
-        #[serde(default)]
-        rankings: Vec<RankingRow>,
+    },
+
+    /// §perf Part B: the SLOW-MOVING per-player sections that used to ride every
+    /// 10 Hz View — standing orders, retained battle/capture reports, and the
+    /// published rankings. Sent per connection ONLY when a section's content
+    /// changed (signature-gated, the timeline_sent pattern), on the RELIABLE
+    /// discrete lane (the View's watch channel may drop frames for a slow
+    /// client, which would lose a once-per-change section forever). A present
+    /// field REPLACES the client's copy; an absent field means "unchanged". A
+    /// fresh connection's first broadcast carries all four (empty signatures).
+    Sections {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        standing_orders: Option<Vec<StandingOrder>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        battle_reports: Option<Vec<BattleReportView>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        capture_reports: Option<Vec<CaptureReportView>>,
+        /// §rankings: the PUBLISHED leaderboard — the same snapshot for every
+        /// player (public by design), taken on the ledger close; it only changes
+        /// on a close, which is exactly when it re-sends.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rankings: Option<Vec<RankingRow>>,
     },
 
     /// §perf Part A: incremental battle-record delivery (was: every record's full

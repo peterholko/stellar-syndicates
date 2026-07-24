@@ -1087,27 +1087,30 @@ export type ServerMsg =
       freight: FreightView;
       /// §TCA Phase 2: YOUR charter standing and band. Owner-only.
       charter: CharterView;
-      standing_orders: StandingOrder[];
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
       // §battles-take-time — ongoing battles visible to this player (light-gated).
       battles: BattleView[];
-      /// §battle-aftermath: retained concluded-battle reports (owner-only).
-      battle_reports: BattleReportView[];
-      /// §contestable-territory Part 2: retained capture reports (per-participant).
-      capture_reports: CaptureReportView[];
       /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
       syndicate?: SyndicateView | null;
       /// §syndicates Part 1: pending invitations the viewer may accept.
       syndicate_invites?: SyndicateInviteView[];
-      /// §rankings: the PUBLISHED leaderboard — public, same for every player,
-      /// snapshotted on the ledger close (holds steady between closes).
-      rankings?: RankingRow[];
       /// §research R6: the viewer's OWN research picture (owner-only; null if
       /// unaffiliated — research is a syndicate institution). §perf Part B: the
       /// DYNAMIC slice only — the client joins it onto Welcome's catalog.
       research?: ResearchDynView | null;
+      // (§perf Part B: standing_orders / battle_reports / capture_reports /
+      // rankings moved to the change-gated "Sections" message.)
+    }
+  | {
+      // §perf Part B: the slow-moving sections, sent only when their content
+      // changed. A present field REPLACES the held copy; absent = unchanged.
+      type: "Sections";
+      standing_orders?: StandingOrder[];
+      battle_reports?: BattleReportView[];
+      capture_reports?: CaptureReportView[];
+      rankings?: RankingRow[];
     }
   | {
       // §perf Part A: incremental battle-record delivery on the reliable lane —

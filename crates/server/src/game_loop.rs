@@ -746,6 +746,11 @@ impl GameLoop {
         // §perf Part A: per-player battle-record specs (what each player MAY see
         // right now) — diffed per CONNECTION against its delivery cursor below.
         let mut record_specs: HashMap<PlayerId, Vec<view::RecordSpec>> = HashMap::new();
+        // §perf Part B: per-player slow-moving sections + their content
+        // signatures — sent per connection only when a signature changed.
+        let mut sections: HashMap<PlayerId, SectionData> = HashMap::new();
+        // The published rankings are identical for everyone: one signature.
+        let rankings_sig = sig_of(&self.world.rankings);
         for player_id in self.sessions.online_players() {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
@@ -852,6 +857,9 @@ impl GameLoop {
             // §battle-aftermath: this player's RETAINED concluded-battle reports
             // (delivered = their light provably arrived). Strictly per-
             // participant — the scheduler holds them keyed by recipient.
+            // §perf Part B: these ride the change-gated Sections lane now; the
+            // retained sets change only by membership (entries are immutable
+            // once delivered), so an id signature detects every change.
             let battle_reports: Vec<crate::protocol::BattleReportView> = self
                 .reports
                 .retained_for(player_id)
@@ -883,6 +891,17 @@ impl GameLoop {
                     plunder: r.plunder.clone(),
                 })
                 .collect();
+            let reports_sig = sig_of(&battle_reports.iter().map(|r| r.id).collect::<Vec<_>>());
+            let captures_sig = sig_of(&capture_reports.iter().map(|r| r.id).collect::<Vec<_>>());
+            let standing_sig = sig_of(&corp.standing_orders);
+            sections.insert(player_id, SectionData {
+                standing: corp.standing_orders.clone(),
+                standing_sig,
+                reports: battle_reports,
+                reports_sig,
+                captures: capture_reports,
+                captures_sig,
+            });
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             // §syndicates Part 2: each syndicate ally's relayable scout intel (their
             // command center is the relay source). The View chain-light-delays each
@@ -1125,9 +1144,6 @@ impl GameLoop {
                     wallet,
                     charter,
                     freight,
-                    // The player's own standing orders (fresh — private policy, not
-                    // light-gated), so the client can list/edit them.
-                    standing_orders: corp.standing_orders.clone(),
                     // The player's own fleet doctrine (fresh private policy).
                     doctrine: corp.doctrine,
                     // The player's own in-flight order lifecycles (§order-lifecycle)
@@ -1144,14 +1160,9 @@ impl GameLoop {
                         })
                         .collect(),
                     battles,
-                    battle_reports,
-                    capture_reports,
                     syndicate,
                     syndicate_invites,
                     research,
-                    // §rankings: the published leaderboard — public, identical for
-                    // every player, a verbatim copy of the sim's last ledger close.
-                    rankings: self.world.rankings.clone(),
                 },
             );
             let due = self.reports.due_for(player_id, cc, c, now);
@@ -1187,6 +1198,10 @@ impl GameLoop {
             if let Some(specs) = record_specs.get(&info.player_id) {
                 send_record_deltas(&self.world.battle_records, specs, info);
             }
+            // §perf Part B: the change-gated slow sections, same reliable lane.
+            if let Some(sec) = sections.get(&info.player_id) {
+                send_sections(sec, rankings_sig, &self.world.rankings, info);
+            }
             if let Some(reps) = reports.get(&info.player_id) {
                 for r in reps {
                     let _ = info.outbound.try_send(r.clone());
@@ -1195,6 +1210,67 @@ impl GameLoop {
             if let Some(tl) = timelines.get(&info.player_id) {
                 let _ = info.outbound.try_send(tl.clone());
             }
+        }
+    }
+}
+
+/// §perf Part B: one player's slow-moving sections for this broadcast, with
+/// their content signatures (computed once per player, compared per connection).
+struct SectionData {
+    standing: Vec<sim::StandingOrder>,
+    standing_sig: u64,
+    reports: Vec<crate::protocol::BattleReportView>,
+    reports_sig: u64,
+    captures: Vec<crate::protocol::CaptureReportView>,
+    captures_sig: u64,
+}
+
+/// §perf Part B: a cheap content signature — the serialized JSON hashed. Used on
+/// small, slow-moving payloads only (standing orders, report id lists, the
+/// ~20-row rankings), never on the big per-tick state.
+fn sig_of<T: serde::Serialize>(v: &T) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(v).unwrap_or_default().hash(&mut h);
+    h.finish()
+}
+
+/// §perf Part B: send this connection whichever sections changed since it last
+/// received them (a present field REPLACES the client copy; absent = unchanged).
+/// Signatures are committed only when the send succeeds — a full queue retries
+/// next broadcast, never silently losing a once-per-change section.
+fn send_sections(
+    sec: &SectionData,
+    rankings_sig: u64,
+    rankings: &[sim::RankingRow],
+    info: &mut ConnInfo,
+) {
+    let sent = &info.sent;
+    let standing = (sent.standing_sig != Some(sec.standing_sig)).then(|| sec.standing.clone());
+    let reports = (sent.reports_sig != Some(sec.reports_sig)).then(|| sec.reports.clone());
+    let captures = (sent.captures_sig != Some(sec.captures_sig)).then(|| sec.captures.clone());
+    let ranks = (sent.rankings_sig != Some(rankings_sig)).then(|| rankings.to_vec());
+    if standing.is_none() && reports.is_none() && captures.is_none() && ranks.is_none() {
+        return;
+    }
+    let msg = ServerMsg::Sections {
+        standing_orders: standing.clone(),
+        battle_reports: reports.clone(),
+        capture_reports: captures.clone(),
+        rankings: ranks.clone(),
+    };
+    if info.outbound.try_send(msg).is_ok() {
+        if standing.is_some() {
+            info.sent.standing_sig = Some(sec.standing_sig);
+        }
+        if reports.is_some() {
+            info.sent.reports_sig = Some(sec.reports_sig);
+        }
+        if captures.is_some() {
+            info.sent.captures_sig = Some(sec.captures_sig);
+        }
+        if ranks.is_some() {
+            info.sent.rankings_sig = Some(rankings_sig);
         }
     }
 }
