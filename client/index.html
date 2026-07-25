@@ -814,6 +814,36 @@
       #syndicate-panel .act--danger:hover { border-color: #ff6b6b; color: #ff9b9b; }
       #syndicate-panel .sy-note { color: var(--dim); line-height: 1.45; font-size: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 
+      /* ---- §TCA: the FACTION panel (syndicate-panel idiom, Authority-amber top).
+             Your standing with the Terran Charter Authority as a LEGAL STATUS —
+             its own navbar destination, not a market tab, because the charter is
+             who you are to the Authority, not something you shop for. ---- */
+      #faction-panel {
+        position: fixed; top: 100px; left: 14px;
+        width: 320px; display: none; flex-direction: column;
+        background: var(--panel-bg); border: 1px solid var(--border);
+        border-top: 2px solid var(--warn); border-radius: 8px;
+        box-shadow: var(--panel-shadow); font-size: 12px; z-index: 8;
+        backdrop-filter: blur(4px); max-height: 74vh; overflow-y: auto;
+      }
+      #faction-panel.is-open { display: flex; }
+      #faction-panel .pp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
+      #faction-panel .pp-head b { letter-spacing: 1px; }
+      #faction-panel .pp-close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
+      #faction-panel .pp-close:hover { color: var(--ink); }
+      #faction-panel .pp-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+      #faction-panel .fp-sub { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; }
+      #faction-panel .fp-name { font-size: 13px; font-weight: 700; color: var(--warn); }
+      #faction-panel .sp-line { line-height: 1.45; }
+      #faction-panel .mhint { font-size: 10px; line-height: 1.45; color: var(--dim); }
+      #faction-panel .mkt-orders { margin-top: 0; }
+      /* The band ladder: the standing band you are IN is the lit rung. */
+      #faction-panel .ord.is-active { color: var(--ink); }
+      #faction-panel input { background: var(--field-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; font: inherit; font-size: 12px; padding: 5px 7px; }
+      #faction-panel .act { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--btn-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; font: inherit; font-size: 12px; padding: 5px 9px; white-space: nowrap; }
+      #faction-panel .act:hover { border-color: var(--warn); color: var(--warn); }
+      #faction-panel .fp-note { color: var(--dim); line-height: 1.45; font-size: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+
       /* ---- §research R6: the Programme Boards panel (house-width modal) ---- */
       #research-panel {
         position: fixed; top: 78px; left: 50%; transform: translateX(-50%);
@@ -1013,6 +1043,7 @@
         <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)"><img class="cicon" src="/art/ui_icons/svg/concept-market-exchange.svg" width="14" height="14" alt="" />Market</button>
         <button id="nav-research" class="hud-btn" type="button" title="Research — programme boards (R)">🔬 Research</button>
         <button id="nav-syndicate" class="hud-btn" type="button" title="Syndicate — alliances (Y)">🤝 Syndicate</button>
+        <button id="nav-faction" class="hud-btn" type="button" title="Faction — your charter with the Terran Charter Authority (C)">⚖ Faction</button>
         <button id="nav-log" class="hud-btn" type="button" title="Check-in log (L)">⌖ Log</button>
       </nav>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
@@ -1054,6 +1085,11 @@
          / leave / dissolve. Opened from the navbar (🤝) or `Y`. Owner-only content
          (your own roster + pending invites; never a rival's private roster). -->
     <div id="syndicate-panel"></div>
+
+    <!-- §TCA: the FACTION panel — your charter standing with the Terran Charter
+         Authority: the band ladder, what the band is costing you, and the
+         reinstatement desk. Opened from the navbar (⚖) or `C`. Owner-only. -->
+    <div id="faction-panel"></div>
     <div id="research-panel"></div>
 
     <!-- Unified right-rail workspace (Stellar-Charters-inspired master→detail):
@@ -1147,13 +1183,13 @@
       <div id="market-wallet" class="stat-strip"></div>
       <div class="seg" id="market-tabs" role="tablist" style="margin: 6px 0 8px">
         <button data-mtab="exchange" class="is-active" role="tab">Exchange</button>
-        <button data-mtab="charter" role="tab">Charter</button>
+        <button data-mtab="freight" role="tab">Freight</button>
         <button data-mtab="specialists" role="tab">Specialists</button>
         <button data-mtab="modules" role="tab">Modules</button>
         <button data-mtab="supply" role="tab">Supply</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="mhint" style="margin-bottom:6px">Trades your <b>hub warehouse</b> — goods held here at the Wormhole Hub, <b>separate from your HQ and your systems' stockpiles</b>. Buys land in the warehouse; sells draw from it. Goods elsewhere must be <b>hauled here first</b> — see the <b>Charter</b> tab for Authority freight, or fly your own convoys. To feed a system's converters, use the <b>Supply</b> tab.</div>
+        <div class="mhint" style="margin-bottom:6px">Trades your <b>hub warehouse</b> — goods held here at the Wormhole Hub, <b>separate from your HQ and your systems' stockpiles</b>. Buys land in the warehouse; sells draw from it. Goods elsewhere must be <b>hauled here first</b> — see the <b>Freight</b> tab for Authority freight, or fly your own convoys. To feed a system's converters, use the <b>Supply</b> tab.</div>
         <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your hub warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
         <div id="market-board"></div>
         <div class="composer">
@@ -1171,15 +1207,11 @@
         <div class="mkt-orders" id="market-orders"></div>
         <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
       </div>
-      <!-- §TCA → §market-ux: the CHARTER tab — your legal standing with the
-           Authority, your warehouse at the hub, and the freight desk. One pane,
-           because they are one loop: standing prices the freight that fills the
-           warehouse the Exchange trades against. -->
-      <div id="market-pane-charter" hidden>
-        <!-- §TCA Phase 2: CHARTER STANDING — a legal status, not a reputation bar. -->
-        <div class="ci-sub">Your charter · Terran Charter Authority</div>
-        <div id="charter-block"></div>
-
+      <!-- §TCA → §market-ux: the FREIGHT tab — your warehouse at the hub and the
+           Authority freight desk. One pane, because they are one loop: freight is
+           what fills the warehouse the Exchange trades against. Your charter
+           STANDING (which prices this freight) lives in the Faction panel. -->
+      <div id="market-pane-freight" hidden>
         <!-- §TCA: the WAREHOUSE — the only stock the Exchange trades against. -->
         <div class="ci-sub">Your warehouse · at the Wormhole Hub</div>
         <div id="wh-table" class="mkt-orders"></div>
@@ -1210,7 +1242,7 @@
         <div class="mhint" id="mod-feedback"></div>
       </div>
       <div id="market-pane-supply" hidden>
-        <div class="mhint">Ship goods from your <b>hub warehouse</b> into a system's stockpile — to feed its converters. Your own convoy, sailing from the hub: free, sub-light and <b>raidable</b>. The <b>Charter</b> tab books the Authority's carrier for the same leg instead.</div>
+        <div class="mhint">Ship goods from your <b>hub warehouse</b> into a system's stockpile — to feed its converters. Your own convoy, sailing from the hub: free, sub-light and <b>raidable</b>. The <b>Freight</b> tab books the Authority's carrier for the same leg instead.</div>
         <div class="composer__row" style="margin-top:8px"><label>To system</label><select id="mk-supply-dest"></select></div>
         <div id="mk-supply-rows" style="margin-top:8px"></div>
         <div class="mhint" id="mk-supply-feedback"></div>

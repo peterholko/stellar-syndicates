@@ -355,11 +355,25 @@ function buildRail(): void {
       updateRankingsPanel();
     }
   });
-  // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate + Log.
+  // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate +
+  // Faction + Log.
   $("nav-market").addEventListener("click", toggleMarket);
   $("nav-research").addEventListener("click", toggleResearch);
   $("nav-syndicate").addEventListener("click", toggleSyndicate);
+  $("nav-faction").addEventListener("click", toggleFaction);
   $("nav-log").addEventListener("click", toggleCheckin);
+  // §TCA: delegated actions inside the Faction panel — close, and the
+  // reinstatement desk (the body rebuilds, so both listeners live on the root).
+  $("faction-panel").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-fp='close']")) { closeFaction(); return; }
+    if (t.id !== "ch-pay" || !net) return;
+    const points = Math.max(1, Math.floor(Number(($("ch-points") as HTMLInputElement).value) || 0));
+    net.send({ type: "PayReinstatement", points });
+  });
+  $("faction-panel").addEventListener("input", (e) => {
+    if ((e.target as HTMLElement).id === "ch-points") syncReinstateCost();
+  });
   $("market-close").addEventListener("click", closeMarket);
   // §research R6: delegated actions inside the Programme Boards panel — close,
   // add an open node to the queue, and reorder/remove queued programmes.
@@ -1764,7 +1778,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
       .join("") + `</div>`;
     const buildSec = ppSec("Build", "The at-a-glance slot pools — the reason to open the builder. Founding a NEW structure claims one of this body's pool slots; tier-ups deepen in place.") +
       poolStrip +
-      `<button class="act pp-build-open" data-action="open-builder" ${anyOpenable ? "" : "disabled"} title="${anyOpenable ? "Open the build panel — pick a structure, read its recipe & effect, then queue it." : "Nothing buildable here — every slot pool is full and there's nothing to deepen. Grow this body's population, or build on another body."}">${icon("build", "sm")} Build structure…</button>`;
+      `<button class="act pp-build-open" data-action="open-builder" ${anyOpenable ? "" : "disabled"} title="${anyOpenable ? "Open the build panel — pick a structure, read its recipe & effect, then queue it." : "Nothing buildable here — every slot pool is full and there's nothing to deepen. Grow this body's population, or build on another body."}">${icon("build", "sm")} Build Structure</button>`;
 
     // Per-body construction queue (ship jobs render under the yard below).
     const bodyQueue = buildQueueRows(sid, dyn, { filter: (j) => j.body_id === body.id && !SHIP_KEYS.has(j.key), seenKey: `${sid}#b${body.id}` });
@@ -1782,7 +1796,7 @@ function openPlanetPanel(d: SystemBodyDetail): void {
       yardSec = shipOpts.length
         ? ppSec("Orbital yard — ship construction", "Ships build at this body's Shipyard (tier-gated exactly as before) and spawn here.") +
           `<div class="pp-yardline"><span class="pp-pool" title="The shipyard tier gates what can be built (Convoy/Scout/Colony I, Raider/Corvette II).">${icon("shipyard", "sm")} Shipyard ${romanTier(yardTier)}</span>` +
-          `<button class="act pp-build-open" data-action="open-shipyard" title="Open the ship builder — pick a hull, set a quantity, read its stats & recipe, then queue it.">${icon("shipyard", "sm")} Build ship…</button></div>` +
+          `<button class="act pp-build-open" data-action="open-shipyard" title="Open the ship builder — pick a hull, set a quantity, read its stats & recipe, then queue it.">${icon("shipyard", "sm")} Build Ship</button></div>` +
           fitPicker(dyn) +
           shipQueue
         : "";
@@ -3122,6 +3136,8 @@ function installInteraction(): void {
       toggleCheckin();
     } else if (e.key === "y" || e.key === "Y") {
       toggleSyndicate(); // §syndicates: alliance panel
+    } else if (e.key === "c" || e.key === "C") {
+      toggleFaction(); // §TCA: your charter with the Authority
     } else if (e.key === "Escape") {
       // §battle-records: the replay overlay is topmost — Escape closes it first.
       if ($("battle-viewer").classList.contains("is-open")) {
@@ -3135,6 +3151,7 @@ function installInteraction(): void {
       } else {
         closeMarket();
         closeSyndicate();
+        closeFaction();
         closeRail();
         closeHubPanel();
         deselectShip();
@@ -4716,12 +4733,12 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-type MarketTab = "exchange" | "charter" | "specialists" | "modules" | "supply";
+type MarketTab = "exchange" | "freight" | "specialists" | "modules" | "supply";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
-  ($("market-pane-charter") as HTMLElement).hidden = tab !== "charter";
+  ($("market-pane-freight") as HTMLElement).hidden = tab !== "freight";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
   ($("market-pane-supply") as HTMLElement).hidden = tab !== "supply";
@@ -4793,16 +4810,6 @@ function buildMarketPanel(): void {
     renderComposer();
   });
   $("mk-qty").addEventListener("input", renderComposer);
-  // §TCA Phase 2: the reinstatement control. The rows rebuild every View, so both
-  // listeners are delegated on the persistent panel root (§single-click).
-  $("market").addEventListener("input", (e) => {
-    if ((e.target as HTMLElement).id === "ch-points") syncReinstateCost();
-  });
-  $("market").addEventListener("click", (e) => {
-    if ((e.target as HTMLElement).id !== "ch-pay" || !net) return;
-    const points = Math.max(1, Math.floor(Number(($("ch-points") as HTMLInputElement).value) || 0));
-    net.send({ type: "PayReinstatement", points });
-  });
   $("mk-shipto").addEventListener("change", renderComposer);
   // --- §TCA freight desk ---
   const frCom = $("fr-commodity") as HTMLSelectElement;
@@ -5125,7 +5132,6 @@ function updateMarket(): void {
   renderSpecialistsPane();
   renderModulesPane();
   renderSupplyPane();
-  renderCharter();
   renderWarehouse();
   renderFreightDesk();
   renderShipmentQueue();
@@ -5906,6 +5912,8 @@ function applyViewRefresh(): void {
   // §syndicates: refresh the alliance roster/invites if the panel is open
   // (guarded by a signature so a half-typed name survives).
   if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
+  // §TCA: refresh the charter standing if the Faction panel is open (self-guarded).
+  updateFactionPanel();
   // §research R6: refresh the Programme Boards if open (coarse signature).
   if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
   // §management-home: inside the System View, refresh the management column +
@@ -6245,16 +6253,44 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
 }
 
 
-// --- §TCA Phase 2: the charter status block ----------------------------------
+// --- §TCA Phase 2: the FACTION panel — your charter status --------------------
+// A top-navbar destination of its own (⚖ / `C`), beside Syndicate: the charter is
+// WHO YOU ARE to the Authority, not something you shop for, so it no longer rides
+// along in a Market tab. The Market's Freight tab still books the carrier this
+// standing prices. Re-rendered only when the charter CHANGES (a signature guard),
+// so a half-typed reinstatement figure is never wiped by a 10 Hz View.
+let lastFactionSig = "";
+function openFaction(): void {
+  $("faction-panel").classList.add("is-open");
+  $("nav-faction").classList.add("is-active");
+  lastFactionSig = ""; // force a fresh render on open
+  updateFactionPanel();
+}
+function closeFaction(): void {
+  $("faction-panel").classList.remove("is-open");
+  $("nav-faction").classList.remove("is-active");
+}
+function toggleFaction(): void {
+  if ($("faction-panel").classList.contains("is-open")) closeFaction();
+  else openFaction();
+}
 
 /// The charter chip + band ladder + (when it bites) the live cost of the band,
 /// and the reinstatement control. Rendered as a LEGAL STATUS — a ladder of named
 /// bands with their thresholds — rather than a reputation bar, because that is
 /// what it is: priced outlawry, with the price written down.
-function renderCharter(): void {
+function updateFactionPanel(): void {
+  const el = $("faction-panel");
+  if (!el.classList.contains("is-open")) return;
+  // Never rebuild under the player's fingers (the reinstatement field).
+  const ae = document.activeElement;
+  if (ae && el.contains(ae) && ae.tagName === "INPUT") return;
   const ch = state.charter;
+  const sig = JSON.stringify([ch, state.charterLadder]);
+  if (sig === lastFactionSig && el.innerHTML) return;
+  lastFactionSig = sig;
   if (!ch) {
-    $("charter-block").innerHTML = "";
+    el.innerHTML = factionShell(`<div class="fp-note">No charter on file yet.</div>`);
     return;
   }
   const tone =
@@ -6284,12 +6320,21 @@ function renderCharter(): void {
       `<button class="act" id="ch-pay" title="Buy charter standing back from the Authority. The credits are burned, and you are only ever charged for points actually restored.">Pay</button>` +
       `<span class="dim" id="ch-cost"></span></div>`
     : "";
-  $("charter-block").innerHTML =
+  el.innerHTML = factionShell(
+    `<div><div class="fp-sub">Your charter</div><div class="fp-name">⚖ Terran Charter Authority</div></div>` +
     `<div class="sp-line">${badge(tone, esc(ch.title))} <b>${ch.standing.toFixed(0)}</b><span class="dim">/${ch.max_standing.toFixed(0)}</span></div>` +
     `<div class="mkt-orders">${rows}</div>` +
     cost +
-    pay;
+    pay +
+    `<div class="fp-note">The Authority issued your charter and runs the Hub Exchange. Standing is a legal status, not a reputation: each band names a tariff on Authority freight and a cut of every Exchange trade. Citations land only when their light reaches the Charterhouse; standing regenerates in the meantime.</div>`,
+  );
   if (shortfall > 0) syncReinstateCost();
+}
+
+/// The faction panel's chrome (head + body), shared by the empty and live states.
+function factionShell(body: string): string {
+  return `<div class="pp-head"><b>FACTION</b><button class="pp-close" data-fp="close" title="Close">✕</button></div>` +
+    `<div class="pp-body">${body}</div>`;
 }
 
 /// Live cost preview for the reinstatement control.

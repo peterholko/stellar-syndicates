@@ -90,10 +90,14 @@ struct Track {
     /// Current broadcast route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
-    /// If the ship was destroyed: (true time, true position) of the destruction.
-    /// The ship is gone from true space, but each viewer keeps seeing its ghost
-    /// until the light of this event reaches their command center (§6).
-    destroyed: Option<(f64, Vec2)>,
+    /// If the fleet has LEFT TRUE SPACE: (true time, true position) where it did.
+    /// A destruction sets this via [`PositionHistory::mark_destroyed`], but so does
+    /// any quiet removal — a colony ship CONSUMED on claim, an occupation
+    /// government landed, a fleet merged into another — latched in `record` when
+    /// the id stops appearing in the world. Either way the fleet is gone, and each
+    /// viewer keeps seeing its ghost until the light of the departure reaches their
+    /// command center (§6).
+    gone: Option<(f64, Vec2)>,
 }
 
 /// §node regional effects for the DARK-fleet view — computed by the game loop
@@ -158,7 +162,7 @@ impl PositionHistory {
                 loadouts: Default::default(),
                 modules: Default::default(),
                 route: None,
-                destroyed: None,
+                gone: None,
             });
             track.owner = ship.owner;
             track.composition = ship.composition.clone();
@@ -188,6 +192,29 @@ impl PositionHistory {
                 }
             }
         }
+        // §fleets: a fleet can leave true space WITHOUT being destroyed — a colony
+        // ship CONSUMED on claim (it became the colony), an occupation government
+        // landed, a fleet merged into another. Those removals fire no destruction
+        // event, so nothing calls `mark_destroyed` and the track would carry no
+        // departure time at all. Latch it here, at the first tick the id stops
+        // appearing in the world, so the ghost flies on old light and then vanishes
+        // when that light lands — exactly like a kill.
+        //
+        // Left unlatched the ghost outlives its own news: `SystemClaimed` reaches
+        // the player at T+d/c while the colony ship keeps being served, so you see
+        // the system claimed AND the ship that claimed it still flying. Worse, once
+        // the last sample's light has landed there are no newer samples to serve, so
+        // the ghost freezes at a fixed position while still reporting its old
+        // velocity — and the client, which dead-reckons every frame from the last
+        // View, lurches it forward and snaps it back 10×/second (the "jerk").
+        for (id, t) in self.tracks.iter_mut() {
+            if t.gone.is_none()
+                && !world.fleets.contains_key(id)
+                && let Some(last) = t.samples.back()
+            {
+                t.gone = Some((last.time, last.pos));
+            }
+        }
         // Forget tracks for ships that have been gone longer than the horizon
         // (their last light has passed) — including destroyed ships once every
         // viewer's light has reached the destruction. Keeps memory bounded.
@@ -201,7 +228,7 @@ impl PositionHistory {
     /// ghost until the light of the destruction reaches them (`view_for`).
     pub fn mark_destroyed(&mut self, ship_id: EntityId, time: f64, pos: Vec2) {
         if let Some(t) = self.tracks.get_mut(&ship_id) {
-            t.destroyed = Some((time, pos));
+            t.gone = Some((time, pos));
             // Keep the track retained until the destruction's light has reached
             // every possible viewer (horizon > max delay).
             t.last_seen = time.max(t.last_seen);
@@ -293,7 +320,7 @@ impl PositionHistory {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
             // center; only THEN does it vanish. Before that, serve it normally.
-            if let Some((dt, dpos)) = track.destroyed
+            if let Some((dt, dpos)) = track.gone
                 && now >= dt + dpos.distance(cc) / c
             {
                 continue; // the destruction has been observed — it's gone
@@ -310,7 +337,7 @@ impl PositionHistory {
             // in the ghost's OWN retarded frame (the world as the arriving light
             // shows it), not the `now` frame whose coverage already reflects the
             // post-kill break-off.
-            let destroyed_detected = track.destroyed.is_some()
+            let destroyed_detected = track.gone.is_some()
                 && !track.broadcasts
                 && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays);
             pre.push(Pre {
@@ -540,7 +567,7 @@ impl PositionHistory {
                 continue; // coverage comes only from the viewer's own assets
             }
             // An asset can't have provided coverage after its own observed death.
-            if let Some((dt, _)) = track.destroyed
+            if let Some((dt, _)) = track.gone
                 && t_r >= dt
             {
                 continue;
@@ -1371,7 +1398,7 @@ mod tests {
             loadouts: Default::default(),
             modules: Default::default(),
             route: None,
-            destroyed: None,
+            gone: None,
         }
     }
 
@@ -2346,7 +2373,7 @@ mod tests {
             loadouts: Default::default(),
             modules: Default::default(),
             route: None,
-            destroyed: None,
+            gone: None,
         }
     }
 
@@ -2598,6 +2625,64 @@ mod tests {
         assert_eq!(hist.view_for(VIEWER, near, c, 22.5).len(), 0, "near vanishes at t=22 while far waits until 35");
     }
 
+    /// §fleets part 3: a colony ship CONSUMED on claim leaves true space without a
+    /// destruction event, so nothing calls `mark_destroyed`. Its ghost must still
+    /// vanish when the claim's light lands — the same rule as a kill.
+    ///
+    /// Regression: unlatched, the track carried no departure time, so `view_for`
+    /// went on serving the last observable sample forever (until the horizon swept
+    /// it). The player saw the system claimed AND the colony ship that claimed it
+    /// still on the map — frozen at one position but still reporting its old
+    /// velocity, which the client dead-reckons per frame and resets per View: a
+    /// ship jerking in place next to the system it had already become.
+    #[test]
+    fn consumed_colony_ship_ghost_vanishes_on_its_own_light() {
+        let mut w = sim::World::new(sim::SimConfig::for_players(7, 4));
+        let me = PlayerId(1);
+        w.step(&[sim::Command::AddPlayer { id: me, name: "Acme".into() }]);
+        let c = w.config.c;
+        // A settleable target: unclaimed AND not a reserved home site.
+        let pos = w
+            .systems
+            .iter()
+            .find(|s| s.is_unclaimed() && !w.home_slots.iter().any(|h| h.system == Some(s.id)))
+            .expect("a settleable system")
+            .pos;
+        // Park the colony ship OUT of claim range first, so it builds up a stretch
+        // of history — a ghost needs old light to still be flying on.
+        let cid = sim::EntityId(9_000_001);
+        w.fleets.insert(
+            cid,
+            sim::Fleet::single(cid, me, ShipKind::Colony, pos + Vec2::new(500.0, 0.0), sim::FleetOrder::Idle, None),
+        );
+        let mut hist = PositionHistory::for_world(&w);
+        let t0 = w.time;
+        while w.time < t0 + 20.0 {
+            w.step(&[]);
+            hist.record(&w);
+        }
+        assert!(w.fleets.contains_key(&cid), "out of claim range it just parks");
+
+        // Now set it on the system and record one tick there (the live loop records
+        // every tick, so the last sample is always the true final position). The
+        // next step settles and CONSUMES it.
+        w.fleets.get_mut(&cid).unwrap().pos = pos;
+        hist.record(&w);
+        let t_claim = w.time;
+        w.step(&[]);
+        assert!(!w.fleets.contains_key(&cid), "the colony ship is consumed on arrival");
+        hist.record(&w);
+
+        // A command center 3000 su away learns of the claim 3000/c seconds later.
+        let cc = pos + Vec2::new(3000.0, 0.0);
+        let delay = 3000.0 / c;
+        let sees = |now: f64| hist.view_for(me, cc, c, now).iter().any(|g| g.id == cid);
+        assert!(sees(t_claim + delay - 0.5), "before the light lands the colony ship still flies on old light");
+        assert!(!sees(t_claim + delay + 0.5), "once the claim's light lands the consumed ship is gone from the map");
+        // And it stays gone — not merely skipped for one frame.
+        assert!(!sees(t_claim + delay + 60.0), "a consumed ship never comes back");
+    }
+
     /// A far rival raider is dark, but if the viewer has an OWN ship near it, the
     /// union coverage detects it (coverage is the union of all assets' radii).
     #[test]
@@ -2657,7 +2742,7 @@ mod tests {
 
     fn dead_track(samples: Vec<Sample>, owner: PlayerId, t: f64, pos: Vec2) -> Track {
         let mut tr = track_from(samples, owner, ShipKind::Raider);
-        tr.destroyed = Some((t, pos));
+        tr.gone = Some((t, pos));
         tr
     }
 
