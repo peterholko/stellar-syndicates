@@ -23,7 +23,7 @@ use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
 use crate::movement::pursue_step;
-use crate::ship::{DefenseEngagement, Fleet, FleetOrder, ShipKind, TradeMission};
+use crate::ship::{DefenseEngagement, DockSite, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 use crate::syndicate::{syndicate_cap, Syndicate};
 use crate::tca::{FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
@@ -146,6 +146,11 @@ pub struct IntelSnapshot {
     /// fortifications; serde default keeps pre-pirate snapshots loading.
     #[serde(default)]
     pub enclave_tier: u32,
+    /// §ground: the scouted GARRISON tier — the single most siege-relevant thing
+    /// on the ground, since it is what stretches the clock and resists a landing.
+    /// A besieger who has not scouted plans blind. serde default 0.
+    #[serde(default)]
+    pub garrison_tier: u32,
     /// Sim-time of the observation (the "as of T" the readout ages from).
     pub observed_at: f64,
     /// Where the scout was at capture — the point the report's light travels from.
@@ -284,6 +289,67 @@ const BLOCKADE_STANDOFF_RADIUS: f64 = 900.0;
 /// Placeholder factor, awaiting pacing data.
 const SIEGE_DURATION_BATTLE_MULT: f64 = 8.0;
 
+// --- §plunder: STRIPPING A BLOCKADED SYSTEM ------------------------------------
+// Raiding could only ever interdict FLOW — convoys in transit — so a player who
+// simply never shipped anything was economically untouchable, and hoarding at a
+// colony was free. A held blockade now strips the stockpile it is strangling.
+//
+// Deliberately tied to a BLOCKADE rather than a hit-and-run raid order: a
+// stockpile is a fatter, stationary target than a convoy, so a raid verb against
+// one would be strictly better than chasing convoys and would hollow out the
+// raiding loop it is meant to complete. Making theft require a HELD blockade —
+// visible to the victim from the moment it establishes, contestable, and fought
+// through the system's platforms and garrison — keeps convoy raiding the fast
+// option and stockpile theft the committed one.
+/// Whole units per second a blockade strips from the system's stockpile.
+/// Tunable — the dial on how much a blockade is worth holding.
+const PLUNDER_UNITS_PER_SEC: f64 = 1.5;
+/// Per-commodity RESERVE the blockade can never strip below. A colony always
+/// keeps a working floor: it goes on producing, its people go on eating, and it
+/// can recover once the siege lifts. Nothing here may starve a colony out —
+/// that is the §5.1 rule, and it binds a besieger too. Tunable.
+const PLUNDER_FLOOR_UNITS: f64 = 40.0;
+/// Hold allowance for a blockading fleet carrying no convoys — a warship can
+/// stuff a modest prize aboard, but hauling a colony's output properly means
+/// bringing hulls that are built for it. Tunable.
+const PLUNDER_RAIDER_HOLD: u32 = 60;
+
+// --- §ground: THE GARRISON -----------------------------------------------------
+// Before this the siege clock was a flat constant: every colony fell in exactly
+// the same time, so defensive investment had nothing to say about the one thing
+// that actually loses you ground. A FED garrison now stretches that clock, which
+// is what makes digging in a real decision.
+/// Each FED garrison tier multiplies the siege clock by this much (tier 3 ⇒
+/// ×1.9). Deliberately generous: a defended world should be a campaign, and the
+/// besieger has a counter — bombardment (§ground M6). Tunable.
+const GARRISON_SIEGE_MULT: f64 = 0.30;
+/// Provisions per second, per garrison tier, drawn from the system's OWN
+/// stockpile. Troops eat. An UNFED garrison suspends — it stops stretching the
+/// clock and stops resisting a landing — but nothing is destroyed and it
+/// recovers the tick food returns (§5.1). Tunable.
+const GARRISON_UPKEEP_PER_TIER: f64 = 0.20;
+
+// --- §ground M6: BOMBARDMENT ---------------------------------------------------
+// Orbital supremacy cannot TAKE a colony in this design — population never
+// decreases, homes are never captured, and the prize has to survive to be worth
+// having. What orbit does instead is SUPPRESS: guns overhead pin a garrison down
+// and open a window for a landing. You do not bombard INSTEAD of landing; you
+// bombard to make the landing possible.
+//
+// Suppression is a WINDOW, never a wound: it decays back to nothing once the guns
+// stop, no tier is destroyed, and no population is touched. That last one is not
+// a tuning choice — it is the law of §5.1 applied to the people on the ground.
+/// Suppression added per second per unit of blockading ATTACK weight overhead.
+/// Sized so a modest squadron pins a tier-3 garrison in well under a minute at
+/// playtest scale. Tunable.
+const BOMBARD_PER_ATTACK_PER_SEC: f64 = 0.004;
+/// Suppression bled off per second once the guns stop. A besieger must KEEP a
+/// fleet overhead — the window closes if they leave. Tunable.
+const BOMBARD_DECAY_PER_SEC: f64 = 0.08;
+// §ground: MARINES_PER_GARRISON_TIER lives in `ground.rs` with the engine that
+// spends it, alongside `break_even_marines` — the two only ever make sense read
+// together, and a landing's arithmetic should have exactly one home.
+
 // --- Autonomous defensive doctrine (§5.1, Pillar 1) — all tunable. -----------
 // A patrolling raider guards friendly convoys within its sensor bubble and can
 // only react to hostiles it can actually sense (== `config.sensor_range`), so
@@ -337,11 +403,11 @@ fn take_from(map: &mut BTreeMap<crate::cargo::Commodity, u32>, c: crate::cargo::
 
 impl World {
     /// Deposit goods into a corporation's HOME SYSTEM stockpile, clamped to the
-    /// depot's remaining headroom; returns the units that actually fit.
+    /// storage headroom; returns the units that actually fit.
     ///
     /// This is where everything that used to land in the retired per-corp "HQ
     /// pool" goes now. The home system is a real [`StarSystem`] the player
-    /// already manages — it produces, it has a depot cap, and it can be shipped
+    /// already manages — it produces, it has a storage cap, and it can be shipped
     /// from — so goods that arrive here are goods the player can actually use,
     /// rather than sitting in a pocket with one exit.
     ///
@@ -451,6 +517,19 @@ pub struct World {
     /// so pre-feature snapshots load with no records.
     #[serde(default)]
     pub battle_records: BTreeMap<EntityId, crate::combat::BattleRecord>,
+    /// §ground G1: LANDINGS in progress, keyed by assault id. A landing is a
+    /// fight that runs over sim time rather than a threshold checked once, so
+    /// it needs somewhere to live between ticks. `serde(default)` — pre-feature
+    /// snapshots simply load with none in flight.
+    #[serde(default)]
+    pub assaults: BTreeMap<EntityId, crate::ground::GroundAssault>,
+    /// §ground G2: the replayable account of every landing, running or finished.
+    /// Filtered per viewer and delivered by light exactly as battle records are.
+    #[serde(default)]
+    pub ground_records: BTreeMap<EntityId, crate::ground::GroundRecord>,
+    /// Monotonic allocator for assault ids (tagged distinct from entity ids).
+    #[serde(default)]
+    next_assault_id: u64,
     /// SYNDICATES (§syndicates) — alliance rosters keyed by id. Membership is also
     /// denormalized on each [`Corporation`] for O(1) `are_allied`. `BTreeMap` keeps
     /// iteration deterministic; `#[serde(default)]` so pre-feature snapshots load.
@@ -562,15 +641,10 @@ pub struct Engagement {
     pub defenders: Vec<EntityId>,
     /// A covering defense platform folded into the defender side, if any.
     pub platform_system: Option<EntityId>,
-    /// §modules: PER-STACK side damage pools (kind → loadout key → pool) — the
-    /// persisted mid-battle state. Per-stack (not per-kind) so an armored stack
-    /// keeps its own accumulated absorption across ticks. `#[serde(default)]`
-    /// drops a pre-fix snapshot's `a_pool`/`d_pool` cleanly (that battle resumes
-    /// with fresh pools — an acceptable alpha discontinuity, never a panic).
-    #[serde(default)]
-    a_stack_pool: crate::combat::StackPoolMap,
-    #[serde(default)]
-    d_stack_pool: crate::combat::StackPoolMap,
+    // §roster: the per-side damage pools are GONE. Mid-battle damage lives on
+    // the HULLS now (each `Ship.hp`, written back every step by `hp_writeback`),
+    // so there is nothing to pool. Pre-roster snapshots still load — serde
+    // ignores the fields they carry.
     /// Report bookkeeping: total composition + strength each side STARTED with.
     a_start: BTreeMap<ShipKind, u32>,
     d_start: BTreeMap<ShipKind, u32>,
@@ -724,6 +798,9 @@ impl World {
             rng,
             engagements: BTreeMap::new(),
             battle_records: BTreeMap::new(),
+            assaults: BTreeMap::new(),
+            ground_records: BTreeMap::new(),
+            next_assault_id: 0,
             next_engagement_id: 0,
             syndicates: BTreeMap::new(),
             next_syndicate_id: 0,
@@ -810,6 +887,41 @@ impl World {
     ///   within `SURVEY_INITIAL_RADIUS` of home as surveyed, so live playtest
     ///   corps don't wake up amnesiac about their own holdings.
     pub fn fixup_after_load(&mut self) {
+        // §roster: synthesize the individual-hull roster for any PRE-ROSTER
+        // fleet (snapshots that carried only `composition` + `loadouts`). One
+        // record per counted hull, fitted stacks first so the fits land on real
+        // ships, every hull at FULL health — a legacy save loads pristine.
+        // Idempotent: a fleet that already has a roster is left alone.
+        for f in self.fleets.values_mut() {
+            if !f.ships.is_empty() || f.composition.is_empty() {
+                continue;
+            }
+            let comp = f.composition.clone();
+            let loadouts = f.loadouts.clone();
+            f.next_ship_id = 0;
+            for (kind, total) in comp {
+                let mut left = total;
+                // Fitted stacks first (deterministic key order), then the
+                // unfitted remainder.
+                if let Some(stacks) = loadouts.get(&kind) {
+                    for (key, n) in stacks {
+                        let take = (*n).min(left);
+                        for _ in 0..take {
+                            let id = f.next_ship_id;
+                            f.next_ship_id += 1;
+                            f.ships.push(crate::ship::Ship::new(id, kind, crate::module::Loadout::from_key(key)));
+                        }
+                        left -= take;
+                    }
+                }
+                for _ in 0..left {
+                    let id = f.next_ship_id;
+                    f.next_ship_id += 1;
+                    f.ships.push(crate::ship::Ship::new(id, kind, crate::module::Loadout::default()));
+                }
+            }
+            f.rebuild_cache();
+        }
         // §economy: fold the legacy flat tier fields into the structures map
         // (Extractor→MiningComplex, Refinery→FuelRefinery, rest 1:1). Idempotent.
         for sys in self.systems.iter_mut() {
@@ -1024,6 +1136,22 @@ impl World {
     /// render the siege-progress readout / countdown.
     pub fn siege_duration_secs(&self) -> f64 {
         SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs
+    }
+
+    /// §ground: the siege clock FOR A PARTICULAR SYSTEM — the base duration
+    /// stretched by whatever fed garrison is dug in there. An unfed garrison
+    /// stretches nothing (it is suspended, not destroyed), and a suppressed one
+    /// counts only for what bombardment has left standing (§ground M6). This is
+    /// the one derivation; the capture path and the client readout share it so
+    /// the countdown a defender sees is the clock the besieger is actually racing.
+    pub fn siege_duration_for(&self, system: EntityId) -> f64 {
+        let eff = self
+            .systems
+            .iter()
+            .find(|s| s.id == system)
+            .map(|s| s.effective_garrison())
+            .unwrap_or(0.0);
+        self.siege_duration_secs() * (1.0 + GARRISON_SIEGE_MULT * eff)
     }
 
     pub fn pending_commands(&self, owner: PlayerId) -> Vec<PendingCommandView> {
@@ -1467,6 +1595,46 @@ impl World {
         // 5b'''. §modules Part B4: return refitted hulls from the yard — same clock
         //        as construction; the hulls were out of combat while queued.
         self.resolve_refits(&mut events);
+
+        // 5b'''ᵒ. §ground M6: BOMBARDMENT — guns overhead pin the garrison down,
+        //          and the suppression bleeds off when they leave. Before the
+        //          upkeep pass so this tick's suppression is what a landing
+        //          resolved later in the tick actually faces.
+        self.resolve_bombardment(&mut events);
+
+        // 5b'''ᵃ. §ground: the dug-in GARRISONS eat, from the colonies they hold.
+        //          Before fleet upkeep so a besieged colony feeds its defenders
+        //          out of the same larder a blockade is stripping.
+        self.draw_garrison_upkeep(&mut events);
+
+        // 5b'''ᵘ. §ground G1: LANDINGS — the only path by which a held system
+        //          changes hands. Deliberately AFTER bombardment and garrison
+        //          upkeep: a landing must resolve against THIS tick's
+        //          suppression and THIS tick's fed state, or the defender's
+        //          counter-play would always land a tick late. New drops go in
+        //          first so a landing committed this tick fights this tick.
+        self.begin_assaults(&mut events);
+        self.step_assaults(&mut events);
+
+        // 5b'''ᵉ. §ground G1: RE-EMBARK — a formation sitting at one of your own
+        //          colonies with a Garrison takes on fresh troops. This is the
+        //          other half of committing them: a capital group that has spent
+        //          its boarding parties has to go home before it can threaten
+        //          ground again, which is what stops a landing being repeatable
+        //          for free off hulls that survive it.
+        self.reembark_marines();
+
+        // 5b'''ª. §upkeep: STANDING FLEET UPKEEP — every fleet eats, wherever it
+        //         is, online or off. Runs after accrual so this tick's harvest can
+        //         feed this tick's navy, and BEFORE repair so a starving fleet
+        //         doesn't get mended by a colony that can't feed it.
+        self.draw_fleet_upkeep(&mut events);
+
+        // 5b'''°. §roster: ORDNANCE FOUNDRIES service damaged hulls. Runs after
+        //         accrual so a foundry can spend goods its own colony just made,
+        //         and on the server clock like everything else — a fleet parked
+        //         at a yard mends whether or not its owner is connected.
+        self.repair_docked_fleets(&mut events);
 
         // 5b''''. §research R2: the DISTRIBUTED CLOCK — every staffed+funded
         //         member Academy drips its basket and adds its rate to the active
@@ -2128,6 +2296,20 @@ impl World {
     /// §modules: the side's aggregate LOADOUT partition (summed over its fleets)
     /// — `kind → loadout key → count`, fitted stacks only. Feeds the tactical
     /// unpack ([`crate::tactical::stacked`]) so battles fight the real fits.
+    /// §roster: every HULL on a side, tagged with the fleet it flies for — the
+    /// engine's unpack input and the key it writes damage back through.
+    fn side_ships(&self, members: &[EntityId]) -> Vec<(EntityId, crate::ship::Ship)> {
+        let mut out = Vec::new();
+        for id in members {
+            if let Some(f) = self.fleets.get(id) {
+                for sh in &f.ships {
+                    out.push((*id, sh.clone()));
+                }
+            }
+        }
+        out
+    }
+
     fn side_loadouts(&self, members: &[EntityId]) -> crate::combat::LoadoutMap {
         let mut out: crate::combat::LoadoutMap = BTreeMap::new();
         for id in members {
@@ -2492,8 +2674,6 @@ impl World {
                 attackers: vec![aid],
                 defenders,
                 platform_system,
-                a_stack_pool: BTreeMap::new(),
-                d_stack_pool: BTreeMap::new(),
                 a_start: a_comp,
                 d_start: d_comp,
                 a_start_loadouts,
@@ -2720,14 +2900,10 @@ impl World {
             }
             self.engagements.get_mut(eid).unwrap().touched = true;
 
-            let a_pool = self.engagements[eid].a_stack_pool.clone();
-            let d_pool = self.engagements[eid].d_stack_pool.clone();
-            // §tactical: partition each side into (kind, loadout) stacks from the
-            // live fleets' fits — the engine's sync/unpack input.
-            let a_loadouts = self.side_loadouts(&attackers);
-            let d_loadouts = self.side_loadouts(&defenders);
-            let a_stacks = crate::tactical::stacked(&a_comp, &a_loadouts);
-            let d_stacks = crate::tactical::stacked(&d_comp, &d_loadouts);
+            // §roster: the engine's input is the two sides' REAL HULLS, each
+            // carrying its own remaining hp — no stacks, no pools, no pro-rata.
+            let a_ships = self.side_ships(&attackers);
+            let d_ships = self.side_ships(&defenders);
 
             // OPEN or MIGRATE: a fresh battle (or an old-snapshot pooled one)
             // unpacks into individual combatants — pro-rata HP from the stack
@@ -2744,10 +2920,8 @@ impl World {
                     crate::tactical::TacticalState::open(
                         self.config.seed,
                         eid.0,
-                        &a_stacks,
-                        &d_stacks,
-                        &a_pool,
-                        &d_pool,
+                        &a_ships,
+                        &d_ships,
                         ptiers,
                         ppool,
                         bearing,
@@ -2758,7 +2932,7 @@ impl World {
             // SYNC to the live strategic sides (relief joins unpack at the edge;
             // withdrawn fleets' ships leave). Scouts die at the boundary — the
             // same instant death the old strip_scouts applied.
-            let scouts = tac.sync([&a_stacks, &d_stacks]);
+            let scouts = tac.sync([&a_ships, &d_ships]);
             let mut la = crate::combat::Losses::default();
             let mut lb = crate::combat::Losses::default();
             if scouts[0] > 0 {
@@ -2845,15 +3019,18 @@ impl World {
                 }
             }
 
-            // Persist the engine's truth back through the OLD channels (§law 1:
-            // the strategic layer sees the same shapes): HP deficits → per-stack
-            // pools; platform tiers + pool → the system.
+            // §roster: persist the engine's truth onto the HULLS. Each combatant's
+            // remaining hp goes home to the exact `(fleet, ship)` it came from, so
+            // damage survives the battle, the withdrawal, and the snapshot with
+            // nothing apportioned. Platform tiers + pool still sync to the system.
             let tac_ptiers = tac.platform_tiers();
             let tac_ppool = tac.platform_pool();
-            {
-                let e = self.engagements.get_mut(eid).unwrap();
-                e.a_stack_pool = tac.pools(0);
-                e.d_stack_pool = tac.pools(1);
+            for (fleet, ship_id, hp) in tac.hp_writeback() {
+                if let Some(f) = self.fleets.get_mut(&fleet)
+                    && let Some(sh) = f.ships.iter_mut().find(|s| s.id == ship_id)
+                {
+                    sh.hp = hp;
+                }
             }
             if let Some(sid) = platform_system
                 && let Some(s) = self.systems.iter_mut().find(|s| s.id == sid)
@@ -3108,8 +3285,8 @@ impl World {
     fn spawn_pirate_pack(&mut self, tier: u32, base_pos: Vec2) -> EntityId {
         let id = self.alloc_entity_id();
         let mut f = Fleet::single(id, PlayerId::PIRATE, ShipKind::Raider, base_pos, FleetOrder::Idle, None);
-        f.composition.clear();
-        f.composition.insert(ShipKind::Raider, pirate::pack_size(tier));
+        // §roster: the pack is a real formation of individual hulls.
+        f.reset_to(ShipKind::Raider, pirate::pack_size(tier));
         self.fleets.insert(id, f);
         id
     }
@@ -3159,8 +3336,6 @@ impl World {
             attackers: vec![aid],
             defenders,
             platform_system: Some(sid),
-            a_stack_pool: BTreeMap::new(),
-            d_stack_pool: BTreeMap::new(),
             a_start: a_comp,
             d_start: d_comp,
             a_start_loadouts,
@@ -3256,9 +3431,9 @@ impl World {
                 let plunder = std::mem::take(&mut self.enclaves.get_mut(&sid).unwrap().plunder);
                 if let Some(v) = victor {
                     // Recovered plunder lands in the victor's HOME SYSTEM stockpile
-                    // (clamped to its depot). Anything that doesn't fit is left in
+                    // (clamped to its storage). Anything that doesn't fit is left in
                     // the wreckage rather than teleported into a pocket — a full
-                    // depot is a real constraint, and the bulletin below reports
+                    // storage is a real constraint, and the bulletin below reports
                     // the whole haul either way.
                     for (c, n) in &plunder {
                         self.deposit_at_home_system(v, *c, *n);
@@ -3778,8 +3953,6 @@ impl World {
                 attackers: vec![o.aid],
                 defenders: o.garrison,
                 platform_system: if o.ptiers >= 1 { Some(o.sys) } else { None },
-                a_stack_pool: BTreeMap::new(),
-                d_stack_pool: BTreeMap::new(),
                 a_start: a_comp,
                 d_start: d_comp,
                 a_start_loadouts,
@@ -3864,6 +4037,87 @@ impl World {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // --- 2b. §plunder: an established blockade STRIPS the stockpile it is
+        //         strangling. The goods go into the blockader's own hold, so they
+        //         still have to be carried home across contested space — the
+        //         crossing stays the danger, exactly as it is for a raided convoy.
+        let plunder_targets: Vec<(EntityId, EntityId)> = on_station
+            .iter()
+            .filter(|(sid, _)| blocked.contains(sid))
+            // The min-id blockader takes the prize — the same deterministic
+            // convention the establishment battle uses.
+            .filter_map(|(sid, bs)| bs.iter().min().map(|b| (*sid, *b)))
+            .collect();
+        for (sys_id, taker) in plunder_targets {
+            let Some(sys) = self.systems.iter().find(|s| s.id == sys_id) else { continue };
+            let (victim, spos) = (sys.owner.unwrap(), sys.pos);
+            let Some(f) = self.fleets.get(&taker) else { continue };
+            // Single-commodity hold, as with a seized convoy: a hold already
+            // carrying something else can take no more until it is emptied.
+            let held = f.cargo;
+            let cap = f.cargo_capacity().max(PLUNDER_RAIDER_HOLD);
+            let room = cap.saturating_sub(held.map(|c| c.units).unwrap_or(0));
+            if room == 0 {
+                continue; // full — the prize crew has all it can carry
+            }
+            // Take the MOST VALUABLE good standing above the floor (deterministic:
+            // price desc, then the wire slug).
+            let pick = sys
+                .stockpile
+                .iter()
+                .filter(|(c, amt)| **amt > PLUNDER_FLOOR_UNITS && held.is_none_or(|h| h.commodity == **c))
+                .max_by(|a, b| {
+                    crate::market::base_price(*a.0)
+                        .partial_cmp(&crate::market::base_price(*b.0))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(b.0.slug().cmp(a.0.slug()))
+                })
+                .map(|(c, amt)| (*c, *amt));
+            let Some((commodity, stock)) = pick else { continue };
+            // Bounded three ways: the tick's rate, the hold's room, and the
+            // floor the colony always keeps.
+            let take = (PLUNDER_UNITS_PER_SEC * DT)
+                .min(room as f64)
+                .min(stock - PLUNDER_FLOOR_UNITS)
+                .max(0.0);
+            if take <= 1e-9 {
+                continue;
+            }
+            if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+                *sys.stockpile.entry(commodity).or_insert(0.0) -= take;
+            }
+            // Accumulate into the hold in WHOLE units (a fractional prize is
+            // carried as the running remainder on the system, not the ship).
+            let mut carried = 0u32;
+            if let Some(f) = self.fleets.get_mut(&taker) {
+                let acc = f.plunder_frac + take;
+                let whole = acc.floor().min(room as f64) as u32;
+                f.plunder_frac = acc - whole as f64;
+                if whole > 0 {
+                    f.cargo = Some(match f.cargo {
+                        Some(c) if c.commodity == commodity => Cargo { commodity, units: c.units + whole },
+                        _ => Cargo { commodity, units: whole },
+                    });
+                    carried = whole;
+                }
+            }
+            if carried > 0 {
+                let besieger = self.fleets.get(&taker).map(|f| f.owner).unwrap_or(victim);
+                self.bump_stats(besieger, |s| s.cargo_captured += carried as u64);
+                events.push(Event::new(
+                    now,
+                    EventPayload::SystemPlundered {
+                        by: besieger,
+                        owner: victim,
+                        system: sys_id,
+                        commodity,
+                        units: carried,
+                        pos: spos,
+                    },
+                ));
             }
         }
 
@@ -4185,6 +4439,11 @@ impl World {
                 if ship.owner != *player_id {
                     return;
                 }
+                // §upkeep: an UNSUPPLIED fleet declines new orders (it keeps its
+                // guns and its current course — it just will not set out again).
+                if !self.fleet_supplied_for_orders(*ship_id, *player_id, events) {
+                    return;
+                }
                 let cost = crate::fuel::fuel_cost(ship.pos.distance(*dest), ship.mass());
                 let origin = ship.pos;
                 if !self.charge_fuel(*player_id, origin, cost) {
@@ -4226,7 +4485,7 @@ impl World {
                         EventPayload::OrderRejected {
                             owner: *player_id,
                             fleet: *raider_id,
-                            target: *target_id,
+                            target: Some(*target_id),
                             reason: crate::event::OrderRejectReason::InsideSovereignZone,
                         },
                     ));
@@ -4250,6 +4509,11 @@ impl World {
                 // Fuel the intercept run (raiders are light → cheap, but not free).
                 let cost = crate::fuel::fuel_cost(raider.pos.distance(target_pos), raider.mass());
                 let origin = raider.pos;
+                // §upkeep: an UNSUPPLIED fleet declines new orders (it keeps its
+                // guns and its current course — it just will not set out again).
+                if !self.fleet_supplied_for_orders(*raider_id, *player_id, events) {
+                    return;
+                }
                 if !self.charge_fuel(*player_id, origin, cost) {
                     events.push(Event::new(
                         self.time,
@@ -4436,7 +4700,7 @@ impl World {
                     }),
                 ));
                 // The DeliverToSystem arm deposits into sys.stockpile (with the
-                // depot-cap / overflow-to-hub handling) on arrival. No fuel charge —
+                // storage-cap / overflow-to-hub handling) on arrival. No fuel charge —
                 // parity with the manual hub-trade family (MarketBuy/MarketSell).
                 let cargo = Cargo { commodity: *commodity, units };
                 let hub = self.hub;
@@ -4935,6 +5199,11 @@ impl World {
                 // HOLDS it (keeps the current order, notifies) — never lost.
                 let cost = crate::fuel::fuel_cost(fleet.pos.distance(station), fleet.mass());
                 let origin = fleet.pos;
+                // §upkeep: an UNSUPPLIED fleet declines new orders (it keeps its
+                // guns and its current course — it just will not set out again).
+                if !self.fleet_supplied_for_orders(*fleet_id, *player_id, events) {
+                    return;
+                }
                 if !self.charge_fuel(*player_id, origin, cost) {
                     events.push(Event::new(self.time, EventPayload::FuelShortfall {
                         owner: *player_id, needed: cost, kind: crate::fuel::ShortfallKind::Move,
@@ -4967,6 +5236,11 @@ impl World {
                 // HOLDS it (keeps the current order, notifies) — never lost.
                 let cost = crate::fuel::fuel_cost(fleet.pos.distance(station), fleet.mass());
                 let origin = fleet.pos;
+                // §upkeep: an UNSUPPLIED fleet declines new orders (it keeps its
+                // guns and its current course — it just will not set out again).
+                if !self.fleet_supplied_for_orders(*fleet_id, *player_id, events) {
+                    return;
+                }
                 if !self.charge_fuel(*player_id, origin, cost) {
                     events.push(Event::new(self.time, EventPayload::FuelShortfall {
                         owner: *player_id, needed: cost, kind: crate::fuel::ShortfallKind::Move,
@@ -5002,7 +5276,7 @@ impl World {
                         EventPayload::OrderRejected {
                             owner: *player_id,
                             fleet: *fleet_id,
-                            target: *target_id,
+                            target: Some(*target_id),
                             reason: crate::event::OrderRejectReason::InsideSovereignZone,
                         },
                     ));
@@ -5022,6 +5296,11 @@ impl World {
                 // shortfall HOLDS it (keeps the current order, notifies) — never lost.
                 let cost = crate::fuel::fuel_cost(attacker.pos.distance(target_pos), attacker.mass());
                 let origin = attacker.pos;
+                // §upkeep: an UNSUPPLIED fleet declines new orders (it keeps its
+                // guns and its current course — it just will not set out again).
+                if !self.fleet_supplied_for_orders(*fleet_id, *player_id, events) {
+                    return;
+                }
                 if !self.charge_fuel(*player_id, origin, cost) {
                     events.push(Event::new(
                         self.time,
@@ -5086,7 +5365,7 @@ impl World {
     fn gather_intel(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
         // Collect first (immutable pass over fleets × systems), then apply.
-        let mut captures: Vec<(PlayerId, EntityId, u32, u32, u32, Vec2)> = Vec::new();
+        let mut captures: Vec<(PlayerId, EntityId, u32, u32, u32, u32, Vec2)> = Vec::new();
         for ship in self.fleets.values() {
             // Any fleet CONTAINING a scout gathers intel (its eyes ride along).
             if !ship.contains(ShipKind::Scout) || ship.owner.is_pirate() {
@@ -5101,18 +5380,18 @@ impl World {
                     // (like fortifications). Its `defense_tier` is the base defense.
                     None => {
                         if let Some(e) = self.enclaves.get(&sys.id) {
-                            captures.push((ship.owner, sys.id, sys.tier_sum(crate::build::StructureKind::DefensePlatform), 0, e.tier, ship.pos));
+                            captures.push((ship.owner, sys.id, sys.tier_sum(crate::build::StructureKind::DefensePlatform), 0, e.tier, 0, ship.pos));
                         }
                     }
                     // A RIVAL's fortifications (never your own or a syndicate ally's).
                     Some(o) if o != ship.owner && !self.are_allied(ship.owner, o) => {
-                        captures.push((ship.owner, sys.id, sys.tier_sum(crate::build::StructureKind::DefensePlatform), sys.tier(crate::build::StructureKind::Shipyard), 0, ship.pos));
+                        captures.push((ship.owner, sys.id, sys.tier_sum(crate::build::StructureKind::DefensePlatform), sys.tier(crate::build::StructureKind::Shipyard), 0, sys.tier_sum(crate::build::StructureKind::Garrison), ship.pos));
                     }
                     _ => {}
                 }
             }
         }
-        for (owner, system, defense_tier, shipyard_tier, enclave_tier, pos) in captures {
+        for (owner, system, defense_tier, shipyard_tier, enclave_tier, garrison_tier, pos) in captures {
             let Some(corp) = self.players.get_mut(&owner) else { continue };
             let prev = corp.intel.get(&system);
             // Notify on a fresh approach (no snapshot, or the last one has gone
@@ -5123,12 +5402,13 @@ impl World {
                     p.defense_tier != defense_tier
                         || p.shipyard_tier != shipyard_tier
                         || p.enclave_tier != enclave_tier
+                        || p.garrison_tier != garrison_tier
                         || now - p.observed_at > crate::ship::SCOUT_INTEL_RENOTIFY_S
                 }
             };
             corp.intel.insert(
                 system,
-                crate::world::IntelSnapshot { defense_tier, shipyard_tier, enclave_tier, observed_at: now, pos },
+                crate::world::IntelSnapshot { defense_tier, shipyard_tier, enclave_tier, garrison_tier, observed_at: now, pos },
             );
             if notify {
                 events.push(Event::new(
@@ -5140,7 +5420,7 @@ impl World {
     }
 
     /// Development slots HELD by in-progress upgrade jobs at `system` (each queued
-    /// Extractor/Depot/Shipyard tier reserves its slot while building, so you can't
+    /// Mining Complex/Orbital Warehouse/Shipyard tier reserves its slot while building, so you can't
     /// over-commit a budget by queueing). Ships never hold slots.
     pub fn dev_slots_pending(&self, system: EntityId) -> u32 {
         self.build_queue
@@ -5227,10 +5507,13 @@ impl World {
         // ship jobs display at the best yard's body; courses at the Academy's.
         let body_id = match what {
             crate::build::BuildKind::Upgrade { upgrade } => body.or_else(|| sys.site_for(upgrade)).unwrap_or(0),
-            crate::build::BuildKind::Ship { .. } => sys
+            // §yards: a ship job displays at (and is staffed by) the body holding
+            // the best yard OF THE KIND THAT GATES IT — a Battleship's job sits
+            // at the Drydock, not at whichever body happens to have a Shipyard.
+            crate::build::BuildKind::Ship { ship } => sys
                 .bodies
                 .iter()
-                .max_by_key(|b| b.tier(crate::build::StructureKind::Shipyard))
+                .max_by_key(|b| b.tier(crate::build::yard_for(ship).0))
                 .map(|b| b.id)
                 .unwrap_or(0),
             crate::build::BuildKind::Train { .. } => sys
@@ -5318,6 +5601,24 @@ impl World {
                 ));
                 return;
             }
+            // §yards: a yard needs its PREREQUISITE yard already standing on the
+            // same SYSTEM (not the same body — the ladder is a shipbuilding
+            // world's, not one rock's). Checked on every tier, so a Drydock
+            // can't outgrow the Shipyard that justifies it.
+            if let Some((needs, tier)) = crate::build::yard_prereq(upgrade)
+                && sys.tier(needs) < tier
+            {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NeedsYard { yard: needs, required: tier },
+                    },
+                ));
+                return;
+            }
             if b.tier(upgrade) == 0 {
                 let pool = upgrade.slot_pool();
                 if b.pool_slots_built(pool) + self.pool_slots_pending(system_id, body_id, pool) >= b.pool_slots(pool) {
@@ -5370,15 +5671,45 @@ impl World {
                 ));
                 return;
             }
-            let required = crate::build::required_shipyard_tier(ship);
-            if sys.tier(crate::build::StructureKind::Shipyard) < required {
+            // §yards: WHICH yard gates this hull, and at what tier. Light hulls
+            // keep the Shipyard and their former tiers; the line of battle wants
+            // a Naval Drydock and the super-capitals a Capital Slipway.
+            let (yard, required) = crate::build::yard_for(ship);
+            if sys.tier(yard) < required {
                 events.push(Event::new(
                     self.time,
                     EventPayload::BuildRejected {
                         owner: player_id,
                         system: system_id,
                         what,
-                        reason: crate::event::BuildRejectReason::NeedsShipyard { required },
+                        reason: crate::event::BuildRejectReason::NeedsYard { yard, required },
+                    },
+                ));
+                return;
+            }
+            // §yards M1: SLIPWAYS. A tier-N yard holds N hulls on the stocks at
+            // once, counted per yard KIND — so a Shipyard 3 + Drydock 2 world
+            // runs three light hulls and two line warships in parallel. Before
+            // this, ship jobs were unbounded and tier was a pure gate. A full
+            // yard soft-rejects on TIMING: nothing is spent, and the same order
+            // lands the moment a slip frees.
+            let slips = crate::build::slips_for(sys.tier(yard));
+            let occupied = self
+                .build_queue
+                .iter()
+                .filter(|j| {
+                    j.system == system_id
+                        && matches!(j.what, crate::build::BuildKind::Ship { ship: s } if crate::build::yard_for(s).0 == yard)
+                })
+                .count() as u32;
+            if occupied >= slips {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::BuildRejected {
+                        owner: player_id,
+                        system: system_id,
+                        what,
+                        reason: crate::event::BuildRejectReason::NoSlip { slips },
                     },
                 ));
                 return;
@@ -5448,8 +5779,10 @@ impl World {
         // faster — ticks / (1 + BOOST · staffing · skill). Locked in at enqueue
         // (deterministic — no mid-flight retiming when crews move); structures
         // are unaffected. skill = 1.0 until specialists (Part 4).
-        let ticks = if matches!(what, crate::build::BuildKind::Ship { .. }) {
-            let yard = crate::build::StructureKind::Shipyard;
+        let ticks = if let crate::build::BuildKind::Ship { ship } = what {
+            // §yards: the boost comes from the yard that GATES the hull — crews
+            // on the Drydock speed the Battleship, crews on the Shipyard don't.
+            let yard = crate::build::yard_for(ship).0;
             let boost = 1.0 + crate::production::SHIPYARD_BOOST * sys.staffing_factor(body_id, yard) * sys.skill_factor(body_id, yard);
             (recipe.build_ticks as f64 / boost).round() as u64
         } else {
@@ -5515,11 +5848,9 @@ impl World {
         }
         let removed = self.fleets.remove(&from).unwrap();
         let target = self.fleets.get_mut(&into).unwrap();
-        for (k, n) in removed.composition {
-            target.add(k, n);
-        }
-        // §modules: the absorbed fleet's FITS carry across the gangway.
-        target.fold_loadouts(&removed.loadouts);
+        // §roster: the absorbed fleet's HULLS walk across the gangway — fits AND
+        // accumulated damage travel with each ship, re-issued ids by the host.
+        target.absorb_ships(removed.ships);
         if target.cargo.is_none() {
             target.cargo = removed.cargo;
         }
@@ -5560,27 +5891,24 @@ impl World {
             return;
         }
         let (pos, owner) = (src.pos, src.owner);
-        // Detach. §modules: the detached ships carry their FITS (fitted stacks
-        // taken first) — an escort split off keeps its loadout.
-        let mut new_comp: BTreeMap<ShipKind, u32> = BTreeMap::new();
-        let mut new_loadouts: crate::combat::LoadoutMap = BTreeMap::new();
+        // §roster: detach the actual HULLS (fitted first, then by id) — each
+        // carries its fit AND its damage onto the new fleet.
+        let mut taken: Vec<crate::ship::Ship> = Vec::new();
         {
             let src = self.fleets.get_mut(&fleet_id).unwrap();
             for (k, n) in counts {
                 if *n > 0 {
-                    let taken = src.detach_loadouts(*k, *n);
-                    src.remove(*k, *n);
-                    new_comp.insert(*k, *n);
-                    for (kind, m) in taken {
-                        new_loadouts.entry(kind).or_default().extend(m);
-                    }
+                    taken.extend(src.detach_ships(*k, *n));
                 }
             }
         }
         let id = self.alloc_entity_id();
         let mut fleet = Fleet::single(id, owner, ShipKind::Scout, pos, FleetOrder::Idle, None);
-        fleet.composition = new_comp;
-        fleet.loadouts = new_loadouts;
+        // Clear the placeholder hull `single` seeded, then take the real ones.
+        fleet.ships.clear();
+        fleet.next_ship_id = 0;
+        fleet.rebuild_cache();
+        fleet.absorb_ships(taken);
         // Report the new fleet's flagship as a spawn (owner-only notice pathway).
         let flagship = fleet.flagship_kind();
         self.fleets.insert(id, fleet);
@@ -5618,19 +5946,20 @@ impl World {
                                 && f.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS
                         })
                     });
+                    // §roster: a completed hull joins as an INDIVIDUAL — fitted
+                    // with the loadout it was laid down under, at full health.
                     if let Some(fid) = join_target {
                         let f = self.fleets.get_mut(&fid).unwrap();
-                        f.add(ship, 1);
-                        // §modules: the built ship enters under its fitted loadout.
-                        if !job.loadout.is_empty() {
-                            *f.loadouts.entry(ship).or_default().entry(job.loadout.key()).or_insert(0) += 1;
-                        }
+                        f.add_fitted(ship, &job.loadout, 1);
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id: fid, owner: job.owner, kind: ship }));
                     } else {
                         let id = self.alloc_entity_id();
                         let mut f = Fleet::single(id, job.owner, ship, pos, FleetOrder::Idle, None);
                         if !job.loadout.is_empty() {
-                            f.loadouts.entry(ship).or_default().insert(job.loadout.key(), 1);
+                            // Replace `single`'s stock hull with the fitted one.
+                            f.ships.clear();
+                            f.next_ship_id = 0;
+                            f.add_fitted(ship, &job.loadout, 1);
                         }
                         self.fleets.insert(id, f);
                         events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: job.owner, kind: ship }));
@@ -5733,22 +6062,26 @@ impl World {
         if !to.validate(ship) || from == to {
             return;
         }
-        let pos = fleet.pos;
-        // Docked at a Shipyard ≥ 1 the player OWNS or is ALLIED with (fits install
-        // at a yard; an ally may host the work — a coalition refit yard).
+        // §yards: docked at an ORDNANCE FOUNDRY ≥ 1 the player OWNS or is ALLIED
+        // with. Outfitting is its own investment now — a construction yard lays
+        // hulls, a foundry changes what they carry — so a forward system can host
+        // refits without being a shipbuilding world (and an ally may host the
+        // work, as before: a coalition refit yard).
+        // §dock: BERTHED at that foundry — the fourth and last copy of this
+        // check to be retired. `dock_of` already establishes ownership/ally and
+        // at-rest; all that is left to ask is whether the berth has a foundry.
         let allies = self.allies_of(player_id);
-        let Some(sys_id) = self
-            .systems
-            .iter()
-            .find(|s| {
-                s.owner.is_some_and(|o| o == player_id || allies.contains(&o))
-                    && s.tier(crate::build::StructureKind::Shipyard) >= 1
-                    && s.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS
-            })
-            .map(|s| s.id)
-        else {
-            return; // no hosting yard in reach — soft reject
+        let Some(DockSite::System(sys_id)) = self.dock_of(fleet_id) else {
+            return; // not in dock — soft reject
         };
+        let hosts = self.systems.iter().any(|s| {
+            s.id == sys_id
+                && s.owner.is_some_and(|o| o == player_id || allies.contains(&o))
+                && s.tier(crate::build::StructureKind::OrdnanceFoundry) >= 1
+        });
+        if !hosts {
+            return; // berthed somewhere with no foundry — soft reject
+        }
         // How many `(ship, from)` hulls the fleet actually holds (clamp `n`).
         let available = if from.is_empty() {
             fleet.count(ship).saturating_sub(fleet.fitted_count(ship))
@@ -5789,8 +6122,11 @@ impl World {
         }
         // Commit: pull the hulls out of the fleet, then reconcile the ledger.
         let fleet = self.fleets.get_mut(&fleet_id).expect("checked above");
-        let pulled = fleet.remove_stack(ship, &from, n);
-        debug_assert_eq!(pulled, n, "remove_stack clamps to `available`, which bounds n");
+        // §roster: TAKE the actual hulls — they go into the yard and come back
+        // out, carrying the health they went in with. A refit changes a ship's
+        // fit; it never mends it.
+        let pulled_hulls = fleet.take_stack(ship, &from, n);
+        debug_assert_eq!(pulled_hulls.len() as u32, n, "take_stack clamps to `available`, which bounds n");
         let empty = fleet.is_empty();
         if empty {
             self.fleets.remove(&fleet_id);
@@ -5817,6 +6153,7 @@ impl World {
             ship,
             to,
             n,
+            hulls: pulled_hulls,
             complete_tick,
         });
         events.push(Event::new(
@@ -5829,6 +6166,522 @@ impl World {
                 complete_tick,
             },
         ));
+    }
+
+    /// §ground M6/M7: THE LANDING — the only way a held system changes hands.
+    ///
+    /// Orbital supremacy cannot take a colony here: population never decreases,
+    /// the prize has to survive to be worth having, and a beaten player always
+    /// keeps a producing base. So orbit does what orbit can — strangle (blockade),
+    /// wear down (the siege clock), and SUPPRESS (bombardment) — and then somebody
+    /// has to go down and take the ground.
+    ///
+    /// Three gates, each a different kind of commitment:
+    ///   1. a ripe SIEGE — logistics strangled long enough (stretched by whatever
+    ///      garrison is dug in, §ground M5);
+    ///   2. enough MARINES to beat what is still standing — the garrison as
+    ///      bombardment has left it (§ground M6);
+    ///   3. not a HOME. Homes are never taken; there is no elimination.
+    fn begin_assaults(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let seed = self.config.seed;
+        let target = self.config.battle_target_secs;
+        let tick = self.tick;
+        // Fleets carrying marines, idle, at a rival system.
+        let landers: Vec<EntityId> = self
+            .fleets
+            .iter()
+            .filter(|(_, f)| f.marines() > 0 && matches!(f.order, FleetOrder::Idle))
+            .map(|(id, _)| *id)
+            .collect();
+        for fid in landers {
+            let Some(f) = self.fleets.get(&fid) else { continue };
+            let (owner, pos, marines) = (f.owner, f.pos, f.marines());
+            let Some(sys) = self
+                .systems
+                .iter()
+                .filter(|sy| sy.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS)
+                .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)))
+            else {
+                continue;
+            };
+            let (sys_id, spos) = (sys.id, sys.pos);
+            let Some(holder) = sys.owner.filter(|h| *h != owner && !self.are_allied(owner, *h)) else {
+                continue; // unclaimed, yours, or an ally's — nothing to storm
+            };
+            if self.is_home_system(holder, sys_id) {
+                continue; // homes are never taken (no elimination)
+            }
+            // One landing at a time per system: a second fleet does not get to
+            // pile into a fight already in progress mid-way through.
+            if self.assaults.values().any(|a| a.system == sys_id) {
+                continue;
+            }
+            // GATE 1: the siege must be ripe.
+            let anchored = self.fleets.values().any(|g| {
+                g.owner == owner
+                    && matches!(g.order, FleetOrder::Blockade { system, .. } if system == sys_id)
+                    && g.composition.iter().any(|(k, n)| *n > 0 && crate::ship::is_siege_anchor(*k))
+            });
+            let siege_dur = self.siege_duration_for(sys_id)
+                / if anchored { crate::ship::SIEGE_ANCHOR_MULT } else { 1.0 };
+            let ripe = sys
+                .blockade
+                .is_some_and(|b| b.by == owner && b.siege_since.is_some_and(|ss| now - ss >= siege_dur));
+            if !ripe {
+                continue;
+            }
+            // GATE 2: worth going in at all. The break-even strength is where a
+            // landing becomes an even bet — below it, commanders hold in orbit
+            // rather than throw the men away, and say so once per approach.
+            // NOTHING is spent on a hold: this is the safety that keeps a fleet
+            // from auto-suiciding now that the outcome is rolled.
+            let tiers = if sys.garrison_fed { sys.tier_sum(crate::build::StructureKind::Garrison) } else { 0 };
+            let suppression = sys.garrison_suppression.clamp(0.0, 1.0);
+            let need = crate::ground::break_even_marines(tiers as f64, suppression);
+            if (marines as f64) < need {
+                if !self.fleets[&fid].notified_held {
+                    if let Some(fl) = self.fleets.get_mut(&fid) {
+                        fl.notified_held = true;
+                    }
+                    events.push(Event::new(
+                        now,
+                        EventPayload::AssaultHeld {
+                            owner,
+                            system: sys_id,
+                            marines,
+                            needed: need.ceil() as u32,
+                            pos: spos,
+                        },
+                    ));
+                }
+                continue;
+            }
+            // THE DROP. Irreversible: the men are committed, and the fight now
+            // runs on its own clock under whatever suppression holds tick by
+            // tick. The hulls stay in orbit until the outcome decides them.
+            let aid = self.next_assault_id();
+            let assault = crate::ground::GroundAssault::open(
+                aid, seed, sys_id, spos, owner, holder, fid, marines, tiers, tick, target,
+            );
+            let defenders = assault.defenders_initial;
+            let rec = crate::ground::GroundRecord::open(&assault, suppression, target);
+            self.ground_records.insert(aid, rec);
+            crate::ground::prune_ground_records(&mut self.ground_records, now);
+            self.assaults.insert(aid, assault);
+            if let Some(fl) = self.fleets.get_mut(&fid) {
+                fl.commit_marines();
+                fl.notified_held = false;
+            }
+            events.push(Event::new(
+                now,
+                EventPayload::AssaultBegan {
+                    attacker: owner,
+                    defender: holder,
+                    system: sys_id,
+                    assault: aid,
+                    marines,
+                    defenders,
+                    suppression,
+                    pos: spos,
+                },
+            ));
+        }
+    }
+
+    /// §ground G1: advance every landing in flight by one tick.
+    ///
+    /// Suppression is RE-READ here, every tick, from live system state — that
+    /// single fact is what gives the defender a second front. A besieger has to
+    /// hold the orbit for the whole landing, and relief that breaks the blockade
+    /// puts the pinned garrison straight back into the firing line mid-fight.
+    fn step_assaults(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let ids: Vec<EntityId> = self.assaults.keys().copied().collect();
+        for aid in ids {
+            // The live read: suppression, and whether the garrison is still fed.
+            // An unfed garrison stops fighting (§5.1 — it suspends, it is not
+            // killed), which is a real way to lose ground you could have held.
+            let Some(a) = self.assaults.get(&aid) else { continue };
+            let (sys_id, attacker, defender, lander) = (a.system, a.attacker, a.defender, a.lander);
+            let Some(sys) = self.systems.iter().find(|s| s.id == sys_id) else {
+                self.assaults.remove(&aid);
+                continue;
+            };
+            // The ground changed hands underneath the fight (or was abandoned):
+            // there is nothing left to take.
+            if sys.owner != Some(defender) {
+                // The ground changed hands (or was abandoned) under the fight.
+                // Close the record out rather than leaving it dangling open —
+                // an unresolved record would read as a landing still in progress.
+                let tick = self.tick;
+                if let Some(a) = self.assaults.get(&aid).cloned()
+                    && let Some(rec) = self.ground_records.get_mut(&aid)
+                {
+                    rec.close(tick, &a, crate::ground::GroundOutcome::Repulsed);
+                }
+                self.assaults.remove(&aid);
+                continue;
+            }
+            let suppression = if sys.garrison_fed { sys.garrison_suppression.clamp(0.0, 1.0) } else { 1.0 };
+            let pos = sys.pos;
+            let tick = self.tick;
+            let Some(a) = self.assaults.get_mut(&aid) else { continue };
+            let step = a.step(suppression, DT);
+            let outcome = a.resolved();
+            let (marines_left, held) = (a.marines_landed, a.defenders_u32());
+            // The record is a pure observer — it reads the assault, never the
+            // other way round, so a replay can never change a fight.
+            let snapshot = a.clone();
+            if let Some(rec) = self.ground_records.get_mut(&aid) {
+                match outcome {
+                    Some(o) => rec.close(tick, &snapshot, o),
+                    None => rec.accumulate(tick, &step, &snapshot),
+                }
+            }
+            let Some(outcome) = outcome else { continue };
+            self.assaults.remove(&aid);
+            match outcome {
+                crate::ground::GroundOutcome::Taken => {
+                    self.capture_system(sys_id, defender, attacker, lander, pos, events);
+                }
+                crate::ground::GroundOutcome::Repulsed => {
+                    // Everything that went down is gone, and so are the hulls
+                    // that carried it — a failed invasion is expensive on
+                    // purpose. Capitals keep their hulls (their parties do not
+                    // come back until the fleet re-embarks).
+                    if let Some(f) = self.fleets.get_mut(&lander) {
+                        let n = f.count(ShipKind::Transport);
+                        if n > 0 {
+                            f.remove(ShipKind::Transport, n);
+                        }
+                        if f.is_empty() {
+                            self.fleets.remove(&lander);
+                        }
+                    }
+                    events.push(Event::new(
+                        now,
+                        EventPayload::AssaultRepulsed {
+                            owner: defender,
+                            system: sys_id,
+                            landed: marines_left,
+                            held,
+                            pos,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    /// §ground G1: refill spent marine complements at owned colonies that keep a
+    /// Garrison. Free and automatic — the interesting decision is where your
+    /// barracks are, not clicking a reload button.
+    fn reembark_marines(&mut self) {
+        let depots: std::collections::BTreeMap<EntityId, PlayerId> = self
+            .systems
+            .iter()
+            .filter(|s| s.garrison_fed && s.tier_sum(crate::build::StructureKind::Garrison) > 0)
+            .filter_map(|s| s.owner.map(|o| (s.id, o)))
+            .collect();
+        if depots.is_empty() {
+            return;
+        }
+        // §dock: troops come aboard at a BERTH, on the same terms as cargo and
+        // repair — one predicate for "this hull is in dock and available".
+        let refill: Vec<EntityId> = self
+            .fleets
+            .iter()
+            .filter(|(_, f)| f.marines_spent > 0)
+            .filter(|(id, f)| {
+                matches!(self.dock_of(**id), Some(DockSite::System(sid)) if depots.get(&sid) == Some(&f.owner))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in refill {
+            if let Some(f) = self.fleets.get_mut(&id) {
+                f.reembark_marines();
+            }
+        }
+    }
+
+    /// Allocate a fresh assault id. The high-bit tag keeps landings visibly
+    /// distinct from both entity ids and engagement ids, so the three never
+    /// collide in a record map or a client's lookup.
+    fn next_assault_id(&mut self) -> EntityId {
+        self.next_assault_id += 1;
+        EntityId(0xD000_0000_0000_0000 | self.next_assault_id)
+    }
+
+    /// §ground M6: BOMBARDMENT. A blockading fleet's guns pin down the garrison
+    /// beneath them — raising `garrison_suppression` while they hold station, and
+    /// letting it bleed off the moment they leave.
+    ///
+    /// THE BOUNDARIES ARE THE MECHANIC. Suppression never destroys a garrison
+    /// tier, never touches population, and never razes a structure: it is a
+    /// WINDOW a besieger opens and must exploit before it closes. That is what
+    /// keeps orbital supremacy from substituting for taking the ground, which
+    /// this design forbids on purpose — the prize has to survive to be worth
+    /// having, and population never decreases (§5.1).
+    fn resolve_bombardment(&mut self, _events: &mut [Event]) {
+        // Attack weight parked on station over each blockaded system.
+        let mut guns: BTreeMap<EntityId, f64> = BTreeMap::new();
+        for f in self.fleets.values() {
+            if let FleetOrder::Blockade { system, .. } = f.order
+                && let Some(sys) = self.systems.iter().find(|s| s.id == system)
+                && sys.owner.is_some_and(|o| o != f.owner && !self.are_allied(f.owner, o))
+                && f.pos.distance(sys.pos) <= BLOCKADE_STATION_RADIUS
+            {
+                *guns.entry(system).or_insert(0.0) += f.attack_power();
+            }
+        }
+        for sys in self.systems.iter_mut() {
+            let overhead = guns.get(&sys.id).copied().unwrap_or(0.0);
+            let next = if overhead > 0.0 {
+                sys.garrison_suppression + BOMBARD_PER_ATTACK_PER_SEC * overhead * DT
+            } else {
+                sys.garrison_suppression - BOMBARD_DECAY_PER_SEC * DT
+            };
+            sys.garrison_suppression = next.clamp(0.0, 1.0);
+        }
+    }
+
+    /// §ground: GARRISON UPKEEP. Dug-in troops eat, out of the stockpile of the
+    /// very colony they defend — so a besieged world that is being stripped
+    /// (§plunder) eventually cannot feed its own defenders, which is the pressure
+    /// a blockade is supposed to apply.
+    ///
+    /// An UNFED garrison SUSPENDS: it stretches no siege clock and resists no
+    /// landing. It is never destroyed, loses no tier, and recovers the tick food
+    /// returns — the same rule Habitats, nodes, and ally garrisons all follow.
+    fn draw_garrison_upkeep(&mut self, events: &mut Vec<Event>) {
+        let prov = crate::cargo::Commodity::Provisions;
+        let now = self.time;
+        let mut transitions: Vec<(PlayerId, EntityId, bool)> = Vec::new();
+        for sys in self.systems.iter_mut() {
+            let tier = sys.tier_sum(crate::build::StructureKind::Garrison);
+            let Some(owner) = sys.owner else {
+                sys.garrison_fed = true;
+                continue;
+            };
+            if tier == 0 {
+                sys.garrison_fed = true; // nothing to feed — vacuously supplied
+                continue;
+            }
+            let cost = GARRISON_UPKEEP_PER_TIER * tier as f64 * DT;
+            let have = sys.stockpile.get(&prov).copied().unwrap_or(0.0);
+            // ATOMIC per tick, like the Habitat's draw: a shortfall never eats a
+            // partial meal, it just suspends.
+            let fed = have + 1e-9 >= cost;
+            if fed {
+                *sys.stockpile.entry(prov).or_insert(0.0) -= cost;
+            }
+            if sys.garrison_fed != fed {
+                transitions.push((owner, sys.id, fed));
+            }
+            sys.garrison_fed = fed;
+        }
+        for (owner, system, fed) in transitions {
+            events.push(Event::new(now, EventPayload::GarrisonSupplyStateChanged { owner, system, fed }));
+        }
+    }
+
+    /// §upkeep: STANDING FLEET UPKEEP — every fleet draws Provisions every tick,
+    /// wherever it is, whether or not its owner is connected.
+    ///
+    /// This is the ceiling on force. Before it, a hull was a one-off purchase and
+    /// an idle navy cost nothing forever, so building up and sitting was strictly
+    /// dominant; now a fleet is a standing commitment measured against what your
+    /// colonies actually grow.
+    ///
+    /// WHERE IT IS PAID FROM mirrors the fuel rule exactly (`charge_fuel`): the
+    /// owner's nearest system that can cover the WHOLE draw, `(distance, id)` to
+    /// break ties — deterministic, and it makes a forward supply line matter,
+    /// because a fleet far from any stocked colony is a fleet about to go hungry.
+    ///
+    /// A SHORTFALL IMMOBILIZES, IT NEVER DESTROYS (§5.1). An unsupplied fleet
+    /// takes no new movement or offensive order, but it keeps its guns, finishes
+    /// the leg it is flying, defends itself normally, and recovers the tick food
+    /// arrives. Nothing is lost, ever — so a week-offline player finds a hungry,
+    /// idle navy, not a smaller one.
+    ///
+    /// EXEMPT: the neutral sentinels (pirate packs and Authority freighters are
+    /// nobody's payroll) and ally garrisons, whose HOST already feeds them under
+    /// `GARRISON_UPKEEP_PER_SHIP` — charging the owner too would bill one hull
+    /// twice.
+    fn draw_fleet_upkeep(&mut self, events: &mut Vec<Event>) {
+        let prov = crate::cargo::Commodity::Provisions;
+        let now = self.time;
+        // Deterministic order: fleets by id.
+        let fleet_ids: Vec<EntityId> = self.fleets.keys().copied().collect();
+        let mut transitions: Vec<(PlayerId, EntityId, bool)> = Vec::new();
+        for fid in fleet_ids {
+            let Some(f) = self.fleets.get(&fid) else { continue };
+            let (owner, pos, was) = (f.owner, f.pos, f.supplied);
+            // Sentinels have no payroll; a hosted garrison is already fed.
+            if owner.is_sentinel() || !f.garrison_fed {
+                if !was
+                    && let Some(f) = self.fleets.get_mut(&fid)
+                {
+                    f.supplied = true;
+                }
+                continue;
+            }
+            let cost = f.upkeep_per_sec() * DT;
+            let fed = if cost <= 1e-12 {
+                true // a fleet of freighters/nothing costs nothing to keep
+            } else {
+                // Nearest owned system that can cover the WHOLE draw.
+                let mut best: Option<(f64, EntityId)> = None;
+                for s in &self.systems {
+                    if s.owner != Some(owner) {
+                        continue;
+                    }
+                    if s.stockpile.get(&prov).copied().unwrap_or(0.0) + 1e-9 < cost {
+                        continue;
+                    }
+                    let key = (s.pos.distance(pos), s.id);
+                    if best.is_none_or(|b| key < b) {
+                        best = Some(key);
+                    }
+                }
+                match best {
+                    Some((_, sid)) => {
+                        if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
+                            *s.stockpile.entry(prov).or_insert(0.0) -= cost;
+                        }
+                        true
+                    }
+                    None => false, // nothing in reach can feed them — they go hungry
+                }
+            };
+            if let Some(f) = self.fleets.get_mut(&fid) {
+                f.supplied = fed;
+            }
+            if fed != was {
+                transitions.push((owner, fid, fed));
+            }
+        }
+        // Transition-only notices, owner-only: a per-tick event would flood.
+        for (owner, fleet, supplied) in transitions {
+            events.push(Event::new(now, EventPayload::FleetSupplyChanged { owner, fleet, supplied }));
+        }
+    }
+
+    /// §roster: ORDNANCE FOUNDRY REPAIR. Every IDLE fleet docked at a system with
+    /// a Foundry mends, on the same factor chain as any production line
+    /// (`tier × staffing × skill`), paying goods per hull point out of that
+    /// system's stockpile.
+    ///
+    /// Async-fair by construction: a shortfall simply repairs LESS this tick
+    /// (down to nothing) — it never destroys, never strands, and resumes the
+    /// moment supply returns. Damage is caused by combat, never by neglect.
+    ///
+    /// Deterministic: fleets in id order, hulls in id order, and each hull is
+    /// mended to full before the next is touched (worst-first would need a sort
+    /// on a float — this order is stable and needs no tie-break).
+    fn repair_docked_fleets(&mut self, events: &mut Vec<Event>) {
+        // (system, foundry rate) for every system that can service hulls.
+        let yards: Vec<(EntityId, Vec2, PlayerId, f64)> = self
+            .systems
+            .iter()
+            .filter_map(|s| {
+                let tier = s.tier(crate::build::StructureKind::OrdnanceFoundry);
+                let owner = s.owner?;
+                if tier == 0 {
+                    return None;
+                }
+                let body = s.site_for(crate::build::StructureKind::OrdnanceFoundry).unwrap_or(0);
+                let rate = crate::build::REPAIR_HP_PER_SEC_PER_TIER
+                    * tier as f64
+                    * s.staffing_factor(body, crate::build::StructureKind::OrdnanceFoundry)
+                    * s.skill_factor(body, crate::build::StructureKind::OrdnanceFoundry);
+                (rate > 0.0).then_some((s.id, s.pos, owner, rate))
+            })
+            .collect();
+        if yards.is_empty() {
+            return;
+        }
+        let allies_of: std::collections::BTreeMap<PlayerId, std::collections::BTreeSet<PlayerId>> =
+            yards.iter().map(|(_, _, o, _)| (*o, self.allies_of(*o))).collect();
+        // A fleet caught in a battle is NOT in the yard, whatever its order says.
+        // An engagement only zeroes a fleet's velocity — it keeps whatever order
+        // it held — so a fleet that was parked `Idle` at a foundry when it was
+        // jumped would otherwise heal as fast as it was being shot, making a
+        // defended foundry system absurdly hard to crack.
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied())
+            .collect();
+        let fleet_ids: Vec<EntityId> = self.fleets.keys().copied().collect();
+        let _ = &engaged; // `dock_of` owns the under-fire rule now (§dock).
+        for fid in fleet_ids {
+            let Some(f) = self.fleets.get(&fid) else { continue };
+            // Hurt, and BERTHED at a yard. `dock_of` carries "at rest, unengaged,
+            // close enough" — this pass used to keep its own copy with a radius
+            // 3× tighter than the logistics one, so a hull could be near enough
+            // to load cargo but not to be mended, with nothing to explain it.
+            if f.ships.iter().all(|s| s.deficit() <= 0.0) {
+                continue;
+            }
+            let owner = f.owner;
+            let Some(DockSite::System(docked_at)) = self.dock_of(fid) else { continue };
+            let Some((sys_id, _, _, rate)) = yards.iter().find(|(sid, _, so, _)| {
+                *sid == docked_at
+                    && (*so == owner || allies_of.get(so).is_some_and(|a| a.contains(&owner)))
+            }) else {
+                continue;
+            };
+            let (sys_id, rate) = (*sys_id, *rate);
+            // How much hull this tick's budget AND the stockpile can afford.
+            let want = rate * DT;
+            let Some(sys) = self.systems.iter().find(|s| s.id == sys_id) else { continue };
+            let affordable = crate::build::REPAIR_COST_PER_HP
+                .iter()
+                .map(|(c, per)| {
+                    if *per <= 0.0 { f64::INFINITY } else { sys.stockpile.get(c).copied().unwrap_or(0.0) / per }
+                })
+                .fold(f64::INFINITY, f64::min);
+            let mut budget = want.min(affordable.max(0.0));
+            if budget <= 1e-9 {
+                continue; // nothing to spend — soft, retried next tick
+            }
+            // Mend hulls in id order, each to full before the next.
+            let mut spent = 0.0;
+            if let Some(f) = self.fleets.get_mut(&fid) {
+                for sh in f.ships.iter_mut() {
+                    if budget <= 1e-9 {
+                        break;
+                    }
+                    let need = sh.deficit();
+                    if need <= 0.0 {
+                        continue;
+                    }
+                    let heal = need.min(budget);
+                    sh.hp += heal;
+                    budget -= heal;
+                    spent += heal;
+                }
+            }
+            if spent <= 1e-9 {
+                continue;
+            }
+            if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+                for (c, per) in crate::build::REPAIR_COST_PER_HP {
+                    let e = sys.stockpile.entry(*c).or_insert(0.0);
+                    *e = (*e - spent * per).max(0.0);
+                }
+            }
+            // Owner-only news, once the fleet is whole again — a per-tick event
+            // would flood the timeline for the entire service.
+            if self.fleets.get(&fid).is_some_and(|f| f.ships.iter().all(|s| s.deficit() <= 1e-9)) {
+                events.push(Event::new(
+                    self.time,
+                    EventPayload::FleetRepaired { owner, fleet: fid, system: sys_id },
+                ));
+            }
+        }
     }
 
     /// §modules Part B4: return refitted hulls from the yard. Rejoin the original
@@ -5856,20 +6709,27 @@ impl World {
                     && matches!(f.order, FleetOrder::Idle)
                     && f.pos.distance(pos) <= crate::ship::COLONY_CLAIM_RADIUS
             });
+            // §roster: THE SAME HULLS leave the yard, re-fitted but no healthier
+            // than they went in. (A pre-roster job in flight carries no hulls —
+            // it falls back to `n` fresh ones, the old behaviour, exactly once.)
+            let mut returning: Vec<crate::ship::Ship> = job.hulls.clone();
+            if returning.is_empty() {
+                returning = (0..job.n).map(|i| crate::ship::Ship::new(i, job.ship, job.to.clone())).collect();
+            }
+            for h in returning.iter_mut() {
+                h.loadout = job.to.clone(); // the fit is what the yard changed
+            }
             if can_rejoin {
                 let f = self.fleets.get_mut(&rejoin).unwrap();
-                f.add(job.ship, job.n);
-                if !job.to.is_empty() {
-                    *f.loadouts.entry(job.ship).or_default().entry(job.to.key()).or_insert(0) += job.n;
-                }
+                f.absorb_ships(returning);
             } else {
                 let id = self.alloc_entity_id();
                 let mut f = Fleet::single(id, job.owner, job.ship, pos, FleetOrder::Idle, None);
-                // Fleet::single seeds one ship; add the rest and the fits.
-                f.add(job.ship, job.n - 1);
-                if !job.to.is_empty() {
-                    f.loadouts.entry(job.ship).or_default().insert(job.to.key(), job.n);
-                }
+                // `single` seeds one placeholder hull — drop it and take the real ones.
+                f.ships.clear();
+                f.next_ship_id = 0;
+                f.rebuild_cache();
+                f.absorb_ships(returning);
                 self.fleets.insert(id, f);
             }
             events.push(Event::new(
@@ -6525,36 +7385,15 @@ impl World {
                     }
                 }
                 Some(holder) if holder != owner => {
-                    // §Part 2 SIEGE → CAPTURE: a colony ship arriving at a RIVAL
-                    // system CAPTURES it iff the besieger (== this colony's owner)
-                    // has held an unbroken, defense-suppressed siege for
-                    // SIEGE_DURATION — and it is NOT the holder's home (home
-                    // protection: a beaten player always keeps a producing base).
-                    // Otherwise the existing soft-hold: intact, redirectable,
-                    // never consumed in vain. "Sieges strangle; only colonists
-                    // conquer" — no colony ship = no capture, ever.
-                    // §ladder: the SIEGE ANCHOR — a Battleship-or-heavier hull on
-                    // blockade station accelerates the capture clock: the ripe
-                    // duration divides by SIEGE_ANCHOR_MULT while one holds the
-                    // line. A named factor, presence-gated at evaluation.
-                    let anchored = self.fleets.values().any(|f| {
-                        f.owner == owner
-                            && matches!(f.order, crate::ship::FleetOrder::Blockade { system, .. } if system == sys_id)
-                            && f.composition.iter().any(|(k, n)| *n > 0 && crate::ship::is_siege_anchor(*k))
-                    });
-                    let siege_dur = SIEGE_DURATION_BATTLE_MULT * self.config.battle_target_secs
-                        / if anchored { crate::ship::SIEGE_ANCHOR_MULT } else { 1.0 };
-                    let captureable = idle
-                        && !self.is_home_system(holder, sys_id)
-                        && self
-                            .systems
-                            .iter()
-                            .find(|s| s.id == sys_id)
-                            .and_then(|s| s.blockade)
-                            .is_some_and(|b| b.by == owner && b.siege_since.is_some_and(|ss| now - ss >= siege_dur));
-                    if captureable {
-                        self.capture_system(sys_id, holder, owner, cid, pos, events);
-                    } else if idle && !self.fleets[&cid].notified_held {
+                    // §ground M7 SETTLE ≠ CONQUER. A colony ship settles EMPTY
+                    // ground; it does not take held ground. Colonists are not
+                    // soldiers, and a colony ship arriving over a defended world
+                    // is a transport full of civilians — it holds, intact and
+                    // redirectable, exactly as it does when it loses a race.
+                    // Taking a held system is `resolve_assaults`: marines, landed
+                    // against a besieged and suppressed garrison.
+                    let _ = holder;
+                    if idle && !self.fleets[&cid].notified_held {
                         self.fleets.get_mut(&cid).unwrap().notified_held = true;
                         events.push(Event::new(now, EventPayload::ColonyHeld { owner, system: sys_id, pos }));
                     }
@@ -6619,9 +7458,12 @@ impl World {
         }
         // Drop the OLD owner's in-progress builds here (they no longer own it).
         self.build_queue.retain(|j| j.system != sys_id);
-        // Consume ONE colony ship (the occupation government), like settlement.
+        // §ground M7: consume ONE TROOP TRANSPORT — it landed and became the
+        // occupation. (Capitals' boarding parties re-embark; it is the trooper
+        // that stays.) A fleet that assaulted on capital marines alone loses no
+        // hull, which is the point of carrying them.
         if let Some(fl) = self.fleets.get_mut(&colony) {
-            fl.remove_one(ShipKind::Colony);
+            fl.remove_one(ShipKind::Transport);
             if fl.is_empty() {
                 self.fleets.remove(&colony);
             } else {
@@ -6720,10 +7562,10 @@ impl World {
     ///
     /// STORAGE CAP (§buildings step 2): a full system EXTRACTS nothing further —
     /// production simply IDLES at the cap until goods ship out (async-fair: an
-    /// offline player's depot fills and waits; nothing is destroyed, and a
+    /// offline player's storage fills and waits; nothing is destroyed, and a
     /// grandfathered over-cap stockpile is untouched — the cap blocks NEW inflow
     /// only). Reserves are drawn down only by what actually accrues, so a full
-    /// depot never wastes a finite deposit. Converters keep running at the cap
+    /// storage never wastes a finite deposit. Converters keep running at the cap
     /// (their ≥1:1 baskets always SHRINK the total).
     ///
     /// COLONY LIFE (§economy Part 2) — ordering rule, per owned system each
@@ -6837,7 +7679,7 @@ impl World {
             // tick: EXTRACTION first (fresh raws), then CONVERTERS in enum
             // order (they can eat this tick's raws; chained converters see
             // upstream output next tick — deterministic either way). A full
-            // depot idles extraction (nothing destroyed); converters never
+            // storage idles extraction (nothing destroyed); converters never
             // net-add units (baskets ≥ 1:1) so the cap can't bind on them
             // (a guard still bounds retunings).
             let share = sys.staffing_share();
@@ -6909,7 +7751,7 @@ impl World {
             }
             // Extraction suspension latch (per staffed extraction structure per
             // body): the food floor keeps it above zero, so the only outage is
-            // a FULL depot — one latched notice, resumed when space frees up.
+            // FULL storage — one latched notice, resumed when space frees up.
             let storage_starved = !extracted_any && sys.storage_headroom() <= 1e-12;
             let sys_id = sys.id;
             for b in sys.bodies.iter_mut() {
@@ -7530,7 +8372,7 @@ impl World {
             }
 
             // Fuel the automated haul ∝ distance × loaded mass (§step1 part 2),
-            // EXCEPT a Fuel haul itself (exempt — else a fuel-starved depot could
+            // EXCEPT a Fuel haul itself (exempt — else a fuel-starved colony could
             // never be resupplied). A shortfall refunds the source and skips THIS
             // cycle silently (the rule stays active and retries) — async-fair, and
             // no timeline spam from offline automation.
@@ -7615,8 +8457,72 @@ impl World {
 
     /// Check the shared preconditions for dockside logistics on `fleet_id`: it must
     /// be the player's, IDLE, not caught up in a battle, and within
-    /// [`crate::tca::LOGISTICS_RANGE`] of `dock`. Returns the fleet id on success,
+    /// [`crate::ship::DOCK_RADIUS`] of `dock`. Returns the fleet id on success,
     /// or emits the typed soft-reject and returns `None`.
+    /// §dock: WHERE THIS FLEET IS BERTHED, if it is berthed at all.
+    ///
+    /// One predicate, read by everything that used to invent its own: logistics
+    /// load/unload, foundry repair, marine re-embark, refit. They had three
+    /// different radii between them and no shared name, so a hull could be close
+    /// enough to load but too far to mend.
+    ///
+    /// A fleet is DOCKED when it is at rest (`Idle`), not in a fight, and within
+    /// [`crate::ship::DOCK_RADIUS`] of the Charterhouse or of a system it — or an
+    /// ally — owns. The ownership clause is what makes this safe to hide from the
+    /// galaxy map: a fleet sitting on a RIVAL's world is blockading, besieging or
+    /// invading it, never berthed, so it keeps its sprite. Docking means "at home
+    /// somewhere", which is exactly when the strategic view doesn't need it.
+    ///
+    /// Nearest site wins, id as tiebreak, so two docks in range resolve
+    /// deterministically.
+    pub fn dock_of(&self, fleet_id: EntityId) -> Option<DockSite> {
+        let f = self.fleets.get(&fleet_id)?;
+        if !matches!(f.order, FleetOrder::Idle) {
+            return None;
+        }
+        if self
+            .engagements
+            .values()
+            .any(|e| e.attackers.contains(&fleet_id) || e.defenders.contains(&fleet_id))
+        {
+            return None; // under fire is not at rest, whatever the order says
+        }
+        let r = crate::ship::DOCK_RADIUS;
+        let nearest_system = self
+            .systems
+            .iter()
+            .filter(|s| {
+                s.owner.is_some_and(|o| o == f.owner || self.are_allied(f.owner, o))
+                    && s.pos.distance(f.pos) <= r
+            })
+            .min_by(|a, b| {
+                a.pos.distance(f.pos).total_cmp(&b.pos.distance(f.pos)).then(a.id.cmp(&b.id))
+            })
+            .map(|s| (s.pos.distance(f.pos), DockSite::System(s.id)));
+        let hub = (self.hub.distance(f.pos) <= r).then(|| (self.hub.distance(f.pos), DockSite::Hub));
+        match (nearest_system, hub) {
+            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a.1 } else { b.1 }),
+            (Some(a), None) => Some(a.1),
+            (None, Some(b)) => Some(b.1),
+            (None, None) => None,
+        }
+    }
+
+    /// The position of a dock site.
+    pub fn dock_pos(&self, site: DockSite) -> Vec2 {
+        match site {
+            DockSite::Hub => self.hub,
+            DockSite::System(id) => {
+                self.systems.iter().find(|s| s.id == id).map(|s| s.pos).unwrap_or(self.hub)
+            }
+        }
+    }
+
+    /// Whether this fleet is berthed at a specific site.
+    pub fn is_docked_at(&self, fleet_id: EntityId, site: DockSite) -> bool {
+        self.dock_of(fleet_id) == Some(site)
+    }
+
     fn logistics_ready(
         &self,
         player_id: PlayerId,
@@ -7630,15 +8536,26 @@ impl World {
             self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::FleetUnavailable);
             return None;
         };
-        let engaged = self
-            .engagements
-            .values()
-            .any(|e| e.attackers.contains(&fleet_id) || e.defenders.contains(&fleet_id));
-        if f.owner != player_id || !matches!(f.order, FleetOrder::Idle) || engaged {
+        if f.owner != player_id {
             self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::FleetUnavailable);
             return None;
         }
-        if f.pos.distance(dock) > crate::tca::LOGISTICS_RANGE {
+        // §dock: goods cross the warehouse boundary only at a BERTH. `dock_of`
+        // owns "at rest, unengaged, close enough" now — this used to be its own
+        // copy of that logic with its own radius.
+        let Some(site) = self.dock_of(fleet_id) else {
+            // Idle-but-far reads as a range problem, anything else as the fleet
+            // simply not being available — the same two reasons as before.
+            let reason = if matches!(f.order, FleetOrder::Idle) {
+                TradeRejectReason::OutOfLogisticsRange
+            } else {
+                TradeRejectReason::FleetUnavailable
+            };
+            self.reject_trade(events, player_id, commodity, units, None, reason);
+            return None;
+        };
+        if self.dock_pos(site).distance(dock) > 1.0 {
+            // Berthed, but somewhere else.
             self.reject_trade(events, player_id, commodity, units, None, TradeRejectReason::OutOfLogisticsRange);
             return None;
         }
@@ -7775,10 +8692,10 @@ impl World {
             return;
         }
         // How much the dock will actually take. The WAREHOUSE is uncapped (the
-        // bays handoff adds that); a SYSTEM has a depot cap, and every sibling
+        // bays handoff adds that); a SYSTEM has a storage cap, and every sibling
         // path clamps to its headroom — so this one does too. The excess is never
-        // destroyed: it stays in the hold, and the player is told the depot is
-        // full (build a Depot, or carry it somewhere else).
+        // destroyed: it stays in the hold, and the player is told storage is
+        // full (build an Orbital Warehouse, or carry it somewhere else).
         let stored = match system {
             None => cargo.units,
             Some(sid) => self
@@ -7961,7 +8878,7 @@ impl World {
             // slaughter — exactly the "costs time, never colonies" shape.
             let fid = self.alloc_entity_id();
             let mut f = Fleet::single(fid, PlayerId::TCA, ShipKind::Corvette, hub, FleetOrder::Blockade { system, station }, None);
-            f.composition.insert(ShipKind::Corvette, crate::tca::TCA_ENFORCEMENT_SHIPS);
+            f.reset_to(ShipKind::Corvette, crate::tca::TCA_ENFORCEMENT_SHIPS); // §roster
             self.fleets.insert(fid, f);
             self.expeditions.insert(
                 fid,
@@ -8219,7 +9136,6 @@ impl World {
             self.reject_trade(events, player_id, commodity, units, Some(system_id), TradeRejectReason::CharterSuspended);
             return;
         }
-        let has_depot = sys.tier(crate::build::StructureKind::Depot) > 0;
         let sys_stock = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
         let dist = self.hub.distance(sys.pos);
         // The Charterhouse won't book to or from a system it BELIEVES blockaded —
@@ -8231,7 +9147,7 @@ impl World {
         // §TCA Phase 2: the TARIFF — a sanctioned corporation pays a multiple of
         // the ordinary fee, linear in how far its standing has fallen. Exactly
         // 1.0× in good standing, so the Phase 1 fee is unchanged for the lawful.
-        let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist, has_depot)
+        let fee = crate::tca::freight_fee(units, self.market.price(commodity), dist)
             * crate::tca::tariff_mult(self.standing_of(player_id));
 
         // The SOURCE must cover the lot (warehouse outbound / stockpile inbound).
@@ -8258,7 +9174,7 @@ impl World {
         // Forecast the departure this lot rides: everything of ours already queued
         // for this destination and direction goes first (FIFO), a cap's worth per
         // scheduled departure.
-        let cap = crate::tca::shipment_cap(has_depot).max(1);
+        let cap = crate::tca::TCA_SHIPMENT_CAP.max(1);
         let ahead: u32 = self
             .freight_queue
             .values()
@@ -8409,7 +9325,7 @@ impl World {
                 continue;
             };
             let dest_pos = sys.pos;
-            let cap = crate::tca::shipment_cap(sys.tier(crate::build::StructureKind::Depot) > 0).max(1);
+            let cap = crate::tca::TCA_SHIPMENT_CAP.max(1);
             let mut manifest: Vec<ShipmentId> = Vec::new();
             let mut aboard: BTreeMap<ShipmentId, Shipment> = BTreeMap::new();
             self.load_shipments(dest, ShipmentDir::Outbound, cap, &mut manifest, &mut aboard);
@@ -8437,8 +9353,8 @@ impl World {
     /// Resolve freighter runs that reached the end of a leg (§TCA).
     ///
     /// At the DESTINATION: every outbound lot whose owner still holds the system
-    /// unloads into its stockpile (bounded by the depot's headroom). Anything that
-    /// can't land — the system changed hands, or the depot is full — STAYS ABOARD
+    /// unloads into its stockpile (bounded by its storage headroom). Anything that
+    /// can't land — the system changed hands, or storage is full — STAYS ABOARD
     /// and rides home to the owner's warehouse. The Authority holds your goods; it
     /// never destroys them (deliberately friendlier than the convoy cargo-lost
     /// rule). The hull then collects that destination's queued inbound lots and
@@ -8460,7 +9376,7 @@ impl World {
                 RunLeg::Outbound => {
                     let dest = self.freight_runs[&fid].dest;
                     let manifest = self.freight_runs[&fid].manifest.clone();
-                    // UNLOAD, in load order so the depot's headroom is shared FIFO.
+                    // UNLOAD, in load order so the storage headroom is shared FIFO.
                     let mut delivered: Vec<ShipmentId> = Vec::new();
                     for sid in manifest {
                         let Some(s) = self.freight_runs[&fid].shipments.get(&sid).copied() else {
@@ -8475,7 +9391,7 @@ impl World {
                         if sys.owner != Some(s.owner) {
                             continue; // no longer yours — it rides home
                         }
-                        // Whole units, bounded by the depot's remaining headroom.
+                        // Whole units, bounded by the storage headroom.
                         let room = sys.storage_headroom().floor().max(0.0) as u32;
                         let take = room.min(s.units);
                         if take > 0 {
@@ -8499,12 +9415,7 @@ impl World {
                     // COLLECT this destination's inbound lots (same per-corp cap),
                     // dropping any whose origin the owner lost since booking.
                     self.forfeit_lost_pickups(events);
-                    let cap = self
-                        .systems
-                        .iter()
-                        .find(|s| s.id == dest)
-                        .map(|s| crate::tca::shipment_cap(s.tier(crate::build::StructureKind::Depot) > 0).max(1))
-                        .unwrap_or(crate::tca::TCA_SHIPMENT_CAP);
+                    let cap = crate::tca::TCA_SHIPMENT_CAP.max(1);
                     let mut manifest = Vec::new();
                     let mut aboard = BTreeMap::new();
                     self.load_shipments(dest, ShipmentDir::Inbound, cap, &mut manifest, &mut aboard);
@@ -8709,7 +9620,7 @@ impl World {
             match mission {
                 TradeMission::DeliverHome => {
                     // §TCA: "home" is the home SYSTEM's stockpile now, clamped to
-                    // its depot like every other system delivery — so this reports
+                    // its storage like every other system delivery — so this reports
                     // as the ordinary system arrival it has become.
                     let home_sys = self.players.get(&ship.owner).and_then(|c| c.home_system);
                     let stored = self.deposit_at_home_system(ship.owner, cargo.commodity, cargo.units);
@@ -8851,13 +9762,13 @@ impl World {
                     // syndicate ALLY's (§syndicates Part 3 AID — a member may supply
                     // an ally's stockpile; blockades still interdict the run upstream).
                     // We don't gift cargo to a rival who took the system mid-transit.
-                    // STORAGE CAP (§buildings step 2): deliver up to the depot's
+                    // STORAGE CAP (§buildings step 2): deliver up to the
                     // remaining headroom (whole units); any EXCESS stays aboard and
                     // the SAME convoy carries it onward to the hub to sell — still
                     // sub-light and raidable, and goods are never silently destroyed.
                     // (This overflow rule is deliberate: of the "sell it / leave it"
                     // options, an automatic sale is the one that can't deadlock a
-                    // full depot or strand cargo.)
+                    // full system or strand cargo.)
                     let allies = self.allies_of(ship.owner);
                     let delivered = self
                         .systems
@@ -9017,6 +9928,26 @@ impl World {
     /// shortfall, in which case NOTHING is debited and the caller must LIMIT the op
     /// (hold it) rather than destroy anything. Tiebreak `(distance, id)` →
     /// deterministic. This is the single fuel-debit choke point (§step1 part 2).
+    /// §upkeep: may this fleet accept a NEW movement or offensive order? An
+    /// unsupplied fleet is immobilized — it keeps its guns and its current
+    /// course, but it will not set out again until it is fed. Emits the
+    /// owner-only reject notice so the reason is never a mystery.
+    fn fleet_supplied_for_orders(&self, fleet_id: EntityId, owner: PlayerId, events: &mut Vec<Event>) -> bool {
+        if self.fleets.get(&fleet_id).is_none_or(|f| f.supplied) {
+            return true;
+        }
+        events.push(Event::new(
+            self.time,
+            EventPayload::OrderRejected {
+                owner,
+                fleet: fleet_id,
+                target: None, // the fleet itself is the problem, not its target
+                reason: crate::event::OrderRejectReason::Unsupplied,
+            },
+        ));
+        false
+    }
+
     fn charge_fuel(&mut self, player: PlayerId, origin: Vec2, cost: f64) -> bool {
         if cost <= 1e-9 {
             return true;
@@ -9129,23 +10060,33 @@ impl World {
             crate::cargo::Cargo { commodity, units }
         };
 
-        // Convoy plies the home↔hub trade lane.
+        // The convoy HAULS THAT LOAD TO MARKET — one real delivery, not a
+        // sightseeing tour.
+        //
+        // It used to be a `Patrol` over [home, hub], which is why a new player
+        // watched their first convoy shuttle back and forth forever with the
+        // cargo still aboard: a patrol has no arrival semantics at all, so there
+        // was no point on the route at which anything could be unloaded. That was
+        // M2 demo behaviour ("so the shared world is visibly alive") left in place
+        // long after real logistics existed, and it taught the loop backwards.
+        //
+        // `DeliverToWarehouse` is the player-owned haul (§TCA Part 5): the load
+        // lands in their hub warehouse and the hull SURVIVES, going Idle at the
+        // Charterhouse ready for its next job. `sell_on_arrival: false` on
+        // purpose — the goods are the player's to price and sell, and arriving
+        // with a stocked warehouse is the introduction to it. The run itself is
+        // raidable the whole way, which is the other half of the lesson.
         let convoy_id = self.alloc_entity_id();
-        self.fleets.insert(
+        let mut convoy = Fleet::single(
             convoy_id,
-            Fleet::single(
-                convoy_id,
-                owner,
-                ShipKind::Convoy,
-                home,
-                FleetOrder::Patrol {
-                    waypoints: vec![home, hub],
-                    index: 1,
-                    dwell_until: 0.0,
-                },
-                Some(cargo),
-            ),
+            owner,
+            ShipKind::Convoy,
+            home,
+            FleetOrder::MoveTo { dest: hub },
+            Some(cargo),
         );
+        convoy.mission = Some(crate::ship::TradeMission::DeliverToWarehouse { sell_on_arrival: false });
+        self.fleets.insert(convoy_id, convoy);
         events.push(Event::new(
             self.time,
             EventPayload::ShipSpawned {
@@ -9213,6 +10154,164 @@ mod tests {
         let mut cfg = SimConfig::for_players(123, 4);
         cfg.battle_target_secs = 20.0;
         World::new(cfg)
+    }
+
+    /// A NEW PLAYER'S FIRST CONVOY MUST ACTUALLY DELIVER ITS LOAD.
+    ///
+    /// It used to be handed `FleetOrder::Patrol { waypoints: [home, hub] }` — M2
+    /// demo behaviour, kept long after real logistics existed. A patrol has no
+    /// arrival semantics whatsoever, so the very first thing a new player watched
+    /// was their convoy shuttling home↔hub forever with the opening cargo still
+    /// in the hold, and no way to tell why. It taught the core loop backwards.
+    #[test]
+    fn a_new_players_first_convoy_delivers_its_load_to_the_warehouse() {
+        let mut w = test_world();
+        let id = PlayerId(300);
+        w.step(&[Command::AddPlayer { id, name: "New".into() }]);
+
+        // The opening convoy is loaded and BOUND FOR THE HUB with a real mission.
+        let (cid, opening) = w
+            .fleets
+            .iter()
+            .find(|(_, f)| f.owner == id && f.count(ShipKind::Convoy) > 0)
+            .map(|(cid, f)| (*cid, f.cargo.map(|c| (c.commodity, c.units)).expect("it starts loaded")))
+            .expect("a new player gets a convoy");
+        assert!(
+            matches!(w.fleets[&cid].mission, Some(TradeMission::DeliverToWarehouse { .. })),
+            "the opening convoy carries a delivery mission, not just cargo",
+        );
+        assert!(
+            !matches!(w.fleets[&cid].order, FleetOrder::Patrol { .. }),
+            "and it is NOT on a patrol — a patrol can never unload",
+        );
+
+        // Run until it lands. The whole point is that this terminates.
+        let delivered = run_until(&mut w, 900, |w| {
+            w.players[&id].warehouse.get(&opening.0).copied().unwrap_or(0) >= opening.1
+        });
+        assert!(delivered, "the opening load reaches the hub warehouse");
+
+        // The hull SURVIVES and is free for its next job — it is the player's.
+        let f = w.fleets.get(&cid).expect("a player's own hull is not consumed by delivering");
+        assert!(f.cargo.is_none(), "and the hold is empty afterwards");
+        assert!(matches!(f.order, FleetOrder::Idle), "it goes Idle at the Charterhouse, ready for orders");
+
+        // It does NOT set off again on its own — the oscillation is gone for good.
+        let at = f.pos;
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let f = &w.fleets[&cid];
+        assert!(f.pos.distance(at) < 1.0, "it stays put until the player gives it something to do");
+        assert!(f.cargo.is_none(), "and nothing reappears in the hold");
+    }
+
+    /// §dock: THE ONE PREDICATE. Everything that used to ask "is this hull parked
+    /// at a facility I control" — logistics, repair, refit, marine re-embark —
+    /// now reads this, so the four different answers they used to give (three
+    /// radii and one location-free check) collapse into one.
+    #[test]
+    fn docking_is_at_rest_unengaged_and_at_a_dock_you_control() {
+        let mut w = test_world();
+        let (me, friend, rival) = (PlayerId(400), PlayerId(401), PlayerId(402));
+        w.step(&[
+            Command::AddPlayer { id: me, name: "Me".into() },
+            Command::AddPlayer { id: friend, name: "Ally".into() },
+            Command::AddPlayer { id: rival, name: "Rival".into() },
+        ]);
+        clear_opening_traffic(&mut w);
+
+        let mine = grant_system_at(&mut w, me, Vec2::new(20_000.0, 0.0), 0);
+        let theirs = grant_system_at(&mut w, rival, Vec2::new(30_000.0, 0.0), 0);
+        let mpos = w.systems.iter().find(|s| s.id == mine).unwrap().pos;
+        let rpos = w.systems.iter().find(|s| s.id == theirs).unwrap().pos;
+
+        let park = |w: &mut World, at: Vec2| {
+            let id = w.alloc_entity_id();
+            w.fleets.insert(id, Fleet::single(id, me, ShipKind::Convoy, at, FleetOrder::Idle, None));
+            id
+        };
+
+        // AT YOUR OWN SYSTEM, at rest → berthed.
+        let a = park(&mut w, mpos + Vec2::new(50.0, 0.0));
+        assert_eq!(w.dock_of(a), Some(DockSite::System(mine)));
+
+        // Just outside the radius → not berthed.
+        let b = park(&mut w, mpos + Vec2::new(crate::ship::DOCK_RADIUS + 10.0, 0.0));
+        assert_eq!(w.dock_of(b), None, "a hull loitering outside the approach is not in dock");
+
+        // UNDER WAY → never berthed, however close it is.
+        let c = park(&mut w, mpos);
+        w.fleets.get_mut(&c).unwrap().order = FleetOrder::MoveTo { dest: Vec2::new(0.0, 0.0) };
+        assert_eq!(w.dock_of(c), None, "a hull under way is not in dock, even sitting on the star");
+
+        // AT A RIVAL'S SYSTEM → NOT berthed. This is the clause that keeps an
+        // invasion or blockade force on the galaxy map: docking means "at home
+        // somewhere", so hiding docked hulls can never hide a fleet on your door.
+        let d = park(&mut w, rpos + Vec2::new(30.0, 0.0));
+        assert_eq!(w.dock_of(d), None, "a fleet sitting on a rival's world is besieging it, not berthed");
+
+        // AT AN ALLY'S SYSTEM → berthed (a coalition yard hosts your hulls).
+        w.systems.iter_mut().find(|s| s.id == theirs).unwrap().owner = Some(friend);
+        ally(&mut w, me, friend);
+        assert_eq!(w.dock_of(d), Some(DockSite::System(theirs)), "an ally's berth is yours to use");
+
+        // AT THE CHARTERHOUSE → berthed, with no system involved at all.
+        let hub = w.hub;
+        let e = park(&mut w, hub + Vec2::new(40.0, 0.0));
+        assert_eq!(w.dock_of(e), Some(DockSite::Hub));
+    }
+
+    /// The unification, stated as the bug it fixes: a hull 150 su out used to be
+    /// close enough to LOAD CARGO (260 su) but too far to be REPAIRED (80 su),
+    /// with nothing anywhere to explain the difference. One radius now, so the
+    /// two answers agree.
+    #[test]
+    fn one_radius_means_loading_and_repair_finally_agree() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(403);
+        w.step(&[Command::AddPlayer { id, name: "Me".into() }]);
+        clear_opening_traffic(&mut w);
+        // The HOME system: it has the population a foundry needs for a crew.
+        let sys = w.players[&id].home_system.unwrap();
+        let spos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            s.set_tier(K::OrdnanceFoundry, 2);
+            let body = s.site_for(K::OrdnanceFoundry).unwrap();
+            // CREWED — repair runs the ordinary factor chain, so an unstaffed
+            // yard services nothing however well berthed the hull is.
+            s.bodies
+                .iter_mut()
+                .find(|b| b.id == body)
+                .unwrap()
+                .assignments
+                .insert(K::OrdnanceFoundry, crate::production::Assignment::crew(1));
+        }
+        seed_stock(&mut w, sys, &[(Commodity::Alloys, 5_000.0), (Commodity::Provisions, 5_000.0)]);
+
+        // Parked at 150 su — inside the old logistics range (260), outside the
+        // old repair range (80). Exactly the gap that was silently inconsistent.
+        let at = spos + Vec2::new(150.0, 0.0);
+        let fid = w.alloc_entity_id();
+        let mut f = Fleet::single(fid, id, ShipKind::Convoy, at, FleetOrder::Idle, None);
+        f.ships[0].hp *= 0.5;
+        w.fleets.insert(fid, f);
+        assert_eq!(w.dock_of(fid), Some(DockSite::System(sys)), "150 su out is in dock");
+
+        // LOADING works there...
+        w.step(&[Command::SystemLoad { player_id: id, fleet_id: fid, system: sys, commodity: Commodity::Alloys, units: 10 }]);
+        assert!(w.fleets[&fid].cargo.is_some(), "a berthed hull can be loaded at this distance");
+
+        // ...and so does REPAIR, which is the half that used to refuse.
+        let hurt0 = w.fleets[&fid].ships[0].deficit();
+        assert!(hurt0 > 0.0);
+        assert!(
+            run_until(&mut w, 120, |w| w.fleets[&fid].ships[0].deficit() < hurt0),
+            "a hull in dock is mended at the same distance it can be loaded at",
+        );
     }
 
     #[test]
@@ -9471,6 +10570,16 @@ mod tests {
         id
     }
 
+    /// §ground M7: a LANDING FORCE — troop transports parked at `pos`, ready to
+    /// storm whatever the siege has ripened.
+    fn landing_force(w: &mut World, owner: PlayerId, pos: Vec2, transports: u32) -> EntityId {
+        let id = w.alloc_entity_id();
+        let mut f = Fleet::single(id, owner, ShipKind::Transport, pos, FleetOrder::Idle, None);
+        f.reset_to(ShipKind::Transport, transports);
+        w.fleets.insert(id, f);
+        id
+    }
+
     /// Seed an owned system's stockpile so a recipe is affordable in tests.
     fn seed_stock(w: &mut World, sys: EntityId, items: &[(Commodity, f64)]) {
         let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
@@ -9553,8 +10662,11 @@ mod tests {
             corp.as_object_mut().unwrap().remove("warehouse");
         }
         let stripped = serde_json::to_string(&v).unwrap();
-        assert!(!stripped.contains("warehouse"), "the forged snapshot has no warehouse key");
-        assert!(!stripped.contains("freight_queue"), "…and no freight_queue key");
+        // The JSON KEY, not the bare substring: `TradeMission::DeliverToWarehouse`
+        // serializes as "deliver_to_warehouse", so a substring check here passes
+        // or fails depending on whether any convoy happens to be mid-haul.
+        assert!(!stripped.contains("\"warehouse\""), "the forged snapshot has no warehouse key");
+        assert!(!stripped.contains("\"freight_queue\""), "…and no freight_queue key");
 
         let old: World = serde_json::from_str(&stripped).unwrap();
         assert!(old.freight_queue.is_empty() && old.freight_runs.is_empty());
@@ -9860,8 +10972,14 @@ mod tests {
         let sid = w.players[&id].syndicate.unwrap();
         let home = w.players[&id].home_system.unwrap();
         let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
-        w.systems.iter_mut().find(|s| s.id == home).unwrap()
-            .set_tier(StructureKind::Shipyard, 6);
+        // §yards: capitals want the YARD LADDER, not one tall Shipyard — a
+        // Drydock for the line of battle, a Slipway for the super-capitals.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(StructureKind::Shipyard, 2);
+            s.set_tier(StructureKind::NavalDrydock, 3);
+            s.set_tier(StructureKind::CapitalSlipway, 2);
+        }
         seed_stock(&mut w, home, &[
             (Commodity::Alloys, 20_000.0), (Commodity::Electronics, 10_000.0),
             (Commodity::Armaments, 10_000.0), (Commodity::Machinery, 10_000.0),
@@ -9907,7 +11025,9 @@ mod tests {
         }
         w.refit_queue.push(crate::build::RefitJob {
             id: 999_999, owner: id, system: home, fleet: titan, ship: ShipKind::Titan,
-            to: crate::module::Loadout::default(), n: 1, complete_tick: w.tick + 10_000,
+            to: crate::module::Loadout::default(), n: 1,
+            hulls: vec![crate::ship::Ship::new(0, ShipKind::Titan, Default::default())],
+            complete_tick: w.tick + 10_000,
         });
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Titan, join: None, loadout: Default::default() }]);
         assert!(
@@ -10033,7 +11153,7 @@ mod tests {
         assert!(b.industrial_slots() >= 1 && b.infrastructure_slots() >= 2, "its pools widened");
     }
 
-    // --- §buildings step 2: Depot storage caps --------------------------------
+    // --- §buildings step 2: Orbital Warehouse storage caps --------------------------------
 
     #[test]
     fn storage_cap_stops_accrual_and_resumes_after_shipping() {
@@ -10041,6 +11161,11 @@ mod tests {
         let id = PlayerId(22);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
+        // §upkeep: this test asserts the stockpile total is EXACTLY pinned at the
+        // cap, which means nothing may quietly draw it down. The starting fleets
+        // eat Provisions every tick (their own tests cover that), so clear them —
+        // the subject here is the storage cap, not the payroll.
+        w.fleets.retain(|_, f| f.owner != id);
 
         // Fill the home to its cap (grandfather-style direct fill).
         let cap = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
@@ -10053,7 +11178,7 @@ mod tests {
             w.step(&[]);
         }
         let t1: f64 = w.systems.iter().find(|s| s.id == home).unwrap().storage_used();
-        assert!((t1 - t0).abs() < 1e-9, "a full depot accrues nothing (production idles)");
+        assert!((t1 - t0).abs() < 1e-9, "full storage accrues nothing (production idles)");
         assert!((t1 - cap).abs() < 1e-6, "…and sits exactly at the cap");
 
         // Fleet goods out (production → hub) → headroom returns → accrual resumes.
@@ -10088,30 +11213,30 @@ mod tests {
     }
 
     #[test]
-    fn depot_tier_raises_the_cap() {
+    fn a_warehouse_tier_raises_the_cap() {
         let mut w = test_world();
         let id = PlayerId(24);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0)]);
         // §economy: the home's Infrastructure pool is BORN FULL (Habitat +
-        // Agroplex on 2 slots) — a Depot needs the third slot, i.e. a
+        // Agroplex on 2 slots) — an Orbital Warehouse needs the third slot, i.e. a
         // DEVELOPED colony. That's the designed progression, so grow first.
         w.systems.iter_mut().find(|s| s.id == home).unwrap().set_population(crate::build::POP_DEVELOPED);
         let cap0 = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
         let slots0 = w.systems.iter().find(|s| s.id == home).unwrap().dev_slots_built();
 
-        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::Depot, body_id: None }]);
-        for _ in 0..(crate::build::DEPOT_RECIPE.build_ticks + 3) {
+        w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: StructureKind::OrbitalWarehouse, body_id: None }]);
+        for _ in 0..(crate::build::ORBITAL_WAREHOUSE_RECIPE.build_ticks + 3) {
             w.step(&[]);
         }
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.tier(crate::build::StructureKind::Depot), 1, "depot tier applied on completion");
+        assert_eq!(sys.tier(crate::build::StructureKind::OrbitalWarehouse), 1, "warehouse tier applied on completion");
         assert!(
-            (sys.storage_cap() - cap0 - crate::build::STORAGE_PER_DEPOT_TIER).abs() < 1e-9,
-            "each depot tier adds STORAGE_PER_DEPOT_TIER capacity"
+            (sys.storage_cap() - cap0 - crate::build::STORAGE_PER_WAREHOUSE_TIER).abs() < 1e-9,
+            "each warehouse tier adds STORAGE_PER_WAREHOUSE_TIER capacity"
         );
-        assert_eq!(sys.dev_slots_built(), slots0 + 1, "a depot tier consumes a development slot");
+        assert_eq!(sys.dev_slots_built(), slots0 + 1, "a warehouse tier consumes a development slot");
     }
 
     #[test]
@@ -10153,7 +11278,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(delivered, 10, "delivers up to the depot's headroom");
+        assert_eq!(delivered, 10, "delivers up to the storage headroom");
         assert_eq!(overflow, 30, "the excess is reported, not destroyed");
         // The SAME convoy carries the excess onward to sell at the hub.
         let ship = w.fleets.get(&sid).expect("convoy survives with the overflow");
@@ -10195,9 +11320,9 @@ mod tests {
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
-                EventPayload::BuildRejected { owner, reason: crate::event::BuildRejectReason::NeedsShipyard { required: 2 }, .. } if owner == id
+                EventPayload::BuildRejected { owner, reason: crate::event::BuildRejectReason::NeedsYard { yard: crate::build::StructureKind::Shipyard, required: 2 }, .. } if owner == id
             )),
-            "the raider rejection names the required tier"
+            "the raider rejection names the required yard and tier"
         );
         assert!(w.build_queue.is_empty(), "no job on a shipyard-short system");
         assert!((system_stock(&w, home, Commodity::Alloys) - alloys0).abs() < 1e-9, "recipe never eaten");
@@ -10230,7 +11355,7 @@ mod tests {
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
-                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsShipyard { required: 1 }, .. }
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsYard { yard: crate::build::StructureKind::Shipyard, required: 1 }, .. }
             )),
             "frontier shipbuilding must be earned (no shipyard → soft reject)"
         );
@@ -10247,7 +11372,7 @@ mod tests {
         {
             let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             sys.set_tier(crate::build::StructureKind::MiningComplex, 2);
-            sys.set_tier(crate::build::StructureKind::Depot, 1);
+            sys.set_tier(crate::build::StructureKind::OrbitalWarehouse, 1);
             sys.set_tier(crate::build::StructureKind::Habitat, 1);
             sys.set_population(2.5);
             sys.food_state = crate::colony::FoodState::Rationing;
@@ -10260,7 +11385,7 @@ mod tests {
         // Scout intel rides the snapshot too (§scout part 2).
         w.players.get_mut(&id).unwrap().intel.insert(
             EntityId(999),
-            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
+            crate::world::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, garrison_tier: 0, observed_at: 3.5, pos: Vec2::new(10.0, 20.0) },
         );
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
@@ -10270,7 +11395,7 @@ mod tests {
         );
         let a = w.systems.iter().find(|s| s.id == home).unwrap();
         let b = w2.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!((a.tier(crate::build::StructureKind::MiningComplex), a.tier(crate::build::StructureKind::Depot), a.tier(crate::build::StructureKind::Shipyard)), (b.tier(crate::build::StructureKind::MiningComplex), b.tier(crate::build::StructureKind::Depot), b.tier(crate::build::StructureKind::Shipyard)));
+        assert_eq!((a.tier(crate::build::StructureKind::MiningComplex), a.tier(crate::build::StructureKind::OrbitalWarehouse), a.tier(crate::build::StructureKind::Shipyard)), (b.tier(crate::build::StructureKind::MiningComplex), b.tier(crate::build::StructureKind::OrbitalWarehouse), b.tier(crate::build::StructureKind::Shipyard)));
         assert_eq!((a.tier(crate::build::StructureKind::Habitat), a.food_state), (b.tier(crate::build::StructureKind::Habitat), b.food_state), "habitat tier + food state round-trip");
         assert!((a.population() - b.population()).abs() < 1e-9, "population rides the snapshot");
         assert_eq!(a.specialists, b.specialists, "the resident specialist pool rides the snapshot");
@@ -11253,10 +12378,10 @@ mod tests {
     }
 
     /// The storage cap never blocks conversion with the LOSSY yield (< 1): at a
-    /// FULL depot, refining shrinks the total (input > output), so it proceeds
+    /// FULL system, refining shrinks the total (input > output), so it proceeds
     /// and the total stays at/under the cap — nothing destroyed, nothing stuck.
     #[test]
-    fn refinery_respects_storage_cap_at_full_depot() {
+    fn refinery_respects_storage_cap_when_full() {
         let mut w = test_world();
         let id = PlayerId(36);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
@@ -11279,7 +12404,7 @@ mod tests {
         assert!(s.storage_used() <= cap + 1e-9, "total never exceeds the cap");
         assert!(
             system_stock(&w, home, Commodity::Fuel) > fuel0,
-            "the ≥1:1 conversion proceeds even at a full depot (it never adds units)"
+            "the ≥1:1 conversion proceeds even at full storage (it never adds units)"
         );
     }
 
@@ -11718,11 +12843,14 @@ mod tests {
             dest,
         }]);
 
-        // Step until just before the order's light arrives: still not a MoveTo.
+        // Step until just before the order's light arrives: it must not yet be
+        // heading for OUR destination. Keyed on the destination, not the variant:
+        // the opening convoy is already a `MoveTo` (its delivery run to the hub),
+        // so "is it a MoveTo at all" stopped being the question.
         while w.time < issue_time + expected_delay - DT {
             w.step(&[]);
             assert!(
-                !matches!(w.fleets[&cid].order, FleetOrder::MoveTo { .. }),
+                !matches!(w.fleets[&cid].order, FleetOrder::MoveTo { dest: d } if d == dest),
                 "order applied too early at t={} (delay {})",
                 w.time,
                 expected_delay
@@ -11751,20 +12879,32 @@ mod tests {
         // Find a ship owned by `owner`.
         let target = *w.fleets.iter().find(|(_, s)| s.owner == owner).unwrap().0;
         let before = format!("{:?}", w.fleets[&target].order);
-        // Rival tries to command it; ignored, no pending order created.
+        // Rival tries to command it; ignored, no pending order created. The
+        // sentinel destination must be somewhere the ship would NEVER go on its
+        // own — (0,0) is the hub, which the opening convoy is already bound for.
+        let rival_dest = Vec2::new(-7777.0, 7777.0);
         w.step(&[Command::MoveShip {
             player_id: attacker,
             ship_id: target,
-            dest: Vec2::new(0.0, 0.0),
+            dest: rival_dest,
         }]);
         for _ in 0..(40 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
-        // It never became a MoveTo to (0,0) from the rival's command.
+        // It never took the rival's destination.
         if let FleetOrder::MoveTo { dest } = w.fleets[&target].order {
-            assert_ne!(dest, Vec2::new(0.0, 0.0), "rival should not control this ship");
+            assert_ne!(dest, rival_dest, "rival should not control this ship");
         }
         let _ = before;
+    }
+
+    /// Drop the OPENING DELIVERY TRAFFIC (§step1) so a test's own convoys are the
+    /// only ones in the world. A new player's convoy launches a real haul to the
+    /// hub, which shares the `DeliverToWarehouse` signature that tests use to
+    /// find "the convoy under test" — so without this it gets counted, or picked,
+    /// instead of the one the test spawned.
+    fn clear_opening_traffic(w: &mut World) {
+        w.fleets.retain(|_, f| f.mission.is_none());
     }
 
     fn find_ship(w: &World, owner: PlayerId, kind: ShipKind) -> EntityId {
@@ -11796,7 +12936,15 @@ mod tests {
             c.pos = cc + convoy_off;
             c.vel = Vec2::ZERO;
             c.order = FleetOrder::Idle; // sitting duck
+            // Drop the opening delivery run (§step1). Trade arrivals resolve on
+            // `mission.is_some() && order == Idle`, so parking a mission-carrying
+            // hull here would deposit its cargo instantly — emptying the hold the
+            // caller is about to fill and making the raid seize nothing.
+            c.mission = None;
         }
+        // The attacker's own opening convoy is live traffic with cargo aboard;
+        // drop it so the only haul in this world is the one under test.
+        w.fleets.retain(|id, f| *id == raider || *id == convoy || f.mission.is_none());
         (raider, convoy)
     }
 
@@ -11846,11 +12994,10 @@ mod tests {
         let mut w = test_world();
         let (atk, def) = (PlayerId(1), PlayerId(2));
         let (raider, target) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(300.0, 0.0));
-        w.fleets.get_mut(&raider).unwrap().composition.insert(ShipKind::Raider, 3);
+        w.fleets.get_mut(&raider).unwrap().reset_to(ShipKind::Raider, 3);
         {
             let d = w.fleets.get_mut(&target).unwrap();
-            d.composition.clear();
-            d.composition.insert(ShipKind::Corvette, 5);
+            d.reset_to(ShipKind::Corvette, 5);
             d.cargo = None;
         }
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: target }]);
@@ -11881,7 +13028,7 @@ mod tests {
         let mut w = test_world();
         let (atk, def) = (PlayerId(1), PlayerId(2));
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(300.0, 0.0));
-        w.fleets.get_mut(&raider).unwrap().composition.insert(ShipKind::Raider, 6);
+        w.fleets.get_mut(&raider).unwrap().reset_to(ShipKind::Raider, 6);
         // Fortify a system covering the convoy.
         let cpos = w.fleets[&convoy].pos;
         let sid = {
@@ -11917,11 +13064,10 @@ mod tests {
         let (atk, def) = (PlayerId(1), PlayerId(2));
         // Place them already in contact range so the fight starts promptly.
         let (raider, target) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
-        w.fleets.get_mut(&raider).unwrap().composition.insert(ShipKind::Raider, 5);
+        w.fleets.get_mut(&raider).unwrap().reset_to(ShipKind::Raider, 5);
         {
             let d = w.fleets.get_mut(&target).unwrap();
-            d.composition.clear();
-            d.composition.insert(ShipKind::Corvette, 4);
+            d.reset_to(ShipKind::Corvette, 4);
             d.cargo = None;
         }
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: target }]);
@@ -11932,14 +13078,17 @@ mod tests {
         }
         let eng = w.engagements.values().next().expect("a battle is underway");
         let started = eng.started_at;
-        assert!(eng.a_stack_pool.values().chain(eng.d_stack_pool.values()).flat_map(|m| m.values()).any(|p| *p > 0.0), "engagement side pools accumulated mid-battle");
+        // §roster: mid-battle damage lives on the HULLS now — assert real ships
+        // are hurt rather than that a side pool accumulated.
+        let hurt = |w: &World| w.fleets.values().flat_map(|f| f.ships.iter()).any(|s| s.deficit() > 0.0);
+        assert!(hurt(&w), "hulls accumulated damage mid-battle");
         // Round-trip through JSON (the snapshot path) — the ENGAGEMENT entity
         // (pools + elapsed + participants) persists, so the fight resumes exactly.
         let json = serde_json::to_string(&w).unwrap();
         let w2: World = serde_json::from_str(&json).unwrap();
         let eng2 = w2.engagements.values().next().expect("the battle survived serialization");
         assert!((eng2.started_at - started).abs() < 1e-9, "elapsed (started_at) persisted");
-        assert!(eng2.a_stack_pool.values().chain(eng2.d_stack_pool.values()).flat_map(|m| m.values()).any(|p| *p > 0.0), "pools survived serialization");
+        assert!(hurt(&w2), "per-hull damage survived serialization");
         // Both worlds resume and reach the SAME result (deterministic).
         let run = |mut w: World| -> (bool, bool) {
             for _ in 0..(300 * crate::config::TICK_HZ) {
@@ -11953,12 +13102,925 @@ mod tests {
         assert_eq!(run(w), run(w2), "the reloaded fight reaches the same result (deterministic)");
     }
 
+    /// §roster THE POINT OF THE WHOLE CHANGE: damage SURVIVES the battle. A
+    /// fleet that wins a fight walks away with hurt hulls, that damage rides the
+    /// snapshot, and the wounds sit on individual ships — not a pooled average.
+    #[test]
+    fn battle_damage_persists_on_individual_hulls_and_survives_a_snapshot() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (atk, def) = (PlayerId(71), PlayerId(72));
+        let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(420.0, 0.0));
+        // A real wing on each side so the fight lasts and survivors exist.
+        w.fleets.get_mut(&raider).unwrap().reset_to(ShipKind::Raider, 6);
+        w.fleets.get_mut(&convoy).unwrap().reset_to(ShipKind::Corvette, 4);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: raider, target_id: convoy }]);
+        // Run until somebody is hurt, then a while longer.
+        let hurt_now = |w: &World| {
+            w.fleets.values().flat_map(|f| f.ships.iter()).any(|s| s.deficit() > 0.0)
+        };
+        assert!(run_until(&mut w, 90, |w| hurt_now(w)), "the wings met and took damage");
+        // Let the engagement CONCLUDE — the pooled model lost everything here.
+        assert!(run_until(&mut w, 300, |w| w.engagements.is_empty()), "the battle resolved");
+
+        let wounded: Vec<(EntityId, u32, f64)> = w
+            .fleets
+            .values()
+            .flat_map(|f| f.ships.iter().map(move |s| (f.id, s.id, s.deficit())))
+            .filter(|(_, _, d)| *d > 0.0)
+            .collect();
+        assert!(!wounded.is_empty(), "survivors carry their damage OUT of the battle");
+        // The wounds are PER HULL: two same-kind siblings on one fleet carry
+        // DIFFERENT deficits. The pooled model divided a stack's damage evenly,
+        // so it could never produce this — it is the signature of the change.
+        let uneven = w.fleets.values().any(|f| {
+            f.ships.iter().any(|a| {
+                f.ships
+                    .iter()
+                    .any(|b| a.kind == b.kind && (a.deficit() - b.deficit()).abs() > 1e-6)
+            })
+        });
+        assert!(uneven, "same-kind hulls carry different damage — not a pooled average");
+        // No hull is over-killed: a live ship always has hp in (0, max].
+        for f in w.fleets.values() {
+            for s in &f.ships {
+                assert!(s.hp > 0.0 && s.hp <= s.max_hp() + 1e-9, "live hull hp in range (got {})", s.hp);
+            }
+        }
+        // …and it all rides the snapshot.
+        let json = serde_json::to_string(&w).unwrap();
+        let w2: World = serde_json::from_str(&json).unwrap();
+        let after: Vec<(EntityId, u32, f64)> = w2
+            .fleets
+            .values()
+            .flat_map(|f| f.ships.iter().map(move |s| (f.id, s.id, s.deficit())))
+            .filter(|(_, _, d)| *d > 0.0)
+            .collect();
+        assert_eq!(wounded, after, "per-hull damage survives a save/load exactly");
+    }
+
+    /// §roster: an ORDNANCE FOUNDRY mends docked hulls, pays goods for it, and
+    /// stops at full — and a shortfall repairs LESS rather than destroying
+    /// anything (the async-fair rule; damage comes from combat, never neglect).
+    #[test]
+    fn a_foundry_repairs_docked_hulls_and_a_shortfall_is_soft() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(73);
+        w.step(&[Command::AddPlayer { id, name: "Yard".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // A foundry, CREWED — repair runs the same factor chain as any other
+        // production line, so an unstaffed yard services nothing.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(K::OrdnanceFoundry, 1);
+            let body = s.site_for(K::OrdnanceFoundry).unwrap();
+            s.bodies
+                .iter_mut()
+                .find(|b| b.id == body)
+                .unwrap()
+                .assignments
+                .insert(K::OrdnanceFoundry, crate::production::Assignment::crew(1));
+        }
+        let fleet = squad(&mut w, id, hpos, ShipKind::Corvette, 3, FleetOrder::Idle);
+        // Maul the wing: three hulls, three different deficits.
+        {
+            let f = w.fleets.get_mut(&fleet).unwrap();
+            f.ships[0].hp *= 0.25;
+            f.ships[1].hp *= 0.60;
+        }
+        let hurt0: f64 = w.fleets[&fleet].ships.iter().map(|s| s.deficit()).sum();
+        assert!(hurt0 > 0.0);
+
+        // NO GOODS → repair is a no-op, and nothing is destroyed or stranded.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.stockpile.remove(&Commodity::Alloys);
+            s.stockpile.remove(&Commodity::Machinery);
+        }
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        let hurt_dry: f64 = w.fleets[&fleet].ships.iter().map(|s| s.deficit()).sum();
+        assert!((hurt_dry - hurt0).abs() < 1e-6, "an unsupplied foundry mends nothing — softly");
+        assert_eq!(w.fleets[&fleet].count(ShipKind::Corvette), 3, "and destroys nothing");
+
+        // SUPPLIED → the hulls mend, the goods are spent, and it stops at full.
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 500.0), (Commodity::Machinery, 500.0)]);
+        let alloys0 = system_stock(&w, home, Commodity::Alloys);
+        // ~920 hull points at a half-crewed tier-1 yard (3 HP/s) is a few
+        // minutes of yard time — the logistics tail persistent damage buys.
+        assert!(run_until(&mut w, 400, |w| {
+            w.fleets[&fleet].ships.iter().all(|s| s.deficit() <= 1e-9)
+        }), "the foundry brings the wing back to full");
+        assert!(system_stock(&w, home, Commodity::Alloys) < alloys0, "repair costs goods");
+        // Overheal is impossible: hp never exceeds the hull.
+        for s in &w.fleets[&fleet].ships {
+            assert!(s.hp <= s.max_hp() + 1e-9, "a repaired hull stops at full");
+        }
+        // Idle at full health, the foundry spends nothing further.
+        let alloys1 = system_stock(&w, home, Commodity::Alloys);
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        assert!((system_stock(&w, home, Commodity::Alloys) - alloys1).abs() < 1e-6, "a whole fleet costs nothing to keep");
+    }
+
+    // --- §ground M5: THE GARRISON ------------------------------------------------
+
+    /// §ground M5: a FED garrison stretches the siege clock; an UNFED one
+    /// suspends (stretching nothing) without losing a tier, and recovers the
+    /// moment food returns. Defensive investment finally has something to say
+    /// about the one thing that loses you ground.
+    #[test]
+    fn a_fed_garrison_stretches_the_siege_clock_and_an_unfed_one_suspends() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(95);
+        w.step(&[Command::AddPlayer { id, name: "Dug In".into() }]);
+        let sys = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        grant_system(&mut w, id, sys);
+        let bare = w.siege_duration_for(sys);
+        assert!((bare - w.siege_duration_secs()).abs() < 1e-9, "an undefended colony runs the base clock");
+
+        // Dig in three tiers and feed them.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(K::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::Garrison, 3);
+        }
+        seed_stock(&mut w, sys, &[(Commodity::Provisions, 5_000.0)]);
+        w.step(&[]);
+        let dug_in = w.siege_duration_for(sys);
+        assert!(dug_in > bare * 1.5, "three fed tiers materially lengthen the siege ({bare:.0}s → {dug_in:.0}s)");
+        assert!(w.systems.iter().find(|s| s.id == sys).unwrap().garrison_fed);
+
+        // Starve them: the clock falls back to bare, but NOTHING is lost.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            s.stockpile.remove(&Commodity::Provisions);
+            s.bodies.iter_mut().for_each(|b| b.assignments.clear()); // no home-grown food
+        }
+        assert!(run_until(&mut w, 30, |w| !w.systems.iter().find(|s| s.id == sys).unwrap().garrison_fed),
+            "an unsupplied garrison goes unfed");
+        assert!((w.siege_duration_for(sys) - bare).abs() < 1e-9, "a suspended garrison stretches nothing");
+        assert_eq!(
+            w.systems.iter().find(|s| s.id == sys).unwrap().tier_sum(K::Garrison), 3,
+            "…but not one tier was destroyed"
+        );
+
+        // Feed them again → the defense stands back up on its own.
+        seed_stock(&mut w, sys, &[(Commodity::Provisions, 5_000.0)]);
+        assert!(run_until(&mut w, 30, |w| w.systems.iter().find(|s| s.id == sys).unwrap().garrison_fed),
+            "supply restores the garrison");
+        assert!((w.siege_duration_for(sys) - dug_in).abs() < 1e-9, "and the clock is long again");
+    }
+
+    /// §ground M5: the garrison tier is OWNER-ONLY ground truth — a besieger
+    /// learns it by SCOUTING, which is what makes pre-assault reconnaissance
+    /// matter. Without a scout you plan an invasion blind.
+    #[test]
+    fn a_scout_reports_the_garrison_tier() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (spy, def) = (PlayerId(96), PlayerId(97));
+        w.step(&[Command::AddPlayer { id: spy, name: "Eyes".into() }]);
+        w.step(&[Command::AddPlayer { id: def, name: "Dug In".into() }]);
+        let sys = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        grant_system(&mut w, def, sys);
+        let spos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(K::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::Garrison, 2);
+        }
+        // No scout yet → no knowledge.
+        assert!(!w.players[&spy].intel.contains_key(&sys), "you know nothing before you look");
+        // Park a scout inside intel range.
+        squad(&mut w, spy, spos, ShipKind::Scout, 1, FleetOrder::Idle);
+        assert!(run_until(&mut w, 30, |w| w.players[&spy].intel.contains_key(&sys)), "the scout reports");
+        assert_eq!(w.players[&spy].intel[&sys].garrison_tier, 2, "…and the report names the garrison");
+    }
+
+    // --- §ground M6/M7: BOMBARDMENT, MARINES, AND THE LANDING --------------------
+
+    /// §ground M6 THE CHAIN: you cannot land into an unsuppressed garrison, and
+    /// bombardment is what opens the window. Orbit does not replace the landing —
+    /// it makes it possible. Suppression is a WINDOW, not a wound: it decays when
+    /// the guns leave, no tier is destroyed, and the population is never touched.
+    #[test]
+    fn bombardment_suppresses_a_garrison_then_the_window_closes_again() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (atk, def) = (PlayerId(100), PlayerId(101));
+        w.step(&[Command::AddPlayer { id: atk, name: "Guns".into() }]);
+        w.step(&[Command::AddPlayer { id: def, name: "Dug In".into() }]);
+        let sys = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        grant_system(&mut w, def, sys);
+        let spos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(K::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::Garrison, 3);
+        }
+        seed_stock(&mut w, sys, &[(Commodity::Provisions, 20_000.0)]);
+        w.step(&[]);
+        let pop0 = w.systems.iter().find(|s| s.id == sys).unwrap().population();
+        let full = w.systems.iter().find(|s| s.id == sys).unwrap().effective_garrison();
+        assert!((full - 3.0).abs() < 1e-9, "three fed tiers stand at full strength");
+
+        // Park guns overhead on blockade station.
+        let guns = squad(&mut w, atk, spos, ShipKind::Raider, 8, FleetOrder::Blockade { system: sys, station: spos });
+        assert!(run_until(&mut w, 120, |w| {
+            w.systems.iter().find(|s| s.id == sys).unwrap().garrison_suppression > 0.4
+        }), "sustained fire pins the garrison down");
+        let suppressed = w.systems.iter().find(|s| s.id == sys).unwrap().effective_garrison();
+        assert!(suppressed < full, "what is still standing is less than what was dug in");
+
+        // NOTHING IS DESTROYED: the tiers are intact and the people untouched.
+        let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+        assert_eq!(s.tier_sum(K::Garrison), 3, "bombardment destroys no garrison tier");
+        assert!((s.population() - pop0).abs() < 1e-6, "and never touches the population");
+
+        // THE WINDOW CLOSES: pull the guns and suppression bleeds back to nothing.
+        w.fleets.remove(&guns);
+        assert!(run_until(&mut w, 120, |w| {
+            w.systems.iter().find(|s| s.id == sys).unwrap().garrison_suppression <= 1e-6
+        }), "suppression decays once the guns leave — a window, not a wound");
+        assert!((w.systems.iter().find(|s| s.id == sys).unwrap().effective_garrison() - full).abs() < 1e-9,
+            "the garrison stands back up on its own");
+    }
+
+    /// §ground M7 SETTLE ≠ CONQUER: a colony ship settles empty ground and NEVER
+    /// takes held ground, however ripe the siege. Colonists are not soldiers.
+    #[test]
+    fn a_colony_ship_can_no_longer_capture_a_held_system() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(102), PlayerId(103));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = ripe_siege(&mut w, atk, def, pos, 0);
+        let colony = colony_at(&mut w, atk, pos);
+        for _ in 0..30 {
+            w.step(&[]);
+        }
+        assert_eq!(
+            w.systems.iter().find(|s| s.id == sys).unwrap().owner,
+            Some(def),
+            "a ripe siege plus colonists is NOT a capture — it takes marines"
+        );
+        assert!(w.fleets.contains_key(&colony), "and the colony ship is intact, not consumed in vain");
+    }
+
+    /// §ground M7: the landing is gated on BEATING what is still standing. Too
+    /// few marines is a soft repulse — nothing lost, and the player is told what
+    /// it would have taken.
+    /// §ground G2: the RECORD is what the replay is made of, so it has to carry
+    /// the beat that matters — the moment the guns lifted and the fight turned.
+    /// A record that only said "you lost" would be a scoreboard, not a replay.
+    #[test]
+    fn the_record_captures_the_landing_and_the_moment_it_turned() {
+        use crate::ground::{GroundNote, GroundOutcome};
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(150), PlayerId(151));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "A".into() },
+            Command::AddPlayer { id: def, name: "D".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        // A DEEP garrison heavily pinned: 150 standing troops with 85% of them
+        // in cover break even at 150·√0.15 ≈ 58, so 80 marines is worth
+        // committing — and hopeless the moment the guns stop.
+        let sys = garrisoned_ripe_siege(&mut w, atk, def, pos, 6);
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().garrison_suppression = 0.85;
+        landing_force(&mut w, atk, pos, 2); // 80 marines vs 150 standing
+
+        assert!(run_until(&mut w, 30, |w| !w.assaults.is_empty()), "the drop goes in");
+        let aid = *w.assaults.keys().next().unwrap();
+        assert!(w.ground_records.contains_key(&aid), "the drop opens a record immediately");
+        assert!(w.ground_records[&aid].ended_tick.is_none(), "and it reads as still being fought");
+
+        // Let it run a couple of seconds under the guns — long enough for the
+        // record to have a bombarded phase to show, short enough that relief
+        // still has something to save.
+        for _ in 0..(2 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        // ...then break the blockade. The pinned garrison comes out of cover.
+        {
+            let s = w.systems.iter_mut().find(|x| x.id == sys).unwrap();
+            s.garrison_suppression = 0.0;
+            s.blockade = None;
+        }
+        assert!(run_until(&mut w, 240, |w| w.assaults.is_empty()), "the fight resolves");
+
+        let rec = &w.ground_records[&aid];
+        assert_eq!(rec.outcome, Some(GroundOutcome::Repulsed), "relief saved the colony");
+        assert!(rec.ended_tick.is_some(), "and the record is closed out");
+        assert_eq!(rec.marines_landed, 80);
+        assert_eq!(rec.defenders_initial, 150);
+        assert!(rec.rounds.len() >= 3, "a fight worth watching has rounds, got {}", rec.rounds.len());
+
+        // The rounds are a real series: tick-ascending, and the suppression
+        // actually falls partway through (this is the whole story).
+        assert!(rec.rounds.windows(2).all(|p| p[0].tick <= p[1].tick), "rounds are tick-ascending");
+        let first = rec.rounds.first().unwrap().suppression;
+        let last = rec.rounds.last().unwrap().suppression;
+        assert!(first > 0.5 && last < 0.2, "the record shows the guns lifting ({first:.2} -> {last:.2})");
+
+        // And the derived beats name it.
+        let notes: Vec<GroundNote> = rec.rounds.iter().flat_map(|r| r.notes.iter().copied()).collect();
+        assert!(notes.contains(&GroundNote::GunsLifted), "the replay marks where the bombardment stopped");
+        assert!(notes.contains(&GroundNote::Tipped), "and where the lead changed hands");
+
+        // Losses in the record add up to the losses in the fight — a replay that
+        // doesn't reconcile with reality is worse than none.
+        let marine_losses: u32 = rec.rounds.iter().map(|r| r.marine_losses).sum();
+        assert!(
+            marine_losses.abs_diff(rec.marines_landed) <= rec.rounds.len() as u32,
+            "recorded marine losses ({marine_losses}) account for the whole landing ({})",
+            rec.marines_landed,
+        );
+    }
+
+    /// §ground G1: A LANDING TAKES TIME. Against a real garrison the system does
+    /// NOT flip on the tick the marines arrive — there is a fight, and it is
+    /// observable while it runs. Everything else in this milestone (the record,
+    /// the theater, the defender's counter-play) depends on this being true.
+    #[test]
+    fn a_landing_against_a_garrison_takes_time_rather_than_flipping_instantly() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(140), PlayerId(141));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "A".into() },
+            Command::AddPlayer { id: def, name: "D".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = garrisoned_ripe_siege(&mut w, atk, def, pos, 2);
+        // 4 transports = 160 marines against 50 — decisive, but not instant.
+        landing_force(&mut w, atk, pos, 4);
+
+        assert!(run_until(&mut w, 30, |w| !w.assaults.is_empty()), "the drop goes in");
+        let owner_at_drop = w.systems.iter().find(|s| s.id == sys).unwrap().owner;
+        assert_eq!(owner_at_drop, Some(def), "the ground does not change hands the moment boots touch it");
+        // The fight is legible WHILE it runs — strengths fall on both sides.
+        let a0 = w.assaults.values().next().unwrap().clone();
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        if let Some(a1) = w.assaults.values().next() {
+            assert!(a1.defenders < a0.defenders, "the garrison is being ground down");
+            assert!(a1.marines < a0.marines, "and taking marines with it");
+        }
+        assert!(run_until(&mut w, 180, |w| {
+            w.systems.iter().find(|s| s.id == sys).unwrap().owner == Some(atk)
+        }), "a decisive landing does eventually take the ground");
+        assert!(w.assaults.is_empty(), "and the assault is closed out");
+    }
+
+    /// THE HEADLINE OF THE MILESTONE, at world level: a landing that is winning
+    /// loses when the blockade breaks under it. Same seed, same landing, same
+    /// tick of divergence — the ONLY difference is whether the besieger's guns
+    /// stay on station. This is the defender's second front, and it is what
+    /// makes "a window, not a wound" true in the code and not just the design.
+    #[test]
+    fn relief_that_breaks_the_blockade_mid_landing_saves_the_colony() {
+        // Build the identical scenario twice and diverge it at the same moment.
+        let run = |relieve: bool| -> Option<PlayerId> {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(142), PlayerId(143));
+            w.step(&[
+                Command::AddPlayer { id: atk, name: "A".into() },
+                Command::AddPlayer { id: def, name: "D".into() },
+            ]);
+            let pos = Vec2::new(5000.0, 0.0);
+            let sys = garrisoned_ripe_siege(&mut w, atk, def, pos, 4);
+            // Pin most of the garrison, so a landing sized for the SUPPRESSED
+            // ground is worth committing — and fatally short of the whole thing.
+            w.systems.iter_mut().find(|s| s.id == sys).unwrap().garrison_suppression = 0.75;
+            landing_force(&mut w, atk, pos, 2); // 80 marines vs 100 standing
+            assert!(run_until(&mut w, 30, |w| !w.assaults.is_empty()), "the drop goes in");
+            if relieve {
+                // RELIEF: the besieging fleets are driven off, so the guns stop
+                // and the suppression bleeds away exactly as it would in play.
+                w.fleets.retain(|_, f| f.owner != atk || f.marines_spent > 0);
+                let s = w.systems.iter_mut().find(|x| x.id == sys).unwrap();
+                s.blockade = None;
+                s.garrison_suppression = 0.0;
+            }
+            run_until(&mut w, 240, |w| w.assaults.is_empty());
+            w.systems.iter().find(|s| s.id == sys).unwrap().owner
+        };
+        let (atk, def) = (PlayerId(142), PlayerId(143));
+        assert_eq!(run(false), Some(atk), "guns kept on station: the landing takes the ground");
+        assert_eq!(run(true), Some(def), "relief mid-landing: the garrison comes out of cover and holds");
+    }
+
+    /// A DESTROYED landing costs the transports that carried it; a landing that
+    /// never went in costs nothing. That asymmetry is the whole point of
+    /// splitting `AssaultHeld` from `AssaultRepulsed`, and the old copy claiming
+    /// a hold destroyed your transports was simply wrong.
+    #[test]
+    fn a_destroyed_landing_costs_its_transports_and_a_hold_costs_nothing() {
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(144), PlayerId(145));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "A".into() },
+            Command::AddPlayer { id: def, name: "D".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = garrisoned_ripe_siege(&mut w, atk, def, pos, 4);
+        // Suppress enough to make an under-strength landing worth committing...
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().garrison_suppression = 0.8;
+        let force = landing_force(&mut w, atk, pos, 2); // 80 marines
+        assert!(run_until(&mut w, 30, |w| !w.assaults.is_empty()), "the drop goes in");
+        // ...then take the guns away, so the same landing is now hopeless.
+        {
+            let s = w.systems.iter_mut().find(|x| x.id == sys).unwrap();
+            s.garrison_suppression = 0.0;
+            s.blockade = None;
+        }
+        let mut repulsed = None;
+        for _ in 0..(240 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::AssaultRepulsed { landed, held, .. } = e.payload {
+                    repulsed = Some((landed, held));
+                }
+            }
+            if repulsed.is_some() {
+                break;
+            }
+        }
+        let (landed, held) = repulsed.expect("the landing is destroyed on the ground");
+        assert_eq!(landed, 80, "the report says what went down");
+        assert!(held > 0, "and how much of the garrison lived through it");
+        assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().owner, Some(def), "the colony holds");
+        assert!(!w.fleets.contains_key(&force), "the transports went down with the men");
+    }
+
+    /// LAW 2, at world level: a landing's dice come from its OWN stream, never
+    /// the world's. Opening one must not shift any unrelated draw — the same
+    /// property the tactical engine is held to, for the same reason.
+    #[test]
+    fn a_landing_never_touches_the_world_rng() {
+        let build = |with_landing: bool| -> u64 {
+            let mut w = test_world();
+            let (atk, def) = (PlayerId(146), PlayerId(147));
+            w.step(&[
+                Command::AddPlayer { id: atk, name: "A".into() },
+                Command::AddPlayer { id: def, name: "D".into() },
+            ]);
+            let pos = Vec2::new(5000.0, 0.0);
+            garrisoned_ripe_siege(&mut w, atk, def, pos, 2);
+            if with_landing {
+                landing_force(&mut w, atk, pos, 4);
+            }
+            for _ in 0..(20 * crate::config::TICK_HZ) {
+                w.step(&[]);
+            }
+            // The world stream's position, observed through the next draw it
+            // would make. Identical iff the landing never touched it.
+            w.rng.next_u64()
+        };
+        assert_eq!(build(false), build(true), "opening a landing must not shift the world's dice");
+    }
+
+    /// Troops that have gone down cannot go down twice. A capital group keeps
+    /// its hulls through a failed landing, so without a spent-complement rule it
+    /// would re-land the same boarding parties every tick forever.
+    #[test]
+    fn a_spent_complement_cannot_land_again_until_it_re_embarks() {
+        let mut w = test_world();
+        let id = PlayerId(148);
+        w.step(&[Command::AddPlayer { id, name: "A".into() }]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let fid = w.alloc_entity_id();
+        let mut f = Fleet::single(fid, id, ShipKind::Battleship, pos, FleetOrder::Idle, None);
+        f.reset_to(ShipKind::Battleship, 3);
+        w.fleets.insert(fid, f);
+        assert_eq!(w.fleets[&fid].marines(), 36, "three battleships carry 12 each");
+
+        w.fleets.get_mut(&fid).unwrap().commit_marines();
+        assert_eq!(w.fleets[&fid].marines(), 0, "committed troops are gone, though the hulls are not");
+
+        // Parked in deep space, they stay gone however long you wait.
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert_eq!(w.fleets[&fid].marines(), 0, "there is nowhere out here to take on fresh troops");
+
+        // At an owned colony with a fed Garrison, they re-embark.
+        let sys = grant_system_at(&mut w, id, pos, 0);
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(crate::build::StructureKind::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(crate::build::StructureKind::Garrison, 1);
+            *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) += 5_000.0;
+        }
+        assert!(run_until(&mut w, 10, |w| w.fleets[&fid].marines() == 36), "a Garrison re-mans the boarding parties");
+    }
+
+    #[test]
+    fn a_landing_below_break_even_holds_off_until_bombardment_makes_it_worth_it() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(104), PlayerId(105));
+        w.step(&[
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+            Command::AddPlayer { id: def, name: "Def".into() },
+        ]);
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = ripe_siege(&mut w, atk, def, pos, 0);
+        // Dig in two fed tiers → 50 marines demanded, unsuppressed.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(K::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::Garrison, 2);
+            *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) += 20_000.0;
+        }
+        w.step(&[]);
+        // §ground M5: digging in STRETCHED the siege clock, so the pre-ripened
+        // siege is no longer ripe — re-backdate it past the new, longer duration.
+        // (That interaction is the milestone working; the test just has to keep up.)
+        {
+            let dur = w.siege_duration_for(sys);
+            let now = w.time;
+            w.systems.iter_mut().find(|s| s.id == sys).unwrap().blockade.as_mut().unwrap().siege_since =
+                Some(now - dur - 1.0);
+        }
+        // ONE transport = 40 marines — short of the break-even strength against
+        // 2 standing tiers, so the commanders HOLD rather than throw them away.
+        let force = landing_force(&mut w, atk, pos, 1);
+        let mut held = None;
+        for _ in 0..20 {
+            for e in w.step(&[]) {
+                if let EventPayload::AssaultHeld { needed, marines, .. } = e.payload {
+                    held = Some((marines, needed));
+                }
+            }
+        }
+        let (had, needed) = held.expect("the landing holds off, and says what it would take");
+        assert_eq!(had, 40, "one transport carries 40 marines");
+        assert_eq!(needed, 50, "two unsuppressed tiers break even at 50");
+        assert_eq!(w.systems.iter().find(|s| s.id == sys).unwrap().owner, Some(def), "the system holds");
+        assert!(w.fleets.contains_key(&force), "holding off costs NOTHING — no drop, no losses");
+        assert!(w.assaults.is_empty(), "and no landing was ever opened");
+
+        // Now SUPPRESS: with 60% of the garrison pinned the break-even strength
+        // falls to 50·√0.4 ≈ 32, so the same 40 marines are worth committing.
+        // This is the chain the whole arc exists to build.
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().garrison_suppression = 0.6;
+        assert!(run_until(&mut w, 120, |w| {
+            w.systems.iter().find(|s| s.id == sys).unwrap().owner == Some(atk)
+        }), "suppressed, the same landing force goes in and takes the ground");
+    }
+
+    // --- §plunder: STRIPPING A BLOCKADED SYSTEM ----------------------------------
+
+    /// §plunder THE MILESTONE: a held blockade takes a BOUNDED slice of the
+    /// stockpile it strangles — never the whole store — the goods land in the
+    /// blockader's own hold (so they still have to be carried home), and the
+    /// colony goes on producing throughout. Runs with nobody connected.
+    #[test]
+    fn a_held_blockade_strips_a_bounded_slice_and_the_colony_survives() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (atk, def) = (PlayerId(90), PlayerId(91));
+        w.step(&[Command::AddPlayer { id: atk, name: "Besieger".into() }]);
+        w.step(&[Command::AddPlayer { id: def, name: "Victim".into() }]);
+        // A defenceless rival colony with a fat, varied stockpile.
+        let sys = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        grant_system(&mut w, def, sys);
+        let spos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        seed_stock(&mut w, sys, &[
+            (Commodity::MetallicOre, 400.0),
+            (Commodity::Alloys, 400.0),   // the most valuable good present
+            (Commodity::Provisions, 400.0),
+        ]);
+        // Park a blockader on station (the order is what the sim reads).
+        let raider = squad(&mut w, atk, spos, ShipKind::Raider, 3, FleetOrder::Blockade { system: sys, station: spos });
+
+        let alloys0 = system_stock(&w, sys, Commodity::Alloys);
+        assert!(run_until(&mut w, 60, |w| w.fleets[&raider].cargo.is_some()), "the blockade takes a prize");
+        // IT TAKES THE MOST VALUABLE GOOD standing above the floor.
+        let held = w.fleets[&raider].cargo.unwrap();
+        assert_eq!(held.commodity, Commodity::Alloys, "a prize crew takes the best thing on the shelf");
+        assert!(system_stock(&w, sys, Commodity::Alloys) < alloys0, "…and it came off the colony's books");
+
+        // BOUNDED: run a long time and it still cannot strip the store bare.
+        for _ in 0..(400 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        for c in [Commodity::MetallicOre, Commodity::Alloys, Commodity::Provisions] {
+            let left = system_stock(&w, sys, c);
+            assert!(
+                left >= PLUNDER_FLOOR_UNITS - 1e-6,
+                "{c:?} never falls below the colony's reserve (got {left:.1})"
+            );
+        }
+        // THE COLONY SURVIVES: still owned, still populated, still producing.
+        let s = w.systems.iter().find(|s| s.id == sys).unwrap();
+        assert_eq!(s.owner, Some(def), "plunder is theft, not conquest");
+        assert!(s.population() > 0.0, "its people are untouched");
+
+        // THE HOLD IS FINITE: a raider-only fleet carries a modest prize, and the
+        // goods are on the SHIP — they still have to survive the trip home.
+        let carried = w.fleets[&raider].cargo.unwrap().units;
+        assert!(carried > 0 && carried <= PLUNDER_RAIDER_HOLD, "a warship's prize hold is bounded (got {carried})");
+    }
+
+    /// §plunder: it is the BLOCKADE that steals, not proximity. A fleet merely
+    /// parked at a rival system — no blockade order, no station — takes nothing.
+    #[test]
+    fn sitting_next_to_a_rival_system_steals_nothing() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (atk, def) = (PlayerId(92), PlayerId(93));
+        w.step(&[Command::AddPlayer { id: atk, name: "Loiterer".into() }]);
+        w.step(&[Command::AddPlayer { id: def, name: "Victim".into() }]);
+        let sys = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        grant_system(&mut w, def, sys);
+        let spos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
+        seed_stock(&mut w, sys, &[(Commodity::Alloys, 400.0)]);
+        // Right on top of it, but IDLE — no blockade order.
+        let idler = squad(&mut w, atk, spos, ShipKind::Raider, 3, FleetOrder::Idle);
+        let a0 = system_stock(&w, sys, Commodity::Alloys);
+        for _ in 0..90 {
+            w.step(&[]);
+        }
+        assert!(w.fleets[&idler].cargo.is_none(), "loitering is not a blockade");
+        assert!(system_stock(&w, sys, Commodity::Alloys) >= a0 - 1e-6, "nothing was taken");
+    }
+
+    // --- §upkeep: STANDING FLEET UPKEEP -----------------------------------------
+
+    /// §upkeep THE CEILING ON FORCE: a fleet eats every tick, and an oversized one
+    /// with nothing to eat is IMMOBILIZED — never destroyed, never disarmed — and
+    /// recovers the moment food arrives. This is the whole milestone in one test,
+    /// and it runs with nobody connected (the world is stepped, not commanded).
+    #[test]
+    fn an_unfed_fleet_is_immobilized_never_destroyed_and_recovers_on_supply() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(80);
+        w.step(&[Command::AddPlayer { id, name: "Hungry".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // A navy far past what this colony can feed, and an empty larder.
+        let wing = squad(&mut w, id, hpos + Vec2::new(600.0, 0.0), ShipKind::Corvette, 40, FleetOrder::Idle);
+        let hulls0 = w.fleets[&wing].total_count();
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.stockpile.remove(&Commodity::Provisions);
+            // Stop the colony growing its own food, so the larder stays bare.
+            for b in s.bodies.iter_mut() {
+                b.assignments.clear();
+            }
+        }
+        // Run with NOBODY connected — upkeep is server-side, like all accrual.
+        assert!(run_until(&mut w, 30, |w| !w.fleets[&wing].supplied), "an unfed fleet goes unsupplied");
+
+        // NOTHING IS DESTROYED: every hull is still there, at full health.
+        assert_eq!(w.fleets[&wing].total_count(), hulls0, "starvation never costs a hull");
+        assert!(w.fleets[&wing].ships.iter().all(|s| s.deficit() <= 1e-9), "…nor a point of hull");
+
+        // IMMOBILIZED: a move order is refused, with a reason, and the fleet keeps
+        // its current order rather than losing it.
+        let dest = hpos + Vec2::new(4_000.0, 0.0);
+        let ev = w.step(&[Command::MoveShip { player_id: id, ship_id: wing, dest }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::OrderRejected { owner, reason: crate::event::OrderRejectReason::Unsupplied, .. } if owner == id
+            )),
+            "the refusal names the reason"
+        );
+        assert!(matches!(w.fleets[&wing].order, FleetOrder::Idle), "it holds its current order");
+
+        // FED AGAIN → free to move, on the very next dispatch.
+        seed_stock(&mut w, home, &[(Commodity::Provisions, 5_000.0)]);
+        assert!(run_until(&mut w, 30, |w| w.fleets[&wing].supplied), "food restores supply");
+        w.step(&[Command::MoveShip { player_id: id, ship_id: wing, dest }]);
+        assert!(run_until(&mut w, 60, |w| !matches!(w.fleets[&wing].order, FleetOrder::Idle)),
+            "a fed fleet sets out again");
+    }
+
+    /// §upkeep: the draw is real, scaled by what you fly, and paid from the
+    /// owner's NEAREST stocked system — the same rule fuel uses, so a forward
+    /// supply line is what keeps a distant fleet fed.
+    #[test]
+    fn upkeep_draws_from_the_nearest_stocked_system_and_scales_with_the_fleet() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(81);
+        w.step(&[Command::AddPlayer { id, name: "Supply".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // A second, FORWARD colony — nearer the fleet than home is.
+        let fwd = w.systems.iter().find(|s| s.is_unclaimed()).map(|s| s.id).unwrap();
+        grant_system(&mut w, id, fwd);
+        let fpos = w.systems.iter().find(|s| s.id == fwd).unwrap().pos;
+        // Silence every OTHER draw on these larders: no production (which would
+        // refill) and no population (which eats 0.06/s per million on its own).
+        // What remains moving the numbers is the fleet's payroll, and only that.
+        for s in w.systems.iter_mut().filter(|s| s.id == home || s.id == fwd) {
+            for b in s.bodies.iter_mut() {
+                b.assignments.clear();
+                b.population = 0.0;
+            }
+        }
+        seed_stock(&mut w, home, &[(Commodity::Provisions, 2_000.0)]);
+        seed_stock(&mut w, fwd, &[(Commodity::Provisions, 2_000.0)]);
+        // The starting convoy/raider sit at HOME and eat from it — clear them, or
+        // the "home untouched" assertion is measuring their payroll, not the wing's.
+        w.fleets.retain(|_, f| f.owner != id);
+        // Park the fleet right on the forward colony.
+        squad(&mut w, id, fpos, ShipKind::Corvette, 10, FleetOrder::Idle);
+        let (h0, f0) = (system_stock(&w, home, Commodity::Provisions), system_stock(&w, fwd, Commodity::Provisions));
+        for _ in 0..60 {
+            w.step(&[]);
+        }
+        let (h1, f1) = (system_stock(&w, home, Commodity::Provisions), system_stock(&w, fwd, Commodity::Provisions));
+        assert!(f1 < f0 - 1e-6, "the NEAREST stocked colony feeds them");
+        assert!((h1 - h0).abs() < 1e-6, "…and the distant one is untouched");
+        // The draw matches the table: 10 corvettes × 0.10/s over 2 s.
+        let spent = f0 - f1;
+        let expect = 10.0 * crate::ship::upkeep_per_sec(ShipKind::Corvette) * 2.0;
+        assert!((spent - expect).abs() < expect * 0.05, "drew ≈{expect:.2}, got {spent:.2}");
+        assert!(hpos.distance(fpos) > 1.0, "the two colonies really are distinct");
+    }
+
+    /// §upkeep: the neutral sentinels are nobody's payroll — a pirate pack never
+    /// starves, so ambient danger doesn't quietly switch itself off.
+    #[test]
+    fn sentinel_fleets_are_exempt_from_upkeep() {
+        let mut w = test_world();
+        let id = PlayerId(82);
+        w.step(&[Command::AddPlayer { id, name: "Bystander".into() }]);
+        // Pirates seed with the galaxy; run a while with nobody feeding them.
+        for _ in 0..90 {
+            w.step(&[]);
+        }
+        let pirates: Vec<&Fleet> = w.fleets.values().filter(|f| f.owner.is_sentinel()).collect();
+        assert!(
+            pirates.iter().all(|f| f.supplied),
+            "a sentinel fleet is never unsupplied ({} of {} were)",
+            pirates.iter().filter(|f| !f.supplied).count(),
+            pirates.len()
+        );
+    }
+
+    /// §roster: A REFIT IS NOT A REPAIR. The hulls that go into the yard are the
+    /// hulls that come out — re-fitted, but no healthier. Before the roster
+    /// carried them through the queue this minted fresh full-health ships, and
+    /// because the yard takes the MOST DAMAGED first it was an optimally
+    /// efficient free repair that bypassed the Foundry's cost entirely.
+    #[test]
+    fn a_refit_changes_the_fit_but_never_mends_the_hull() {
+        use crate::build::StructureKind as K;
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(75);
+        w.step(&[Command::AddPlayer { id, name: "Launder".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(K::OrdnanceFoundry, 1); // refits install here…
+            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+            // …but NO crew is posted, so its repair service does nothing. This
+            // isolates the refit path: any healing seen here is laundering.
+        }
+        let fleet = squad(&mut w, id, hpos, ShipKind::Raider, 2, FleetOrder::Idle);
+        // Maul one hull to a known, distinctive value.
+        let wounded_hp = 42.0;
+        w.fleets.get_mut(&fleet).unwrap().ships[0].hp = wounded_hp;
+        let hurt0: f64 = w.fleets[&fleet].ships.iter().map(|s| s.deficit()).sum();
+        assert!(hurt0 > 0.0);
+
+        // Refit ONE hull to a mass-driver fit. The yard takes the most damaged.
+        let to = Loadout::new(vec![ModuleKind::MassDriver]);
+        w.step(&[Command::RefitShips {
+            player_id: id, fleet_id: fleet, ship: ShipKind::Raider,
+            from: Loadout::default(), to: to.clone(), n: 1,
+        }]);
+        assert_eq!(w.refit_queue.len(), 1, "the refit was accepted");
+        assert!(run_until(&mut w, 60, |w| w.refit_queue.is_empty()), "the refit completes");
+
+        let f = &w.fleets[&fleet];
+        assert_eq!(f.count(ShipKind::Raider), 2, "both hulls are back");
+        assert_eq!(f.fitted_count(ShipKind::Raider), 1, "one now carries the mass driver");
+        // THE POINT: the wounded hull is still wounded, to the exact HP.
+        assert!(
+            f.ships.iter().any(|s| (s.hp - wounded_hp).abs() < 1e-9),
+            "the mauled hull came back at its own health, not minted anew (hp: {:?})",
+            f.ships.iter().map(|s| s.hp).collect::<Vec<_>>()
+        );
+        let hurt1: f64 = f.ships.iter().map(|s| s.deficit()).sum();
+        assert!((hurt1 - hurt0).abs() < 1e-9, "a refit heals exactly nothing");
+    }
+
+    /// §roster: a fleet UNDER FIRE is not in the yard. An engagement only zeroes
+    /// a fleet's velocity — it keeps its order — so an `Idle` fleet jumped at its
+    /// own foundry would otherwise heal as fast as it was being shot.
+    #[test]
+    fn a_fleet_under_fire_does_not_repair_even_docked_at_its_own_foundry() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        w.enclaves.clear();
+        let (def, atk) = (PlayerId(76), PlayerId(77));
+        w.step(&[Command::AddPlayer { id: def, name: "Docked".into() }]);
+        w.step(&[Command::AddPlayer { id: atk, name: "Raider".into() }]);
+        let home = w.players[&def].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(K::OrdnanceFoundry, 2);
+            let body = s.site_for(K::OrdnanceFoundry).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap()
+                .assignments.insert(K::OrdnanceFoundry, crate::production::Assignment::crew(2));
+        }
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 5_000.0), (Commodity::Machinery, 5_000.0)]);
+        // A hurt wing parked Idle right at the yard.
+        // Enough hulls that the wing SURVIVES the fight — the test needs
+        // something still afloat afterwards to prove repairs resume.
+        let victim = squad(&mut w, def, hpos, ShipKind::Corvette, 8, FleetOrder::Idle);
+        for sh in w.fleets.get_mut(&victim).unwrap().ships.iter_mut() {
+            sh.hp *= 0.5;
+        }
+        // Jump them where they sit. (They repair legitimately during the
+        // attacker's approach — the baseline is taken when the battle OPENS.)
+        let striker = squad(&mut w, atk, hpos + Vec2::new(150.0, 0.0), ShipKind::Raider, 3, FleetOrder::Idle);
+        w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: victim }]);
+        assert!(run_until(&mut w, 90, |w| !w.engagements.is_empty()), "the battle opened at the yard");
+        // While ENGAGED, the yard must not mend them — their order is still Idle.
+        assert!(matches!(w.fleets.get(&victim).map(|f| f.order.clone()), Some(FleetOrder::Idle)),
+            "the docked fleet is still nominally Idle — which is exactly the trap");
+        // The signal must be the yard SPENDING, not the hull total: under fire
+        // damage outruns the repair rate, so "the deficit never shrank" would
+        // hold either way and prove nothing. Repair is the only thing at this
+        // colony that consumes Alloys (no Machine Works, no Armaments Complex,
+        // nothing queued), so an untouched Alloys stock is exact evidence that
+        // the yard did no work while the battle raged.
+        let alloys_at_open = system_stock(&w, home, Commodity::Alloys);
+        let mut sampled = 0;
+        for _ in 0..60 {
+            w.step(&[]);
+            if w.engagements.is_empty() {
+                break;
+            }
+            sampled += 1;
+            let now = system_stock(&w, home, Commodity::Alloys);
+            assert!(
+                now >= alloys_at_open - 1e-6,
+                "the foundry spent goods mid-battle — it repaired under fire ({alloys_at_open:.2} → {now:.2})"
+            );
+        }
+        assert!(sampled > 0, "the fight lasted long enough to observe");
+        // …and once the shooting stops, the yard DOES get back to work — proving
+        // the exclusion is scoped to the engagement, not a blanket disable.
+        assert!(w.fleets.contains_key(&victim), "the defending wing survived the fight");
+        assert!(run_until(&mut w, 120, |w| {
+            system_stock(w, home, Commodity::Alloys) < alloys_at_open - 1e-6
+        }), "repairs resume after the battle ends");
+    }
+
+    /// §roster: repair is a YARD service — a damaged fleet sitting in open space
+    /// (or at a system with no Foundry) mends nothing. Distance is the antagonist.
+    #[test]
+    fn hulls_do_not_mend_away_from_a_foundry() {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(74);
+        w.step(&[Command::AddPlayer { id, name: "Adrift".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::Alloys, 500.0), (Commodity::Machinery, 500.0)]);
+        // Parked far from any yard (the home has no Foundry either way).
+        let far = w.systems.iter().find(|s| s.id == home).unwrap().pos + Vec2::new(3000.0, 0.0);
+        let fleet = squad(&mut w, id, far, ShipKind::Corvette, 2, FleetOrder::Idle);
+        w.fleets.get_mut(&fleet).unwrap().ships[0].hp *= 0.5;
+        let hurt0: f64 = w.fleets[&fleet].ships.iter().map(|s| s.deficit()).sum();
+        for _ in 0..60 {
+            w.step(&[]);
+        }
+        let hurt1: f64 = w.fleets[&fleet].ships.iter().map(|s| s.deficit()).sum();
+        assert!((hurt1 - hurt0).abs() < 1e-6, "no passive regeneration anywhere — repair is the yard's job");
+    }
+
     /// Park a combatant fleet of `n × kind` (Idle unless an order given).
     fn squad(w: &mut World, owner: PlayerId, pos: Vec2, kind: ShipKind, n: u32, order: FleetOrder) -> EntityId {
         let id = w.alloc_entity_id();
         let mut f = Fleet::single(id, owner, kind, pos, order, None);
-        f.composition.clear();
-        f.composition.insert(kind, n);
+        f.reset_to(kind, n);
         w.fleets.insert(id, f);
         id
     }
@@ -11997,9 +14059,8 @@ mod tests {
         // must accept (contains a raider).
         let striker = w.alloc_entity_id();
         let mut sf = Fleet::single(striker, atk, ShipKind::Corvette, cc + Vec2::new(120.0, 0.0), FleetOrder::Idle, None);
-        sf.composition.clear();
-        sf.composition.insert(ShipKind::Corvette, 2);
-        sf.composition.insert(ShipKind::Raider, 2);
+        sf.reset_to(ShipKind::Corvette, 2);
+        sf.add(ShipKind::Raider, 2);
         assert_ne!(sf.flagship_kind(), ShipKind::Raider, "flagship is the corvette");
         w.fleets.insert(striker, sf);
         // Target: a lone rival raider, near the striker so contact is quick.
@@ -12382,10 +14443,10 @@ mod tests {
         let cc = w.players[&atk].command_center;
         let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 4, FleetOrder::Idle);
         let md = Loadout::new(vec![ModuleKind::MassDriver]);
-        w.fleets.get_mut(&striker).unwrap().loadouts.entry(ShipKind::Raider).or_default().insert(md.key(), 4);
+        w.fleets.get_mut(&striker).unwrap().set_fitted(ShipKind::Raider, &md, 4);
         let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 4, FleetOrder::Idle);
         let wa = Loadout::new(vec![ModuleKind::WhippleArmor]);
-        w.fleets.get_mut(&target).unwrap().loadouts.entry(ShipKind::Corvette).or_default().insert(wa.key(), 4);
+        w.fleets.get_mut(&target).unwrap().set_fitted(ShipKind::Corvette, &wa, 4);
         w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
         assert!(run_until(&mut w, 20, |w| !w.battle_records.is_empty()), "a record opens on contact");
         let rec = w.battle_records.values().next().unwrap();
@@ -12430,12 +14491,10 @@ mod tests {
             w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
             let cc = w.players[&atk].command_center;
             let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 6, FleetOrder::Idle);
-            w.fleets.get_mut(&striker).unwrap().loadouts.entry(ShipKind::Raider).or_default()
-                .insert(Loadout::new(vec![ModuleKind::MassDriver]).key(), 6);
+            w.fleets.get_mut(&striker).unwrap().set_fitted(ShipKind::Raider, &Loadout::new(vec![ModuleKind::MassDriver]), 6);
             let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 8, FleetOrder::Idle);
             if whipple {
-                w.fleets.get_mut(&target).unwrap().loadouts.entry(ShipKind::Corvette).or_default()
-                    .insert(Loadout::new(vec![ModuleKind::WhippleArmor]).key(), 8);
+                w.fleets.get_mut(&target).unwrap().set_fitted(ShipKind::Corvette, &Loadout::new(vec![ModuleKind::WhippleArmor]), 8);
             }
             w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
             assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "battle opens");
@@ -12461,12 +14520,10 @@ mod tests {
         w.step(&[Command::AddPlayer { id: atk, name: "A".into() }, Command::AddPlayer { id: def, name: "D".into() }]);
         let cc = w.players[&atk].command_center;
         let striker = squad(&mut w, atk, cc + Vec2::new(120.0, 0.0), ShipKind::Raider, 8, FleetOrder::Idle);
-        w.fleets.get_mut(&striker).unwrap().loadouts.entry(ShipKind::Raider).or_default()
-            .insert(crate::module::Loadout::new(vec![crate::module::ModuleKind::MassDriver]).key(), 8);
+        w.fleets.get_mut(&striker).unwrap().set_fitted(ShipKind::Raider, &crate::module::Loadout::new(vec![crate::module::ModuleKind::MassDriver]), 8);
         // Defender: 5 corvettes, 3 whipple-armored (a mixed same-kind side).
         let target = squad(&mut w, def, cc + Vec2::new(160.0, 0.0), ShipKind::Corvette, 5, FleetOrder::Idle);
-        w.fleets.get_mut(&target).unwrap().loadouts.entry(ShipKind::Corvette).or_default()
-            .insert(crate::module::Loadout::new(vec![crate::module::ModuleKind::WhippleArmor]).key(), 3);
+        w.fleets.get_mut(&target).unwrap().set_fitted(ShipKind::Corvette, &crate::module::Loadout::new(vec![crate::module::ModuleKind::WhippleArmor]), 3);
         w.step(&[Command::AttackFleet { player_id: atk, fleet_id: striker, target_id: target }]);
         assert!(run_until(&mut w, 20, |w| !w.engagements.is_empty()), "battle opens");
         // Run until the defender has taken real losses, then check the survivors.
@@ -12497,12 +14554,12 @@ mod tests {
         let a = w.alloc_entity_id();
         let mut fa = Fleet::single(a, id, ShipKind::Raider, pos, FleetOrder::Idle, None);
         fa.add(ShipKind::Raider, 1);
-        fa.loadouts.entry(ShipKind::Raider).or_default().insert(Loadout::new(vec![ModuleKind::TorpedoRack]).key(), 1);
+        fa.set_fitted(ShipKind::Raider, &Loadout::new(vec![ModuleKind::TorpedoRack]), 1);
         w.fleets.insert(a, fa);
         // Fleet B: 1 raider with reflective plating, co-located.
         let b = w.alloc_entity_id();
         let mut fb = Fleet::single(b, id, ShipKind::Raider, pos, FleetOrder::Idle, None);
-        fb.loadouts.entry(ShipKind::Raider).or_default().insert(Loadout::new(vec![ModuleKind::ReflectivePlating]).key(), 1);
+        fb.set_fitted(ShipKind::Raider, &Loadout::new(vec![ModuleKind::ReflectivePlating]), 1);
         w.fleets.insert(b, fb);
         // Merge B into A → A carries BOTH fits.
         w.step(&[Command::MergeFleets { player_id: id, into: a, from: b }]);
@@ -12578,6 +14635,7 @@ mod tests {
             s.owner = Some(id);
             s.claimed_at = Some(0.0);
             s.set_tier(crate::build::StructureKind::Shipyard, 2); // raiders need a tier-2 yard
+            s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1); // §yards: fits install at a foundry
             *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 1;
             s.id
         };
@@ -12606,6 +14664,7 @@ mod tests {
             s.owner = Some(id);
             s.claimed_at = Some(0.0);
             s.set_tier(crate::build::StructureKind::Shipyard, 2);
+            s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1); // §yards: fits install at a foundry
             s.id // NO modules in the ledger
         };
         seed_stock(&mut w, sid, &[(Commodity::Alloys, 200.0), (Commodity::Electronics, 200.0), (Commodity::Armaments, 200.0), (Commodity::Fuel, 200.0)]);
@@ -12619,8 +14678,10 @@ mod tests {
 
     // --- §modules Part B4: REFIT (swap fits at a yard, delta-reconciled) --------
 
-    /// Helper: a player owning their home (Shipyard 1), a wing of `n` `from`-fitted
-    /// raiders docked at it, and a ledger seeded with `stock`. Returns (home id, pos).
+    /// Helper: a player owning their home (Shipyard 1 + an Ordnance Foundry —
+    /// §yards: fits install at a FOUNDRY now, not at any construction yard), a
+    /// wing of `n` `from`-fitted raiders docked at it, and a ledger seeded with
+    /// `stock`. Returns (home id, pos).
     fn refit_home(w: &mut World, id: PlayerId, n: u32, from: &crate::module::Loadout, stock: &[(crate::module::ModuleKind, u32)]) -> (EntityId, Vec2, EntityId) {
         w.enclaves.clear();
         w.step(&[Command::AddPlayer { id, name: "A".into() }]);
@@ -12628,13 +14689,14 @@ mod tests {
         let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
         {
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1);
             for (m, c) in stock {
                 *s.modules.entry(*m).or_insert(0) += *c;
             }
         }
         let fleet = squad(w, id, hpos, ShipKind::Raider, n, FleetOrder::Idle);
         if !from.is_empty() {
-            w.fleets.get_mut(&fleet).unwrap().loadouts.entry(ShipKind::Raider).or_default().insert(from.key(), n);
+            w.fleets.get_mut(&fleet).unwrap().set_fitted(ShipKind::Raider, &from, n);
         }
         (home, hpos, fleet)
     }
@@ -12724,6 +14786,7 @@ mod tests {
             s.owner = Some(id);
             s.claimed_at = Some(0.0);
             s.set_tier(crate::build::StructureKind::Shipyard, 2); // corvettes need tier 2
+            s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1); // §yards: fits install at a foundry
             *s.modules.entry(ModuleKind::TorpedoRack).or_insert(0) += 2;
             *s.modules.entry(ModuleKind::WhippleArmor).or_insert(0) += 2;
             *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
@@ -12755,7 +14818,7 @@ mod tests {
         {
             let f = w.fleets.get_mut(&fleet).unwrap();
             f.add(ShipKind::Corvette, 2);
-            f.loadouts.entry(ShipKind::Corvette).or_default().insert(legacy.key(), 2);
+            f.set_fitted(ShipKind::Corvette, &legacy, 2);
         }
         // It SURVIVES a serde round-trip untouched (no strip/mutate on load)…
         let json = serde_json::to_string(&w).expect("serialize");
@@ -13004,8 +15067,7 @@ mod tests {
             let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
             {
                 let c = w.fleets.get_mut(&convoy).unwrap();
-                c.composition.clear();
-                c.composition.insert(ShipKind::Convoy, 1);
+                c.reset_to(ShipKind::Convoy, 1);
                 c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
             }
             let cmd = if attack {
@@ -13261,8 +15323,7 @@ mod tests {
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
         {
             let c = w.fleets.get_mut(&convoy).unwrap();
-            c.composition.clear();
-            c.composition.insert(ShipKind::Convoy, 20);
+            c.reset_to(ShipKind::Convoy, 20);
         }
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
         let mut outcome = None;
@@ -13990,13 +16051,202 @@ mod tests {
         assert!(
             ev.iter().any(|e| matches!(
                 e.payload,
-                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsShipyard { required: 2 }, .. }
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsYard { yard: crate::build::StructureKind::Shipyard, required: 2 }, .. }
             )),
             "home tier 1 can't build corvettes"
         );
         w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(crate::build::StructureKind::Shipyard, 2);
         let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None , loadout: Default::default() }]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "tier 2 builds them");
+    }
+
+    // --- §yards M1/M2: SLIPWAYS + the yard ladder --------------------------------
+
+    /// §yards M1: a yard's TIER is its THROUGHPUT. A tier-N yard holds N hulls on
+    /// the stocks; the N+1'th soft-rejects on TIMING (nothing spent, no job) and
+    /// lands the moment a slip frees. Before this, ship jobs were unbounded.
+    #[test]
+    fn yard_tier_caps_concurrent_hulls_and_a_freed_slip_admits_the_next() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        let id = PlayerId(61);
+        w.step(&[Command::AddPlayer { id, name: "Slips".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[
+            (Commodity::Alloys, 5_000.0), (Commodity::Machinery, 5_000.0),
+            (Commodity::Polymers, 5_000.0), (Commodity::Electronics, 5_000.0),
+        ]);
+        let stock0 = system_stock(&w, home, Commodity::Alloys);
+        // Home is Shipyard 1 → exactly ONE slip.
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the first convoy takes the slip");
+        let after_first = system_stock(&w, home, Commodity::Alloys);
+        assert!(after_first < stock0, "the first hull was paid for");
+
+        // The second finds the slip occupied — soft reject, nothing spent.
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NoSlip { slips: 1 }, .. })),
+            "a full yard rejects on slips, naming how many it has"
+        );
+        assert_eq!(w.build_queue.len(), 1, "no second job queued");
+        assert!((system_stock(&w, home, Commodity::Alloys) - after_first).abs() < 1e-9, "a slip reject is FREE — the recipe is never eaten");
+
+        // Raise the yard to tier 2 → a second slip opens immediately.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::Shipyard, 2);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "tier 2 lays a second keel alongside the first");
+        assert_eq!(w.build_queue.len(), 2, "both hulls are on the stocks at once");
+    }
+
+    /// §yards M1: slips are counted PER YARD KIND — a Shipyard full of light
+    /// hulls never blocks the Drydock's line warships, and vice versa.
+    #[test]
+    fn slips_are_counted_per_yard_kind() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        let id = PlayerId(62);
+        w.step(&[Command::AddPlayer { id, name: "Yards".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Line".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("hull_line_iv_destroyer".into());
+        let home = w.players[&id].home_system.unwrap();
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(K::Shipyard, 2);
+            s.set_tier(K::NavalDrydock, 1);
+        }
+        seed_stock(&mut w, home, &[
+            (Commodity::Alloys, 20_000.0), (Commodity::Machinery, 20_000.0), (Commodity::Polymers, 20_000.0),
+            (Commodity::Electronics, 20_000.0), (Commodity::Armaments, 20_000.0), (Commodity::Fuel, 20_000.0),
+        ]);
+        // Fill BOTH Shipyard slips with convoys.
+        for _ in 0..2 {
+            w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+        }
+        assert_eq!(w.build_queue.len(), 2, "the Shipyard's two slips are full");
+        // A third convoy is refused…
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NoSlip { .. }, .. })));
+        // …but the DRYDOCK's own slip is untouched by the Shipyard's congestion.
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "a separate yard keeps separate slips");
+        assert_eq!(w.build_queue.len(), 3);
+    }
+
+    /// §yards M2: capitals need the LADDER — a Shipyard, however tall, no longer
+    /// builds a ship of the line. The gate names the yard the player must build.
+    #[test]
+    fn a_tall_shipyard_cannot_build_capitals_the_drydock_does() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        let id = PlayerId(63);
+        w.step(&[Command::AddPlayer { id, name: "Tall".into() }]);
+        w.step(&[Command::CreateSyndicate { player_id: id, name: "Line".into() }]);
+        let sid = w.players[&id].syndicate.unwrap();
+        w.syndicates.get_mut(&sid).unwrap().research.completed.insert("hull_line_iv_destroyer".into());
+        let home = w.players[&id].home_system.unwrap();
+        // A Shipyard at the OLD capital tier (6) — under the new ladder it is
+        // irrelevant to a Destroyer.
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::Shipyard, 6);
+        seed_stock(&mut w, home, &[
+            (Commodity::Alloys, 20_000.0), (Commodity::Electronics, 20_000.0),
+            (Commodity::Armaments, 20_000.0), (Commodity::Machinery, 20_000.0), (Commodity::Fuel, 20_000.0),
+        ]);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsYard { yard: K::NavalDrydock, required: 1 }, .. }
+            )),
+            "a Shipyard — at ANY tier — no longer lays a ship of the line"
+        );
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::NavalDrydock, 1);
+        let ev = w.step(&[Command::BuildShip { player_id: id, system_id: home, ship_kind: ShipKind::Destroyer, join: None, loadout: Default::default() }]);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "the drydock lays it");
+    }
+
+    /// §yards M2: the yard LADDER is geography — each yard needs the one below it
+    /// standing on the same system, so a Capital Slipway is grown, never dropped.
+    #[test]
+    fn yard_prerequisites_chain_on_the_same_system() {
+        use crate::build::StructureKind as K;
+        let mut w = test_world();
+        let id = PlayerId(64);
+        w.step(&[Command::AddPlayer { id, name: "Chain".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[
+            (Commodity::Alloys, 20_000.0), (Commodity::Electronics, 20_000.0),
+            (Commodity::Armaments, 20_000.0), (Commodity::Machinery, 20_000.0),
+            (Commodity::RareElements, 20_000.0),
+        ]);
+        // The yard ladder is SLOT-expensive: three yards on one body wants three
+        // Industrial slots, and a fresh body has two (base 2 + population tier 0).
+        // That is the economy working — a capital yard world is a DEVELOPED world
+        // (or the ladder spreads across bodies, since the prereq is system-scoped).
+        // Give the yard body the population so this test is about the CHAIN.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            let primary = s.site_for(K::Shipyard).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == primary).unwrap().population = crate::body::BODY_POP_MAJOR;
+        }
+        let dev = |w: &mut World, k: K| w.step(&[Command::DevelopSystem { player_id: id, system_id: home, upgrade: k, body_id: None }]);
+        // Home is Shipyard 1 → a Drydock (wants 2) is refused, naming the fix.
+        let ev = dev(&mut w, K::NavalDrydock);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsYard { yard: K::Shipyard, required: 2 }, .. }
+            )),
+            "a drydock needs a Shipyard 2 beneath it"
+        );
+        // A Slipway is refused all the harder — no Drydock at all.
+        let ev = dev(&mut w, K::CapitalSlipway);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e.payload,
+                EventPayload::BuildRejected { reason: crate::event::BuildRejectReason::NeedsYard { yard: K::NavalDrydock, required: 3 }, .. }
+            )),
+            "a slipway needs a Drydock 3 beneath it"
+        );
+        // Satisfy the chain and both are admitted.
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(K::Shipyard, 2);
+        }
+        let ev = dev(&mut w, K::NavalDrydock);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "Shipyard 2 admits the drydock");
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::NavalDrydock, 3);
+        let ev = dev(&mut w, K::CapitalSlipway);
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })), "Drydock 3 admits the slipway");
+    }
+
+    /// §yards M2: refits install at an ORDNANCE FOUNDRY. A construction yard,
+    /// however tall, no longer changes what a hull carries.
+    #[test]
+    fn refit_needs_a_foundry_not_a_construction_yard() {
+        use crate::build::StructureKind as K;
+        use crate::module::{Loadout, ModuleKind};
+        let mut w = test_world();
+        w.enclaves.clear();
+        let id = PlayerId(65);
+        w.step(&[Command::AddPlayer { id, name: "Fit".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(K::Shipyard, 6); // a very tall CONSTRUCTION yard…
+            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+        }
+        let fleet = squad(&mut w, id, hpos, ShipKind::Raider, 2, FleetOrder::Idle);
+        let to = Loadout::new(vec![ModuleKind::MassDriver]);
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: Loadout::default(), to: to.clone(), n: 1 }]);
+        assert!(w.refit_queue.is_empty(), "…installs nothing — refit is the foundry's work");
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&ModuleKind::MassDriver], 2, "a rejected refit debits no crates");
+
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::OrdnanceFoundry, 1);
+        w.step(&[Command::RefitShips { player_id: id, fleet_id: fleet, ship: ShipKind::Raider, from: Loadout::default(), to, n: 1 }]);
+        assert_eq!(w.refit_queue.len(), 1, "the foundry takes the work");
     }
 
     #[test]
@@ -14196,6 +16446,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // §step1: the opening delivery convoy shares the `DeliverToWarehouse`
+        // signature this test searches on — drop it so only our own traffic counts.
+        clear_opening_traffic(&mut w);
         // Start from an empty hub warehouse so the assertions below read as
         // absolute totals rather than deltas off the starting stock.
         clear_warehouse(&mut w, id);
@@ -14265,6 +16518,10 @@ mod tests {
             f.vel = Vec2::ZERO;
             f.order = FleetOrder::Idle;
             f.cargo = None;
+            // Drop the opening delivery run (§step1): trade arrivals resolve on
+            // `mission.is_some() && order == Idle`, so a parked hull that still
+            // carries one unloads whatever we put in it on the very next tick.
+            f.mission = None;
         }
 
         w.step(&[Command::SystemLoad { player_id: id, fleet_id: convoy, system: colony, commodity: Alloys, units: 200 }]);
@@ -14345,6 +16602,7 @@ mod tests {
             f.vel = Vec2::ZERO;
             f.order = FleetOrder::Idle;
             f.cargo = None;
+            f.mission = None; // drop the opening delivery run (§step1)
         }
         w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 80 }]);
         assert_eq!(wh(&w, id, Fuel), 40);
@@ -14386,7 +16644,7 @@ mod tests {
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
             f.order = FleetOrder::Idle;
-            f.pos = w.hub + Vec2::new(crate::tca::LOGISTICS_RANGE * 3.0, 0.0);
+            f.pos = w.hub + Vec2::new(crate::ship::DOCK_RADIUS * 3.0, 0.0);
         }
         let ev = w.step(&[Command::HubLoad { player_id: id, fleet_id: convoy, commodity: Fuel, units: 10 }]);
         assert!(matches!(reason_of(&ev), Some(TradeRejectReason::OutOfLogisticsRange)));
@@ -14745,7 +17003,11 @@ mod tests {
         // Wipe the squadron where it stands (the fight itself is ordinary
         // Lanchester and is covered elsewhere; this test is about the aftermath).
         let pos = w.fleets[&fid].pos;
-        w.fleets.get_mut(&fid).unwrap().composition.clear();
+        {
+            let f = w.fleets.get_mut(&fid).unwrap();
+            f.ships.clear();
+            f.rebuild_cache();
+        }
         w.record_incident(
             pos,
             [id].into_iter().collect(),
@@ -14844,7 +17106,7 @@ mod tests {
         // A freight booking costs precisely the Phase 1 fee.
         let price = w.market.price(Alloys);
         let dist = w.hub.distance(w.systems.iter().find(|s| s.id == colony).unwrap().pos);
-        let expect_fee = crate::tca::freight_fee(100, price, dist, false);
+        let expect_fee = crate::tca::freight_fee(100, price, dist);
         let credits0 = w.players[&id].credits;
         w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
         let paid = credits0 - w.players[&id].credits;
@@ -14883,12 +17145,12 @@ mod tests {
         // FREIGHT: the fee is multiplied by the tariff.
         let price = w.market.price(Alloys);
         let dist = w.hub.distance(w.systems.iter().find(|s| s.id == colony).unwrap().pos);
-        let expect = crate::tca::freight_fee(100, price, dist, false) * crate::tca::tariff_mult(mid);
+        let expect = crate::tca::freight_fee(100, price, dist) * crate::tca::tariff_mult(mid);
         let credits0 = w.players[&id].credits;
         w.step(&[Command::BookFreightOut { player_id: id, system: colony, commodity: Alloys, units: 100 }]);
         let paid = credits0 - w.players[&id].credits;
         assert!((paid - expect).abs() < 1e-6, "freight pays the tariff (paid {paid}, want {expect})");
-        assert!(paid > crate::tca::freight_fee(100, price, dist, false), "…which is strictly more than the lawful fee");
+        assert!(paid > crate::tca::freight_fee(100, price, dist), "…which is strictly more than the lawful fee");
 
         // EXCHANGE: a sale is docked the penalty, which is BURNED (not paid out).
         set_standing(&mut w, id, mid);
@@ -14984,6 +17246,7 @@ mod tests {
             f.vel = Vec2::ZERO;
             f.order = FleetOrder::Idle;
             f.cargo = None;
+            f.mission = None; // drop the opening delivery run (§step1)
         }
         // …and the WAREHOUSE is still reachable: a revoked outlaw fetches its goods.
         set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
@@ -15159,8 +17422,7 @@ mod tests {
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
         {
             let c = w.fleets.get_mut(&convoy).unwrap();
-            c.composition.clear();
-            c.composition.insert(ShipKind::Convoy, 1);
+            c.reset_to(ShipKind::Convoy, 1);
             c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
         }
         let standing0 = w.players[&atk].tca_standing;
@@ -15588,20 +17850,23 @@ mod tests {
         assert!(w.freight_queue.is_empty(), "the queue drained completely");
     }
 
-    /// A DEPOT at the destination both doubles the per-departure cap and discounts
-    /// the fee — the flat v1 terms.
+    /// THE AUTHORITY'S TERMS ARE ITS OWN: an Orbital Warehouse at the destination
+    /// changes NEITHER the freight fee NOR the per-departure lift. Both belong to
+    /// the carrier — the fee is the Authority's price list, the lift is the
+    /// freighter's hull — so no ground structure may move either. End-to-end
+    /// through the real booking + departure path, not just the pure functions.
     #[test]
-    fn a_depot_doubles_the_lift_and_discounts_the_fee() {
+    fn an_orbital_warehouse_changes_nothing_about_authority_freight() {
         use crate::cargo::Commodity::Alloys;
         let cap = crate::tca::TCA_SHIPMENT_CAP;
-        let fee_of = |depot: bool| {
+        let fee_of = |warehouse: bool| {
             let mut w = test_world();
             let id = PlayerId(1);
             w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
             let colony = near_hub_colony(&mut w, id, 1200.0);
-            if depot {
+            if warehouse {
                 let s = w.systems.iter_mut().find(|s| s.id == colony).unwrap();
-                s.set_tier(crate::build::StructureKind::Depot, 1);
+                s.set_tier(crate::build::StructureKind::OrbitalWarehouse, 1);
             }
             seed_warehouse(&mut w, id, &[(Alloys, cap * 2)]);
             w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
@@ -15618,12 +17883,12 @@ mod tests {
             (fee, lifted)
         };
         let (plain_fee, plain_lift) = fee_of(false);
-        let (depot_fee, depot_lift) = fee_of(true);
-        assert_eq!(plain_lift, cap, "no depot: one cap per departure");
-        assert_eq!(depot_lift, cap * 2, "a depot doubles the per-departure lift");
+        let (wh_fee, wh_lift) = fee_of(true);
+        assert_eq!(plain_lift, cap, "one cap per departure");
+        assert_eq!(wh_lift, cap, "a warehouse must NOT enlarge the per-departure lift");
         assert!(
-            (depot_fee - plain_fee * crate::tca::TCA_DEPOT_FEE_MULT).abs() < 1e-6,
-            "a depot discounts the fee (plain {plain_fee}, depot {depot_fee})"
+            (wh_fee - plain_fee).abs() < 1e-6,
+            "a warehouse must NOT change the fee (plain {plain_fee}, warehouse {wh_fee})"
         );
     }
 
@@ -15690,7 +17955,7 @@ mod tests {
         assert!(w.freight_runs.is_empty() && !w.fleets.values().any(|f| f.owner.is_tca()), "the run is retired");
     }
 
-    /// A FULL DEPOT bounces what won't fit: the Authority unloads up to the
+    /// FULL STORAGE bounces what won't fit: the Authority unloads up to the
     /// system's remaining headroom and carries the rest back to the owner's
     /// warehouse. Goods are never destroyed and never silently vanish.
     ///
@@ -15706,7 +17971,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let colony = near_hub_colony(&mut w, id, 1200.0);
         let cap_units = w.systems.iter().find(|s| s.id == colony).unwrap().storage_cap();
-        // Pre-fill the depot to 60 units short of full, then ship 200.
+        // Pre-fill the stockpile to 60 units short of full, then ship 200.
         seed_stock(&mut w, colony, &[(Alloys, cap_units - 60.0)]);
         seed_warehouse(&mut w, id, &[(Alloys, 200)]);
         w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
@@ -15714,7 +17979,7 @@ mod tests {
 
         step_until(&mut w, 20_000, "the overflow to come home", |w| wh(w, id, Alloys) > 0 && w.freight_runs.is_empty());
         // 60 landed, 140 came back — nothing created, nothing destroyed.
-        assert_eq!(sys_units(&w, colony, Alloys), cap_units as u32, "the depot filled exactly to its cap");
+        assert_eq!(sys_units(&w, colony, Alloys), cap_units as u32, "the stockpile filled exactly to its cap");
         assert_eq!(wh(&w, id, Alloys), 140, "the overflow is back in the Charterhouse warehouse");
     }
 
@@ -16504,6 +18769,9 @@ mod tests {
         w.enclaves.clear(); // isolate the trade loop from ambient piracy
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // §step1: the opening delivery convoy shares the `DeliverToWarehouse`
+        // signature this test searches on — drop it so only our own traffic counts.
+        clear_opening_traffic(&mut w);
         let sysid = richest_system(&w);
         grant_system(&mut w, id, sysid);
         w.step(&[]);
@@ -16646,6 +18914,9 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // §step1: the opening delivery convoy shares the `DeliverToWarehouse`
+        // signature this test searches on — drop it so only our own traffic counts.
+        clear_opening_traffic(&mut w);
         let sysid = richest_system(&w);
         grant_system(&mut w, id, sysid);
         w.step(&[]);
@@ -16693,8 +18964,8 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        // Own two systems: a producing source and a destination depot. Pick the
-        // depot NEAREST the source so a sub-light convoy reliably reaches it within
+        // Own two systems: a producing source and a destination colony. Pick the
+        // destination NEAREST the source so a sub-light convoy reliably reaches it within
         // the run window (independent of the seeded galaxy's exact geometry).
         let source = richest_system(&w);
         let source_pos = w.systems.iter().find(|s| s.id == source).unwrap().pos;
@@ -16709,10 +18980,10 @@ mod tests {
         grant_system(&mut w, id, source);
         w.step(&[]);
         grant_system(&mut w, id, dest);
-        // Give the depot ample headroom so the supply always has room to land —
+        // Give the destination ample headroom so the supply always has room to land —
         // otherwise the dest's OWN production can fill the base cap before the
         // (sub-light) convoy arrives, a race unrelated to what this test checks.
-        w.systems.iter_mut().find(|s| s.id == dest).unwrap().set_tier(crate::build::StructureKind::Depot, 5);
+        w.systems.iter_mut().find(|s| s.id == dest).unwrap().set_tier(crate::build::StructureKind::OrbitalWarehouse, 5);
         w.step(&[]);
 
         w.step(&[Command::SetStandingOrder {
@@ -16747,8 +19018,8 @@ mod tests {
                 break;
             }
         }
-        assert!(delivered_via_route, "a system→system supply convoy must deliver to the depot");
-        assert!(dest_has(&w) >= 5.0, "MaintainAtDest must bring the depot up to the target");
+        assert!(delivered_via_route, "a system→system supply convoy must deliver to the destination");
+        assert!(dest_has(&w) >= 5.0, "MaintainAtDest must bring the destination up to the target");
     }
 
     /// §naming: a fresh galaxy gets pronounceable WORD names, drawn without
@@ -16935,7 +19206,7 @@ mod tests {
         }
         // Reset to a clean slate where BOTH rules are idle + eligible on the SAME
         // upcoming eval tick (the over-ship scenario): drop any convoy a rule already
-        // launched during setup, refill sources, empty the depot, clear the gates.
+        // launched during setup, refill sources, empty the destination, clear the gates.
         w.fleets.retain(|_, s| s.mission.is_none());
         for &sid in &[a, b] {
             w.systems.iter_mut().find(|s| s.id == sid).unwrap().stockpile.insert(MetallicOre, 50.0);
@@ -16954,7 +19225,7 @@ mod tests {
                 dispatched += units;
             }
         }
-        assert!(dispatched >= 1, "a maintain rule should ship toward the empty depot");
+        assert!(dispatched >= 1, "a maintain rule should ship toward the empty destination");
         assert!(dispatched <= 5, "two rules to one dest must not over-ship the target (shipped {dispatched})");
     }
 
@@ -17260,7 +19531,7 @@ mod tests {
         let pos = w.systems.iter().find(|s| s.id == sys).unwrap().pos;
         let id = w.alloc_entity_id();
         let mut f = Fleet::single(id, owner, ShipKind::Raider, pos, FleetOrder::Blockade { system: sys, station: pos }, None);
-        f.composition.insert(ShipKind::Raider, raiders);
+        f.reset_to(ShipKind::Raider, raiders);
         w.fleets.insert(id, f);
         id
     }
@@ -17435,6 +19706,27 @@ mod tests {
         sys
     }
 
+    /// A ripe siege with `tiers` of FED garrison dug in. Digging in stretches
+    /// the siege clock (§ground M5), so the clock is re-backdated past the new,
+    /// longer duration afterwards — that interaction is the milestone working,
+    /// and every ground test would otherwise have to repeat the dance.
+    fn garrisoned_ripe_siege(w: &mut World, atk: PlayerId, def: PlayerId, pos: Vec2, tiers: u32) -> EntityId {
+        use crate::build::StructureKind as K;
+        let sys = ripe_siege(w, atk, def, pos, 0);
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(K::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::Garrison, tiers);
+            *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) += 50_000.0;
+        }
+        w.step(&[]); // let the garrison draw its rations, so it counts
+        let dur = w.siege_duration_for(sys);
+        let now = w.time;
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().blockade.as_mut().unwrap().siege_since =
+            Some(now - dur - 1.0);
+        sys
+    }
+
     fn step_capture(w: &mut World) -> Option<(PlayerId, EntityId)> {
         for _ in 0..5 {
             for e in w.step(&[]) {
@@ -17447,7 +19739,7 @@ mod tests {
     }
 
     #[test]
-    fn siege_plus_colony_captures_with_half_tiers_and_plunder() {
+    fn siege_plus_marines_capture_with_half_tiers_and_plunder() {
         let mut w = test_world();
         let (atk, def) = (PlayerId(1), PlayerId(2));
         w.step(&[
@@ -17463,7 +19755,8 @@ mod tests {
             s.set_tier(crate::build::StructureKind::Habitat, 3);
             *s.stockpile.entry(Commodity::MetallicOre).or_insert(0.0) += 100.0;
         }
-        let colony = colony_at(&mut w, atk, pos);
+        // §ground M7: a colony ship no longer takes held ground — marines do.
+        let force = landing_force(&mut w, atk, pos, 1);
 
         let mut plunder = None;
         let cap = {
@@ -17479,15 +19772,23 @@ mod tests {
             }
             got
         };
-        assert_eq!(cap, Some((atk, sys)), "a colony delivered to a ripe siege captures");
+        assert_eq!(cap, Some((atk, sys)), "marines landed onto a ripe siege capture");
         let s = w.systems.iter().find(|s| s.id == sys).unwrap();
         assert_eq!(s.owner, Some(atk), "ownership flipped to the captor");
         assert_eq!(s.tier(crate::build::StructureKind::MiningComplex), 2, "developments transfer at HALF tiers (4→2)");
         assert_eq!(s.tier(crate::build::StructureKind::Shipyard), 1, "2→1");
         assert_eq!(s.tier(crate::build::StructureKind::Habitat), 1, "3→1 (rounded down)");
         assert!(s.blockade.is_none(), "the captured system is no longer besieged");
-        assert_eq!(plunder.unwrap().get(&Commodity::MetallicOre).copied(), Some(100), "the stockpile is plundered (itemized)");
-        assert!(!w.fleets.contains_key(&colony), "the lone colony ship was consumed (occupation)");
+        // §plunder: the held blockade strips the stockpile WHILE the siege runs,
+        // so what capture hands over is whatever survived that — and the floor
+        // guarantees something always does. A stronger statement than the old
+        // exact-100: the report is itemized AND the reserve was never breached.
+        let ore = plunder.unwrap().get(&Commodity::MetallicOre).copied().expect("ore is itemized");
+        assert!(
+            ore as f64 > PLUNDER_FLOOR_UNITS && ore <= 100,
+            "capture hands over what the siege left, never below the floor (got {ore})"
+        );
+        assert!(!w.fleets.contains_key(&force), "the lone transport was consumed (it became the occupation)");
     }
 
     #[test]
@@ -18810,7 +21111,7 @@ mod tests {
             ev(EventPayload::Trade(TradeEvent::Bought { player: p1, commodity: Commodity::MetallicOre, units: 2, unit_price: 3.0, penalty: 0.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Sell, commodity: Commodity::MetallicOre, units: 3, unit_price: 2.0, penalty: 0.0 })),
             ev(EventPayload::Trade(TradeEvent::LimitFilled { player: p1, side: Side::Buy, commodity: Commodity::MetallicOre, units: 1, unit_price: 4.0, penalty: 0.0 })),
-            ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::StructureKind::Depot, tier: 1 }),
+            ev(EventPayload::SystemUpgraded { system: EntityId(1), owner: p1, upgrade: crate::build::StructureKind::OrbitalWarehouse, tier: 1 }),
             ev(EventPayload::IntelGathered { owner: p1, system: EntityId(1), defense_tier: 0, shipyard_tier: 0, pos: Vec2::ZERO }),
         ]);
         {
@@ -18871,8 +21172,7 @@ mod tests {
         let (raider, convoy) = raid_setup(&mut w, atk, def, Vec2::new(120.0, 0.0), Vec2::new(160.0, 0.0));
         {
             let c = w.fleets.get_mut(&convoy).unwrap();
-            c.composition.clear();
-            c.composition.insert(ShipKind::Convoy, 1);
+            c.reset_to(ShipKind::Convoy, 1);
             c.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 40 });
         }
         w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
@@ -19551,7 +21851,7 @@ mod tests {
         let s0 = &w2.systems[0];
         assert_eq!(s0.tier(K::MiningComplex), 2, "Extractor folds to MiningComplex");
         assert_eq!(s0.tier(K::FuelRefinery), 1, "Refinery folds to FuelRefinery");
-        assert_eq!(s0.tier(K::Depot), 3, "Depot folds 1:1");
+        assert_eq!(s0.tier(K::OrbitalWarehouse), 3, "the legacy depot_tier folds 1:1 onto Orbital Warehouse");
         assert_eq!(s0.legacy_extractor_tier, 0, "carriers zeroed after the fold");
         // Idempotent: folding again changes nothing.
         let before = s0.bodies.iter().map(|b| b.structures.clone()).collect::<Vec<_>>();

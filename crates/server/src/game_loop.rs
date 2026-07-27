@@ -746,6 +746,8 @@ impl GameLoop {
         // §perf Part A: per-player battle-record specs (what each player MAY see
         // right now) — diffed per CONNECTION against its delivery cursor below.
         let mut record_specs: HashMap<PlayerId, Vec<view::RecordSpec>> = HashMap::new();
+        // §ground G2: the same, for landing records.
+        let mut ground_specs: HashMap<PlayerId, Vec<view::GroundSpec>> = HashMap::new();
         // §perf Part B: per-player slow-moving sections + their content
         // signatures — sent per connection only when a signature changed.
         let mut sections: HashMap<PlayerId, SectionData> = HashMap::new();
@@ -832,6 +834,10 @@ impl GameLoop {
                         g.garrison_host = Some(host);
                         g.garrison_fed = self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
                     }
+                    // §upkeep: OWNER-ONLY supply state — an unsupplied fleet is
+                    // immobilized, and the panel must say so or a refused order
+                    // looks like a bug.
+                    g.supplied = self.world.fleets.get(&g.id).is_none_or(|f| f.supplied);
                     // §explore Part 2: OWNER-ONLY survey-dwell progress (0..1) for
                     // the progress ring — a rival never sees your order state.
                     g.survey_progress = self.world.fleets.get(&g.id).and_then(|f| match f.order {
@@ -937,6 +943,46 @@ impl GameLoop {
             // both light-gates; grants no owner-only data (Part 1 is tint only).
             for sv in systems.iter_mut() {
                 sv.ally = sv.owner.is_some_and(|o| self.world.known_ally(player_id, o, now));
+                // §ground G4: the PRE-COMMIT LANDING ESTIMATE. Only for a
+                // besieger who actually has marines in orbit here — the person
+                // making the decision, and nobody else. It is sampled from the
+                // REAL ground engine, so it can never drift from the fight it
+                // predicts, and it is computed from state this viewer already
+                // holds (their own troops, the garrison their `ground` readout
+                // already shows), so it discloses nothing new.
+                if let Some(g) = sv.ground.as_mut()
+                    && sv.owner != Some(player_id)
+                    && let Some(sys) = self.world.systems.iter().find(|s| s.id == sv.id)
+                    && sys.blockade.is_some_and(|b| b.by == player_id)
+                {
+                    let marines: u32 = self
+                        .world
+                        .fleets
+                        .values()
+                        .filter(|f| {
+                            f.owner == player_id
+                                && f.pos.distance(sys.pos) <= sim::ship::COLONY_CLAIM_RADIUS
+                        })
+                        .map(|f| f.marines())
+                        .sum();
+                    if marines > 0 {
+                        let o = sim::ground::project_landing(
+                            marines,
+                            sys.tier_sum(sim::StructureKind::Garrison),
+                            if sys.garrison_fed { sys.garrison_suppression } else { 1.0 },
+                            self.world.config.battle_target_secs,
+                            sys.id.0,
+                            sim::ground::LANDING_ROLLOUTS,
+                        );
+                        g.landing = Some(crate::protocol::LandingOddsView {
+                            marines,
+                            win: o.win,
+                            win_if_guns_leave: o.win_if_guns_leave,
+                            expected_losses: o.expected_marine_losses.round() as u32,
+                            expected_secs: o.expected_secs,
+                        });
+                    }
+                }
                 // §syndicates Part 3: OWNER-ONLY hosted-garrison indicator (the
                 // coalition shield you're feeding). Only for your OWN systems.
                 if sv.owner == Some(player_id)
@@ -1097,6 +1143,11 @@ impl GameLoop {
                         .and_then(|s| s.flagship_name.clone())
                 });
             record_specs.insert(player_id, specs);
+            // §ground G2: which landings this player may see, at what fidelity.
+            ground_specs.insert(
+                player_id,
+                view::visible_ground_specs(&self.world.ground_records, player_id, cc, c, now, &coverage),
+            );
             // §TCA: the Charterhouse freight desk. Terms for every system this
             // player owns (the only valid destinations), plus their OWN lots.
             let freight = crate::protocol::FreightView {
@@ -1104,7 +1155,6 @@ impl GameLoop {
                 period: self.world.freight_period_secs(),
                 fee_frac: sim::tca::TCA_FREIGHT_FEE_FRAC,
                 fee_per_unit_dist: sim::tca::TCA_FREIGHT_FEE_PER_UNIT_DIST,
-                depot_fee_mult: sim::tca::TCA_DEPOT_FEE_MULT,
                 terms: self
                     .world
                     .systems
@@ -1112,13 +1162,11 @@ impl GameLoop {
                     .filter(|s| s.owner == Some(player_id))
                     .map(|s| {
                         let distance = hub.distance(s.pos);
-                        let depot = s.tier(sim::StructureKind::Depot) > 0;
                         let secs_out = sim::World::freight_flight_secs(distance);
                         crate::protocol::FreightTermsView {
                             system: s.id,
                             distance,
-                            depot,
-                            cap: sim::tca::shipment_cap(depot),
+                            cap: sim::tca::TCA_SHIPMENT_CAP,
                             secs_out,
                             secs_round: secs_out * 2.0,
                         }
@@ -1208,6 +1256,10 @@ impl GameLoop {
             // RELIABLE lane (cursor committed only when the send succeeds).
             if let Some(specs) = record_specs.get(&info.player_id) {
                 send_record_deltas(&self.world.battle_records, specs, info);
+            }
+            // §ground G2: this connection's landing-record increments.
+            if let Some(specs) = ground_specs.get(&info.player_id) {
+                send_ground_deltas(&self.world.ground_records, specs, info);
             }
             // §perf Part B: the change-gated slow sections, same reliable lane.
             if let Some(sec) = sections.get(&info.player_id) {
@@ -1360,6 +1412,68 @@ fn send_record_deltas(
     }
 }
 
+/// §ground G2: one connection's LANDING-record increments, on the same reliable
+/// lane and the same cursor discipline as battle records — new records get a
+/// header, known ones get only the rounds whose light has newly arrived, and the
+/// cursor advances only if the send lands.
+fn send_ground_deltas(
+    records: &std::collections::BTreeMap<sim::EntityId, sim::ground::GroundRecord>,
+    specs: &[view::GroundSpec],
+    info: &mut ConnInfo,
+) {
+    use crate::protocol::{GroundFidelity, GroundRecordUpdate};
+    use crate::session::RecordCursor;
+
+    let mut updates: Vec<GroundRecordUpdate> = Vec::new();
+    let mut staged: Vec<(sim::EntityId, RecordCursor)> = Vec::new();
+    for spec in specs {
+        let Some(r) = records.get(&spec.id) else { continue };
+        let participant = matches!(spec.fidelity, GroundFidelity::Participant);
+        let cur = info.sent.ground_records.get(&spec.id);
+        let is_new = cur.is_none();
+        let from = cur.map_or(0, |c| c.rounds_sent).min(spec.arrived_len);
+        let new_rounds = if spec.arrived_len > from {
+            view::ground_rounds_range(r, from, spec.arrived_len, participant)
+        } else {
+            Vec::new()
+        };
+        let send_outcome = spec.outcome.is_some() && !cur.is_some_and(|c| c.outcome_sent);
+        if is_new || !new_rounds.is_empty() || send_outcome {
+            updates.push(GroundRecordUpdate {
+                id: spec.id,
+                header: is_new.then(|| view::ground_header(r, spec)),
+                new_rounds,
+                light_frontier_tick: spec.frontier_tick,
+                outcome: if send_outcome { spec.outcome.clone() } else { None },
+            });
+            staged.push((
+                spec.id,
+                RecordCursor {
+                    rounds_sent: spec.arrived_len.max(cur.map_or(0, |c| c.rounds_sent)),
+                    outcome_sent: send_outcome || cur.is_some_and(|c| c.outcome_sent),
+                    names: [None, None],
+                },
+            ));
+        }
+    }
+    let visible: std::collections::HashSet<sim::EntityId> = specs.iter().map(|s| s.id).collect();
+    let removed: Vec<sim::EntityId> =
+        info.sent.ground_records.keys().filter(|id| !visible.contains(id)).copied().collect();
+
+    if updates.is_empty() && removed.is_empty() {
+        return;
+    }
+    let msg = ServerMsg::GroundRecords { updates, removed: removed.clone() };
+    if info.outbound.try_send(msg).is_ok() {
+        for (id, cursor) in staged {
+            info.sent.ground_records.insert(id, cursor);
+        }
+        for id in removed {
+            info.sent.ground_records.remove(&id);
+        }
+    }
+}
+
 /// The buildable options + their recipes (§step1), built from the sim's const
 /// The public star chart as SystemInfo rows — the Welcome galaxy's `systems`
 /// and every GalaxyUpdate re-broadcast share this one mapper, so the two can
@@ -1381,8 +1495,10 @@ fn system_infos(world: &sim::World) -> Vec<SystemInfo> {
 /// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
 fn build_options() -> Vec<BuildOptionView> {
     use sim::{BuildKind, ShipKind, StructureKind};
-    // §economy: the 5 ships + ALL 16 structures, data-driven (keys = slugs; a
-    // legacy client sending an old slug still parses via the serde aliases).
+    // §economy: every buildable hull + ALL structures, data-driven (keys = slugs;
+    // a legacy client sending an old slug still parses via the serde aliases).
+    // Structures come from `StructureKind::ALL`, so a new one appears here for
+    // free — a new SHIP does not, and has to be listed below.
     let ships = [
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
@@ -1396,6 +1512,11 @@ fn build_options() -> Vec<BuildOptionView> {
         ("battleship", "Battleship", BuildKind::Ship { ship: ShipKind::Battleship }),
         ("dreadnought", "Dreadnought", BuildKind::Ship { ship: ShipKind::Dreadnought }),
         ("titan", "Titan", BuildKind::Ship { ship: ShipKind::Titan }),
+        // §ground: the troopship. Gated by a Garrison rather than a yard, but it
+        // is an ordinary ship job otherwise.
+        ("transport", "Troop Transport", BuildKind::Ship { ship: ShipKind::Transport }),
+        // §ground: the troopship. Gated by a Garrison rather than a yard, but it
+        // is an ordinary ship job otherwise.
     ];
     // §modules Part B3: the 5 modules, keyed `module:<slug>` so the client routes
     // them to BuildModule (not BuildShip/DevelopSystem) while reusing the same
@@ -1596,6 +1717,41 @@ pub async fn run(
 mod tests {
     use super::*;
     use sim::Vec2;
+
+    /// The build CATALOGUE must offer every hull a corporation can actually
+    /// build, and every structure. Structures ride `StructureKind::ALL` and so
+    /// come along for free; SHIPS are hand-listed, and that list is exactly the
+    /// kind of thing that silently rots — a hull the sim knows how to build but
+    /// the catalogue never mentions is simply unbuildable, with no error
+    /// anywhere to say so. (This test was written because the Troop Transport
+    /// shipped that way and only a live client check caught it.)
+    #[test]
+    fn every_buildable_hull_and_structure_is_offered() {
+        let opts = build_options();
+        let keys: std::collections::BTreeSet<&str> = opts.iter().map(|o| o.key.as_str()).collect();
+
+        // The hull slug is whatever the WIRE calls it — derived from serde, not
+        // retyped here, so the catalogue key and the protocol can't drift apart.
+        let slug_of = |k: sim::ShipKind| serde_json::to_value(k).unwrap().as_str().unwrap().to_string();
+        for k in sim::ALL_SHIP_KINDS {
+            let slug = slug_of(k);
+            // The Authority's freighter is the ONE hull no corporation may lay.
+            if k == sim::ShipKind::Freighter {
+                assert!(!keys.contains(slug.as_str()), "the Authority's carrier must never be offered");
+                continue;
+            }
+            assert!(
+                keys.contains(slug.as_str()),
+                "hull `{slug}` is buildable in the sim but missing from the catalogue — it is unreachable from the UI",
+            );
+        }
+        for k in sim::StructureKind::ALL {
+            assert!(keys.contains(k.slug()), "structure `{}` is missing from the catalogue", k.slug());
+        }
+        // And every offer must price out — a key with no recipe would render a
+        // build button that can never be paid for.
+        assert!(opts.iter().all(|o| !o.costs.is_empty()), "every build option carries a cost");
+    }
 
     fn concluded(started_at: f64, ended_at: f64, pos: Vec2) -> ConcludedBattle {
         ConcludedBattle {

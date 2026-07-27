@@ -400,7 +400,7 @@ pub enum Command {
     // ---- §TCA Part 5: PLAYER-CONVOY LOGISTICS --------------------------------
     // The second, player-owned logistics channel: you fly it, you load it, you
     // take the risk, and it costs no fee. Every one of these requires the fleet to
-    // be the player's, IDLE, unengaged, and within `tca::LOGISTICS_RANGE` of the
+    // be the player's, IDLE, unengaged, and within `ship::DOCK_RADIUS` of the
     // dock — loading is dockside work. All soft-reject, free, owner-only.
     /// Move goods from the corp's CHARTERHOUSE WAREHOUSE into a fleet's hold.
     /// Tops up an existing load of the same commodity; a hold already carrying a

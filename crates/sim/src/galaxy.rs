@@ -38,6 +38,11 @@ pub struct Deposit {
 /// *dynamic* state: a claim is an event at `pos`/`claimed_at`, so its reveal to
 /// rivals must respect light delay (enforced by the server's view filter), and a
 /// player's accumulated production is private to them.
+/// serde default for `StarSystem::garrison_fed` (old snapshots load fed).
+fn default_true_sys() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StarSystem {
     pub id: EntityId,
@@ -80,8 +85,8 @@ pub struct StarSystem {
     /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
     #[serde(default, rename = "extractor_tier")]
     pub legacy_extractor_tier: u32,
-    /// Number of Depot upgrades built here (§buildings step 2). Each tier raises
-    /// the system's storage cap by `STORAGE_PER_DEPOT_TIER`. `default` = 0 on old
+    /// Number of Orbital Warehouse tiers built here (§buildings step 2). Each tier raises
+    /// the system's storage cap by `STORAGE_PER_WAREHOUSE_TIER`. `default` = 0 on old
     /// snapshots (they get the base cap; oversize stockpiles are grandfathered —
     /// the cap blocks NEW inflow only, it never destroys what's stored).
     #[serde(default, rename = "depot_tier")]
@@ -151,6 +156,19 @@ pub struct StarSystem {
     /// pre-feature galaxy simply has none (acceptable; new generations do).
     #[serde(default)]
     pub trait_: Option<crate::explore::SystemTrait>,
+    /// §ground: is the dug-in GARRISON currently fed? Recomputed every tick from
+    /// this system's own Provisions (like `food_state`). An UNFED garrison
+    /// suspends — it stretches no siege clock and resists no landing — but no
+    /// tier is ever lost and it recovers the tick supply returns. Owner-only in
+    /// the View. `default` true so pre-garrison snapshots load untroubled.
+    #[serde(default = "default_true_sys")]
+    pub garrison_fed: bool,
+    /// §ground M6: BOMBARDMENT SUPPRESSION, 0..1 — the fraction of the garrison
+    /// currently pinned down by orbital fire. Decays back to 0 when the guns
+    /// stop, so it is a window a besieger must exploit, never a permanent loss:
+    /// no tier is destroyed and no population is touched. `default` 0.
+    #[serde(default)]
+    pub garrison_suppression: f64,
     /// §explore Part 3: the Precursor Cache has PAID (latched — exactly once,
     /// ever; deliberately NOT reset on capture, so a flip can't re-mint it).
     #[serde(default)]
@@ -220,7 +238,7 @@ impl StarSystem {
     }
 
     /// The SUMMED tiers of a kind across bodies — the read for quantities that
-    /// STACK (Depot storage capacity, Defense Platform strength).
+    /// STACK (Orbital Warehouse storage capacity, Defense Platform strength).
     pub fn tier_sum(&self, kind: crate::build::StructureKind) -> u32 {
         self.bodies.iter().map(|b| b.tier(kind)).sum()
     }
@@ -311,9 +329,19 @@ impl StarSystem {
                 })
             }
             K::FuelRefinery | K::ChemicalWorks => volatiles_body,
-            K::Habitat | K::Agroplex | K::Academy => habitable_body,
+            // §ground: the garrison sits where the people are — you defend a
+            // populated world, not a bare rock.
+            K::Habitat | K::Agroplex | K::Academy | K::Garrison => habitable_body,
             K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex => industrial_body,
-            K::Shipyard | K::Depot | K::DefensePlatform => primary,
+            // §yards: the whole yard family auto-sites with the Shipyard, on the
+            // system's primary body — a shipbuilding world builds its ladder in
+            // one place, and the drydock's crews are the shipyard's neighbours.
+            K::Shipyard
+            | K::NavalDrydock
+            | K::CapitalSlipway
+            | K::OrdnanceFoundry
+            | K::OrbitalWarehouse
+            | K::DefensePlatform => primary,
             K::SensorArray => outermost,
         }
     }
@@ -424,7 +452,7 @@ impl StarSystem {
         use crate::build::StructureKind as K;
         let folds = [
             (std::mem::take(&mut self.legacy_extractor_tier), K::MiningComplex),
-            (std::mem::take(&mut self.legacy_depot_tier), K::Depot),
+            (std::mem::take(&mut self.legacy_depot_tier), K::OrbitalWarehouse),
             (std::mem::take(&mut self.legacy_shipyard_tier), K::Shipyard),
             (std::mem::take(&mut self.legacy_sensor_tier), K::SensorArray),
             (std::mem::take(&mut self.legacy_defense_tier), K::DefensePlatform),
@@ -589,19 +617,31 @@ impl StarSystem {
         self.bodies.iter().map(|b| b.structures.values().filter(|t| **t >= 1).count() as u32).sum()
     }
 
+    /// §ground: the garrison strength actually standing right now — its tier,
+    /// zeroed if unfed, and reduced by whatever bombardment has pinned down.
+    /// THE one derivation: the siege clock and any landing both read this, so a
+    /// besieger's guns and a defender's larder move the same number.
+    pub fn effective_garrison(&self) -> f64 {
+        if !self.garrison_fed {
+            return 0.0;
+        }
+        let tier = self.tier_sum(crate::build::StructureKind::Garrison) as f64;
+        (tier * (1.0 - self.garrison_suppression.clamp(0.0, 1.0))).max(0.0)
+    }
+
     /// The sensor bubble this system projects FOR ITS OWNER (0 without an array).
     pub fn sensor_bubble(&self) -> f64 {
         crate::build::sensor_array_radius(self.tier(crate::build::StructureKind::SensorArray))
     }
 
     /// This system's TOTAL storage capacity (§buildings step 2): a base every
-    /// system has, plus a chunk per Depot tier. New inflow is capped at this;
+    /// system has, plus a chunk per Orbital Warehouse tier. New inflow is capped at this;
     /// what's already stored is never destroyed.
     pub fn storage_cap(&self) -> f64 {
-        // §bodies: depots STACK — every warehouse tier on every body raises
-        // the one pooled cap (tier_sum, not the best single depot).
+        // §bodies: warehouses STACK — every warehouse tier on every body raises
+        // the one pooled cap (tier_sum, not the best single warehouse).
         crate::build::STORAGE_BASE_CAP
-            + crate::build::STORAGE_PER_DEPOT_TIER * self.tier_sum(crate::build::StructureKind::Depot) as f64
+            + crate::build::STORAGE_PER_WAREHOUSE_TIER * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64
     }
 
     /// Total units currently stored (summed across commodities) — what the cap
@@ -703,6 +743,8 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, names: &[String]
             food_state: crate::colony::FoodState::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
             blockade_prev: None,
             trait_: None,
             cache_claimed: false,
@@ -825,7 +867,7 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
         // §economy Part 3+5 bootstrap stock: a standing Provisions buffer (the
         // food ladder starts Well Supplied while the farm chain spins up) plus
         // the STARTER KIT — enough Machinery/Alloys/Polymers that the first
-        // Depot/Habitat/industry doesn't require a market round-trip. (The
+        // Orbital Warehouse/Habitat/industry doesn't require a market round-trip. (The
         // Fuel movement seed lands on join.) All Tunable.
         stockpile: [
             (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
@@ -846,6 +888,8 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
         food_state: crate::colony::FoodState::default(),
         legacy_refinery_tier: 0,
         blockade: None,
+        garrison_fed: true,
+        garrison_suppression: 0.0,
         blockade_prev: None,
         trait_: None,
         cache_claimed: false,

@@ -51,12 +51,15 @@ const SCALE = CANVAS_H / (2 * VIEW_R);
 const MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+  // §ground: the troop transport — a fat, unarmed hull.
+  transport: 7000,
   // §TCA: the Authority's carrier — never a combatant, but the type is total.
   freighter: 6000,
 };
 const KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+  transport: "Troop Transport",
   freighter: "Authority Freighter",
 };
 
@@ -83,6 +86,9 @@ const SHIP_ART: Record<ShipKind, string> = {
   raider: "raider_attack_ship.png",
   corvette: "corvette_escort_ship.png",
   colony: "colony_ship.png",
+  // §ground: no dedicated troopship art yet — the colony hull stands in (same
+  // silhouette problem: a fat, unarmed carrier full of people).
+  transport: "colony_ship.png",
   scout: "scout_utility_ship.png",
   destroyer: "destroyer_line_ship.png",
   cruiser: "cruiser_line_ship.png",

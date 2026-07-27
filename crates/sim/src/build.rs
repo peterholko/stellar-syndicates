@@ -81,14 +81,35 @@ pub enum StructureKind {
     MachineWorks,
     /// Alloys + Electronics + Polymers → Armaments.
     ArmamentsComplex,
-    /// GATES ship construction (`required_shipyard_tier`), exactly as before.
+    /// GATES the LIGHT hulls (`yard_for`): Convoy/Scout/Colony at tier 1,
+    /// Raider/Corvette at tier 2. Its tier is also its SLIPWAY COUNT — how many
+    /// of those hulls it can lay down at once (§yards M1).
     Shipyard,
+    /// §yards: the LINE-WARSHIP yard — Destroyer/Cruiser/Battleship. Needs a
+    /// Shipyard ≥ 2 on the same system ([`yard_prereq`]): you learn to build
+    /// before you build big. Its own tier is its own slip count, independent of
+    /// the Shipyard's, so a yard world can lay light and line hulls in parallel.
+    NavalDrydock,
+    /// §yards: the SUPER-CAPITAL yard — Dreadnought/Titan. Needs a Naval Drydock
+    /// ≥ 3 here. Deliberately the deepest prerequisite chain in the game: a
+    /// capital slipway is a season's investment, and (unlike a home) it sits on
+    /// capturable ground.
+    CapitalSlipway,
+    /// §yards: OUTFITTING AND MAINTENANCE — the yard that fits hulls rather than
+    /// laying them. Holds the REFIT work that used to happen at any Shipyard, so
+    /// a forward system can be a refit base without being a construction base.
+    /// (Module MANUFACTURE stays at the Armaments Complex: armaments make the
+    /// crates, the foundry installs them.)
+    OrdnanceFoundry,
     // ── Support (Infrastructure slots) ──────────────────────────────────────
     /// Population capacity + workforce slots (§economy Part 2 — the boost/upkeep
     /// semantics retire; capacity is the Habitat's value now).
     Habitat,
-    /// Raises the storage cap (unchanged semantics).
-    Depot,
+    /// Raises the system's storage cap — and ONLY that. (Renamed from `Depot`; the
+    /// alias keeps old snapshots, in-flight build jobs, and old client commands
+    /// parsing, exactly as `extractor` does for MiningComplex.)
+    #[serde(alias = "depot")]
+    OrbitalWarehouse,
     /// Standing sensor bubble (unchanged semantics).
     SensorArray,
     /// Static defense (combat semantics + `defense_pool` untouched).
@@ -96,11 +117,21 @@ pub enum StructureKind {
     /// Trains specialists locally (§economy Part 4) — endogenous supply so Sol
     /// never stays a permanent monopoly.
     Academy,
+    /// §ground: THE GARRISON — dug-in ground defense, and the only thing that
+    /// makes a siege take longer than the clock says. Fed on Provisions like any
+    /// standing force; an UNFED garrison suspends its contribution (nothing is
+    /// destroyed, it recovers when supplied). Also the barracks: it builds the
+    /// Troop Transports an assault needs (§ground M7).
+    ///
+    /// Note the name collides conceptually with `Fleet::garrison_fed`, which is a
+    /// different thing entirely — an ALLY FLEET stationed at a host system. This
+    /// is ground troops on a planet.
+    Garrison,
 }
 
 impl StructureKind {
     /// Every kind, in display order.
-    pub const ALL: [StructureKind; 16] = [
+    pub const ALL: [StructureKind; 20] = [
         StructureKind::MiningComplex,
         StructureKind::VolatileHarvester,
         StructureKind::Bioharvester,
@@ -112,11 +143,15 @@ impl StructureKind {
         StructureKind::MachineWorks,
         StructureKind::ArmamentsComplex,
         StructureKind::Shipyard,
+        StructureKind::NavalDrydock,
+        StructureKind::CapitalSlipway,
+        StructureKind::OrdnanceFoundry,
         StructureKind::Habitat,
-        StructureKind::Depot,
+        StructureKind::OrbitalWarehouse,
         StructureKind::SensorArray,
         StructureKind::DefensePlatform,
         StructureKind::Academy,
+        StructureKind::Garrison,
     ];
 
     /// Which slot pool a built tier of this kind consumes.
@@ -131,7 +166,13 @@ impl StructureKind {
             | StructureKind::FuelRefinery
             | StructureKind::MachineWorks
             | StructureKind::ArmamentsComplex
-            | StructureKind::Shipyard => SlotPool::Industrial,
+            // §yards: the whole yard family is INDUSTRIAL. That pool is already
+            // the tightest one (base 2 per body + population tier), which is the
+            // point: a shipbuilding world visibly gives up its other industry.
+            | StructureKind::Shipyard
+            | StructureKind::NavalDrydock
+            | StructureKind::CapitalSlipway
+            | StructureKind::OrdnanceFoundry => SlotPool::Industrial,
             // §economy Part 3: the AGROPLEX is CIVIC — food security lives in
             // the Infrastructure pool (Habitat + Agroplex = a self-feeding
             // outpost on the base 2 slots, no industrial investment needed).
@@ -141,10 +182,13 @@ impl StructureKind {
             // Shipyard-tier-2 requirement now, not industrial-slot scarcity.
             StructureKind::Agroplex
             | StructureKind::Habitat
-            | StructureKind::Depot
+            | StructureKind::OrbitalWarehouse
             | StructureKind::SensorArray
             | StructureKind::DefensePlatform
-            | StructureKind::Academy => SlotPool::Infrastructure,
+            | StructureKind::Academy
+            // §ground: the garrison is civic infrastructure — a colony defends
+            // itself out of the same budget that houses and feeds it.
+            | StructureKind::Garrison => SlotPool::Infrastructure,
         }
     }
 
@@ -162,11 +206,15 @@ impl StructureKind {
             StructureKind::MachineWorks => "machine_works",
             StructureKind::ArmamentsComplex => "armaments_complex",
             StructureKind::Shipyard => "shipyard",
+            StructureKind::NavalDrydock => "naval_drydock",
+            StructureKind::CapitalSlipway => "capital_slipway",
+            StructureKind::OrdnanceFoundry => "ordnance_foundry",
             StructureKind::Habitat => "habitat",
-            StructureKind::Depot => "depot",
+            StructureKind::OrbitalWarehouse => "orbital_warehouse",
             StructureKind::SensorArray => "sensor_array",
             StructureKind::DefensePlatform => "defense_platform",
             StructureKind::Academy => "academy",
+            StructureKind::Garrison => "garrison",
         }
     }
 
@@ -184,11 +232,15 @@ impl StructureKind {
             StructureKind::MachineWorks => "Machine Works",
             StructureKind::ArmamentsComplex => "Armaments Complex",
             StructureKind::Shipyard => "Shipyard",
+            StructureKind::NavalDrydock => "Naval Drydock",
+            StructureKind::CapitalSlipway => "Capital Slipway",
+            StructureKind::OrdnanceFoundry => "Ordnance Foundry",
             StructureKind::Habitat => "Habitat",
-            StructureKind::Depot => "Depot",
+            StructureKind::OrbitalWarehouse => "Orbital Warehouse",
             StructureKind::SensorArray => "Sensor Array",
             StructureKind::DefensePlatform => "Defense Platform",
             StructureKind::Academy => "Academy",
+            StructureKind::Garrison => "Garrison",
         }
     }
 }
@@ -250,6 +302,16 @@ pub struct RefitJob {
     pub to: crate::module::Loadout,
     /// How many hulls are in the yard.
     pub n: u32,
+    /// §roster: THE ACTUAL HULLS in the yard, carrying their remaining health.
+    /// A refit changes what a ship carries — it does not mend it. Storing counts
+    /// here (as this did before) minted fresh full-health hulls on completion,
+    /// which made a refit a free full repair; and because the yard takes the
+    /// most-damaged hulls first, it was an optimally-efficient one. The Ordnance
+    /// Foundry's repair service is the only thing that restores hull.
+    /// `#[serde(default)]` so a pre-roster job in flight still completes (it
+    /// falls back to `n` fresh hulls, the old behaviour, exactly once).
+    #[serde(default)]
+    pub hulls: Vec<crate::ship::Ship>,
     /// Absolute sim tick of completion.
     pub complete_tick: u64,
 }
@@ -310,11 +372,24 @@ pub const AGROPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.
 pub const MACHINE_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
 pub const ARMAMENTS_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
 pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 20 * HZ };
+// §yards: the yard family climbs steeply — a Drydock is roughly twice a Shipyard
+// and a Slipway roughly twice again, with Armaments entering at the Drydock and
+// Rare Elements at the Slipway (the capital economy, mirroring the hull recipes).
+// The Foundry is the cheap one: outfitting is not construction. All Tunable.
+pub const NAVAL_DRYDOCK_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 35.0), (Commodity::Alloys, 70.0), (Commodity::Electronics, 25.0), (Commodity::Armaments, 15.0)], build_ticks: 30 * HZ };
+pub const CAPITAL_SLIPWAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 70.0), (Commodity::Alloys, 150.0), (Commodity::Electronics, 55.0), (Commodity::Armaments, 40.0), (Commodity::RareElements, 15.0)], build_ticks: 45 * HZ };
+pub const ORDNANCE_FOUNDRY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 18.0), (Commodity::Alloys, 35.0), (Commodity::Electronics, 20.0)], build_ticks: 18 * HZ };
 pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Polymers, 20.0), (Commodity::Machinery, 8.0)], build_ticks: 20 * HZ };
-pub const DEPOT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)], build_ticks: 15 * HZ };
+pub const ORBITAL_WAREHOUSE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)], build_ticks: 15 * HZ };
 pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Electronics, 18.0), (Commodity::Machinery, 10.0)], build_ticks: 18 * HZ };
 pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 35.0), (Commodity::Electronics, 15.0), (Commodity::Armaments, 15.0)], build_ticks: 22 * HZ };
 pub const ACADEMY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 15.0), (Commodity::Provisions, 20.0)], build_ticks: 20 * HZ };
+/// §ground: a Garrison is armaments and people, not heavy industry — cheap
+/// enough that any colony can dig in, dear enough that doing it everywhere costs.
+/// §ground M7: a trooper is people and their kit, not heavy industry — built at
+/// a Garrison, and priced so an invasion is an investment rather than a whim.
+pub const TRANSPORT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 40.0), (Commodity::Armaments, 30.0), (Commodity::Provisions, 40.0), (Commodity::Fuel, 15.0)], build_ticks: 24 * HZ };
+pub const GARRISON_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 20.0), (Commodity::Alloys, 25.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
 
 /// §economy Part 4: one Academy training course (Provisions feed the cohort,
 /// Electronics equip the lab). Costs live in `specialist::ACADEMY_TRAIN_COSTS`.
@@ -361,6 +436,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::Battleship } => &BATTLESHIP_RECIPE,
         BuildKind::Ship { ship: ShipKind::Dreadnought } => &DREADNOUGHT_RECIPE,
         BuildKind::Ship { ship: ShipKind::Titan } => &TITAN_RECIPE,
+        BuildKind::Ship { ship: ShipKind::Transport } => &TRANSPORT_RECIPE,
         // The Authority Freighter (§TCA) is TCA-only and never buildable: the
         // `BuildShip` handler soft-rejects it (via `ShipKind::is_buildable`) BEFORE
         // any recipe lookup, and no `BuildJob` for one can ever be enqueued, so this
@@ -382,11 +458,15 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             StructureKind::MachineWorks => &MACHINE_WORKS_RECIPE,
             StructureKind::ArmamentsComplex => &ARMAMENTS_COMPLEX_RECIPE,
             StructureKind::Shipyard => &SHIPYARD_RECIPE,
+            StructureKind::NavalDrydock => &NAVAL_DRYDOCK_RECIPE,
+            StructureKind::CapitalSlipway => &CAPITAL_SLIPWAY_RECIPE,
+            StructureKind::OrdnanceFoundry => &ORDNANCE_FOUNDRY_RECIPE,
             StructureKind::Habitat => &HABITAT_RECIPE,
-            StructureKind::Depot => &DEPOT_RECIPE,
+            StructureKind::OrbitalWarehouse => &ORBITAL_WAREHOUSE_RECIPE,
             StructureKind::SensorArray => &SENSOR_ARRAY_RECIPE,
             StructureKind::DefensePlatform => &DEFENSE_PLATFORM_RECIPE,
             StructureKind::Academy => &ACADEMY_RECIPE,
+            StructureKind::Garrison => &GARRISON_RECIPE,
         },
     }
 }
@@ -464,30 +544,86 @@ pub fn pop_tier(population: f64) -> u32 {
     }
 }
 
-// --- SHIPYARD GATING (§buildings step 3) --------------------------------------
+// --- YARD GATING (§buildings step 3 → §yards) ---------------------------------
 
-/// The Shipyard tier a system needs to build each ship kind: the workhorse
-/// Convoy and the cheap Scout at tier 1, the advanced Raider only at tier 2
-/// (military industry must be EARNED). Homes are seeded at tier 1, so convoys
-/// AND scouts build turn one. Tunable.
-pub fn required_shipyard_tier(kind: ShipKind) -> u32 {
+/// WHICH YARD builds a hull, and at what tier. This replaces the old flat
+/// "Shipyard tier 1→6" ladder: the cost of a capital fleet is now SLOTS AND
+/// GEOGRAPHY (three co-located structures, each needing the one below it — see
+/// [`yard_prereq`]) rather than one very tall building.
+///
+/// The light hulls keep their exact former gates, so the opening is unchanged:
+/// homes generate with Shipyard 1 and still build convoys and scouts turn one,
+/// and raiders still cost a second Shipyard tier. Only the capital ladder moves.
+/// Tunable.
+pub fn yard_for(kind: ShipKind) -> (StructureKind, u32) {
     match kind {
-        ShipKind::Convoy => 1,
-        ShipKind::Raider => 2,
-        ShipKind::Corvette => 2, // military industry, like the raider
-        ShipKind::Colony => 1,   // civilian settlement — any yard
-        ShipKind::Scout => 1,
-        // §ladder: capital yards — tiers 5/6 are themselves research prizes
-        // (Line VII/VIII grant the shipyard ceiling with the hull).
-        ShipKind::Destroyer => 3,
-        ShipKind::Cruiser => 4,
-        ShipKind::Battleship => 4,
-        ShipKind::Dreadnought => 5,
-        ShipKind::Titan => 6,
-        // §TCA: no shipyard tier can EVER build an Authority freighter — a
+        // Light + civilian — the Shipyard, exactly as before.
+        ShipKind::Convoy => (StructureKind::Shipyard, 1),
+        ShipKind::Scout => (StructureKind::Shipyard, 1),
+        ShipKind::Colony => (StructureKind::Shipyard, 1), // civilian settlement
+        ShipKind::Raider => (StructureKind::Shipyard, 2), // military industry is earned
+        ShipKind::Corvette => (StructureKind::Shipyard, 2),
+        // The line of battle — a dedicated drydock.
+        ShipKind::Destroyer => (StructureKind::NavalDrydock, 1),
+        ShipKind::Cruiser => (StructureKind::NavalDrydock, 2),
+        ShipKind::Battleship => (StructureKind::NavalDrydock, 3),
+        // The super-capitals — a slipway, at the end of the deepest chain.
+        ShipKind::Dreadnought => (StructureKind::CapitalSlipway, 1),
+        ShipKind::Titan => (StructureKind::CapitalSlipway, 2),
+        // §ground: troops come from BARRACKS, not slipways — the Garrison that
+        // defends a world is the same institution that raises an invasion.
+        ShipKind::Transport => (StructureKind::Garrison, 1),
+        // §TCA: no yard at any tier can EVER build an Authority freighter — a
         // belt-and-suspenders backstop behind `ShipKind::is_buildable`.
-        ShipKind::Freighter => u32::MAX,
+        ShipKind::Freighter => (StructureKind::Shipyard, u32::MAX),
     }
+}
+
+/// The structure a YARD needs co-located on the same system before it can be
+/// founded, if any. This is what makes the ladder geography: you cannot drop a
+/// Capital Slipway on a fresh rock, you grow one. `None` for everything else.
+/// Tunable.
+pub fn yard_prereq(kind: StructureKind) -> Option<(StructureKind, u32)> {
+    match kind {
+        StructureKind::NavalDrydock => Some((StructureKind::Shipyard, 2)),
+        StructureKind::CapitalSlipway => Some((StructureKind::NavalDrydock, 3)),
+        StructureKind::OrdnanceFoundry => Some((StructureKind::Shipyard, 1)),
+        _ => None,
+    }
+}
+
+// --- REPAIR (§roster) ---------------------------------------------------------
+// The Ordnance Foundry services damaged hulls. Battle damage PERSISTS per ship
+// now, so without a cure attrition would be permanent — this is the relief
+// valve, and it is deliberately geographic: a forward foundry keeps a fleet in
+// the fight, a rear one costs you the trip home.
+
+/// Hull points restored per second, per Foundry tier, at full staffing. The
+/// factor chain (`tier × staffing × skill`) multiplies this exactly like any
+/// production line. Sized against the hull table (a Raider is 200, a Corvette
+/// 800): a staffed tier-1 foundry patches a mauled corvette in a couple of
+/// minutes, a capital in far longer. Tunable — the single pacing knob.
+pub const REPAIR_HP_PER_SEC_PER_TIER: f64 = 6.0;
+
+/// Goods consumed per HULL POINT restored. Repair is cheap relative to
+/// replacing the hull (that is the point — it should beat rebuilding), but not
+/// free: a serviced fleet is a supplied fleet. Tunable.
+pub const REPAIR_COST_PER_HP: &[(Commodity, f64)] =
+    &[(Commodity::Alloys, 0.01), (Commodity::Machinery, 0.002)];
+
+// --- SLIPWAYS (§yards M1) -----------------------------------------------------
+// A yard's TIER is also its THROUGHPUT: how many hulls it can have on the stocks
+// at once. Before this, ship jobs were unbounded — a system could lay down any
+// number simultaneously, which is precisely why tier meant nothing but a gate.
+// Each yard KIND counts its own slips, so a Shipyard 3 + Drydock 2 world runs
+// three light hulls and two line warships in parallel.
+
+/// Slips one tier of a yard provides. Tunable — the whole knob for build tempo.
+pub const SLIPS_PER_TIER: u32 = 1;
+
+/// How many hulls a yard of `tier` can build at once (0 = no yard, no slips).
+pub fn slips_for(tier: u32) -> u32 {
+    tier.saturating_mul(SLIPS_PER_TIER)
 }
 
 /// The Shipyard tier every HOME system starts with (consuming one development
@@ -527,9 +663,9 @@ pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u
 // structure tier, × staffing × skill × food), not a compounding multiplier.
 
 // --- DEVELOPMENT SLOTS (§buildings step 1) ----------------------------------
-// Every development BUILT (each Extractor/Depot/Shipyard tier) consumes ONE slot
+// Every development BUILT (each Mining Complex/Orbital Warehouse/Shipyard tier) consumes ONE slot
 // of the system's budget; ships are units, not developments, and consume none.
-// Scarcity is the point: maxing Extractors crowds out Depot/Shipyard, so systems
+// Scarcity is the point: maxing Extractors crowds out warehousing/Shipyard, so systems
 // must SPECIALIZE ("this one's my extraction colony, THAT one's my shipyard").
 // The budget itself derives from geology — see `StarSystem::dev_slots`.
 
@@ -542,19 +678,37 @@ pub const DEV_SLOTS_MAX: u32 = 5;
 // A system's stockpile has a TOTAL capacity (summed across commodities). NEW
 // inflow (production accrual, seeds, deliveries) is capped — production simply
 // IDLES at the cap; nothing already stored is ever destroyed (async-fair, and
-// oversize pre-cap stockpiles are grandfathered). Depot tiers raise the cap.
+// oversize pre-cap stockpiles are grandfathered). Orbital Warehouse tiers raise the cap.
 
-/// Base storage capacity of every system (no Depot). Chosen comfortably above the
+/// Base storage capacity of every system (no Orbital Warehouse). Chosen comfortably above the
 /// home's 300-unit fuel seed so a fresh corporation starts with headroom, while
 /// still filling within minutes of idle production — the "ship it or lose the
 /// flow" pressure that gives standing orders a real job. Tunable.
 pub const STORAGE_BASE_CAP: f64 = 700.0;
-/// Extra capacity per Depot tier. Tunable.
-pub const STORAGE_PER_DEPOT_TIER: f64 = 400.0;
+/// Extra capacity per Orbital Warehouse tier. Tunable.
+pub const STORAGE_PER_WAREHOUSE_TIER: f64 = 400.0;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Depot → Orbital Warehouse rename keeps OLD snapshots parsing: the
+    /// legacy `"depot"` slug still deserialises onto the renamed variant (in the
+    /// structures map, in queued `Upgrade` build jobs, and in old client commands),
+    /// while the new slug round-trips.
+    #[test]
+    fn depot_alias_keeps_old_snapshots_loading() {
+        let old: StructureKind = serde_json::from_str("\"depot\"").unwrap();
+        assert_eq!(old, StructureKind::OrbitalWarehouse);
+        let new = serde_json::to_string(&StructureKind::OrbitalWarehouse).unwrap();
+        assert_eq!(new, "\"orbital_warehouse\"");
+        assert_eq!(serde_json::from_str::<StructureKind>(&new).unwrap(), StructureKind::OrbitalWarehouse);
+        // A build job queued under the old slug completes as the renamed structure.
+        let job: BuildKind = serde_json::from_str(r#"{"kind":"upgrade","upgrade":"depot"}"#).unwrap();
+        assert_eq!(job, BuildKind::Upgrade { upgrade: StructureKind::OrbitalWarehouse });
+        // …and the slug() helper agrees with what serde writes.
+        assert_eq!(StructureKind::OrbitalWarehouse.slug(), "orbital_warehouse");
+    }
 
     /// §ladder B6.1 — THE EFFICIENCY INVARIANT (load-bearing): combat weight
     /// per Armaments spent PEAKS at Destroyer-or-Cruiser and STRICTLY DECLINES
@@ -584,12 +738,15 @@ mod tests {
 
     #[test]
     fn capital_recipes_and_gates_climb_the_ladder() {
-        // Shipyard gates 3/4/4/5/6 and build times 8h → 8d, strictly rising.
-        assert_eq!(required_shipyard_tier(ShipKind::Destroyer), 3);
-        assert_eq!(required_shipyard_tier(ShipKind::Cruiser), 4);
-        assert_eq!(required_shipyard_tier(ShipKind::Battleship), 4);
-        assert_eq!(required_shipyard_tier(ShipKind::Dreadnought), 5);
-        assert_eq!(required_shipyard_tier(ShipKind::Titan), 6);
+        // §yards: the capital ladder now climbs across TWO yards — the line of
+        // battle at the Drydock (1/2/3), the super-capitals at the Slipway (1/2)
+        // — instead of one Shipyard running to tier 6. Build times 8h → 8d,
+        // strictly rising, are unchanged.
+        assert_eq!(yard_for(ShipKind::Destroyer), (StructureKind::NavalDrydock, 1));
+        assert_eq!(yard_for(ShipKind::Cruiser), (StructureKind::NavalDrydock, 2));
+        assert_eq!(yard_for(ShipKind::Battleship), (StructureKind::NavalDrydock, 3));
+        assert_eq!(yard_for(ShipKind::Dreadnought), (StructureKind::CapitalSlipway, 1));
+        assert_eq!(yard_for(ShipKind::Titan), (StructureKind::CapitalSlipway, 2));
         let ticks = |k: ShipKind| recipe_for(BuildKind::Ship { ship: k }).build_ticks;
         assert_eq!(ticks(ShipKind::Destroyer), 8 * 3600 * HZ, "a Destroyer takes 8 hours");
         assert_eq!(ticks(ShipKind::Titan), 192 * 3600 * HZ, "a Titan takes 8 days — a season event");

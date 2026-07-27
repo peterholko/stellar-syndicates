@@ -74,6 +74,14 @@ pub enum ShipKind {
     /// answer is the wolfpack torpedo Raider, unless its 45 points went to PD
     /// or Dreadnought screens (the puzzle the budgets exist to pose).
     Titan,
+    /// §ground M7: THE TROOP TRANSPORT — the hull an invasion is actually built
+    /// around. Slow, unarmed, and it BROADCASTS: an assault force is telegraphed,
+    /// raidable, and escortable, exactly like the colony ship whose job it takes
+    /// over. It carries no cargo and no guns; what it carries is marines, and
+    /// losing it in transit loses them (expansion by force has stakes, the same
+    /// way settlement does). Built at a GARRISON, not a shipyard — troops come
+    /// from barracks, not slipways.
+    Transport,
     /// THE AUTHORITY FREIGHTER (§TCA): the scheduled common-carrier hull the
     /// TERRAN CHARTER AUTHORITY runs between the Charterhouse and the colonies.
     /// Owned ONLY by the [`crate::ids::PlayerId::TCA`] sentinel — NOT buildable by
@@ -122,6 +130,8 @@ impl ShipKind {
             ShipKind::Battleship => 8_000.0,
             ShipKind::Dreadnought => 16_000.0,
             ShipKind::Titan => 32_000.0,
+            // §ground: a trooper is a big soft hull — heavy, but not a warship.
+            ShipKind::Transport => 7_000.0,
             ShipKind::Freighter => 6000.0, // chunkier than a convoy — a bulk carrier
         }
     }
@@ -156,6 +166,7 @@ impl ShipKind {
             ShipKind::Battleship => 36.0,
             ShipKind::Dreadnought => 29.0,
             ShipKind::Titan => 23.0, // the slowest hull flying — presence, not pursuit
+            ShipKind::Transport => 30.0, // an invasion is slow and everyone sees it coming
             ShipKind::Freighter => 32.0, // slower than a convoy — a laden common carrier
         }
     }
@@ -180,6 +191,9 @@ impl ShipKind {
                 | ShipKind::Battleship
                 | ShipKind::Dreadnought
                 | ShipKind::Titan
+                // §ground: a troop convoy is a declared civilian-escort formation
+                // — an invasion cannot be a surprise.
+                | ShipKind::Transport
                 | ShipKind::Freighter
         )
     }
@@ -218,6 +232,7 @@ impl ShipKind {
             ShipKind::Battleship => 8.0,
             ShipKind::Dreadnought => 12.0,
             ShipKind::Titan => 24.0,
+            ShipKind::Transport => 0.0, // troopers do not fight ships
             ShipKind::Freighter => 0.0, // an unarmed common carrier
         }
     }
@@ -237,6 +252,7 @@ impl ShipKind {
             ShipKind::Battleship => 12.0,
             ShipKind::Dreadnought => 26.0,
             ShipKind::Titan => 44.0,
+            ShipKind::Transport => 1.0, // a fat hull that needs escorting
             ShipKind::Freighter => 1.0, // a fat civilian hull, like a convoy
         }
     }
@@ -292,7 +308,7 @@ impl ShipKind {
             ShipKind::Raider => 2,
             ShipKind::Scout => 1,
             // §TCA: the Authority's carrier fits no modules — it is not a warship.
-            ShipKind::Convoy | ShipKind::Colony | ShipKind::Freighter => 0,
+            ShipKind::Convoy | ShipKind::Colony | ShipKind::Transport | ShipKind::Freighter => 0,
             ShipKind::Destroyer => 3,
             ShipKind::Cruiser => 4,
             ShipKind::Battleship => 4,
@@ -315,6 +331,7 @@ pub fn fitting_points(kind: ShipKind) -> u32 {
         ShipKind::Scout => 2,
         ShipKind::Convoy => 2,
         ShipKind::Colony => 2,
+        ShipKind::Transport => 2,
         ShipKind::Raider => 4,
         ShipKind::Corvette => 5,
         // §ladder: the big budgets — capitals combine freely (a Titan carries
@@ -393,7 +410,7 @@ pub fn is_siege_anchor(kind: ShipKind) -> bool {
 /// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A
 /// fleet-of-one resolves to that ship's own kind, so nothing changes for the
 /// N=1 world. Highest precedence first.
-pub const FLAGSHIP_PRECEDENCE: [ShipKind; 11] = [
+pub const FLAGSHIP_PRECEDENCE: [ShipKind; 12] = [
     // §ladder: a capital OUTRANKS everything — a fleet with a Titan IS the
     // Titan (its name, its sprite, its label), down the ladder from there.
     ShipKind::Titan,
@@ -401,6 +418,9 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 11] = [
     ShipKind::Battleship,
     ShipKind::Cruiser,
     ShipKind::Destroyer,
+    // §ground: a troop convoy reads as the invasion it is — outranking the
+    // civilian hulls it travels with, so a fleet carrying one is drawn as one.
+    ShipKind::Transport,
     ShipKind::Colony,
     ShipKind::Convoy,
     // A freighter fleet is pure freighters (never mixed with player ships), so its
@@ -413,7 +433,7 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 11] = [
 
 /// All ship kinds, in a fixed deterministic order (composition iteration,
 /// damage-pool distribution, report ordering). Kept in sync with [`ShipKind`].
-pub const ALL_SHIP_KINDS: [ShipKind; 11] = [
+pub const ALL_SHIP_KINDS: [ShipKind; 12] = [
     ShipKind::Convoy,
     ShipKind::Raider,
     ShipKind::Corvette,
@@ -424,6 +444,7 @@ pub const ALL_SHIP_KINDS: [ShipKind; 11] = [
     ShipKind::Battleship,
     ShipKind::Dreadnought,
     ShipKind::Titan,
+    ShipKind::Transport,
     ShipKind::Freighter,
 ];
 
@@ -499,6 +520,93 @@ impl CountClass {
         }
     }
 }
+
+// --- STANDING UPKEEP (§upkeep) -------------------------------------------------
+// Fleets cost PROVISIONS every second they exist, fed or not, anywhere. This is
+// the ceiling on force: before it, a hull was a one-off purchase and an idle
+// navy was free forever, so hoarding was strictly dominant and the economy never
+// pushed back. The charge is on CREW, not tonnage — a Titan is a city under arms
+// while a convoy is mostly empty hold — so the sink lands on warfleets and
+// leaves logistics cheap.
+//
+// Scale check against a fresh home (one staffed Agroplex ≈ 1.2 Provisions/s, its
+// 2.0M population eating 0.12/s): the ~1.08/s spare feeds roughly 18 raiders, or
+// 10 corvettes, and not one Titan. A home alone supports a raiding wing; a line
+// of battle needs colonies behind it. Every value Tunable — this table is the
+// single dial on how big a navy the map can carry.
+
+/// PROVISIONS per second, per hull. `Freighter` is 0: the Authority's own hull is
+/// never a corporation's cost.
+pub fn upkeep_per_sec(kind: ShipKind) -> f64 {
+    match kind {
+        ShipKind::Scout => 0.01,     // a couple of crew and a very good sensor
+        ShipKind::Convoy => 0.03,    // civilian hauler: big hull, small crew
+        ShipKind::Colony => 0.06,    // the colonists aboard eat too
+        // §ground: a trooper is a barracks under way — marines eat well.
+        ShipKind::Transport => 0.35,
+        ShipKind::Raider => 0.06,
+        ShipKind::Corvette => 0.10,
+        ShipKind::Destroyer => 0.25,
+        ShipKind::Cruiser => 0.45,
+        ShipKind::Battleship => 0.80,
+        ShipKind::Dreadnought => 1.40,
+        ShipKind::Titan => 2.50, // a flagship is a standing commitment, not a purchase
+        ShipKind::Freighter => 0.0,
+    }
+}
+
+// --- §ground M6/M7: MARINES ----------------------------------------------------
+// Taking ground needs troops on it. Orbital supremacy suppresses a garrison
+// (§ground M6) but can never take a colony — the prize must survive, and
+// population never decreases — so somebody has to land.
+//
+// Capitals carry a marine complement as a matter of course, which finally gives
+// the top of the ladder a job besides presence; the dedicated Troop Transport
+// carries far more per ton and is the hull an actual invasion is built around.
+
+/// MARINE COMPLEMENT carried by one hull of this kind. Warships carry a boarding
+/// party; the Transport is a purpose-built trooper. Everything civilian carries
+/// none — colonists are not soldiers. Tunable.
+pub fn marine_capacity(kind: ShipKind) -> u32 {
+    match kind {
+        // The dedicated invasion hull.
+        ShipKind::Transport => 40,
+        // Capitals carry real boarding parties — presence with a purpose.
+        ShipKind::Titan => 30,
+        ShipKind::Dreadnought => 18,
+        ShipKind::Battleship => 12,
+        ShipKind::Cruiser => 7,
+        ShipKind::Destroyer => 4,
+        // Everything else: none. A corvette screens, a raider steals, and a
+        // colony ship settles empty ground — none of them storm a planet.
+        _ => 0,
+    }
+}
+
+/// §dock: WHERE a fleet is berthed. The Charterhouse is not a system (it has no
+/// id — it is a fixed point in the galaxy), so a plain `Option<EntityId>` can't
+/// name it without conflating "berthed at the hub" with "not berthed at all".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DockSite {
+    /// The Terran Charterhouse at the wormhole hub — the galaxy's busiest dock,
+    /// and the one place every corporation's traffic converges.
+    Hub,
+    /// A star system this fleet's owner (or an ally) holds.
+    System(EntityId),
+}
+
+/// §dock: how close a fleet must be to a dock to BE DOCKED — one radius for
+/// every purpose, replacing the three that grew up independently (logistics at
+/// 260, repair and marine re-embark at 80). A hull 150 su out could be loaded
+/// with cargo but not repaired, and nothing anywhere said why.
+///
+/// Sized as a docking APPROACH rather than a contact: it is generous enough that
+/// a player who parked "at" a system is docked, which matters more now that
+/// docking is a state they can see. Nothing under way can trip it — the
+/// predicate requires an Idle fleet — so a ship merely passing near a world is
+/// never captured by it. Tunable.
+pub const DOCK_RADIUS: f64 = 260.0;
 
 /// Radius (sim units) within which an arriving COLONY SHIP settles an
 /// unclaimed system (§ships part 3) — matches the raid contact radius, so
@@ -644,9 +752,58 @@ pub struct DefenseEngagement {
     pub patrol: Vec<Vec2>,
 }
 
+/// §roster — ONE INDIVIDUAL HULL. Fleets are ROSTERS now, not histograms: every
+/// ship in the game is a record with its own identity, fit, and remaining hull.
+/// This is what makes battle damage PERSIST exactly — a survivor carries its own
+/// deficit out of the arena and into the next fight, with no pooling and no
+/// pro-rata share anywhere.
+///
+/// `id` is FLEET-LOCAL (allocated from [`Fleet::next_ship_id`]): a ship is only
+/// ever addressed as `(fleet, ship)`, and a hull moving between fleets by
+/// merge/split is re-issued an id by its new owner. Fleet-local keeps ids small
+/// in snapshots and needs no world-wide counter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ship {
+    pub id: u32,
+    pub kind: ShipKind,
+    /// The fit this HULL carries. Empty = the stock beam brawler.
+    #[serde(default)]
+    pub loadout: crate::module::Loadout,
+    /// Remaining hull. Full = [`ShipKind::hull_mass`] (the tactical engine's
+    /// battle HP). Damage persists here between engagements until repaired.
+    pub hp: f64,
+}
+
+impl Ship {
+    /// A fresh, undamaged hull.
+    pub fn new(id: u32, kind: ShipKind, loadout: crate::module::Loadout) -> Self {
+        Ship { id, kind, loadout, hp: kind.hull_mass() }
+    }
+    /// Full hull — the tactical engine's `max_hp` for this kind.
+    pub fn max_hp(&self) -> f64 {
+        self.kind.hull_mass()
+    }
+    /// Missing hull (never negative).
+    pub fn deficit(&self) -> f64 {
+        (self.max_hp() - self.hp).max(0.0)
+    }
+    /// The stack key this hull belongs to — `(kind, loadout key)`.
+    pub fn stack_key(&self) -> String {
+        self.loadout.key()
+    }
+}
+
 /// A FLEET: the map/sim unit (GDD §13.1). One or more ships of mixed kinds
 /// moving, fighting, and being observed as a SINGLE entity. A fleet-of-one is
-/// the N=1 case and behaves exactly as the old single [`Ship`]-per-unit world.
+/// the N=1 case and behaves exactly as the old single ship-per-unit world.
+///
+/// §roster: [`Fleet::ships`] is the SOURCE OF TRUTH — `composition` and
+/// `loadouts` are a denormalized CACHE rebuilt from it after every mutation
+/// ([`Fleet::rebuild_cache`]). Storing it twice is deliberate (the same pattern
+/// syndicate membership uses): every hot read — detection signature, mass, fuel,
+/// combat weight, the fog bucket — stays an O(1) map lookup instead of walking a
+/// 300-hull roster at 30 Hz, and the wire projection is unchanged. The two are
+/// pinned together by `roster_and_cache_always_agree`.
 ///
 /// `composition` is a deterministic `BTreeMap` (id-sorted kind iteration) of how
 /// many of each kind ride in the formation. It is never empty for a live fleet —
@@ -655,7 +812,17 @@ pub struct DefenseEngagement {
 pub struct Fleet {
     pub id: EntityId,
     pub owner: PlayerId,
-    /// How many of each ship kind ride in this formation (deterministic order).
+    /// §roster: THE INDIVIDUAL HULLS — the source of truth. Kept sorted by `id`
+    /// (deterministic iteration; a JSON array is far leaner than a keyed map at
+    /// 300 hulls). `#[serde(default)]` + `fixup_after_load` synthesize a roster
+    /// for every pre-roster snapshot, so old saves load pristine.
+    #[serde(default)]
+    pub ships: Vec<Ship>,
+    /// Monotonic allocator for this fleet's ship ids.
+    #[serde(default)]
+    pub next_ship_id: u32,
+    /// CACHE (derived from `ships`): how many of each kind ride in this
+    /// formation. Never written directly — see [`Fleet::rebuild_cache`].
     pub composition: BTreeMap<ShipKind, u32>,
     pub pos: Vec2,
     pub vel: Vec2,
@@ -677,6 +844,13 @@ pub struct Fleet {
     /// every tick. Cleared whenever the fleet moves again. serde default = false.
     #[serde(default)]
     pub notified_held: bool,
+    /// §ground G1: marines this formation has already put on the ground. Hulls
+    /// survive a landing; the men in them do not, so without this a capital
+    /// group would land the same boarding parties every tick forever. Cleared
+    /// by re-embarking at an owned Garrison. serde default = 0 (pre-feature
+    /// fleets are fully manned, which is what they were).
+    #[serde(default)]
+    pub marines_spent: u32,
     /// Per-kind DAMAGE POOLS accumulated in an ongoing engagement (Part 2,
     /// Lanchester attrition). Empty when not/never engaged; serde default keeps
     /// old snapshots loading. A kind's ships die whole once its pool ≥ its hull,
@@ -716,6 +890,21 @@ pub struct Fleet {
     /// fleet that isn't a garrison. serde default `true` so old snaps load fed.
     #[serde(default = "default_true")]
     pub garrison_fed: bool,
+    /// §upkeep: is this fleet's standing Provisions upkeep currently being met?
+    /// Recomputed every tick from the owner's stockpiles. An UNSUPPLIED fleet is
+    /// IMMOBILIZED — it accepts no new movement or offensive order — but it is
+    /// never destroyed, never disarmed, and never stopped mid-flight: it still
+    /// defends itself, still finishes the leg it is on, and recovers the instant
+    /// food reaches it. Shortages suspend; they do not destroy (§5.1). serde
+    /// default `true` so every pre-upkeep snapshot loads supplied.
+    #[serde(default = "default_true")]
+    pub supplied: bool,
+    /// §plunder: the sub-unit remainder of goods stripped from a blockaded
+    /// system. Plunder accrues at a per-second rate but loads in WHOLE units, so
+    /// the fraction rides here between ticks rather than rounding away (which
+    /// would silently change the effective rate). serde default 0.0.
+    #[serde(default)]
+    pub plunder_frac: f64,
     /// §rankings: has this fleet EVER been a participant in an engagement? Latches
     /// true when the fleet joins any battle, so a convoy that fought and STILL
     /// delivered can be credited "cargo protected" on arrival. serde default false
@@ -771,6 +960,9 @@ impl Fleet {
         Fleet {
             id,
             owner,
+            // §roster: the fleet-of-one primitive is one HULL at full health.
+            ships: vec![Ship::new(0, kind, crate::module::Loadout::default())],
+            next_ship_id: 1,
             composition,
             pos,
             vel: Vec2::ZERO,
@@ -779,17 +971,165 @@ impl Fleet {
             mission: None,
             defense: None,
             notified_held: false,
+            marines_spent: 0,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
             passengers: BTreeMap::new(),
             modules: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
             garrison_fed: true,
+            supplied: true,
+            plunder_frac: 0.0,
             fought: false,
             loadouts: BTreeMap::new(),
             engage_freight: false,
             disposable: false,
         }
+    }
+
+    // --- §roster: the ROSTER is truth; composition/loadouts are its cache ------
+
+    /// Rebuild the denormalized `composition` + `loadouts` cache from `ships`.
+    /// Called after EVERY roster mutation — the one place the two can be brought
+    /// back into agreement, so they can never silently drift.
+    pub fn rebuild_cache(&mut self) {
+        self.ships.sort_by_key(|s| s.id); // deterministic iteration + JSON order
+        self.composition.clear();
+        self.loadouts.clear();
+        for s in &self.ships {
+            *self.composition.entry(s.kind).or_insert(0) += 1;
+            if !s.loadout.is_empty() {
+                *self.loadouts.entry(s.kind).or_default().entry(s.stack_key()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    /// Allocate the next fleet-local ship id.
+    fn alloc_ship_id(&mut self) -> u32 {
+        let id = self.next_ship_id;
+        self.next_ship_id += 1;
+        id
+    }
+
+    /// Push `n` fresh hulls of `(kind, loadout)` at FULL health and refresh the
+    /// cache. The single entry point for new ships joining a fleet.
+    pub fn add_fitted(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) {
+        for _ in 0..n {
+            let id = self.alloc_ship_id();
+            self.ships.push(Ship::new(id, kind, loadout.clone()));
+        }
+        if n > 0 {
+            self.rebuild_cache();
+        }
+    }
+
+    /// Replace the ENTIRE roster with `n` fresh unfitted hulls of `kind` — the
+    /// spawn primitive for scripted formations (pirate packs, Authority
+    /// enforcement squadrons) and for test setup that wants a known fleet.
+    pub fn reset_to(&mut self, kind: ShipKind, n: u32) {
+        self.ships.clear();
+        self.next_ship_id = 0;
+        self.add_fitted(kind, &crate::module::Loadout::default(), n);
+    }
+
+    /// ABSORB hulls from another fleet (merge / relief / a completed refit),
+    /// re-issuing ids from this fleet's allocator. Damage travels WITH the hull.
+    pub fn absorb_ships(&mut self, incoming: Vec<Ship>) {
+        if incoming.is_empty() {
+            return;
+        }
+        for mut s in incoming {
+            s.id = self.alloc_ship_id();
+            self.ships.push(s);
+        }
+        self.rebuild_cache();
+    }
+
+    /// DETACH `n` hulls of `kind` for a split, FITTED FIRST (so a detached
+    /// escort keeps its fits — the pre-roster `detach_loadouts` behaviour) and
+    /// then by id. Returns the actual hulls, damage and all.
+    pub fn detach_ships(&mut self, kind: ShipKind, n: u32) -> Vec<Ship> {
+        let mut idx: Vec<usize> = (0..self.ships.len()).filter(|i| self.ships[*i].kind == kind).collect();
+        // Fitted first, then by id — deterministic.
+        idx.sort_by(|a, b| {
+            let (x, y) = (&self.ships[*a], &self.ships[*b]);
+            x.loadout.is_empty().cmp(&y.loadout.is_empty()).then(x.id.cmp(&y.id))
+        });
+        idx.truncate(n as usize);
+        idx.sort_unstable();
+        let mut out = Vec::with_capacity(idx.len());
+        for i in idx.into_iter().rev() {
+            out.push(self.ships.remove(i));
+        }
+        out.reverse();
+        if !out.is_empty() {
+            self.rebuild_cache();
+        }
+        out
+    }
+
+    /// RE-FIT `n` existing hulls of `kind` to `loadout` in place, taking the
+    /// currently-unfitted ones first (by id — deterministic). This is what a
+    /// completed refit does to hulls that never left, and the natural way to
+    /// express "this wing flies fitted" in setup. Returns how many were changed.
+    pub fn set_fitted(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> u32 {
+        let mut idx: Vec<usize> = (0..self.ships.len()).filter(|i| self.ships[*i].kind == kind).collect();
+        idx.sort_by(|a, b| {
+            let (x, y) = (&self.ships[*a], &self.ships[*b]);
+            y.loadout.is_empty().cmp(&x.loadout.is_empty()).then(x.id.cmp(&y.id))
+        });
+        idx.truncate(n as usize);
+        let changed = idx.len() as u32;
+        for i in idx {
+            self.ships[i].loadout = loadout.clone();
+        }
+        if changed > 0 {
+            self.rebuild_cache();
+        }
+        changed
+    }
+
+    /// The roster entry for `(kind, ship id)`, if it is still aboard.
+    pub fn ship_mut(&mut self, kind: ShipKind, id: u32) -> Option<&mut Ship> {
+        self.ships.iter_mut().find(|s| s.id == id && s.kind == kind)
+    }
+
+    /// §ground: the MARINES this formation can put on the ground — summed over
+    /// its hulls. What an assault is measured in.
+    pub fn marines(&self) -> u32 {
+        let carried: u32 = self.ships.iter().map(|s| marine_capacity(s.kind)).sum();
+        carried.saturating_sub(self.marines_spent)
+    }
+
+    /// §ground G1: mark this formation's whole complement as COMMITTED. Troops
+    /// that have gone down cannot go down twice — without this a capital group
+    /// would re-land its boarding parties every tick, since the hulls survive a
+    /// landing even when the men do not. Cleared by re-embarking (§ground).
+    pub fn commit_marines(&mut self) {
+        self.marines_spent = self.ships.iter().map(|s| marine_capacity(s.kind)).sum();
+    }
+
+    /// Take on fresh troops — only at an owned colony with a Garrison to draw
+    /// them from. This is why a capital group that has spent its parties has to
+    /// go home before it can threaten ground again.
+    pub fn reembark_marines(&mut self) {
+        self.marines_spent = 0;
+    }
+
+    /// §upkeep: Provisions per second this whole formation draws — the sum over
+    /// its hulls. A fleet's standing cost, paid wherever it happens to be.
+    pub fn upkeep_per_sec(&self) -> f64 {
+        self.ships.iter().map(|s| upkeep_per_sec(s.kind)).sum()
+    }
+
+    /// Total missing hull across the whole formation, and its full-health total —
+    /// the aggregate the View reports (never per-hull; that would leak counts).
+    pub fn damage_fraction(&self) -> f64 {
+        let max: f64 = self.ships.iter().map(|s| s.max_hp()).sum();
+        if max <= 0.0 {
+            return 0.0;
+        }
+        (self.ships.iter().map(|s| s.deficit()).sum::<f64>() / max).clamp(0.0, 1.0)
     }
 
     // --- §modules Part B: the LOADOUT partition (invariant: Σ ≤ composition) ---
@@ -799,109 +1139,57 @@ impl Fleet {
         self.loadouts.get(&kind).map(|m| m.values().sum()).unwrap_or(0)
     }
 
-    /// Fold ANOTHER fleet's loadouts into this one (merge/relief: fits carry).
-    pub fn fold_loadouts(&mut self, other: &crate::combat::LoadoutMap) {
-        for (kind, m) in other {
-            for (key, n) in m {
-                if *n > 0 && !key.is_empty() {
-                    *self.loadouts.entry(*kind).or_default().entry(key.clone()).or_insert(0) += *n;
-                }
-            }
-        }
-    }
-
-    /// DETACH `n` ships of `kind` for a split: take from FITTED stacks first
-    /// (deterministic key order — a detached escort keeps its fits), returning
-    /// the fitted breakdown taken (the rest are unfitted on the new fleet). Only
-    /// touches loadouts; the caller adjusts `composition` separately.
-    pub fn detach_loadouts(&mut self, kind: ShipKind, n: u32) -> crate::combat::LoadoutMap {
-        let mut taken: crate::combat::LoadoutMap = BTreeMap::new();
-        let mut remaining = n;
-        if let Some(m) = self.loadouts.get_mut(&kind) {
-            let keys: Vec<String> = m.keys().cloned().collect();
-            for key in keys {
-                if remaining == 0 {
-                    break;
-                }
-                let have = m.get(&key).copied().unwrap_or(0);
-                let take = have.min(remaining);
-                if take > 0 {
-                    *taken.entry(kind).or_default().entry(key.clone()).or_insert(0) += take;
-                    let left = have - take;
-                    if left == 0 {
-                        m.remove(&key);
-                    } else {
-                        m.insert(key, left);
-                    }
-                    remaining -= take;
-                }
-            }
-            if m.is_empty() {
-                self.loadouts.remove(&kind);
-            }
-        }
-        taken
-    }
+    // §roster: `fold_loadouts` / `detach_loadouts` are RETIRED. They moved fits
+    // as counts, separately from the hulls, which the roster makes both
+    // unnecessary and wrong — a hull's fit AND its accumulated damage now travel
+    // together in the `Ship` record. Use `absorb_ships` / `detach_ships`.
 
     /// Remove `n` ships from the `(kind, loadout)` stack — decrements
     /// `composition[kind]` and, for a fitted loadout, its stack count. Returns
     /// how many were removed (clamped to what's in that stack).
-    pub fn remove_stack(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> u32 {
+    /// TAKE up to `n` hulls out of the `(kind, loadout)` stack and RETURN them,
+    /// most-damaged first. Combat kills the ships that were already hurt (which
+    /// is both intuitive and keeps a surviving roster healthy rather than
+    /// uniformly chipped); a yard likewise takes the neediest hulls first.
+    ///
+    /// Returning the hulls — rather than a count — is what lets a caller that
+    /// intends to give them BACK (the refit queue) preserve their health. A
+    /// caller that is destroying them just drops the Vec.
+    pub fn take_stack(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> Vec<Ship> {
         let key = loadout.key();
-        let available = if loadout.is_empty() {
-            // Unfitted ships = composition remainder not covered by fitted stacks.
-            self.count(kind).saturating_sub(self.fitted_count(kind))
-        } else {
-            self.loadouts.get(&kind).and_then(|m| m.get(&key)).copied().unwrap_or(0)
-        };
-        let take = available.min(n);
-        if take == 0 {
-            return 0;
+        let mut idx: Vec<usize> = (0..self.ships.len())
+            .filter(|i| self.ships[*i].kind == kind && self.ships[*i].stack_key() == key)
+            .collect();
+        idx.sort_by(|a, b| {
+            let (x, y) = (&self.ships[*a], &self.ships[*b]);
+            y.deficit().partial_cmp(&x.deficit()).unwrap_or(std::cmp::Ordering::Equal).then(x.id.cmp(&y.id))
+        });
+        idx.truncate(n as usize);
+        if idx.is_empty() {
+            return Vec::new();
         }
-        self.remove(kind, take); // composition (+ zeroes the per-kind pool if emptied)
-        if !loadout.is_empty()
-            && let Some(m) = self.loadouts.get_mut(&kind)
-        {
-            let left = m.get(&key).copied().unwrap_or(0).saturating_sub(take);
-            if left == 0 {
-                m.remove(&key);
-            } else {
-                m.insert(key, left);
-            }
-            if m.is_empty() {
-                self.loadouts.remove(&kind);
-            }
+        idx.sort_unstable();
+        let mut out = Vec::with_capacity(idx.len());
+        for i in idx.into_iter().rev() {
+            out.push(self.ships.remove(i));
         }
-        take
+        out.reverse();
+        self.rebuild_cache();
+        out
     }
 
-    /// Clamp the loadout partition back to the invariant (Σ ≤ composition per
-    /// kind) and drop empty entries — self-healing after any bare composition edit.
+    /// Remove `n` ships from the `(kind, loadout)` stack, discarding them.
+    /// Returns how many went (the loss-accounting path).
+    pub fn remove_stack(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> u32 {
+        self.take_stack(kind, loadout, n).len() as u32
+    }
+
+    /// §roster: SUPERSEDED — the loadout partition is a projection of the roster
+    /// now, so it cannot drift out of the invariant in the first place. Kept as a
+    /// named entry point (and for any hand-edited cache) that simply rebuilds it
+    /// from the hulls, which is the strongest form of "normalize" available.
     pub fn normalize_loadouts(&mut self) {
-        self.loadouts.retain(|kind, m| {
-            m.retain(|key, n| *n > 0 && !key.is_empty());
-            let cap = self.composition.get(kind).copied().unwrap_or(0);
-            let mut total: u32 = m.values().sum();
-            if total > cap {
-                // Trim excess from the last keys (deterministic).
-                let keys: Vec<String> = m.keys().cloned().collect();
-                for key in keys.into_iter().rev() {
-                    if total <= cap {
-                        break;
-                    }
-                    let have = m.get(&key).copied().unwrap_or(0);
-                    let drop = have.min(total - cap);
-                    let left = have - drop;
-                    if left == 0 {
-                        m.remove(&key);
-                    } else {
-                        m.insert(key, left);
-                    }
-                    total -= drop;
-                }
-            }
-            !m.is_empty()
-        });
+        self.rebuild_cache();
     }
 
     /// How many ships of `kind` ride in this fleet (0 if none).
@@ -924,27 +1212,30 @@ impl Fleet {
         CountClass::from_count(self.total_count())
     }
 
-    /// Add `n` ships of `kind` to the composition.
+    /// Add `n` UNFITTED ships of `kind` at full health (§roster).
     pub fn add(&mut self, kind: ShipKind, n: u32) {
-        if n > 0 {
-            *self.composition.entry(kind).or_insert(0) += n;
-        }
+        self.add_fitted(kind, &crate::module::Loadout::default(), n);
     }
 
-    /// Remove up to `n` ships of `kind`, dropping the entry when it hits zero.
-    /// Returns how many were actually removed.
+    /// Remove up to `n` ships of `kind`. Sheds UNFITTED hulls first (the
+    /// pre-roster behaviour, where `normalize_loadouts` trimmed the fitted
+    /// partition last), then by id — deterministic. Returns how many went.
     pub fn remove(&mut self, kind: ShipKind, n: u32) -> u32 {
-        let have = self.count(kind);
-        let take = have.min(n);
+        let mut idx: Vec<usize> = (0..self.ships.len()).filter(|i| self.ships[*i].kind == kind).collect();
+        idx.sort_by(|a, b| {
+            let (x, y) = (&self.ships[*a], &self.ships[*b]);
+            y.loadout.is_empty().cmp(&x.loadout.is_empty()).then(x.id.cmp(&y.id))
+        });
+        idx.truncate(n as usize);
+        let take = idx.len() as u32;
         if take == 0 {
             return 0;
         }
-        if take == have {
-            self.composition.remove(&kind);
-            self.damage.remove(&kind);
-        } else {
-            self.composition.insert(kind, have - take);
+        idx.sort_unstable();
+        for i in idx.into_iter().rev() {
+            self.ships.remove(i);
         }
+        self.rebuild_cache();
         take
     }
 
@@ -1151,7 +1442,10 @@ mod tests {
 
     fn fleet(comp: &[(ShipKind, u32)], cargo: Option<Cargo>) -> Fleet {
         let mut f = Fleet::single(EntityId(1), PlayerId(1), ShipKind::Scout, Vec2::ZERO, FleetOrder::Idle, cargo);
-        f.composition.clear();
+        // §roster: drop the placeholder hull `single` seeded, then crew for real.
+        f.ships.clear();
+        f.next_ship_id = 0;
+        f.rebuild_cache();
         for (k, n) in comp {
             f.add(*k, *n);
         }
@@ -1280,7 +1574,7 @@ mod tests {
     fn loadout_partition_holds_through_add_remove_detach_fold() {
         let md = Loadout::new(vec![ModuleKind::MassDriver]);
         let mut f = fleet(&[(ShipKind::Raider, 5)], None);
-        f.loadouts.entry(ShipKind::Raider).or_default().insert(md.key(), 3); // 3 fitted, 2 unfitted
+        f.set_fitted(ShipKind::Raider, &md, 3); // 3 fitted, 2 unfitted
         assert!(invariant_holds(&f) && total_fitted(&f, ShipKind::Raider) == 3);
 
         // Removing an UNFITTED ship leaves the fits intact.
@@ -1293,33 +1587,99 @@ mod tests {
         assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
         assert!(invariant_holds(&f));
 
-        // Detach 2 (fitted-first): takes both remaining fits onto the new fleet.
-        let taken = f.detach_loadouts(ShipKind::Raider, 2);
-        f.remove(ShipKind::Raider, 2);
-        assert_eq!(taken.get(&ShipKind::Raider).map(|m| m.values().sum::<u32>()).unwrap_or(0), 2, "escorts keep their fits");
+        // §roster: detach 2 (fitted-first) — the actual HULLS leave, carrying
+        // their fits with them, and the source is left with only unfitted ships.
+        let taken = f.detach_ships(ShipKind::Raider, 2);
+        assert_eq!(taken.len(), 2);
+        assert_eq!(taken.iter().filter(|s| !s.loadout.is_empty()).count(), 2, "escorts keep their fits");
+        assert_eq!(f.count(ShipKind::Raider), 1);
         assert_eq!(total_fitted(&f, ShipKind::Raider), 0);
         assert!(invariant_holds(&f));
 
-        // Fold another fleet's fits back in (merge/relief).
+        // Absorb another fleet's hulls (merge/relief): their fits come along.
         let mut g = fleet(&[(ShipKind::Raider, 2)], None);
-        g.loadouts.entry(ShipKind::Raider).or_default().insert(Loadout::new(vec![ModuleKind::WhippleArmor]).key(), 2);
-        f.add(ShipKind::Raider, 2);
-        f.fold_loadouts(&g.loadouts);
+        g.set_fitted(ShipKind::Raider, &Loadout::new(vec![ModuleKind::WhippleArmor]), 2);
+        f.absorb_ships(std::mem::take(&mut g.ships));
+        assert_eq!(f.count(ShipKind::Raider), 3);
         assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
         assert!(invariant_holds(&f));
+    }
+
+    /// §roster THE LOAD-BEARING INVARIANT: `ships` is truth and
+    /// `composition`/`loadouts` are its projection, so after ANY mutation the
+    /// two must agree exactly. Storing it twice is only safe because this holds.
+    #[test]
+    fn roster_and_cache_always_agree() {
+        let md = Loadout::new(vec![ModuleKind::MassDriver]);
+        let wa = Loadout::new(vec![ModuleKind::WhippleArmor]);
+        let agree = |f: &Fleet| {
+            let mut comp: BTreeMap<ShipKind, u32> = BTreeMap::new();
+            let mut lo: crate::combat::LoadoutMap = BTreeMap::new();
+            for s in &f.ships {
+                *comp.entry(s.kind).or_insert(0) += 1;
+                if !s.loadout.is_empty() {
+                    *lo.entry(s.kind).or_default().entry(s.stack_key()).or_insert(0) += 1;
+                }
+            }
+            comp == f.composition && lo == f.loadouts
+                // …and ids are unique + sorted (deterministic iteration).
+                && f.ships.windows(2).all(|w| w[0].id < w[1].id)
+        };
+        let mut f = fleet(&[(ShipKind::Raider, 4), (ShipKind::Corvette, 2)], None);
+        assert!(agree(&f), "fresh");
+        f.set_fitted(ShipKind::Raider, &md, 2);
+        assert!(agree(&f), "after set_fitted");
+        f.add_fitted(ShipKind::Corvette, &wa, 3);
+        assert!(agree(&f), "after add_fitted");
+        f.remove(ShipKind::Raider, 1);
+        assert!(agree(&f), "after remove");
+        f.remove_stack(ShipKind::Raider, &md, 1);
+        assert!(agree(&f), "after remove_stack");
+        let taken = f.detach_ships(ShipKind::Corvette, 2);
+        assert!(agree(&f), "after detach");
+        f.absorb_ships(taken);
+        assert!(agree(&f), "after absorb");
+        f.reset_to(ShipKind::Scout, 5);
+        assert!(agree(&f), "after reset_to");
+        // A serde round trip preserves the roster and re-derives an equal cache.
+        let json = serde_json::to_string(&f).unwrap();
+        let back: Fleet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ships, f.ships);
+        assert!(agree(&back), "after a snapshot round-trip");
+    }
+
+    /// §roster: damage rides the HULL. A wounded ship keeps its deficit through
+    /// a split and a merge — no pooling, no pro-rata, no laundering by reorg.
+    #[test]
+    fn damage_travels_with_the_hull_through_split_and_merge() {
+        let mut f = fleet(&[(ShipKind::Raider, 3)], None);
+        f.ships[1].hp = 50.0; // one wounded raider
+        let full = ShipKind::Raider.hull_mass();
+        assert!((f.damage_fraction() - (full - 50.0) / (3.0 * full)).abs() < 1e-9);
+        // Detaching the wounded hull moves the damage with it.
+        let wounded_id = f.ships[1].id;
+        let taken = f.detach_ships(ShipKind::Raider, 3);
+        assert_eq!(taken.iter().find(|s| s.id == wounded_id).unwrap().hp, 50.0);
+        // …and absorbing it back preserves the hp under a re-issued id.
+        let mut g = fleet(&[(ShipKind::Raider, 1)], None);
+        g.absorb_ships(taken);
+        assert_eq!(g.ships.iter().filter(|s| s.hp == 50.0).count(), 1, "exactly one hull is still hurt");
+        assert_eq!(g.count(ShipKind::Raider), 4);
     }
 
     #[test]
     fn normalize_clamps_an_over_fit_partition() {
         let mut f = fleet(&[(ShipKind::Raider, 2)], None);
-        // Corrupt the invariant (4 fits over 2 hulls) — normalize must clamp.
+        // §roster: hand-corrupt the CACHE (4 fits over 2 hulls). Because the
+        // roster is the source of truth, rebuilding restores the invariant
+        // exactly — a corrupted projection can't survive a rebuild.
         let m = f.loadouts.entry(ShipKind::Raider).or_default();
         m.insert(Loadout::new(vec![ModuleKind::MassDriver]).key(), 3);
         m.insert(Loadout::new(vec![ModuleKind::TorpedoRack]).key(), 1);
         assert!(!invariant_holds(&f));
         f.normalize_loadouts();
         assert!(invariant_holds(&f), "normalize restores Σ ≤ composition");
-        assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
+        assert_eq!(total_fitted(&f, ShipKind::Raider), 0, "the hulls were never actually fitted");
     }
 
     #[test]

@@ -163,7 +163,7 @@ pub enum EventPayload {
     SystemUpgraded {
         system: EntityId,
         owner: PlayerId,
-        /// Which development completed (Extractor/Depot/…).
+        /// Which development completed (Mining Complex/Orbital Warehouse/…).
         upgrade: crate::build::StructureKind,
         /// The new tier of that development.
         tier: u32,
@@ -208,6 +208,58 @@ pub enum EventPayload {
     /// §modules Part B4: a REFIT completed — `n` hulls of `ship` rejoined fitted
     /// to `loadout` at `system`. OWNER-ONLY, own clock (a yard job, like a build).
     ShipsRefitted { owner: PlayerId, system: EntityId, ship: crate::ship::ShipKind, loadout: crate::module::Loadout, n: u32 },
+    /// §ground M7: a landing was REPULSED — the marines that arrived could not
+    /// beat what was still standing. Nothing is lost (the fleet holds, intact and
+    /// redirectable); this exists so the player learns WHY rather than watching
+    /// nothing happen. OWNER-ONLY. `needed` is what the garrison demanded AS
+    /// BOMBARDED — bring more troops, or suppress harder.
+    /// §ground G1: a landing force REFUSED to go in — it is short of the
+    /// break-even strength, so nothing was committed and nothing was lost. The
+    /// fleet holds in orbit until it is reinforced or the guns pin more of the
+    /// garrison. Distinct from `AssaultRepulsed`, which costs you the landing.
+    AssaultHeld { owner: PlayerId, system: EntityId, marines: u32, needed: u32, pos: crate::math::Vec2 },
+    /// §ground G1: the drop went in. `marines` landed against `defenders`
+    /// standing troops, under `suppression` at the moment of the landing.
+    AssaultBegan {
+        attacker: PlayerId,
+        defender: PlayerId,
+        system: EntityId,
+        assault: EntityId,
+        marines: u32,
+        defenders: u32,
+        suppression: f64,
+        pos: crate::math::Vec2,
+    },
+    /// §ground G1: the landing was DESTROYED on the ground. The marines are
+    /// gone with the transports that carried them; the colony holds. `held` is
+    /// what the garrison had left when it was over.
+    AssaultRepulsed { owner: PlayerId, system: EntityId, landed: u32, held: u32, pos: crate::math::Vec2 },
+    /// §ground: a system's dug-in GARRISON went unfed (suspending its defense) or
+    /// was fed again. OWNER-ONLY, own clock — your own quartermastery, and it
+    /// must never leak: a rival learning your garrison is starving would be told
+    /// exactly when to land.
+    GarrisonSupplyStateChanged { owner: PlayerId, system: EntityId, fed: bool },
+    /// §plunder: a held BLOCKADE stripped goods from the system it strangles.
+    /// Both sides learn it light-delayed from the system (the victim sees their
+    /// stores walking away; the besieger sees the prize come aboard) — the same
+    /// treatment `BlockadeEstablished` gets.
+    SystemPlundered {
+        by: PlayerId,
+        owner: PlayerId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+        pos: crate::math::Vec2,
+    },
+    /// §upkeep: a fleet's standing Provisions supply changed state — it went
+    /// hungry (and is now immobilized) or was fed again (and is free to move).
+    /// Transition-only, OWNER-ONLY, own clock: it is your own quartermastery.
+    FleetSupplyChanged { owner: PlayerId, fleet: EntityId, supplied: bool },
+    /// §roster: a fleet finished REPAIRS at an Ordnance Foundry — every hull back
+    /// to full. Fires ONCE, on completion (a per-tick event would flood the
+    /// timeline for the whole service). OWNER-ONLY, own clock: it is your own
+    /// yard's work, like a build.
+    FleetRepaired { owner: PlayerId, fleet: EntityId, system: EntityId },
     /// §modules Part B3: a module convoy LANDED its crates into a system's ledger.
     /// OWNER-ONLY, own clock (own-economy precedent, like SpecialistsDelivered).
     ModulesDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32> },
@@ -383,7 +435,11 @@ pub enum EventPayload {
     OrderRejected {
         owner: PlayerId,
         fleet: EntityId,
-        target: EntityId,
+        /// The order's target, when it had one. `None` for a rejection about the
+        /// FLEET ITSELF rather than what it was pointed at (§upkeep: an
+        /// unsupplied fleet declines any order, target or not).
+        #[serde(default)]
+        target: Option<EntityId>,
         reason: OrderRejectReason,
     },
 
@@ -438,7 +494,7 @@ pub enum TradeEvent {
     /// `action`. The "your frontier supply went sideways" notification — an
     /// attention item for the check-in timeline (§16, Layer 2).
     SupplyDiverted { player: PlayerId, commodity: Commodity, units: u32, system: EntityId, action: DivertAction },
-    /// A delivery arrived at `system` but its DEPOT was (partly) FULL (§buildings
+    /// A delivery arrived at `system` but its STORAGE was (partly) FULL (§buildings
     /// step 2): `units` of the cargo could not be stored, so the SAME convoy
     /// carries the excess onward to the hub to sell (sub-light, raidable — goods
     /// are never silently destroyed). Any storable part was delivered first (its
@@ -507,7 +563,7 @@ pub enum FreightStage {
     CollectedForPickup,
     /// Landed in the owner's Charterhouse warehouse.
     ArrivedAtWarehouse,
-    /// Could not be delivered (the system is no longer the owner's, or its depot
+    /// Could not be delivered (the system is no longer the owner's, or its storage
     /// had no room), so the Authority carried it back to the owner's warehouse.
     /// Friendlier than the convoy cargo-lost rule, and deliberately so.
     ReturnedUndeliverable,
@@ -591,9 +647,16 @@ impl RaidOutcome {
 pub enum BuildRejectReason {
     /// Every development slot at the system is used (built + in-progress).
     NoSlot,
-    /// The system's Shipyard tier is below what this ship kind needs
-    /// (§buildings step 3: Convoy ≥ 1, Raider ≥ 2).
-    NeedsShipyard { required: u32 },
+    /// §yards: the system's gating YARD is below the tier this hull needs — or,
+    /// for a yard STRUCTURE, its prerequisite yard is (a Naval Drydock wants a
+    /// Shipyard ≥ 2 here, a Capital Slipway a Drydock ≥ 3). Carries which yard
+    /// and what tier, so the notice names the fix. Supersedes the old
+    /// `NeedsShipyard`, which could only ever mean the Shipyard.
+    NeedsYard { yard: crate::build::StructureKind, required: u32 },
+    /// §yards M1: the gating yard's SLIPWAYS are all occupied — a tier-N yard
+    /// builds N hulls at once. Not a refusal of the hull, just of the timing:
+    /// nothing is spent, and the same request succeeds when a slip frees up.
+    NoSlip { slips: u32 },
     /// The requested ship kind is not buildable by a corporation (§TCA — the
     /// Authority Freighter is TCA-only). Should never reach a real client (it is
     /// absent from every BUILDABLE menu); a defensive soft-reject for a malformed
@@ -672,6 +735,11 @@ pub enum OrderRejectReason {
     /// §TCA: the target shelters inside the CHARTERHOUSE SOVEREIGNTY BUBBLE, where
     /// no engagement may open. Fleeing into the bubble is sanctuary, by design.
     InsideSovereignZone,
+    /// §upkeep: the fleet is UNSUPPLIED — its standing Provisions upkeep isn't
+    /// being met, so it accepts no new movement or offensive order. Nothing is
+    /// lost: the fleet keeps its guns and its current course, and the order can
+    /// simply be re-issued once food reaches it.
+    Unsupplied,
 }
 
 impl Event {

@@ -110,11 +110,11 @@ export interface SystemBodyDetail {
 
 /// The GLYPH families for structure markers (art only — placement comes from
 /// each body's actual structures).
-export type DevKey = "extractor" | "depot" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
+export type DevKey = "extractor" | "orbital_warehouse" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
 function glyphFamily(slug: string): DevKey {
   switch (slug) {
     case "mining_complex": case "volatile_harvester": case "bioharvester": return "extractor";
-    case "depot": return "depot";
+    case "orbital_warehouse": return "orbital_warehouse";
     case "shipyard": return "shipyard";
     case "sensor_array": return "sensor_array";
     case "defense_platform": return "defense_platform";
@@ -747,7 +747,7 @@ export class SystemViewScene {
         g.poly([5, -4, 5, 4, 2, 4]).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
         g.moveTo(-5, -4).lineTo(5, -4).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
         break;
-      case "depot": // violet crate: square with a band
+      case "orbital_warehouse": // violet crate: square with a band
         g.rect(-4, -4, 8, 8).stroke({ width: 1.3, color: 0xc99bff, alpha: 0.95 });
         g.moveTo(-4, 0).lineTo(4, 0).stroke({ width: 1, color: 0xc99bff, alpha: 0.7 });
         break;

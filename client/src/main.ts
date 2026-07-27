@@ -3,10 +3,11 @@
 import { Net } from "./net";
 import { Renderer } from "./render";
 import { initialState, type LinkStatus, type ViewState } from "./state";
-import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type KeyframeView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
+import { groundTheaterAttach, groundTheaterAvailable, groundTheaterClose, groundTheaterDebug, groundTheaterSetTime, groundTheaterStep } from "./groundtheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 
 const state: ViewState = initialState();
@@ -71,42 +72,28 @@ function flushPressGuard(): void {
 window.addEventListener("pointerup", () => setTimeout(flushPressGuard, 0), true);
 window.addEventListener("pointercancel", () => setTimeout(flushPressGuard, 0), true);
 
-// The same hazard one step earlier: HOVER. A panel that rebuilds on every View
-// recreates its buttons ~10×/s, and a brand-new node has no `:hover` until the
-// browser's next hit-test — so the hover border on whatever the cursor rests on
-// blinks off and on. That is the flicker. `setHtml` below removes the common
-// case (a rebuild that changes nothing shouldn't touch the DOM at all); this
-// guard covers the rest, holding a rebuild that WOULD destroy the control under
-// the cursor until the cursor leaves it. Deliberately narrow: only while
-// pointing AT a control, so live numbers elsewhere in the panel keep ticking.
-const hoverGuard = { target: null as EventTarget | null, deferred: new Map<string, () => void>() };
-const HOVER_CONTROLS = "button,select,input,textarea,a,[data-body],[data-bp-row],[data-act],[role=tab]";
-function hoveringControl(rootId: string): boolean {
-  const t = hoverGuard.target;
-  return t instanceof Element && $(rootId).contains(t) && !!t.closest(HOVER_CONTROLS);
-}
-window.addEventListener("pointermove", (e) => {
-  hoverGuard.target = e.target;
-  if (!hoverGuard.deferred.size) return;
-  for (const [rootId, render] of [...hoverGuard.deferred]) {
-    if (hoveringControl(rootId)) continue; // still on it — keep holding
-    hoverGuard.deferred.delete(rootId);
-    render();
-  }
-}, true);
+// The same hazard one step earlier was HOVER: a panel that rebuilds on every View
+// recreated its buttons ~10×/s, and a brand-new node has no `:hover` until the
+// browser's next hit-test, so the border on whatever the cursor rested on blinked.
+// That used to be answered by a second guard that HELD the rebuild until the
+// cursor left the control — which quietly froze the panel for as long as the
+// player kept the mouse still. Assign a crew, don't move the mouse, and the crew
+// count never changed: the command had landed a tick later, but the panel was
+// waiting on a `pointermove` that never came. It read as mysterious lag.
+//
+// The narrow fix is in `setHtml`: rebuild the panel but PRESERVE the node under
+// the cursor, by reconciling the DOM in place instead of replacing it. The hovered
+// button is the same element before and after, so its `:hover` never lapses and
+// there is nothing to defer. No hover guard remains — panels stay live under the
+// pointer.
 
 /// True → `rootId` must NOT rebuild its DOM right now, because a press is down
-/// inside it (the pressed node must survive to pointerup) or the cursor is
-/// resting on one of its controls (destroying it would drop `:hover`). Either
-/// way the render is queued and re-runs the moment the guard lifts.
+/// inside it: the pressed node must survive to pointerup or the click is lost.
+/// The render is queued and re-runs the moment the press lifts.
 function renderDeferred(rootId: string, render: () => void): boolean {
   const t = pressGuard.target;
   if (t instanceof Node && $(rootId).contains(t)) {
     pressGuard.deferred.set(rootId, render);
-    return true;
-  }
-  if (hoveringControl(rootId)) {
-    hoverGuard.deferred.set(rootId, render);
     return true;
   }
   return false;
@@ -118,11 +105,129 @@ function renderDeferred(rootId: string, render: () => void): boolean {
 /// whatever the player was pointing at. The last string is cached per element
 /// (rather than read back from `innerHTML`) so the check costs a comparison,
 /// not a DOM serialization.
+///
+/// When the html HAS changed, the update is applied by RECONCILING the existing
+/// DOM against it (`morphChildren`) rather than by `innerHTML =`. A wholesale
+/// rewrite destroys every descendant, and a brand-new node has no `:hover` until
+/// the browser's next hit-test — so the control under the cursor blinks, and (the
+/// reason this matters) the panel could not be rebuilt AT ALL while the cursor
+/// rested on one of its buttons without that blink. Reusing nodes keeps the
+/// cursor's node identity, so a panel refreshes under the pointer with no flicker
+/// and no deferral: click a crew ±, watch the number change, mouse never moves.
 const lastHtmlWritten = new WeakMap<HTMLElement, string>();
 function setHtml(el: HTMLElement, html: string): void {
   if (lastHtmlWritten.get(el) === html) return;
   lastHtmlWritten.set(el, html);
-  el.innerHTML = html;
+  const parsed = document.createElement("template");
+  parsed.innerHTML = html; // <template> parses ANY fragment (incl. bare <option>)
+  morphChildren(el, parsed.content);
+}
+
+/// Attributes that give a node a STABLE IDENTITY across rebuilds, so it is reused
+/// even when the list around it reorders (production lines re-sort as crews move).
+/// Order matters only for determinism — the first present wins.
+const NODE_KEY_ATTRS = ["id", "data-crew", "data-build", "data-body", "data-action", "data-act", "data-mtab", "data-tab", "data-rid", "data-sy"];
+function nodeKey(e: Element): string | null {
+  for (const a of NODE_KEY_ATTRS) {
+    const v = e.getAttribute(a);
+    if (v !== null) return `${a}=${v}`;
+  }
+  return null;
+}
+
+/// Reconcile `target`'s children against `source`'s, IN PLACE: reuse a node when
+/// it matches (by key, else by position + tag), recurse into it, and only create
+/// or drop what genuinely appeared or vanished. Live DOM state a rewrite would
+/// destroy — `:hover`, focus, caret, scroll, a dirtied input's value, an <img>
+/// already decoded — survives on every reused node.
+function morphChildren(target: Element, source: ParentNode): void {
+  // Index the current children that carry a key, so a reorder MOVES nodes rather
+  // than recreating them.
+  //
+  // Each key maps to a QUEUE, not a single node, because keys are NOT guaranteed
+  // unique among siblings: `nodeKey` returns the first attribute a node carries
+  // from NODE_KEY_ATTRS, and plenty of generated lists share one — every battle
+  // scrubber tick is `data-act=round`, every speed button `data-act=speed`,
+  // every split button `data-act=split`, and the per-item attribute that
+  // actually distinguishes them (`data-round`, `data-speed`, `data-kind`) is not
+  // a key attribute. With one node per key, every one of those source children
+  // resolved to the SAME target node: they all morphed onto it, the cursor
+  // finished immediately after it, and the trailing cleanup deleted the rest of
+  // the list. The list rendered correctly on first paint (nothing to reuse) and
+  // collapsed to a single item on the first re-render after — silently, since
+  // nothing errors. Matching duplicates in document order degrades them to
+  // positional reuse WITHIN the key group, which is exactly right, and leaves
+  // genuinely-unique keys behaving as they always did.
+  const keyed = new Map<string, Element[]>();
+  for (let n = target.firstElementChild; n; n = n.nextElementSibling) {
+    const k = nodeKey(n);
+    if (!k) continue;
+    const q = keyed.get(k);
+    if (q) q.push(n);
+    else keyed.set(k, [n]);
+  }
+  let cursor: ChildNode | null = target.firstChild;
+  for (const src of [...source.childNodes]) {
+    let match: ChildNode | null = null;
+    if (src.nodeType === Node.ELEMENT_NODE) {
+      const k = nodeKey(src as Element);
+      if (k) {
+        // Same key AND same tag — a key that changed element type is a different
+        // thing wearing an old name, and reusing it would leave the cursor
+        // pointing at a node we then replace (and delete the rest of the list).
+        // Consume the first queued node of that tag, so each source child claims
+        // a distinct target node and no two can land on the same one.
+        const q = keyed.get(k);
+        const at = q ? q.findIndex((e) => e.tagName === (src as Element).tagName) : -1;
+        if (q && at >= 0) match = q.splice(at, 1)[0];
+      } else if (
+        cursor?.nodeType === Node.ELEMENT_NODE
+        && (cursor as Element).tagName === (src as Element).tagName
+        && !nodeKey(cursor as Element) // never steal a keyed node for an unkeyed slot
+      ) {
+        match = cursor;
+      }
+    } else if (cursor && cursor.nodeType === src.nodeType) {
+      match = cursor; // text / comment in the same slot
+    }
+    if (!match) {
+      target.insertBefore(src, cursor); // genuinely new — adopt it from the parse
+      continue;
+    }
+    if (match !== cursor) target.insertBefore(match, cursor); // reordered
+    if (src.nodeType === Node.ELEMENT_NODE) {
+      morphElement(match as Element, src as Element);
+    } else if (match.nodeValue !== src.nodeValue) {
+      match.nodeValue = src.nodeValue;
+    }
+    cursor = match.nextSibling;
+  }
+  // Anything left past the cursor is gone from the new html.
+  while (cursor) {
+    const next: ChildNode | null = cursor.nextSibling;
+    cursor.remove();
+    cursor = next;
+  }
+}
+
+/// Bring one reused element up to date: attributes first, then its children.
+/// Only ever called with matching tag names (`morphChildren` guarantees it).
+function morphElement(target: Element, source: Element): void {
+  for (const a of [...target.attributes]) {
+    if (!source.hasAttribute(a.name)) target.removeAttribute(a.name);
+  }
+  for (const a of [...source.attributes]) {
+    if (target.getAttribute(a.name) !== a.value) target.setAttribute(a.name, a.value);
+  }
+  // A <select>'s selection lives in the PROPERTY, not the attribute: reconciling
+  // its <option>s can leave the property pointing at nothing, so restore it when
+  // the previously-selected value still exists.
+  const wanted = target instanceof HTMLSelectElement ? target.value : null;
+  morphChildren(target, source);
+  if (target instanceof HTMLSelectElement && wanted !== null && target.value !== wanted
+    && [...target.options].some((o) => o.value === wanted)) {
+    target.value = wanted;
+  }
 }
 
 // --- Renderer --------------------------------------------------------------
@@ -130,7 +235,8 @@ const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
-(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false, big = false) => theaterDemo(titanDown, big), theaterDemoLive: (ms = 1800) => theaterDemoLive(ms) };
+bindLandingDelegate();
+(window as unknown as { __ss: unknown }).__ss = { state, renderer, openBattleViewer, openGroundViewer, groundTheaterDebug, theaterHash, theaterDebug, theaterSetTime, theaterStep, theaterDemo: (titanDown = false, big = false) => theaterDemo(titanDown, big), theaterDemoLive: (ms = 1800) => theaterDemoLive(ms) };
 
 async function startRenderer(): Promise<void> {
   if (rendererReady) return;
@@ -219,11 +325,18 @@ const HULL_MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
+  // §ground: the troop transport (mirrors ship.rs).
+  transport: 7000,
   // §TCA: the Authority's carrier (mirrors ship.rs).
   freighter: 6000,
 };
 const CARGO_MASS_PER_UNIT = 28;
-// §TCA Part 5: mirrors `tca::LOGISTICS_RANGE` — how close a fleet must be to a
+// Mirrors `ShipKind::Convoy.max_speed()` — the cruise of the hull a `StockSystem`
+// run spawns at the hub, so the Warehouse tab can quote an honest own-convoy ETA
+// beside the Authority's (whose legs the server sends as `secs_out`/`secs_round`,
+// computed from the slower Freighter hull).
+const CONVOY_SPEED_UI = 40;
+// §dock: mirrors `ship::DOCK_RADIUS` — how close a fleet must be to a
 // dock (the Charterhouse, or one of your systems) to load or unload.
 const LOGISTICS_RANGE_UI = 260;
 // §TCA Phase 2: mirrors `tca::TCA_STANDING_LOSS_PER_INCIDENT` — used only for the
@@ -566,6 +679,7 @@ const TCA_SOVEREIGN_RADIUS = 900;
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
+  transport: "Troop Transport",
   freighter: "Authority Freighter",
 };
 const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
@@ -685,6 +799,29 @@ function postureSection(g: GhostView): string {
 const FLAGSHIP_ORDER: ShipKind[] = ["titan", "dreadnought", "battleship", "cruiser", "destroyer", "colony", "convoy", "corvette", "raider", "scout"];
 
 // The COMPOSITION section of the fleet panel — mirrors the §13.1 intel ladder:
+/// §upkeep: an UNSUPPLIED fleet is immobilized — it declines new movement and
+/// offensive orders until Provisions reach it. Owner-only, and loud: without this
+/// line a refused order just looks like the click did nothing.
+function supplyLine(g: GhostView): string {
+  if (!g.own || g.supplied !== false) return "";
+  return `<div class="sp-line"><span class="negative" title="This fleet has run out of Provisions. It keeps its guns and its current order and loses nothing — but it will not set out again until food reaches a system near it. Ship Provisions toward it, or bring it home.">` +
+    `${icon("warning", "sm")} <b>out of supply</b> — immobilized until fed</span></div>`;
+}
+
+/// §roster: how beaten up the formation is. Rides the composition gate, so a
+/// rival's condition shows only from inside sensor coverage — finding a wounded
+/// fleet is real intel. An AGGREGATE: the per-hull roster never leaves the sim.
+function damageLine(g: GhostView): string {
+  const d = g.damage ?? 0;
+  if (d <= 0.001) return "";
+  const pct = Math.round(d * 100);
+  const tone = d > 0.5 ? "negative" : d > 0.2 ? "warn" : "dim";
+  const word = d > 0.5 ? "crippled" : d > 0.2 ? "mauled" : "scratched";
+  const who = g.own ? "Dock at an Ordnance Foundry to repair." : "A wounded formation is the best target on the map.";
+  return `<div class="sp-line"><span class="${tone}" title="${esc(pct + "% of this formation's hull is gone. Damage persists between battles until a foundry services it. " + who)}">` +
+    `hull <b>${100 - pct}%</b> — ${word}</span></div>`;
+}
+
 // full composition for own fleets and rivals inside sensor coverage; a bucket-only
 // estimate ("est. 4–7 ships — composition unknown") outside coverage.
 function compositionSection(g: GhostView): string {
@@ -702,7 +839,7 @@ function compositionSection(g: GhostView): string {
       flagship = `<div class="sp-line">${icon("fleet", "sm")} flagship: <b>${name ? esc(name) : "<span class=\"dim\">unnamed</span>"}</b> ` +
         `<button class="act" style="width:auto;padding:2px 7px;font-size:11px" data-act="nameflagship" title="Christen your syndicate's Titan — the name shows on your fleet and in participant battle records.">${name ? "rename" : "name it"}…</button></div>`;
     }
-    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>${flagship}`;
+    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>${flagship}${damageLine(g)}${supplyLine(g)}`;
   }
   return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
@@ -994,7 +1131,7 @@ function updateShipPanel(): void {
   // to its first option) — the panel still rebuilds ~10 Hz to keep the age live.
   const prevQty = (root.querySelector(".lg-qty") as HTMLInputElement | null)?.value;
   const prevCom = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value;
-  root.innerHTML = head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`;
+  setHtml(root, head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`);
   if (prevQty !== undefined) {
     const q = root.querySelector(".lg-qty") as HTMLInputElement | null;
     if (q) q.value = prevQty;
@@ -1283,7 +1420,7 @@ function updateRankingsPanel(): void {
 
   const el = $("rankings-body");
   if (!rows.length) {
-    el.innerHTML = `<div class="dim">No ledger published yet — the first close lands within a minute of the campaign start.</div>`;
+    setHtml(el, `<div class="dim">No ledger published yet — the first close lands within a minute of the campaign start.</div>`);
     return;
   }
   const cat = RANK_CATS.find((c) => c.slug === rankingsSortCat) ?? RANK_CATS[0];
@@ -1308,10 +1445,10 @@ function updateRankingsPanel(): void {
       );
     })
     .join("");
-  el.innerHTML =
+  setHtml(el,
     `<div class="rk-chips">${chips}</div>` +
     `<div class="rk-catname dim">Ranked by <b>${esc(cat.label)}</b></div>` +
-    `<div class="rk-table">${body}</div>`;
+    `<div class="rk-table">${body}</div>`);
 }
 
 // --- Wormhole Hub detail panel (§hub-art) --------------------------------------
@@ -1517,14 +1654,14 @@ function updateSysviewManage(): void {
   if (svmSig === lastSysviewManageSig && $("svm-body").innerHTML) return;
   lastSysviewManageSig = svmSig;
 
-  // Stockpile + depot cap (the "ship it or it idles" pressure).
+  // Stockpile + storage cap (the "ship it or it idles" pressure).
   const cap = dyn.storage_cap ?? 0;
   const used = dyn.storage_used ?? 0;
   const storageFull = cap > 0 && used >= cap;
   const storageBar = cap > 0
     ? `<div class="deps-head">${icon("storage", "sm", "Stockpile")} Stockpile Capacity ${fmt(used)} / ${fmt(cap)}</div>` +
       `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
-      (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build a Depot to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
+      (storageFull ? ` ${badgeChip("storage", "full", "warn", "Storage full — production idles at the cap. Ship goods out or build an Orbital Warehouse to raise it (reserves aren't wasted; accrual resumes when goods ship).")}` : "") +
       `</div>`
     : "";
   // §body-management: COLONY VITALS — population, food rung, workforce, and the
@@ -1579,7 +1716,7 @@ function updateSysviewManage(): void {
   // (production still accrues into the stockpile). A prominent banner explains it.
   const blockaded = !!dyn.blockade;
   const siege = siegeProgress(dyn);
-  const siegeTip = "Defenses suppressed, the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — a rival colony ship landing at full siege CAPTURES this system. (Your home can be blockaded but never falls.)";
+  const siegeTip = "Defenses suppressed, the siege clock is running. Break the blockade or rebuild a Defense Platform to reset it — at full siege, rival MARINES landing in strength take this system. (Your home can be blockaded but never falls.)";
   const siegeLine = siege
     ? `<div class="deps-head" style="margin-top:6px">${badgeChip("siege", siege.ripe ? "SIEGE CRITICAL — capture imminent" : `siege — falls in ${fmtCountdown(siege.left)}`, "negative", siegeTip)}</div>` +
       `<div class="storage-row">${bar(siege.pct, "is-warn")}</div>`
@@ -1588,7 +1725,7 @@ function updateSysviewManage(): void {
     ? `<div style="margin:6px 0">${badgeChip("blockade", "under blockade", "negative", "A rival fleet holds station — convoys are held in & out (production still accrues). Break the blockade (relief, or a new Defense Platform tier) to resume shipping.")}</div>${siegeLine}`
     : "";
   // §body-management: NO action buttons here — shipping/auto-supply live on
-  // the Depot's station panel, builds/crews on their anchor bodies.
+  // the warehouse station panel, builds/crews on their anchor bodies.
   // §syndicates Part 3: the ally GARRISON you're hosting here — the coalition
   // shield you feed (its Provisions upkeep draws from THIS system).
   const gShips = dyn.ally_garrison_ships ?? 0;
@@ -1611,6 +1748,8 @@ function updateSysviewManage(): void {
     converterBanner(dyn), // "Idle converters" — built lines that need crew / inputs / food
     `<div class="deps-head">Planets</div>` + devs, // the planet roster under its own header
     vitals + poolStrip, // colony vitals + slot pools
+    groundLine(dyn), // §ground: what a landing here would have to beat
+    berthLine(sid), // §dock: hulls parked here, which the star chart no longer draws
     garrisonHost,
     queue,
   ].filter((s) => s.trim() !== "");
@@ -1661,13 +1800,6 @@ function buildPlanetPanel(): void {
         // sibling — opening it closes the structure builder, and vice-versa).
         if (openBodyDetail) openShipPanel(openBodyDetail.id);
         break;
-      case "ship": {
-        const manifest = shippableStock(state.systems.find((s) => s.id === sid));
-        if (manifest.length) net.send({ type: "ShipProduction", system_id: sid });
-        refreshOpenBodyPanel();
-        updateSysviewManage();
-        break;
-      }
       case "standing":
         // Logistics is a corp-wide galaxy concern — a deliberate context switch.
         exitSystem();
@@ -1792,10 +1924,29 @@ function openPlanetPanel(d: SystemBodyDetail): void {
       const shipQueue = buildQueueRows(sid, dyn, { filter: (j) => SHIP_KEYS.has(j.key), seenKey: `${sid}#yard` });
       // The per-hull rows moved into the dedicated ship builder; the planet panel
       // keeps the fit composer + the yard's queue (watch it here, choose there).
-      const yardTier = dyn.shipyard_tier ?? 0;
+      // §yards: the whole family, each with its own slipway count — a tier-N yard
+      // holds N hulls on the stocks, and the yards count their slips separately.
+      const yardChips = (["shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry"] as const)
+        .map((k) => [k, dyn.structures?.[k] ?? 0] as const)
+        .filter(([k, t]) => t > 0 || k === "shipyard")
+        .map(([k, t]) => {
+          const busy = (dyn.builds ?? []).filter((j) => SHIP_YARD[j.key]?.yard === k).length;
+          const slips = k === "ordnance_foundry" ? "" : ` · ${busy}/${slipsFor(t)} slips`;
+          const tip = k === "ordnance_foundry"
+            ? "Outfitting and maintenance — refits install here, and damaged hulls docked here are repaired. Repair runs on crew, like any production line."
+            : `A tier-${t} yard holds ${slipsFor(t)} hull${slipsFor(t) === 1 ? "" : "s"} on the stocks at once.`;
+          // §roster: a foundry with NO crew posted services nothing — and says so.
+          // It isn't a converter, so the idle-converter banner never covers it.
+          const unstaffed = k === "ordnance_foundry"
+            && t > 0
+            && !(dyn.assignments ?? []).some((a) => a.structure === "ordnance_foundry" && a.workers > 0)
+            ? ` <span class="warn" title="An unstaffed foundry installs no refits and repairs nothing. Post a crew to it from this body's production lines.">· unstaffed</span>`
+            : "";
+          return `<span class="pp-pool" title="${esc(tip)}">${icon("shipyard", "sm")} ${esc(YARD_TITLE[k])} ${romanTier(t)}${slips}${unstaffed}</span>`;
+        }).join("");
       yardSec = shipOpts.length
-        ? ppSec("Orbital yard — ship construction", "Ships build at this body's Shipyard (tier-gated exactly as before) and spawn here.") +
-          `<div class="pp-yardline"><span class="pp-pool" title="The shipyard tier gates what can be built (Convoy/Scout/Colony I, Raider/Corvette II).">${icon("shipyard", "sm")} Shipyard ${romanTier(yardTier)}</span>` +
+        ? ppSec("Orbital yards — ship construction", "Light hulls build at the Shipyard, the line of battle at a Naval Drydock, super-capitals at a Capital Slipway. Each yard's tier is its slipway count.") +
+          `<div class="pp-yardline">${yardChips}` +
           `<button class="act pp-build-open" data-action="open-shipyard" title="Open the ship builder — pick a hull, set a quantity, read its stats & recipe, then queue it.">${icon("shipyard", "sm")} Build Ship</button></div>` +
           fitPicker(dyn) +
           shipQueue
@@ -1810,19 +1961,19 @@ function openPlanetPanel(d: SystemBodyDetail): void {
         moduleForge(dyn);
     }
 
-    // 6. DEPOT on this body: LOGISTICS — cargo leaves from the orbital warehouse.
-    let depotSec = "";
-    if ((tiers["depot"] ?? 0) > 0) {
-      const canShip = !blockaded && shippableStock(dyn).length > 0;
-      const shipTitle = blockaded ? "Held — this system is under blockade." : canShip ? "Ship one raidable convoy per commodity, selling on arrival (Fuel stays as this system's operating reserve)." : "Nothing shippable — Fuel is retained as the operating reserve; other goods ship in whole units.";
-      depotSec = ppSec("Orbital warehouse — logistics", "The system stockpile ships out from this station.") +
-        `<div><button class="act" data-action="ship" ${canShip ? "" : "disabled"} title="${esc(shipTitle)}">${icon("cargo", "sm")} Ship → hub</button>` +
-        `<button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button></div>`;
+    // 6. ORBITAL WAREHOUSE on this body: LOGISTICS. The warehouse is CAPACITY and
+    // nothing else — it is NOT a permit to ship (dispatch is system-scoped and
+    // needs no structure), so no per-body shipping button lives here, and it buys
+    // no favour from the Authority (freight terms are uniform).
+    let warehouseSec = "";
+    if ((tiers["orbital_warehouse"] ?? 0) > 0) {
+      warehouseSec = ppSec("Orbital Warehouse — logistics", "Raises how much this system can hold. The stockpile it guards is system-wide, and shipping out needs no structure at all.") +
+        `<div><button class="act" data-action="standing" title="Set a standing logistics rule that auto-dispatches convoys from here (online or off).">${icon("doctrine", "sm")} Auto-supply</button></div>`;
     }
 
     // The "Under construction" progress bars sit directly under Production Lines
     // (a structure being built is production-in-progress), above the Build menu.
-    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + depotSec;
+    manage = blockChip + built + linesSec + bodyQueue + buildSec + yardSec + modulesSec + warehouseSec;
     // §bodies edge state: a body with nothing built and nothing buildable
     // stays a quiet piece of scenery.
     if (!manage) manage = `<div class="mhint">Nothing built here yet.</div>`;
@@ -2009,6 +2160,8 @@ const SHIP_ICON: Record<ShipKind, string> = {
   // capital sheet arrives separately; see PR note).
   destroyer: "concept-fleet", cruiser: "concept-fleet", battleship: "concept-fleet",
   dreadnought: "concept-fleet", titan: "concept-fleet",
+  // §ground: a troopship is a settlement hull with rifles — reuse the claim glyph.
+  transport: "action-claim-system",
   // §TCA: the Authority's common carrier — drawn with the hauler glyph.
   freighter: "concept-convoy",
 };
@@ -2211,6 +2364,176 @@ function buildBattleViewer(): void {
       }
     }
   });
+}
+
+// ============ §ground G3: THE GROUND VIEWER =================================
+// The host shell around `groundtheater.ts`: playback clock, scrubber, and the
+// same light-cone honesty as the battle viewer — the scrubber simply has no
+// rounds beyond the frontier, because the record has none. Nothing here can
+// show a player something that has not reached them.
+
+let groundViewerBuilt = false;
+let openGroundViewerId: string | null = null;
+let gvRound = 0;
+let gvFrac = 0;
+let gvLive = false;
+let gvPlaying = false;
+let gvLastTs = 0;
+let gvLoopRunning = false;
+let lastGroundViewerSig = "";
+
+const gvRecordFor = (id: string): GroundRecordView | undefined => state.groundRecords.find((r) => r.id === id);
+
+// §ground G3: the "watch the landing" affordance is rendered by `groundLine`,
+// which appears in TWO panels (the colony sheet and the system rail). One
+// delegated listener on the document covers both, rather than duplicating the
+// handler in each panel's own click router.
+let landingDelegateBound = false;
+function bindLandingDelegate(): void {
+  if (landingDelegateBound) return;
+  landingDelegateBound = true;
+  document.addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest("[data-act='watch-landing']") as HTMLElement | null;
+    if (el?.dataset.landing) openGroundViewer(el.dataset.landing);
+  });
+}
+
+function buildGroundViewer(): void {
+  if (groundViewerBuilt) return;
+  groundViewerBuilt = true;
+  $("ground-viewer").addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+    if (!el) return;
+    const rec = openGroundViewerId ? gvRecordFor(openGroundViewerId) : undefined;
+    const frontier = rec ? rec.rounds.length - 1 : -1;
+    switch (el.dataset.act) {
+      case "close":
+        closeGroundViewer();
+        break;
+      case "play":
+        if (!gvPlaying && rec && rec.outcome !== null && gvRound >= frontier) { gvRound = 0; gvLive = false; }
+        gvPlaying = !gvPlaying;
+        renderGroundViewer();
+        break;
+      case "round":
+        gvRound = Number(el.dataset.round) || 0;
+        gvFrac = 0;
+        gvLive = rec !== undefined && rec.outcome === null && gvRound >= frontier;
+        gvPlaying = false;
+        renderGroundViewer();
+        break;
+    }
+  });
+}
+
+function openGroundViewer(id: string): void {
+  const rec = gvRecordFor(id);
+  if (!rec) return; // no access → no viewer (fog); the affordance is guarded too
+  buildGroundViewer();
+  openGroundViewerId = id;
+  const running = rec.outcome === null;
+  const frontier = rec.rounds.length - 1;
+  gvLive = running;
+  gvRound = running ? Math.max(0, frontier) : 0;
+  gvFrac = 0;
+  gvPlaying = !running && frontier > 0; // auto-play a concluded landing from the top
+  gvLastTs = 0;
+  lastGroundViewerSig = "";
+  renderGroundViewer();
+  if (!gvLoopRunning) {
+    gvLoopRunning = true;
+    requestAnimationFrame(gvTick);
+  }
+}
+
+function closeGroundViewer(): void {
+  openGroundViewerId = null;
+  gvPlaying = false;
+  $("ground-viewer").classList.remove("is-open");
+  groundTheaterClose();
+}
+
+function refreshOpenGroundViewer(): void {
+  if (openGroundViewerId !== null) renderGroundViewer();
+}
+
+/// Playback clock. Like the battle viewer, a LIVE landing chases the light
+/// frontier at the fight's real pace and holds when caught up; a concluded one
+/// replays from the top.
+function gvTick(ts: number): void {
+  if (openGroundViewerId === null) { gvLoopRunning = false; return; }
+  const rec = gvRecordFor(openGroundViewerId);
+  if (!rec) { closeGroundViewer(); gvLoopRunning = false; return; }
+  const frontier = rec.rounds.length - 1;
+  const dt = gvLastTs ? Math.min(0.25, (ts - gvLastTs) / 1000) : 0;
+  gvLastTs = ts;
+  if ((gvPlaying || gvLive) && frontier > 0) {
+    const hz = state.tickHz || 30;
+    const at = Math.min(gvRound, frontier - 1);
+    const wnd = Math.max(0.2, (rec.rounds[at + 1].tick - rec.rounds[at].tick) / hz);
+    gvFrac += dt / wnd;
+    while (gvFrac >= 1 && gvRound < frontier) { gvRound++; gvFrac -= 1; }
+    if (gvRound >= frontier) {
+      gvFrac = 0;
+      if (gvLive && rec.outcome !== null) { gvLive = false; gvPlaying = false; }
+      else if (!gvLive) { gvPlaying = false; }
+      renderGroundViewer();
+    }
+  }
+  // Idle motion (falling fire, drifting scatter) runs regardless, so a held
+  // frame still reads as a live battlefield rather than a screenshot.
+  groundTheaterStep(dt);
+  requestAnimationFrame(gvTick);
+}
+
+function renderGroundViewer(): void {
+  const id = openGroundViewerId;
+  if (id === null) return;
+  const rec = gvRecordFor(id);
+  if (!rec) { closeGroundViewer(); return; }
+  const panel = $("ground-viewer");
+  panel.classList.add("is-open");
+  const frontier = rec.rounds.length - 1;
+  // Rebuild the chrome only when something structural changed — the canvas
+  // repaints every frame regardless (§single-click: don't churn the DOM).
+  const sig = JSON.stringify([id, rec.rounds.length, rec.outcome, gvRound, gvPlaying, gvLive]);
+  if (sig !== lastGroundViewerSig) {
+    lastGroundViewerSig = sig;
+    const sysName = systemName(rec.system);
+    const who = rec.attacking ? "Your landing" : "A landing on your ground";
+    const verdict = rec.outcome === null
+      ? badge("negative", "landing in progress")
+      : rec.outcome === "taken"
+        ? badge(rec.attacking ? "accent" : "negative", "ground taken")
+        : badge(rec.attacking ? "negative" : "accent", "landing destroyed");
+    const scrub = rec.rounds
+      .map((r, i) => {
+        const beat = (r.notes ?? []).length > 0;
+        const cls = i === gvRound ? "is-at" : beat ? "is-beat" : "";
+        const title = beat ? (r.notes ?? []).join(", ") : `round ${i + 1}`;
+        return `<button data-act="round" data-round="${i}" class="${cls}" title="${esc(title)}"></button>`;
+      })
+      .join("");
+    setHtml(panel,
+      `<div class="panel-title"><div><div class="eyebrow">${esc(rec.fidelity === "participant" ? "ground assault" : "observed from orbit")}</div>` +
+      `<h2>${esc(who)} — ${esc(sysName)}</h2></div>` +
+      `<div class="panel-title__right">${verdict}<button class="pp-close" data-act="close">✕</button></div></div>` +
+      `<div class="bv-sub">` +
+      (rec.marines_landed !== null
+        ? `<span><b>${rec.marines_landed}</b> marines landed against <b>${rec.defenders_initial}</b></span>`
+        : `<span class="dim">Troop strengths are not resolvable from here — you are watching from orbit.</span>`) +
+      `<span class="dim">· ${rec.garrison_tiers} garrison tier${rec.garrison_tiers === 1 ? "" : "s"}</span>` +
+      `<span class="dim">· ${Math.round(rec.suppression_at_drop * 100)}% pinned at the drop</span>` +
+      `</div>` +
+      `<div class="gt-stage" id="gt-stage"></div>` +
+      `<div class="gt-scrub">${scrub}</div>` +
+      `<div class="bv-sub"><button class="pp-btn" data-act="play">${gvPlaying ? "❚❚ Pause" : "▶ Play"}</button>` +
+      `<span class="dim">Round ${Math.min(gvRound + 1, rec.rounds.length)} of ${rec.rounds.length}` +
+      (gvLive ? " · chasing your light cone — later rounds have not reached you yet" : "") +
+      `</span></div>`);
+    if (groundTheaterAvailable()) groundTheaterAttach($("gt-stage"), rec);
+  }
+  groundTheaterSetTime(gvRound, gvFrac, gvLive && gvRound >= frontier);
 }
 
 function openBattleViewer(id: string): void {
@@ -2520,7 +2843,7 @@ function renderBattleViewer(): void {
     `<span class="bv-speeds">${speeds}</span>` +
     `<div class="bv-scrub">${ticks || `<div class="bv-tick cur"></div>`}${hatch}</div></div>${agoline}`;
 
-  $("battle-viewer").innerHTML = head + sub + arena + notes + transport;
+  setHtml($("battle-viewer"), head + sub + arena + notes + transport);
   $("battle-viewer").classList.add("is-open");
   // §theater: (re)mount the persistent canvas into the fresh DOM — the holder
   // is re-appended, so the WebGL context survives innerHTML rebuilds.
@@ -2661,7 +2984,7 @@ function openCapturePanel(id: number): void {
   const ago = (t: number) => fmtCountdown(Math.max(0, now - t));
   const plunderStr = r.plunder.length ? r.plunder.map((s) => `${s.units} ${esc(label(s.commodity))}`).join(", ") : "an empty stockpile";
   const verdict = r.captor
-    ? badgeChip("captured", "captured — yours", "positive", "A colony ship became the occupation government (one consumed). The old owner keeps their fleets — no elimination.")
+    ? badgeChip("captured", "captured — yours", "positive", "Your marines took the ground (one Troop Transport consumed). The old owner keeps their fleets — no elimination.")
     : badgeChip("lost", "lost — taken", "negative", "Your fleets survive; only the territory changed hands. Retake it the same way — blockade, suppress, and land a colony ship.");
   const head =
     `<div class="pp-head"><div class="panel-title"><div><div class="eyebrow">capture · delayed report</div>` +
@@ -3257,48 +3580,9 @@ const PRODUCER_SLUGS = new Set([
 const SUSPEND_HINT: Record<string, string> = {
   no_food: "out of Provisions — ship food",
   no_inputs: "input basket dry — ship raws in or staff extraction",
-  storage_full: "storage full — ship goods out or build a Depot",
+  storage_full: "storage full — ship goods out or build an Orbital Warehouse",
   needs_crew: "built but idle — post a crew (open its body and hire/assign workers)",
 };
-
-// §economy SUPPLY (Market → Supply tab): ship goods from the corp's HUB
-// WAREHOUSE into a chosen OWNED system's stockpile via a raidable convoy — the
-// bridge that lets market-bought inputs feed a system's converters, which draw
-// from the system stockpile. Lives ONLY in the Market panel, beside the Exchange
-// that fills the warehouse it ships from. The destination <select> is static HTML — its options are
-// rebuilt only when the owned-system set changes (never mid-dropdown at ~10 Hz).
-let supplyDestSig = "";
-function renderSupplyPane(): void {
-  const owned = (state.systems ?? []).filter((s) => s.owner === state.playerId);
-  const sel = $("mk-supply-dest") as HTMLSelectElement;
-  const sig = owned.map((s) => s.id).join(",");
-  // Never rebuild the options while the native dropdown is open (activeElement) —
-  // rebuilding a <select> mid-popup wedges Chrome's list, the fixed Deliver bug.
-  // A skipped rebuild retries on the next update once the player has picked.
-  if (sig !== supplyDestSig && document.activeElement !== sel) {
-    supplyDestSig = sig;
-    const prev = sel.value;
-    sel.innerHTML = owned.map((s) => `<option value="${esc(s.id)}">${esc(systemName(s.id))}</option>`).join("");
-    if (owned.some((s) => s.id === prev)) sel.value = prev; // keep the pick across roster changes
-  }
-  const rows = $("mk-supply-rows");
-  if (!owned.length) { rows.innerHTML = `<div class="mhint dim">Claim a system before you can supply one.</div>`; return; }
-  // §TCA: supply draws from the HUB WAREHOUSE — the same stock the Exchange
-  // trades against, and the only hub-side store there is.
-  const held = (state.wallet?.warehouse ?? []).filter((i) => i.units > 0);
-  if (!held.length) { rows.innerHTML = `<div class="mhint dim">Your hub warehouse is empty. Buy on the Exchange, then supply a system here.</div>`; return; }
-  rows.innerHTML = held.map((i) => {
-    const presets = [...new Set([10, 50, i.units])].filter((n) => n >= 1 && n <= i.units).sort((a, b) => a - b);
-    const btns = presets.map((n) =>
-      `<button class="act act--mini" data-supply-c="${esc(i.commodity)}" data-supply-n="${n}" ` +
-      `title="Ship ${n} ${esc(label(i.commodity))} to the selected system (sub-light, raidable)">${n === i.units ? `All ${fmt(n)}` : `+${n}`}</button>`
-    ).join("");
-    return `<div class="supply-row">` +
-      `<span class="sr-name">${commodityIcon(i.commodity, "sm")} <b>${esc(label(i.commodity))}</b></span>` +
-      `<span class="sr-qty">${fmt(i.units)}</span>` +
-      `<span class="supply-btns">${btns}</span></div>`;
-  }).join("");
-}
 
 // §economy: an at-a-glance banner for BUILT converters producing nothing, with
 // the reason (needs crew / no inputs / no food / storage full). "" when all run.
@@ -3375,14 +3659,40 @@ function sendCrew(systemId: EntityId, spec: string): void {
   const line = dyn?.assignments?.find((a) => a.body_id === body_id && a.structure === slug);
   net.send({ type: "SetAssignment", system_id: systemId, structure: slug, workers: Math.max(0, Number(n) || 0), specialists: line?.specialists ?? {}, body_id });
 }
-// Shipyard tier each ship kind requires — MIRRORS the sim's
-// `required_shipyard_tier` (crates/sim/src/build.rs): Convoy 1, Raider 2.
-// Homes bootstrap at tier 1, so convoys build turn one; raiders are earned.
-const SHIP_REQ: Record<string, number> = {
-  convoy: 1, raider: 2, corvette: 2, colony: 1, scout: 1,
-  // §ladder: capital yards (tiers 5/6 are themselves Line VII/VIII prizes).
-  destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
+// §yards: WHICH YARD builds each hull, and at what tier — mirrors the sim's
+// `build::yard_for`. Light hulls keep the Shipyard (homes bootstrap at tier 1, so
+// convoys and scouts build turn one; raiders are earned at tier 2); the line of
+// battle wants a Naval Drydock and the super-capitals a Capital Slipway.
+const SHIP_YARD: Record<string, { yard: string; tier: number }> = {
+  convoy: { yard: "shipyard", tier: 1 },
+  scout: { yard: "shipyard", tier: 1 },
+  colony: { yard: "shipyard", tier: 1 },
+  raider: { yard: "shipyard", tier: 2 },
+  corvette: { yard: "shipyard", tier: 2 },
+  destroyer: { yard: "naval_drydock", tier: 1 },
+  cruiser: { yard: "naval_drydock", tier: 2 },
+  battleship: { yard: "naval_drydock", tier: 3 },
+  dreadnought: { yard: "capital_slipway", tier: 1 },
+  titan: { yard: "capital_slipway", tier: 2 },
+  // §ground: troops muster at a BARRACKS, not a shipyard — the one hull whose
+  // gate sits outside the yard family entirely.
+  transport: { yard: "garrison", tier: 1 },
 };
+// §yards: what a yard needs standing on the same SYSTEM before it can be founded
+// — mirrors `build::yard_prereq`. Drives the build panel's gate copy.
+const YARD_PREREQ: Record<string, { yard: string; tier: number }> = {
+  naval_drydock: { yard: "shipyard", tier: 2 },
+  capital_slipway: { yard: "naval_drydock", tier: 3 },
+  ordnance_foundry: { yard: "shipyard", tier: 1 },
+};
+const YARD_TITLE: Record<string, string> = {
+  shipyard: "Shipyard", naval_drydock: "Naval Drydock",
+  capital_slipway: "Capital Slipway", ordnance_foundry: "Ordnance Foundry",
+  garrison: "Garrison",
+};
+/// §yards M1: a yard's tier is its SLIPWAY COUNT (mirrors `build::slips_for`,
+/// SLIPS_PER_TIER = 1) — how many hulls it can hold on the stocks at once.
+const slipsFor = (tier: number): number => Math.max(0, tier);
 // §ladder: the Line programme that unlocks each capital hull (mirrors
 // research.rs) — the client's research-gate copy; the sim enforces it.
 const HULL_PROGRAMME: Record<string, string> = {
@@ -3400,9 +3710,12 @@ const HULL_PROGRAMME: Record<string, string> = {
 const BUILD_ICON: Record<string, string> = {
   convoy: "concept-convoy", raider: "action-attack-raid", corvette: "concept-fleet",
   colony: "action-claim-system", scout: "action-survey-scout",
-  extractor: "resource-metals", depot: "action-load-cargo", shipyard: "action-build",
+  extractor: "resource-metals", orbital_warehouse: "action-load-cargo", shipyard: "action-build",
+  naval_drydock: "action-build", capital_slipway: "action-build", ordnance_foundry: "action-build",
   sensor_array: "concept-sensor-range", defense_platform: "status-warning-threat",
   habitat: "resource-supplies", refinery: "resource-fuel",
+  // §ground: the garrison and the hull it musters.
+  garrison: "status-warning-threat", transport: "action-claim-system",
 };
 const buildOption = (key: string) => state.galaxy?.build_options.find((o) => o.key === key);
 const buildLabel = (key: string): string => buildOption(key)?.label ?? key;
@@ -3718,9 +4031,14 @@ function nodeBonusDesc(slug: string): string {
 const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure"> = {
   mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource",
   smelter: "industrial", electronics_fabricator: "industrial", chemical_works: "industrial",
-  fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial", shipyard: "industrial",
-  agroplex: "infrastructure", habitat: "infrastructure", depot: "infrastructure",
+  fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial",
+  // §yards: the whole yard family is industrial — the tightest pool, which is
+  // why a shipbuilding world visibly gives up its other industry.
+  shipyard: "industrial", naval_drydock: "industrial", capital_slipway: "industrial", ordnance_foundry: "industrial",
+  agroplex: "infrastructure", habitat: "infrastructure", orbital_warehouse: "infrastructure",
   sensor_array: "infrastructure", defense_platform: "infrastructure", academy: "infrastructure",
+  // §ground: a garrison is barracks and armories — people, not heavy industry.
+  garrison: "infrastructure",
 };
 // Extraction structure → the deposit commodities it works — MIRRORS the sim's
 // production.rs extraction_structure (a mine only works its own rock).
@@ -3782,7 +4100,7 @@ const STRUCT_ICON: Record<string, IconKey> = {
   mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
   smelter: "refinery", electronics_fabricator: "refinery", chemical_works: "refinery",
   fuel_refinery: "refinery", machine_works: "build", armaments_complex: "build", shipyard: "shipyard",
-  agroplex: "habitat", habitat: "habitat", depot: "depot",
+  agroplex: "habitat", habitat: "habitat", orbital_warehouse: "orbital_warehouse",
   sensor_array: "sensor", defense_platform: "defense", academy: "habitat",
 };
 // Producers scale output by the tier-throughput curve (mirrors sim TIER_THROUGHPUT).
@@ -3800,10 +4118,14 @@ const STRUCT_INFO: Record<string, { desc: string; effect: string }> = {
   fuel_refinery: { desc: "Refines Volatiles into Fuel.", effect: "Unlocks Fuel — powers movement + smelting." },
   machine_works: { desc: "Builds Machinery from Alloys + Electronics + Fuel.", effect: "Unlocks Machinery — the build-cost backbone." },
   armaments_complex: { desc: "Assembles Armaments from Alloys + Electronics + Polymers.", effect: "Unlocks Armaments + on-site module manufacture." },
-  shipyard: { desc: "An orbital yard that builds and fits warships here.", effect: "Gates ship construction (Convoy I, Raider/Corvette II)." },
+  shipyard: { desc: "An orbital yard that lays down light hulls here.", effect: "Builds Convoy/Scout/Colony (I) and Raider/Corvette (II). Its tier is its slipway count." },
+  naval_drydock: { desc: "A heavy drydock for ships of the line. Needs a Shipyard II here.", effect: "Builds Destroyer (I), Cruiser (II), Battleship (III). Its own slipways." },
+  capital_slipway: { desc: "A super-capital slipway — the deepest yard. Needs a Naval Drydock III here.", effect: "Builds Dreadnought (I) and Titan (II). A season's investment on capturable ground." },
+  ordnance_foundry: { desc: "An outfitting yard — it changes what a hull carries rather than laying new ones.", effect: "Installs refits here (a forward foundry refits without a construction yard)." },
   agroplex: { desc: "Grows Provisions from Biomass.", effect: "Feeds the colony — keeps it Well Supplied." },
+  garrison: { desc: "Barracks, armories and a drop-troop depot. Standing troops defend this ground; they also give you the hull to take someone else's.", effect: "Stiffens defense (a besieger's clock runs slower here) and holds off landings \u2014 25 marines per tier. Builds Troop Transports. Eats Provisions: an unfed garrison stops counting." },
   habitat: { desc: "Housing that lifts this body's population ceiling.", effect: "+population cap & workforce; boosts output when fed." },
-  depot: { desc: "An orbital warehouse that raises storage capacity.", effect: "+400 storage cap; ships cargo to the hub." },
+  orbital_warehouse: { desc: "An orbital warehouse that raises storage capacity.", effect: "+400 storage cap per tier." },
   sensor_array: { desc: "A standing sensor array over the system.", effect: "Projects a sensor bubble — see rivals sooner." },
   defense_platform: { desc: "Static defenses that fight raiders at the system.", effect: "+1 defense tier vs. attackers (can be worn down)." },
   academy: { desc: "Trains specialists and powers syndicate research.", effect: "Enables specialist training + a research contribution." },
@@ -3814,6 +4136,8 @@ interface StructOpt {
   o: BuildOpt; pool: Pool; currentTier: number; targetTier: number;
   foundsNew: boolean; tierUp: boolean;
   afford: boolean; poolFull: boolean; noDeposit: boolean;
+  /// §yards: the co-located yard this one needs, unmet (`null` when satisfied).
+  yardPrereq: { yard: string; tier: number; have: number } | null;
   buildable: boolean; reason: string;
 }
 /// The sim-mirroring state for building `o` on `body` — current/target tier,
@@ -3832,11 +4156,18 @@ function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, pools: 
   const poolFull = foundsNew && !!pool && pools[pool].used >= pools[pool].total;
   const extractsFrom = EXTRACTION_OF[o.key];
   const noDeposit = foundsNew && !!extractsFrom && !(body.deposits ?? []).some((d) => extractsFrom.includes(d.resource as Commodity));
-  const buildable = !poolFull && !noDeposit && afford;
+  // §yards: a yard needs the one below it standing on the same SYSTEM (not this
+  // body — the ladder belongs to a shipbuilding world, so it may spread across
+  // bodies). Checked on every tier, so a Drydock can't outgrow its Shipyard.
+  const pre = YARD_PREREQ[o.key];
+  const preHave = pre ? (dyn.structures?.[pre.yard] ?? 0) : 0;
+  const yardPrereq = pre && preHave < pre.tier ? { ...pre, have: preHave } : null;
+  const buildable = !poolFull && !noDeposit && !yardPrereq && afford;
   const reason = noDeposit ? "No matching deposit on this body — a mine only works its own rock."
+    : yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? yardPrereq.yard} tier ${yardPrereq.tier} somewhere in this system (have ${yardPrereq.have}).`
     : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
       : !afford ? "Not enough goods stockpiled at this system." : "";
-  return { o, pool, currentTier, targetTier, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, buildable, reason };
+  return { o, pool, currentTier, targetTier, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, yardPrereq, buildable, reason };
 }
 const romanTier = (n: number): string => ROMAN[n] ?? String(n);
 
@@ -4074,7 +4405,7 @@ const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; at
   dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 12, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
   titan: { role: "The flagship — broadly good at every weapon (×1.10), best at nothing; one per syndicate.", speed: 23, hull: 32000, atk: 24, def: 44, slots: 6, cap: "Line VIII research · 45 fit pts · singleton" },
 };
-interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; }
+interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; slipsFull: boolean; slips: number; }
 /// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
 /// shipyard tier — the same field the old inline rows read) + afford, plus the
 /// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
@@ -4087,19 +4418,29 @@ function hullResearched(key: string): boolean {
 }
 function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const have = new Map((dyn.stockpile ?? []).map((s) => [s.commodity, s.units]));
-  const yardTier = dyn.shipyard_tier ?? 0;
-  const needTier = SHIP_REQ[o.key] ?? 1;
+  // §yards: read the gating yard's tier from the owner-only structures map
+  // (`shipyard_tier` only ever knew about the Shipyard).
+  const gate = SHIP_YARD[o.key] ?? { yard: "shipyard", tier: 1 };
+  const yardTier = dyn.structures?.[gate.yard] ?? 0;
+  const needTier = gate.tier;
   const yardShort = yardTier < needTier;
   const unresearched = !hullResearched(o.key);
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
   const maxAff = o.costs.length
     ? Math.max(0, Math.min(...o.costs.map((c) => Math.floor((have.get(c.commodity as Commodity) ?? 0) / c.units))))
     : 0;
-  const buildable = !yardShort && !unresearched && afford;
+  // §yards M1: SLIPWAYS. Hulls in progress at this system that this same yard
+  // gates occupy its slips; a full yard can't lay another keel until one frees.
+  const slips = slipsFor(yardTier);
+  const occupied = (dyn.builds ?? []).filter((j) => SHIP_YARD[j.key]?.yard === gate.yard).length;
+  const slipsFull = !yardShort && occupied >= slips;
+  const buildable = !yardShort && !unresearched && !slipsFull && afford;
   const reason = unresearched
     ? "Requires its Line programme on the Hulls research board."
-    : yardShort ? `Needs Shipyard tier ${needTier} (have ${yardTier}).` : !afford ? "Not enough goods stockpiled at this system." : "";
-  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason };
+    : yardShort ? `Needs ${YARD_TITLE[gate.yard] ?? gate.yard} tier ${needTier} (have ${yardTier}).`
+    : slipsFull ? `All ${slips} slipway${slips === 1 ? "" : "s"} busy — raise the ${YARD_TITLE[gate.yard] ?? gate.yard} or wait for a hull to launch.`
+    : !afford ? "Not enough goods stockpiled at this system." : "";
+  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason, slipsFull, slips };
 }
 // A build duration for humans: seconds under 2 min, then minutes / hours / days
 // (a capital keel is a season event — "8d" reads, "691200s" doesn't).
@@ -4120,7 +4461,11 @@ function shipRowHtml(st: ShipOpt): string {
   const sel = st.o.key === shipSelectedKind ? " is-sel" : "";
   const off = st.buildable ? "" : " is-off";
   const info = SHIP_STATS[st.o.key];
-  const short = !hullResearched(st.o.key) ? "needs research" : st.yardShort ? `needs yard ${romanTier(st.needTier)}` : !st.afford ? "short on goods" : "";
+  const gate = SHIP_YARD[st.o.key] ?? { yard: "shipyard", tier: 1 };
+  const short = !hullResearched(st.o.key) ? "needs research"
+    : st.yardShort ? `needs ${(YARD_TITLE[gate.yard] ?? gate.yard).toLowerCase()} ${romanTier(st.needTier)}`
+    : st.slipsFull ? "slipways full"
+    : !st.afford ? "short on goods" : "";
   const reason = short ? `<span class="bp-row-reason">${short}</span>` : "";
   return `<button class="bp-row bp-ship-row${sel}${off}" data-bp-row="${st.o.key}" title="${esc(info?.role ?? st.o.label)}">` +
     `<span class="bp-row-ic">${icon(SHIP_HULL_ICON[st.o.key] ?? "fleet", "sm")}</span>` +
@@ -4477,7 +4822,7 @@ function updateSystemTab(): void {
   // Storage fill bar + full warning, under the strip (owner-only).
   const storageBar = mine && cap > 0
     ? `<div class="storage-row">${bar(Math.min(100, (used / cap) * 100), storageFull ? "is-warn" : "")}` +
-      (storageFull ? `<span class="storage-warn">${badge("warn", "storage full")} production idling — ship goods out or build a Depot</span>` : "") +
+      (storageFull ? `<span class="storage-warn">${badge("warn", "storage full")} production idling — ship goods out or build an Orbital Warehouse</span>` : "") +
       `</div>`
     : "";
   // §management-home: the rail is a SUMMARY now — the build menu, production
@@ -4584,7 +4929,10 @@ function updateSystemTab(): void {
     ? `<div class="mhint" title="Send a colony ship: on arrival the system becomes yours (the ship is consumed). Rivals learn you hold it only when the claim's light reaches them.">Claim by sending a ${icon("colony", "sm")} colony ship here.${deps === null ? ` <span style="color:var(--warn)">unsurveyed — claiming blind</span>` : ""}</div>`
     : "";
 
-  root.innerHTML = rail + header + starFeature + nodeBlock + strip + storageBar + attention + geology + intelBlock + actions + hint;
+  // §ground: the landing readout sits with the siege badge — this is the panel a
+  // BESIEGER stares at while their guns work, so the marine requirement has to
+  // be here and not only on the owner's own colony sheet.
+  setHtml(root, rail + header + starFeature + nodeBlock + groundLine(dyn) + berthLine(sys.id) + strip + storageBar + attention + geology + intelBlock + actions + hint);
 }
 
 // --- Delayed reports log -----------------------------------------------------
@@ -4733,15 +5081,18 @@ function recordPriceHistory(): void {
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-type MarketTab = "exchange" | "freight" | "specialists" | "modules" | "supply";
+// §market-ux: the old FREIGHT and SUPPLY tabs were one decision split across two
+// panes — both moved goods between the hub warehouse and a system, differing only
+// in WHO flew it. They are now the single WAREHOUSE tab, with that difference
+// expressed as the carrier toggle (see `freightCarrier`).
+type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
   marketTab = tab;
   ($("market-pane-exchange") as HTMLElement).hidden = tab !== "exchange";
-  ($("market-pane-freight") as HTMLElement).hidden = tab !== "freight";
+  ($("market-pane-warehouse") as HTMLElement).hidden = tab !== "warehouse";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
-  ($("market-pane-supply") as HTMLElement).hidden = tab !== "supply";
   document.querySelectorAll<HTMLElement>("#market-tabs button").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.mtab === tab));
   updateMarket();
@@ -4769,16 +5120,23 @@ function buildMarketPanel(): void {
       $("mod-feedback").textContent = `Selling a ${MODULE_LABEL[b.dataset.msell as ModuleKind]} to Sol — convoy away, clears on arrival.`;
     }
   });
-  // §economy Supply: ship HQ-held goods → the selected owned system's stockpile
-  // (StockSystem). Lives on the Supply pane so market inventory stays in the Market.
-  $("market-pane-supply").addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest("[data-supply-c]") as HTMLElement | null;
-    if (!b?.dataset.supplyC || !net) return;
-    const dest = ($("mk-supply-dest") as HTMLSelectElement).value;
-    const units = Number(b.dataset.supplyN) || 0;
-    if (!dest || units <= 0) return;
-    net.send({ type: "StockSystem", system_id: dest, commodity: b.dataset.supplyC as Commodity, units });
-    $("mk-supply-feedback").textContent = `Supply convoy away: ${units} ${label(b.dataset.supplyC as Commodity)} → ${systemName(dest)} (raidable).`;
+  // §market-ux: a warehouse row is the master list for the composer below it —
+  // clicking one loads that commodity and clamps the qty to what you actually
+  // hold, which is what the old Supply pane's preset buttons were really for.
+  $("wh-table").addEventListener("click", (e) => {
+    const r = (e.target as HTMLElement).closest("[data-wh-c]") as HTMLElement | null;
+    if (!r?.dataset.whC) return;
+    const c = r.dataset.whC as Commodity;
+    ($("fr-commodity") as HTMLSelectElement).value = c;
+    // Picking a stocked good is an OUTBOUND gesture ("send this out"), so snap the
+    // direction to match and offer the whole holding.
+    freightDir = "outbound";
+    ($("fr-qty") as HTMLInputElement).value = String(Math.max(1, warehouseUnits(c)));
+    // Both halves: the composer reads the new pick, and the table re-marks which
+    // row is active. Without the second call the highlight lags until the next
+    // signature change (up to a second) — a visible stutter on a click.
+    renderWarehouse();
+    renderWarehouseDesk();
   });
   // §economy Part 6: a Sol specialist contract → HireSpecialist to the home.
   // Lives on the Specialists pane; feedback lands where the player is looking.
@@ -4811,18 +5169,31 @@ function buildMarketPanel(): void {
   });
   $("mk-qty").addEventListener("input", renderComposer);
   $("mk-shipto").addEventListener("change", renderComposer);
-  // --- §TCA freight desk ---
+  // --- §TCA + §market-ux: the WAREHOUSE tab's shipping composer ---
   const frCom = $("fr-commodity") as HTMLSelectElement;
   frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
+  // The CARRIER choice: the Authority's scheduled hull, or one of yours. Same
+  // goods, same destination, different cost/timing/risk — the logistics game.
+  $("fr-carrier").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
+    if (!b?.dataset.carrier) return;
+    freightCarrier = b.dataset.carrier as FreightCarrier;
+    // Your own convoy only sails OUTBOUND from here: hauling goods IN with your own
+    // hull needs a fleet at the far end (load it there, then Haul to Charterhouse),
+    // which is the fleet panel's job. Snap the direction rather than offer a dead end.
+    if (freightCarrier === "own") freightDir = "outbound";
+    renderWarehouseDesk();
+  });
   $("fr-dir").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
     if (!b?.dataset.dir) return;
+    if (freightCarrier === "own" && b.dataset.dir === "inbound") return; // disabled — see above
     freightDir = b.dataset.dir as ShipmentDir;
-    renderFreightDesk();
+    renderWarehouseDesk();
   });
   ["fr-system", "fr-commodity", "fr-qty", "fr-sell"].forEach((id) => {
-    $(id).addEventListener("input", renderFreightDesk);
-    $(id).addEventListener("change", renderFreightDesk);
+    $(id).addEventListener("input", renderWarehouseDesk);
+    $(id).addEventListener("change", renderWarehouseDesk);
   });
   $("fr-submit").addEventListener("click", () => {
     if (!net) return;
@@ -4830,12 +5201,19 @@ function buildMarketPanel(): void {
     if (!system) return;
     const commodity = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
     const units = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
-    if (freightDir === "outbound") {
+    if (freightCarrier === "own") {
+      // StockSystem: a convoy of yours leaves the Charterhouse now, sub-light and
+      // raidable, and deposits into the system's stockpile on arrival.
+      net.send({ type: "StockSystem", system_id: system, commodity, units });
+      $("fr-feedback").textContent =
+        `Convoy away: ${units} ${label(commodity)} → ${systemName(system)} — your hull, sub-light and raidable.`;
+    } else if (freightDir === "outbound") {
       net.send({ type: "BookFreightOut", system, commodity, units });
+      $("fr-feedback").textContent = `Booking sent: ${units} ${label(commodity)} → ${systemName(system)}.`;
     } else {
       net.send({ type: "BookFreightIn", system, commodity, units, sell_on_arrival: ($("fr-sell") as HTMLInputElement).checked });
+      $("fr-feedback").textContent = `Booking sent: ${units} ${label(commodity)} ← ${systemName(system)}.`;
     }
-    $("fr-feedback").textContent = `Booking sent: ${units} ${commodity} ${freightDir === "outbound" ? "→" : "←"} ${systemName(system)}.`;
   });
   $("mk-limit").addEventListener("input", renderComposer);
   $("mk-submit").addEventListener("click", () => {
@@ -4867,7 +5245,7 @@ function renderMarketBoard(): void {
   // player a sell the sim will soft-reject as InsufficientWarehouseStock.
   const heldOf = new Map((state.wallet?.warehouse ?? []).map((i) => [i.commodity, i.units]));
   const stale = state.market.staleness > 0.5;
-  $("market-board").innerHTML = COMMODITIES.map((c) => {
+  setHtml($("market-board"), COMMODITIES.map((c) => {
     const p = priceOf.get(c);
     const hist = state.priceHistory[c] ?? [];
     const tr = trend(hist);
@@ -4879,7 +5257,7 @@ function renderMarketBoard(): void {
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
       `<span class="b-held">${heldOf.get(c) ?? 0}</span></button>`;
-  }).join("");
+  }).join(""));
 }
 
 // §economy Part 6 → §market-ux: SOL SPECIALIST CONTRACTS, now a Market TAB of
@@ -4981,8 +5359,13 @@ function renderComposer(): void {
 
 // --- §TCA: the Charterhouse warehouse, freight desk, and shipment queue -------
 
-/// Which way the freight desk is currently booking.
+/// Which way the shipping composer is currently moving goods.
 let freightDir: ShipmentDir = "outbound";
+/// §market-ux: WHO flies the lot — the Authority's scheduled carrier, or one of
+/// your own convoys. The two channels of §9: a fee and a timetable against free
+/// and immediate, with the risk moving from someone else's hull onto yours.
+type FreightCarrier = "tca" | "own";
+let freightCarrier: FreightCarrier = "tca";
 
 /// Units of `c` in the player's Charterhouse warehouse.
 function warehouseUnits(c: Commodity): number {
@@ -5003,45 +5386,88 @@ function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): vo
   // Rebuild only when the roster actually changes, and never while the player
   // has the select focused (the open-popup proxy); a skipped rebuild retries on
   // the next update once they've picked.
-  const sig = terms.map((t) => `${t.system}${t.depot ? "+d" : ""}:${systemName(t.system)}`).join(",");
+  const sig = terms.map((t) => `${t.system}:${systemName(t.system)}`).join(",");
   if (sel.dataset.sig === sig || document.activeElement === sel) return;
   sel.dataset.sig = sig;
   const prev = sel.value;
   sel.innerHTML =
     (blankLabel ? `<option value="">${esc(blankLabel)}</option>` : "") +
-    terms.map((t) => `<option value="${t.system}">${esc(systemName(t.system))}${t.depot ? " · Depot" : ""}</option>`).join("");
+    terms.map((t) => `<option value="${t.system}">${esc(systemName(t.system))}</option>`).join("");
   if (prev && terms.some((t) => String(t.system) === prev)) sel.value = prev;
 }
 
-/// The warehouse table — commodity × units, the Exchange's only stock.
+/// The warehouse table — commodity × units, the Exchange's only stock, and the
+/// master list for the shipping composer below it (click a row to load it).
 function renderWarehouse(): void {
   const rows = (state.wallet?.warehouse ?? []).filter((w) => w.units > 0);
+  const picked = ($("fr-commodity") as HTMLSelectElement | null)?.value ?? "";
   $("wh-table").innerHTML = rows.length
-    ? rows.map((w) => `<div class="ord">${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(label(w.commodity))}</div>`).join("")
-    : `<div class="mhint dim">Empty. Buy here, or ship goods in from a system — Authority freight or one of your own convoys.</div>`;
+    ? rows.map((w) =>
+        `<div class="ord${w.commodity === picked ? " is-active" : ""}" data-wh-c="${esc(w.commodity)}"` +
+        ` title="Ship ${esc(label(w.commodity))} out — loads this good into the composer below">` +
+        `${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(label(w.commodity))}</div>`).join("")
+    : `<div class="mhint dim">Empty. Buy on the Exchange, or bring goods in from a system with Authority freight below.</div>`;
 }
 
-/// The freight desk: live fee, the EXACT next departure, and the ETA — all
-/// computed from server-sent terms, so the player commits with full knowledge.
-function renderFreightDesk(): void {
+/// The Warehouse tab's shipping composer: the live cost, the EXACT departure, and
+/// the ETA for whichever CARRIER is selected — all from server-sent terms, so the
+/// player commits with full knowledge of both channels.
+function renderWarehouseDesk(): void {
   const f = state.freight;
   if (!f) return;
   fillSystemSelect($("fr-system") as HTMLSelectElement, null);
-  const dir = freightDir;
-  document.querySelectorAll<HTMLElement>("#fr-dir button").forEach((b) => b.classList.toggle("is-active", b.dataset.dir === dir));
-  ($("fr-sell-row") as HTMLElement).style.display = dir === "inbound" ? "flex" : "none";
+  const own = freightCarrier === "own";
+  // Your own convoy is OUTBOUND-only from here (the inbound leg needs a fleet at
+  // the far end — the fleet panel's Haul to Charterhouse). Keep the button visible
+  // but disabled, so the constraint reads as a rule rather than a missing feature.
+  const dir = own ? "outbound" : freightDir;
+  document.querySelectorAll<HTMLElement>("#fr-carrier button").forEach((b) =>
+    b.classList.toggle("is-active", (b.dataset.carrier === "own") === own));
+  document.querySelectorAll<HTMLButtonElement>("#fr-dir button").forEach((b) => {
+    b.classList.toggle("is-active", b.dataset.dir === dir);
+    const blocked = own && b.dataset.dir === "inbound";
+    b.disabled = blocked;
+    b.title = blocked
+      ? "Your own hulls haul goods IN from a fleet at the far end: load it at the system, then Haul to Charterhouse from the fleet panel."
+      : "";
+  });
+  // Sell-on-arrival is an Authority inbound option only — nothing else can land a
+  // lot at the Exchange without a hull of yours already being there.
+  ($("fr-sell-row") as HTMLElement).style.display = !own && dir === "inbound" ? "flex" : "none";
 
   const sysId = ($("fr-system") as HTMLSelectElement).value as EntityId;
   const t = f.terms.find((x) => String(x.system) === String(sysId));
   const c = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
   const qty = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
   const submit = $("fr-submit") as HTMLButtonElement;
+  submit.textContent = own ? "Send convoy" : "Book freight";
   if (!t) {
-    $("fr-preview").innerHTML = `<span class="dim">You hold no systems the Authority can serve.</span>`;
+    $("fr-preview").innerHTML = own
+      ? `<span class="dim">Claim a system before you can ship goods to one.</span>`
+      : `<span class="dim">You hold no systems the Authority can serve.</span>`;
     submit.disabled = true;
     return;
   }
   submit.disabled = false;
+  // Both OUTBOUND channels escrow out of the warehouse, so a short holding is a
+  // soft reject either way — warn before the click rather than after it.
+  const held = warehouseUnits(c);
+  const short = dir === "outbound" && qty > held
+    ? ` · <span class="warn" title="The warehouse is the source for any outbound lot. A short holding soft-rejects: nothing is charged and nothing is lost.">you hold ${fmt(held)}</span>`
+    : "";
+
+  if (own) {
+    // A `StockSystem` convoy leaves at once and cruises at the Convoy speed — no
+    // fee, no timetable, and the crossing risk is yours.
+    const flight = t.distance / CONVOY_SPEED_UI;
+    $("fr-preview").innerHTML =
+      `<span class="positive" title="You already own the hull — there is no Authority fee to pay.">Free</span> · ` +
+      `departs <b>now</b> · arrives ~<b>${fmtDur(flight)}</b>` +
+      ` · <span class="warn" title="Your convoy broadcasts under the Convention and can be raided the whole way. Escort it if the lot matters.">your hull · raidable</span>` +
+      short;
+    return;
+  }
+
   const price = state.market?.prices.find((p) => p.commodity === c)?.price ?? 0;
   // §TCA Phase 2: the Authority charges base fee × the charter TARIFF — quote
   // what will actually be debited, or a sanctioned corp commits against a
@@ -5057,8 +5483,9 @@ function renderFreightDesk(): void {
   $("fr-preview").innerHTML =
     `<span title="The fee is charged at booking and destroyed — it is never refunded, even if the lot is lost.">Fee <span class="accent">${fmt(fee)} Cr</span>${tariffNote}</span> · ` +
     `departs in <b>${fmtDur(wait)}</b> · arrives ~<b>${fmtDur(wait + flight)}</b>` +
-    (t.depot ? ` · <span class="dim">Depot: ${Math.round((1 - f.depot_fee_mult) * 100)}% off, ${t.cap} cap</span>` : ` · <span class="dim">${t.cap}/departure</span>`) +
-    (overCap ? ` · <span class="warn" title="Not a refusal — the lot is split and rolls onto consecutive departures, first booked first served.">rides ${Math.ceil(qty / t.cap)} departures</span>` : "");
+    ` · <span class="dim">${t.cap}/departure</span>` +
+    (overCap ? ` · <span class="warn" title="Not a refusal — the lot is split and rolls onto consecutive departures, first booked first served.">rides ${Math.ceil(qty / t.cap)} departures</span>` : "") +
+    short;
 }
 
 /// The shipment queue — your lots, waiting at the Charterhouse or aboard a hull.
@@ -5086,10 +5513,10 @@ function fmtDur(secs: number): string {
 
 function renderRestingOrders(): void {
   const orders = state.wallet?.orders ?? [];
-  $("market-orders").innerHTML = orders.length
+  setHtml($("market-orders"), orders.length
     ? `<div class="deps-head">Resting limit orders</div>` +
       orders.map((o) => `<div class="ord">${badge(o.side === "buy" ? "positive" : "warn", `${o.side} ${o.units} ${label(o.commodity)} @ ${o.limit_price.toFixed(1)}`)}</div>`).join("")
-    : "";
+    : "");
 }
 
 let lastMarketSig = "";
@@ -5131,9 +5558,8 @@ function updateMarket(): void {
   renderRestingOrders();
   renderSpecialistsPane();
   renderModulesPane();
-  renderSupplyPane();
   renderWarehouse();
-  renderFreightDesk();
+  renderWarehouseDesk();
   renderShipmentQueue();
 }
 
@@ -5169,7 +5595,7 @@ function addTradeNews(t: TradeEvent): void {
       break;
     }
     case "StorageOverflow":
-      text = `⚠ Depot full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — carried on to sell at the hub.`;
+      text = `⚠ Storage full at ${systemName(t.system)}: ${t.units} ${label(t.commodity)} couldn't be stored — carried on to sell at the hub.`;
       break;
     // --- §TCA: freight + dockside logistics -------------------------------
     case "Rejected": text = `⚠ ${rejectText(t)}`; break;
@@ -5303,14 +5729,14 @@ function updateStandingPanel(): void {
   if (srcSel.dataset.key !== ownedKey && document.activeElement !== srcSel && document.activeElement !== destSel) {
     srcSel.dataset.key = ownedKey;
     const prevSrc = srcSel.value, prevDest = destSel.value;
-    // Source is always your OWN system; destinations add hub/home + your depots +
+    // Source is always your OWN system; destinations add hub/home + your colonies +
     // ally systems (§syndicates Part 3 AID).
     srcSel.innerHTML = owned.length
       ? owned.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")
       : `<option value="">(claim a system first)</option>`;
     if (owned.some((s) => s.id === prevSrc)) srcSel.value = prevSrc;
     destSel.innerHTML = `<option value="hub">hub (sell)</option><option value="home">home (store)</option>` +
-      owned.map((s) => `<option value="${s.id}">${s.name} (depot)</option>`).join("") +
+      owned.map((s) => `<option value="${s.id}">${s.name} (colony)</option>`).join("") +
       allies.map((s) => `<option value="${s.id}">${s.name} (ally aid)</option>`).join("");
     if (prevDest) destSel.value = prevDest;
   }
@@ -5326,10 +5752,10 @@ function updateStandingPanel(): void {
   if (listSig === lastStandingListSig && list.innerHTML) return;
   lastStandingListSig = listSig;
   if (!orders.length) {
-    list.innerHTML = `<span class="dim">No standing orders yet — set one below. They run on the server while you're away.</span>`;
+    setHtml(list, `<span class="dim">No standing orders yet — set one below. They run on the server while you're away.</span>`);
     return;
   }
-  list.innerHTML = orders
+  setHtml(list, orders
     .map((o) => {
       const flight = o.in_flight ? `<span class="run">● convoy en route</span>` : `<span class="dim">idle</span>`;
       const paused = o.status === "paused" ? " · paused" : "";
@@ -5337,7 +5763,7 @@ function updateStandingPanel(): void {
         `<b>#${o.id}</b> ${commodityIcon(o.commodity, "sm")} ${label(o.commodity)}: ${endpointLabel(o.source)} → ${endpointLabel(o.dest)}${paused}<br>` +
         `<span class="meta">${triggerLabel(o.trigger)} · ${flight}</span></div>`;
     })
-    .join("");
+    .join(""));
   // ✕ handling is DELEGATED on the persistent list root (see buildStanding…) —
   // per-render listeners on the rebuilt rows was the old pattern; §single-click
   // standardizes on delegation everywhere.
@@ -5414,8 +5840,116 @@ function agoLabel(at: number): string {
 
 // §contestable-territory Part 2: siege progress for a system's blockade view
 // field. Returns null unless the (defense-suppressed) siege clock is running.
-// `pct` fills a bar; `left` is the capture countdown; `ripe` = a colony ship
+// `pct` fills a bar; `left` is the capture countdown; `ripe` = a landing force
 // delivered now would capture.
+// §ground: the LANDING readout — the one number that makes orbital bombardment
+// legible. Both participants read the SAME figure from the same fog-safe view
+// field (owner + besieger only; see `SystemStateView.ground`), so a besieger can
+// watch `marines_needed` fall as their guns pin the garrison, and the owner can
+// watch it fall too and know exactly how exposed they are. No ground, no line.
+function groundLine(dyn: SystemStateView | undefined): string {
+  const g = dyn?.ground;
+  if (!g || g.garrison_tier === 0) return "";
+  const supp = Math.round(g.suppression * 100);
+  const mine = dyn!.owner === state.playerId;
+  const tip = mine
+    ? `Your Garrison ${romanTier(g.garrison_tier)} holds this ground. A landing of about ${g.marines_needed} marines would be an even fight — fewer and their commanders won't come down at all. Bombardment from a blockading fleet pins the garrison and lowers that number, but only while their guns keep firing: break the blockade and your pinned troops rejoin the fight, even mid-landing.`
+    : `A Garrison ${romanTier(g.garrison_tier)} holds this ground. About ${g.marines_needed} marines makes it an even fight, and below that your commanders will hold off rather than throw the men away. Keep a fleet on station bombarding to pin the garrison and cut the number — the suppression bleeds off the moment you leave, and a landing already on the ground can lose because of it.`;
+  const need = g.marines_needed === 0
+    ? badgeChip("garrison", "ground open — no defenders", mine ? "negative" : "positive", tip)
+    : badgeChip("garrison", `even odds at ${g.marines_needed} marines`, mine ? "positive" : "warn", tip);
+  const fed = g.garrison_fed
+    ? ""
+    : ` ${badgeChip("garrison", "UNFED — not defending", mine ? "negative" : "positive", "This garrison has no Provisions, so it counts for nothing until the colony feeds it. Nothing is lost — it stands back up the moment supply returns.")}`;
+  const suppTag = supp > 0
+    ? ` <span class="dim" title="Orbital bombardment currently pinning the garrison. It decays once the guns stop.">· ${supp}% suppressed</span>`
+    : "";
+  // §ground G3: if a landing has been fought here and its light has reached us,
+  // offer the replay right where the ground is described.
+  const landing = latestGroundRecordFor(dyn!.id);
+  const watch = landing
+    ? ` <button class="pp-btn pp-btn--sm" data-act="watch-landing" data-landing="${esc(landing.id)}" title="${esc(
+        landing.outcome === null
+          ? "A landing is being fought here right now. Watch it as its rounds reach you."
+          : "Replay this landing — both sides' strength round by round, and the moment it turned.",
+      )}">${landing.outcome === null ? "◉ Landing in progress" : "▶ Replay the landing"}</button>`
+    : "";
+  return `<div class="deps-head" style="margin-top:6px">${icon("garrison", "sm")} Garrison ${romanTier(g.garrison_tier)} ${need}${fed}${suppTag}${watch}</div>`
+    + landingOddsLine(g.landing);
+}
+
+/// §ground G4: the PRE-COMMIT ESTIMATE, shown to the besieger who has the men.
+/// A landing is rolled now, so this is what stands between "my gamble" and "the
+/// game robbed me" — it prices the decision BEFORE the transports go down, and
+/// it is sampled from the same engine that will fight it.
+function landingOddsLine(o: LandingOddsView | null | undefined): string {
+  if (!o) return "";
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const tone = o.win >= 0.85 ? "positive" : o.win >= 0.5 ? "warn" : "negative";
+  // THE WARNING: a landing that only works while the guns fire is the blockade's,
+  // not the men's — and it lasts exactly as long as you hold the orbit.
+  const fragile = o.win - o.win_if_guns_leave >= 0.25;
+  const chip = badgeChip(
+    "garrison",
+    `landing: ${pct(o.win)}`,
+    tone,
+    `Sampled from the real ground engine using the ${o.marines} marines you have in orbit. ` +
+      `Expect to lose about ${o.expected_losses} of them over roughly ${Math.round(o.expected_secs)}s of fighting. ` +
+      `A landing is fought out and rolled — margin above the break-even strength buys confidence, never certainty.`,
+  );
+  const warn = fragile
+    ? ` ${badgeChip(
+        "garrison",
+        `${pct(o.win_if_guns_leave)} if the guns leave`,
+        "negative",
+        "This landing belongs to your BOMBARDMENT, not to your marines. If the blockade breaks while they are on the ground, the pinned garrison comes out of cover and these odds collapse. Hold the orbit for the whole landing, or bring more men.",
+      )}`
+    : "";
+  return `<div class="deps-head" style="margin-top:4px"><span class="dim">Your ${o.marines} marines —</span> ${chip}${warn}</div>`;
+}
+
+/// §dock: the hulls BERTHED at a dock, from the ghosts this viewer already has.
+///
+/// Derived client-side on purpose: the ghost list is already fog-filtered, so
+/// counting it can neither invent intel nor lose any. The galaxy map stops
+/// drawing these sprites and this count takes their place — the same
+/// information, in a form you can actually read when six convoys are stacked on
+/// one star. `site` is a system id, or "hub" for the Charterhouse.
+function berthed(site: string): GhostView[] {
+  return state.ghosts.filter((g) => g.docked === site);
+}
+
+/// The berth readout for a system panel: how many hulls are parked here, and
+/// whose. Rival hulls are counted separately — you can see that someone else's
+/// ships are sitting on this ground, which is exactly what their sprites used
+/// to tell you.
+function berthLine(systemId: string): string {
+  const all = berthed(systemId);
+  if (all.length === 0) return "";
+  const mine = all.filter((g) => g.own);
+  const others = all.length - mine.length;
+  const chip = (n: number, what: string, tone: "positive" | "warn") =>
+    badgeChip("garrison", `${n} ${what}${n === 1 ? "" : "s"}`, tone,
+      `Hulls berthed here — at rest, and available for loading, repair and refit. They are not drawn on the galaxy map; a docked ship belongs to the system view.`);
+  return `<div class="deps-head" style="margin-top:6px">⚓ Berths ` +
+    (mine.length > 0 ? chip(mine.length, "of yours", "positive") : "") +
+    (others > 0 ? ` ${chip(others, "other hull", "warn")}` : "") +
+    `</div>`;
+}
+
+/// The most recent landing at a system that this viewer can see. Fog-safe by
+/// construction: `state.groundRecords` only ever holds what the server sent us.
+function latestGroundRecordFor(system: string): GroundRecordView | undefined {
+  let best: GroundRecordView | undefined;
+  for (const r of state.groundRecords) {
+    if (r.system !== system) continue;
+    // A running landing always wins — it is the live thing.
+    if (r.outcome === null) return r;
+    if (!best || r.started_at > best.started_at) best = r;
+  }
+  return best;
+}
+
 function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: number; ripe: boolean } | null {
   if (!dyn?.blockade || dyn.blockade.siege_since == null || !state.galaxy) return null;
   const total = state.galaxy.siege_secs || 1;
@@ -5520,7 +6054,7 @@ function computeInbox(): InboxItem[] {
     if (sg) {
       push({ key: `siege:${s.id}`, weight: INBOX_W.siege, tone: "negative", icon: "siege",
         headline: `${systemName(s.id)} — SIEGE in progress`,
-        stakes: sg.ripe ? "CRITICAL — a rival colony ship landing now CAPTURES it." : `Falls in ${fmtCountdown(sg.left)} unless you break the blockade or rebuild a Defense Platform.`,
+        stakes: sg.ripe ? "CRITICAL — rival marines landing now TAKE it." : `Falls in ${fmtCountdown(sg.left)} unless you break the blockade or rebuild a Defense Platform.`,
         age: s.blockade.since,
         actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(`siege:${s.id}`)] });
     } else {
@@ -5590,7 +6124,7 @@ function computeInbox(): InboxItem[] {
     const key = `capture:${r.id}`;
     push({ key, weight: r.captor ? INBOX_W.captureWon : INBOX_W.captureLost, tone: r.captor ? "info" : "negative", icon: r.captor ? "captured" : "lost",
       headline: r.captor ? `You CAPTURED ${locName(r.pos)}` : `You LOST ${locName(r.pos)}`,
-      stakes: r.captor ? "Territory taken — plunder seized." : "A rival colony ship landed at full siege and took the system.",
+      stakes: r.captor ? "Territory taken — plunder seized." : "Rival marines landed at full siege and took the system.",
       age: r.learned_at,
       actions: [{ label: "Open report", run: () => { closeCheckin(); openCapturePanel(r.id); }, primary: true }, dismissAct(key)] });
   }
@@ -5622,7 +6156,7 @@ function computeInbox(): InboxItem[] {
       const key = `storage:${s.id}`;
       push({ key, weight: INBOX_W.storageFull, tone: "warn", icon: "storage",
         headline: `${systemName(s.id)} — storage FULL (${s.storage_used}/${s.storage_cap})`,
-        stakes: "Production idles at the cap. Ship goods out, automate it, or build a Depot (nothing is lost).",
+        stakes: "Production idles at the cap. Ship goods out, automate it, or build an Orbital Warehouse (nothing is lost).",
         actions: [{ label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, { label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics }, { label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
     if (s.population > 0 && !s.habitat_fed) {
@@ -5662,7 +6196,7 @@ function computeInbox(): InboxItem[] {
       const key = `queue:${s.id}`;
       push({ key, weight: INBOX_W.emptyQueue, tone: "info", icon: "build",
         headline: `${systemName(s.id)} — nothing built yet`,
-        stakes: `${s.slots_total} development slot(s) free and idle — develop it (Extractor, Depot, Sensor…).`,
+        stakes: `${s.slots_total} development slot(s) free and idle — develop it (Mining Complex, Orbital Warehouse, Sensor…).`,
         actions: [{ label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
   }
@@ -5817,9 +6351,9 @@ function renderInbox(): void {
   currentInbox = items;
   const el = $("checkin-attention");
   $("checkin-att-head").textContent = `Decision inbox${items.length ? ` (${items.length})` : ""}`;
-  el.innerHTML = items.length
+  setHtml(el, items.length
     ? items.map((it, i) => inboxCardHtml(it, i)).join("")
-    : `<div class="inbox-clear">${icon("success", "sm")} ${esc(nextDecisionLabel())}</div>`;
+    : `<div class="inbox-clear">${icon("success", "sm")} ${esc(nextDecisionLabel())}</div>`);
 }
 
 let checkinBuilt = false;
@@ -5858,7 +6392,7 @@ function updateCheckinPanel(): void {
     ? `<div class="ci-sub">Earlier</div>` + earlier.slice().reverse().map(row).join("")
     : "";
   $("checkin-log-head").textContent = `Log${away.length ? ` (${away.length} new)` : ""}`;
-  $("checkin-timeline").innerHTML = awayHtml + earlierHtml;
+  setHtml($("checkin-timeline"), awayHtml + earlierHtml);
 }
 
 // --- Networking ------------------------------------------------------------
@@ -6080,6 +6614,30 @@ function join(): void {
           // Keep an open replay live without waiting for the next View's refresh
           // (cheap — it signature-guards itself).
           refreshOpenBattleViewer();
+          break;
+        }
+        case "GroundRecords": {
+          // §ground G2: merge landing-record increments, identical discipline to
+          // BattleRecords above — updated records become NEW objects so content
+          // compares fire; untouched ones keep identity; position is stable.
+          let grecs = state.groundRecords;
+          for (const id of msg.removed ?? []) grecs = grecs.filter((r) => r.id !== id);
+          for (const u of msg.updates ?? []) {
+            const prev = grecs.find((r) => r.id === u.id);
+            const base: GroundRecordView | undefined = u.header
+              ? { id: u.id, ...u.header, rounds: prev?.rounds ?? [], light_frontier_tick: u.light_frontier_tick, outcome: prev?.outcome ?? null }
+              : prev;
+            if (!base) continue; // increment for a record we never got — drop safely
+            const next: GroundRecordView = {
+              ...base,
+              rounds: u.new_rounds?.length ? [...base.rounds, ...u.new_rounds] : base.rounds,
+              light_frontier_tick: u.light_frontier_tick,
+              outcome: u.outcome ?? base.outcome ?? null,
+            };
+            grecs = prev ? grecs.map((r) => (r.id === u.id ? next : r)) : grecs.concat([next]);
+          }
+          state.groundRecords = grecs;
+          refreshOpenGroundViewer();
           break;
         }
         case "Sections": {

@@ -1,5 +1,25 @@
 # Design — Research: Programme Boards with Schools · v6
 
+> **Status: built, with four known drifts.** This is the design source the research layer was
+> implemented from, and its structure, board discipline, and balance laws all still hold — the
+> code in `crates/sim/src/research.rs` is authoritative, and GAME_DESIGN §12 summarizes what
+> shipped. Where this document and the code disagree:
+>
+> 1. **The Hulls field grants five hulls, not two.** The Line school was extended past Tier V
+>    into a full capital ladder: Destroyer (IV), Cruiser (V), Battleship (VI), Dreadnought
+>    (VII), Titan (VIII), with the last two also granting Shipyard tiers 5 and 6. The
+>    "two new hulls in the whole tree" rule below is superseded; "new hulls live only in the
+>    Hulls field" still holds.
+> 2. **The catalog is 111 programmes**, not ~108. Ten of them are live placeholders —
+>    researchable and described but inert until their content pass — and two (Salvage Rigs,
+>    Boarding Parties) are hidden and unresearchable, as specified here.
+> 3. **`DepotCap` is `WarehouseCap`.** The Depot structure was renamed Orbital Warehouse;
+>    "Bulk Storage (+50% Depot caps)" is +50% Orbital Warehouse capacity.
+> 4. **PD interception is literal now.** The side-level intercept share-math this document's
+>    `PdIntercept` key assumed was replaced by per-ship rolls against torpedoes crossing a
+>    screen bubble. The mod key survives and Flak Doctrine still scales it (×1.25) — it just
+>    scales a real roll rather than a pooled fraction.
+
 Stellar Syndicates · **architecture decided: Hybrid** — Programme Boards, verb-gated tiers, continuous goods-funded clock. **v6: exclusivity removed.** Every programme in every school is researchable by every corp; differentiation comes from *sequencing* on the continuous clock, verb gates, and season length. Six fields, twelve schools. Reverse engineering and tech trading remain deferred.
 
 ## Structure

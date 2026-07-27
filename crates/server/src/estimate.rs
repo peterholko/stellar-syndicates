@@ -142,35 +142,52 @@ pub fn prepare_estimate(
     let raid = ghost.kind == sim::ShipKind::Convoy;
     let own_retreat = world.players.get(&viewer).and_then(|c| c.doctrine.retreat.min_ratio());
 
-    // Own side EXACT — composition + fitted stacks + carried per-kind damage
-    // (spread under the unfitted key: a projection-grade approximation).
-    let a = sim::tactical::stacked(&own_fleet.composition, &own_fleet.loadouts);
-    let mut a_pool: sim::combat::StackPoolMap = std::collections::BTreeMap::new();
-    for (k, dmg) in &own_fleet.damage {
-        if *dmg > 0.0 {
-            a_pool.entry(*k).or_default().insert(String::new(), *dmg);
-        }
-    }
+    // §roster: OWN SIDE IS EXACT — the actual hulls, each at its real remaining
+    // health. A fleet that came out of its last fight hurt is projected hurt,
+    // which is precisely what the player needs to know before committing again.
+    let a: Vec<(sim::EntityId, sim::ship::Ship)> =
+        own_fleet.ships.iter().map(|s| (own_fleet.id, s.clone())).collect();
     // Target side exactly as the view shows it: exact comp (+ revealed fitted
-    // stacks) inside coverage, else the bucket-midpoint typical warfleet.
-    let d = {
+    // stacks) inside coverage, else the bucket-midpoint typical warfleet. Their
+    // hulls are modelled at FULL health — we cannot see their damage from here,
+    // and over-estimating the enemy is the safe direction (it never under-states
+    // a threat, which is what the leak checks care about).
+    let d: Vec<(sim::EntityId, sim::ship::Ship)> = {
         let comp = target_forces.comp();
-        let mut lm: sim::combat::LoadoutMap = std::collections::BTreeMap::new();
+        // Which fitted stacks the view revealed, consumed in order per kind.
+        let mut fits: std::collections::BTreeMap<sim::ShipKind, Vec<(sim::Loadout, u32)>> = Default::default();
         if let Some(stacks) = &ghost.loadouts {
             for st in stacks {
-                let key = sim::Loadout::new(st.modules.clone()).key();
-                if !key.is_empty() {
-                    *lm.entry(st.kind).or_default().entry(key).or_insert(0) += st.n;
+                let lo = sim::Loadout::new(st.modules.clone());
+                if !lo.is_empty() {
+                    fits.entry(st.kind).or_default().push((lo, st.n));
                 }
             }
         }
-        sim::tactical::stacked(&comp, &lm)
+        let mut out = Vec::new();
+        let mut next_id = 0u32;
+        for (kind, n) in comp {
+            let mut left = n;
+            if let Some(stacks) = fits.get(&kind) {
+                for (lo, cnt) in stacks {
+                    let take = (*cnt).min(left);
+                    for _ in 0..take {
+                        out.push((ghost.id, sim::ship::Ship::new(next_id, kind, lo.clone())));
+                        next_id += 1;
+                    }
+                    left -= take;
+                }
+            }
+            for _ in 0..left {
+                out.push((ghost.id, sim::ship::Ship::new(next_id, kind, sim::Loadout::default())));
+                next_id += 1;
+            }
+        }
+        out
     };
     let setup = sim::tactical::ProjSetup {
         a,
         d,
-        a_pool,
-        d_pool: std::collections::BTreeMap::new(),
         platform_tiers: platform_tiers.unwrap_or(0),
         raid,
         a_retreat: own_retreat,

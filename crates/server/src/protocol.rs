@@ -387,9 +387,8 @@ pub struct FreightTermsView {
     pub system: EntityId,
     /// Charterhouse → system distance (sim units).
     pub distance: f64,
-    /// Whether the system has a Depot (bigger cap, discounted fee).
-    pub depot: bool,
-    /// Max units this corp may load to this destination per departure.
+    /// Max units this corp may load to this destination per departure. Uniform
+    /// across destinations — nothing the colony builds changes the Authority's terms.
     pub cap: u32,
     /// Flight time one way (seconds) — add to a departure for the outbound ETA.
     pub secs_out: f64,
@@ -405,13 +404,11 @@ pub struct FreightView {
     pub next_departure: f64,
     /// Seconds between departures.
     pub period: f64,
-    /// Fee = units × (price × `fee_frac` + distance × `fee_per_unit_dist`),
-    /// then × `depot_fee_mult` if the destination has a Depot. Exposed as inputs
-    /// (not a per-commodity table) so the client prices any lot live off the
-    /// ticker; `freight_view_terms_price_a_lot_exactly` guards the contract.
+    /// Fee = units × (price × `fee_frac` + distance × `fee_per_unit_dist`). Exposed
+    /// as inputs (not a per-commodity table) so the client prices any lot live off
+    /// the ticker; `freight_view_terms_price_a_lot_exactly` guards the contract.
     pub fee_frac: f64,
     pub fee_per_unit_dist: f64,
-    pub depot_fee_mult: f64,
     /// Terms for each system the viewer currently owns (the valid destinations).
     pub terms: Vec<FreightTermsView>,
     /// The viewer's own lots, queued and aboard.
@@ -689,6 +686,49 @@ pub struct BlockadeStateView {
     pub siege_since: Option<f64>,
 }
 
+/// §ground: the GROUND situation at a system — what a landing would have to
+/// beat. Fog-safe, and populated for exactly two viewers: the OWNER (it is their
+/// building) and the corp currently BLOCKADING it (their fleet is parked
+/// overhead measuring it, and without this reading bombardment would be an
+/// invisible mechanic — you could never tell whether the guns were working).
+/// Third parties get null.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct GroundStateView {
+    /// Garrison tiers standing here, summed across bodies.
+    pub garrison_tier: u32,
+    /// Whether the garrison is drawing its Provisions. An unfed garrison stops
+    /// counting entirely — it defends nothing until the colony feeds it.
+    pub garrison_fed: bool,
+    /// 0..1 — how much of the garrison orbital bombardment currently has pinned.
+    /// Bleeds off the moment the guns stop, so it is a window, not a wound.
+    pub suppression: f64,
+    /// The BREAK-EVEN landing — the even-odds point, not a guarantee. Falls as
+    /// suppression rises; 0 means the ground is open.
+    pub marines_needed: u32,
+    /// §ground G4: the PRE-COMMIT ESTIMATE for the force this viewer actually
+    /// has in orbit, sampled from the real ground engine. Present only for a
+    /// besieger with marines on station — it is a decision aid for the person
+    /// making the decision, and it would be an intel leak for anyone else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing: Option<LandingOddsView>,
+}
+
+/// §ground G4: what a landing with the marines currently in orbit would cost.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct LandingOddsView {
+    /// Marines this viewer has on station, i.e. what the odds below are for.
+    pub marines: u32,
+    /// 0..1 chance of taking the ground at the CURRENT suppression.
+    pub win: f64,
+    /// 0..1 chance if the bombardment stops the moment the men are down. The
+    /// GAP between this and `win` is the warning: a landing that only works
+    /// while the guns fire lasts exactly as long as you hold the orbit.
+    pub win_if_guns_leave: f64,
+    /// Mean marines lost, and mean seconds the fight runs.
+    pub expected_losses: u32,
+    pub expected_secs: f64,
+}
+
 /// An owner-only in-progress build at a system (§step1). `key` is what's building;
 /// `complete_time` is the sim-time of completion (the client shows ETA = it − now).
 #[derive(Debug, Clone, Serialize)]
@@ -752,8 +792,8 @@ pub struct SystemStateView {
     /// Number of Extractor upgrades built here (visible to all once the system is
     /// known — it's part of the system's observable development, not private intel).
     pub extractor_tier: u32,
-    /// Number of Depot upgrades built here (§buildings step 2) — owner-only.
-    pub depot_tier: u32,
+    /// Number of Orbital Warehouse tiers built here (§buildings step 2) — owner-only.
+    pub orbital_warehouse_tier: u32,
     /// Number of Shipyard upgrades built here (§buildings step 3) — owner-only.
     /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
     pub shipyard_tier: u32,
@@ -813,6 +853,9 @@ pub struct SystemStateView {
     /// parties get `None` here — they observe the fight via `battles`, and the
     /// eventual capture via the light-delayed ownership change.
     pub blockade: Option<BlockadeStateView>,
+    /// §ground: what a landing here would face — owner + besieger only (see
+    /// `GroundStateView`); null for everyone else.
+    pub ground: Option<GroundStateView>,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,
@@ -1236,6 +1279,83 @@ pub struct BattleRecordView {
     pub outcome: Option<RaidOutcome>,
 }
 
+// --- §ground G2: LANDING RECORDS ---------------------------------------------
+// A landing is a fight that takes time now, so it leaves a replayable account.
+// Everything here follows the battle record's fog discipline exactly: opening
+// light gates the record's existence, each round arrives on its own light, and
+// a third party covering the site sees the SHAPE of the fight without its
+// numbers. It rides the same reliable delta lane for the same reason — the View
+// is last-write-wins, and re-shipping whole records per tick was a confirmed
+// source of stutter.
+
+/// How much of a landing a viewer can resolve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundFidelity {
+    /// Attacker or defender: exact troop counts, casualties, every beat.
+    Participant,
+    /// A third party covering the site from orbit: they can see a landing is
+    /// being fought and roughly how it is going — never the true headcounts.
+    Bucket,
+}
+
+/// One recorded round as a viewer sees it. `marines`/`defenders` carry exact
+/// numbers ONLY at participant fidelity; the `*_frac` fields (0..1 of each
+/// side's opening strength) are always present, so a bucket observer can watch
+/// the shape of the fight without ever learning its arithmetic.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundRoundView {
+    pub tick: u64,
+    pub marines: Option<u32>,
+    pub defenders: Option<u32>,
+    pub marines_frac: f64,
+    pub defenders_frac: f64,
+    /// 0..1 of the garrison pinned by bombardment over this round. Visible to
+    /// everyone who can see the fight at all — the guns are not subtle.
+    pub suppression: f64,
+    pub marine_losses: Option<u32>,
+    pub defender_losses: Option<u32>,
+    /// Derived beats: guns_lifted / guns_resumed / garrison_starved / tipped.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub notes: Vec<String>,
+}
+
+/// A landing's per-viewer header — everything except the rounds. Sent once per
+/// record per connection; the rounds then stream as their light arrives.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundRecordHeader {
+    pub system: EntityId,
+    pub pos: Vec2,
+    pub started_at: f64,
+    pub fidelity: GroundFidelity,
+    pub attacker: PlayerId,
+    pub defender: PlayerId,
+    /// True when the viewer is the one who put the men down (drives the "you"
+    /// framing, and nothing else — both sides read the same fight).
+    pub attacking: bool,
+    /// Opening strengths — participant only.
+    pub marines_landed: Option<u32>,
+    pub defenders_initial: Option<u32>,
+    /// Garrison tiers that stood here. Public in the sense that anyone watching
+    /// a landing can see how dug-in the ground was.
+    pub garrison_tiers: u32,
+    pub suppression_at_drop: f64,
+}
+
+/// An incremental update for one landing record.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundRecordUpdate {
+    pub id: EntityId,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub header: Option<GroundRecordHeader>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub new_rounds: Vec<GroundRoundView>,
+    pub light_frontier_tick: u64,
+    /// `taken` / `repulsed`, once the FINAL round's light has arrived.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub outcome: Option<String>,
+}
+
 /// §perf Part A: a record's per-viewer HEADER — everything except the rounds.
 /// Sent once per record per connection (and again only if a christened flagship
 /// name changes); the rounds then stream incrementally as their light arrives.
@@ -1332,6 +1452,18 @@ pub struct GhostView {
     pub uncertainty: f64,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
+    /// §dock: the BERTH this sighting was taken at — `"hub"` for the
+    /// Charterhouse, otherwise the system's id — or null if the fleet was under
+    /// way (or loitering somewhere it does not control).
+    ///
+    /// Deliberately NOT gated behind the composition reveal, unlike `cargo` or
+    /// `damage`. Being parked at a station is plain from the position and
+    /// velocity this ghost already carries; withholding it would conceal nothing
+    /// and would make fleets vanish from the map inconsistently, since the
+    /// client keys its declutter on this field. It is light-delayed like the
+    /// rest of the sighting: a fleet you see berthed may have sailed since.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docked: Option<String>,
     /// The convoy's broadcast route (waypoints), light-delayed like its
     /// position. `None` for raiders (they don't broadcast).
     pub route: Option<Vec<Vec2>>,
@@ -1349,6 +1481,14 @@ pub struct GhostView {
     /// fleets, or a rival fleet inside sensor coverage (Tier 2). `None` otherwise
     /// — you have the size bucket but not the makeup. Never leaks the true count.
     pub composition: Option<Vec<CompCount>>,
+    /// §roster: how BEATEN UP the fleet is — 0.0 pristine … 1.0 every hull spent.
+    /// An AGGREGATE FRACTION, never the per-hull roster: shipping individual
+    /// hulls would hand a distant observer the exact count that `count_class`
+    /// exists to withhold. Present under exactly the `composition` rule, so a
+    /// wounded fleet reads as wounded only from inside sensor coverage — which
+    /// makes finding one a real intel prize.
+    #[serde(default)]
+    pub damage: Option<f64>,
     /// §modules Part B: the FITTED stacks (kind + modules + count). Present under
     /// exactly the `composition` rule — seeing the makeup reveals the fits. Only
     /// non-default stacks; the unfitted remainder = composition − Σ these.
@@ -1385,6 +1525,13 @@ pub struct GhostView {
     pub garrison_host: Option<EntityId>,
     #[serde(default)]
     pub garrison_fed: bool,
+    /// §upkeep: OWNER-ONLY. Is this fleet's standing Provisions upkeep being met?
+    /// `false` = IMMOBILIZED: it accepts no new movement or offensive order until
+    /// food reaches it (it keeps its guns and its current course, and loses
+    /// nothing). Private quartermastery — a rival never learns you can't feed
+    /// your navy, which would be a gift. serde default `true`.
+    #[serde(default)]
+    pub supplied: bool,
     /// §pirates: this fleet belongs to the neutral PIRATE faction (a raider pack) —
     /// drives the distinct hostile-neutral tint. Hostile to everyone.
     #[serde(default)]
@@ -1535,6 +1682,15 @@ pub enum ServerMsg {
     BattleRecords {
         #[serde(skip_serializing_if = "Vec::is_empty", default)]
         updates: Vec<BattleRecordUpdate>,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        removed: Vec<EntityId>,
+    },
+
+    /// §ground G2: incremental LANDING-record delivery. Same reliable lane and
+    /// same cursor discipline as `BattleRecords`, for the same reasons.
+    GroundRecords {
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        updates: Vec<GroundRecordUpdate>,
         #[serde(skip_serializing_if = "Vec::is_empty", default)]
         removed: Vec<EntityId>,
     },

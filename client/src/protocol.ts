@@ -10,10 +10,83 @@ export interface Vec2 {
   y: number;
 }
 
+/// §ground G4: what a landing with the marines currently in orbit would cost.
+/// Present only for the besieger who has them — the person making the decision.
+export interface LandingOddsView {
+  marines: number;
+  /// 0..1 chance of taking the ground at the CURRENT suppression.
+  win: number;
+  /// 0..1 chance if the bombardment stops the moment the men are down.
+  win_if_guns_leave: number;
+  expected_losses: number;
+  expected_secs: number;
+}
+
+// --- §ground G2: LANDING RECORDS ---------------------------------------------
+
+/// How much of a landing this viewer can resolve. `participant` = attacker or
+/// defender (exact troop counts); `bucket` = a third party who merely covers the
+/// site from orbit — they see the SHAPE of the fight, never its arithmetic.
+export type GroundFidelity = "participant" | "bucket";
+
+/// A derived beat in the replay — the moments worth pointing at afterwards.
+export type GroundNote = "guns_lifted" | "guns_resumed" | "garrison_starved" | "tipped";
+
+/// One recorded round. Exact counts ride participant fidelity only; the
+/// fractions (0..1 of each side's opening strength) are always present, so the
+/// replay can be drawn either way from one code path.
+export interface GroundRoundView {
+  tick: number;
+  marines: number | null;
+  defenders: number | null;
+  marines_frac: number;
+  defenders_frac: number;
+  /// 0..1 of the garrison pinned by bombardment over this round. Watch this
+  /// fall and the defenders' line stiffen — that is a blockade being broken.
+  suppression: number;
+  marine_losses: number | null;
+  defender_losses: number | null;
+  notes?: GroundNote[];
+}
+
+export interface GroundRecordHeader {
+  system: EntityId;
+  pos: Vec2;
+  started_at: number;
+  fidelity: GroundFidelity;
+  attacker: PlayerId;
+  defender: PlayerId;
+  /// Whether the viewer is the one who put the men down — framing only.
+  attacking: boolean;
+  marines_landed: number | null;
+  defenders_initial: number | null;
+  garrison_tiers: number;
+  suppression_at_drop: number;
+}
+
+export interface GroundRecordUpdate {
+  id: EntityId;
+  header?: GroundRecordHeader;
+  new_rounds?: GroundRoundView[];
+  light_frontier_tick: number;
+  outcome?: "taken" | "repulsed";
+}
+
+/// A landing as the client holds it: the header, plus every round whose light
+/// has arrived so far.
+export interface GroundRecordView extends GroundRecordHeader {
+  id: EntityId;
+  rounds: GroundRoundView[];
+  light_frontier_tick: number;
+  outcome: "taken" | "repulsed" | null;
+}
+
 export type ShipKind =
   | "convoy" | "raider" | "corvette" | "colony" | "scout"
   // §ladder: the research-gated warship ladder.
   | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
+  // §ground: the troop transport — an invasion's hull, built at a Garrison.
+  | "transport"
   // §TCA: the Authority's common carrier — never buildable by a corporation.
   | "freighter";
 
@@ -123,10 +196,29 @@ export interface SystemStateView {
   /// `siege_since` = when the (defense-suppressed) capture clock started (§Part 2),
   /// null if the siege can't progress yet. Progress = (now−siege_since)/siege_secs.
   blockade: { by: PlayerId; since: number; by_me: boolean; siege_since: number | null } | null;
+  /// §ground: what a LANDING here would have to beat. Fog-safe and populated for
+  /// exactly two viewers — the owner (their building) and whoever is currently
+  /// blockading (their fleet is overhead measuring it). Null for everyone else.
+  /// `suppression` is 0..1 of the garrison pinned by orbital bombardment; it
+  /// bleeds off the moment the guns stop, so it is a window, not a wound.
+  /// §ground G1: `marines_needed` is the BREAK-EVEN landing — the even-odds
+  /// point, not a guarantee. A landing is fought out over time and rolled, so
+  /// margin above this buys confidence rather than certainty.
+  ground: {
+    garrison_tier: number;
+    garrison_fed: boolean;
+    suppression: number;
+    marines_needed: number;
+    /// §ground G4: the pre-commit estimate for the marines YOU have in orbit —
+    /// present only when you are the besieger with troops on station. The gap
+    /// between `win` and `win_if_guns_leave` is the warning that a landing
+    /// belongs to the bombardment rather than to the men.
+    landing?: LandingOddsView | null;
+  } | null;
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
-  /// Depot upgrades built here (§buildings step 2) — owner-only; rivals see 0.
-  depot_tier: number;
+  /// Orbital Warehouse tiers built here (§buildings step 2) — owner-only; rivals see 0.
+  orbital_warehouse_tier: number;
   /// Shipyard upgrades built here (§buildings step 3) — owner-only; rivals see 0.
   /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
   shipyard_tier: number;
@@ -350,8 +442,7 @@ export interface ShipmentView {
 export interface FreightTermsView {
   system: EntityId;
   distance: number;
-  depot: boolean;
-  cap: number; // max units this corp may load per departure
+  cap: number; // max units this corp may load per departure (uniform across destinations)
   secs_out: number; // one-way flight time
   secs_round: number; // out and back (an inbound lot's total after departure)
 }
@@ -379,11 +470,10 @@ export interface CharterView {
 export interface FreightView {
   next_departure: number; // sim-time of the next scheduled departure
   period: number; // seconds between departures
-  // fee = units × (price × fee_frac + distance × fee_per_unit_dist),
-  // then × depot_fee_mult if the destination has a Depot.
+  // fee = units × (price × fee_frac + distance × fee_per_unit_dist). Nothing the
+  // destination has built changes it — the terms are the Authority's.
   fee_frac: number;
   fee_per_unit_dist: number;
-  depot_fee_mult: number;
   terms: FreightTermsView[];
   shipments: ShipmentView[];
 }
@@ -402,8 +492,7 @@ export interface ManifestEntryView {
 /// `tca::freight_fee`; the Rust test `exposed_terms_reproduce_the_charged_fee`
 /// guards the two against drifting apart.
 export function freightFee(f: FreightView, t: FreightTermsView, unitPrice: number, units: number): number {
-  const raw = units * (unitPrice * f.fee_frac + t.distance * f.fee_per_unit_dist);
-  return Math.max(0, t.depot ? raw * f.depot_fee_mult : raw);
+  return Math.max(0, units * (unitPrice * f.fee_frac + t.distance * f.fee_per_unit_dist));
 }
 
 // Economy news (mirrors sim TradeEvent, tagged by `event`).
@@ -581,6 +670,16 @@ export interface GhostView {
   age: number;
   uncertainty: number;
   own: boolean;
+  /// §dock: the BERTH this sighting was taken at — `"hub"` for the Charterhouse,
+  /// otherwise the system's id — or absent if the fleet was under way (or
+  /// loitering somewhere it does not control, which is what keeps a blockading
+  /// or invading fleet on the galaxy map).
+  ///
+  /// The galaxy map does NOT draw berthed hulls: a docked ship belongs to the
+  /// system view, not the star chart. Nothing is concealed by this — the same
+  /// ghosts are grouped into per-system berth counts, so the information moves
+  /// from "overlapping sprites" to "a number you can read".
+  docked?: string | null;
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   // Cargo present only when this convoy is within your sensor coverage.
@@ -592,6 +691,14 @@ export interface GhostView {
   count_class: CountClass;
   // Exact composition — present only in coverage or for your own fleet.
   composition: CompCount[] | null;
+  /// §roster: how BEATEN UP the fleet is — 0 pristine … 1 every hull spent. An
+  /// AGGREGATE fraction under exactly the `composition` gate (never the per-hull
+  /// roster, which would leak the exact count `count_class` withholds).
+  damage?: number | null;
+  /// §upkeep: OWNER-ONLY. Is this fleet's standing Provisions upkeep met? `false`
+  /// = immobilized until fed (it keeps its guns and its course, and loses
+  /// nothing). Always `true` on a rival's ghost — a private status.
+  supplied?: boolean;
   // §modules Part B: FITTED stacks — present under the same rule as composition
   // (seeing the makeup reveals the fits). Only fitted stacks; the unfitted
   // remainder = composition − Σ these. null when composition is null.
@@ -1119,6 +1226,13 @@ export type ServerMsg =
       // record that becomes visible again arrives fresh with a full header.
       type: "BattleRecords";
       updates?: BattleRecordUpdate[];
+      removed?: EntityId[];
+    }
+  | {
+      // §ground G2: incremental LANDING-record delivery, same reliable lane and
+      // same semantics as BattleRecords.
+      type: "GroundRecords";
+      updates?: GroundRecordUpdate[];
       removed?: EntityId[];
     }
   | { type: "Report"; report: RaidReport }

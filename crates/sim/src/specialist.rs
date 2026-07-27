@@ -100,7 +100,8 @@ pub fn passenger_capacity(kind: ShipKind) -> u32 {
         // Warships carry crews, not passengers — capitals included (§ladder).
         // §TCA: Authority freighters haul GOODS, not people — personnel ride a
         // corp's own logistics hulls, never the common carrier.
-        ShipKind::Freighter
+        ShipKind::Transport // marines are not passengers — they ride their own berths
+        | ShipKind::Freighter
         | ShipKind::Scout
         | ShipKind::Raider
         | ShipKind::Corvette

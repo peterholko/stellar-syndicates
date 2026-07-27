@@ -191,6 +191,36 @@ impl Timeline {
                     let name = system_name(world, *system);
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("Construction started at {name}: {}.", build_label(*what)));
                 }
+                // §plunder: a held blockade stripped goods off a colony. BOTH
+                // sides hear it on their own clock — the victim watching their
+                // stores walk away is half the point of the mechanic.
+                EventPayload::SystemPlundered { by, owner, system, commodity, units, pos } => {
+                    let name = system_name(world, *system);
+                    let good = commodity_name(*commodity);
+                    // The VICTIM learns by light from the system, exactly as they
+                    // learn the blockade itself — owning ground grants no FTL
+                    // knowledge of what is happening on it (§6).
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                            "{name} is being STRIPPED — {units} {good} carried off by the blockade holding it. \
+                             Break the blockade or keep losing stores."
+                        ));
+                    }
+                    // The BESIEGER is there: it is their own fleet's prize, so it
+                    // is own-clock news like any of their economy.
+                    self.push(*by, e.time, TimelineSeverity::Good, format!(
+                        "Prize taken at {name}: {units} {good} aboard the blockade — it still has to get home."
+                    ));
+                }
+                // §roster: a fleet finished REPAIRS — every hull back to full.
+                // Exactly the kind of "ready when you are" news the check-in loop
+                // exists for: you left a mauled wing in a yard, you come back and
+                // it is whole. Fires once, on completion.
+                EventPayload::FleetRepaired { owner, system, .. } => {
+                    let name = system_name(world, *system);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!("Repairs complete at {name} — the fleet is back to full hull."));
+                }
                 EventPayload::SystemUpgraded { owner, system, upgrade, tier } => {
                     let name = system_name(world, *system);
                     // §economy: one title-driven line for all 16 structure kinds.
@@ -207,9 +237,16 @@ impl Timeline {
                             "Can't build {} at {name}: every development slot is used — systems must specialize.",
                             build_label(*what)
                         ),
-                        sim::BuildRejectReason::NeedsShipyard { required } => format!(
-                            "Can't build {} at {name}: needs Shipyard tier {required} there.",
-                            build_label(*what)
+                        sim::BuildRejectReason::NeedsYard { yard, required } => format!(
+                            "Can't build {} at {name}: needs {} tier {required} there.",
+                            build_label(*what),
+                            yard.title()
+                        ),
+                        sim::BuildRejectReason::NoSlip { slips } => format!(
+                            "Can't build {} at {name}: its yard's {slips} slipway{} {} full — raise the yard's tier or wait for a hull to finish.",
+                            build_label(*what),
+                            if *slips == 1 { "" } else { "s" },
+                            if *slips == 1 { "is" } else { "are" }
                         ),
                         sim::BuildRejectReason::NotBuildable => format!(
                             "Can't build {} at {name}: it isn't a corporation-buildable hull.",
@@ -236,6 +273,14 @@ impl Timeline {
                         sim::OrderRejectReason::InsideSovereignZone =>
                             "Order refused: the target shelters inside the Authority's sovereign zone at the hub — \
                              no engagement may open there. Your fleet holds its current order."
+                                .to_string(),
+                        // §upkeep: the fleet is starving. Nothing is lost — it keeps
+                        // its guns and its course — but it will not set out again
+                        // until Provisions reach it.
+                        sim::OrderRejectReason::Unsupplied =>
+                            "Order refused: the fleet is out of Provisions and cannot set out. \
+                             Ship food to a system near it — it keeps its guns and its current \
+                             order, and moves again the moment it is fed."
                                 .to_string(),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
@@ -277,13 +322,69 @@ impl Timeline {
                     if let Some(cc) = world.players.get(old_owner).map(|c2| c2.command_center) {
                         let observe = e.time + pos.distance(cc) / c;
                         self.push(*old_owner, observe, TimelineSeverity::Bad, format!(
-                            "You LOST {name} — a besieging colony ship captured it. Its stockpile was plundered and its developments damaged; your fleets survive."
+                            "You LOST {name} — a besieger's marines took the ground. Its stockpile was plundered and its developments damaged; your fleets survive."
                         ));
                     }
                     if let Some(cc) = world.players.get(new_owner).map(|c2| c2.command_center) {
                         let observe = e.time + pos.distance(cc) / c;
                         self.push(*new_owner, observe, TimelineSeverity::Good, format!(
-                            "You CAPTURED {name} — the siege paid off. You inherit its (damaged) developments and plundered stockpile."
+                            "You CAPTURED {name} — your marines hold the ground. You inherit its (damaged) developments and plundered stockpile."
+                        ));
+                    }
+                }
+                // §ground G1: the landing force HELD OFF — it is short of the
+                // break-even strength, so nothing went in and nothing was lost.
+                // The old copy here said the transports were destroyed, which
+                // was never true of a hold and is now the whole distinction
+                // between this notice and `AssaultRepulsed`.
+                EventPayload::AssaultHeld { owner, system, marines, needed, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "A landing force is standing off {name} — {marines} marines against ground that would take about {needed}. Your garrison is why they haven't come down."
+                        ));
+                    }
+                    // The would-be attacker is on station, so they see it at once.
+                    if let Some(by) = world.systems.iter().find(|s| s.id == *system)
+                        .and_then(|s| s.blockade.as_ref()).map(|b| b.by)
+                    {
+                        self.push(by, e.time, TimelineSeverity::Warn, format!(
+                            "Your commanders WILL NOT land at {name} — {marines} marines against a break-even of {needed}. Nothing was committed. Bring more transports, or keep bombarding to pin more of the garrison."
+                        ));
+                    }
+                }
+                // §ground G1: the drop went in. Both sides watch the same clock
+                // from here, and the fight is live — the defender can still
+                // change it by breaking the blockade.
+                EventPayload::AssaultBegan { attacker, defender, system, marines, defenders, suppression, pos, .. } => {
+                    let name = system_name(world, *system);
+                    let pinned = (suppression * 100.0).round() as u32;
+                    if let Some(cc) = world.players.get(defender).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*defender, observe, TimelineSeverity::Bad, format!(
+                            "LANDING AT {name} — {marines} marines are on the ground against your {defenders} ({pinned}% of the garrison pinned by bombardment). BREAK THE BLOCKADE and the pinned troops rejoin the fight."
+                        ));
+                    }
+                    self.push(*attacker, e.time, TimelineSeverity::Warn, format!(
+                        "Your landing at {name} has gone in — {marines} marines against {defenders}, with {pinned}% of the garrison pinned. Keep the guns on station: if the blockade breaks, they come out of cover."
+                    ));
+                }
+                // §ground G1: the landing was DESTROYED on the ground. This one
+                // really does cost the transports.
+                EventPayload::AssaultRepulsed { owner, system, landed, held, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + pos.distance(cc) / c;
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "Your garrison at {name} DESTROYED a landing of {landed} marines — {held} of your troops still hold the ground. The transports went with them."
+                        ));
+                    }
+                    if let Some(by) = world.systems.iter().find(|s| s.id == *system)
+                        .and_then(|s| s.blockade.as_ref()).map(|b| b.by)
+                    {
+                        self.push(by, e.time, TimelineSeverity::Bad, format!(
+                            "Your landing at {name} was DESTROYED — all {landed} marines and the transports that carried them are lost, against {held} surviving defenders."
                         ));
                     }
                 }
@@ -353,7 +454,7 @@ impl Timeline {
                     let cause = match reason {
                         R::NoFood => "the colony is out of Provisions — ship food",
                         R::NoInputs => "its input basket ran dry — ship raws in or staff extraction",
-                        R::StorageFull => "storage is FULL — ship goods out or build a Depot",
+                        R::StorageFull => "storage is FULL — ship goods out or build an Orbital Warehouse",
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, format!(
                         "{} at {name} SUSPENDED — {cause} (nothing is lost).",
@@ -664,6 +765,7 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
                 sim::ShipKind::Raider => "raider",
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
+                sim::ShipKind::Transport => "transport",
                 sim::ShipKind::Scout => "scout",
                 sim::ShipKind::Freighter => "freighter",
                 sim::ShipKind::Destroyer => "destroyer",
@@ -697,6 +799,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Transport } => "a Troop Transport",
         // §TCA: never appears in a real build event (the Freighter is TCA-only),
         // but the match must be total — a defensive label.
         sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "an Authority Freighter",
@@ -732,6 +835,7 @@ fn kind_word(k: ShipKind) -> &'static str {
         ShipKind::Raider => "raider",
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
+        ShipKind::Transport => "troop transport",
         ShipKind::Scout => "scout",
         ShipKind::Freighter => "freighter",
         ShipKind::Destroyer => "destroyer",
@@ -814,14 +918,14 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
             }
         }
-        // A full depot bounced part of a delivery onward to the hub (§buildings
-        // step 2) — an attention item: the player should ship out or build a Depot.
+        // A full warehouse bounced part of a delivery onward to the hub (§buildings
+        // step 2) — an attention item: the player should ship out or build an Orbital Warehouse.
         TradeEvent::StorageOverflow { commodity, units, system, .. } => {
             let name = system_name(world, system);
             (
                 Warn,
                 format!(
-                    "Depot full at {name}: {units} {} couldn't be stored — re-routed to sell at the hub. Ship goods out or build a Depot.",
+                    "Storage full at {name}: {units} {} couldn't be stored — re-routed to sell at the hub. Ship goods out or build an Orbital Warehouse.",
                     commodity_name(commodity)
                 ),
             )
@@ -972,7 +1076,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                     Warn,
                     format!(
                         "Authority freight couldn't unload {units} {com} at {name} — it's no longer yours, \
-                         or its depot is full. The lot is back in your hub warehouse."
+                         or its storage is full. The lot is back in your hub warehouse."
                     ),
                 ),
                 sim::FreightStage::ForfeitedOnCapture => (

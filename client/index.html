@@ -196,8 +196,10 @@
       #checkin .mhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
       #checkin .mhead b { letter-spacing: 1px; }
       #checkin #checkin-toggle { cursor: pointer; }
-      #checkin .ci-sub { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin: 10px 0 5px; }
-      #checkin .ci-sub:first-child { margin-top: 0; }
+      /* Section sub-heads. The Warehouse tab uses the same idiom as the check-in
+         digest, so the rule is shared rather than duplicated. */
+      #checkin .ci-sub, #market .ci-sub { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin: 10px 0 5px; }
+      #checkin .ci-sub:first-child, #market .ci-sub:first-child { margin-top: 0; }
       #checkin .ci { display: flex; align-items: flex-start; gap: var(--icon-gap); padding: 5px 8px; margin-bottom: 4px; border-left: 2px solid #2a3a58; border-radius: 4px; background: rgba(20,26,40,0.5); line-height: 1.4; }
       #checkin .ci .t { color: var(--dim); font-size: 10px; margin-left: auto; flex: none; padding-left: 8px; }
       #checkin .ci.good { border-left-color: #5fd08a; }
@@ -436,16 +438,12 @@
          grows/truncates, everything after it stays inline at content width. */
       .sys-prod--flow { display: flex; align-items: center; gap: 8px; }
       .sys-prod--flow .sp-name { flex: 1 1 auto; }
-      /* §economy Supply-from-HQ rows (Market → Supply tab): a 3-column grid so the
-         name, amount, and buttons line up in aligned columns across rows, with the
-         buttons kept tight next to the amount. Rows use display:contents so their
-         cells flow into the parent grid. */
-      #mk-supply-rows { display: grid; grid-template-columns: auto auto auto; column-gap: 10px; row-gap: 5px; align-items: center; font-size: 11px; width: fit-content; margin-inline: auto; }
-      #mk-supply-rows > .mhint { grid-column: 1 / -1; }
-      .supply-row { display: contents; }
-      .supply-row .sr-name { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .supply-row .sr-qty { text-align: right; font-variant-numeric: tabular-nums; }
-      .supply-row .supply-btns { display: flex; gap: 5px; flex-wrap: nowrap; margin-left: 16px; }
+      /* §market-ux: warehouse rows are the master list for the shipping composer
+         below them — clicking one loads that commodity, so they read as pickable.
+         The selected row keeps the accent so the pairing is never ambiguous. */
+      #wh-table .ord[data-wh-c] { cursor: pointer; padding: 2px 4px; margin-inline: -4px; border-radius: 3px; }
+      #wh-table .ord[data-wh-c]:hover { background: var(--btn-bg); }
+      #wh-table .ord.is-active { color: var(--accent); }
       .act.act--mini { width: auto; margin: 0; padding: 3px 8px; font-size: 11px; display: inline-flex; line-height: 1.2; white-space: nowrap; }
       .conv-idle { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
       /* The crew ± / "+ crew" controls are the full-width stacked .act by
@@ -492,7 +490,7 @@
       .storage-row { margin: 0 0 10px; }
       .storage-row .bar { margin-bottom: 4px; }
       .storage-row .storage-warn { font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 6px; line-height: 1.4; }
-      /* Developments-at-a-glance strip (Extractor ×N · Depot ×N · Shipyard ×N). */
+      /* Developments-at-a-glance strip (Mining Complex ×N · Orbital Warehouse ×N · Shipyard ×N). */
       .devs-row { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; margin: 0 0 10px; font-size: 11px; }
       /* §bodies: roster chips flow INLINE inside their body's row — undo the
          full-width .act default (an ID rule, hence the ID prefixes here) so the
@@ -965,6 +963,29 @@
       #battle-viewer.is-open { display: block; }
       #battle-viewer .pp-close { cursor: pointer; color: var(--dim); font-size: 14px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #battle-viewer .pp-close:hover { color: var(--ink); }
+      /* §ground G3: the ground theater shares the battle viewer's chrome — same
+         overlay, same close affordance — but is narrower: a landing is two
+         masses and a graph, not a fleet arena, and the extra width would only
+         stretch it. The accent rule is dust-coloured rather than ember. */
+      #ground-viewer {
+        position: fixed; top: 34px; left: 50%; transform: translateX(-50%);
+        display: none;
+        width: min(940px, 96vw); max-height: 92vh; overflow-y: auto;
+        padding: 12px 16px 14px;
+        background: var(--panel-bg);
+        border: 1px solid var(--border); border-top: 2px solid #9a7b53; border-radius: 8px;
+        box-shadow: var(--panel-shadow); backdrop-filter: blur(4px);
+        font-size: 12px; z-index: 11;
+      }
+      #ground-viewer.is-open { display: block; }
+      #ground-viewer .pp-close { cursor: pointer; color: var(--dim); font-size: 14px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
+      #ground-viewer .pp-close:hover { color: var(--ink); }
+      .gt-stage { margin: 8px 0 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #05070c; }
+      .gt-scrub { display: flex; gap: 2px; margin: 8px 0 4px; }
+      .gt-scrub button { flex: 1 1 0; height: 16px; border: 0; border-radius: 2px; background: rgba(255,255,255,0.10); cursor: pointer; padding: 0; }
+      .gt-scrub button.is-at { background: var(--accent); }
+      .gt-scrub button.is-beat { background: rgba(255,190,120,0.75); }
+      .gt-scrub button.is-beyond { background: rgba(255,255,255,0.04); cursor: default; }
       .bv-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; color: var(--dim); }
       .bv-sub .bv-vs { color: var(--ink); font-weight: 600; }
       .bv-sub .bv-vs .you { color: var(--accent); }
@@ -1077,6 +1098,10 @@
          from a battle panel / inbox "View battle" affordance. -->
     <div id="battle-viewer"></div>
 
+    <!-- §ground G3: the GROUND THEATER — a landing replayed. Same light-cone
+         discipline as the battle viewer: everything shown has already arrived. -->
+    <div id="ground-viewer"></div>
+
     <!-- Wormhole Hub detail — portrait + blurb + Open Market shortcut when the
          hub landmark is clicked on the galaxy map. Public geography; info only. -->
     <div id="hub-panel"></div>
@@ -1169,7 +1194,7 @@
       <div class="svm-head">
         <div><div class="eyebrow" id="svm-eyebrow">system management</div><h2 id="svm-title" style="margin:0;font-size:16px">—</h2></div>
         <div style="display:flex;align-items:center;gap:10px">
-          <span class="svm-slots" id="svm-slots" title="development slots used / total — each Extractor/Depot/Shipyard/… tier uses one; ships never do">—</span>
+          <span class="svm-slots" id="svm-slots" title="development slots used / total — each Mining Complex/Orbital Warehouse/Shipyard/… tier uses one; ships never do">—</span>
           <button class="svm-close" id="svm-close" type="button" title="Back to galaxy (Esc)" aria-label="Close management">✕</button>
         </div>
       </div>
@@ -1183,13 +1208,12 @@
       <div id="market-wallet" class="stat-strip"></div>
       <div class="seg" id="market-tabs" role="tablist" style="margin: 6px 0 8px">
         <button data-mtab="exchange" class="is-active" role="tab">Exchange</button>
-        <button data-mtab="freight" role="tab">Freight</button>
+        <button data-mtab="warehouse" role="tab">Warehouse</button>
         <button data-mtab="specialists" role="tab">Specialists</button>
         <button data-mtab="modules" role="tab">Modules</button>
-        <button data-mtab="supply" role="tab">Supply</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="mhint" style="margin-bottom:6px">Trades your <b>hub warehouse</b> — goods held here at the Wormhole Hub, <b>separate from your HQ and your systems' stockpiles</b>. Buys land in the warehouse; sells draw from it. Goods elsewhere must be <b>hauled here first</b> — see the <b>Freight</b> tab for Authority freight, or fly your own convoys. To feed a system's converters, use the <b>Supply</b> tab.</div>
+        <div class="mhint" style="margin-bottom:6px">Trades your <b>hub warehouse</b> — goods held here at the Wormhole Hub. Buys land in the warehouse; sells draw from it. Nothing about a trade moves goods across space: your goods sit in exactly two kinds of place, this warehouse and each owned system's stockpile, and moving them between the two is the separate act on the <b>Warehouse</b> tab.</div>
         <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your hub warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
         <div id="market-board"></div>
         <div class="composer">
@@ -1207,18 +1231,26 @@
         <div class="mkt-orders" id="market-orders"></div>
         <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
       </div>
-      <!-- §TCA → §market-ux: the FREIGHT tab — your warehouse at the hub and the
-           Authority freight desk. One pane, because they are one loop: freight is
-           what fills the warehouse the Exchange trades against. Your charter
-           STANDING (which prices this freight) lives in the Faction panel. -->
-      <div id="market-pane-freight" hidden>
-        <!-- §TCA: the WAREHOUSE — the only stock the Exchange trades against. -->
+      <!-- §TCA → §market-ux: the WAREHOUSE tab — your stock at the hub and the ONE
+           place goods cross between it and your systems. Both channels live here,
+           chosen by the CARRIER toggle, because they are the same decision made two
+           ways: the Authority's scheduled hull (a fee, a timetable, someone else's
+           risk to fly) or one of your own convoys (free, immediate, yours to lose).
+           Your charter STANDING, which prices the Authority's half, is in Faction. -->
+      <div id="market-pane-warehouse" hidden>
+        <!-- §TCA: the WAREHOUSE — the only stock the Exchange trades against. Rows
+             are clickable: picking one loads it into the shipping composer below. -->
         <div class="ci-sub">Your warehouse · at the Wormhole Hub</div>
         <div id="wh-table" class="mkt-orders"></div>
 
-        <!-- §TCA: the FREIGHT DESK — book the Authority's scheduled carrier. -->
-        <div class="ci-sub">Authority freight · scheduled service</div>
+        <div class="ci-sub">Move goods · warehouse ↔ your systems</div>
         <div class="composer">
+          <div class="composer__row"><label>Carrier</label>
+            <div class="seg" id="fr-carrier">
+              <button data-carrier="tca" class="is-active" title="The Terran Charter Authority's scheduled common carrier. Costs a fee (charged now and destroyed), rides a fixed timetable, and can carry goods BOTH ways. The freighter is a real, raidable hull — but it isn't yours to lose.">Authority freight</button>
+              <button data-carrier="own" title="One of your own convoys, sailing from the Charterhouse the moment you send it. Free and immediate, but outbound only, and it is your hull crossing raidable space.">Your own convoy</button>
+            </div>
+          </div>
           <div class="composer__row"><label>Direction</label>
             <div class="seg" id="fr-dir"><button data-dir="outbound" class="is-active">Warehouse → system</button><button data-dir="inbound">System → warehouse</button></div>
           </div>
@@ -1240,12 +1272,6 @@
       <div id="market-pane-modules" hidden>
         <div id="mod-rows"></div>
         <div class="mhint" id="mod-feedback"></div>
-      </div>
-      <div id="market-pane-supply" hidden>
-        <div class="mhint">Ship goods from your <b>hub warehouse</b> into a system's stockpile — to feed its converters. Your own convoy, sailing from the hub: free, sub-light and <b>raidable</b>. The <b>Freight</b> tab books the Authority's carrier for the same leg instead.</div>
-        <div class="composer__row" style="margin-top:8px"><label>To system</label><select id="mk-supply-dest"></select></div>
-        <div id="mk-supply-rows" style="margin-top:8px"></div>
-        <div class="mhint" id="mk-supply-feedback"></div>
       </div>
     </div>
 

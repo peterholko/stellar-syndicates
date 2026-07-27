@@ -68,6 +68,8 @@ pub struct RecordCursor {
 pub struct ConnSentState {
     /// Per-record delivery cursors (records currently known to this connection).
     pub records: HashMap<EntityId, RecordCursor>,
+    /// §ground G2: the same, for LANDING records.
+    pub ground_records: HashMap<EntityId, RecordCursor>,
     /// Signature of the standing-orders list as last sent.
     pub standing_sig: Option<u64>,
     /// Signature of the retained battle-reports list as last sent.

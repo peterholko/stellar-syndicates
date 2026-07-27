@@ -24,6 +24,7 @@ pub mod event;
 pub mod explore;
 pub mod fuel;
 pub mod galaxy;
+pub mod ground;
 pub mod ids;
 pub mod market;
 pub mod math;
@@ -76,7 +77,7 @@ pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
 pub use rng::Rng;
 pub use detection::{detected as detected_by, signature as fleet_signature};
 pub use ship::{
-    fitting_points, hull_affinity, CountClass, DefenseEngagement, Fleet, FleetOrder, ShipKind,
+    fitting_points, hull_affinity, CountClass, DefenseEngagement, DockSite, Fleet, FleetOrder, ShipKind,
     TradeMission, TransitMode, ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
 };
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};

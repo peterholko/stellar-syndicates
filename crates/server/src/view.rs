@@ -34,7 +34,7 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity, GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -67,6 +67,16 @@ struct Track {
     max_speed: f64,
     /// The estimated-size bucket a fog observer sees.
     count_class: CountClass,
+    /// §roster: the fleet's AGGREGATE damage (0 = pristine, 1 = every hull at
+    /// zero). A FRACTION only — never the per-hull roster, which would leak the
+    /// exact count the `count_class` bucket exists to hide. Gated on coverage
+    /// exactly like `composition`.
+    damage_frac: f64,
+    /// §dock: WHERE this fleet is berthed, if it is. Sampled per tick like any
+    /// other track state, so a light-delayed sighting reports the dock as it was
+    /// when the light left — a fleet you see berthed may have sailed since,
+    /// exactly like everything else on this track.
+    docked: Option<sim::DockSite>,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
@@ -163,6 +173,8 @@ impl PositionHistory {
                 modules: Default::default(),
                 route: None,
                 gone: None,
+                damage_frac: 0.0,
+                docked: None,
             });
             track.owner = ship.owner;
             track.composition = ship.composition.clone();
@@ -171,6 +183,8 @@ impl PositionHistory {
             track.sensor_mult = ship.sensor_mult();
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
+            track.damage_frac = ship.damage_fraction();
+            track.docked = world.dock_of(*id);
             track.last_seen = now;
             track.cargo = ship.cargo;
             track.passengers = ship.passengers.clone();
@@ -295,6 +309,10 @@ impl PositionHistory {
             broadcasts: bool,
             max_speed: f64,
             count_class: CountClass,
+            /// §roster: aggregate damage fraction, gated like `composition`.
+            damage_frac: f64,
+            /// §dock: the berth this sighting was taken at, if any.
+            docked: Option<sim::DockSite>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
             sample: Sample,
@@ -347,6 +365,8 @@ impl PositionHistory {
                 broadcasts: track.broadcasts,
                 max_speed: track.max_speed,
                 count_class: track.count_class,
+                damage_frac: track.damage_frac,
+                docked: track.docked,
                 composition: &track.composition,
                 loadouts: &track.loadouts,
                 sample,
@@ -457,6 +477,15 @@ impl PositionHistory {
             } else {
                 None
             };
+            // §roster: how BEATEN UP the fleet is rides the same reveal — a close
+            // look tells you they're hurt, a distant bucket does not. A fraction
+            // only: the roster never goes on the wire at any fidelity.
+            let damage = if own || detected || deep { Some(p.damage_frac) } else { None };
+            // §dock: ungated — see `GhostView::docked`. "hub" or the system id.
+            let docked = p.docked.map(|d| match d {
+                sim::DockSite::Hub => "hub".to_string(),
+                sim::DockSite::System(id) => id.to_string(),
+            });
             // §modules Part B: FITS ride with the composition reveal — if you can
             // see the makeup, you can see what's fitted (fitted stacks only; the
             // unfitted remainder is derived client-side).
@@ -481,6 +510,7 @@ impl PositionHistory {
             let modules = if detected { p.modules.clone() } else { Default::default() };
 
             ghosts.push(GhostView {
+                docked,
                 id: p.id,
                 owner: p.owner,
                 kind: p.flagship,
@@ -494,6 +524,7 @@ impl PositionHistory {
                 passengers,
                 count_class: p.count_class,
                 composition,
+                damage,
                 loadouts,
                 modules,
                 signature: if p.broadcasts { None } else { Some(signature) },
@@ -508,6 +539,11 @@ impl PositionHistory {
                 ally: false,
                 garrison_host: None,
                 garrison_fed: false,
+                // §upkeep: OWNER-ONLY supply state — injected by the game loop
+                // from authoritative fleet state (this history-only view can't
+                // see it). Defaults to supplied, so a rival's ghost never carries
+                // a hint about whether you can feed your navy.
+                supplied: true,
                 // §pirates: the neutral faction flag — this history-only view keys
                 // off the recorded owner, filled by the game loop.
                 pirate: p.owner.is_pirate(),
@@ -723,6 +759,35 @@ pub fn filter_systems(
                 let owner_sees = own && now >= b.since + sys.pos.distance(cc) / c;
                 (by_me || owner_sees).then_some(BlockadeStateView { by: b.by, since: b.since, by_me, siege_since: b.siege_since })
             });
+            // §ground: what a landing here would have to beat. Same two-viewer
+            // rule as the blockade, for the same reason — but NOT light-gated:
+            // the owner is reading their own building, and the besieger is
+            // reading it through a fleet parked in the system. Third parties get
+            // None (a rival's garrison strength is private intel, exactly like
+            // their defense platform).
+            let ground = {
+                let besieging = sys.blockade.is_some_and(|b| b.by == viewer);
+                (own || besieging).then(|| GroundStateView {
+                    garrison_tier: sys.tier_sum(sim::StructureKind::Garrison),
+                    garrison_fed: sys.garrison_fed,
+                    suppression: sys.garrison_suppression.clamp(0.0, 1.0),
+                    // §ground G1: the BREAK-EVEN landing, not a guarantee. A
+                    // landing is fought out over time and rolled now, so this
+                    // is the even-odds point — and it carries the square root
+                    // that falls out of resolving the fight rather than
+                    // comparing two numbers (see `ground::break_even_marines`).
+                    marines_needed: sim::ground::break_even_marines(
+                        sys.tier_sum(sim::StructureKind::Garrison) as f64,
+                        if sys.garrison_fed { sys.garrison_suppression } else { 1.0 },
+                    )
+                    .ceil() as u32,
+                    // §ground G4: filled in by the game loop, which has the
+                    // fleets and the config this needs. Kept OUT of the fog
+                    // filter on purpose — the odds are a decision aid computed
+                    // from state the viewer already has, not another gated fact.
+                    landing: None,
+                })
+            };
             SystemStateView {
                 id: sys.id,
                 owner,
@@ -730,12 +795,13 @@ pub fn filter_systems(
                 build,
                 builds,
                 blockade,
+                ground,
                 // Owner-only, like the stockpile: a system's development tier is
                 // private intel. Gating it also avoids leaking an upgrade to a rival
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
                 extractor_tier: if own { sys.tier(sim::StructureKind::MiningComplex) } else { 0 },
-                depot_tier: if own { sys.tier(sim::StructureKind::Depot) } else { 0 },
+                orbital_warehouse_tier: if own { sys.tier(sim::StructureKind::OrbitalWarehouse) } else { 0 },
                 shipyard_tier: if own { sys.tier(sim::StructureKind::Shipyard) } else { 0 },
                 sensor_tier: if own { sys.tier(sim::StructureKind::SensorArray) } else { 0 },
                 // A rival NEVER sees a platform in the View — it reveals itself
@@ -1132,6 +1198,136 @@ pub fn visible_record_specs(
     out
 }
 
+// --- §ground G2: LANDING RECORDS, per viewer ---------------------------------
+
+/// What one viewer can resolve of one landing, and how much of it has arrived.
+#[derive(Debug, Clone)]
+pub struct GroundSpec {
+    pub id: sim::EntityId,
+    pub fidelity: GroundFidelity,
+    pub attacking: bool,
+    pub arrived_len: usize,
+    pub frontier_tick: u64,
+    pub outcome: Option<String>,
+}
+
+/// Which landings this viewer can see, at what fidelity, and how much of each
+/// has reached them.
+///
+/// The fog rules are the battle record's, applied to ground: a landing exists to
+/// you once its opening light arrives; you are a PARTICIPANT if you are the one
+/// landing or the one being landed on; you are a BUCKET observer if you merely
+/// have sensor coverage of the site — enough to see a fight is being had and
+/// roughly how it is going, never the headcounts. No coverage, no record.
+pub fn visible_ground_specs(
+    records: &BTreeMap<sim::EntityId, sim::ground::GroundRecord>,
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+    coverage: &[(Vec2, f64)],
+) -> Vec<GroundSpec> {
+    let mut out = Vec::new();
+    for r in records.values() {
+        let delay = r.pos.distance(cc) / c;
+        let arrived = |tick: u64| (tick as f64) * sim::DT + delay <= now;
+        if !arrived(r.started_tick) {
+            continue;
+        }
+        let participant = r.attacker == viewer || r.defender == viewer;
+        let fidelity = if participant {
+            GroundFidelity::Participant
+        } else if within_coverage(coverage, r.pos) {
+            GroundFidelity::Bucket
+        } else {
+            continue;
+        };
+        let mut arrived_len = 0;
+        let mut frontier = r.started_tick;
+        for rr in &r.rounds {
+            if !arrived(rr.tick) {
+                break;
+            }
+            frontier = rr.tick;
+            arrived_len += 1;
+        }
+        let outcome = r.ended_tick.filter(|t| arrived(*t)).and(r.outcome).map(|o| {
+            match o {
+                sim::ground::GroundOutcome::Taken => "taken",
+                sim::ground::GroundOutcome::Repulsed => "repulsed",
+            }
+            .to_string()
+        });
+        out.push(GroundSpec {
+            id: r.id,
+            fidelity,
+            attacking: r.attacker == viewer,
+            arrived_len,
+            frontier_tick: frontier,
+            outcome,
+        });
+    }
+    out
+}
+
+/// One landing's per-viewer header at the spec's fidelity.
+pub fn ground_header(r: &sim::ground::GroundRecord, spec: &GroundSpec) -> GroundRecordHeader {
+    let participant = matches!(spec.fidelity, GroundFidelity::Participant);
+    GroundRecordHeader {
+        system: r.system,
+        pos: r.pos,
+        started_at: r.started_tick as f64 * sim::DT,
+        fidelity: spec.fidelity,
+        attacker: r.attacker,
+        defender: r.defender,
+        attacking: spec.attacking,
+        marines_landed: participant.then_some(r.marines_landed),
+        defenders_initial: participant.then_some(r.defenders_initial),
+        garrison_tiers: r.garrison_tiers,
+        suppression_at_drop: r.suppression_at_drop,
+    }
+}
+
+/// A half-open range of one landing's rounds at the given fidelity.
+///
+/// The FRACTIONS are always present and the COUNTS never are outside
+/// participant fidelity: a third party watching from orbit can see one side
+/// collapsing without learning how many were there, which is the same trade the
+/// two-tier intel ladder makes everywhere else.
+pub fn ground_rounds_range(
+    r: &sim::ground::GroundRecord,
+    from: usize,
+    to: usize,
+    participant: bool,
+) -> Vec<GroundRoundView> {
+    let m0 = (r.marines_landed.max(1)) as f64;
+    let d0 = (r.defenders_initial.max(1)) as f64;
+    r.rounds[from.min(r.rounds.len())..to.min(r.rounds.len())]
+        .iter()
+        .map(|rr| GroundRoundView {
+            tick: rr.tick,
+            marines: participant.then_some(rr.marines),
+            defenders: participant.then_some(rr.defenders),
+            marines_frac: (rr.marines as f64 / m0).clamp(0.0, 1.0),
+            defenders_frac: (rr.defenders as f64 / d0).clamp(0.0, 1.0),
+            suppression: rr.suppression,
+            marine_losses: participant.then_some(rr.marine_losses),
+            defender_losses: participant.then_some(rr.defender_losses),
+            notes: rr
+                .notes
+                .iter()
+                .map(|n| match n {
+                    sim::ground::GroundNote::GunsLifted => "guns_lifted",
+                    sim::ground::GroundNote::GunsResumed => "guns_resumed",
+                    sim::ground::GroundNote::GarrisonStarved => "garrison_starved",
+                    sim::ground::GroundNote::Tipped => "tipped",
+                })
+                .map(str::to_string)
+                .collect(),
+        })
+        .collect()
+}
+
 /// §perf Part A: materialize one record's per-viewer HEADER (everything but the
 /// rounds) at the spec's fidelity. The per-side filtering is the original
 /// `side_view` logic, verbatim: posture rides only the viewer's own side, fits +
@@ -1263,6 +1459,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
         sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
+        sim::BuildKind::Ship { ship: sim::ShipKind::Transport } => "transport",
         // §TCA: the Authority Freighter is never a corp build option — a defensive
         // key so the match stays total (absent from the client build menu).
         sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "freighter",
@@ -1391,6 +1588,8 @@ mod tests {
             sensor_mult: kind.sensor_mult(),
             max_speed: kind.max_speed(),
             count_class: CountClass::from_count(1),
+            damage_frac: 0.0,
+            docked: None,
             samples: samples.into(),
             last_seen: last,
             cargo,
@@ -1580,6 +1779,8 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
                 blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
@@ -1653,8 +1854,8 @@ mod tests {
         // Storage cap + fill (§buildings step 2) — owner-only on the same rule.
         assert_eq!(v10[0].storage_cap, systems[0].storage_cap() as u32, "owner sees their cap");
         assert_eq!(v10[0].storage_used, 12, "owner sees fill in whole units");
-        assert_eq!(v10[0].depot_tier, 0);
-        assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].depot_tier), (0, 0, 0), "a rival's storage never leaks");
+        assert_eq!(v10[0].orbital_warehouse_tier, 0);
+        assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].orbital_warehouse_tier), (0, 0, 0), "a rival's storage never leaks");
         // Shipyard tier (§buildings step 3) — owner-only on the same rule.
         assert_eq!(v10[0].shipyard_tier, systems[0].tier(sim::StructureKind::Shipyard), "owner sees their shipyard tier");
         assert_eq!(v10[1].shipyard_tier, 0, "a rival's shipyard tier never leaks");
@@ -1723,6 +1924,8 @@ mod tests {
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
             blockade_prev: None,
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
@@ -1872,6 +2075,166 @@ mod tests {
         assert_eq!(near_third[1].owner, b);
     }
 
+    /// §ground: the GROUND readout follows the blockade's two-participant rule,
+    /// but deliberately WITHOUT the light delay — the owner is reading their own
+    /// building, and the besieger is reading it through a fleet parked in the
+    /// system. What must never happen is a THIRD party learning how well
+    /// defended someone else's ground is: that is scouting intel, and free
+    /// access to it would let anyone shop for the softest target in the galaxy.
+    #[test]
+    fn ground_state_is_owner_and_besieger_only() {
+        use std::collections::BTreeMap;
+        let c = 300.0;
+        let owner = PlayerId(7);
+        let besieger = PlayerId(8);
+        let third = PlayerId(9);
+        let mut sys = StarSystem {
+            id: EntityId(1), pos: Vec2::new(6000.0, 0.0), name: "S".into(), bodies: vec![],
+            legacy_deposits: vec![], claim_cost: 0.0,
+            owner: Some(owner), claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
+            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
+            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+            legacy_refinery_tier: 0,
+            blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+            blockade_prev: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
+            trait_: None, cache_claimed: false, legacy_structures: Default::default(),
+            legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+        };
+        // Two standing tiers on the habitable body — 50 marines to take it.
+        sys.bodies.push(sim::Body {
+            id: 1, name: "S I".into(), kind: sim::BodyKind::Terrestrial, parent: None,
+            habitable: true, deposits: vec![],
+            structures: [(sim::StructureKind::Garrison, 2)].into_iter().collect(),
+            population: 0.0, assignments: Default::default(),
+        });
+        let systems = vec![sys];
+        let cc = Vec2::new(0.0, 0.0);
+        let builds = vec![];
+        // Long after the onset light, so a light delay can't be what hides it.
+        let q = |viewer| {
+            filter_systems(&systems, viewer, cc, c, 5_000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].ground
+        };
+
+        let o = q(owner).expect("the owner always reads their own garrison");
+        assert_eq!(o.garrison_tier, 2);
+        assert!(o.garrison_fed);
+        assert_eq!(o.marines_needed, 50, "two unsuppressed tiers break even at 50 boots");
+
+        let b = q(besieger).expect("the besieger reads the ground their fleet is sitting on");
+        assert_eq!(b.marines_needed, 50, "both sides read the SAME number — no asymmetric lie");
+
+        assert!(q(third).is_none(), "leak: a third party must never learn how defended this ground is");
+    }
+
+    /// §ground G2: a LANDING RECORD carries the same three-tier fog as a battle
+    /// record. Both participants read the whole fight. A third party who merely
+    /// covers the site from orbit can see that a landing is being fought and how
+    /// it is GOING — the shape of it — but never the headcounts: troop strength
+    /// is exactly the intel an onlooker should have to earn. Nobody else sees it
+    /// at all. Leak-checked in both directions.
+    #[test]
+    fn a_landing_record_is_participant_exact_observer_shaped_and_otherwise_invisible() {
+        use sim::ground::{GroundAssault, GroundNote, GroundRecord, GroundRound};
+        let (atk, def, watcher, stranger) = (PlayerId(1), PlayerId(2), PlayerId(3), PlayerId(4));
+        let pos = Vec2::new(600.0, 0.0);
+        let a = GroundAssault::open(
+            EntityId(0xD001), 42, EntityId(9), pos, atk, def, EntityId(5), 80, 4, 0, 45.0,
+        );
+        let mut rec = GroundRecord::open(&a, 0.5, 45.0);
+        rec.rounds.push(GroundRound {
+            tick: 30, marines: 60, defenders: 70, suppression: 0.5,
+            marine_losses: 20, defender_losses: 30, notes: vec![GroundNote::Tipped],
+        });
+        let records: BTreeMap<sim::EntityId, GroundRecord> =
+            [(rec.id, rec.clone())].into_iter().collect();
+
+        let cc = Vec2::new(0.0, 0.0);
+        // Long after the light, so nothing here is hidden by delay alone.
+        let specs = |viewer, coverage: &[(Vec2, f64)]| {
+            visible_ground_specs(&records, viewer, cc, 300.0, 10_000.0, coverage)
+        };
+        let covering = [(pos, 200.0)];
+
+        // PARTICIPANTS — both sides, exact.
+        for (who, attacking) in [(atk, true), (def, false)] {
+            let s = specs(who, &[]);
+            assert_eq!(s.len(), 1, "a participant sees their own landing without needing sensors");
+            assert!(matches!(s[0].fidelity, GroundFidelity::Participant));
+            assert_eq!(s[0].attacking, attacking);
+            let h = ground_header(&records[&rec.id], &s[0]);
+            assert_eq!(h.marines_landed, Some(80), "a participant reads the true landing size");
+            assert_eq!(h.defenders_initial, Some(100));
+            let rounds = ground_rounds_range(&records[&rec.id], 0, s[0].arrived_len, true);
+            assert_eq!(rounds[0].marines, Some(60));
+            assert_eq!(rounds[0].defenders, Some(70));
+            assert_eq!(rounds[0].marine_losses, Some(20));
+        }
+
+        // A COVERING THIRD PARTY — the shape, never the numbers.
+        let s = specs(watcher, &covering);
+        assert_eq!(s.len(), 1, "coverage of the site reveals that a landing is happening");
+        assert!(matches!(s[0].fidelity, GroundFidelity::Bucket));
+        let h = ground_header(&records[&rec.id], &s[0]);
+        assert_eq!(h.marines_landed, None, "leak: an onlooker must not learn the landing's size");
+        assert_eq!(h.defenders_initial, None, "leak: nor how many defended it");
+        let rounds = ground_rounds_range(&records[&rec.id], 0, s[0].arrived_len, false);
+        assert_eq!(rounds[0].marines, None, "leak: no exact troop counts");
+        assert_eq!(rounds[0].defenders, None);
+        assert_eq!(rounds[0].marine_losses, None, "leak: nor exact casualties");
+        // ...but the SHAPE is legible, which is the point of the tier.
+        assert!((rounds[0].marines_frac - 0.75).abs() < 1e-9, "the landing is at 3/4 strength");
+        assert!((rounds[0].defenders_frac - 0.70).abs() < 1e-9, "the garrison at 7/10");
+        assert_eq!(rounds[0].suppression, 0.5, "and the guns are not subtle");
+        assert_eq!(rounds[0].notes, vec!["tipped".to_string()], "the beats are visible too");
+
+        // A STRANGER with no coverage — nothing at all.
+        assert!(specs(stranger, &[]).is_empty(), "leak: an uncovered stranger must not see the landing");
+        assert!(
+            specs(stranger, &[(Vec2::new(50_000.0, 0.0), 100.0)]).is_empty(),
+            "leak: coverage somewhere ELSE reveals nothing",
+        );
+    }
+
+    /// §ground G1: the wire's break-even figure carries the SQUARE ROOT that
+    /// falls out of fighting a landing over time. Suppressing half a garrison
+    /// discounts the landing by 29%, not 50% — bombardment is a discount on
+    /// troops, never a replacement for them, and the number the player is
+    /// shown has to be the one the engine actually uses.
+    #[test]
+    fn the_wire_reports_the_break_even_landing_not_a_linear_threshold() {
+        use std::collections::BTreeMap;
+        let owner = PlayerId(7);
+        let mk = |suppression: f64| {
+            let mut sys = StarSystem {
+                id: EntityId(1), pos: Vec2::new(10.0, 0.0), name: "S".into(), bodies: vec![],
+                legacy_deposits: vec![], claim_cost: 0.0,
+                owner: Some(owner), claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
+                legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
+                legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+                legacy_refinery_tier: 0, blockade: None, blockade_prev: None,
+                garrison_fed: true, garrison_suppression: suppression,
+                trait_: None, cache_claimed: false, legacy_structures: Default::default(),
+                legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+            };
+            sys.bodies.push(sim::Body {
+                id: 1, name: "S I".into(), kind: sim::BodyKind::Terrestrial, parent: None,
+                habitable: true, deposits: vec![],
+                structures: [(sim::StructureKind::Garrison, 4)].into_iter().collect(),
+                population: 0.0, assignments: Default::default(),
+            });
+            let systems = vec![sys];
+            filter_systems(&systems, owner, Vec2::new(0.0, 0.0), 300.0, 5_000.0, &[], 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0]
+                .ground
+                .expect("the owner reads their own ground")
+                .marines_needed
+        };
+        assert_eq!(mk(0.0), 100, "four unsuppressed tiers break even at 100");
+        assert_eq!(mk(0.5), 71, "half pinned → 100·√0.5 ≈ 71, NOT 50");
+        assert_eq!(mk(1.0), 0, "fully pinned ground is open");
+    }
+
     /// BLOCKADE state (§contestable-territory Part 1) is surfaced to the two
     /// PARTICIPANTS only, each light-honestly: the BESIEGER sees it instantly
     /// (their fleet is there); the OWNER only once the onset light reaches their
@@ -1891,7 +2254,9 @@ mod tests {
             legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
-                blockade_prev: None,
+            blockade_prev: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
@@ -1948,13 +2313,15 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
                 blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
             EntityId(1),
-            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
+            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
         );
         let builds: Vec<sim::BuildJob> = vec![];
 
@@ -1998,6 +2365,8 @@ mod tests {
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
                 blockade_prev: None,
             trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
         }]
@@ -2017,7 +2386,7 @@ mod tests {
         let builds: Vec<sim::BuildJob> = vec![];
         // The ALLY scouted the rival system (capture pos ~ the system): observed_at 0.
         let mut ally_map = BTreeMap::new();
-        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
         // Chain: T2 = 6000/300 = 20 (ally learns), T3 = 20 + 12000/300 = 60 (I learn).
         let v55 = filter_systems(&systems, me, cc, c, 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
@@ -2044,13 +2413,13 @@ mod tests {
         let systems = rival_one_system(rival);
         let builds: Vec<sim::BuildJob> = vec![];
         let mut ally_map = BTreeMap::new();
-        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         // Non-member: no allies passed → nothing relayed, even long after the chain.
         let v_non = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v_non[0].intel.is_none(), "a non-member receives no relayed intel");
         // Own direct snapshot present AND ally relay present → OWN wins (no provenance).
         let mut own_map = BTreeMap::new();
-        own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
         let v = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &own_map, &allies, &BTreeSet::new());
         let iv = v[0].intel.expect("own intel delivered");
@@ -2366,6 +2735,8 @@ mod tests {
             sensor_mult: f.sensor_mult(),
             max_speed: f.max_speed(),
             count_class: f.count_class(),
+            damage_frac: f.damage_fraction(),
+            docked: None,
             samples: samples.into(),
             last_seen: 100.0,
             cargo: None,
@@ -2375,6 +2746,44 @@ mod tests {
             route: None,
             gone: None,
         }
+    }
+
+    /// §roster LEAK CHECK: a fleet's DAMAGE rides the composition gate. A far
+    /// observer learns nothing about how beaten up a rival is; inside sensor
+    /// coverage they do — which is what makes a wounded fleet worth finding.
+    /// And in NO case does the per-hull roster reach the wire: the payload must
+    /// carry a single fraction, never anything the true count could be read from.
+    #[test]
+    fn fleet_damage_is_gated_on_coverage_and_never_ships_the_roster() {
+        // A broadcasting wing, several hulls hurt by DIFFERENT amounts (only a
+        // real roster can express that) — the track carries the aggregate.
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let hurt = || {
+            let mut t = fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp);
+            // 0.30 of the formation's total hull is missing, spread unevenly.
+            t.damage_frac = 0.30;
+            t
+        };
+
+        // OUTSIDE coverage: the bucket is present; damage is NOT.
+        let hist = history_of(vec![(EntityId(1), hurt())], 1000.0);
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        assert!(far[0].composition.is_none(), "composition stays hidden outside coverage");
+        assert!(far[0].damage.is_none(), "…and so does how hurt they are");
+
+        // INSIDE coverage: both revealed, and the damage is the aggregate.
+        let hist = history_of(vec![(EntityId(1), hurt())], 1000.0);
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        assert!(near[0].composition.is_some(), "coverage reveals the makeup");
+        let dmg = near[0].damage.expect("coverage reveals the damage");
+        assert!((dmg - 0.30).abs() < 1e-9, "the reported figure is the fleet's own aggregate");
+
+        // THE PAYLOAD ITSELF: one fraction, never the hulls. Serializing the
+        // REVEALING view must expose no roster and no per-ship health — that
+        // would hand a reader the exact count `count_class` exists to withhold.
+        let json = serde_json::to_string(&near).unwrap();
+        assert!(!json.contains("\"ships\""), "the roster must never reach the wire");
+        assert!(!json.contains("\"hp\""), "per-hull health must never reach the wire");
     }
 
     /// LEAK CHECK (broadcasting fleet, outside coverage): the size BUCKET is

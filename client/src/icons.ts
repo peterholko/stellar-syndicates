@@ -15,7 +15,7 @@ export type IconKey =
   | "fuel" | "ore" | "alloys" | "provisions" | "volatiles" | "credits"
   // economy / structures
   | "storage" | "slots" | "shipyard" | "sensor" | "defense" | "habitat" | "refinery" | "interdictor"
-  | "extractor" | "depot" | "build" | "queue"
+  | "extractor" | "orbital_warehouse" | "build" | "queue"
   // fleets / ship kinds
   | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony"
   // verbs / orders
@@ -75,7 +75,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   refinery: P("⚗", "Fuel refinery (Volatiles → Fuel)"),
   interdictor: P("⛓", "Interdictor"),
   extractor: P("⛏", "Extractor tier (output ×1.5)"),
-  depot: P("🏬", "Depot tier (storage cap)"),
+  orbital_warehouse: P("🏬", "Orbital Warehouse tier (storage cap)"),
   build: A("action-build", "Build"),
   queue: P("🔨", "Under construction"),
   // fleets / ship kinds

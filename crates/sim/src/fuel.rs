@@ -47,7 +47,7 @@ pub const FUEL_HOME_SEED: f64 = 300.0;
 
 /// The commodity that fuels movement (and so is the one operation kind that is
 /// EXEMPT from the charge — a convoy hauling Fuel must move without needing Fuel,
-/// or a fuel-starved depot could never be resupplied: a deadlock).
+/// or a fuel-starved colony could never be resupplied: a deadlock).
 pub const MOVEMENT_FUEL: Commodity = Commodity::Fuel;
 
 /// Fuel a fleet of `mass` burns to traverse `distance`. Deterministic; clamps

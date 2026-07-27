@@ -160,9 +160,16 @@ const STAR_MAX_PX = 480; // a star icon's CANVAS at max zoom — a uniform 1.875
 // texture's NATIVE width (1254px), so max zoom renders it at sprite scale
 // exactly 1.0 — pixel-crisp by construction, never upscaled (a fixed target
 // above the asset's resolution is what made it blurry). See hubRenderedPx.
-// Click-target cap for grown BODIES: a max-zoom star/hub is hundreds of px —
-// its hit circle stops at this radius so it never swallows clicks meant for
-// ships parked on it (ships are hit-tested first and stay ≤ ~65px anyway).
+// Click-target cap for grown BODIES: a max-zoom star/hub is hundreds of px, and
+// its hit circle stops here.
+//
+// §dock: this cap existed because ships PARKED ON a star competed with it for
+// clicks. Berthed hulls are no longer drawn on the star chart at all, so that
+// pressure is gone and the cap could be loosened considerably — a max-zoom star
+// could reasonably be clickable across its whole disc now. Kept deliberately:
+// a fleet at a BLOCKADED berth still draws (decluttering must not conceal an
+// attack), and a fleet merely passing near a star is still hit-tested first.
+// The cap costs nothing and keeps those two cases clickable.
 const BODY_HIT_CAP_PX = 90;
 
 // §battle-aftermath tunables. The marker is SCREEN-SPACE UI (like pips/badges):
@@ -1510,6 +1517,8 @@ export class Renderer {
       // §TCA: the Authority freighter reuses the bulk-hauler art; its neutral
       // TINT is what distinguishes it from a corporation's convoy.
       case "freighter": return this.texConvoy;
+      // §ground: the troopship rides the colony hull until it has its own art.
+      case "transport": return this.texColony;
     }
   }
 
@@ -1522,6 +1531,9 @@ export class Renderer {
       case "corvette": return "corvette";
       case "scout": return "scout";
       case "colony": return null;
+      // §ground: a landing force draws its single fat hull + count badge, like
+      // the colony ship it shares art with.
+      case "transport": return null;
       // §ladder: a capital IS the formation — always the single (placeholder)
       // hull + count badge, like the colony ship.
       case "destroyer":
@@ -2009,11 +2021,30 @@ export class Renderer {
       // fleet the icon doesn't represent.
       const engaged = new Set<string>();
       for (const b of state.battles) for (const p of b.participants) engaged.add(p);
+      // §dock: BERTHED hulls are not drawn on the star chart. A docked ship
+      // belongs to the system view — drawing it here is what buried systems
+      // under stacks of overlapping sprites and forced the hit-radius caps
+      // below. Nothing is concealed: the same ghosts become the berth counts on
+      // the system panel, so the information moves rather than disappearing.
+      //
+      // TWO ESCAPES, both deliberate. A fleet can only be berthed at the hub or
+      // at ground its owner (or an ally) holds — so anything sitting on a
+      // rival's world is blockading, besieging or invading, and keeps its
+      // sprite. And a berth under BLOCKADE keeps drawing regardless: decluttering
+      // must never become concealment of an attack on your own dock.
+      const besieged = new Set<string>(
+        state.systems.filter((s) => s.blockade !== null).map((s) => s.id),
+      );
       for (const ghost of state.ghosts) {
         if (engaged.has(ghost.id)) {
           const sp = this.ghosts.get(ghost.id);
           if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
           continue; // not in screenById → no order line either
+        }
+        if (ghost.docked && !besieged.has(ghost.docked)) {
+          const sp = this.ghosts.get(ghost.id);
+          if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
+          continue;
         }
         const sp0 = this.ghosts.get(ghost.id);
         if (sp0) sp0.container.visible = true; // un-suppress a fleet that broke away

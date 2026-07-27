@@ -82,6 +82,8 @@ export interface ViewState {
   /// §battle-records Part A: the light-gated replay of every observable battle
   /// (running + recent), at the viewer's fidelity. Keyed use is by id.
   battleRecords: import("./protocol").BattleRecordView[];
+  /// §ground G2: LANDING records, held and merged exactly like battle records.
+  groundRecords: import("./protocol").GroundRecordView[];
   /// §syndicates Part 1: the viewer's OWN syndicate roster (null if unaffiliated).
   syndicate: import("./protocol").SyndicateView | null;
   /// §syndicates Part 1: pending invitations the viewer may accept.
@@ -153,6 +155,7 @@ export function initialState(): ViewState {
     battles: [],
     battleReports: [],
     battleRecords: [],
+    groundRecords: [],
     captureReports: [],
     syndicate: null,
     syndicateInvites: [],

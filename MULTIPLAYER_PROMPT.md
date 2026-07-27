@@ -1,5 +1,27 @@
 # Multiplayer Build Plan — Claude Code Handoff
 
+> **HISTORICAL. Do not build from this document.**
+>
+> This is the original bootstrap prompt for milestones M1–M7. All seven are long since
+> complete, and the game has grown well past this plan. Several of its instructions now
+> describe mechanics that were deliberately **removed** after playtest:
+>
+> - **M2's flip-and-burn acceleration** was retired for constant per-kind speeds — the burn
+>   was invisible at async cadence and its `t ≈ 2√(d/a)` law defeated the mental arithmetic a
+>   prediction game needs (see GAME_DESIGN §7).
+> - **M5's buy/sell asymmetry** (buys spawning free delivery convoys, sells clearing at
+>   price-on-arrival) was replaced by the Charterhouse warehouse: trades are symmetric and
+>   price-certain, and hauling is a separate explicit act (GAME_DESIGN §9).
+> - Its `§16 (milestones)` reference points at a GDD section that is now fleet doctrine.
+>
+> Its **architectural** non-negotiables are still exactly right and still hold in the code:
+> a pure I/O-free deterministic sim core, a single world-owning game-loop task, axum
+> WebSockets as pure I/O, persistence off the hot path, and the per-player lightspeed view
+> filter as a first-class component with no cross-player information leaks.
+>
+> For the current design read [`GAME_DESIGN.md`](GAME_DESIGN.md); for the current state read
+> [`README.md`](README.md). This file is kept only as a record of how the build started.
+
 Build the game described in `GAME_DESIGN.md`. **Target: the full per-GDD multiplayer game — up to
 12 players, robust sessions, the complete multiplayer economy.** Read `GAME_DESIGN.md` in full,
 especially §6 (the lightspeed information model — the heart), §9 (the market), §14 (architecture),

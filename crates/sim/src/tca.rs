@@ -35,16 +35,10 @@ use crate::ids::{EntityId, PlayerId};
 pub const TCA_DEPARTURE_PERIOD: f64 = 120.0;
 
 /// Max units a single corporation may load per destination per departure. Bookings
-/// beyond this don't reject — they roll forward FIFO to later departures.
+/// beyond this don't reject — they roll forward FIFO to later departures. UNIFORM
+/// across destinations: how much a freighter lifts is a property of the HULL, not
+/// of what the receiving colony has built, so no ground structure raises it.
 pub const TCA_SHIPMENT_CAP: u32 = 400;
-
-/// A destination system with ANY Depot tier gets its per-departure cap multiplied
-/// by this (flat v1; per-tier scaling deferred — a Depot means "the Authority runs
-/// bigger, cheaper lifts to a place that can receive them").
-pub const TCA_DEPOT_CAP_MULT: f64 = 2.0;
-
-/// …and its freight fee discounted by this multiplier (flat v1).
-pub const TCA_DEPOT_FEE_MULT: f64 = 0.75;
 
 /// The AD-VALOREM part of the freight fee: this fraction of the cargo's market
 /// value (at booking time) is charged. A pure credit SINK — destroyed, never paid
@@ -228,33 +222,21 @@ pub fn status_ladder() -> [(&'static str, f64); 5] {
     ]
 }
 
-/// Interaction radius for player-convoy HUB/SYSTEM load & unload (§TCA Part 5): a
-/// fleet must be within this of the Charterhouse (or the owned system's star) to
-/// move goods across the warehouse/stockpile boundary. Sized like a short docking
-/// approach; playtest placeholder.
-pub const LOGISTICS_RANGE: f64 = 260.0;
+// §dock: the old `LOGISTICS_RANGE` lived here and was one of four independent
+// answers to "is this hull at a facility". It is now `ship::DOCK_RADIUS`, read
+// through `World::dock_of`, so there is exactly one radius and one predicate —
+// keeping a second copy here is precisely how the three-way split happened.
 
 /// The freight fee for a booking, given the cargo `units`, the per-unit
-/// `booking_price` (the standing Exchange price at booking time), the hub→dest
-/// `dist`, and whether the destination has a Depot. A PURE function (the whole
-/// sink is deterministic + testable). Never negative.
-pub fn freight_fee(units: u32, booking_price: f64, dist: f64, has_depot: bool) -> f64 {
+/// `booking_price` (the standing Exchange price at booking time) and the hub→dest
+/// `dist`. NOTHING the destination has built changes it — the terms are the
+/// Authority's, the same for every colony. A PURE function (the whole sink is
+/// deterministic + testable). Never negative.
+pub fn freight_fee(units: u32, booking_price: f64, dist: f64) -> f64 {
     let u = units as f64;
     let value_fee = u * booking_price * TCA_FREIGHT_FEE_FRAC;
     let dist_fee = u * dist * TCA_FREIGHT_FEE_PER_UNIT_DIST;
-    let raw = value_fee + dist_fee;
-    let fee = if has_depot { raw * TCA_DEPOT_FEE_MULT } else { raw };
-    fee.max(0.0)
-}
-
-/// The per-corporation, per-departure unit cap for a destination — the base cap,
-/// doubled if the destination has a Depot.
-pub fn shipment_cap(has_depot: bool) -> u32 {
-    if has_depot {
-        (TCA_SHIPMENT_CAP as f64 * TCA_DEPOT_CAP_MULT) as u32
-    } else {
-        TCA_SHIPMENT_CAP
-    }
+    (value_fee + dist_fee).max(0.0)
 }
 
 /// What a corporation is cited FOR (§TCA Phase 2). The Authority protects ONLY
@@ -423,39 +405,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fee_has_value_and_distance_parts_and_depot_discount() {
-        // 100 units, price 10, dist 5000, no depot.
-        // value = 100*10*0.06 = 60; dist = 100*5000*1e-4 = 50; raw = 110.
-        let raw = freight_fee(100, 10.0, 5000.0, false);
+    fn fee_has_a_value_part_and_a_distance_part() {
+        // 100 units, price 10, dist 5000.
+        // value = 100*10*0.06 = 60; dist = 100*5000*1e-4 = 50; total = 110.
+        let raw = freight_fee(100, 10.0, 5000.0);
         assert!((raw - 110.0).abs() < 1e-9, "got {raw}");
-        // A depot discounts the WHOLE fee by 0.75.
-        let disc = freight_fee(100, 10.0, 5000.0, true);
-        assert!((disc - 110.0 * 0.75).abs() < 1e-9, "got {disc}");
         // Zero units is a zero fee (no free lunch, no negative either).
-        assert_eq!(freight_fee(0, 10.0, 5000.0, false), 0.0);
+        assert_eq!(freight_fee(0, 10.0, 5000.0), 0.0);
     }
 
     /// THE WIRE CONTRACT: the View exposes the fee's INPUTS (`TCA_FREIGHT_FEE_FRAC`,
-    /// `TCA_FREIGHT_FEE_PER_UNIT_DIST`, `TCA_DEPOT_FEE_MULT`) plus each destination's
-    /// distance, and the client prices a lot from them. This asserts that
-    /// recomposition is EXACTLY what the sim charges, so the two can never drift.
+    /// `TCA_FREIGHT_FEE_PER_UNIT_DIST`) plus each destination's distance, and the
+    /// client prices a lot from them. This asserts that recomposition is EXACTLY
+    /// what the sim charges, so the two can never drift.
     #[test]
     fn exposed_terms_reproduce_the_charged_fee() {
-        for &(units, price, dist, depot) in &[
-            (100u32, 10.0, 5000.0, false),
-            (37, 22.5, 1234.0, true),
-            (1, 0.5, 0.0, true),
-            (4096, 62.0, 7999.0, false),
+        for &(units, price, dist) in &[
+            (100u32, 10.0, 5000.0),
+            (37, 22.5, 1234.0),
+            (1, 0.5, 0.0),
+            (4096, 62.0, 7999.0),
         ] {
             // What a client computes from the exposed inputs…
             let per_unit = price * TCA_FREIGHT_FEE_FRAC + dist * TCA_FREIGHT_FEE_PER_UNIT_DIST;
-            let raw = units as f64 * per_unit;
-            let client = if depot { raw * TCA_DEPOT_FEE_MULT } else { raw };
+            let client = units as f64 * per_unit;
             // …must equal what the Authority actually charges.
-            let server = freight_fee(units, price, dist, depot);
+            let server = freight_fee(units, price, dist);
             assert!(
                 (client - server).abs() < 1e-9,
-                "client priced {client}, server charged {server} (units {units}, price {price}, dist {dist}, depot {depot})"
+                "client priced {client}, server charged {server} (units {units}, price {price}, dist {dist})"
             );
         }
     }
@@ -514,7 +492,7 @@ mod tests {
         assert_eq!(tariff_mult(1e9), 1.0);
         assert_eq!(market_penalty_frac(1e9), 0.0);
         // The freight fee at full standing is EXACTLY the Phase 1 fee.
-        let base = freight_fee(100, 10.0, 5000.0, false);
+        let base = freight_fee(100, 10.0, 5000.0);
         assert_eq!(base * tariff_mult(TCA_STANDING_MAX), base);
     }
 
@@ -593,10 +571,16 @@ mod tests {
         }
     }
 
+    /// FREIGHT TERMS ARE THE AUTHORITY'S, not the colony's: neither the fee nor
+    /// the per-departure cap may vary with anything the destination has built. Both
+    /// are single functions of the lot and the distance — there is no structure-aware
+    /// variant to call, and this test exists so a future bonus is added somewhere
+    /// deliberate rather than smuggled back in here.
     #[test]
-    fn depot_doubles_the_cap() {
-        assert_eq!(shipment_cap(false), TCA_SHIPMENT_CAP);
-        assert_eq!(shipment_cap(true), TCA_SHIPMENT_CAP * 2);
+    fn freight_terms_never_depend_on_what_the_destination_built() {
+        let (units, price, dist) = (100u32, 20.0, 1000.0);
+        assert_eq!(freight_fee(units, price, dist), freight_fee(units, price, dist));
+        assert_eq!(TCA_SHIPMENT_CAP, 400);
     }
 
     #[test]

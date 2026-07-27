@@ -26,11 +26,12 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::combat::{LoadoutMap, Losses, StackPoolMap};
+use crate::combat::{LoadoutMap, Losses};
 use crate::math::Vec2;
 use crate::module::{DamageType, Loadout};
 use crate::rng::Rng;
-use crate::ship::{hull_affinity, ShipKind};
+use crate::ids::EntityId;
+use crate::ship::{hull_affinity, Ship, ShipKind};
 
 // --- CADENCE & ARENA (Tunable) ---------------------------------------------------
 
@@ -228,6 +229,12 @@ pub struct Combatant {
     /// tiers sync back to the system, not to a fleet).
     #[serde(default)]
     pub platform: bool,
+    /// §roster: WHICH HULL this is — `(fleet, ship id)`. Every combatant is one
+    /// real ship on a real fleet's roster, so its remaining `hp` writes back to
+    /// exactly that record when the battle ends. `None` only for platform tiers,
+    /// which sync to their system's `defense_pool` instead.
+    #[serde(default)]
+    pub origin: Option<(EntityId, u32)>,
 }
 
 impl Combatant {
@@ -259,12 +266,13 @@ pub struct Torpedo {
     pub dmg: f64,
 }
 
-/// One reinforcement WAVE entry: a stack held past the per-side cap.
+/// §roster: ONE HULL held past the per-side cap, waiting for a slot. Identified
+/// like any other combatant, so a hull that never reaches the line takes no
+/// damage at all — the pooled model used to spread the side's deficit over it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WaveEntry {
-    pub kind: ShipKind,
-    pub stack: String,
-    pub count: u32,
+    pub fleet: EntityId,
+    pub ship: Ship,
 }
 
 /// What one tactical step did — the world applies it through the SAME channels
@@ -359,13 +367,15 @@ impl TacticalState {
     /// die at the boundary (the caller books them, exactly like the old
     /// `strip_scouts`).
     #[allow(clippy::too_many_arguments)]
+    /// §roster: open a battle from the two sides' REAL HULLS. Each combatant is
+    /// one ship off a fleet's roster and enters at that ship's own remaining
+    /// `hp` — a wounded veteran starts the fight wounded, with no pooling and no
+    /// pro-rata share anywhere.
     pub fn open(
         world_seed: u64,
         battle_id: u64,
-        a: &LoadoutMap,
-        d: &LoadoutMap,
-        a_pool: &StackPoolMap,
-        d_pool: &StackPoolMap,
+        a: &[(EntityId, Ship)],
+        d: &[(EntityId, Ship)],
         platform_tiers: u32,
         platform_pool: f64,
         bearing: Vec2,
@@ -382,8 +392,8 @@ impl TacticalState {
             bearing: b,
             withdrawing: [false, false],
         };
-        st.deploy_side(0, a, a_pool);
-        st.deploy_side(1, d, d_pool);
+        st.deploy_side(0, a);
+        st.deploy_side(1, d);
         // Platform tiers: stationary anchors at the origin, damage pool spread
         // pro-rata like a ship stack's.
         if platform_tiers > 0 {
@@ -402,6 +412,7 @@ impl TacticalState {
                     cooldowns: TypedCooldowns::default(),
                     role: Role::Anchor,
                     platform: true,
+                    origin: None, // tiers sync to the system, not to a fleet
                 });
             }
         }
@@ -415,51 +426,39 @@ impl TacticalState {
         c
     }
 
-    /// Deploy one side's stacks (heavies first, deterministic), respecting the
+    /// Deploy one side's HULLS (heaviest first, deterministic), respecting the
     /// per-side cap; the overflow holds as waves.
-    fn deploy_side(&mut self, side: u8, stacks: &LoadoutMap, pools: &StackPoolMap) {
-        // Heavies first: sort stacks by hull mass desc, then enum order, then key.
-        let mut order: Vec<(&ShipKind, &String, &u32)> = Vec::new();
-        for (k, m) in stacks {
-            for (key, n) in m {
-                if *n > 0 {
-                    order.push((k, key, n));
-                }
-            }
-        }
+    fn deploy_side(&mut self, side: u8, ships: &[(EntityId, Ship)]) {
+        let mut order: Vec<&(EntityId, Ship)> = ships.iter().collect();
         order.sort_by(|a, b| {
-            b.0.hull_mass()
-                .partial_cmp(&a.0.hull_mass())
+            b.1.kind
+                .hull_mass()
+                .partial_cmp(&a.1.kind.hull_mass())
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.0.cmp(b.0))
-                .then(a.1.cmp(b.1))
+                .then(a.1.kind.cmp(&b.1.kind))
+                .then(a.1.stack_key().cmp(&b.1.stack_key()))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.id.cmp(&b.1.id))
         });
-        for (kind, key, n) in order {
-            if *kind == ShipKind::Scout {
+        for (fleet, ship) in order {
+            if ship.kind == ShipKind::Scout {
                 continue; // scouts die at the boundary — never unpacked
             }
-            let pool = pools.get(kind).and_then(|m| m.get(key)).copied().unwrap_or(0.0);
-            let per = pool / (*n).max(1) as f64;
-            for _ in 0..*n {
-                self.spawn(side, *kind, key.clone(), per);
-            }
+            self.spawn(side, *fleet, ship);
         }
     }
 
     /// Spawn one combatant (or hold it in a wave past the cap).
-    fn spawn(&mut self, side: u8, kind: ShipKind, stack: String, pool_share: f64) {
+    fn spawn(&mut self, side: u8, fleet: EntityId, ship: &Ship) {
+        let (kind, stack) = (ship.kind, ship.stack_key());
         let alive = self.combatants.iter().filter(|c| c.side == side && !c.platform).count();
         if alive >= MAX_COMBATANTS_PER_SIDE {
-            // Hold as a wave entry (merged per stack, deterministic order).
-            let w = &mut self.waves[side as usize];
-            if let Some(e) = w.iter_mut().find(|e| e.kind == kind && e.stack == stack) {
-                e.count += 1;
-            } else {
-                w.push(WaveEntry { kind, stack, count: 1 });
-            }
+            // Hold THIS HULL for a later echelon — untouched until it commits.
+            self.waves[side as usize].push(WaveEntry { fleet, ship: ship.clone() });
             return;
         }
-        let hp = (kind.hull_mass() - pool_share).max(1.0);
+        // §roster: the ship enters at its OWN remaining hull.
+        let hp = ship.hp.clamp(1.0, kind.hull_mass());
         let idx = self.combatants.iter().filter(|c| c.side == side).count() as f64;
         // Deployment: defender anchored around the origin, attacker at standoff
         // along the approach bearing; a deterministic lateral fan spreads the line.
@@ -483,78 +482,78 @@ impl TacticalState {
             vel: Vec2::new(0.0, 0.0),
             cooldowns: TypedCooldowns::default(),
             role,
-        platform: false,
+            platform: false,
+            origin: Some((fleet, ship.id)),
         });
     }
 
-    /// SYNC the engine to the live strategic sides (joins unpack, withdrawals
-    /// remove — the old engine got this for free by rebuilding every tick).
+    /// SYNC the engine to the live strategic sides. §roster: reconciliation is by
+    /// HULL IDENTITY now — a combatant whose `(fleet, ship)` is no longer on the
+    /// desired roster has withdrawn or died strategically and leaves; a hull on
+    /// the roster with no combatant is relief and joins the line. Simpler and
+    /// exact, where the old count-matching had to guess which hull was which.
     /// Returns scout counts that must die at the boundary per side.
-    pub fn sync(&mut self, desired: [&LoadoutMap; 2]) -> [u32; 2] {
+    pub fn sync(&mut self, desired: [&[(EntityId, Ship)]; 2]) -> [u32; 2] {
         let mut scouts = [0u32; 2];
         for side in 0..2u8 {
-            // Current per-stack counts (alive + held waves).
-            let mut have: BTreeMap<(ShipKind, String), u32> = BTreeMap::new();
+            let mut want: std::collections::BTreeSet<(EntityId, u32)> = Default::default();
+            for (fleet, ship) in desired[side as usize] {
+                if ship.kind == ShipKind::Scout {
+                    scouts[side as usize] += 1; // dies at the boundary, never unpacked
+                    continue;
+                }
+                want.insert((*fleet, ship.id));
+            }
+            // Departures: anything no longer on the roster (withdrawn, or lost
+            // with its fleet) leaves the arena — waves included.
+            self.combatants
+                .retain(|c| c.side != side || c.platform || c.origin.is_some_and(|o| want.contains(&o)));
+            self.waves[side as usize].retain(|w| want.contains(&(w.fleet, w.ship.id)));
+            // Arrivals: relief joining the line.
+            let mut have: std::collections::BTreeSet<(EntityId, u32)> = Default::default();
             for c in self.combatants.iter().filter(|c| c.side == side && !c.platform) {
-                *have.entry((c.kind, c.stack.clone())).or_insert(0) += 1;
+                if let Some(o) = c.origin {
+                    have.insert(o);
+                }
             }
             for w in &self.waves[side as usize] {
-                *have.entry((w.kind, w.stack.clone())).or_insert(0) += w.count;
+                have.insert((w.fleet, w.ship.id));
             }
-            let mut want: BTreeMap<(ShipKind, String), u32> = BTreeMap::new();
-            for (k, m) in desired[side as usize] {
-                for (key, n) in m {
-                    if *k == ShipKind::Scout {
-                        scouts[side as usize] += *n;
-                        continue;
-                    }
-                    if *n > 0 {
-                        *want.entry((*k, key.clone())).or_insert(0) += *n;
-                    }
-                }
-            }
-            // Removals first (withdrawn fleets / strategic shrinkage): waves
-            // first, then the LAST-spawned combatants of the stack (stable).
-            let keys: Vec<(ShipKind, String)> = have.keys().cloned().collect();
-            for key in keys {
-                let h = have.get(&key).copied().unwrap_or(0);
-                let w = want.get(&key).copied().unwrap_or(0);
-                if h > w {
-                    let mut excess = h - w;
-                    let waves = &mut self.waves[side as usize];
-                    if let Some(e) = waves.iter_mut().find(|e| e.kind == key.0 && e.stack == key.1) {
-                        let take = e.count.min(excess);
-                        e.count -= take;
-                        excess -= take;
-                    }
-                    waves.retain(|e| e.count > 0);
-                    while excess > 0 {
-                        if let Some(i) = self
-                            .combatants
-                            .iter()
-                            .rposition(|c| c.side == side && !c.platform && c.kind == key.0 && c.stack == key.1)
-                        {
-                            self.combatants.remove(i);
-                            excess -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            // Additions (relief joining the line): spawn at the side's edge.
-            for (key, w) in &want {
-                let h = have.get(key).copied().unwrap_or(0);
-                for _ in h..*w {
-                    self.spawn(side, key.0, key.1.clone(), 0.0);
-                }
+            let joining: Vec<(EntityId, Ship)> = desired[side as usize]
+                .iter()
+                .filter(|(f, sh)| sh.kind != ShipKind::Scout && !have.contains(&(*f, sh.id)))
+                .cloned()
+                .collect();
+            for (fleet, ship) in &joining {
+                self.spawn(side, *fleet, ship);
             }
         }
         scouts
     }
 
-    /// Commit held waves into freed slots (heavies first — the same order the
-    /// deploy used; deterministic echelons).
+    /// §roster: THE WRITE-BACK — every live hull's remaining HP, keyed by the
+    /// exact `(fleet, ship)` it came from. The world folds this straight onto the
+    /// rosters, so damage persists per ship with nothing apportioned.
+    pub fn hp_writeback(&self) -> Vec<(EntityId, u32, f64)> {
+        let mut out: Vec<(EntityId, u32, f64)> = self
+            .combatants
+            .iter()
+            .filter(|c| !c.platform)
+            .filter_map(|c| c.origin.map(|(f, id)| (f, id, c.hp)))
+            .collect();
+        // Held waves are untouched hulls — report them at full health so a
+        // never-committed reinforcement is never recorded as damaged.
+        for side in 0..2usize {
+            for w in &self.waves[side] {
+                out.push((w.fleet, w.ship.id, w.ship.hp));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        out
+    }
+
+    /// Commit held waves into freed slots (heaviest hull first — the same order
+    /// the deploy used; deterministic echelons).
     fn commit_waves(&mut self) {
         for side in 0..2u8 {
             loop {
@@ -562,31 +561,25 @@ impl TacticalState {
                 if alive >= MAX_COMBATANTS_PER_SIDE {
                     break;
                 }
-                // Heaviest held stack first.
                 let Some(best) = self.waves[side as usize]
                     .iter()
                     .enumerate()
                     .max_by(|(ai, a), (bi, b)| {
-                        a.kind
+                        a.ship
+                            .kind
                             .hull_mass()
-                            .partial_cmp(&b.kind.hull_mass())
+                            .partial_cmp(&b.ship.kind.hull_mass())
                             .unwrap_or(std::cmp::Ordering::Equal)
-                            .then(b.kind.cmp(&a.kind))
-                            .then(b.stack.cmp(&a.stack))
+                            .then(b.ship.kind.cmp(&a.ship.kind))
+                            .then(b.ship.stack_key().cmp(&a.ship.stack_key()))
                             .then(bi.cmp(ai))
                     })
                     .map(|(i, _)| i)
                 else {
                     break;
                 };
-                let e = &mut self.waves[side as usize][best];
-                let kind = e.kind;
-                let stack = e.stack.clone();
-                e.count -= 1;
-                if e.count == 0 {
-                    self.waves[side as usize].remove(best);
-                }
-                self.spawn(side, kind, stack, 0.0);
+                let e = self.waves[side as usize].remove(best);
+                self.spawn(side, e.fleet, &e.ship);
             }
         }
     }
@@ -603,7 +596,7 @@ impl TacticalState {
 
     pub fn alive(&self, side: u8) -> usize {
         self.combatants.iter().filter(|c| c.side == side && !c.platform).count()
-            + self.waves[side as usize].iter().map(|w| w.count as usize).sum::<usize>()
+            + self.waves[side as usize].len()
     }
 
     pub fn platform_tiers(&self) -> u32 {
@@ -634,17 +627,6 @@ impl TacticalState {
     /// The per-stack damage pools implied by current HP deficits — persisted
     /// back onto the engagement each step so every existing consumer (serde,
     /// withdraw-mid-battle, repack) sees the exact old shapes (§law 1).
-    pub fn pools(&self, side: u8) -> StackPoolMap {
-        let mut out: StackPoolMap = BTreeMap::new();
-        for c in self.combatants.iter().filter(|c| c.side == side && !c.platform) {
-            let deficit = (c.max_hp - c.hp).max(0.0);
-            if deficit > 1e-9 {
-                *out.entry(c.kind).or_default().entry(c.stack.clone()).or_insert(0.0) += deficit;
-            }
-        }
-        out
-    }
-
     /// Platform damage pool (deficit of the LIVE tiers).
     pub fn platform_pool(&self) -> f64 {
         self.combatants.iter().filter(|c| c.platform).map(|c| (c.max_hp - c.hp).max(0.0)).sum()
@@ -1048,10 +1030,10 @@ impl TacticalState {
 /// side fogged exactly as the observer sees it).
 #[derive(Debug, Clone, Default)]
 pub struct ProjSetup {
-    pub a: LoadoutMap,
-    pub d: LoadoutMap,
-    pub a_pool: StackPoolMap,
-    pub d_pool: StackPoolMap,
+    /// §roster: the projected sides as REAL HULLS — so the estimate accounts for
+    /// how beaten up your own fleet already is, exactly as the battle will.
+    pub a: Vec<(EntityId, Ship)>,
+    pub d: Vec<(EntityId, Ship)>,
     pub platform_tiers: u32,
     pub raid: bool,
     /// Retreat thresholds as min-strength-ratio (mirroring doctrine); `None`
@@ -1085,8 +1067,6 @@ pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
         0xC0FFEE, // the projection's battle-id salt — any constant works
         &setup.a,
         &setup.d,
-        &setup.a_pool,
-        &setup.d_pool,
         setup.platform_tiers,
         0.0,
         Vec2::new(1.0, 0.0),
@@ -1165,8 +1145,7 @@ pub struct Distribution {
 /// (the stated CPU budget: a reference battle × 32 stays trivially cheap; a
 /// 300v300 echelon fight samples 8).
 pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distribution {
-    let ships: u32 = setup.a.values().flat_map(|m| m.values()).sum::<u32>()
-        + setup.d.values().flat_map(|m| m.values()).sum::<u32>();
+    let ships: u32 = (setup.a.len() + setup.d.len()) as u32;
     let k = if ships > 150 { k.min(8) } else if ships > 60 { k.min(16) } else { k.max(1) };
     let mut outs: Vec<SimOutcome> = (0..k)
         .map(|i| simulate_engagement(setup, base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
@@ -1243,20 +1222,28 @@ pub fn role_for(kind: ShipKind, loadout: &Loadout, _side: u8) -> Role {
 mod tests {
     use super::*;
 
-    fn fleet(entries: &[(ShipKind, &str, u32)]) -> LoadoutMap {
-        let mut m: LoadoutMap = BTreeMap::new();
+    /// §roster: build a side as REAL HULLS, all on one notional fleet and all
+    /// at full health — the test-facing equivalent of the old stack map.
+    /// §roster: a side as REAL HULLS on fleet `fid`, all at full health. The two
+    /// sides MUST carry different fleet ids — `(fleet, ship)` is the write-back
+    /// key, so reusing one id would make the two sides' hulls indistinguishable.
+    fn fleet_of(fid: u64, entries: &[(ShipKind, &str, u32)]) -> Vec<(EntityId, Ship)> {
+        let mut out = Vec::new();
+        let mut id = 0u32;
         for (k, key, n) in entries {
-            m.entry(*k).or_default().insert(key.to_string(), *n);
+            for _ in 0..*n {
+                out.push((EntityId(fid), Ship::new(id, *k, Loadout::from_key(key))));
+                id += 1;
+            }
         }
-        m
+        out
     }
-
     fn setup(a: &[(ShipKind, &str, u32)], d: &[(ShipKind, &str, u32)], ar: Option<f64>, dr: Option<f64>) -> ProjSetup {
-        ProjSetup { a: fleet(a), d: fleet(d), a_retreat: ar, d_retreat: dr, ..Default::default() }
+        ProjSetup { a: fleet_of(1, a), d: fleet_of(2, d), a_retreat: ar, d_retreat: dr, ..Default::default() }
     }
 
     fn open_plain(a: &[(ShipKind, &str, u32)], d: &[(ShipKind, &str, u32)], seed: u64) -> TacticalState {
-        TacticalState::open(seed, 99, &fleet(a), &fleet(d), &BTreeMap::new(), &BTreeMap::new(), 0, 0.0, Vec2::new(1.0, 0.0))
+        TacticalState::open(seed, 99, &fleet_of(1, a), &fleet_of(2, d), 0, 0.0, Vec2::new(1.0, 0.0))
     }
 
     /// EV instrument: HP a fixed defender loses over `steps` steps under a
@@ -1466,7 +1453,7 @@ mod tests {
         for _ in 0..120 {
             st.step(false, [SideMods::default(), SideMods::default()]);
             assert!(in_arena(&st, 0) <= MAX_COMBATANTS_PER_SIDE && in_arena(&st, 1) <= MAX_COMBATANTS_PER_SIDE, "the cap holds every step");
-            if st.waves[0].iter().map(|w| w.count).sum::<u32>() < 50 {
+            if st.waves[0].len() < 50 {
                 committed = true;
                 break;
             }
@@ -1481,11 +1468,11 @@ mod tests {
         assert_eq!(st.alive(1), st2.alive(1));
     }
 
+    /// §roster: the WRITE-BACK is per HULL, keyed by `(fleet, ship)` — no
+    /// pooling, no pro-rata. Every combatant reports its own remaining hp, and
+    /// held reinforcements report FULL health because they never fought.
     #[test]
-    fn pools_carry_hp_deficits_per_stack() {
-        // A fitted stack and an unfitted remainder fight side by side: every
-        // survivor's missing HP lands in ITS OWN stack's pool — the exact
-        // shapes the strategic layer persists between ticks (§law 1).
+    fn writeback_is_per_hull_and_keyed_by_identity() {
         let mut st = open_plain(
             &[(ShipKind::Raider, "", 6)],
             &[(ShipKind::Corvette, "whipple_armor", 2), (ShipKind::Corvette, "", 3)],
@@ -1494,17 +1481,45 @@ mod tests {
         for _ in 0..6 {
             st.step(false, [SideMods::default(), SideMods::default()]);
         }
-        let pools = st.pools(1);
-        let deficit: f64 = st
-            .combatants
-            .iter()
-            .filter(|c| c.side == 1 && !c.platform)
-            .map(|c| (c.max_hp - c.hp).max(0.0))
-            .sum();
-        let pooled: f64 = pools.values().flat_map(|m| m.values()).sum();
-        assert!((pooled - deficit).abs() < 1e-6, "Σ pools == Σ survivor HP deficits ({pooled:.1} vs {deficit:.1})");
-        for key in pools.get(&ShipKind::Corvette).map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default() {
-            assert!(key.is_empty() || key == "whipple_armor", "pools key by the stack that bled (got '{key}')");
+        let wb = st.hp_writeback();
+        // One entry per live hull, each keyed by the identity it deployed under.
+        let live = st.combatants.iter().filter(|c| !c.platform).count();
+        assert_eq!(wb.len(), live, "one write-back row per surviving hull");
+        for (fleet, ship, hp) in &wb {
+            let c = st
+                .combatants
+                .iter()
+                .find(|c| c.origin == Some((*fleet, *ship)))
+                .expect("every row maps to the hull it came from");
+            assert_eq!(*hp, c.hp, "hp is the hull's own, never a share");
+        }
+        // Somebody actually bled — the test would be vacuous otherwise.
+        assert!(wb.iter().any(|(_, _, hp)| *hp < ShipKind::Corvette.hull_mass()), "the defenders took damage");
+        // Rows are sorted (fleet, ship): deterministic application order.
+        let mut sorted = wb.clone();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        assert_eq!(wb, sorted);
+    }
+
+    /// §roster: a hull held past the per-side cap never entered the arena, so it
+    /// must come out UNTOUCHED. The old pooled model spread the side's deficit
+    /// across it — this is the correctness win identity buys.
+    #[test]
+    fn held_reinforcements_take_no_damage() {
+        let big = &[(ShipKind::Raider, "", MAX_COMBATANTS_PER_SIDE as u32 + 40)][..];
+        let mut st = open_plain(big, big, 555);
+        let held: Vec<(EntityId, u32)> = st.waves[0].iter().map(|w| (w.fleet, w.ship.id)).collect();
+        assert!(!held.is_empty(), "the cap held some hulls back");
+        for _ in 0..3 {
+            st.step(false, [SideMods::default(), SideMods::default()]);
+        }
+        let wb = st.hp_writeback();
+        for (f, id) in held.iter().take(10) {
+            // Only assert on hulls STILL held (some may have committed as slots freed).
+            if st.waves[0].iter().any(|w| w.fleet == *f && w.ship.id == *id) {
+                let (_, _, hp) = wb.iter().find(|(wf, wi, _)| wf == f && wi == id).expect("held hulls report too");
+                assert_eq!(*hp, ShipKind::Raider.hull_mass(), "a hull that never fought is undamaged");
+            }
         }
     }
 
@@ -1581,12 +1596,13 @@ mod arena_discipline {
     /// inside arc — and only a WITHDRAWING ship ever crosses it.
     #[test]
     fn fighting_ships_stay_inside_the_ring() {
-        let mut a: LoadoutMap = BTreeMap::new();
-        a.entry(ShipKind::Raider).or_default().insert(String::new(), 10);
-        let mut d: LoadoutMap = BTreeMap::new();
-        d.entry(ShipKind::Raider).or_default().insert(String::new(), 10);
+        // §roster: ten real hulls a side, all at full health.
+        let side = |base: u32| -> Vec<(EntityId, Ship)> {
+            (0..10).map(|i| (EntityId(1), Ship::new(base + i, ShipKind::Raider, Loadout::default()))).collect()
+        };
+        let (a, d) = (side(0), side(100));
         for seed in 0..8u64 {
-            let mut st = TacticalState::open(seed, 7, &a, &d, &BTreeMap::new(), &BTreeMap::new(), 0, 0.0, Vec2::new(1.0, 0.0));
+            let mut st = TacticalState::open(seed, 7, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
             let mut max_fighting = 0.0f64;
             for step in 0..80 {
                 st.step(false, [SideMods::default(), SideMods::default()]);
