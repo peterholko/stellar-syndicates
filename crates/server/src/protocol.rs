@@ -1435,6 +1435,15 @@ pub struct LoadoutStack {
     pub n: u32,
 }
 
+/// §course-plan: one step of an OWN fleet's planned flight — where it is going
+/// next and whether it gets there by riding a lane. What the map draws when the
+/// ship is selected, so the line shown is the path the sim will actually fly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathPointView {
+    pub pos: Vec2,
+    pub lane: bool,
+}
+
 /// §emplacements: one structure standing in open space.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmplacementView {
@@ -1508,6 +1517,11 @@ pub struct GhostView {
     /// The convoy's broadcast route (waypoints), light-delayed like its
     /// position. `None` for raiders (they don't broadcast).
     pub route: Option<Vec<Vec2>>,
+    /// §course-plan: OWN fleets only — the remaining legs of the flight the sim
+    /// is actually flying, lane-tagged. Rivals get `None`: your flight plan is
+    /// yours. (Current-state like `docked`, with the same staleness caveat.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<PathPointView>>,
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// included under exactly the cargo rule below (empty = none visible).
     pub passengers: BTreeMap<sim::SpecialistKind, u32>,

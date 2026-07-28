@@ -1421,6 +1421,30 @@ export class Renderer {
       const from = ghostById.get(shipId);
       if (!from) continue;
       const to = this.worldToScreen(dest);
+      // §course-plan: draw the flight the sim is ACTUALLY flying when we know
+      // it — the ship's remaining legs, lane rides bright and solid, warp hops
+      // dashed. The straight line was a lie whenever the plan rode a lane: the
+      // ship visibly left it, and the map looked broken rather than clever.
+      // Fallback to the straight dashed line while the order is still in
+      // flight to the ship (no plan exists yet — honestly so).
+      const ghost = state.ghosts.find((x) => x.id === shipId);
+      const plan = ghost?.own ? ghost.path : null;
+      if (plan && plan.length > 0) {
+        let prev = from;
+        for (const leg of plan) {
+          const p = this.worldToScreen(leg.pos);
+          if (leg.lane) {
+            g.moveTo(prev.x, prev.y).lineTo(p.x, p.y);
+            g.stroke({ width: 1.5, color: COL_OWN, alpha: 0.6 });
+          } else {
+            dashedLine(g, prev.x, prev.y, p.x, p.y, 6, 5);
+            g.stroke({ width: 1, color: COL_OWN, alpha: 0.45 });
+          }
+          prev = p;
+        }
+        g.circle(prev.x, prev.y, 3).stroke({ width: 1, color: COL_OWN, alpha: 0.7 });
+        continue;
+      }
       // Dashed line from the ghost to its commanded destination.
       dashedLine(g, from.x, from.y, to.x, to.y, 6, 5);
       g.stroke({ width: 1, color: COL_OWN, alpha: 0.45 });

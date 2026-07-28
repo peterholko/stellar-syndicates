@@ -684,6 +684,12 @@ export interface EmplacementView {
   sensor_range: number;
 }
 
+/// §course-plan: one step of an own fleet's planned flight.
+export interface PathPointView {
+  pos: Vec2;
+  lane: boolean;
+}
+
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
@@ -709,6 +715,8 @@ export interface GhostView {
   speed?: number;
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
+  /// §course-plan: own fleets only — the remaining legs the sim is flying.
+  path?: PathPointView[] | null;
   // Cargo present only when this convoy is within your sensor coverage.
   /// Specialist passengers aboard — manifest data, included under exactly the
   /// cargo rule (empty object = none visible / none aboard).

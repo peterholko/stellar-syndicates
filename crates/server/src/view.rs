@@ -85,6 +85,8 @@ struct Track {
     /// when the light left — a fleet you see berthed may have sailed since,
     /// exactly like everything else on this track.
     docked: Option<sim::DockSite>,
+    /// §course-plan: the fleet's remaining legs, lane-tagged (own-only on the wire).
+    path: Vec<(Vec2, bool)>,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
@@ -191,6 +193,7 @@ impl PositionHistory {
                 gone: None,
                 damage_frac: 0.0,
                 docked: None,
+                path: Vec::new(),
             });
             track.owner = ship.owner;
             track.composition = ship.composition.clone();
@@ -201,6 +204,7 @@ impl PositionHistory {
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
             track.docked = world.dock_of(*id);
+            track.path = ship.route.iter().map(|l| (l.to, l.lane.is_some())).collect();
             track.last_seen = now;
             track.cargo = ship.cargo;
             track.passengers = ship.passengers.clone();
@@ -330,6 +334,7 @@ impl PositionHistory {
             damage_frac: f64,
             /// §dock: the berth this sighting was taken at, if any.
             docked: Option<sim::DockSite>,
+            path: Vec<(Vec2, bool)>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
             sample: Sample,
@@ -384,6 +389,7 @@ impl PositionHistory {
                 count_class: track.count_class,
                 damage_frac: track.damage_frac,
                 docked: track.docked,
+                path: track.path.clone(),
                 composition: &track.composition,
                 loadouts: &track.loadouts,
                 sample,
@@ -528,6 +534,12 @@ impl PositionHistory {
 
             ghosts.push(GhostView {
                 docked,
+                path: own.then(|| {
+                    p.path
+                        .iter()
+                        .map(|(pos, lane)| crate::protocol::PathPointView { pos: *pos, lane: *lane })
+                        .collect()
+                }),
                 regime: p.sample.regime,
                 speed: p.sample.vel.length(),
                 id: p.id,
@@ -1630,6 +1642,7 @@ mod tests {
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
             docked: None,
+            path: Vec::new(),
             samples: samples.into(),
             last_seen: last,
             cargo,
@@ -2779,6 +2792,7 @@ mod tests {
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
             docked: None,
+            path: Vec::new(),
             samples: samples.into(),
             last_seen: 100.0,
             cargo: None,

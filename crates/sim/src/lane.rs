@@ -643,19 +643,6 @@ impl LaneNetwork {
             .collect();
     }
 
-    /// Flat node id for `stops[lane][k]`.
-    fn node_id(&self, lane: usize, k: usize) -> usize {
-        self.stops[..lane].iter().map(Vec::len).sum::<usize>() + k
-    }
-
-    /// The index in `stops[lane]` nearest arc position `s`.
-    fn stop_at(&self, lane: usize, s: f64) -> usize {
-        self.stops[lane]
-            .iter()
-            .enumerate()
-            .min_by(|x, y| (x.1 - s).abs().total_cmp(&(y.1 - s).abs()))
-            .map_or(0, |(k, _)| k)
-    }
 
     /// §junction: the fastest way across the NETWORK, not along one route.
     ///
@@ -672,21 +659,58 @@ impl LaneNetwork {
     /// information is better connected across this network than freight is.
     ///
     /// Returns the node path, or `None` when flying straight beats the network.
-    fn best_path(&self, from: Vec2, to: Vec2, lane_ratio: f64, transfer: f64) -> Option<Vec<usize>> {
-        let total: usize = self.stops.iter().map(Vec::len).sum();
-        if total == 0 {
+    /// §junction: the fastest way across the NETWORK, as (lane index, arc
+    /// position) pairs — resolved places, not graph node ids.
+    ///
+    /// The graph's permanent stops are junctions and endpoints, and for a while
+    /// those were the ONLY places a ride could begin or end. That is wrong for
+    /// any destination beside the middle of a lane: with no stop near it, the
+    /// path exits at the far junction instead, and a fleet visibly sails PAST
+    /// where it was sent, still on the lane. So each query adds two stops of its
+    /// own — the origin's and destination's projections onto every lane — and a
+    /// ride can now start and end at the nearest point worth using.
+    fn best_path(&self, from: Vec2, to: Vec2, lane_ratio: f64, transfer: f64) -> Option<Vec<(usize, f64)>> {
+        if self.lanes.is_empty() {
             return None;
         }
-        // Node positions, once.
+        // Augment the standing stops with this query's own on/off points.
+        let mut stops: Vec<Vec<f64>> = self.stops.clone();
+        for (li, l) in self.lanes.iter().enumerate() {
+            for p in [from, to] {
+                if let Some((sm, _)) = l.nearest(p) {
+                    stops[li].push(sm.s);
+                }
+            }
+            stops[li].sort_by(f64::total_cmp);
+            stops[li].dedup_by(|x, y| (*x - *y).abs() < 1.0);
+        }
+        let offset: Vec<usize> = stops
+            .iter()
+            .scan(0usize, |acc, v| {
+                let o = *acc;
+                *acc += v.len();
+                Some(o)
+            })
+            .collect();
+        let total: usize = stops.iter().map(Vec::len).sum();
+        let locate = |node: usize| -> (usize, usize) {
+            let li = offset.iter().rposition(|o| *o <= node).unwrap_or(0);
+            (li, node - offset[li])
+        };
+        let stop_at = |li: usize, s: f64| -> usize {
+            stops[li]
+                .iter()
+                .enumerate()
+                .min_by(|x, y| (x.1 - s).abs().total_cmp(&(y.1 - s).abs()))
+                .map_or(0, |(k, _)| k)
+        };
         let mut pos: Vec<Vec2> = Vec::with_capacity(total);
         for (li, l) in self.lanes.iter().enumerate() {
-            for s in &self.stops[li] {
-                pos.push(l.at(*s));
+            for st in &stops[li] {
+                pos.push(l.at(*st));
             }
         }
         let direct = from.distance(to);
-        // Dijkstra over a few hundred nodes: dense is simpler than a heap and
-        // has no tie-break ambiguity to make the galaxy non-deterministic.
         let mut dist: Vec<f64> = pos.iter().map(|p| from.distance(*p)).collect();
         let mut prev: Vec<Option<usize>> = vec![None; total];
         let mut done = vec![false; total];
@@ -702,28 +726,24 @@ impl LaneNetwork {
                 break;
             };
             done[u] = true;
-            let relax = |v: usize, w: f64, dist: &mut Vec<f64>, prev: &mut Vec<Option<usize>>| {
+            let (lane, k) = locate(u);
+            let mut relax = |v: usize, w: f64, dist: &mut Vec<f64>, prev: &mut Vec<Option<usize>>| {
                 if du + w < dist[v] {
                     dist[v] = du + w;
                     prev[v] = Some(u);
                 }
             };
-            // Along the lane this node sits on.
-            let (lane, k) = self.locate(u);
-            let stops = &self.stops[lane];
-            for (dk, kk) in [(1i64, k + 1), (-1, k.wrapping_sub(1))] {
-                let _ = dk;
-                if kk < stops.len() {
-                    let w = (stops[kk] - stops[k]).abs() / lane_ratio.max(1e-9);
-                    relax(self.node_id(lane, kk), w, &mut dist, &mut prev);
+            for kk in [k + 1, k.wrapping_sub(1)] {
+                if kk < stops[lane].len() {
+                    let w = (stops[lane][kk] - stops[lane][k]).abs() / lane_ratio.max(1e-9);
+                    relax(offset[lane] + kk, w, &mut dist, &mut prev);
                 }
             }
-            // Across a crossing.
             for j in &self.junctions {
-                let (here, there) = if j.a == lane && self.stop_at(j.a, j.sa) == k {
-                    (true, self.node_id(j.b, self.stop_at(j.b, j.sb)))
-                } else if j.b == lane && self.stop_at(j.b, j.sb) == k {
-                    (true, self.node_id(j.a, self.stop_at(j.a, j.sa)))
+                let (here, there) = if j.a == lane && stop_at(j.a, j.sa) == k {
+                    (true, offset[j.b] + stop_at(j.b, j.sb))
+                } else if j.b == lane && stop_at(j.b, j.sb) == k {
+                    (true, offset[j.a] + stop_at(j.a, j.sa))
                 } else {
                     (false, 0)
                 };
@@ -732,35 +752,34 @@ impl LaneNetwork {
                 }
             }
         }
-        // Best exit: node cost + the hop from it to the destination.
-        let best = dist
+        let (end, t) = dist
             .iter()
             .enumerate()
             .map(|(i, d)| (i, d + pos[i].distance(to)))
             .filter(|(_, c)| c.is_finite())
             .min_by(|x, y| x.1.total_cmp(&y.1))?;
-        if best.1 >= direct {
+        if t >= direct {
             return None; // the straight run wins
         }
-        let mut path = vec![best.0];
-        while let Some(p) = prev[*path.last().unwrap()] {
-            path.push(p);
+        let mut chain = vec![end];
+        while let Some(p) = prev[*chain.last().unwrap()] {
+            chain.push(p);
         }
-        path.reverse();
-        Some(path)
+        chain.reverse();
+        if chain.len() < 2 {
+            return None; // touching one point of the network is not a ride
+        }
+        Some(
+            chain
+                .into_iter()
+                .map(|n| {
+                    let (li, k) = locate(n);
+                    (li, stops[li][k])
+                })
+                .collect(),
+        )
     }
 
-    /// Which (lane, stop) a flat node id refers to.
-    fn locate(&self, node: usize) -> (usize, usize) {
-        let mut n = node;
-        for (li, st) in self.stops.iter().enumerate() {
-            if n < st.len() {
-                return (li, n);
-            }
-            n -= st.len();
-        }
-        (0, 0)
-    }
 
     /// Every lane whose ribbon covers `p`. A point may lie in several at a
     /// junction; that is ordinary, and never additive (see `speed_factor`).
@@ -1043,38 +1062,21 @@ impl LaneNetwork {
     /// bounds the search — entering a lane far away costs distance linearly
     /// while the saving is bounded, so the optimal entry is always local.
     pub fn delay(&self, a: Vec2, b: Vec2, c: f64) -> f64 {
-        let open_speed = c * WARP_FACTOR;
-        let direct = a.distance(b) / open_speed;
-        if self.lanes.is_empty() {
-            return direct;
-        }
+        let warp = c * WARP_FACTOR;
+        let direct = a.distance(b) / warp;
         let lane_speed = c * self.signal_factor_on_lane();
-        let ratio = (lane_speed / open_speed).max(1.0);
-        // A SIGNAL PAYS NOTHING TO CHANGE ROUTES. It has no turning circle to arc
-        // through, so a crossing is just a place where two fast paths meet — where
-        // a hull must fall out of alignment, swing round and re-enter. That
-        // asymmetry is the point rather than an oversight: news is better
-        // connected across this network than freight is, which is the premise the
-        // whole light-delay design rests on.
-        let Some(path) = self.best_path(a, b, ratio, 0.0) else {
+        let ratio = lane_speed / warp;
+        let Some(pairs) = self.best_path(a, b, ratio, 0.0) else {
             return direct;
         };
-        let mut t = 0.0;
-        let mut at = a;
-        for w in path.windows(2) {
-            let (la, ka) = self.locate(w[0]);
-            let (lb, kb) = self.locate(w[1]);
-            if la == lb {
-                t += (self.stops[la][kb] - self.stops[la][ka]).abs() / lane_speed;
+        let mut t = a.distance(self.lanes[pairs[0].0].at(pairs[0].1)) / warp;
+        for w in pairs.windows(2) {
+            if w[0].0 == w[1].0 {
+                t += (w[1].1 - w[0].1).abs() / lane_speed;
             }
-            at = self.lanes[lb].at(self.stops[lb][kb]);
         }
-        // The hops on and off, at warp speed.
-        if let Some(first) = path.first() {
-            let (l, k) = self.locate(*first);
-            t += a.distance(self.lanes[l].at(self.stops[l][k])) / open_speed;
-        }
-        t += at.distance(b) / open_speed;
+        let last = pairs[pairs.len() - 1];
+        t += self.lanes[last.0].at(last.1).distance(b) / warp;
         t.min(direct)
     }
 }
@@ -1155,45 +1157,33 @@ impl LaneNetwork {
     /// run, which is the honest answer for a short hop.
     pub fn route(&self, from: Vec2, to: Vec2, v_deep: f64, v_lane: f64) -> Vec<Leg> {
         let ratio = (v_lane / v_deep.max(1e-9)).max(1.0);
-        // What a crossing costs a HULL, in deep-equivalent distance: the arc it
-        // must fly to come onto the new heading, at the radius it turns with once
-        // the alignment gate has dropped it out of lane speed.
         let transfer = TURN_K * v_deep;
-        let Some(path) = self.best_path(from, to, ratio, transfer) else {
+        let Some(pairs) = self.best_path(from, to, ratio, transfer) else {
             return Vec::new();
         };
         let mut legs: Vec<Leg> = Vec::new();
-        // GETTING ON: a warp hop from wherever the fleet is to the first stop.
-        if let Some(first) = path.first() {
-            let (l, k) = self.locate(*first);
-            let entry = self.lanes[l].at(self.stops[l][k]);
+        // GETTING ON: a warp hop to the first point of the ride.
+        if let Some(&(l0, s0)) = pairs.first() {
+            let entry = self.lanes[l0].at(s0);
             if entry.distance(from) > 1.0 {
                 legs.push(Leg::warp(entry));
             }
         }
-        for w in path.windows(2) {
-            let (la, ka) = self.locate(w[0]);
-            let (lb, kb) = self.locate(w[1]);
+        for w in pairs.windows(2) {
+            let (la, sa) = w[0];
+            let (lb, sb) = w[1];
             if la == lb {
-                // RIDING: lay the centerline down, every point tagged with the
-                // road it belongs to.
+                // RIDING: the centerline between the two stops, tagged with the
+                // road it belongs to, ending exactly at the off point.
                 let id = self.lanes[la].id;
-                legs.extend(
-                    self.lanes[la]
-                        .span(self.stops[la][ka], self.stops[lb][kb])
-                        .into_iter()
-                        .map(|p| Leg::riding(p, id)),
-                );
+                legs.extend(self.lanes[la].span(sa, sb).into_iter().map(|p| Leg::riding(p, id)));
+                legs.push(Leg::riding(self.lanes[la].at(sb), id));
             } else {
-                // CHANGING ROADS at a crossing: one place, so nothing to lay
-                // down — the next ride picks up from it.
-                legs.push(Leg::riding(self.lanes[lb].at(self.stops[lb][kb]), self.lanes[lb].id));
+                // CHANGING ROADS at a crossing.
+                legs.push(Leg::riding(self.lanes[lb].at(sb), self.lanes[lb].id));
             }
         }
         legs.dedup_by(|x, y| x.to.distance(y.to) < 1.0 && x.lane == y.lane);
-        // A waypoint the fleet is already standing on is not a waypoint: it
-        // arrives on the tick it is issued, and arriving zeroes velocity, so the
-        // route would start by throwing away the heading it needs to hold a road.
         while legs.first().is_some_and(|l| l.to.distance(from) < 1.0) {
             legs.remove(0);
         }
@@ -2161,7 +2151,7 @@ mod tests {
         let path = n
             .best_path(from, to, LANE_MULT, TURN_K * 500.0)
             .expect("a long leg should find a path through the network");
-        let lanes: Vec<usize> = path.iter().map(|nd| n.locate(*nd).0).collect();
+        let lanes: Vec<usize> = path.iter().map(|(li, _)| *li).collect();
         let distinct: std::collections::BTreeSet<usize> = lanes.iter().copied().collect();
         assert!(
             distinct.len() >= 2,
