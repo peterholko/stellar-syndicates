@@ -1631,14 +1631,21 @@ fn latest_observable(
     ears: &[sim::lane::Relay],
 ) -> Option<Sample> {
     for s in samples.iter().rev() {
-        let coupled =
+        // §coupled: an OWN transmitter anywhere INSIDE a ribbon injects into the
+        // medium — that is literally what a buoy is, a stationary, non-riding
+        // object in a lane that transmits through it. Gating on the drive being
+        // engaged created a seam at every lane EXIT: the moment a fleet began
+        // dropping out, its reports fell back to passive light and its ghost
+        // parked on the lane at the exit point, looking like it never left.
+        // `from_coupled` checks containment itself and degrades to plain
+        // `between` off the network, so it simply always applies to own fleets.
+        let mut delay =
+            if own { delays.from_coupled(s.pos, cc) } else { delays.between(s.pos, cc) };
+        // A rival's WAKE, by contrast, comes from RIDING — the drive stirring
+        // the medium — so the tripwire keeps its drive gate.
+        let riding =
             matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
-        let mut delay = if own && coupled {
-            delays.from_coupled(s.pos, cc)
-        } else {
-            delays.between(s.pos, cc)
-        };
-        if coupled && !ears.is_empty() {
+        if riding && !ears.is_empty() {
             delay = delay.min(delays.heard(s.pos, cc, ears));
         }
         if s.time + delay <= now {
