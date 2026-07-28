@@ -20,6 +20,7 @@ pub mod command;
 pub mod config;
 pub mod detection;
 pub mod doctrine;
+pub mod emplace;
 pub mod event;
 pub mod explore;
 pub mod fuel;

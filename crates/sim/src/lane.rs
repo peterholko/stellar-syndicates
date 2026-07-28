@@ -208,11 +208,37 @@ impl Lane {
     }
 
     /// Nearest centerline sample to `p`, and the distance to it.
+    /// The nearest sample, and the distance to the CENTERLINE — measured to the
+    /// polyline through the samples, not to the samples themselves.
+    ///
+    /// Measuring to discrete samples is granular by half their spacing, and that
+    /// is not a rounding error here: samples sit ~13,600 su apart on a long route
+    /// while a ribbon is ~5,900 su half-wide, so a point lying EXACTLY on the
+    /// centerline midway between two of them measured ~6,800 away and was ruled
+    /// outside the lane it was sitting on. A fleet riding a lane therefore fell
+    /// out of it and back in once per segment, at a factor of ten in speed each
+    /// time. That is the stutter seen in playtest — it was never lateral drift,
+    /// it was the yardstick.
     fn nearest(&self, p: Vec2) -> Option<(&LaneSample, f64)> {
-        self.samples
-            .iter()
-            .map(|s| (s, s.pos.distance(p)))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
+        if self.samples.len() < 2 {
+            return self.samples.first().map(|s| (s, s.pos.distance(p)));
+        }
+        let mut best: Option<(usize, f64)> = None;
+        for (i, w) in self.samples.windows(2).enumerate() {
+            let (a, b) = (w[0].pos, w[1].pos);
+            let ab = b - a;
+            let len2 = ab.length_sq();
+            // Project p onto the segment, clamped to its ends.
+            let t = if len2 > 1e-12 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let d = p.distance(a + ab * t);
+            // Attribute the hit to whichever end it fell nearer, so the caller
+            // still gets a real sample — and with it a tangent and an arc position.
+            let idx = if t <= 0.5 { i } else { i + 1 };
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((idx, d));
+            }
+        }
+        best.map(|(i, d)| (&self.samples[i], d))
     }
 
     /// The ribbon's half-width at arc position `s` — constant, except across a
@@ -327,6 +353,23 @@ pub struct LaneNetwork {
     pub stops: Vec<Vec<f64>>,
 }
 
+/// A relay point resolved against the network: where it is, and which routes it
+/// is near enough to transmit along.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Relay {
+    pub pos: Vec2,
+    /// Lane ids this relay can send along, with its arc position on each.
+    pub on: Vec<(u32, f64)>,
+}
+
+/// One hop of a signal's journey — what the order graphic traces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hop {
+    pub to: Vec2,
+    /// The lane ridden, or `None` for a warp hop across open space.
+    pub lane: Option<u32>,
+}
+
 /// One step of a planned journey: fly to `to`, and if `lane` is set, do it by
 /// RIDING that route rather than crossing open space.
 ///
@@ -376,6 +419,116 @@ impl LaneNetwork {
         let mut n = LaneNetwork { lanes, ..Default::default() };
         n.rebuild_junctions();
         n
+    }
+
+    /// §buoys: resolve a relay point against the network — which routes is it
+    /// near enough to transmit along, and where on each?
+    ///
+    /// Reuses the ribbon's own half-width, the same tolerance a hull needs to
+    /// board. "Near enough to count as in the lane" then means one thing across
+    /// the whole game rather than two thresholds that quietly drift apart.
+    pub fn relay_at(&self, pos: Vec2) -> Relay {
+        let on = self
+            .lanes
+            .iter()
+            .filter_map(|l| {
+                l.nearest(pos)
+                    .filter(|(sm, d)| *d <= l.half_width_at(sm.s))
+                    .map(|(sm, _)| (l.id, sm.s))
+            })
+            .collect();
+        Relay { pos, on }
+    }
+
+    /// §buoys: the fastest way for a SIGNAL to get from `a` to `b`, and the path
+    /// it takes.
+    ///
+    /// Warp everywhere by default. Hyperspace speed only along a lane BETWEEN TWO
+    /// RELAYS that both sit on it — one buoy relays to nothing, which is why a
+    /// home system being a free first buoy costs nothing and the second one is
+    /// the real purchase.
+    ///
+    /// Returns the hops as well as the time, because the order graphic has to
+    /// trace the path the signal actually took rather than a straight line to
+    /// the destination.
+    ///
+    /// Cheap by construction, deliberately: this replaces a continuous geometric
+    /// search that scanned every sample of every lane twice per query, which the
+    /// view filter then ran per history sample per ghost. A handful of relays is
+    /// a handful of distance computations.
+    pub fn signal(&self, a: Vec2, b: Vec2, c: f64, buoys: &[Vec2]) -> (f64, Vec<Hop>) {
+        let warp = c * WARP_FACTOR;
+        let lane_speed = c * self.signal_factor_on_lane();
+        let direct = (a.distance(b) / warp, vec![Hop { to: b, lane: None }]);
+        if buoys.len() < 2 {
+            return direct; // nothing to relay BETWEEN
+        }
+        let relays: Vec<Relay> = buoys.iter().map(|p| self.relay_at(*p)).collect();
+        let n = relays.len();
+
+        let mut best: Vec<f64> = relays.iter().map(|r| a.distance(r.pos) / warp).collect();
+        let mut prev: Vec<Option<usize>> = vec![None; n];
+        let mut done = vec![false; n];
+        loop {
+            let Some((u, du)) = best
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !done[*i])
+                .map(|(i, d)| (i, *d))
+                .filter(|(_, d)| d.is_finite())
+                .min_by(|x, y| x.1.total_cmp(&y.1))
+            else {
+                break;
+            };
+            done[u] = true;
+            for v in 0..n {
+                if done[v] {
+                    continue;
+                }
+                // A LANE edge exists only where both relays sit on the SAME lane.
+                let mut w = f64::INFINITY;
+                for (la, sa) in &relays[u].on {
+                    for (lb, sb) in &relays[v].on {
+                        if la == lb {
+                            w = w.min((sa - sb).abs() / lane_speed);
+                        }
+                    }
+                }
+                // Failing that they can still talk, just at warp.
+                w = w.min(relays[u].pos.distance(relays[v].pos) / warp);
+                if du + w < best[v] {
+                    best[v] = du + w;
+                    prev[v] = Some(u);
+                }
+            }
+        }
+        let Some((end, t)) = best
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, d + relays[i].pos.distance(b) / warp))
+            .filter(|(_, t)| t.is_finite())
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+        else {
+            return direct;
+        };
+        if t >= direct.0 {
+            return direct; // a plain warp run is no slower
+        }
+        let mut chain = vec![end];
+        while let Some(p) = prev[*chain.last().unwrap()] {
+            chain.push(p);
+        }
+        chain.reverse();
+        let mut hops: Vec<Hop> = Vec::with_capacity(chain.len() + 1);
+        for (k, &i) in chain.iter().enumerate() {
+            let lane = k.checked_sub(1).and_then(|j| {
+                let (u, v) = (&relays[chain[j]], &relays[i]);
+                u.on.iter().find_map(|(la, _)| v.on.iter().find(|(lb, _)| lb == la).map(|_| *la))
+            });
+            hops.push(Hop { to: relays[i].pos, lane });
+        }
+        hops.push(Hop { to: b, lane: None });
+        (t, hops)
     }
 
     /// §junction: find every crossing and lay out the graph.
@@ -2026,6 +2179,78 @@ mod tests {
         let (n, anchors, ..) = super::tests::net(11, 4);
         let a = anchors[0].pos;
         assert!(n.route(a, a + Vec2::new(300.0, 0.0), 200.0, 2_000.0).is_empty(), "a hop next door needs no lane");
+    }
+
+    /// §buoys: ONE RELAY IS WORTH NOTHING. A lane carries a signal only between
+    /// TWO buoys sitting on it, so a lone buoy — which is what a home system is
+    /// on its own — leaves communication at warp, source to destination.
+    #[test]
+    fn a_single_buoy_does_not_speed_anything_up() {
+        let (n, ..) = net(1, 4);
+        let l = &n.lanes[0];
+        let (a, b) = (l.at(l.length() * 0.15), l.at(l.length() * 0.85));
+        let c = 400.0;
+        let warp_time = a.distance(b) / (c * WARP_FACTOR);
+        assert!((n.signal(a, b, c, &[]).0 - warp_time).abs() < 1e-6, "no buoys: a plain warp run");
+        assert!((n.signal(a, b, c, &[a]).0 - warp_time).abs() < 1e-6, "one buoy relays to nothing");
+    }
+
+    /// §buoys: TWO ON THE SAME LANE is the purchase — that pair, and only that
+    /// pair, unlocks hyperspace-speed relay along the route between them.
+    #[test]
+    fn two_buoys_on_one_lane_carry_the_signal_at_lane_speed() {
+        let (n, ..) = net(1, 4);
+        let l = &n.lanes[0];
+        let (a, b) = (l.at(l.length() * 0.1), l.at(l.length() * 0.9));
+        let c = 400.0;
+        let warp_only = n.signal(a, b, c, &[]).0;
+        let (relayed, hops) = n.signal(a, b, c, &[a, b]);
+        assert!(
+            relayed < warp_only * 0.5,
+            "two buoys on one lane should be far quicker ({relayed:.1}s vs {warp_only:.1}s)",
+        );
+        assert!(hops.iter().any(|h| h.lane == Some(l.id)), "and the path says which road it rode");
+        assert_eq!(hops.last().unwrap().to, b, "a signal always ends where it was sent");
+    }
+
+    /// §buoys: two buoys sharing NO lane are just two points in space, so the
+    /// signal stays at warp. Building them anywhere is not building a network.
+    #[test]
+    fn buoys_off_the_network_relay_nothing() {
+        let (n, _, _, radius) = net(1, 4);
+        let c = 400.0;
+        let (a, b) = (Vec2::new(radius * 3.0, 0.0), Vec2::new(radius * 3.0, radius));
+        let (t, hops) = n.signal(a, b, c, &[a, b]);
+        assert!((t - a.distance(b) / (c * WARP_FACTOR)).abs() < 1e-6, "warp, not relay");
+        assert!(hops.iter().all(|h| h.lane.is_none()), "no hop claims a lane");
+    }
+
+    /// CONTAINMENT IS MEASURED TO THE CENTERLINE, not to the nearest sample.
+    ///
+    /// Samples sit far further apart than a ribbon is wide, so a sample-granular
+    /// yardstick reports a point lying exactly ON the centerline as most of a
+    /// segment away from it — and therefore outside the lane it is sitting on.
+    /// That is what made a fleet riding a lane fall out of it and back in once
+    /// per segment, at a factor of ten in speed each time.
+    #[test]
+    fn a_point_on_the_centerline_is_inside_its_own_lane() {
+        let (n, ..) = net(1, 4);
+        for l in &n.lanes {
+            // Walk the whole route, landing BETWEEN samples as well as on them —
+            // mid-segment is exactly where the old measure was worst.
+            for k in 0..=200 {
+                let s = l.length() * (k as f64 / 200.0);
+                let p = l.at(s);
+                let (_, d) = l.nearest(p).expect("a route has samples");
+                assert!(
+                    d <= l.half_width,
+                    "{}: a point on its own centerline at s={s:.0} measured {d:.0} from it \
+                     (half-width {:.0}) — the ribbon test is granular, not the geometry",
+                    l.name,
+                    l.half_width,
+                );
+            }
+        }
     }
 
     /// SYMMETRY. A lane is not a current, so it carries information equally both

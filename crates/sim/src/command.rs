@@ -315,6 +315,19 @@ pub enum Command {
         counts: std::collections::BTreeMap<crate::ship::ShipKind, u32>,
     },
 
+    /// §emplacements: place a structure in OPEN SPACE — a hyperspace buoy or a
+    /// deep space sensor — at a point the player picked on the galaxy map.
+    ///
+    /// The site is validated server-side against exactly the rule the client
+    /// previews (`emplace::site_check`), so a placement the map showed as legal
+    /// can never be refused for a reason the player was never shown.
+    BuildEmplacement {
+        player_id: PlayerId,
+        /// Not `kind`: the enum is internally tagged on that name.
+        emplacement: crate::emplace::EmplacementKind,
+        pos: crate::math::Vec2,
+    },
+
     /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an
     /// Extractor tier that raises its output. Same deduct-and-enqueue semantics as
     /// `BuildShip`; on completion the upgrade is applied (only if still owned).

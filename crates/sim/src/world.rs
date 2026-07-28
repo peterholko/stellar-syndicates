@@ -484,6 +484,11 @@ pub struct World {
     /// center (§order-lifecycle, owner-only). serde default so old snaps load.
     #[serde(default)]
     pending_echoes: Vec<PendingEcho>,
+    /// §emplacements: structures placed in OPEN SPACE — hyperspace buoys and
+    /// deep space sensors. Kept in id order for determinism. `#[serde(default)]`
+    /// so pre-feature snapshots load with none.
+    #[serde(default)]
+    pub emplacements: Vec<crate::emplace::Emplacement>,
     /// Monotonic allocator for entity ids.
     next_entity_id: u64,
     /// Pending construction jobs (fleets + system upgrades), resolved in step()
@@ -795,6 +800,7 @@ impl World {
         };
 
         let mut world = World {
+            emplacements: Vec::new(),
             config,
             tick: 0,
             time: 0.0,
@@ -5113,6 +5119,24 @@ impl World {
                     f.cargo = None;
                     f.modules.insert(*module, take);
                 }
+            }
+            Command::BuildEmplacement { player_id, emplacement, pos } => {
+                // §emplacements: the SAME check the client previewed. Validating
+                // against a different rule than the one the map drew would let a
+                // site look legal and then be refused for an unstated reason.
+                if crate::emplace::site_check(*emplacement, *pos, &self.lanes, &self.emplacements)
+                    .is_err()
+                {
+                    return;
+                }
+                let id = EntityId(self.next_entity_id);
+                self.next_entity_id += 1;
+                self.emplacements.push(crate::emplace::Emplacement {
+                    id,
+                    owner: *player_id,
+                    kind: *emplacement,
+                    pos: *pos,
+                });
             }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
                 self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), events);
