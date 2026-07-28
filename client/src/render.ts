@@ -128,6 +128,9 @@ const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 // §hyperspace: how hard a drawn fleet chases its authoritative position. Higher
 // converges faster and shows more of each correction; lower is smoother but lags.
+// §roads: how much of the sim's swept lane width the drawn band occupies.
+// Purely visual — the gameplay tolerance is unchanged.
+const LANE_DRAW_FRAC = 0.45;
 // §emplacements: kept in step with `emplace::MIN_SPACING` / `DEEP_SPACE_SENSOR_RANGE`.
 const EMPLACEMENT_MIN_SPACING = 12_000;
 const DEEP_SPACE_SENSOR_RANGE = 60_000;
@@ -729,10 +732,17 @@ export class Renderer {
       // there is no hard edge out there to mistake for the corridor's, while the
       // corridor itself stays the one band with a defined boundary. The map gains
       // the weight without the picture claiming a lane is bigger than it is.
-      const widthPx = Math.max(1.5, lane.half_width * 2 * this.scale);
+      // §roads: the DRAWN band is the road, not the tolerance. Ships ride the
+      // centerline now, so a band at the full swept width read as a highway
+      // nobody uses the shoulders of — and with the width cap gone it grew
+      // heavier still. The sim's half_width keeps its full size for what it
+      // still governs (boarding, buoy siting, junction detection); the siting
+      // preview shows THAT band's legality itself, so nothing is hidden by
+      // drawing the road slimmer than the rule.
+      const widthPx = Math.max(1.5, lane.half_width * 2 * this.scale * LANE_DRAW_FRAC);
       for (const [mult, alpha] of [
-        [3.4, 0.022],
-        [2.1, 0.035],
+        [2.2, 0.022],
+        [1.5, 0.035],
         [1.0, 0.075],
       ] as const) {
         trace();
