@@ -744,16 +744,21 @@ function orderLifecycleLine(g: GhostView): string {
   if (!p) {
     const exp = confirmedFlashUntil.get(g.id);
     if (exp && performance.now() < exp) {
-      return `<div class="sp-sec">Order</div><div class="sp-line">${badgeChip("confirmed", "confirmed", "positive", "Confirmed — the echo light has returned; you can see the fleet complying.")}</div>`;
+      return `<div class="sp-sec">Order</div><div class="sp-line">${badgeChip("confirmed", "confirmed", "positive", "Confirmed — the response light has returned; you can see the fleet complying.")}</div>`;
     }
     return "";
   }
   // Near-zero (fleet at the command center): don't flash noisy sub-second states.
   if (p.echo_at - p.delivered_at < LIFECYCLE_MIN_S) return "";
   const now = liveSimTime();
+  // §one-clock: the two visible phases are SYMMETRIC on purpose — one signal
+  // out, one response back, each with its countdown. The player learns a
+  // single metaphor and reuses it; "awaiting echo" made the return leg sound
+  // like a different mechanism than the outbound one, when it is the same
+  // light crossing the same space the other way.
   const line = now < p.delivered_at
-    ? chip("delivered", fmtCountdown(p.delivered_at - now), `IN TRANSIT — your ${p.kind} order is crossing space; it reaches the fleet in ${fmtCountdown(p.delivered_at - now)}.`)
-    : chip("echo", fmtCountdown(p.echo_at - now), `DELIVERED — awaiting echo: the fleet has your ${p.kind} order, but the light showing it comply hasn't returned yet.`);
+    ? chip("delivered", `<span class="dim">signal outbound</span> ${fmtCountdown(p.delivered_at - now)}`, `SIGNAL OUTBOUND — your ${p.kind} order is crossing space; it reaches the fleet in ${fmtCountdown(p.delivered_at - now)}.`)
+    : chip("echo", `<span class="dim">response in transit</span> ${fmtCountdown(p.echo_at - now)}`, `RESPONSE IN TRANSIT — the fleet received your ${p.kind} order and is presumed complying; the light showing it reaches you in ${fmtCountdown(p.echo_at - now)}.`);
   return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div>`;
 }
 
@@ -958,7 +963,7 @@ function regimeCell(g: GhostView): string {
 // purely from the client's own overlays (raids/orders/command signals/route/vel).
 function ownActivity(g: GhostView): string {
   const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
-  if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "order in transit", "Your command is still crossing space to this fleet.");
+  if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "signal outbound", "Your command is still crossing space to this fleet.");
   if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
   if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
   if (g.route && g.route.length) return a("convoy", "hauling", "En route along its trade route.");

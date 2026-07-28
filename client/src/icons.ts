@@ -105,8 +105,8 @@ export const ICONS: Record<IconKey, IconDef> = {
   sensorRange: A("concept-sensor-range", "Sensor range"),
   // order lifecycle
   delay: A("concept-lightspeed-signal", "Command / light delay"),
-  echo: P("◔", "Awaiting echo (executing, unconfirmed)"),
-  delivered: P("◈", "In transit (order en route)"),
+  echo: P("◔", "Response in transit (received, presumed complying)"),
+  delivered: P("◈", "Signal outbound (order en route)"),
   confirmed: P("✓", "Confirmed"),
   inTransit: A("status-in-transit", "In transit"),
   // status / intel
