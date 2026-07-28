@@ -132,16 +132,19 @@ const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 const EMPLACEMENT_MIN_SPACING = 12_000;
 const DEEP_SPACE_SENSOR_RANGE = 60_000;
 const SMOOTH_RATE = 9.0; // e-folds per second
-// Corrections bigger than this are treated as a JUMP and applied at once: a
-// fleet that really did move that far did not drift there. Generous, and
-// deliberately so — a fleet riding a lane toward you OUTRUNS its own report
-// (hyperspace ×50 vs a buoy-less warp signal ×5), so when its bow-wave of
-// light finally arrives, a whole stretch of its flight becomes visible at
-// once. That correction is enormous and REAL; easing turns it into a visible
-// zoom down the lane, where snapping read as a teleport. Only a truly wild
-// jump (fog re-entry, respawn) should snap.
-const SMOOTH_SNAP_SU = 80_000;
-const SMOOTH_SNAP_S = 12.0; // ...or this many seconds of its own travel, whichever is larger
+// RIVALS ONLY: corrections bigger than this snap rather than ease. A rival
+// re-appearing from fog really is new information at a new place — easing it
+// would paint positions you never observed. YOUR OWN fleets never snap: a
+// fleet riding a lane toward you outruns its own report (hyperspace ×50 vs a
+// buoy-less warp signal ×5), so its bow-wave of light arrives essentially
+// WITH the ship and the correction is the WHOLE leg — no fixed threshold can
+// contain it, which is how the first version of this reintroduced the very
+// teleport it claimed to fix. Easing closes any distance in ~half a second,
+// reading as the ship streaking home. (The in-fiction cure is a buoy pair on
+// the lane: relayed reports at ×50 outrun any hull, and the blackout never
+// happens at all.)
+const SMOOTH_SNAP_SU = 4_000;
+const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // Deep-zoom NATIVE-size ramp: the zoom ratio r (= scale / fitScale) at which
 // ships BEGIN ramping from their indicator size (base × SHIP_ZOOM_MAX) up to
@@ -1790,7 +1793,7 @@ export class Renderer {
     const prev = sp.shown;
     const jump = prev ? Math.hypot(px - prev.x, py - prev.y) : Infinity;
     const snapAt = Math.max(SMOOTH_SNAP_SU, Math.hypot(ghost.vel.x, ghost.vel.y) * SMOOTH_SNAP_S);
-    if (!prev || jump > snapAt) {
+    if (!prev || (!ghost.own && jump > snapAt)) {
       sp.shown = { x: px, y: py };
     } else {
       // Frame-rate independent easing: the same time constant whatever the fps.
