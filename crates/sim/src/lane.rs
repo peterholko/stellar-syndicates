@@ -1047,6 +1047,14 @@ impl LaneNetwork {
 #[derive(Clone, Copy)]
 pub struct DelayField<'a> {
     pub lanes: &'a LaneNetwork,
+    /// §buoys: the VIEWER'S OWN relay network — their hyperspace buoys plus
+    /// their home system, which counts as the first one.
+    ///
+    /// Per-player, because a comms network is something you built and a rival's
+    /// buoys carry nothing of yours. Empty means every signal runs at warp,
+    /// which is where everyone starts.
+    #[allow(clippy::doc_markdown)]
+    pub buoys: &'a [Vec2],
     /// Normal-space `c`, still the anchor every other speed is expressed against.
     pub c: f64,
 }
@@ -1058,7 +1066,13 @@ impl DelayField<'_> {
     /// both ways — which is what lets one field serve outbound orders and inbound
     /// reports alike.
     pub fn between(&self, a: Vec2, b: Vec2) -> f64 {
-        self.lanes.delay(a, b, self.c)
+        self.lanes.signal(a, b, self.c, self.buoys).0
+    }
+
+    /// The same journey, with the HOPS it takes — what the order graphic traces
+    /// so the line on the map is the path the signal actually flew.
+    pub fn path(&self, a: Vec2, b: Vec2) -> Vec<Hop> {
+        self.lanes.signal(a, b, self.c, self.buoys).1
     }
 }
 

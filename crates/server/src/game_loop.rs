@@ -165,7 +165,8 @@ impl GameLoop {
         let c = self.world.config.c;
         // §hyperspace: information delay is a shortest-TIME path through a medium
         // whose speed varies, so the lane network travels with `c` now.
-        let delays = sim::lane::DelayField { lanes: &self.world.lanes, c };
+        let buoys = self.world.relay_network(player_id);
+        let delays = sim::lane::DelayField { lanes: &self.world.lanes, buoys: &buoys, c };
         let now = self.world.time;
         // Observed one-way light delay to the ship (its ghost staleness). Falls
         // back to ~0 if just spawned at home. The order reaches the ship one delay
@@ -748,9 +749,9 @@ impl GameLoop {
     /// guarantee, enforced by [`PositionHistory::view_for`].
     fn broadcast(&mut self) {
         let c = self.world.config.c;
-        // §hyperspace: the delay field for this broadcast — one construction,
-        // read by every per-player filter below.
-        let delays = sim::lane::DelayField { lanes: &self.world.lanes, c };
+        // §buoys: the delay field is PER PLAYER now — a relay network is built,
+        // owned, and cuttable, so a rival's buoys carry nothing of yours. Built
+        // inside the loop below rather than shared across it.
         let now = self.world.time;
         let tick = self.world.tick;
         let hub = self.world.hub;
@@ -774,6 +775,8 @@ impl GameLoop {
         // The published rankings are identical for everyone: one signature.
         let rankings_sig = sig_of(&self.world.rankings);
         for player_id in self.sessions.online_players() {
+            let buoys = self.world.relay_network(player_id);
+            let delays = sim::lane::DelayField { lanes: &self.world.lanes, buoys: &buoys, c };
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
             };

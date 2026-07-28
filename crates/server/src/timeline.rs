@@ -56,7 +56,11 @@ impl Timeline {
         // everything else does — a shortest-time path over the lane network, not
         // `distance / c`. Left on bare `c` these would arrive up to 50× late
         // across the rescaled galaxy.
-        let delays = sim::lane::DelayField { lanes: &world.lanes, c: world.config.c };
+        // §buoys: ingest runs across every player's notices, so it has no single
+        // relay network to read. Warp-only here is the conservative reading — a
+        // notice never arrives EARLIER than the medium allows.
+        let delays =
+            sim::lane::DelayField { lanes: &world.lanes, buoys: &[], c: world.config.c };
         for e in events {
             match &e.payload {
                 // Own economy / automation — observable on your own clock now.
@@ -799,6 +803,10 @@ fn fmt_wait(secs: f64) -> String {
 /// Human label for a build job, for the check-in timeline (§step1).
 fn build_label(what: sim::BuildKind) -> &'static str {
     match what {
+        sim::BuildKind::Emplace { emplacement } => match emplacement {
+            sim::EmplacementKind::HyperspaceBuoy => "a Hyperspace Buoy",
+            sim::EmplacementKind::DeepSpaceSensor => "a Deep Space Sensor",
+        },
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",

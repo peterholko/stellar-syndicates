@@ -5006,10 +5006,10 @@ impl World {
                 }
             }
             Command::BuildShip { player_id, system_id, ship_kind, join, loadout } => {
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, loadout.clone(), events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, loadout.clone(), None, events);
             }
             Command::BuildModule { player_id, system_id, module } => {
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, crate::module::Loadout::default(), events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, crate::module::Loadout::default(), None, events);
             }
             Command::RefitShips { player_id, fleet_id, ship, from, to, n } => {
                 self.apply_refit(*player_id, *fleet_id, *ship, from.clone(), to.clone(), *n, events);
@@ -5129,17 +5129,32 @@ impl World {
                 {
                     return;
                 }
-                let id = EntityId(self.next_entity_id);
-                self.next_entity_id += 1;
-                self.emplacements.push(crate::emplace::Emplacement {
-                    id,
-                    owner: *player_id,
-                    kind: *emplacement,
-                    pos: *pos,
-                });
+                // Paid for and assembled at the player's NEAREST OWNED SYSTEM —
+                // it has to come out of somebody's yard, and the nearest one is
+                // the one that would plausibly ship it. Nothing to build from
+                // means nothing to build.
+                let Some(sys) = self
+                    .systems
+                    .iter()
+                    .filter(|s| s.owner == Some(*player_id))
+                    .min_by(|a, b| a.pos.distance(*pos).total_cmp(&b.pos.distance(*pos)))
+                    .map(|s| s.id)
+                else {
+                    return;
+                };
+                self.apply_build(
+                    *player_id,
+                    sys,
+                    None,
+                    crate::build::BuildKind::Emplace { emplacement: *emplacement },
+                    None,
+                    crate::module::Loadout::default(),
+                    Some(*pos),
+                    events,
+                );
             }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
-                self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), events);
+                self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), None, events);
             }
             Command::SetAssignment { player_id, system_id, structure, workers, specialists, body_id } => {
                 // §economy Part 3 → §bodies: INSTANT local administration on ONE
@@ -5242,7 +5257,7 @@ impl World {
                 if !has_academy {
                     return; // soft reject — no Academy standing there
                 }
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Train { specialist: *specialist }, None, crate::module::Loadout::default(), events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Train { specialist: *specialist }, None, crate::module::Loadout::default(), None, events);
             }
             Command::TransferSpecialists { player_id, from, to, manifest } => {
                 // §economy Part 4: a dedicated personnel convoy between the
@@ -5490,6 +5505,33 @@ impl World {
     /// coverage rendering — so everything that keys off sensor range inherits
     /// arrays consistently. Systems are static, so including them in the View's
     /// delayed composite frame is exactly as leak-free as ship bubbles.
+    /// §buoys: this player's RELAY NETWORK — every hyperspace buoy they own,
+    /// plus their home system, which counts as their first buoy.
+    ///
+    /// Home is free and deliberately worth nothing on its own: a lane relays
+    /// only BETWEEN two buoys, so the first one buys nothing and the second is
+    /// the real purchase. That is what makes siting a decision rather than a
+    /// formality.
+    pub fn relay_network(&self, owner: PlayerId) -> Vec<Vec2> {
+        let mut v: Vec<Vec2> = self
+            .players
+            .get(&owner)
+            .and_then(|c| c.home_system)
+            .and_then(|id| self.systems.iter().find(|s| s.id == id))
+            .map(|s| s.pos)
+            .into_iter()
+            .collect();
+        v.extend(
+            self.emplacements
+                .iter()
+                .filter(|e| {
+                    e.owner == owner && e.kind == crate::emplace::EmplacementKind::HyperspaceBuoy
+                })
+                .map(|e| e.pos),
+        );
+        v
+    }
+
     pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
         // §research R4a SensorRadius widens every owned array's bubble.
         let radius = self.research_mod(owner, crate::research::ModKey::SensorRadius);
@@ -5497,6 +5539,19 @@ impl World {
             .iter()
             .filter(|s| s.owner == Some(owner) && s.tier(crate::build::StructureKind::SensorArray) >= 1)
             .map(|s| (s.pos, s.sensor_bubble() * radius))
+            // §emplacements: DEEP SPACE SENSORS join the same union. A picket is
+            // an array that happens to be nowhere in particular, and it is what
+            // shortens the OBSERVATION leg — the half a buoy cannot help with,
+            // since a buoy only makes the trip home faster once you have seen
+            // something. Same research widening; a buoy contributes nothing,
+            // because relaying is not watching.
+            .chain(
+                self.emplacements
+                    .iter()
+                    .filter(|e| e.owner == owner)
+                    .map(|e| (e.pos, e.kind.sensor_range() * radius))
+                    .filter(|(_, r)| *r > 0.0),
+            )
             .collect()
     }
 
@@ -5605,7 +5660,8 @@ impl World {
     /// forcing the specialization choice. Deducts the recipe NOW and enqueues a job
     /// that resolves at `tick + build_ticks`. Determinism: pure, runs in command
     /// phase so the debit is visible to this tick's accrual + standing orders.
-    fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
+    #[allow(clippy::too_many_arguments)] // one more knob than clippy likes; splitting it would only scatter the call sites
+    fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, emplace_pos: Option<crate::math::Vec2>, events: &mut Vec<Event>) {
         // §TCA: a corporation can never build an Authority Freighter (it is TCA-only
         // and absent from every BUILDABLE menu). Soft-reject BEFORE any recipe lookup
         // — no debit, no job — so `recipe_for`/`required_shipyard_tier` never see it.
@@ -5637,6 +5693,8 @@ impl World {
                 self.research_mod(player_id, ModKey::WarshipBuildTime),
             ),
             crate::build::BuildKind::Ship { .. } => (1.0, 1.0), // civilian hulls untuned
+            // §emplacements: no research line touches these yet.
+            crate::build::BuildKind::Emplace { .. } => (1.0, 1.0),
             crate::build::BuildKind::Module { .. } => (
                 self.research_mod(player_id, ModKey::ModuleCost),
                 self.research_mod(player_id, ModKey::ModuleBuildTime),
@@ -5654,6 +5712,9 @@ impl World {
         // body (`None` = the shared siting rules — old clients keep working);
         // ship jobs display at the best yard's body; courses at the Academy's.
         let body_id = match what {
+            // §emplacements: assembled at the system but DEPLOYED into space, so
+            // it holds no body — nothing about it sits on a planet.
+            crate::build::BuildKind::Emplace { .. } => 0,
             crate::build::BuildKind::Upgrade { upgrade } => body.or_else(|| sys.site_for(upgrade)).unwrap_or(0),
             // §yards: a ship job displays at (and is staffed by) the body holding
             // the best yard OF THE KIND THAT GATES IT — a Battleship's job sits
@@ -5949,6 +6010,8 @@ impl World {
             complete_tick,
             // Join only applies to ship builds; an upgrade always passes None.
             join: if matches!(what, crate::build::BuildKind::Ship { .. }) { join } else { None },
+            // §emplacements: set by the BuildEmplacement handler, None otherwise.
+            emplace_pos,
             // §modules: carry the (validated, debited) loadout to spawn time.
             loadout: if matches!(what, crate::build::BuildKind::Ship { .. }) { loadout } else { crate::module::Loadout::default() },
         });
@@ -6076,6 +6139,30 @@ impl World {
         self.build_queue.retain(|j| j.complete_tick > self.tick);
         for job in due {
             match job.what {
+                crate::build::BuildKind::Emplace { emplacement } => {
+                    // §emplacements: completes OUT IN SPACE, at the site the
+                    // player picked — re-checked, because the network and the
+                    // neighbours may have moved while it was in the yard.
+                    let Some(pos) = job.emplace_pos else { continue };
+                    if crate::emplace::site_check(
+                        emplacement,
+                        pos,
+                        &self.lanes,
+                        &self.emplacements,
+                    )
+                    .is_err()
+                    {
+                        continue;
+                    }
+                    let id = EntityId(self.next_entity_id);
+                    self.next_entity_id += 1;
+                    self.emplacements.push(crate::emplace::Emplacement {
+                        id,
+                        owner: job.owner,
+                        kind: emplacement,
+                        pos,
+                    });
+                }
                 crate::build::BuildKind::Ship { ship } => {
                     let pos = self
                         .systems

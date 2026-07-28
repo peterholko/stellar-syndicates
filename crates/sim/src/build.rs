@@ -33,6 +33,12 @@ pub enum BuildKind {
     /// module ledger (if still held). Needs an Armaments Complex ≥ 1; holds no
     /// slot; rides the same build queue.
     Module { module: ModuleKind },
+    /// §emplacements: build a structure that is DEPLOYED INTO OPEN SPACE — a
+    /// hyperspace buoy or a deep space sensor. Paid for and assembled at a
+    /// system like anything else, but it completes OUT IN SPACE rather than at
+    /// the yard — the site rides on `BuildJob::emplace_pos`, because where it
+    /// goes is the whole decision and a kind is not a place.
+    Emplace { emplacement: crate::emplace::EmplacementKind },
 }
 
 /// §economy: which SLOT POOL a structure consumes. Slot budgets are DERIVED,
@@ -275,6 +281,10 @@ pub struct BuildJob {
     /// = unfitted, so pre-module build jobs complete as stock ships.
     #[serde(default)]
     pub loadout: crate::module::Loadout,
+    /// §emplacements: for an `Emplace` job, WHERE it is deployed. `None` for
+    /// every other kind, which completes at its system.
+    #[serde(default)]
+    pub emplace_pos: Option<crate::math::Vec2>,
 }
 
 /// §modules Part B4: a queued REFIT — `n` ships of `ship` were pulled OUT of a
@@ -424,6 +434,21 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
     }
 }
 
+/// §emplacements: a BUOY is electronics and a power plant, not much metal — the
+/// cost is in siting it, not in building it. Cheap enough that a second one is a
+/// real option early, which matters because one buoy relays nothing.
+static HYPERSPACE_BUOY_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 40.0), (Commodity::Electronics, 60.0), (Commodity::Fuel, 30.0)],
+    build_ticks: 45 * HZ,
+};
+
+/// A SENSOR is the expensive one: it is an instrument, and it is what lets you
+/// see a rival coming before they arrive.
+static DEEP_SPACE_SENSOR_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 60.0), (Commodity::Electronics, 120.0), (Commodity::Fuel, 40.0)],
+    build_ticks: 70 * HZ,
+};
+
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
         BuildKind::Ship { ship: ShipKind::Convoy } => &CONVOY_RECIPE,
@@ -445,6 +470,10 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             unreachable!("Freighter is TCA-only and never buildable — apply_build guards it")
         }
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
+        BuildKind::Emplace { emplacement } => match emplacement {
+            crate::emplace::EmplacementKind::HyperspaceBuoy => &HYPERSPACE_BUOY_RECIPE,
+            crate::emplace::EmplacementKind::DeepSpaceSensor => &DEEP_SPACE_SENSOR_RECIPE,
+        },
         BuildKind::Module { module } => module_recipe(module),
         BuildKind::Upgrade { upgrade } => match upgrade {
             StructureKind::MiningComplex => &MINING_COMPLEX_RECIPE,

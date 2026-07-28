@@ -100,7 +100,8 @@ pub fn prepare_estimate(
     let deep = world.deep_scan_regions(viewer);
     // §hyperspace: the estimator reads the SAME delayed view the player does, so
     // it must resolve staleness through the same medium the map does.
-    let delays = sim::lane::DelayField { lanes: &world.lanes, c };
+    let buoys = world.relay_network(viewer);
+    let delays = sim::lane::DelayField { lanes: &world.lanes, buoys: &buoys, c };
     let ghosts = history.view_for_with_arrays(
         viewer, cc, &delays, now, arrays, &std::collections::BTreeSet::new(),
         NodeEffects { veil: &veil, deep_scan: &deep },

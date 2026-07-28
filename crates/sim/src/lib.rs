@@ -21,6 +21,7 @@ pub mod config;
 pub mod detection;
 pub mod doctrine;
 pub mod emplace;
+pub use emplace::{Emplacement, EmplacementKind};
 pub mod event;
 pub mod explore;
 pub mod fuel;
