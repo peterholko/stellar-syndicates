@@ -599,6 +599,45 @@ impl LaneNetwork {
         best
     }
 
+    /// §coupled: the delay for a viewer to HEAR a coupled hull at `p` through
+    /// their lane listening posts (`ears`), then get the report home to `b`.
+    ///
+    /// The wake rides the lane to the nearest post within listening range, and
+    /// the post relays home through the ordinary signal path (its buoys, warp).
+    /// `INFINITY` when no post hears it — the caller minimises this against
+    /// passive light, so no ears simply means no advantage.
+    pub fn signal_heard(
+        &self,
+        p: Vec2,
+        ears: &[Relay],
+        b: Vec2,
+        c: f64,
+        buoys: &[Vec2],
+    ) -> f64 {
+        let lane_speed = c * self.signal_factor_on_lane();
+        let mut best = f64::INFINITY;
+        for l in &self.lanes {
+            let Some((on, d)) = l.nearest(p) else { continue };
+            if d > l.half_width_at(on.s) {
+                continue; // the hull is not coupled to THIS lane
+            }
+            for ear in ears {
+                for (lid, s_ear) in &ear.on {
+                    if *lid != l.id {
+                        continue;
+                    }
+                    let along = (on.s - s_ear).abs();
+                    if along > crate::emplace::LANE_LISTEN_RANGE {
+                        continue; // a wake attenuates — out of earshot
+                    }
+                    let t = along / lane_speed + self.signal(ear.pos, b, c, buoys).0;
+                    best = best.min(t);
+                }
+            }
+        }
+        best
+    }
+
     /// §junction: find every crossing and lay out the graph.
     ///
     /// Two routes cross where their ribbons overlap — a fleet standing there is
@@ -1155,6 +1194,13 @@ impl DelayField<'_> {
     /// through the medium it is coupled to. See `LaneNetwork::signal_coupled`.
     pub fn from_coupled(&self, p: Vec2, b: Vec2) -> f64 {
         self.lanes.signal_coupled(p, b, self.c, self.buoys)
+    }
+
+    /// §coupled: the delay to HEAR a coupled hull at `p` through the viewer's
+    /// lane listening posts. INFINITY with no post in earshot — minimise against
+    /// `between`. See `LaneNetwork::signal_heard`.
+    pub fn heard(&self, p: Vec2, b: Vec2, ears: &[Relay]) -> f64 {
+        self.lanes.signal_heard(p, ears, b, self.c, self.buoys)
     }
 }
 

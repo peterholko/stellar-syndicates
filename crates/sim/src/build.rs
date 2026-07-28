@@ -454,8 +454,16 @@ pub fn emplacement_recipe(kind: crate::emplace::EmplacementKind) -> &'static Rec
     match kind {
         crate::emplace::EmplacementKind::HyperspaceBuoy => &HYPERSPACE_BUOY_RECIPE,
         crate::emplace::EmplacementKind::DeepSpaceSensor => &DEEP_SPACE_SENSOR_RECIPE,
+        crate::emplace::EmplacementKind::HyperspaceSensor => &HYPERSPACE_SENSOR_RECIPE,
     }
 }
+
+/// Priced between the buoy and the deep space instrument: it is a tripwire, and
+/// a tripwire you cannot afford to string is not a mechanic.
+static HYPERSPACE_SENSOR_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 50.0), (Commodity::Electronics, 90.0), (Commodity::Fuel, 30.0)],
+    build_ticks: 60 * HZ,
+};
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {

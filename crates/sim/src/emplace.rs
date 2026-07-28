@@ -26,16 +26,27 @@ pub enum EmplacementKind {
     /// what it sees home at warp — so it shortens the *observation* leg rather
     /// than the transmission, which is the half a buoy cannot help with.
     DeepSpaceSensor,
+    /// §coupled: a listening post PARKED IN A LANE. A hull riding a lane is
+    /// coupled to the medium, and coupling works both ways — the sensor hears
+    /// the wake of rival traffic on its lane and reports home at lane speed, so
+    /// a lane raider can no longer arrive ahead of the news of it PAST one of
+    /// these. The counter-play is built in: drop to warp and go the slow, quiet
+    /// way around, off the wire.
+    HyperspaceSensor,
 }
 
 impl EmplacementKind {
-    pub const ALL: [EmplacementKind; 2] =
-        [EmplacementKind::HyperspaceBuoy, EmplacementKind::DeepSpaceSensor];
+    pub const ALL: [EmplacementKind; 3] = [
+        EmplacementKind::HyperspaceBuoy,
+        EmplacementKind::DeepSpaceSensor,
+        EmplacementKind::HyperspaceSensor,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             EmplacementKind::HyperspaceBuoy => "Hyperspace Buoy",
             EmplacementKind::DeepSpaceSensor => "Deep Space Sensor",
+            EmplacementKind::HyperspaceSensor => "Hyperspace Sensor",
         }
     }
 
@@ -43,7 +54,7 @@ impl EmplacementKind {
     /// space and may be put anywhere — the frontier is exactly where it earns
     /// its keep.
     pub fn needs_a_lane(self) -> bool {
-        matches!(self, EmplacementKind::HyperspaceBuoy)
+        matches!(self, EmplacementKind::HyperspaceBuoy | EmplacementKind::HyperspaceSensor)
     }
 
     /// The bubble a deep space sensor projects. Zero for a buoy, which relays
@@ -52,6 +63,8 @@ impl EmplacementKind {
         match self {
             EmplacementKind::HyperspaceBuoy => 0.0,
             EmplacementKind::DeepSpaceSensor => DEEP_SPACE_SENSOR_RANGE,
+            // A lane listener hears the MEDIUM, not open space.
+            EmplacementKind::HyperspaceSensor => 0.0,
         }
     }
 }
@@ -81,6 +94,12 @@ pub enum SiteError {
     /// Something of yours is already here.
     TooClose,
 }
+
+/// §coupled: how far along its lane a hyperspace sensor HEARS, in arc length,
+/// either way. A wake is noise, not a directed transmission — it attenuates —
+/// so one post covers a corridor, not the whole route, and siting the approach
+/// lanes stays a real decision.
+pub const LANE_LISTEN_RANGE: f64 = 120_000.0;
 
 /// How close a builder must hold to its site for the work to run — a worksite,
 /// not a rendezvous, so it is tight.

@@ -679,7 +679,7 @@ export interface LoadoutStack {
 /// §emplacements: one structure standing in open space.
 export interface EmplacementView {
   id: string;
-  kind: "hyperspace_buoy" | "deep_space_sensor";
+  kind: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor";
   pos: Vec2;
   /// The bubble it watches, 0 for a buoy.
   sensor_range: number;
@@ -811,7 +811,7 @@ export type ClientMsg =
   /// §emplacements: build a structure out in open space at a chosen point. The
   /// field is `emplacement`, not `kind` — the server's Command enum is tagged
   /// on that name.
-  | { type: "BuildEmplacement"; emplacement: "hyperspace_buoy" | "deep_space_sensor"; pos: Vec2 }
+  | { type: "BuildEmplacement"; emplacement: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor"; pos: Vec2 }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }

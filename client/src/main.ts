@@ -3112,7 +3112,12 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
         readout().innerHTML = `<span style="color:var(--warn)">No idle Construction Ship — build one at a Shipyard, then site this.</span>`;
         return;
       }
-      const label = state.placing === "hyperspace_buoy" ? "Hyperspace Buoy" : "Deep Space Sensor";
+      const label =
+        state.placing === "hyperspace_buoy"
+          ? "Hyperspace Buoy"
+          : state.placing === "deep_space_sensor"
+            ? "Deep Space Sensor"
+            : "Hyperspace Sensor";
       net?.send({ type: "BuildEmplacement", emplacement: state.placing, pos: at });
       readout().innerHTML =
         `<b>${label}</b> ordered — your nearest Construction Ship is being dispatched (signal outbound).` +
@@ -3459,6 +3464,7 @@ function updateEmplaceBar(): void {
   const kinds: [string, string, string][] = [
     ["hyperspace_buoy", "Hyperspace Buoy", "Relays orders and reports at lane speed — but only between TWO buoys sharing a lane. Must be sited in a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Site it anywhere."],
+    ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must be sited in a lane."],
   ];
   bar.innerHTML = kinds
     .map(

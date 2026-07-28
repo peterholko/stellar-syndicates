@@ -318,7 +318,7 @@ impl PositionHistory {
     /// [`Self::view_for_with_arrays`]; the many fairness tests use this form.)
     #[cfg(test)]
     pub fn view_for(&self, viewer: PlayerId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Vec<GhostView> {
-        self.view_for_with_arrays(viewer, cc, delays, now, &[], &BTreeSet::new(), NodeEffects::default())
+        self.view_for_with_arrays(viewer, cc, delays, now, &[], &[], &BTreeSet::new(), NodeEffects::default())
     }
 
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
@@ -340,6 +340,9 @@ impl PositionHistory {
         delays: &sim::lane::DelayField<'_>,
         now: f64,
         arrays: &[(Vec2, f64)],
+        // §coupled: the viewer's HYPERSPACE SENSORS resolved onto their lanes —
+        // the tripwires that hear rival traffic riding a listened lane.
+        ears: &[sim::lane::Relay],
         // Fleets FORCE-REVEALED by weapons fire (§battles-take-time): battle
         // participants whose battle-light has reached the viewer are shown at the
         // site even if dark and out of coverage — fighting means being seen.
@@ -392,7 +395,7 @@ impl PositionHistory {
                 continue; // the destruction has been observed — it's gone
             }
             let own = track.owner == viewer;
-            let Some(sample) = latest_observable(&track.samples, cc, delays, now, own) else {
+            let Some(sample) = latest_observable(&track.samples, cc, delays, now, own, ears) else {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
@@ -633,7 +636,7 @@ impl PositionHistory {
     pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<f64> {
         let track = self.tracks.get(&ship_id)?;
         // observed_age serves the ISSUING player's own ship — coupled applies.
-        let sample = latest_observable(&track.samples, cc, delays, now, true)?;
+        let sample = latest_observable(&track.samples, cc, delays, now, true, &[])?;
         Some(now - sample.time)
     }
 
@@ -1614,12 +1617,30 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 /// warp-speed light. A RIVAL's fleet transmits nothing to this viewer: it is
 /// seen passively, so its lane transits still arrive ahead of the news of them
 /// — the bow wave stays a weapon, it just stops being friendly fire.
-fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64, own: bool) -> Option<Sample> {
+/// `ears`: the viewer's HYPERSPACE SENSORS, resolved onto the lanes they sit
+/// in. §coupled — a rival hull riding a lane makes a wake in the medium, and a
+/// listening post on that lane hears it and reports home at lane speed. Passive
+/// light still governs everything the wire does not cover, so a raider that
+/// drops to warp and goes around stays quiet — slower, off the tripwire.
+fn latest_observable(
+    samples: &VecDeque<Sample>,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+    own: bool,
+    ears: &[sim::lane::Relay],
+) -> Option<Sample> {
     for s in samples.iter().rev() {
-        let coupled = own
-            && matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
-        let delay =
-            if coupled { delays.from_coupled(s.pos, cc) } else { delays.between(s.pos, cc) };
+        let coupled =
+            matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let mut delay = if own && coupled {
+            delays.from_coupled(s.pos, cc)
+        } else {
+            delays.between(s.pos, cc)
+        };
+        if coupled && !ears.is_empty() {
+            delay = delay.min(delays.heard(s.pos, cc, ears));
+        }
         if s.time + delay <= now {
             return Some(*s);
         }
@@ -1707,8 +1728,8 @@ mod tests {
         }
         let now = t; // the moment the hull nears the cc
 
-        let own = latest_observable(&samples, cc, &field, now, true).expect("owner sees it");
-        let rival = latest_observable(&samples, cc, &field, now, false);
+        let own = latest_observable(&samples, cc, &field, now, true, &[]).expect("owner sees it");
+        let rival = latest_observable(&samples, cc, &field, now, false, &[]);
         let own_age = now - own.time;
         assert!(
             own_age < 8.0,
@@ -1725,6 +1746,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// §coupled: A HYPERSPACE SENSOR HEARS THE LANE. A rival hull riding a
+    /// listened lane makes a wake the post reports home at lane speed — so it
+    /// can no longer arrive ahead of the news of it past a tripwire. Without
+    /// the ear, passive light rules and the same rider stays dark.
+    #[test]
+    fn a_lane_tripwire_hears_a_rival_rider_that_passive_light_misses() {
+        let ctrl =
+            vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 400.0;
+        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let cc = Vec2::new(0.0, 0.0);
+        // The tripwire: a post on the lane 60k out, well inside listening range
+        // of the rider's approach.
+        let ear = net.relay_at(Vec2::new(60_000.0, 0.0));
+        assert!(!ear.on.is_empty(), "the post is coupled to the lane");
+
+        // A RIVAL riding inbound at 5,000 su/s against 2,000 su/s light.
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let (mut t, mut x) = (0.0, 250_000.0);
+        while x > 30_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: Vec2::new(x, 0.0),
+                vel: Vec2::new(-5_000.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += 1.0;
+            x -= 5_000.0;
+        }
+        // Judge a beat after the run ends: the wake still had to reach the post
+        // and the post's report still crosses home at warp — the tripwire is
+        // not free intelligence, it is EARLIER intelligence.
+        let now = t + 10.0;
+        let ears = [ear];
+        let heard = latest_observable(&samples, cc, &field, now, false, &ears);
+        let deaf = latest_observable(&samples, cc, &field, now, false, &[]);
+        let heard_age = now - heard.expect("the wire hears the rider").time;
+        let deaf_age = deaf.map(|s| now - s.time);
+        assert!(
+            deaf_age.is_none_or(|a| a > heard_age + 10.0),
+            "without the ear the same rider must be dark or far staler \
+             ({deaf_age:?} vs heard {heard_age:.1}s)",
+        );
     }
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
@@ -2761,7 +2838,7 @@ mod tests {
         assert!(hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
         // As a battle participant, weapons fire reveals it at the site, in full.
         let reveal: BTreeSet<EntityId> = [EntityId(1)].into_iter().collect();
-        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &reveal, NodeEffects::default());
+        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &reveal, NodeEffects::default());
         assert_eq!(seen.len(), 1, "weapons fire reveals the dark participant at the battle site");
         assert!(seen[0].composition.is_some(), "and its full composition is seen there");
     }
@@ -2799,16 +2876,14 @@ mod tests {
         assert!(base[0].composition.is_none(), "outside coverage: bucket only, no exact composition");
         // A Deep-Scan region over the fleet → exact composition, still ONE fleet.
         let deep = [pos];
-        let scanned = hist.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
+        let scanned = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
             NodeEffects { veil: &[], deep_scan: &deep },
         );
         assert_eq!(scanned.len(), 1, "deep scan reveals no NEW fleet");
         assert!(scanned[0].composition.is_some(), "it upgrades the visible fleet's bucket to exact");
         // A DARK, undetected raider in the same region stays hidden under deep scan.
         let dark = history_of(vec![dark_track(RIVAL, pos, ShipKind::Raider.max_speed(), &[(ShipKind::Raider, 2)])], 1000.0);
-        let dscanned = dark.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
+        let dscanned = dark.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
             NodeEffects { veil: &[], deep_scan: &deep },
         );
         assert!(dscanned.is_empty(), "deep scan never conjures an undetected dark fleet");
@@ -2830,16 +2905,14 @@ mod tests {
         assert!(!hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "without a Veil, the fleet is detected");
         // A Veil region (its owner's) over the fleet halves its signature → hidden.
         let veil = [(RIVAL, pos)];
-        let seen = hist.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
+        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
             NodeEffects { veil: &veil, deep_scan: &[] },
         );
         assert!(seen.is_empty(), "the Veil shrinks the fleet's detection radius below its range");
         // A rival's Veil never quiets someone else's fleet: a mismatched-owner region
         // does nothing (the fleet is RIVAL's, the region is credited to VIEWER).
         let wrong = [(VIEWER, pos)];
-        let still = hist.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
+        let still = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
             NodeEffects { veil: &wrong, deep_scan: &[] },
         );
         assert!(!still.is_empty(), "a Veil only quiets its OWN holder's fleets");
@@ -3060,7 +3133,7 @@ mod tests {
         assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
         // An owned array system near them (bubble 1200 su) covers both.
         let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
-        let seen = hist.view_for_with_arrays(VIEWER, cc, &df(300.0), 60.0, &arrays, &BTreeSet::new(), NodeEffects::default());
+        let seen = hist.view_for_with_arrays(VIEWER, cc, &df(300.0), 60.0, &arrays, &[], &BTreeSet::new(), NodeEffects::default());
         assert_eq!(seen.len(), 2, "the array detects the dark raider");
         let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
         assert!(convoy.cargo.is_some(), "cargo revealed at array range");

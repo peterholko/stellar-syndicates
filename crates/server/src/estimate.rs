@@ -102,8 +102,14 @@ pub fn prepare_estimate(
     // it must resolve staleness through the same medium the map does.
     let buoys = world.relay_network(viewer);
     let delays = sim::lane::DelayField { lanes: &world.lanes, buoys: &buoys, c };
+    let ears: Vec<sim::lane::Relay> = world
+        .emplacements
+        .iter()
+        .filter(|e| e.owner == viewer && e.kind == sim::EmplacementKind::HyperspaceSensor)
+        .map(|e| world.lanes.relay_at(e.pos))
+        .collect();
     let ghosts = history.view_for_with_arrays(
-        viewer, cc, &delays, now, arrays, &std::collections::BTreeSet::new(),
+        viewer, cc, &delays, now, arrays, &ears, &std::collections::BTreeSet::new(),
         NodeEffects { veil: &veil, deep_scan: &deep },
     );
     let ghost = ghosts.into_iter().find(|g| g.id == target)?;

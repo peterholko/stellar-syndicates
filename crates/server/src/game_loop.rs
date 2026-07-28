@@ -831,8 +831,18 @@ impl GameLoop {
             // holders' dark fleets; Deep Scan resolves exact composition in-region).
             let veil_regions = self.world.active_veil_regions();
             let deep_scan_regions = self.world.deep_scan_regions(player_id);
+            // §coupled: this viewer's lane tripwires, resolved once per view.
+            let ears: Vec<sim::lane::Relay> = self
+                .world
+                .emplacements
+                .iter()
+                .filter(|e| {
+                    e.owner == player_id && e.kind == sim::EmplacementKind::HyperspaceSensor
+                })
+                .map(|e| self.world.lanes.relay_at(e.pos))
+                .collect();
             let mut ghosts = self.history.view_for_with_arrays(
-                player_id, cc, &delays, now, &arrays, &battle_reveal,
+                player_id, cc, &delays, now, &arrays, &ears, &battle_reveal,
                 view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
             );
             // §offensive-orders Part 2: attach each OWN fleet's engagement posture
