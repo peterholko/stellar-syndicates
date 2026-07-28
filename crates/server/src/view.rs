@@ -391,7 +391,8 @@ impl PositionHistory {
             {
                 continue; // the destruction has been observed — it's gone
             }
-            let Some(sample) = latest_observable(&track.samples, cc, delays, now) else {
+            let own = track.owner == viewer;
+            let Some(sample) = latest_observable(&track.samples, cc, delays, now, own) else {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
@@ -631,7 +632,8 @@ impl PositionHistory {
     /// comet so it meets the ghost. `None` if the ship is currently dark.
     pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<f64> {
         let track = self.tracks.get(&ship_id)?;
-        let sample = latest_observable(&track.samples, cc, delays, now)?;
+        // observed_age serves the ISSUING player's own ship — coupled applies.
+        let sample = latest_observable(&track.samples, cc, delays, now, true)?;
         Some(now - sample.time)
     }
 
@@ -1606,10 +1608,19 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 /// The latest sample whose light has reached `cc` by `now`. Relies on
 /// `arrival(t)` being strictly increasing (object speed < c): the first sample
 /// found scanning newest→oldest with `arrival ≤ now` is the answer.
-fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<Sample> {
+/// `own`: whether the viewer OWNS this track. §coupled — an own fleet riding a
+/// lane transmits its report through the lane it is in, so those samples travel
+/// at lane signal speed and its picture stays fresh even when the hull outruns
+/// warp-speed light. A RIVAL's fleet transmits nothing to this viewer: it is
+/// seen passively, so its lane transits still arrive ahead of the news of them
+/// — the bow wave stays a weapon, it just stops being friendly fire.
+fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64, own: bool) -> Option<Sample> {
     for s in samples.iter().rev() {
-        let arrival = s.time + delays.between(s.pos, cc);
-        if arrival <= now {
+        let coupled = own
+            && matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let delay =
+            if coupled { delays.from_coupled(s.pos, cc) } else { delays.between(s.pos, cc) };
+        if s.time + delay <= now {
             return Some(*s);
         }
     }
@@ -1652,6 +1663,69 @@ mod tests {
     }
 
     use super::*;
+
+    /// §coupled: A FLEET RIDING A LANE TRANSMITS THROUGH IT — its own report
+    /// rides at lane signal speed, so the owner's picture of it stays fresh even
+    /// when the hull outruns warp-speed light. A RIVAL watching the same fleet
+    /// gets only passive light: the lane transit still arrives ahead of the news
+    /// of it. One track, two viewers, opposite freshness — that asymmetry is the
+    /// mechanic (the bow wave stops being friendly fire and stays a weapon).
+    #[test]
+    fn a_lane_rider_is_fresh_to_its_owner_and_stale_to_a_rival() {
+        // A straight lane running along x, viewer's CC at the origin end.
+        let ctrl =
+            vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 400.0;
+        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let cc = Vec2::new(0.0, 0.0);
+
+        // A hull riding the lane TOWARD the cc at 5,000 su/s — 2.5× the 2,000
+        // su/s warp signal, the exact geometry of every playtest teleport.
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let mut t = 0.0;
+        let mut x = 250_000.0;
+        while x > 20_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: Vec2::new(x, 0.0),
+                vel: Vec2::new(-5_000.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += 1.0;
+            x -= 5_000.0;
+        }
+        let now = t; // the moment the hull nears the cc
+
+        let own = latest_observable(&samples, cc, &field, now, true).expect("owner sees it");
+        let rival = latest_observable(&samples, cc, &field, now, false);
+        let own_age = now - own.time;
+        assert!(
+            own_age < 8.0,
+            "the owner's picture should be near-live (report rides the lane), got {own_age:.1}s stale",
+        );
+        match rival {
+            None => {} // still dark — the hull is ahead of its own light entirely
+            Some(r) => {
+                let rival_age = now - r.time;
+                assert!(
+                    rival_age > own_age + 10.0,
+                    "a rival's passive light must lag far behind the owner's coupled report \
+                     (rival {rival_age:.1}s vs own {own_age:.1}s)",
+                );
+            }
+        }
+    }
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
         let last = samples.last().map(|s| s.time).unwrap_or(0.0);

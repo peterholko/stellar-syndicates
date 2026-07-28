@@ -572,6 +572,33 @@ impl LaneNetwork {
         (t, hops)
     }
 
+    /// §coupled: the signal delay from a fleet that is RIDING A LANE to `b`.
+    ///
+    /// A hull with its hyperspace drive engaged is coupled to the lane medium —
+    /// which is exactly what a buoy is, a transmitter parked in a lane — so its
+    /// own report rides the lane it is in at full lane signal speed, exits at
+    /// the point nearest the receiver, and crosses the rest at warp (through
+    /// whatever buoys the owner has, via the ordinary path).
+    ///
+    /// Deliberately bounded: the report rides THE ONE LANE the fleet is in. It
+    /// does not transfer at junctions — crossing onto another lane needs a
+    /// transmitter parked there, which is what buoys are for. Without that line
+    /// this rule would quietly resurrect the free pre-buoy network.
+    pub fn signal_coupled(&self, p: Vec2, b: Vec2, c: f64, buoys: &[Vec2]) -> f64 {
+        let mut best = self.signal(p, b, c, buoys).0;
+        let lane_speed = c * self.signal_factor_on_lane();
+        for l in &self.lanes {
+            let Some((on, d)) = l.nearest(p) else { continue };
+            if d > l.half_width_at(on.s) {
+                continue; // not in this ribbon — not coupled to it
+            }
+            let Some((exit, _)) = l.nearest(b) else { continue };
+            let t = (on.s - exit.s).abs() / lane_speed + self.signal(exit.pos, b, c, buoys).0;
+            best = best.min(t);
+        }
+        best
+    }
+
     /// §junction: find every crossing and lay out the graph.
     ///
     /// Two routes cross where their ribbons overlap — a fleet standing there is
@@ -853,6 +880,12 @@ fn menger_radius(a: Vec2, b: Vec2, c: Vec2) -> f64 {
 /// Bézier because it interpolates its control points: the route provably passes
 /// through the anchors generation chose, so the drawn geometry and the
 /// mechanical geometry are the same object.
+/// Test-only re-export of the baker, so server tests can build a hand-made lane
+/// without reaching into generation.
+pub fn bake_for_tests(pts: &[Vec2]) -> Vec<LaneSample> {
+    bake(pts)
+}
+
 fn bake(pts: &[Vec2]) -> Vec<LaneSample> {
     if pts.len() < 2 {
         return Vec::new();
@@ -1116,6 +1149,12 @@ impl DelayField<'_> {
     /// so the line on the map is the path the signal actually flew.
     pub fn path(&self, a: Vec2, b: Vec2) -> Vec<Hop> {
         self.lanes.signal(a, b, self.c, self.buoys).1
+    }
+
+    /// §coupled: `between`, for a sender RIDING A LANE — its report goes out
+    /// through the medium it is coupled to. See `LaneNetwork::signal_coupled`.
+    pub fn from_coupled(&self, p: Vec2, b: Vec2) -> f64 {
+        self.lanes.signal_coupled(p, b, self.c, self.buoys)
     }
 }
 
