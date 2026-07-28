@@ -3443,7 +3443,10 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
         `Order away to <b>${esc(shipKindLabel(sel!.kind))}</b>. ` +
         `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
         `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>` + blind;
+        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>` + blind +
+        (out > 8
+          ? ` <span style="color:var(--warn)">That sighting is stale — the fleet has flown on since, and its picture will catch up in a rush once fresher light arrives.</span>`
+          : "");
     }
 }
 
