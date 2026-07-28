@@ -163,12 +163,15 @@ impl GameLoop {
         }
         let cc = corp.command_center;
         let c = self.world.config.c;
+        // §hyperspace: information delay is a shortest-TIME path through a medium
+        // whose speed varies, so the lane network travels with `c` now.
+        let delays = sim::lane::DelayField { lanes: &self.world.lanes, c };
         let now = self.world.time;
         // Observed one-way light delay to the ship (its ghost staleness). Falls
         // back to ~0 if just spawned at home. The order reaches the ship one delay
         // out — that's the whole outbound signal; the ship's reaction is then seen
         // directly on the map when its light arrives (no return signal needed).
-        let age = self.history.observed_age(ship_id, cc, c, now).unwrap_or(0.0);
+        let age = self.history.observed_age(ship_id, cc, &sim::lane::DelayField { lanes: &self.world.lanes, c }, now).unwrap_or(0.0);
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandSignal {
@@ -222,6 +225,20 @@ impl GameLoop {
                         tick: self.world.tick,
                         sim_time: self.world.time,
                         galaxy: GalaxyInfo {
+                            // §hyperspace: static, public, shipped once.
+                            lanes: self
+                                .world
+                                .lanes
+                                .lanes
+                                .iter()
+                                .map(|l| crate::protocol::LaneView {
+                                    id: l.id,
+                                    name: l.name.clone(),
+                                    points: l.samples.iter().map(|s| s.pos).collect(),
+                                    half_width: l.half_width,
+                                    tapers: l.tapers,
+                                })
+                                .collect(),
                             hub: self.world.hub,
                             radius: self.world.config.galaxy_radius,
                             c: self.world.config.c,
@@ -731,6 +748,9 @@ impl GameLoop {
     /// guarantee, enforced by [`PositionHistory::view_for`].
     fn broadcast(&mut self) {
         let c = self.world.config.c;
+        // §hyperspace: the delay field for this broadcast — one construction,
+        // read by every per-player filter below.
+        let delays = sim::lane::DelayField { lanes: &self.world.lanes, c };
         let now = self.world.time;
         let tick = self.world.tick;
         let hub = self.world.hub;
@@ -809,7 +829,7 @@ impl GameLoop {
             let veil_regions = self.world.active_veil_regions();
             let deep_scan_regions = self.world.deep_scan_regions(player_id);
             let mut ghosts = self.history.view_for_with_arrays(
-                player_id, cc, c, now, &arrays, &battle_reveal,
+                player_id, cc, &delays, now, &arrays, &battle_reveal,
                 view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
             );
             // §offensive-orders Part 2: attach each OWN fleet's engagement posture
@@ -919,7 +939,7 @@ impl GameLoop {
                 captures: capture_reports,
                 captures_sig,
             });
-            let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
+            let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, &delays, now);
             // §syndicates Part 2: each syndicate ally's relayable scout intel (their
             // command center is the relay source). The View chain-light-delays each
             // ally's snapshots to this viewer, provenance preserved.
@@ -935,7 +955,7 @@ impl GameLoop {
                 })
                 .collect();
             let mut systems = view::filter_systems(
-                &self.world.systems, player_id, cc, c, now, &self.world.build_queue, self.world.tick, DT,
+                &self.world.systems, player_id, cc, &delays, now, &self.world.build_queue, self.world.tick, DT,
                 &corp.intel, &ally_intel, &corp.surveyed,
             );
             // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
@@ -1133,7 +1153,7 @@ impl GameLoop {
             // below diffs each of their connections' cursors against this and
             // ships only the increments, on the reliable discrete lane.
             let specs =
-                view::visible_record_specs(&self.world.battle_records, player_id, cc, c, now, &coverage, &|corp| {
+                view::visible_record_specs(&self.world.battle_records, player_id, cc, &delays, now, &coverage, &|corp| {
                     // §ladder B4: resolve a side's christened Titan name.
                     self.world
                         .players
@@ -1146,7 +1166,7 @@ impl GameLoop {
             // §ground G2: which landings this player may see, at what fidelity.
             ground_specs.insert(
                 player_id,
-                view::visible_ground_specs(&self.world.ground_records, player_id, cc, c, now, &coverage),
+                view::visible_ground_specs(&self.world.ground_records, player_id, cc, &delays, now, &coverage),
             );
             // §TCA: the Charterhouse freight desk. Terms for every system this
             // player owns (the only valid destinations), plus their OWN lots.

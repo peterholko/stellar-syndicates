@@ -508,10 +508,15 @@ pub const PLATFORM_TIER_DEFENSE: f64 = 3.0;
 
 /// Bubble radius of a tier-1 array — matches the global ship/CC bubble, so one
 /// tier buys a ship's worth of standing vision at the system. Tunable.
-pub const SENSOR_ARRAY_BASE: f64 = 2200.0;
+///
+/// §hyperspace: scaled with the galaxy, exactly as `config.sensor_range` is.
+/// Left absolute it would have projected 2,200 against a 110,000 fleet bubble —
+/// the building would have been worthless, and the panel that now reports its
+/// reach as a number would have been reporting a lie.
+pub const SENSOR_ARRAY_BASE: f64 = 2200.0 * crate::lane::GALAXY_SCALE;
 /// Extra radius per tier past the first (+40% of base) — a tier-2 array outsees
 /// any ship. Tunable.
-pub const SENSOR_ARRAY_PER_TIER: f64 = 880.0;
+pub const SENSOR_ARRAY_PER_TIER: f64 = 880.0 * crate::lane::GALAXY_SCALE;
 
 /// The sensor bubble radius an array of `tier` projects (0 = no array).
 pub fn sensor_array_radius(tier: u32) -> f64 {

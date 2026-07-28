@@ -133,8 +133,12 @@ pub struct NodeEffects<'a> {
 pub struct PositionHistory {
     tracks: HashMap<EntityId, Track>,
     /// How many seconds of history to retain. Must exceed the largest possible
-    /// light delay (galaxy diameter / c) so every long-lived object always has
-    /// an observable sample.
+    /// information delay so every long-lived object always has an observable
+    /// sample. §hyperspace: that bound is the galaxy diameter over the SLOWEST
+    /// signal route, which is open hyperspace — not bare `c`. Signals always
+    /// couple into the overlay, so nothing ever crawls at `c` across interstellar
+    /// distance, and sizing to `c` would retain 5× more history than any viewer
+    /// can ever read.
     horizon: f64,
     /// Sensor detection radius each of a player's assets projects (config).
     sensor_range: f64,
@@ -144,7 +148,11 @@ impl PositionHistory {
     /// Create a history sized to a world's maximum possible light delay, with a
     /// safety margin.
     pub fn for_world(world: &World) -> Self {
-        let max_delay = (2.0 * world.config.galaxy_radius) / world.config.c;
+        // The slowest a signal can cross the galaxy: open hyperspace, off every
+        // lane. Sizing to bare `c` would be both wasteful and wrong — no signal
+        // travels that slowly once the overlay exists.
+        let max_delay = (2.0 * world.config.galaxy_radius)
+            / (world.config.c * sim::lane::HYPERSPACE_FACTOR);
         PositionHistory {
             tracks: HashMap::new(),
             horizon: max_delay * 1.25 + 1.0,
@@ -270,8 +278,8 @@ impl PositionHistory {
     /// (Array-less convenience — production always goes through
     /// [`Self::view_for_with_arrays`]; the many fairness tests use this form.)
     #[cfg(test)]
-    pub fn view_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<GhostView> {
-        self.view_for_with_arrays(viewer, cc, c, now, &[], &BTreeSet::new(), NodeEffects::default())
+    pub fn view_for(&self, viewer: PlayerId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Vec<GhostView> {
+        self.view_for_with_arrays(viewer, cc, delays, now, &[], &BTreeSet::new(), NodeEffects::default())
     }
 
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
@@ -290,7 +298,7 @@ impl PositionHistory {
         &self,
         viewer: PlayerId,
         cc: Vec2,
-        c: f64,
+        delays: &sim::lane::DelayField<'_>,
         now: f64,
         arrays: &[(Vec2, f64)],
         // Fleets FORCE-REVEALED by weapons fire (§battles-take-time): battle
@@ -339,11 +347,11 @@ impl PositionHistory {
             // old light) until the destruction's light reaches their command
             // center; only THEN does it vanish. Before that, serve it normally.
             if let Some((dt, dpos)) = track.gone
-                && now >= dt + dpos.distance(cc) / c
+                && now >= dt + delays.between(dpos, cc)
             {
                 continue; // the destruction has been observed — it's gone
             }
-            let Some(sample) = latest_observable(&track.samples, cc, c, now) else {
+            let Some(sample) = latest_observable(&track.samples, cc, delays, now) else {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
@@ -564,11 +572,11 @@ impl PositionHistory {
     /// The staleness (light delay, seconds) of a ship's ghost as the command
     /// center at `cc` observes it — the age of the latest sample whose light has
     /// arrived. This is exactly how far behind the player's view of that ship
-    /// is, and equals `|ghost_pos − cc| / c`. Used to pace the outbound command
+    /// is. Used to pace the outbound command
     /// comet so it meets the ghost. `None` if the ship is currently dark.
-    pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, c: f64, now: f64) -> Option<f64> {
+    pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<f64> {
         let track = self.tracks.get(&ship_id)?;
-        let sample = latest_observable(&track.samples, cc, c, now)?;
+        let sample = latest_observable(&track.samples, cc, delays, now)?;
         Some(now - sample.time)
     }
 
@@ -626,7 +634,7 @@ pub fn filter_anchors(
     slots: &[HomeSlot],
     viewer: PlayerId,
     cc: Vec2,
-    c: f64,
+    delays: &sim::lane::DelayField<'_>,
     now: f64,
 ) -> Vec<AnchorView> {
     slots
@@ -635,7 +643,7 @@ pub fn filter_anchors(
             let owner = match (slot.owner, slot.claimed_at) {
                 (Some(owner), _) if owner == viewer => Some(owner),
                 (Some(owner), Some(claimed_at)) => {
-                    let arrival = claimed_at + slot.pos.distance(cc) / c;
+                    let arrival = claimed_at + delays.between(slot.pos, cc);
                     if arrival <= now {
                         Some(owner)
                     } else {
@@ -682,7 +690,7 @@ pub fn filter_systems(
     systems: &[StarSystem],
     viewer: PlayerId,
     cc: Vec2,
-    c: f64,
+    delays: &sim::lane::DelayField<'_>,
     now: f64,
     build_queue: &[sim::BuildJob],
     tick: u64,
@@ -698,7 +706,7 @@ pub fn filter_systems(
             let owner = match (sys.owner, sys.claimed_at) {
                 (Some(owner), _) if owner == viewer => Some(owner),
                 (Some(owner), Some(claimed_at)) => {
-                    let arrival = claimed_at + sys.pos.distance(cc) / c;
+                    let arrival = claimed_at + delays.between(sys.pos, cc);
                     if arrival <= now {
                         Some(owner)
                     } else {
@@ -756,7 +764,7 @@ pub fn filter_systems(
             // notice. Third parties get None (they see the fight via `battles`).
             let blockade = sys.blockade.and_then(|b| {
                 let by_me = b.by == viewer;
-                let owner_sees = own && now >= b.since + sys.pos.distance(cc) / c;
+                let owner_sees = own && now >= b.since + delays.between(sys.pos, cc);
                 (by_me || owner_sees).then_some(BlockadeStateView { by: b.by, since: b.since, by_me, siege_since: b.siege_since })
             });
             // §ground: what a landing here would have to beat. Same two-viewer
@@ -884,7 +892,7 @@ pub fn filter_systems(
                     // Your OWN scout snapshot (direct, no provenance) — delivered
                     // once its light reached your command center — is authoritative.
                     let own_iv = intel.get(&sys.id).and_then(|snap| {
-                        let arrival = snap.observed_at + snap.pos.distance(cc) / c;
+                        let arrival = snap.observed_at + delays.between(snap.pos, cc);
                         (arrival <= now).then_some(IntelView {
                             defense_tier: snap.defense_tier,
                             shipyard_tier: snap.shipyard_tier,
@@ -903,8 +911,8 @@ pub fn filter_systems(
                         let mut best_obs = f64::NEG_INFINITY;
                         for a in allies {
                             let Some(snap) = a.intel.get(&sys.id) else { continue };
-                            let t2 = snap.observed_at + snap.pos.distance(a.cc) / c;
-                            let t3 = t2 + a.cc.distance(cc) / c;
+                            let t2 = snap.observed_at + delays.between(snap.pos, a.cc);
+                            let t3 = t2 + delays.between(a.cc, cc);
                             if now >= t3 && snap.observed_at > best_obs {
                                 best_obs = snap.observed_at;
                                 best = Some(IntelView {
@@ -1096,11 +1104,11 @@ pub fn battle_record_views(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    c: f64,
+    delays: &sim::lane::DelayField<'_>,
     now: f64,
     coverage: &[(Vec2, f64)],
 ) -> Vec<BattleRecordView> {
-    battle_record_views_named(records, viewer, cc, c, now, coverage, &|_| None)
+    battle_record_views_named(records, viewer, cc, delays, now, coverage, &|_| None)
 }
 
 /// §perf Part A: what a viewer may see of one record RIGHT NOW — the cheap
@@ -1136,14 +1144,14 @@ pub fn visible_record_specs(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    c: f64,
+    delays: &sim::lane::DelayField<'_>,
     now: f64,
     coverage: &[(Vec2, f64)],
     flagship_of: &dyn Fn(PlayerId) -> Option<String>,
 ) -> Vec<RecordSpec> {
     let mut out = Vec::new();
     for r in records.values() {
-        let delay = r.pos.distance(cc) / c;
+        let delay = delays.between(r.pos, cc);
         let arrived = |tick: u64| (tick as f64) * sim::DT + delay <= now;
         // The battle only exists to a viewer once its opening light arrived.
         if !arrived(r.started_tick) {
@@ -1223,13 +1231,13 @@ pub fn visible_ground_specs(
     records: &BTreeMap<sim::EntityId, sim::ground::GroundRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    c: f64,
+    delays: &sim::lane::DelayField<'_>,
     now: f64,
     coverage: &[(Vec2, f64)],
 ) -> Vec<GroundSpec> {
     let mut out = Vec::new();
     for r in records.values() {
-        let delay = r.pos.distance(cc) / c;
+        let delay = delays.between(r.pos, cc);
         let arrived = |tick: u64| (tick as f64) * sim::DT + delay <= now;
         if !arrived(r.started_tick) {
             continue;
@@ -1395,12 +1403,12 @@ pub fn battle_record_views_named(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    c: f64,
+    delays: &sim::lane::DelayField<'_>,
     now: f64,
     coverage: &[(Vec2, f64)],
     flagship_of: &dyn Fn(PlayerId) -> Option<String>,
 ) -> Vec<BattleRecordView> {
-    visible_record_specs(records, viewer, cc, c, now, coverage, flagship_of)
+    visible_record_specs(records, viewer, cc, delays, now, coverage, flagship_of)
         .into_iter()
         .filter_map(|spec| {
             let r = records.get(&spec.id)?;
@@ -1542,9 +1550,9 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 /// The latest sample whose light has reached `cc` by `now`. Relies on
 /// `arrival(t)` being strictly increasing (object speed < c): the first sample
 /// found scanning newest→oldest with `arrival ≤ now` is the answer.
-fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, c: f64, now: f64) -> Option<Sample> {
+fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<Sample> {
     for s in samples.iter().rev() {
-        let arrival = s.time + s.pos.distance(cc) / c;
+        let arrival = s.time + delays.between(s.pos, cc);
         if arrival <= now {
             return Some(*s);
         }
@@ -1570,6 +1578,22 @@ fn sample_at(samples: &VecDeque<Sample>, t_r: f64) -> Option<Sample> {
 
 #[cfg(test)]
 mod tests {
+    /// §hyperspace: a delay field for tests that predate lanes.
+    ///
+    /// These assert the LIGHT LAW — nothing is observable before its delay, no
+    /// leak, arrival is monotonic — not any particular signal speed. They derive
+    /// their probe times from `distance / c` by hand, so this hands them a field
+    /// whose EFFECTIVE signal speed is exactly `c`: an empty network (no lane
+    /// bonus) with the hyperspace factor divided back out.
+    ///
+    /// That keeps every one of those tests testing precisely what it was written
+    /// to test. Lane-aware delay has its own coverage in `sim::lane`, and the
+    /// playtest crossing target is pinned by `hub_to_rim_stays_about_twenty_seconds_off_lane`.
+    static NO_LANES: sim::lane::LaneNetwork = sim::lane::LaneNetwork { lanes: Vec::new() };
+    fn df(c: f64) -> sim::lane::DelayField<'static> {
+        sim::lane::DelayField { lanes: &NO_LANES, c: c / sim::lane::HYPERSPACE_FACTOR }
+    }
+
     use super::*;
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
@@ -1652,15 +1676,15 @@ mod tests {
 
         // Light delay from X to cc ≈ 6000/300 = 20 s; the jump at t=10 cannot be
         // seen before ~t=30. At now=25 the viewer must still see X.
-        let g25 = &hist.view_for(PlayerId(99), cc, c, 25.0)[0];
+        let g25 = &hist.view_for(PlayerId(99), cc, &df(c), 25.0)[0];
         assert_eq!(g25.pos, x, "viewer saw the jump before its light arrived (LEAK)");
 
         // Sanity: the shown sample's light really has arrived.
-        let arrival = (25.0 - g25.age) + g25.pos.distance(cc) / c;
+        let arrival = (25.0 - g25.age) + df(c).between(g25.pos, cc);
         assert!(arrival <= 25.0 + 1e-9);
 
         // Much later (well after the jump's light could arrive), it sees Y.
-        let g_late = &hist.view_for(PlayerId(99), cc, c, 40.0)[0];
+        let g_late = &hist.view_for(PlayerId(99), cc, &df(c), 40.0)[0];
         assert_eq!(g_late.pos, y, "viewer never saw the jump even long after");
     }
 
@@ -1684,11 +1708,11 @@ mod tests {
         }
         let hist = history_with(track_from(samples.clone(), PlayerId(7), ShipKind::Convoy));
         let now = 45.0;
-        let g = &hist.view_for(PlayerId(99), cc, c, now)[0];
+        let g = &hist.view_for(PlayerId(99), cc, &df(c), now)[0];
 
         // The shown sample arrived.
         let shown_t = now - g.age;
-        let shown_arrival = shown_t + g.pos.distance(cc) / c;
+        let shown_arrival = shown_t + df(c).between(g.pos, cc);
         assert!(shown_arrival <= now + 1e-9, "shown sample hasn't arrived");
 
         // The next newer sample has NOT arrived (it would be a leak to show it).
@@ -1696,7 +1720,7 @@ mod tests {
             .iter()
             .find(|s| s.time > shown_t + 1e-9)
             .expect("there is a newer sample");
-        let next_arrival = next.time + next.pos.distance(cc) / c;
+        let next_arrival = next.time + df(c).between(next.pos, cc);
         assert!(next_arrival > now, "a newer sample had also arrived — not the boundary");
     }
 
@@ -1715,8 +1739,8 @@ mod tests {
         let now = 50.0;
         let near = Vec2::new(100.0, 200.0);
         let far = Vec2::new(0.0, 9000.0);
-        let g_near = &hist.view_for(PlayerId(99), near, c, now)[0];
-        let g_far = &hist.view_for(PlayerId(99), far, c, now)[0];
+        let g_near = &hist.view_for(PlayerId(99), near, &df(c), now)[0];
+        let g_far = &hist.view_for(PlayerId(99), far, &df(c), now)[0];
         assert!(g_near.age < g_far.age, "near {} should be fresher than far {}", g_near.age, g_far.age);
     }
 
@@ -1737,13 +1761,13 @@ mod tests {
         ];
 
         // At t=10s, the rival's claim light (20 s away) has NOT arrived.
-        let v10 = filter_anchors(&slots, me, cc, c, 10.0);
+        let v10 = filter_anchors(&slots, me, cc, &df(c), 10.0);
         assert_eq!(v10[0].owner, Some(me), "own claim should be visible instantly");
         assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
         assert_eq!(v10[2].owner, None);
 
         // At t=25s, the rival's claim light has arrived.
-        let v25 = filter_anchors(&slots, me, cc, c, 25.0);
+        let v25 = filter_anchors(&slots, me, cc, &df(c), 25.0);
         assert_eq!(v25[1].owner, Some(rival), "rival claim should be visible after light arrives");
 
         // Positions are always present (static geography).
@@ -1820,7 +1844,7 @@ mod tests {
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let v10 = filter_systems(&systems, me, cc, &df(c), 10.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
         assert!(v10[1].build.is_none(), "a rival's build state must never leak");
         // The full queue list (§build-progress) follows the same fog rule and
@@ -1895,7 +1919,7 @@ mod tests {
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let v25 = filter_systems(&systems, me, cc, &df(c), 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert_eq!(v25[1].owner, Some(rival));
         // …but still NEVER their stockpile or development tier.
         assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
@@ -1943,7 +1967,7 @@ mod tests {
         }
         let builds: Vec<sim::BuildJob> = Vec::new();
         let surveyed: BTreeSet<EntityId> = [EntityId(3)].into_iter().collect();
-        let v = filter_systems(&systems, me, cc, c, 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &surveyed);
+        let v = filter_systems(&systems, me, cc, &df(c), 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &surveyed);
         // OWNER always sees own geology (holding is knowing).
         let mine = v[0].deposits.as_ref().expect("owner sees own geology");
         assert_eq!(mine.len(), 1);
@@ -1957,7 +1981,7 @@ mod tests {
         assert!(v[2].deposits.is_some(), "surveyed knowledge shows the exact table");
         // And the RIVAL's own view is gated on THEIR set: with an empty set they
         // see their own system but not my surveyed frontier one.
-        let rv = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let rv = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), &df(c), 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(rv[1].deposits.is_some(), "the rival sees their own geology");
         assert!(rv[2].deposits.is_none(), "MY survey knowledge never reaches the rival's wire");
         // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
@@ -2114,7 +2138,7 @@ mod tests {
         let builds = vec![];
         // Long after the onset light, so a light delay can't be what hides it.
         let q = |viewer| {
-            filter_systems(&systems, viewer, cc, c, 5_000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].ground
+            filter_systems(&systems, viewer, cc, &df(c), 5_000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].ground
         };
 
         let o = q(owner).expect("the owner always reads their own garrison");
@@ -2153,7 +2177,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         // Long after the light, so nothing here is hidden by delay alone.
         let specs = |viewer, coverage: &[(Vec2, f64)]| {
-            visible_ground_specs(&records, viewer, cc, 300.0, 10_000.0, coverage)
+            visible_ground_specs(&records, viewer, cc, &df(300.0), 10_000.0, coverage)
         };
         let covering = [(pos, 200.0)];
 
@@ -2225,7 +2249,7 @@ mod tests {
                 population: 0.0, assignments: Default::default(),
             });
             let systems = vec![sys];
-            filter_systems(&systems, owner, Vec2::new(0.0, 0.0), 300.0, 5_000.0, &[], 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0]
+            filter_systems(&systems, owner, Vec2::new(0.0, 0.0), &df(300.0), 5_000.0, &[], 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0]
                 .ground
                 .expect("the owner reads their own ground")
                 .marines_needed
@@ -2265,7 +2289,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let builds = vec![];
         let q = |viewer, now| {
-            filter_systems(&systems, viewer, cc, c, now, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].blockade
+            filter_systems(&systems, viewer, cc, &df(c), now, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].blockade
         };
 
         // The BESIEGER sees it at once (by_me), regardless of light.
@@ -2326,21 +2350,21 @@ mod tests {
         let builds: Vec<sim::BuildJob> = vec![];
 
         // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
-        let v10 = filter_systems(&systems, me, cc, c, 10.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
+        let v10 = filter_systems(&systems, me, cc, &df(c), 10.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
         assert!(v10[0].intel.is_none(), "intel must not appear before its light arrives");
 
         // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
-        let v25 = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
+        let v25 = filter_systems(&systems, me, cc, &df(c), 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
         let iv = v25[0].intel.expect("intel delivered once its light arrives");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
         assert!((iv.observed_at - 0.0).abs() < 1e-9, "a snapshot keeps its capture time — it ages");
 
         // Leak checks: a viewer WITHOUT snapshots sees nothing…
-        let v_none = filter_systems(&systems, me, cc, c, 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let v_none = filter_systems(&systems, me, cc, &df(c), 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
         // …and the SCOUTED RIVAL's own view is untouched: their own system never
         // carries intel (own => None), even if a stale map were passed in.
-        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), c, 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
+        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), &df(c), 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
         assert!(v_rival[0].intel.is_none(), "the scouted side learns nothing — not even that it was scouted");
     }
 
@@ -2389,9 +2413,9 @@ mod tests {
         ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
         // Chain: T2 = 6000/300 = 20 (ally learns), T3 = 20 + 12000/300 = 60 (I learn).
-        let v55 = filter_systems(&systems, me, cc, c, 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
+        let v55 = filter_systems(&systems, me, cc, &df(c), 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
         assert!(v55[0].intel.is_none(), "a relayed snapshot waits for the FULL chain (observed→ally→me)");
-        let v65 = filter_systems(&systems, me, cc, c, 65.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
+        let v65 = filter_systems(&systems, me, cc, &df(c), 65.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
         let iv = v65[0].intel.expect("relayed once the chain completes");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (3, 2));
         assert_eq!(iv.relayed_by, Some(ally), "provenance names the reporting ally");
@@ -2415,13 +2439,13 @@ mod tests {
         let mut ally_map = BTreeMap::new();
         ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         // Non-member: no allies passed → nothing relayed, even long after the chain.
-        let v_non = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let v_non = filter_systems(&systems, me, cc, &df(c), 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
         assert!(v_non[0].intel.is_none(), "a non-member receives no relayed intel");
         // Own direct snapshot present AND ally relay present → OWN wins (no provenance).
         let mut own_map = BTreeMap::new();
         own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
         let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
-        let v = filter_systems(&systems, me, cc, c, 200.0, &builds, 0, sim::DT, &own_map, &allies, &BTreeSet::new());
+        let v = filter_systems(&systems, me, cc, &df(c), 200.0, &builds, 0, sim::DT, &own_map, &allies, &BTreeSet::new());
         let iv = v[0].intel.expect("own intel delivered");
         assert_eq!(iv.relayed_by, None, "your own direct scouting is authoritative — no relay provenance");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (1, 1), "own snapshot values, not the ally's");
@@ -2448,7 +2472,7 @@ mod tests {
         let owner = PlayerId(7);
         let hist = history_with(still_track(Vec2::ZERO, owner, ShipKind::Raider));
 
-        let g_own = &hist.view_for(owner, cc, c, 50.0)[0];
+        let g_own = &hist.view_for(owner, cc, &df(c), 50.0)[0];
         // Own AND far ⇒ uncertain. No ownership exemption.
         assert!(g_own.own);
         assert!(g_own.uncertainty > 0.0, "a distant own ship must be uncertain, not certain");
@@ -2457,7 +2481,7 @@ mod tests {
 
         // An enemy raider on the SAME track is fogged identically — same age, same
         // uncertainty. Ownership changes only the `own` flag, nothing else.
-        let g_enemy = &hist.view_for(PlayerId(99), cc, c, 50.0)[0];
+        let g_enemy = &hist.view_for(PlayerId(99), cc, &df(c), 50.0)[0];
         assert!(!g_enemy.own);
         assert!((g_own.uncertainty - g_enemy.uncertainty).abs() < 1e-9,
             "own and enemy at the same distance from the command center are equally uncertain");
@@ -2474,9 +2498,9 @@ mod tests {
         let hist = history_with(still_track(Vec2::ZERO, owner, ShipKind::Raider));
 
         // Command center 30 su away: light delay 0.1 s ⇒ uncertainty ≈ 0.1·max_speed.
-        let near = &hist.view_for(owner, Vec2::new(30.0, 0.0), c, 50.0)[0];
+        let near = &hist.view_for(owner, Vec2::new(30.0, 0.0), &df(c), 50.0)[0];
         // Same own ship viewed from 9000 su away: ~30 s stale, far more uncertain.
-        let far = &hist.view_for(owner, Vec2::new(9000.0, 0.0), c, 50.0)[0];
+        let far = &hist.view_for(owner, Vec2::new(9000.0, 0.0), &df(c), 50.0)[0];
 
         assert!(near.uncertainty < far.uncertainty,
             "near {} should be far crisper than far {}", near.uncertainty, far.uncertainty);
@@ -2494,7 +2518,7 @@ mod tests {
     #[test]
     fn convoy_broadcasts_but_cargo_is_hidden_out_of_range() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert_eq!(view.len(), 1, "convoy should broadcast galaxy-wide");
         assert!(view[0].cargo.is_none(), "cargo must be hidden outside sensor range");
     }
@@ -2504,7 +2528,7 @@ mod tests {
     fn convoy_cargo_revealed_within_sensor_range() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
         // Command center 200 su from the convoy → inside the 1000 su sensor range.
-        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         assert_eq!(view.len(), 1);
         assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
     }
@@ -2522,12 +2546,12 @@ mod tests {
             history_of(vec![(id, track)], 1000.0)
         };
         // 5000 su out, viewer at 300 su sensor range → OUT of coverage.
-        let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert_eq!(far.len(), 1, "the convoy itself broadcasts — identity is public");
         assert!(far[0].passengers.is_empty(), "…but the PEOPLE aboard must never leak outside coverage");
         assert!(far[0].cargo.is_none(), "(same rule as cargo)");
         // 200 su away → inside coverage: the manifest opens.
-        let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         assert_eq!(near[0].passengers.get(&sim::SpecialistKind::NavalArchitect), Some(&3), "sensors read the manifest — people included");
     }
 
@@ -2558,8 +2582,8 @@ mod tests {
         let pos = Vec2::new(700.0, 0.0); // inside 1000, outside 0.4×1000 = 400
         let hist_full = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 1)])], 1000.0);
         let hist_creep = history_of(vec![dark_track(RIVAL, pos, full * sim::detection::STEALTH_FRACTION, &[(ShipKind::Raider, 1)])], 1000.0);
-        assert_eq!(hist_full.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).len(), 1, "at flank speed the raider is flagged");
-        assert!(hist_creep.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "creeping at stealth it reaches the sensor edge unseen");
+        assert_eq!(hist_full.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).len(), 1, "at flank speed the raider is flagged");
+        assert!(hist_creep.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "creeping at stealth it reaches the sensor edge unseen");
     }
 
     /// RETARDED-TIME signature (the correctness rule): a fleet that SPRINTED then
@@ -2586,7 +2610,7 @@ mod tests {
         tracks.insert(EntityId(1), track);
         // Bubble 950: full-speed sig 1.0 reaches 950 > 900; coast sig would not.
         let hist = PositionHistory { tracks, horizon: 1e9, sensor_range: 950.0 };
-        let seen = hist.view_for(VIEWER, cc, 300.0, 6.0);
+        let seen = hist.view_for(VIEWER, cc, &df(300.0), 6.0);
         assert_eq!(seen.len(), 1, "the old full-speed flare is what arrives — detected on schedule");
     }
 
@@ -2600,10 +2624,10 @@ mod tests {
         let full = ShipKind::Raider.max_speed();
         let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 2)])], 1000.0);
         // Out of coverage → omitted entirely (the fog default).
-        assert!(hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
+        assert!(hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
         // As a battle participant, weapons fire reveals it at the site, in full.
         let reveal: BTreeSet<EntityId> = [EntityId(1)].into_iter().collect();
-        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &reveal, NodeEffects::default());
+        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &reveal, NodeEffects::default());
         assert_eq!(seen.len(), 1, "weapons fire reveals the dark participant at the battle site");
         assert!(seen[0].composition.is_some(), "and its full composition is seen there");
     }
@@ -2617,7 +2641,7 @@ mod tests {
         for dist in [300.0, 700.0, 1200.0, 2500.0] {
             let pos = Vec2::new(dist, 0.0);
             let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], 1000.0);
-            let view_sees = !hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty();
+            let view_sees = !hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty();
             // The sim's shared function, same coverage (just the CC bubble here).
             let sig = sim::detection::signature(&comp, full, ShipKind::Raider.max_speed());
             let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
@@ -2636,13 +2660,13 @@ mod tests {
         // the size bucket outside coverage.
         let comp = [(ShipKind::Convoy, 3), (ShipKind::Raider, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, pos, &comp))], 1000.0);
-        let base = hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0);
+        let base = hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0);
         assert_eq!(base.len(), 1);
         assert!(base[0].composition.is_none(), "outside coverage: bucket only, no exact composition");
         // A Deep-Scan region over the fleet → exact composition, still ONE fleet.
         let deep = [pos];
         let scanned = hist.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
             NodeEffects { veil: &[], deep_scan: &deep },
         );
         assert_eq!(scanned.len(), 1, "deep scan reveals no NEW fleet");
@@ -2650,7 +2674,7 @@ mod tests {
         // A DARK, undetected raider in the same region stays hidden under deep scan.
         let dark = history_of(vec![dark_track(RIVAL, pos, ShipKind::Raider.max_speed(), &[(ShipKind::Raider, 2)])], 1000.0);
         let dscanned = dark.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
             NodeEffects { veil: &[], deep_scan: &deep },
         );
         assert!(dscanned.is_empty(), "deep scan never conjures an undetected dark fleet");
@@ -2669,11 +2693,11 @@ mod tests {
         let d = 0.75 * sensor * sig;
         let pos = Vec2::new(d, 0.0);
         let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], sensor);
-        assert!(!hist.view_for(VIEWER, Vec2::ZERO, 300.0, 90.0).is_empty(), "without a Veil, the fleet is detected");
+        assert!(!hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "without a Veil, the fleet is detected");
         // A Veil region (its owner's) over the fleet halves its signature → hidden.
         let veil = [(RIVAL, pos)];
         let seen = hist.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
             NodeEffects { veil: &veil, deep_scan: &[] },
         );
         assert!(seen.is_empty(), "the Veil shrinks the fleet's detection radius below its range");
@@ -2681,7 +2705,7 @@ mod tests {
         // does nothing (the fleet is RIVAL's, the region is credited to VIEWER).
         let wrong = [(VIEWER, pos)];
         let still = hist.view_for_with_arrays(
-            VIEWER, Vec2::ZERO, 300.0, 90.0, &[], &BTreeSet::new(),
+            VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &BTreeSet::new(),
             NodeEffects { veil: &wrong, deep_scan: &[] },
         );
         assert!(!still.is_empty(), "a Veil only quiets its OWN holder's fleets");
@@ -2707,8 +2731,8 @@ mod tests {
             }
             history_of(vec![(EntityId(1), track)], sensor)
         };
-        assert!(mk(false).view_for(VIEWER, Vec2::ZERO, 300.0, 60.0).is_empty(), "a QUIET holding scout at d stays dark");
-        assert_eq!(mk(true).view_for(VIEWER, Vec2::ZERO, 300.0, 60.0).len(), 1, "the SAME scout DWELLING (loud) is detected — active sensing is loud");
+        assert!(mk(false).view_for(VIEWER, Vec2::ZERO, &df(300.0), 60.0).is_empty(), "a QUIET holding scout at d stays dark");
+        assert_eq!(mk(true).view_for(VIEWER, Vec2::ZERO, &df(300.0), 60.0).len(), 1, "the SAME scout DWELLING (loud) is detected — active sensing is loud");
     }
 
     /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
@@ -2767,13 +2791,13 @@ mod tests {
 
         // OUTSIDE coverage: the bucket is present; damage is NOT.
         let hist = history_of(vec![(EntityId(1), hurt())], 1000.0);
-        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert!(far[0].composition.is_none(), "composition stays hidden outside coverage");
         assert!(far[0].damage.is_none(), "…and so does how hurt they are");
 
         // INSIDE coverage: both revealed, and the damage is the aggregate.
         let hist = history_of(vec![(EntityId(1), hurt())], 1000.0);
-        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         assert!(near[0].composition.is_some(), "coverage reveals the makeup");
         let dmg = near[0].damage.expect("coverage reveals the damage");
         assert!((dmg - 0.30).abs() < 1e-9, "the reported figure is the fleet's own aggregate");
@@ -2794,7 +2818,7 @@ mod tests {
         // 3 convoys + 2 corvettes + 1 raider = 6 ships (broadcasts: has convoys).
         let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert_eq!(view.len(), 1, "the broadcasting fleet is visible galaxy-wide");
         let g = &view[0];
         assert_eq!(g.count_class, CountClass::from_count(6), "size bucket always present");
@@ -2810,7 +2834,7 @@ mod tests {
         let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
         // Command center 200 su from the fleet → inside the 1000 su sensor range.
-        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         let g = &view[0];
         let revealed = g.composition.as_ref().expect("composition revealed inside coverage");
         let got: BTreeMap<ShipKind, u32> = revealed.iter().map(|c| (c.kind, c.count)).collect();
@@ -2826,7 +2850,7 @@ mod tests {
         let comp = [(ShipKind::Convoy, 2), (ShipKind::Colony, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(VIEWER, Vec2::new(8000.0, 0.0), &comp))], 500.0);
         // Viewer's own fleet, far from the command center (out of the 500 su bubble).
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         let g = &view[0];
         assert!(g.own);
         assert!(g.composition.is_some(), "own fleet composition is always exact");
@@ -2840,10 +2864,10 @@ mod tests {
         let comp = [(ShipKind::Raider, 4), (ShipKind::Scout, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
         // Outside coverage: omitted entirely.
-        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert!(far.is_empty(), "a dark fleet out of coverage must not appear at all");
         // Inside coverage: seen, with full composition.
-        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         assert_eq!(near.len(), 1);
         assert!(near[0].composition.is_some(), "a seen dark fleet shows its full composition");
         assert_eq!(near[0].count_class, CountClass::from_count(5));
@@ -2855,7 +2879,7 @@ mod tests {
     fn count_bucket_contains_true_size_without_revealing_it() {
         let comp = [(ShipKind::Convoy, 20)]; // 20 broadcasting convoys, far away
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(6000.0, 0.0), &comp))], 800.0);
-        let g = &hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0)[0];
+        let g = &hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0)[0];
         assert_eq!(g.count_class, CountClass::SixteenToThirty, "20 → the 16–30 bucket");
         assert!(g.composition.is_none(), "the exact 20 is never revealed outside coverage");
     }
@@ -2865,7 +2889,7 @@ mod tests {
     #[test]
     fn dark_raider_omitted_outside_sensor() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert!(view.is_empty(), "a dark raider out of sensor range must not appear at all");
     }
 
@@ -2874,7 +2898,7 @@ mod tests {
     #[test]
     fn raider_detected_within_sensor() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         assert_eq!(view.len(), 1, "raider within sensor range is detected");
         assert!(!view[0].own);
     }
@@ -2896,12 +2920,12 @@ mod tests {
             1000.0,
         );
         // No array: the raider is omitted, the convoy's cargo hidden.
-        let blind = hist.view_for(VIEWER, cc, 300.0, 60.0);
+        let blind = hist.view_for(VIEWER, cc, &df(300.0), 60.0);
         assert_eq!(blind.len(), 1, "only the broadcast convoy, no raider");
         assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
         // An owned array system near them (bubble 1200 su) covers both.
         let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
-        let seen = hist.view_for_with_arrays(VIEWER, cc, 300.0, 60.0, &arrays, &BTreeSet::new(), NodeEffects::default());
+        let seen = hist.view_for_with_arrays(VIEWER, cc, &df(300.0), 60.0, &arrays, &BTreeSet::new(), NodeEffects::default());
         assert_eq!(seen.len(), 2, "the array detects the dark raider");
         let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
         assert!(convoy.cargo.is_some(), "cargo revealed at array range");
@@ -2925,7 +2949,7 @@ mod tests {
             ],
             1000.0,
         );
-        let v = with_raider.view_for(VIEWER, cc, 300.0, 60.0);
+        let v = with_raider.view_for(VIEWER, cc, &df(300.0), 60.0);
         assert!(!v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "an ordinary ship at 1400 su misses the dark raider");
 
         let with_scout = history_of(
@@ -2936,7 +2960,7 @@ mod tests {
             ],
             1000.0,
         );
-        let v = with_scout.view_for(VIEWER, cc, 300.0, 60.0);
+        let v = with_scout.view_for(VIEWER, cc, &df(300.0), 60.0);
         assert!(v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "the scout's oversized bubble detects it");
         let convoy = v.iter().find(|g| g.kind == ShipKind::Convoy && !g.own).unwrap();
         assert!(convoy.cargo.is_some(), "…and reveals convoy cargo at scout range");
@@ -2948,9 +2972,9 @@ mod tests {
     #[test]
     fn rival_scout_is_dark_outside_coverage() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Scout)], 1000.0);
-        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert!(far.is_empty(), "a dark scout out of coverage must not appear at all");
-        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), 300.0, 60.0);
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
         assert_eq!(near.len(), 1, "inside coverage it's a detected contact like any dark ship");
         assert_eq!(near[0].kind, ShipKind::Scout);
     }
@@ -2960,7 +2984,7 @@ mod tests {
     #[test]
     fn own_raider_is_always_visible() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, VIEWER, ShipKind::Raider)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
         assert_eq!(view.len(), 1, "own raider must always be visible");
         assert!(view[0].own);
     }
@@ -2986,14 +3010,14 @@ mod tests {
         hist.mark_destroyed(EntityId(1), 10.0, dpos);
 
         // The near CC observes the destruction at 10 + 1 = 11.
-        assert_eq!(hist.view_for(VIEWER, near, c, 10.5).len(), 1, "near still sees it alive just before its light");
-        assert_eq!(hist.view_for(VIEWER, near, c, 11.5).len(), 0, "near sees it destroyed after the light arrives");
+        assert_eq!(hist.view_for(VIEWER, near, &df(c), 10.5).len(), 1, "near still sees it alive just before its light");
+        assert_eq!(hist.view_for(VIEWER, near, &df(c), 11.5).len(), 0, "near sees it destroyed after the light arrives");
 
         // The far CC observes it at 10 + 20 = 30 — so at t=25 it STILL sees the
         // ship alive (flying on old light) while the near CC already saw it die.
-        assert_eq!(hist.view_for(VIEWER, far, c, 25.0).len(), 1, "far still sees the (already-dead) ship alive");
-        assert_eq!(hist.view_for(VIEWER, near, c, 25.0).len(), 0, "...while near has long since seen it destroyed");
-        assert_eq!(hist.view_for(VIEWER, far, c, 30.5).len(), 0, "far finally sees it destroyed when its light arrives");
+        assert_eq!(hist.view_for(VIEWER, far, &df(c), 25.0).len(), 1, "far still sees the (already-dead) ship alive");
+        assert_eq!(hist.view_for(VIEWER, near, &df(c), 25.0).len(), 0, "...while near has long since seen it destroyed");
+        assert_eq!(hist.view_for(VIEWER, far, &df(c), 30.5).len(), 0, "far finally sees it destroyed when its light arrives");
     }
 
     /// A destroyed CONVOY (moving, broadcast-visible) keeps being served as a
@@ -3021,17 +3045,17 @@ mod tests {
         // across the entire [15, 35) interval and vanish only at 35.
         let far = Vec2::new(200.0, 4500.0); // |dpos-far| = 4500
         for now in [16.0, 25.0, 30.0, 34.5] {
-            assert_eq!(hist.view_for(VIEWER, far, c, now).len(), 1,
+            assert_eq!(hist.view_for(VIEWER, far, &df(c), now).len(), 1,
                 "far viewer must still see the dead convoy flying on old light at t={now} (light lands at 35)");
         }
-        assert_eq!(hist.view_for(VIEWER, far, c, 35.5).len(), 0,
+        assert_eq!(hist.view_for(VIEWER, far, &df(c), 35.5).len(), 0,
             "far viewer's convoy vanishes exactly when its destruction light arrives (t=35)");
 
         // NEAR viewer: 600 su → 2 s of light → vanishes at t=22, 13 s before the
         // far viewer. ONE destruction, observed asymmetrically.
         let near = Vec2::new(200.0, 600.0); // |dpos-near| = 600
-        assert_eq!(hist.view_for(VIEWER, near, c, 21.5).len(), 1, "near still sees it just before its light");
-        assert_eq!(hist.view_for(VIEWER, near, c, 22.5).len(), 0, "near vanishes at t=22 while far waits until 35");
+        assert_eq!(hist.view_for(VIEWER, near, &df(c), 21.5).len(), 1, "near still sees it just before its light");
+        assert_eq!(hist.view_for(VIEWER, near, &df(c), 22.5).len(), 0, "near vanishes at t=22 while far waits until 35");
     }
 
     /// §fleets part 3: a colony ship CONSUMED on claim leaves true space without a
@@ -3085,7 +3109,7 @@ mod tests {
         // A command center 3000 su away learns of the claim 3000/c seconds later.
         let cc = pos + Vec2::new(3000.0, 0.0);
         let delay = 3000.0 / c;
-        let sees = |now: f64| hist.view_for(me, cc, c, now).iter().any(|g| g.id == cid);
+        let sees = |now: f64| hist.view_for(me, cc, &df(c), now).iter().any(|g| g.id == cid);
         assert!(sees(t_claim + delay - 0.5), "before the light lands the colony ship still flies on old light");
         assert!(!sees(t_claim + delay + 0.5), "once the claim's light lands the consumed ship is gone from the map");
         // And it stays gone — not merely skipped for one frame.
@@ -3104,7 +3128,7 @@ mod tests {
             1000.0,
         );
         // Command center far away; detection comes from the own ship's radius.
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 9000.0), 300.0, 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 9000.0), &df(300.0), 60.0);
         let raider = view.iter().find(|g| g.id == EntityId(1));
         assert!(raider.is_some(), "own ship's sensor radius should detect the nearby raider");
     }
@@ -3160,7 +3184,7 @@ mod tests {
     fn vanish_time(hist: &PositionHistory, viewer: PlayerId, cc: Vec2, ship: EntityId, from: f64, to: f64) -> Option<f64> {
         let (mut now, mut seen) = (from, false);
         while now <= to {
-            let present = hist.view_for(viewer, cc, 300.0, now).iter().any(|g| g.id == ship);
+            let present = hist.view_for(viewer, cc, &df(300.0), now).iter().any(|g| g.id == ship);
             if present {
                 seen = true;
             } else if seen {
@@ -3180,7 +3204,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let p = Vec2::new(1500.0, 0.0); // dead rival, 5 s of light from cc
         let t = 10.0;
-        let honest = t + p.distance(cc) / c; // = 15.0
+        let honest = t + df(c).between(p, cc); // = 15.0
         // Own attacker sat at (1300,0) (4.33 s of light) until T, then recedes home.
         let attacker = recede_samples(Vec2::new(1300.0, 0.0), cc, 250.0, t, 25.0);
         let hist = history_of(
@@ -3191,7 +3215,7 @@ mod tests {
             250.0, // sensor range — tight, so the skew matters
         );
         // Sanity: before the destruction light, the dead rival IS visible.
-        assert!(hist.view_for(VIEWER, cc, c, 13.0).iter().any(|g| g.id == EntityId(1)),
+        assert!(hist.view_for(VIEWER, cc, &df(c), 13.0).iter().any(|g| g.id == EntityId(1)),
             "dead rival should still be a ghost well before its light arrives");
         let vanish = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0)
             .expect("the dead rival must eventually be observed destroyed");
@@ -3210,7 +3234,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let p = Vec2::new(1500.0, 0.0);
         let t = 10.0;
-        let honest = t + p.distance(cc) / c; // 15.0
+        let honest = t + df(c).between(p, cc); // 15.0
         let hist = history_of(
             vec![(EntityId(1), dead_track(still_samples(p, t), VIEWER, t, p))],
             250.0,
@@ -3230,8 +3254,8 @@ mod tests {
         let p_own = Vec2::new(1300.0, 0.0); // own dead raider, 4.33 s light
         let p_enemy = Vec2::new(1500.0, 0.0); // enemy dead raider, 5 s light (200 su apart)
         let t = 10.0;
-        let honest_own = t + p_own.distance(cc) / c; // 14.33
-        let honest_enemy = t + p_enemy.distance(cc) / c; // 15.0
+        let honest_own = t + df(c).between(p_own, cc); // 14.33
+        let honest_enemy = t + df(c).between(p_enemy, cc); // 15.0
         let hist = history_of(
             vec![
                 (EntityId(1), dead_track(still_samples(p_own, t), VIEWER, t, p_own)),
@@ -3260,7 +3284,7 @@ mod tests {
         );
         let mut now = 0.0;
         while now <= 20.0 {
-            assert!(hist.view_for(VIEWER, cc, c, now).is_empty(),
+            assert!(hist.view_for(VIEWER, cc, &df(c), now).is_empty(),
                 "a never-detected dead raider must never appear (existence leak at t={now:.1})");
             now += 0.25;
         }
@@ -3308,7 +3332,7 @@ mod tests {
         let cc = Vec2::ZERO;
         let pos = Vec2::new(3.0, 0.0); // delay = 3.0 s at c = 1.0
         let recs = one_record(EntityId(1), a, d, pos);
-        let view = |now: f64| battle_record_views(&recs, a, cc, 1.0, now, &[]);
+        let view = |now: f64| battle_record_views(&recs, a, cc, &df(1.0), now, &[]);
         // Before the START light (tick 0 → 3.0 s): no record at all.
         assert!(view(2.9).is_empty(), "the battle is unknown before its opening light");
         // Start arrived, no rounds yet (tick 15 → 3.5 s).
@@ -3337,7 +3361,7 @@ mod tests {
         let pos = Vec2::new(3.0, 0.0);
         let recs = one_record(EntityId(1), a, d, pos);
         // Attacker's view, everything arrived, no coverage needed.
-        let v = &battle_record_views(&recs, a, cc, 1.0, 100.0, &[])[0];
+        let v = &battle_record_views(&recs, a, cc, &df(1.0), 100.0, &[])[0];
         assert!(matches!(v.fidelity, BattleFidelity::Participant));
         assert_eq!(v.own_side, Some(0));
         // Own posture present, opponent's hidden (the owner-only law).
@@ -3359,7 +3383,7 @@ mod tests {
         // Coverage that includes the battle site → bucket access.
         let coverage = [(pos, 100.0)];
         // Far enough that light has fully arrived (|pos-cc| = 47, delay = 47 s).
-        let v = &battle_record_views(&recs, x, cc, 1.0, 1000.0, &coverage)[0];
+        let v = &battle_record_views(&recs, x, cc, &df(1.0), 1000.0, &coverage)[0];
         assert!(matches!(v.fidelity, BattleFidelity::Bucket));
         assert_eq!(v.own_side, None);
         // No exact counts, no damage dealt, no posture leak.
@@ -3380,7 +3404,7 @@ mod tests {
         let pos = Vec2::new(3.0, 0.0);
         let recs = one_record(EntityId(1), a, d, pos);
         // No coverage of the site → no access (only the news/wreck reach them).
-        let out = battle_record_views(&recs, x, cc, 1.0, 1000.0, &[]);
+        let out = battle_record_views(&recs, x, cc, &df(1.0), 1000.0, &[]);
         assert!(out.is_empty(), "a third party who can't sense the site gets no replay");
     }
 }

@@ -4126,7 +4126,7 @@ const STRUCT_INFO: Record<string, { desc: string; effect: string }> = {
   garrison: { desc: "Barracks, armories and a drop-troop depot. Standing troops defend this ground; they also give you the hull to take someone else's.", effect: "Stiffens defense (a besieger's clock runs slower here) and holds off landings \u2014 25 marines per tier. Builds Troop Transports. Eats Provisions: an unfed garrison stops counting." },
   habitat: { desc: "Housing that lifts this body's population ceiling.", effect: "+population cap & workforce; boosts output when fed." },
   orbital_warehouse: { desc: "An orbital warehouse that raises storage capacity.", effect: "+400 storage cap per tier." },
-  sensor_array: { desc: "A standing sensor array over the system.", effect: "Projects a sensor bubble — see rivals sooner." },
+  sensor_array: { desc: "A standing sensor array over the system.", effect: "Extends detection range around this system — see rivals sooner, and read what they are carrying." },
   defense_platform: { desc: "Static defenses that fight raiders at the system.", effect: "+1 defense tier vs. attackers (can be worn down)." },
   academy: { desc: "Trains specialists and powers syndicate research.", effect: "Enables specialist training + a research contribution." },
 };
@@ -4314,6 +4314,23 @@ function buildDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView, pool
       `<span class="bp-cost-c">${commodityIcon(c.commodity as Commodity, "sm")} ${esc(label(c.commodity))}</span>` +
       `<span class="bp-cost-n">${c.units} <span class="bp-cost-have">have ${has}</span></span></div>`;
   }).join("");
+  // §hyperspace: the sensor bubble is no longer drawn on the map — a single ring
+  // claimed a certainty detection never had (`bubble × signature` means a quiet
+  // raider is caught at 0.4× it and a loud fleet well outside it). So the Sensor
+  // Array REPORTS its reach as a number instead, here, where the decision to
+  // build it is actually made.
+  const sensorLine = (() => {
+    if (o.key !== "sensor_array") return "";
+    const g = state.galaxy;
+    if (!g?.sensor_array_base) return "";
+    const reach = (t: number) => Math.round(g.sensor_array_base + g.sensor_array_per_tier * Math.max(0, t - 1));
+    const now = st.targetTier > 1 ? reach(st.targetTier - 1) : 0;
+    const next = reach(st.targetTier);
+    return `<div class="bp-note">Detection reach <b>${fmt(next)} su</b>` +
+      (now > 0 ? ` <span class="dim">(from ${fmt(now)})</span>` : "") +
+      ` <span class="dim">— against a reference contact; a quiet hull is seen closer, a fast or large one farther.</span></div>`;
+  })();
+
   const slotLine = st.foundsNew
     ? `Claims a <b>${POOL_LABEL[st.pool]}</b> slot — ${pools[st.pool].used} → ${pools[st.pool].used + 1} / ${pools[st.pool].total}.`
     : `Deepens in place — no new slot consumed.`;
@@ -4337,6 +4354,7 @@ function buildDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView, pool
     (st.noDeposit ? `<div class="bp-d-warn">No matching deposit on this body — found it on a body that has one.</div>` : "") +
     `<div class="bp-d-sec">Build time</div><div class="bp-d-line">${icon("time", "sm")} ${Math.round(o.build_secs)}s at this system.</div>` +
     `<div class="bp-d-sec">Slot</div><div class="bp-d-line">${slotLine}</div>` +
+    sensorLine +
     `<div class="bp-d-sec">Enables</div><div class="bp-d-line">${esc(info.effect)}</div>`;
 }
 function renderBuildPanel(): void {

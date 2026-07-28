@@ -851,6 +851,31 @@ pub struct Fleet {
     /// fleets are fully manned, which is what they were).
     #[serde(default)]
     pub marines_spent: u32,
+    /// §hyperspace: is the HYPERSPACE DRIVE lit? Hyperspace is an overlay on the
+    /// same coordinates, so this is a state a fleet is in, not a place it went.
+    /// Drive off is the pre-hyperspace game exactly: slow, and quiet — since
+    /// signature already scales with speed (§6.3), going dark and going slow are
+    /// the same act. serde default = false, so pre-feature fleets load sublight.
+    #[serde(default)]
+    pub hyperdrive: bool,
+    /// §hyperspace: the ROUTE this fleet is flying, as remaining waypoints.
+    ///
+    /// A lane is a curve, so riding one means following its centerline rather
+    /// than flying a straight line and hoping to clip the ribbon at a useful
+    /// angle. Planned once at order time from the lane network, then consumed
+    /// point by point — so the path a fleet flies is the path the player was
+    /// shown, and it does not silently re-plan mid-flight on information the
+    /// player never had.
+    ///
+    /// Empty = fly straight to the order's destination, which is both the
+    /// fallback when no lane saves time and how every pre-feature fleet loads.
+    #[serde(default)]
+    pub route: Vec<Vec2>,
+    /// §hyperspace: this fleet has run dry and is holding. A latch, so the
+    /// owner-only notice fires once per stall rather than thirty times a second.
+    /// Cleared the tick it is fed again.
+    #[serde(default)]
+    pub stalled: bool,
     /// Per-kind DAMAGE POOLS accumulated in an ongoing engagement (Part 2,
     /// Lanchester attrition). Empty when not/never engaged; serde default keeps
     /// old snapshots loading. A kind's ships die whole once its pool ≥ its hull,
@@ -972,6 +997,9 @@ impl Fleet {
             defense: None,
             notified_held: false,
             marines_spent: 0,
+            hyperdrive: false,
+            route: Vec::new(),
+            stalled: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
             passengers: BTreeMap::new(),
@@ -1371,8 +1399,23 @@ impl Fleet {
     /// Advance this fleet one timestep at simulation time `time`. Moves at the
     /// FORMATION constant speed (slowest member sets the pace), scaled by the
     /// transit throttle (§Part 4 — Full/Stealth).
-    pub fn advance(&mut self, time: f64, dt: f64) {
-        let speed = self.transit_speed();
+    pub fn advance(&mut self, time: f64, dt: f64, env: &crate::lane::TransitEnv<'_>) {
+        // §hyperspace: the regime is resolved per tick from WHERE the fleet is
+        // and what its drive is doing — normal, open hyperspace, or an aligned
+        // lane. Heading comes from current velocity, so a fleet already running
+        // down a lane keeps its benefit; one at rest has no alignment and starts
+        // at open-hyperspace speed until it is under way.
+        let heading = if self.vel.length_sq() > 1e-9 { self.vel } else { Vec2::ZERO };
+        // §hyperspace: the drive LIGHTS AUTOMATICALLY for a fleet under way and
+        // clear of a gravity well. Nobody toggles a drive per trip — the default
+        // is that you use it, and turning it OFF is the tactical act (slow and
+        // quiet, since signature already scales with speed). Without this a fleet
+        // would fly a route planned at hyperspace speeds at sublight, taking the
+        // long way round a lane's bow for nothing.
+        let under_way = !matches!(self.order, FleetOrder::Idle);
+        let drive = self.hyperdrive || (under_way && !env.in_well(self.pos));
+        let speed = self.transit_speed() * env.factor(self.pos, heading, drive);
+        let radius = crate::lane::TransitEnv::turn_radius(speed);
 
         match &mut self.order {
             FleetOrder::Idle => {
@@ -1380,11 +1423,24 @@ impl Fleet {
                 self.vel = Vec2::ZERO;
             }
             FleetOrder::MoveTo { dest } => {
-                let step = advance_toward(self.pos, *dest, speed, dt);
+                // Steer to the next waypoint of the planned route, or straight at
+                // the destination when there is none.
+                let target = self.route.first().copied().unwrap_or(*dest);
+                let step = crate::movement::advance_turning(self.pos, self.vel, target, speed, dt, radius);
                 self.pos = step.pos;
                 self.vel = step.vel;
                 if step.arrived {
-                    self.order = FleetOrder::Idle;
+                    if self.route.is_empty() {
+                        self.order = FleetOrder::Idle;
+                    } else {
+                        self.route.remove(0);
+                        // Retiring the LAST waypoint is arriving: the route always
+                        // ends at the destination, so there is nothing further to
+                        // steer to and the fleet is where it was sent.
+                        if self.route.is_empty() {
+                            self.order = FleetOrder::Idle;
+                        }
+                    }
                 }
             }
             FleetOrder::Blockade { station, .. } => {
@@ -1392,14 +1448,14 @@ impl Fleet {
                 // world reads on-station presence as an active blockade; going
                 // Idle would drop it). Once arrived, advance_toward returns the
                 // station point at zero velocity, so it simply holds each tick.
-                let step = advance_toward(self.pos, *station, speed, dt);
+                let step = crate::movement::advance_turning(self.pos, self.vel, *station, speed, dt, radius);
                 self.pos = step.pos;
                 self.vel = step.vel;
             }
             FleetOrder::Survey { station, .. } => {
                 // §explore: fly to the star and HOLD (the world's survey resolver
                 // runs the dwell clock + completion; going Idle would drop it).
-                let step = advance_toward(self.pos, *station, speed, dt);
+                let step = crate::movement::advance_turning(self.pos, self.vel, *station, speed, dt, radius);
                 self.pos = step.pos;
                 self.vel = step.vel;
             }

@@ -81,6 +81,18 @@ export interface GroundRecordView extends GroundRecordHeader {
   outcome: "taken" | "repulsed" | null;
 }
 
+/// §hyperspace: one lane's drawable centerline. Static and public — a lane is a
+/// visible feature of space, not intel — so it ships once in the Welcome galaxy.
+export interface LaneView {
+  id: number;
+  name: string;
+  /// Baked centerline. The ribbon is this swept by `half_width`.
+  points: Vec2[];
+  half_width: number;
+  /// Routes that fade into the frontier taper over their tail.
+  tapers: boolean;
+}
+
 export type ShipKind =
   | "convoy" | "raider" | "corvette" | "colony" | "scout"
   // §ladder: the research-gated warship ladder.
@@ -371,6 +383,8 @@ export interface GalaxyInfo {
   /// §node: a node's region radius (sim units) — for the holder's region ring.
   node_region_radius?: number;
   systems: SystemInfo[];
+  /// §hyperspace: the lane network, as drawable geometry. Static, sent once.
+  lanes?: LaneView[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
 

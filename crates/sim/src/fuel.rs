@@ -43,7 +43,14 @@ pub const FUEL_PER_MASS_DISTANCE: f64 = 1.0e-6;
 /// starting operating reserve, so fleets move from turn one before any
 /// fuel-bearing system is claimed. The home produces no fuel, so this is the
 /// runway that buys time to expand toward fuel deposits. Tunable.
-pub const FUEL_HOME_SEED: f64 = 300.0;
+///
+/// §hyperspace: scaled with the galaxy. 300 was sized when a full sublight
+/// crossing cost ~36 Fuel; across 400,000 su that same crossing costs 36 ON A
+/// LANE but 360 in open hyperspace, so the old runway did not cover a single
+/// off-network trip. The multiplier is `HYPERSPACE_FACTOR` rather than the full
+/// `GALAXY_SCALE`, deliberately: lane travel is priced exactly as it always was,
+/// so the runway only has to grow by what going OFF the network now costs.
+pub const FUEL_HOME_SEED: f64 = 300.0 * crate::lane::HYPERSPACE_FACTOR;
 
 /// The commodity that fuels movement (and so is the one operation kind that is
 /// EXEMPT from the charge — a convoy hauling Fuel must move without needing Fuel,
@@ -52,6 +59,20 @@ pub const MOVEMENT_FUEL: Commodity = Commodity::Fuel;
 
 /// Fuel a fleet of `mass` burns to traverse `distance`. Deterministic; clamps
 /// negatives to zero so a degenerate (already-at-destination) dispatch is free.
+/// §hyperspace: fuel burned in ONE TICK by a fleet under way.
+///
+/// The rate is set by the hull's OWN rated speed — before any medium factor —
+/// so the lane does not make your engines efficient, it makes the same
+/// engine-seconds cover more ground. Integrating over a leg, `v_base` cancels
+/// and the total comes to `k · mass · length / factor`: one cause producing both
+/// the speed benefit and the fuel benefit, rather than two bolted-on bonuses.
+///
+/// Zero when idle, and it picks up the Stealth throttle for free — half speed
+/// burns half per second and takes twice as long, netting the same total.
+pub fn fuel_tick(mass: f64, base_speed: f64, dt: f64) -> f64 {
+    FUEL_PER_MASS_DISTANCE * mass.max(0.0) * base_speed.max(0.0) * dt.max(0.0)
+}
+
 pub fn fuel_cost(distance: f64, mass: f64) -> f64 {
     FUEL_PER_MASS_DISTANCE * distance.max(0.0) * mass.max(0.0)
 }

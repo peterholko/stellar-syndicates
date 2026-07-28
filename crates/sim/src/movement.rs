@@ -45,6 +45,48 @@ pub fn advance_toward(pos: Vec2, dest: Vec2, speed: f64, dt: f64) -> MoveStep {
     MoveStep { pos: pos + dir * step, vel: dir * speed, arrived: false }
 }
 
+/// §hyperspace: advance toward `dest` under a BOUNDED TURN RATE.
+///
+/// Speed is unchanged — this is emphatically not the flip-and-burn model §7
+/// removed, which varied speed over time and gave travel a √-shaped law. Only
+/// heading is rate-limited, at `speed·dt / min_radius` radians per tick.
+///
+/// It is load-bearing rather than flavour: at lane speed a hull's turning circle
+/// is wider than the ribbon, so **coming about inside a lane is physically
+/// impossible** and a reversal necessarily means leaving, arcing through open
+/// hyperspace, and re-entering. That cost is geometry, not a rule.
+pub fn advance_turning(
+    pos: Vec2,
+    vel: Vec2,
+    dest: Vec2,
+    speed: f64,
+    dt: f64,
+    min_radius: f64,
+) -> MoveStep {
+    let to_dest = dest - pos;
+    let dist = to_dest.length();
+    let step = speed * dt;
+    if dist <= ARRIVE_DIST || dist <= step {
+        return MoveStep { pos: dest, vel: Vec2::ZERO, arrived: true };
+    }
+    let want = to_dest / dist;
+    // A fleet at rest has no heading to preserve: it may set off any way it likes.
+    let cur = if vel.length_sq() > 1e-9 { vel.normalized() } else { want };
+    let max_turn = if min_radius > 0.0 { step / min_radius } else { std::f64::consts::PI };
+    let cos = cur.dot(want).clamp(-1.0, 1.0);
+    let needed = cos.acos();
+    let dir = if needed <= max_turn {
+        want
+    } else {
+        // Rotate `cur` toward `want` by exactly the tick's allowance.
+        let cross = cur.x * want.y - cur.y * want.x;
+        let sign = if cross >= 0.0 { 1.0 } else { -1.0 };
+        let (s, c) = (max_turn * sign).sin_cos();
+        Vec2::new(cur.x * c - cur.y * s, cur.x * s + cur.y * c).normalized()
+    };
+    MoveStep { pos: pos + dir * step, vel: dir * speed, arrived: false }
+}
+
 /// The ANALYTIC interception point (§14.1): where a pursuer at `p` moving at
 /// constant `speed` should aim to catch a target at `t` moving at constant
 /// velocity `vt`. Solves `|t + vt·τ − p| = speed·τ` for the smallest `τ ≥ 0` and

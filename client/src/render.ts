@@ -67,23 +67,6 @@ const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
-const COL_SENSOR = 0x3fe0c8; // sensor coverage (teal)
-// Sensor-coverage bubble style — ONE tunable block, TWO states (OPTION C).
-// DEFAULT: a quiet ambient hint — a faint DASHED boundary (constant screen-px
-// dashes read consistently at any zoom) over little/no fill, so the coverage
-// union (command center + every own ship + the scout's oversized bubble + owned
-// array systems) doesn't shout. EMPHASIZED: when the player SELECTS the SOURCE of
-// a bubble (its fleet / array system / the home system for the command center),
-// THAT bubble alone brightens to a clearer solid-ish ring + stronger fill — so
-// you can inspect "what does THIS sensor cover" on demand. (Hover-emphasis is a
-// follow-up — there's no map hover layer yet, so emphasis is SELECTION-only.)
-// Deliberately distinct from the CRISP platform/interdictor range rings and the
-// pulsing THREAT / SELECTION rings (untouched). Re-tune both states here.
-const SENSOR_COVERAGE = {
-  dashOn: 8, dashOff: 6, // default dash pattern (screen px)
-  outlineAlpha: 0.2, fillAlpha: 0.03, // default: faint dashed hint, whisper of fill
-  emphOutlineAlpha: 0.5, emphFillAlpha: 0.09, emphWidth: 1.4, // selected source: clearer solid-ish ring + stronger fill
-};
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 // Ships render in their NATURAL art — no per-syndicate body tint (a future
@@ -249,7 +232,9 @@ export class Renderer {
   // camera (scale/cx/cy) still drives everything inside it exactly as before.
   private galaxyRoot = new Container();
   private bg = new Container(); // galaxy rings + hub (was: also the starfield)
-  private sensorGfx = new Graphics();
+  /// §hyperspace: the lane ribbons. Static geometry, so this is rebuilt only
+  /// when the camera moves — not per frame.
+  private lanesGfx = new Graphics();
   private routesGfx = new Graphics();
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
@@ -367,7 +352,7 @@ export class Renderer {
     // the per-layer camera math are unchanged — only the parent is now galaxyRoot.
     this.galaxyRoot.addChild(
       this.bg,
-      this.sensorGfx, // soft sensor coverage, under everything gameplay
+      this.lanesGfx, // §hyperspace: lanes are TERRAIN — beneath everything
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
       this.anchorsLayer,
@@ -682,6 +667,53 @@ export class Renderer {
     }
     // Persistent backdrop shared by both scenes (no longer inside `bg`).
     this.starfield.addChild(stars);
+  }
+
+  /// §hyperspace: draw the LANE RIBBONS.
+  ///
+  /// Terrain, not objects — they sit beneath every gameplay layer and never
+  /// move, so this rebuilds only when the camera does. Each route is drawn as
+  /// its swept ribbon plus a brighter centerline, so the geometry a player reads
+  /// is exactly the geometry the sim tests membership against: the drawn edge IS
+  /// the mechanical edge, never a separate catchment.
+  private drawLanes(state: ViewState): void {
+    const g = this.lanesGfx;
+    g.clear();
+    const lanes = state.galaxy?.lanes ?? [];
+    if (lanes.length === 0) return;
+    for (const lane of lanes) {
+      if (lane.points.length < 2) continue;
+      const pts = lane.points.map((p) => this.worldToScreen(p));
+      const trace = () => {
+        g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      };
+      // THE SWEPT WIDTH IS NOT A FREE DIAL. It is capped in the sim against the
+      // tightest turning circle any hull has, because a corridor wider than that
+      // circle is one a fleet could come about inside — and reversal is supposed
+      // to cost an exit and an arc. So the corridor cannot simply be drawn
+      // broader to give the map more presence.
+      //
+      // What it gets instead is FALLOFF. Concentric strokes at decreasing alpha
+      // read as hyperspace bleeding off the lane rather than as a wider lane:
+      // there is no hard edge out there to mistake for the corridor's, while the
+      // corridor itself stays the one band with a defined boundary. The map gains
+      // the weight without the picture claiming a lane is bigger than it is.
+      const widthPx = Math.max(1.5, lane.half_width * 2 * this.scale);
+      for (const [mult, alpha] of [
+        [3.4, 0.022],
+        [2.1, 0.035],
+        [1.0, 0.075],
+      ] as const) {
+        trace();
+        g.stroke({ width: widthPx * mult, color: 0x2a6fb0, alpha, cap: "round", join: "round" });
+      }
+      // The centerline: the axis a fleet aligns to for the speed benefit. Kept
+      // thin in absolute terms rather than as a share of the ribbon, which would
+      // have thickened it in step with the widening.
+      trace();
+      g.stroke({ width: Math.max(0.7, widthPx * 0.02), color: 0x6fd0ff, alpha: 0.3, cap: "round" });
+    }
   }
 
   private drawBackground(): void {
@@ -1340,77 +1372,6 @@ export class Renderer {
     g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.9 });
   }
 
-  /// Sensor coverage: a soft bubble around each of the player's assets — their
-  /// own ships + command center at the global sensor range, plus any OWNED
-  /// SENSOR-ARRAY systems at their per-tier radius (§buildings step 2b; the
-  /// same coverage union the server computes — one source of truth). The union
-  /// shows where the player can detect raiders and read cargo — and, by what it
-  /// doesn't cover, where they are blind. Owner-only by construction: array
-  /// tiers come from the light-gated View, which reports 0 for rival systems.
-  private drawSensorCoverage(state: ViewState, dt: number): void {
-    const g = this.sensorGfx;
-    g.clear();
-    if (!state.galaxy || !state.commandCenter) return;
-    const baseR = state.galaxy.sensor_range;
-    // A source is EMPHASIZED when the player has selected the object that projects
-    // it: a fleet (selectedShipId), an array system (selectedSystemId), or — for
-    // the command center — the HOME system (the owned system co-located with the
-    // command center). `sel` is precomputed per source and drives the two states.
-    const cc = state.commandCenter;
-    const selSys = state.selectedSystemId ? state.galaxy.systems.find((s) => s.id === state.selectedSystemId) : undefined;
-    const ccSel = !!selSys && Math.abs(selSys.pos.x - cc.x) < 1 && Math.abs(selSys.pos.y - cc.y) < 1;
-    const sources: { x: number; y: number; r: number; sel: boolean }[] = [{ ...cc, r: baseR, sel: ccSel }];
-    for (const gh of state.ghosts) {
-      // Each own ship projects its KIND's bubble — a scout an oversized one
-      // (scout_sensor_mult; mobile vision, mirroring the server's coverage).
-      const r = gh.kind === "scout" ? baseR * (state.galaxy.scout_sensor_mult ?? 1.5) : baseR;
-      if (gh.own) sources.push({ x: gh.pos.x + gh.vel.x * dt, y: gh.pos.y + gh.vel.y * dt, r, sel: gh.id === state.selectedShipId });
-    }
-    // Standing array bubbles at OUR systems (sensor_tier is owner-only in the View).
-    for (const dyn of state.systems) {
-      if (dyn.owner === state.playerId && dyn.sensor_tier >= 1) {
-        const sys = state.galaxy.systems.find((s) => s.id === dyn.id);
-        if (sys) {
-          const r = state.galaxy.sensor_array_base + state.galaxy.sensor_array_per_tier * (dyn.sensor_tier - 1);
-          sources.push({ x: sys.pos.x, y: sys.pos.y, r, sel: dyn.id === state.selectedSystemId });
-        }
-      }
-    }
-    const st = SENSOR_COVERAGE;
-    const vb = { w: this.viewW, h: this.viewH }; // §perf: viewport for dash clipping
-    for (const c of sources) {
-      const s = this.worldToScreen(c);
-      const rPx = c.r * this.scale;
-      if (rPx < 1) continue;
-      if (c.sel) {
-        // EMPHASIZED (source selected): a clearer solid-ish ring + stronger fill —
-        // fill+stroke the SAME circle path in one chain (crisp, on-demand inspect).
-        g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: st.emphFillAlpha }).stroke({ width: st.emphWidth, color: COL_SENSOR, alpha: st.emphOutlineAlpha });
-      } else {
-        // DEFAULT: a whisper of fill (separate committed path) under a faint DASHED
-        // boundary — a quiet ambient hint, not a hard border.
-        if (st.fillAlpha > 0) g.circle(s.x, s.y, rPx).fill({ color: COL_SENSOR, alpha: st.fillAlpha });
-        dashedCircle(g, s.x, s.y, rPx, st.dashOn, st.dashOff, vb);
-        g.stroke({ width: 1, color: COL_SENSOR, alpha: st.outlineAlpha });
-      }
-    }
-
-    // DEFENSE PLATFORM protection rings on OUR OWN defended systems (§buildings
-    // step 2c) — owner-only by construction (defense_tier is 0 for rivals in the
-    // View). Drawn in the coverage idiom but visually DISTINCT from the teal
-    // sensor bubbles: a dashed cyan ring, no fill — "protected zone", not vision.
-    for (const dyn of state.systems) {
-      if (dyn.owner === state.playerId && dyn.defense_tier >= 1) {
-        const sys = state.galaxy.systems.find((s) => s.id === dyn.id);
-        if (sys) {
-          const s = this.worldToScreen(sys.pos);
-          const rPx = state.galaxy.defense_platform_radius * this.scale;
-          dashedCircle(g, s.x, s.y, rPx, 10, 8, vb);
-          g.stroke({ width: 1.2, color: COL_OWN, alpha: 0.22 });
-        }
-      }
-    }
-  }
 
   /// Convoy broadcast routes: because convoys broadcast position + heading, show
   /// their waypoints and the path between them (light-delayed like the rest).
@@ -1994,11 +1955,24 @@ export class Renderer {
       // Redraw the world-anchored background (rings + hub) when the camera moved.
       if (this.viewDirty) {
         this.drawBackground();
+        this.drawLanes(state);
         this.viewDirty = false;
       }
       const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
 
-      this.drawSensorCoverage(state, dt);
+      // §hyperspace: the sensor bubble is NO LONGER DRAWN.
+      //
+      // A single ring was always a simplification — detection is
+      // `bubble × signature`, so a quiet raider is only caught at 0.4× that
+      // radius while a big fleet at speed is caught well outside it. The circle
+      // therefore claimed a certainty it never had, in both directions, and the
+      // speed-signature work will widen that gap further. Same reasoning that
+      // retired the uncertainty cones: a shape that lies is worse than no shape.
+      //
+      // Coverage still governs everything it always did — it is simply reported
+      // as a NUMBER on the Sensor Array that projects it, rather than drawn as a
+      // boundary the player can misread as a guarantee.
+      // this.drawSensorCoverage(state, dt);
       this.drawSystems(state, geomDirty);
       this.drawHubBody();
       this.drawRoutes(state);
@@ -2181,32 +2155,6 @@ function arrowhead(g: Graphics, x: number, y: number, dx: number, dy: number, si
   g.poly([tipX, tipY, blX, blY, brX, brY]).fill({ color, alpha });
 }
 
-// A dashed circle (screen px), for the platform protection ring and the DEFAULT
-// (unselected) sensor-coverage boundary. Constant screen-px dashes read
-// consistently across zoom; distinct from the solid/pulsing threat & selection rings.
-function dashedCircle(g: Graphics, cx: number, cy: number, r: number, dash: number, gap: number, bounds?: { w: number; h: number }): void {
-  if (r < 4) return;
-  const step = (dash + gap) / r; // radians per dash+gap
-  // §perf: when the circle is far larger than the viewport (deep zoom — a single
-  // sensor bubble tessellated ~2,500 dashes, nearly all off-screen), skip the
-  // dashes whose start point lies outside the viewport by more than one dash. The
-  // arc spans only `dash` px, so a generous margin never drops a visible dash —
-  // the drawn result is identical, the off-screen tessellation is not emitted.
-  const m = dash + gap + 8;
-  const minX = -m, maxX = bounds ? bounds.w + m : Infinity;
-  const minY = -m, maxY = bounds ? bounds.h + m : Infinity;
-  for (let a = 0; a < Math.PI * 2; a += step) {
-    const sx = cx + Math.cos(a) * r;
-    const sy = cy + Math.sin(a) * r;
-    if (bounds && (sx < minX || sx > maxX || sy < minY || sy > maxY)) continue;
-    const b = Math.min(a + dash / r, Math.PI * 2);
-    g.moveTo(sx, sy);
-    // Approximate the arc with a couple of segments (short dashes → fine).
-    const mid = (a + b) / 2;
-    g.lineTo(cx + Math.cos(mid) * r, cy + Math.sin(mid) * r);
-    g.lineTo(cx + Math.cos(b) * r, cy + Math.sin(b) * r);
-  }
-}
 
 function dashedLine(g: Graphics, x1: number, y1: number, x2: number, y2: number, dash: number, gap: number): void {
   const dx = x2 - x1;

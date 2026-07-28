@@ -595,11 +595,28 @@ pub struct SystemInfo {
     pub claim_cost: f64,
 }
 
+/// §hyperspace: one lane's drawable centerline. PUBLIC and identical for every
+/// player — a lane is a visible feature of space, not intel — and static, so it
+/// ships once in the Welcome galaxy rather than riding per-tick updates.
+#[derive(Debug, Clone, Serialize)]
+pub struct LaneView {
+    pub id: u32,
+    pub name: String,
+    /// Baked centerline points. The ribbon is this swept by `half_width`.
+    pub points: Vec<Vec2>,
+    pub half_width: f64,
+    /// True where the route fades into the frontier rather than ending at a
+    /// world — the client tapers the ribbon over its tail.
+    pub tapers: bool,
+}
+
 /// Static galaxy geography, sent once at join. Never changes during a session
 /// (systems don't move), so it doesn't need to be in the per-tick stream.
 #[derive(Debug, Clone, Serialize)]
 pub struct GalaxyInfo {
     pub hub: Vec2,
+    /// §hyperspace: the lane network, as drawable geometry.
+    pub lanes: Vec<LaneView>,
     pub radius: f64,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,

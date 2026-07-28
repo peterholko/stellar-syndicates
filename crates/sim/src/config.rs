@@ -101,7 +101,19 @@ impl SimConfig {
         let player_count = player_count.max(1);
         // Radius grows ~sqrt(players): area scales with player count so density
         // of homes stays roughly constant.
-        let galaxy_radius = 4000.0 * (player_count as f64).sqrt();
+        // §hyperspace: the galaxy scales with the HYPERSPACE FACTOR so that
+        // information delay stays where it has always been.
+        //
+        // Calibrated on the FASTEST route: hub → rim along a trunk is ~20 s, the
+        // quickest news can possibly cross the map. Off-lane is then `LANE_MULT`
+        // times slower (~200 s) and normal space slower again — which is the
+        // intended shape, since the lane network is the information network and
+        // being off it should be genuinely remote.
+        //
+        // It also lands lane TRAVEL on today's pacing: a Convoy riding a trunk
+        // crosses the galaxy in ~200 s, exactly as it does sublight today.
+        let galaxy_radius =
+            4000.0 * (player_count as f64).sqrt() * crate::lane::GALAXY_SCALE;
         let cfg = SimConfig {
             seed,
             max_players: player_count,
@@ -119,7 +131,12 @@ impl SimConfig {
             // Local sensor bubbles (~28% of galaxy radius): coverage is islands
             // around your assets, so most of the dark between homes is blind to
             // raiders — the tension the model wants.
-            sensor_range: 2200.0,
+            // Scaled with the galaxy so COVERAGE stays ~28% of the radius. Left
+            // absolute it would fall to 5.5% and the map would go dark — a much
+            // bigger balance change than the rescale is meant to be. (System-scale
+            // constants — blockade, docking, the hyperlimit, colony claim — do NOT
+            // scale: a system stays the size it is, and only the gaps grow.)
+            sensor_range: 2200.0 * crate::lane::GALAXY_SCALE,
             // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
             // ~2700 s / 45 min — battles at the scale of light-delays + relief).
             battle_target_secs: default_battle_target_secs(),
