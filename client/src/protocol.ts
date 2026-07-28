@@ -694,6 +694,10 @@ export interface GhostView {
   /// ghosts are grouped into per-system berth counts, so the information moves
   /// from "overlapping sprites" to "a number you can read".
   docked?: string | null;
+  /// §hyperspace: which layer the fleet was moving through when the light left.
+  regime?: "thrusters" | "warp" | "hyperspace";
+  /// Speed at that retarded moment (su/s).
+  speed?: number;
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   // Cargo present only when this convoy is within your sensor coverage.

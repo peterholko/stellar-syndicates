@@ -896,6 +896,25 @@ function headingCell(g: GhostView): string {
   return stat("Heading", `<span class="sp-arrow" aria-hidden="true" style="transform:rotate(${deg.toFixed(0)}deg)">➤</span> ${sp.toFixed(0)} su/s`);
 }
 
+// §hyperspace: WHICH DRIVE is carrying the fleet — thrusters, warp, or the
+// hyperspace drive on a lane. Each is an order of magnitude apart, and until
+// this existed the only way to tell them apart was to watch how fast the sprite
+// crawled, which is unreadable at map zoom: a lane transit and a thruster crawl
+// both look like a dot.
+function regimeCell(g: GhostView): string {
+  const sp = g.speed ?? Math.hypot(g.vel.x, g.vel.y);
+  if (sp < 0.5) return stat("Transit", `<span class="dim">holding</span>`);
+  const r = g.regime ?? "thrusters";
+  const shown = { thrusters: "thrusters", warp: "warp drive", hyperspace: "hyperspace lane" }[r];
+  const tip = {
+    thrusters: "Thrusters only — sublight manoeuvring, inside a gravity well or with the warp drive shut down.",
+    warp: "Warp drive: five times thruster speed, and it flies anywhere — no lane needed, no heading to hold.",
+    hyperspace: "Hyperspace drive, riding a lane: ten times warp again. The drive only engages near a lane, and leaving the ribbon or turning off its heading drops the fleet back to warp.",
+  }[r];
+  const tone = r === "hyperspace" ? "tone-up" : r === "thrusters" ? "dim" : "";
+  return stat("Drive", `<span class="${tone}" title="${esc(tip)}">${shown}</span>`);
+}
+
 // Inferred activity for an OWN ship — there is NO server order field, so this reads
 // purely from the client's own overlays (raids/orders/command signals/route/vel).
 function ownActivity(g: GhostView): string {
@@ -1124,7 +1143,7 @@ function updateShipPanel(): void {
   const posCell = certain
     ? `<div class="stat" title="At your command center (or nearly): ~zero light-lag, so the position is effectively certain."><dt>Position</dt><dd><span class="tone-up">confirmed</span></dd></div>`
     : `<div class="stat" title="${esc(uncTip)}"><dt>Position</dt><dd>±${fmt(g.uncertainty)} su</dd></div>`;
-  const strip = statStrip([ageCell, headingCell(g), posCell]);
+  const strip = statStrip([ageCell, headingCell(g), regimeCell(g), posCell]);
 
   // Preserve an in-progress dockside load selection/qty across the rebuild (the
   // fresh <input> would otherwise snap back to its default 50, the fresh <select>

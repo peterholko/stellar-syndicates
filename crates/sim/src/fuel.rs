@@ -66,7 +66,7 @@ pub const MOVEMENT_FUEL: Commodity = Commodity::Fuel;
 /// Burn is `FUEL_PER_MASS_DISTANCE × mass × base_speed × dt`, so a full tank
 /// buys `FUEL_PER_HULL_MASS × factor / FUEL_PER_MASS_DISTANCE` of distance —
 /// mass cancels, and range depends only on which layer you fly in. Calibrated
-/// so a full formation crosses roughly one galaxy radius in open hyperspace and
+/// so a full formation crosses roughly one galaxy radius in warp and
 /// ten in a lane: enough that a one-way trip out is a decision rather than a
 /// formality, and that a rim campaign wants a tanker behind it.
 pub const FUEL_PER_HULL_MASS: f64 = 0.035;

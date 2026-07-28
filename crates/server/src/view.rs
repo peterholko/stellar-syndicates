@@ -47,6 +47,14 @@ struct Sample {
     /// Rides the per-sample history so the loudness is judged in the RETARDED
     /// frame — exactly like velocity — and can never leak or lag FTL.
     loud: bool,
+    /// §hyperspace: which layer the fleet was moving through at this sample.
+    ///
+    /// Per-sample for the same reason `loud` is: it must be read in the RETARDED
+    /// frame. Carried on the track instead, it reported the CURRENT regime beside
+    /// a light-delayed speed, so a convoy showed "hyperspace lane" next to an
+    /// warp velocity, and a fleet that had already stopped still
+    /// claimed to be in hyperspace.
+    regime: sim::lane::Regime,
 }
 
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
@@ -135,7 +143,7 @@ pub struct PositionHistory {
     /// How many seconds of history to retain. Must exceed the largest possible
     /// information delay so every long-lived object always has an observable
     /// sample. §hyperspace: that bound is the galaxy diameter over the SLOWEST
-    /// signal route, which is open hyperspace — not bare `c`. Signals always
+    /// signal route, which is warp — not bare `c`. Signals always
     /// couple into the overlay, so nothing ever crawls at `c` across interstellar
     /// distance, and sizing to `c` would retain 5× more history than any viewer
     /// can ever read.
@@ -148,11 +156,11 @@ impl PositionHistory {
     /// Create a history sized to a world's maximum possible light delay, with a
     /// safety margin.
     pub fn for_world(world: &World) -> Self {
-        // The slowest a signal can cross the galaxy: open hyperspace, off every
+        // The slowest a signal can cross the galaxy: warp, off every
         // lane. Sizing to bare `c` would be both wasteful and wrong — no signal
         // travels that slowly once the overlay exists.
         let max_delay = (2.0 * world.config.galaxy_radius)
-            / (world.config.c * sim::lane::HYPERSPACE_FACTOR);
+            / (world.config.c * sim::lane::WARP_FACTOR);
         PositionHistory {
             tracks: HashMap::new(),
             horizon: max_delay * 1.25 + 1.0,
@@ -204,6 +212,7 @@ impl PositionHistory {
                 pos: ship.pos,
                 vel: ship.vel,
                 loud: ship.surveying(),
+                regime: ship.regime,
             });
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
@@ -519,6 +528,8 @@ impl PositionHistory {
 
             ghosts.push(GhostView {
                 docked,
+                regime: p.sample.regime,
+                speed: p.sample.vel.length(),
                 id: p.id,
                 owner: p.owner,
                 kind: p.flagship,
@@ -1589,9 +1600,10 @@ mod tests {
     /// That keeps every one of those tests testing precisely what it was written
     /// to test. Lane-aware delay has its own coverage in `sim::lane`, and the
     /// playtest crossing target is pinned by `hub_to_rim_stays_about_twenty_seconds_off_lane`.
-    static NO_LANES: sim::lane::LaneNetwork = sim::lane::LaneNetwork { lanes: Vec::new() };
+    static NO_LANES: std::sync::LazyLock<sim::lane::LaneNetwork> =
+        std::sync::LazyLock::new(|| sim::lane::LaneNetwork::of(Vec::new()));
     fn df(c: f64) -> sim::lane::DelayField<'static> {
-        sim::lane::DelayField { lanes: &NO_LANES, c: c / sim::lane::HYPERSPACE_FACTOR }
+        sim::lane::DelayField { lanes: &NO_LANES, c: c / sim::lane::WARP_FACTOR }
     }
 
     use super::*;
@@ -1634,7 +1646,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false });
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -1669,6 +1681,7 @@ mod tests {
                 pos: if t < 10.0 { x } else { y },
                 vel: Vec2::ZERO,
                 loud: false,
+                regime: sim::lane::Regime::Thrusters,
             });
             t += 0.1;
         }
@@ -1703,6 +1716,7 @@ mod tests {
                 pos: Vec2::new(0.0, t * 5.0),
                 vel: Vec2::new(0.0, 5.0),
                 loud: false,
+                regime: sim::lane::Regime::Thrusters,
             });
             t += 0.1;
         }
@@ -1732,7 +1746,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
@@ -2456,7 +2470,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         track_from(samples, owner, kind)
@@ -2565,7 +2579,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel, loud: false });
+            samples.push(Sample { time: t, pos, vel, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         track.samples = samples.into();
@@ -2601,7 +2615,7 @@ mod tests {
         let mut t = 0.0;
         while t <= 8.0 {
             let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
-            samples.push(Sample { time: t, pos, vel, loud: false });
+            samples.push(Sample { time: t, pos, vel, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
@@ -2741,7 +2755,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
@@ -3003,7 +3017,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 10.0 {
-            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false });
+            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
@@ -3033,7 +3047,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 20.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         let dpos = Vec2::new(200.0, 0.0);
@@ -3149,7 +3163,7 @@ mod tests {
         let mut s = Vec::new();
         let mut t = 0.0;
         while t <= t_end + 1e-9 {
-            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false });
+            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         s
@@ -3167,7 +3181,7 @@ mod tests {
             } else {
                 (start + unit * (speed * (t - t_turn)), unit * speed)
             };
-            s.push(Sample { time: t, pos, vel, loud: false });
+            s.push(Sample { time: t, pos, vel, loud: false, regime: sim::lane::Regime::Thrusters });
             t += 0.1;
         }
         s

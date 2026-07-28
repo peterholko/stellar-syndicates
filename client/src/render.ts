@@ -94,6 +94,9 @@ interface GhostSprite {
   badge: Graphics; // fleet count pill (exact Σ, or the fog size bucket)
   badgeText: Text; // the number / bucket label drawn on the badge
   seen: boolean;
+  /// §hyperspace: the WORLD position actually drawn, which chases the
+  /// authoritative one rather than jumping to it. See `drawGhost`.
+  shown?: { x: number; y: number };
 }
 
 // §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
@@ -123,6 +126,13 @@ const SHIP_PX_CORVETTE = 48; // between raider and convoy — the size hierarchy
 const SHIP_PX_COLONY = 64; // the biggest thing flying
 const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
+// §hyperspace: how hard a drawn fleet chases its authoritative position. Higher
+// converges faster and shows more of each correction; lower is smoother but lags.
+const SMOOTH_RATE = 9.0; // e-folds per second
+// Corrections bigger than this are treated as a JUMP and applied at once: a
+// fleet that really did move that far did not drift there.
+const SMOOTH_SNAP_SU = 4_000;
+const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // Deep-zoom NATIVE-size ramp: the zoom ratio r (= scale / fitScale) at which
 // ships BEGIN ramping from their indicator size (base × SHIP_ZOOM_MAX) up to
@@ -315,6 +325,9 @@ export class Renderer {
 
   private galaxy: GalaxyInfo | null = null;
   private scale = 1;
+  /// Seconds since the previous rendered frame — see the smoothing in `drawGhost`.
+  private frameDt = 1 / 60;
+  private lastFrameMs = 0;
   private cx = 0;
   private cy = 0;
   /// True once the user has zoomed/panned — so a window resize PRESERVES their
@@ -1651,9 +1664,33 @@ export class Renderer {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
 
+    // WHERE THE SERVER SAYS IT IS, dead-reckoned to now.
     const px = ghost.pos.x + ghost.vel.x * dt;
     const py = ghost.pos.y + ghost.vel.y * dt;
-    const s = this.worldToScreen({ x: px, y: py });
+
+    // CHASE that, do not snap to it — this is what stops the elastic band.
+    //
+    // Dead reckoning assumes the velocity in the last snapshot held until now,
+    // and across a regime change it did not: a fleet sampled at lane speed is
+    // extrapolated at 5,000 su/s, and when the next view shows it dropped to 500
+    // the sprite is a long way ahead of where it belongs and jumps back. Ten
+    // times a second, in both directions, that reads as a ship twanging along on
+    // a rubber band. Easing toward the authoritative position spreads each
+    // correction over a few frames instead of showing it as a jump.
+    //
+    // A LARGE error is not a correction, it is a different situation — a new
+    // contact, a teleport, a fleet re-appearing from fog — so those still snap.
+    const prev = sp.shown;
+    const jump = prev ? Math.hypot(px - prev.x, py - prev.y) : Infinity;
+    const snapAt = Math.max(SMOOTH_SNAP_SU, Math.hypot(ghost.vel.x, ghost.vel.y) * SMOOTH_SNAP_S);
+    if (!prev || jump > snapAt) {
+      sp.shown = { x: px, y: py };
+    } else {
+      // Frame-rate independent easing: the same time constant whatever the fps.
+      const k = 1 - Math.exp(-SMOOTH_RATE * Math.max(this.frameDt, 1 / 240));
+      sp.shown = { x: prev.x + (px - prev.x) * k, y: prev.y + (py - prev.y) * k };
+    }
+    const s = this.worldToScreen(sp.shown);
     sp.container.position.set(s.x, s.y);
 
     const own = ghost.own;
@@ -1958,7 +1995,13 @@ export class Renderer {
         this.drawLanes(state);
         this.viewDirty = false;
       }
-      const dt = Math.min((performance.now() - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
+      const nowMs = performance.now();
+      const dt = Math.min((nowMs - state.lastViewWallMs) / 1000, MAX_EXTRAPOLATE_S);
+      // The FRAME delta, which is a different quantity from `dt` above (that one
+      // is the age of the last view). Position smoothing needs how long since the
+      // last frame, or its time constant would vary with snapshot staleness.
+      this.frameDt = this.lastFrameMs > 0 ? Math.min((nowMs - this.lastFrameMs) / 1000, 0.25) : 1 / 60;
+      this.lastFrameMs = nowMs;
 
       // §hyperspace: the sensor bubble is NO LONGER DRAWN.
       //

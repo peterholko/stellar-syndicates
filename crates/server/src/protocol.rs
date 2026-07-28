@@ -1481,6 +1481,19 @@ pub struct GhostView {
     /// rest of the sighting: a fleet you see berthed may have sailed since.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docked: Option<String>,
+    /// §hyperspace: which layer the fleet was moving through — normal space,
+    /// warp, or an aligned lane.
+    ///
+    /// Ungated, like `docked`. It leaks nothing the sighting does not already
+    /// give away: `vel` is right here, and a fleet crossing at fifty times its
+    /// own cruise is visibly in a lane whether or not anyone labels it.
+    #[serde(default)]
+    pub regime: sim::lane::Regime,
+    /// Speed at the retarded moment (sim units / s) — the magnitude of `vel`,
+    /// sent alongside it so the panel does not have to recompute what the server
+    /// already knows.
+    #[serde(default)]
+    pub speed: f64,
     /// The convoy's broadcast route (waypoints), light-delayed like its
     /// position. `None` for raiders (they don't broadcast).
     pub route: Option<Vec<Vec2>>,

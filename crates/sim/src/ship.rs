@@ -851,13 +851,21 @@ pub struct Fleet {
     /// fleets are fully manned, which is what they were).
     #[serde(default)]
     pub marines_spent: u32,
-    /// §hyperspace: is the HYPERSPACE DRIVE lit? Hyperspace is an overlay on the
-    /// same coordinates, so this is a state a fleet is in, not a place it went.
-    /// Drive off is the pre-hyperspace game exactly: slow, and quiet — since
+    /// §hyperspace: is the WARP DRIVE lit?
+    ///
+    /// Warp is the middle of the three drives — thrusters, warp, hyperspace —
+    /// and the only one that works anywhere: it is an overlay on the same
+    /// coordinates, so this is a state a fleet is in rather than a place it went.
+    /// The HYPERSPACE drive is not a flag here because it is not a free choice:
+    /// it only bites near a lane, so whether it is engaged is a fact about where
+    /// the fleet is, read back through `Regime`.
+    ///
+    /// Warp off is the pre-hyperspace game exactly: slow, and quiet — since
     /// signature already scales with speed (§6.3), going dark and going slow are
-    /// the same act. serde default = false, so pre-feature fleets load sublight.
+    /// the same act. serde default = false, so pre-feature fleets load on
+    /// thrusters.
     #[serde(default)]
-    pub hyperdrive: bool,
+    pub warp: bool,
     /// §hyperspace: the ROUTE this fleet is flying, as remaining waypoints.
     ///
     /// A lane is a curve, so riding one means following its centerline rather
@@ -867,10 +875,13 @@ pub struct Fleet {
     /// shown, and it does not silently re-plan mid-flight on information the
     /// player never had.
     ///
+    /// Each step carries the ROAD it belongs to, so speed is a property of what
+    /// the fleet is doing rather than of where it happens to be standing.
+    ///
     /// Empty = fly straight to the order's destination, which is both the
     /// fallback when no lane saves time and how every pre-feature fleet loads.
     #[serde(default)]
-    pub route: Vec<Vec2>,
+    pub route: Vec<crate::lane::Leg>,
     /// §hyperspace: FUEL IN THE TANKS. Carried, not drawn.
     ///
     /// This used to live in system stockpiles, and a moving fleet reached back
@@ -887,6 +898,11 @@ pub struct Fleet {
     /// bookkeeping question and becomes a property of the formation.
     #[serde(default)]
     pub fuel: f64,
+    /// §hyperspace: which layer this fleet is moving through, as of the last
+    /// tick it moved. Recorded rather than re-derived so the badge the map shows
+    /// is the regime the fleet was actually flown at.
+    #[serde(default)]
+    pub regime: crate::lane::Regime,
     /// §hyperspace: this fleet has run dry and is holding. A latch, so the
     /// owner-only notice fires once per stall rather than thirty times a second.
     /// Cleared the tick it is refuelled.
@@ -1018,8 +1034,9 @@ impl Fleet {
             defense: None,
             notified_held: false,
             marines_spent: 0,
-            hyperdrive: false,
+            warp: false,
             fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
+            regime: crate::lane::Regime::Thrusters,
             route: Vec::new(),
             stalled: false,
             damage: BTreeMap::new(),
@@ -1451,20 +1468,46 @@ impl Fleet {
     /// transit throttle (§Part 4 — Full/Stealth).
     pub fn advance(&mut self, time: f64, dt: f64, env: &crate::lane::TransitEnv<'_>) {
         // §hyperspace: the regime is resolved per tick from WHERE the fleet is
-        // and what its drive is doing — normal, open hyperspace, or an aligned
+        // and what its drive is doing — normal, warp, or an aligned
         // lane. Heading comes from current velocity, so a fleet already running
         // down a lane keeps its benefit; one at rest has no alignment and starts
-        // at open-hyperspace speed until it is under way.
+        // at warp speed until it is under way.
         let heading = if self.vel.length_sq() > 1e-9 { self.vel } else { Vec2::ZERO };
-        // §hyperspace: the drive LIGHTS AUTOMATICALLY for a fleet under way and
-        // clear of a gravity well. Nobody toggles a drive per trip — the default
-        // is that you use it, and turning it OFF is the tactical act (slow and
-        // quiet, since signature already scales with speed). Without this a fleet
-        // would fly a route planned at hyperspace speeds at sublight, taking the
-        // long way round a lane's bow for nothing.
+        // §hyperspace: the WARP DRIVE lights automatically for a fleet under way
+        // and clear of a gravity well. Nobody toggles a drive per trip — the
+        // default is that you use it, and shutting it OFF is the tactical act
+        // (slow and quiet, since signature already scales with speed). Without
+        // this a fleet would fly a route planned at warp speeds on thrusters,
+        // taking the long way round a lane's bow for nothing.
+        //
+        // The HYPERSPACE drive needs no flag: it engages wherever there is a lane
+        // to bite on and the fleet is running along it, which `factor` answers.
         let under_way = !matches!(self.order, FleetOrder::Idle);
-        let drive = self.hyperdrive || (under_way && !env.in_well(self.pos));
-        let speed = self.transit_speed() * env.factor(self.pos, heading, drive);
+        let drive = self.warp || (under_way && !env.in_well(self.pos));
+        // §roads: THE LEG SAYS WHICH DRIVE IS CARRYING YOU.
+        //
+        // A fleet rides a lane because its route put it on one, not because it
+        // happens to be standing inside a ribbon pointing the right way. That old
+        // per-tick test answered YES for a fleet merely CROSSING a lane — so a
+        // ship cutting diagonally over one collected full hyperspace speed for a
+        // second and lost it on the way out, about once a second, all trip. Speed
+        // now comes from what the fleet is doing, which cannot flicker.
+        //
+        // The hyperspace drive still only bites near a lane: `boarding` is
+        // checked when the leg is taken up, not re-litigated every tick.
+        let riding = self.route.first().and_then(|l| l.lane).filter(|_| drive);
+        let factor = match riding {
+            Some(_) => crate::lane::WARP_FACTOR * crate::lane::LANE_MULT,
+            None if drive && !env.in_well(self.pos) => crate::lane::WARP_FACTOR,
+            None => 1.0,
+        };
+        let _ = heading;
+        self.regime = match riding {
+            Some(_) => crate::lane::Regime::Hyperspace,
+            None if drive && !env.in_well(self.pos) => crate::lane::Regime::Warp,
+            None => crate::lane::Regime::Thrusters,
+        };
+        let speed = self.transit_speed() * factor;
         let radius = crate::lane::TransitEnv::turn_radius(speed);
 
         match &mut self.order {
@@ -1475,7 +1518,7 @@ impl Fleet {
             FleetOrder::MoveTo { dest } => {
                 // Steer to the next waypoint of the planned route, or straight at
                 // the destination when there is none.
-                let target = self.route.first().copied().unwrap_or(*dest);
+                let target = self.route.first().map_or(*dest, |l| l.to);
                 let carried = self.vel;
                 let step = crate::movement::advance_turning(self.pos, self.vel, target, speed, dt, radius);
                 self.pos = step.pos;
@@ -1499,7 +1542,7 @@ impl Fleet {
                             // so a fleet that reaches a waypoint at rest is a
                             // fleet that has just left the lane. It then re-aligns
                             // over the next leg, reaches the following waypoint,
-                            // and drops out again — paying open-hyperspace speed
+                            // and drops out again — paying warp speed
                             // for most of a route it planned to fly at ten times
                             // that. Routed trips came out SLOWER than the straight
                             // line they were meant to beat.

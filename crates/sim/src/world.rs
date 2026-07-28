@@ -4259,8 +4259,8 @@ impl World {
                             self.lanes.route(
                                 ship.pos,
                                 *dest,
-                                base * crate::lane::HYPERSPACE_FACTOR,
-                                base * crate::lane::HYPERSPACE_FACTOR * crate::lane::LANE_MULT,
+                                base * crate::lane::WARP_FACTOR,
+                                base * crate::lane::WARP_FACTOR * crate::lane::LANE_MULT,
                             )
                         }
                         // Any other order clears a stale route rather than
@@ -10086,7 +10086,7 @@ impl World {
     /// fuel carried, what decides a run is whether it fits in the tanks.
     ///
     /// Two corrections come with that. `cost` is priced in NORMAL space, but
-    /// automation flies open hyperspace, which is `HYPERSPACE_FACTOR` cheaper per
+    /// automation flies warp, which is `WARP_FACTOR` cheaper per
     /// unit of distance — quoting the sublight price rejected affordable runs by
     /// a factor of five. And tankage scales with HULL mass, so a heavy load
     /// shortens the leg it can manage rather than buying itself more fuel.
@@ -10094,7 +10094,7 @@ impl World {
         if cost <= 1e-9 {
             return true;
         }
-        let burn = cost / crate::lane::HYPERSPACE_FACTOR;
+        let burn = cost / crate::lane::WARP_FACTOR;
         let tank = ShipKind::Convoy.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS;
         burn <= tank
     }

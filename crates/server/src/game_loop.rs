@@ -171,7 +171,7 @@ impl GameLoop {
         // back to ~0 if just spawned at home. The order reaches the ship one delay
         // out — that's the whole outbound signal; the ship's reaction is then seen
         // directly on the map when its light arrives (no return signal needed).
-        let age = self.history.observed_age(ship_id, cc, &sim::lane::DelayField { lanes: &self.world.lanes, c }, now).unwrap_or(0.0);
+        let age = self.history.observed_age(ship_id, cc, &delays, now).unwrap_or(0.0);
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandSignal {
