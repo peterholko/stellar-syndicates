@@ -128,6 +128,9 @@ const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 // §hyperspace: how hard a drawn fleet chases its authoritative position. Higher
 // converges faster and shows more of each correction; lower is smoother but lags.
+// §emplacements: kept in step with `emplace::MIN_SPACING` / `DEEP_SPACE_SENSOR_RANGE`.
+const EMPLACEMENT_MIN_SPACING = 12_000;
+const DEEP_SPACE_SENSOR_RANGE = 60_000;
 const SMOOTH_RATE = 9.0; // e-folds per second
 // Corrections bigger than this are treated as a JUMP and applied at once: a
 // fleet that really did move that far did not drift there.
@@ -245,6 +248,10 @@ export class Renderer {
   /// §hyperspace: the lane ribbons. Static geometry, so this is rebuilt only
   /// when the camera moves — not per frame.
   private lanesGfx = new Graphics();
+  /// §emplacements: buoys, sensors, and the siting preview.
+  private emplaceGfx = new Graphics();
+  /// World-space cursor, for the siting preview. Null when the pointer is off-map.
+  cursorWorld: { x: number; y: number } | null = null;
   private routesGfx = new Graphics();
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
@@ -366,6 +373,7 @@ export class Renderer {
     this.galaxyRoot.addChild(
       this.bg,
       this.lanesGfx, // §hyperspace: lanes are TERRAIN — beneath everything
+      this.emplaceGfx, // ...and what you built on them sits just above
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
       this.anchorsLayer,
@@ -1660,6 +1668,75 @@ export class Renderer {
     return this.shipHitRadius(ghost.kind) * (marker ? marker.mult : 1);
   }
 
+  /// §emplacements: MIRRORS `emplace::site_check` IN THE SIM.
+  ///
+  /// The map must preview exactly the rule the server will enforce, or a site
+  /// can look legal and then be silently refused — the one failure mode a
+  /// placement UI must not have. Kept next to the drawing so the two cannot
+  /// drift without someone noticing.
+  siteError(kind: string, p: { x: number; y: number }, state: ViewState): string | null {
+    if (kind === "hyperspace_buoy") {
+      const lanes = state.galaxy?.lanes ?? [];
+      const onALane = lanes.some((l) => {
+        // Distance to the CENTERLINE, not to the nearest point — same fix the
+        // sim needed, for the same reason: samples are far further apart than a
+        // ribbon is wide, so a point-wise test rejects points lying on the line.
+        for (let i = 1; i < l.points.length; i++) {
+          const a = l.points[i - 1];
+          const b = l.points[i];
+          const abx = b.x - a.x;
+          const aby = b.y - a.y;
+          const len2 = abx * abx + aby * aby;
+          const t = len2 > 1e-9 ? Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2)) : 0;
+          const dx = p.x - (a.x + abx * t);
+          const dy = p.y - (a.y + aby * t);
+          if (Math.hypot(dx, dy) <= l.half_width) return true;
+        }
+        return false;
+      });
+      if (!onALane) return "A hyperspace buoy has to sit in a lane — it relays along one.";
+    }
+    const tooClose = (state.emplacements ?? []).some(
+      (e) => Math.hypot(e.pos.x - p.x, e.pos.y - p.y) < EMPLACEMENT_MIN_SPACING,
+    );
+    return tooClose ? "Too close to one of your own." : null;
+  }
+
+  /// §emplacements: draw what is standing out there, plus the live siting
+  /// preview while the player is choosing a spot.
+  private drawEmplacements(state: ViewState): void {
+    const g = this.emplaceGfx;
+    g.clear();
+    for (const e of state.emplacements ?? []) {
+      const p = this.worldToScreen(e.pos);
+      const buoy = e.kind === "hyperspace_buoy";
+      const col = buoy ? 0x6fd0ff : 0x8fe3a0;
+      // A sensor's coverage is the reason it exists, so it is drawn.
+      if (e.sensor_range > 0) {
+        g.circle(p.x, p.y, e.sensor_range * this.scale).stroke({ width: 1, color: col, alpha: 0.18 });
+      }
+      if (buoy) {
+        // A buoy reads as a relay node: a ring on the lane it serves.
+        g.circle(p.x, p.y, 5).stroke({ width: 1.5, color: col, alpha: 0.9 });
+        g.circle(p.x, p.y, 1.5).fill({ color: col, alpha: 0.9 });
+      } else {
+        // A sensor reads as a dish: a wedge, so the two never look alike.
+        g.moveTo(p.x - 5, p.y + 4).lineTo(p.x, p.y - 5).lineTo(p.x + 5, p.y + 4).closePath();
+        g.stroke({ width: 1.5, color: col, alpha: 0.9 });
+      }
+    }
+    // The siting preview — legal in the structure's own colour, refused in red.
+    if (state.placing && this.cursorWorld) {
+      const p = this.worldToScreen(this.cursorWorld);
+      const err = this.siteError(state.placing, this.cursorWorld, state);
+      const col = err ? 0xff6b6b : state.placing === "hyperspace_buoy" ? 0x6fd0ff : 0x8fe3a0;
+      g.circle(p.x, p.y, 7).stroke({ width: 1.5, color: col, alpha: 0.85 });
+      if (!err && state.placing === "deep_space_sensor") {
+        g.circle(p.x, p.y, DEEP_SPACE_SENSOR_RANGE * this.scale).stroke({ width: 1, color: col, alpha: 0.25 });
+      }
+    }
+  }
+
   private drawGhost(ghost: GhostView, state: ViewState, dt: number): { x: number; y: number } {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
@@ -1993,6 +2070,7 @@ export class Renderer {
       if (this.viewDirty) {
         this.drawBackground();
         this.drawLanes(state);
+        this.drawEmplacements(state);
         this.viewDirty = false;
       }
       const nowMs = performance.now();

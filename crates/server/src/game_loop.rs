@@ -1222,6 +1222,18 @@ impl GameLoop {
                     anchors,
                     systems,
                     ghosts,
+                    emplacements: self
+                        .world
+                        .emplacements
+                        .iter()
+                        .filter(|e| e.owner == player_id)
+                        .map(|e| crate::protocol::EmplacementView {
+                            id: e.id,
+                            kind: e.kind,
+                            pos: e.pos,
+                            sensor_range: e.kind.sensor_range(),
+                        })
+                        .collect(),
                     market,
                     wallet,
                     charter,

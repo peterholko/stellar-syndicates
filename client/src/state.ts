@@ -2,7 +2,8 @@
 // pushed. This is *not* authoritative — in M2 it is the TRUE world (movement
 // verification); in M3 it becomes a delayed, fogged picture.
 
-import type { AnchorView, CharterView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+import type {
+  EmplacementView, AnchorView, CharterView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
@@ -45,6 +46,11 @@ export interface ViewState {
   /// keyed by system id, paired with the static `galaxy.systems` geology.
   systems: SystemStateView[];
   ghosts: GhostView[];
+  /// §emplacements: your own structures standing in open space.
+  emplacements: EmplacementView[];
+  /// §emplacements: the kind currently being SITED, or null when not placing.
+  /// While set, the map previews legality under the cursor and a click commits.
+  placing: "hyperspace_buoy" | "deep_space_sensor" | null;
   market: MarketView | null;
   /// Client-accumulated history of the (light-delayed) hub prices the player has
   /// OBSERVED, per commodity — the data source for the Market sparklines. This is
@@ -141,6 +147,8 @@ export function initialState(): ViewState {
     anchors: [],
     systems: [],
     ghosts: [],
+    emplacements: [],
+    placing: null,
     market: null,
     priceHistory: {},
     lastPriceSampleAt: -1,

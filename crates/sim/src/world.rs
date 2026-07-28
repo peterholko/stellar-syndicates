@@ -13003,6 +13003,75 @@ mod tests {
     /// described never happened. Carrying fuel and paying BEFORE the step makes
     /// that unfakeable: there is no position to roll back, because a fleet that
     /// cannot pay never moves.
+    /// §emplacements: THE WHOLE PATH — command, cost, build time, deployment.
+    ///
+    /// A buoy is not placed the instant it is ordered: it is paid for and built
+    /// at a system like anything else, and only then does it appear out in
+    /// space. The site is re-checked at completion, so a legal order cannot
+    /// deploy somewhere that has since stopped being legal.
+    #[test]
+    fn an_ordered_buoy_is_paid_for_built_and_then_deployed() {
+        let mut w = test_world();
+        let id = PlayerId(9);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        // Somewhere on a lane, which is the only legal site for a buoy.
+        let lane = &w.lanes.lanes[0];
+        let at = lane.at(lane.length() * 0.5);
+        let home = w.players[&id].home_system.unwrap();
+        // Stock the yard so the recipe can actually be paid.
+        for (c, n) in [
+            (Commodity::Alloys, 500.0),
+            (Commodity::Electronics, 500.0),
+            (Commodity::Fuel, 500.0),
+        ] {
+            *w.systems
+                .iter_mut()
+                .find(|s| s.id == home)
+                .unwrap()
+                .stockpile
+                .entry(c)
+                .or_insert(0.0) += n;
+        }
+        let electronics0 = system_stock(&w, home, Commodity::Electronics);
+
+        w.step(&[Command::BuildEmplacement {
+            player_id: id,
+            emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            pos: at,
+        }]);
+        assert!(w.emplacements.is_empty(), "not placed the instant it is ordered");
+        assert_eq!(w.build_queue.len(), 1, "it is enqueued as a build job");
+        assert!(
+            system_stock(&w, home, Commodity::Electronics) < electronics0,
+            "and the yard was actually charged for it",
+        );
+
+        // Run past the recipe's build time.
+        for _ in 0..(60.0 / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        assert_eq!(w.emplacements.len(), 1, "it deploys when the job completes");
+        let e = &w.emplacements[0];
+        assert_eq!(e.owner, id);
+        assert!(e.pos.distance(at) < 1.0, "at the site that was picked, not at the yard");
+    }
+
+    /// A site the rule refuses is refused at the COMMAND, not silently accepted
+    /// and then dropped later — nothing is charged for a build that cannot happen.
+    #[test]
+    fn a_buoy_off_the_network_is_refused_outright() {
+        let mut w = test_world();
+        let id = PlayerId(9);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        w.step(&[Command::BuildEmplacement {
+            player_id: id,
+            emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            pos: Vec2::new(9_000_000.0, 0.0),
+        }]);
+        assert!(w.emplacements.is_empty());
+        assert!(w.build_queue.is_empty(), "nothing enqueued, so nothing charged");
+    }
+
     #[test]
     fn a_fleet_with_dry_tanks_does_not_move() {
         let mut w = test_world();

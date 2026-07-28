@@ -1435,6 +1435,17 @@ pub struct LoadoutStack {
     pub n: u32,
 }
 
+/// §emplacements: one structure standing in open space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmplacementView {
+    pub id: EntityId,
+    pub kind: sim::EmplacementKind,
+    pub pos: Vec2,
+    /// The bubble it watches, or 0 for a buoy — so the map can draw coverage
+    /// without needing the sim's constants.
+    pub sensor_range: f64,
+}
+
 /// A FLEET as a player perceives it: a delayed "ghost" — the position the light
 /// now arriving at their command center shows, plus how stale that is and how
 /// much the object could have moved since (§6). This is the ONLY fleet
@@ -1638,6 +1649,12 @@ pub enum ServerMsg {
         systems: Vec<SystemStateView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
+        /// §emplacements: structures standing in open space — hyperspace buoys
+        /// and deep space sensors. Sent UNDELAYED, and only the viewer's own:
+        /// they are your own infrastructure, so you know where you put them.
+        /// A rival's are found the way anything else is, by seeing them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        emplacements: Vec<EmplacementView>,
         /// The hub ticker, light-delayed (§9).
         market: MarketView,
         /// The player's own credits + holdings (fresh).

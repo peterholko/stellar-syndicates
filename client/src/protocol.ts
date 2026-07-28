@@ -675,6 +675,15 @@ export interface LoadoutStack {
 // as). The two-tier intel ladder: `count_class` (size bucket) is ALWAYS present;
 // `composition` (exact kinds + counts) only for your own fleets or a rival fleet
 // inside your sensor coverage — never leaking the true count outside it.
+/// §emplacements: one structure standing in open space.
+export interface EmplacementView {
+  id: string;
+  kind: "hyperspace_buoy" | "deep_space_sensor";
+  pos: Vec2;
+  /// The bubble it watches, 0 for a buoy.
+  sensor_range: number;
+}
+
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
@@ -781,6 +790,10 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
+  /// §emplacements: build a structure out in open space at a chosen point. The
+  /// field is `emplacement`, not `kind` — the server's Command enum is tagged
+  /// on that name.
+  | { type: "BuildEmplacement"; emplacement: "hyperspace_buoy" | "deep_space_sensor"; pos: Vec2 }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }
@@ -1205,6 +1218,9 @@ export type ServerMsg =
       anchors: AnchorView[];
       systems: SystemStateView[];
       ghosts: GhostView[];
+      /// §emplacements: your own structures standing in open space. Undelayed —
+      /// you know where you put them.
+      emplacements?: EmplacementView[];
       market: MarketView;
       wallet: WalletView;
       /// §TCA: the Charterhouse freight desk — timetable, per-destination terms,

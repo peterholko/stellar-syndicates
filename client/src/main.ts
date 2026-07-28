@@ -3038,6 +3038,31 @@ let clickCycle: { sx: number; sy: number; keys: string; index: number } | null =
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
 function handleMapClick(sx: number, sy: number, shift = false): void {
+    // §emplacements: SITING MODE takes the click before anything else. While
+    // placing, the map is a placement surface — a click that also selected a
+    // system or issued a move would make siting feel like a mode you cannot
+    // trust. A refused site is reported and stays in the mode, so the player can
+    // simply try a little further along the lane.
+    if (state.placing) {
+      const at = renderer.screenToWorld(sx, sy);
+      const err = renderer.siteError(state.placing, at, state);
+      if (err) {
+        // Stay in the mode: the player almost certainly wants to try a little
+        // further along, and dropping them out would punish a near miss.
+        readout().innerHTML = `<span style="color:var(--warn)">${esc(err)}</span>`;
+        return;
+      }
+      const label = state.placing === "hyperspace_buoy" ? "Hyperspace Buoy" : "Deep Space Sensor";
+      net?.send({ type: "BuildEmplacement", emplacement: state.placing, pos: at });
+      readout().innerHTML =
+        `<b>${label}</b> ordered — building at your nearest system, then deployed here.` +
+        (state.placing === "hyperspace_buoy"
+          ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
+          : "");
+      state.placing = null;
+      updateEmplaceBar();
+      return;
+    }
     // §aftermath-select: any fresh map click drops the concluded-battle marker
     // ring; the aftermath/capture branches below re-set it if they hit a marker.
     renderer.selectedBattleMarkerId = null;
@@ -3362,11 +3387,55 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     }
 }
 
+// §emplacements: the siting toolbar. Two buttons that arm placement mode; the
+// map does the rest. Deliberately NOT a modal or a panel — siting is a decision
+// about WHERE, so the map has to stay visible while you make it.
+function updateEmplaceBar(): void {
+  const bar = document.getElementById("emplace-bar");
+  if (!bar) return;
+  const kinds: [string, string, string][] = [
+    ["hyperspace_buoy", "Hyperspace Buoy", "Relays orders and reports at lane speed — but only between TWO buoys sharing a lane. Must be sited in a lane."],
+    ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Site it anywhere."],
+  ];
+  bar.innerHTML = kinds
+    .map(
+      ([k, label, tip]) =>
+        `<button class="emplace-btn${state.placing === k ? " armed" : ""}" data-kind="${k}" title="${esc(tip)}">${label}</button>`,
+    )
+    .join("");
+}
+
 // Wire map interaction: zoom (wheel toward cursor + buttons), pan (left-drag on
 // empty space), and the click action — gated so a drag PANS and never fires a
 // click (no accidental move orders / raids / selections when panning).
 function installInteraction(): void {
   const canvas = renderer.canvas;
+  // §emplacements: arm a kind, or disarm by clicking the armed one again.
+  $("emplace-bar").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest(".emplace-btn") as HTMLElement | null;
+    if (!b) return;
+    const k = b.dataset.kind as "hyperspace_buoy" | "deep_space_sensor";
+    state.placing = state.placing === k ? null : k;
+    updateEmplaceBar();
+    readout().innerHTML = state.placing
+      ? `Pick a spot on the map. <span class="dim">Esc to cancel.</span>`
+      : "";
+  });
+  // The map has to know where the pointer is to preview the site under it.
+  canvas.addEventListener("pointermove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    renderer.cursorWorld = renderer.screenToWorld(e.clientX - r.left, e.clientY - r.top);
+  });
+  canvas.addEventListener("pointerleave", () => {
+    renderer.cursorWorld = null;
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.placing) {
+      state.placing = null;
+      updateEmplaceBar();
+      readout().innerHTML = "";
+    }
+  });
   const DRAG_THRESHOLD = 5; // px of motion that turns a press into a pan
   let down = false, panning = false;
   let startX = 0, startY = 0, lastX = 0, lastY = 0;
@@ -6550,6 +6619,8 @@ function join(): void {
           $("readout").style.display = "block";
           $("legend").style.display = "block";
           $("zoom-controls").style.display = "flex";
+          $("emplace-bar").style.display = "flex";
+          updateEmplaceBar();
           // Wire the rail (System/Logistics/Doctrine), the navbar Market overlay,
           // and the navbar Log. The rail + Market stay CLOSED on join so the map is
           // uncluttered — opened by clicking a system, S/O/F, or the navbar/M.
@@ -6583,6 +6654,7 @@ function join(): void {
           state.anchors = msg.anchors;
           state.systems = msg.systems;
           state.ghosts = msg.ghosts;
+          state.emplacements = msg.emplacements ?? [];
           state.market = msg.market;
           state.wallet = msg.wallet;
           state.freight = msg.freight;
