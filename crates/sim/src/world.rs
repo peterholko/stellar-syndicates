@@ -10413,50 +10413,19 @@ impl World {
         let hub = self.hub;
         let nearest = self.nearest_system(home).unwrap_or(hub);
 
-        // Deterministic demo cargo for the convoy. §economy: draws from the RAW
-        // ladder explicitly (a starting convoy hauls raws — the old `ALL % 5` was
-        // a magic modulo that silently narrowed when ALL grew to 12).
-        let cargo = {
-            let commodity = crate::cargo::Commodity::RAW
-                [(self.rng.next_u64() % crate::cargo::Commodity::RAW.len() as u64) as usize];
-            let units = 40 + (self.rng.next_u64() % 160) as u32;
-            crate::cargo::Cargo { commodity, units }
-        };
-
-        // The convoy HAULS THAT LOAD TO MARKET — one real delivery, not a
-        // sightseeing tour.
-        //
-        // It used to be a `Patrol` over [home, hub], which is why a new player
-        // watched their first convoy shuttle back and forth forever with the
-        // cargo still aboard: a patrol has no arrival semantics at all, so there
-        // was no point on the route at which anything could be unloaded. That was
-        // M2 demo behaviour ("so the shared world is visibly alive") left in place
-        // long after real logistics existed, and it taught the loop backwards.
-        //
-        // `DeliverToWarehouse` is the player-owned haul (§TCA Part 5): the load
-        // lands in their hub warehouse and the hull SURVIVES, going Idle at the
-        // Charterhouse ready for its next job. `sell_on_arrival: false` on
-        // purpose — the goods are the player's to price and sell, and arriving
-        // with a stocked warehouse is the introduction to it. The run itself is
-        // raidable the whole way, which is the other half of the lesson.
-        let convoy_id = self.alloc_entity_id();
-        let mut convoy = Fleet::single(
-            convoy_id,
-            owner,
-            ShipKind::Convoy,
-            home,
-            FleetOrder::MoveTo { dest: hub },
-            Some(cargo),
-        );
-        convoy.mission = Some(crate::ship::TradeMission::DeliverToWarehouse { sell_on_arrival: false });
-        self.fleets.insert(convoy_id, convoy);
+        // §emplacements: the player STARTS WITH A CONSTRUCTION SHIP, not a
+        // convoy. The opening act of the hyperspace game is infrastructure —
+        // a buoy pair for comms, a tripwire on the approach — and the hull that
+        // does it should be in hand from the first minute rather than gated
+        // behind the first 50s build. The opening cargo haul went with the
+        // convoy: a builder lifts nothing, so the introduction to the market is
+        // now buying your first freighter, not watching one arrive pre-loaded.
+        let builder_id = self.alloc_entity_id();
+        let builder = Fleet::single(builder_id, owner, ShipKind::Builder, home, FleetOrder::Idle, None);
+        self.fleets.insert(builder_id, builder);
         events.push(Event::new(
             self.time,
-            EventPayload::ShipSpawned {
-                id: convoy_id,
-                owner,
-                kind: ShipKind::Convoy,
-            },
+            EventPayload::ShipSpawned { id: builder_id, owner, kind: ShipKind::Builder },
         ));
 
         // Raider ESCORTS the convoy's home↔hub trade lane (so it's positioned to
@@ -10835,6 +10804,11 @@ mod tests {
         assert!(stock >= 1.0, "the home system produces from turn one (got {stock})");
 
         // It fleets to the hub like any owned system → a raidable sell convoy.
+        // Pin the geometry: the roster change re-rolled home placement, and a
+        // convoy's tank makes hub hauls viable only within its range — this test
+        // asserts the PIPELINE, not the luck of the draw.
+        let hub = w.hub;
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().pos = hub + Vec2::new(40_000.0, 0.0);
         w.step(&[Command::ShipProduction { player_id: id, system_id: home }]);
         let convoy = w.fleets.values().find(|s| s.owner == id && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. })));
         assert!(convoy.is_some(), "the home can ship its production to the Charterhouse");
@@ -12623,7 +12597,7 @@ mod tests {
         let mut convoy = Fleet::single(cid, def, ShipKind::Convoy, cc + Vec2::new(3000.0, 0.0), FleetOrder::Idle, None);
         convoy.passengers.insert(crate::specialist::SpecialistKind::Geologist, 2);
         w.fleets.insert(cid, convoy);
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         {
             let r = w.fleets.get_mut(&raider).unwrap();
             r.pos = cc + Vec2::new(3040.0, 0.0);
@@ -12807,7 +12781,7 @@ mod tests {
         }
         assert!(home_fuel(&w, id) > 5.0, "refinery built an operating reserve from volatiles");
         // A move now dispatches on refinery-produced fuel (no shortfall hold).
-        let ship = player_ship(&w, id, ShipKind::Convoy);
+        let ship = player_ship(&mut w, id, ShipKind::Convoy);
         let dest = w.players[&id].home + Vec2::new(2000.0, 0.0);
         let mut held = false;
         w.step(&[Command::MoveShip { player_id: id, ship_id: ship, dest }]);
@@ -12860,7 +12834,7 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         let sid = w.alloc_entity_id();
         w.fleets.insert(sid, Fleet::single(sid, def, ShipKind::Scout, cc + Vec2::new(420.0, 0.0), FleetOrder::Idle, None));
         {
@@ -12883,7 +12857,7 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, def, ShipKind::Convoy);
         {
             let c = w.fleets.get_mut(&convoy).unwrap();
             c.pos = cc + Vec2::new(420.0, 0.0);
@@ -13009,8 +12983,21 @@ mod tests {
 
     // --- §step1 PART 2: fuel-to-move sink -----------------------------------
 
-    fn player_ship(w: &World, owner: PlayerId, kind: ShipKind) -> EntityId {
-        *w.fleets.iter().find(|(_, s)| s.owner == owner && s.flagship_kind() == kind).unwrap().0
+    /// §emplacements: the starting hauler became a Construction Ship, so tests
+    /// premised on "a convoy exists from the first tick" now MAKE one — at the
+    /// owner's home, Idle, exactly the shape the old starting convoy had. The
+    /// fifty-odd tests using this keep testing what they were written to test.
+    fn player_ship(w: &mut World, owner: PlayerId, kind: ShipKind) -> EntityId {
+        if let Some((id, _)) =
+            w.fleets.iter().find(|(_, s)| s.owner == owner && s.flagship_kind() == kind)
+        {
+            return *id;
+        }
+        let home = w.players[&owner].home_system.unwrap();
+        let pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        let id = EntityId(900_000 + w.fleets.len() as u64);
+        w.fleets.insert(id, crate::ship::Fleet::single(id, owner, kind, pos, FleetOrder::Idle, None));
+        id
     }
     fn home_fuel(w: &World, owner: PlayerId) -> f64 {
         let h = w.players[&owner].home_system.unwrap();
@@ -13049,7 +13036,7 @@ mod tests {
             let mut w = test_world();
             let id = PlayerId(7);
             w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-            let convoy = player_ship(&w, id, ShipKind::Convoy);
+            let convoy = player_ship(&mut w, id, ShipKind::Convoy);
             w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: Vec2::new(2000.0, 1500.0) }]);
             for _ in 0..200 {
                 w.step(&[]);
@@ -13208,7 +13195,7 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let convoy = player_ship(&w, id, ShipKind::Convoy);
+        let convoy = player_ship(&mut w, id, ShipKind::Convoy);
         let far = w.fleets[&convoy].pos + Vec2::new(120_000.0, 0.0);
         w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: far }]);
 
@@ -13243,7 +13230,7 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let convoy = player_ship(&w, id, ShipKind::Convoy);
+        let convoy = player_ship(&mut w, id, ShipKind::Convoy);
         w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: Vec2::new(2000.0, 1500.0) }]);
         for _ in 0..40 {
             w.step(&[]);
@@ -13274,12 +13261,14 @@ mod tests {
         assert!(moved, "fleets should have moved from their start positions");
     }
 
-    fn convoy_id(w: &World) -> EntityId {
-        *w.fleets
-            .iter()
-            .find(|(_, s)| s.flagship_kind() == ShipKind::Convoy)
-            .unwrap()
-            .0
+    fn convoy_id(w: &mut World) -> EntityId {
+        if let Some((id, _)) =
+            w.fleets.iter().find(|(_, s)| s.flagship_kind() == ShipKind::Convoy)
+        {
+            return *id;
+        }
+        let owner = *w.players.keys().find(|p| !p.is_sentinel()).unwrap();
+        player_ship(w, owner, ShipKind::Convoy)
     }
 
     #[test]
@@ -13293,8 +13282,10 @@ mod tests {
         for _ in 0..(45 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
-        let cid = convoy_id(&w);
+        let cid = convoy_id(&mut w);
+        // The shim spawns at home; this test needs real light-lag, so park it out.
         let cc = w.players[&id].command_center;
+        w.fleets.get_mut(&cid).unwrap().pos = cc + Vec2::new(30_000.0, 0.0);
         let ship_pos = w.fleets[&cid].pos;
         // §one-clock: the order travels the SIGNAL medium (warp, buoy-boosted),
         // the same one the player's ETAs read — not bare normal-space c.
@@ -13375,12 +13366,9 @@ mod tests {
         w.fleets.retain(|_, f| f.mission.is_none());
     }
 
-    fn find_ship(w: &World, owner: PlayerId, kind: ShipKind) -> EntityId {
-        *w.fleets
-            .iter()
-            .find(|(_, s)| s.owner == owner && s.flagship_kind() == kind)
-            .unwrap()
-            .0
+    /// Same premise-shim as `player_ship` — see the note there.
+    fn find_ship(w: &mut World, owner: PlayerId, kind: ShipKind) -> EntityId {
+        player_ship(w, owner, kind)
     }
 
     /// Set up an attacker raider and a (stationary) defender convoy at chosen
@@ -16007,8 +15995,8 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let raider = find_ship(&w, atk, ShipKind::Raider);
-        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
+        let convoy = find_ship(&mut w, def, ShipKind::Convoy);
         // Raider beside the attacker's command center; convoy ~2500 su away and
         // FLEEING further out, so the raider must chase it down over distance.
         {
@@ -16416,7 +16404,7 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, def, ShipKind::Convoy);
         let cid = w.alloc_entity_id();
         w.fleets.insert(cid, Fleet::single(cid, atk, ShipKind::Corvette, cc, FleetOrder::Idle, None));
         let fuel0 = home_fuel(&w, atk);
@@ -16745,8 +16733,8 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let attacker = find_ship(&w, atk, ShipKind::Raider);
-        let target = find_ship(&w, def, ShipKind::Raider); // target a RIVAL RAIDER
+        let attacker = find_ship(&mut w, atk, ShipKind::Raider);
+        let target = find_ship(&mut w, def, ShipKind::Raider); // target a RIVAL RAIDER
         for (id, off) in [(attacker, Vec2::new(120.0, 0.0)), (target, Vec2::new(420.0, 0.0))] {
             let s = w.fleets.get_mut(&id).unwrap();
             s.pos = cc + off;
@@ -16987,7 +16975,7 @@ mod tests {
         let colony_pos = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
         seed_stock(&mut w, colony, &[(Alloys, 300.0)]);
         // Park the player's convoy alongside the colony.
-        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, id, ShipKind::Convoy);
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
             f.pos = colony_pos;
@@ -17032,7 +17020,7 @@ mod tests {
         // Start from an empty hub warehouse so the assertions below read as
         // absolute totals rather than deltas off the starting stock.
         clear_warehouse(&mut w, id);
-        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, id, ShipKind::Convoy);
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
             f.pos = w.hub + Vec2::new(60.0, 0.0); // moments from the dock
@@ -17071,7 +17059,7 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         seed_warehouse(&mut w, id, &[(Fuel, 120)]);
-        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, id, ShipKind::Convoy);
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
             f.pos = w.hub;
@@ -17098,8 +17086,8 @@ mod tests {
         let id = PlayerId(1);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         seed_warehouse(&mut w, id, &[(Fuel, 500), (Alloys, 500)]);
-        let convoy = find_ship(&w, id, ShipKind::Convoy);
-        let raider = find_ship(&w, id, ShipKind::Raider);
+        let convoy = find_ship(&mut w, id, ShipKind::Convoy);
+        let raider = find_ship(&mut w, id, ShipKind::Raider);
         let reason_of = |ev: &[Event]| -> Option<TradeRejectReason> {
             ev.iter().find_map(|e| match &e.payload {
                 EventPayload::Trade(TradeEvent::Rejected { reason, .. }) => Some(*reason),
@@ -17527,7 +17515,7 @@ mod tests {
         assert!(w.in_sovereign_zone(w.fleets[&fid].pos), "it spawns inside the bubble");
 
         // An ambusher waiting just OUTSIDE the radius, on the squadron's path.
-        let raider = find_ship(&w, id, ShipKind::Raider);
+        let raider = find_ship(&mut w, id, ShipKind::Raider);
         let ambush = Vec2::new(crate::tca::TCA_SOVEREIGN_RADIUS + 60.0, 0.0);
         {
             let r = w.fleets.get_mut(&raider).unwrap();
@@ -17717,7 +17705,7 @@ mod tests {
         assert_eq!(w.book.len(), 1, "no new order joined the book");
 
         // The GRANDFATHERED order is still on the book and still clears.
-        let convoy = find_ship(&w, id, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, id, ShipKind::Convoy);
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
             f.pos = w.hub;
@@ -17751,7 +17739,7 @@ mod tests {
             Command::AddPlayer { id: victim, name: "Vic".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         {
             let r = w.fleets.get_mut(&raider).unwrap();
             r.pos = cc + Vec2::new(120.0, 0.0);
@@ -17845,7 +17833,7 @@ mod tests {
         let hull_a = freighter_at(&mut w, spot_a, dest, &[(victim, Commodity::Alloys, 60)]);
         let hull_b = freighter_at(&mut w, spot_b, dest, &[(victim, Commodity::Alloys, 60)]);
 
-        let a1 = find_ship(&w, a, ShipKind::Raider);
+        let a1 = find_ship(&mut w, a, ShipKind::Raider);
         // A second raider fleet for A, parked beside the first.
         let a2 = w.alloc_entity_id();
         w.fleets.insert(a2, Fleet::single(a2, a, ShipKind::Raider, spot_a + Vec2::new(-30.0, 0.0), FleetOrder::Idle, None));
@@ -17855,7 +17843,7 @@ mod tests {
             f.vel = Vec2::ZERO;
             f.order = FleetOrder::Idle;
         }
-        let b1 = find_ship(&w, b, ShipKind::Raider);
+        let b1 = find_ship(&mut w, b, ShipKind::Raider);
         {
             let f = w.fleets.get_mut(&b1).unwrap();
             f.pos = spot_b + Vec2::new(-30.0, 0.0);
@@ -17976,7 +17964,7 @@ mod tests {
             Command::AddPlayer { id: victim, name: "Vic".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         {
             let r = w.fleets.get_mut(&raider).unwrap();
             r.pos = cc + Vec2::new(120.0, 0.0);
@@ -18024,7 +18012,7 @@ mod tests {
             Command::AddPlayer { id: victim, name: "Vic".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         {
             let r = w.fleets.get_mut(&raider).unwrap();
             r.pos = cc + Vec2::new(120.0, 0.0);
@@ -18138,7 +18126,7 @@ mod tests {
             let colony = near_hub_colony(&mut w, victim, 3000.0);
             let station = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
             // The blockading fleet, on station.
-            let blk = find_ship(&w, blk_owner, ShipKind::Raider);
+            let blk = find_ship(&mut w, blk_owner, ShipKind::Raider);
             {
                 let f = w.fleets.get_mut(&blk).unwrap();
                 f.pos = station;
@@ -18172,8 +18160,8 @@ mod tests {
             Command::AddPlayer { id: atk, name: "Atk".into() },
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
-        let raider = find_ship(&w, atk, ShipKind::Raider);
-        let convoy = find_ship(&w, def, ShipKind::Convoy);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
+        let convoy = find_ship(&mut w, def, ShipKind::Convoy);
         // Both parked deep inside the bubble, well within contact range.
         let inside = crate::tca::TCA_SOVEREIGN_RADIUS * 0.5;
         {
@@ -19198,7 +19186,7 @@ mod tests {
             Command::AddPlayer { id: def, name: "Def".into() },
         ]);
         let cc = w.players[&atk].command_center;
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         {
             let r = w.fleets.get_mut(&raider).unwrap();
             r.pos = cc + Vec2::new(120.0, 0.0);
@@ -19313,11 +19301,14 @@ mod tests {
         grant_system(&mut w, def, sysid);
         w.step(&[]);
         for _ in 0..(30 * crate::config::TICK_HZ) { w.step(&[]); }
+        // Same geometry pin as the turn-one test: the pipeline, not the draw.
+        let hub = w.hub;
+        w.systems.iter_mut().find(|s| s.id == sysid).unwrap().pos = hub + Vec2::new(40_000.0, 0.0);
         w.step(&[Command::ShipProduction { player_id: def, system_id: sysid }]);
         let convoy = *w.fleets.iter().find(|(_, s)| s.owner == def && matches!(s.mission, Some(TradeMission::DeliverToWarehouse { .. }))).unwrap().0;
 
         // Park the attacker's raider right on the production convoy and commit.
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         let cpos = w.fleets[&convoy].pos;
         {
             let r = w.fleets.get_mut(&raider).unwrap();
@@ -20150,12 +20141,12 @@ mod tests {
         ]);
         let sys = grant_system_at(&mut w, def, Vec2::new(3000.0, 0.0), 0);
         // A CONVOY fleet (no raider) can't blockade — soft reject (order unchanged).
-        let convoy = find_ship(&w, atk, ShipKind::Convoy);
+        let convoy = find_ship(&mut w, atk, ShipKind::Convoy);
         w.step(&[Command::BlockadeSystem { player_id: atk, fleet_id: convoy, system_id: sys }]);
         for _ in 0..20 { w.step(&[]); }
         assert!(!matches!(w.fleets[&convoy].order, FleetOrder::Blockade { .. }), "a convoy can't blockade");
         // A raider CAN — its order becomes Blockade once the command's light lands.
-        let raider = find_ship(&w, atk, ShipKind::Raider);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
         w.fleets.get_mut(&raider).unwrap().pos = w.players[&atk].command_center;
         w.step(&[Command::BlockadeSystem { player_id: atk, fleet_id: raider, system_id: sys }]);
         let mut became_blockade = false;

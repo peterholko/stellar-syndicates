@@ -374,6 +374,7 @@ mod tests {
         assert_eq!(restored.fleets.len(), before, "new snapshot survives migrate + reload");
         // Every restored fleet has a non-empty composition (no lost ships).
         assert!(restored.fleets.values().all(|f| f.total_count() >= 1));
-        assert!(restored.fleets.values().any(|f| f.contains(ShipKind::Convoy)));
+        // §emplacements: the starting roster is Builder + Raider now.
+        assert!(restored.fleets.values().any(|f| f.contains(ShipKind::Builder)));
     }
 }
