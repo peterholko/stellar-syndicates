@@ -508,6 +508,12 @@ pub struct World {
     #[serde(default)]
     pub refit_queue: Vec<crate::build::RefitJob>,
     /// World RNG stream (continues past generation) for deterministic events.
+    /// §keyed-streams: the AMBIENT stream — ongoing world noise (market drift is
+    /// its only consumer today). One purpose per stream is the rule: a new
+    /// randomized subsystem takes `Rng::keyed(seed, "its-name")`, never a share
+    /// of this one, so adding or removing a draw in one feature can never
+    /// re-roll another. Galaxy gen, traits, pirates and lanes already derive
+    /// their own; joining draws nothing at all — and a test pins that.
     rng: crate::rng::Rng,
     /// Ongoing BATTLES (§battles-take-time) — persistent, observable engagement
     /// entities keyed by id. Each pools one or more fleets per side and carries
@@ -10740,6 +10746,27 @@ mod tests {
         w.step(&[]);
         assert_eq!(w.tick, 1);
         assert!((w.time - DT).abs() < 1e-12);
+    }
+
+    /// §keyed-streams: JOINING IS INDEPENDENT OF THE AMBIENT STREAM. A player's
+    /// home must depend on the seed and the join order alone — never on how many
+    /// draws the world happened to make first. If someone couples joining to the
+    /// shared rng, this fails: the second world steps 20s (market drift consumes
+    /// the ambient stream) before the join, and the home must not move.
+    #[test]
+    fn a_join_is_unmoved_by_ambient_rng_draws() {
+        let id = PlayerId(6);
+        let mut w1 = test_world();
+        w1.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let mut w2 = test_world();
+        for _ in 0..(20.0 / crate::config::DT) as usize {
+            w2.step(&[]);
+        }
+        w2.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        assert_eq!(
+            w1.players[&id].home_system, w2.players[&id].home_system,
+            "ambient draws before a join must not re-roll where the player lands",
+        );
     }
 
     #[test]
