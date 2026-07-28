@@ -133,9 +133,15 @@ const EMPLACEMENT_MIN_SPACING = 12_000;
 const DEEP_SPACE_SENSOR_RANGE = 60_000;
 const SMOOTH_RATE = 9.0; // e-folds per second
 // Corrections bigger than this are treated as a JUMP and applied at once: a
-// fleet that really did move that far did not drift there.
-const SMOOTH_SNAP_SU = 4_000;
-const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
+// fleet that really did move that far did not drift there. Generous, and
+// deliberately so — a fleet riding a lane toward you OUTRUNS its own report
+// (hyperspace ×50 vs a buoy-less warp signal ×5), so when its bow-wave of
+// light finally arrives, a whole stretch of its flight becomes visible at
+// once. That correction is enormous and REAL; easing turns it into a visible
+// zoom down the lane, where snapping read as a teleport. Only a truly wild
+// jump (fog re-entry, respawn) should snap.
+const SMOOTH_SNAP_SU = 80_000;
+const SMOOTH_SNAP_S = 12.0; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 // Deep-zoom NATIVE-size ramp: the zoom ratio r (= scale / fitScale) at which
 // ships BEGIN ramping from their indicator size (base × SHIP_ZOOM_MAX) up to

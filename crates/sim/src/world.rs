@@ -10137,18 +10137,25 @@ impl World {
         // command's outbound leg) — the SINGLE plug for the tempo bonus, so it can
         // never desync from what the map shows. `relay_factor` is 1.0 with no node.
         let relay = self.relay_factor(player_id, ship_pos);
-        // Outbound light delay from the fleet's current position (deterministic,
-        // known at issue). `delivered_at` is when the fleet gets the order.
-        let delay = ship_pos.distance(cc) / c * relay;
+        // §one-clock: the order travels through the SAME MEDIUM as everything
+        // the player watches — warp-speed signal, boosted where their buoys
+        // relay it — not bare normal-space `c`. Split clocks here were directly
+        // visible at the desk: the client's comet and ETA said 45 seconds (it
+        // reads the signal field), then the authoritative pending-order arrival
+        // said three minutes (this code, at c), and the ship finally moved at a
+        // moment that matched neither. One medium, one countdown.
+        let buoys = self.relay_network(player_id);
+        let field = crate::lane::DelayField { lanes: &self.lanes, buoys: &buoys, c };
+        let delay = field.between(cc, ship_pos) * relay;
         let delivered_at = self.time + delay;
         // The DELIVERY POINT: where the fleet will be when the order lands, by
         // constant-velocity extrapolation of its current motion (§14.1). The echo
         // — the first light of the new behavior — leaves there at delivery and
-        // reaches the command center `distance/c` later. Exactly computable now.
-        // The return leg is relayed too when the delivery point stays in region.
+        // reaches the command center one signal-delay later. Exactly computable
+        // now. The return leg is relayed too when the point stays in region.
         let delivery_point = ship_pos + ship_vel * delay;
         let echo_relay = self.relay_factor(player_id, delivery_point);
-        let echo_at = delivered_at + delivery_point.distance(cc) / c * echo_relay;
+        let echo_at = delivered_at + field.between(delivery_point, cc) * echo_relay;
         self.pending_orders.push(PendingOrder {
             apply_time: delivered_at,
             ship_id,
@@ -13165,7 +13172,11 @@ mod tests {
         let cid = convoy_id(&w);
         let cc = w.players[&id].command_center;
         let ship_pos = w.fleets[&cid].pos;
-        let expected_delay = ship_pos.distance(cc) / w.config.c;
+        // §one-clock: the order travels the SIGNAL medium (warp, buoy-boosted),
+        // the same one the player's ETAs read — not bare normal-space c.
+        let buoys = w.relay_network(id);
+        let expected_delay = crate::lane::DelayField { lanes: &w.lanes, buoys: &buoys, c: w.config.c }
+            .between(cc, ship_pos);
         assert!(expected_delay > 1.0, "convoy should be well away from home");
 
         let issue_time = w.time;
@@ -18857,11 +18868,13 @@ mod tests {
         let t0 = w.time;
         w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest }]);
         let pc = w.pending_commands(id).into_iter().find(|p| p.fleet == fid).expect("lifecycle present");
-        // delivered_at = issue + d/c; the fleet is Idle so the delivery point is
-        // its current pos → echo_at = delivered_at + d/c.
-        let leg = pos.distance(cc) / c;
-        assert!((pc.delivered_at - (t0 + leg)).abs() < 1e-6, "delivered_at = issue + d/c");
-        assert!((pc.echo_at - (t0 + 2.0 * leg)).abs() < 1e-6, "echo_at = delivered_at + d/c");
+        // §one-clock: one leg = the SIGNAL delay (warp, buoy-boosted), the same
+        // medium every player-facing ETA reads. The fleet is Idle so the delivery
+        // point is its current pos → the echo is one more identical leg.
+        let buoys = w.relay_network(id);
+        let leg = crate::lane::DelayField { lanes: &w.lanes, buoys: &buoys, c }.between(cc, pos);
+        assert!((pc.delivered_at - (t0 + leg)).abs() < 1e-6, "delivered_at = issue + signal leg");
+        assert!((pc.echo_at - (t0 + 2.0 * leg)).abs() < 1e-6, "echo_at = delivered_at + signal leg");
         assert_eq!(pc.kind, crate::event::OrderKind::Move);
     }
 
@@ -18923,10 +18936,15 @@ mod tests {
     fn destroyed_fleet_resolves_the_lifecycle_without_a_false_confirm() {
         let mut w = test_world();
         let id = PlayerId(1);
-        let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
+        let (fid, cc, pos) = lifecycle_setup(&mut w, id, 900.0);
         w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 400.0) }]);
-        // Run past delivery so it's AWAITING ECHO.
-        for _ in 0..(4 * crate::config::TICK_HZ) {
+        // Run just past DELIVERY — but not past the echo, which is one more leg
+        // out. §one-clock: a leg is the signal delay, not distance/c, so the
+        // window is computed from the same field the sim schedules with.
+        let buoys = w.relay_network(id);
+        let leg = crate::lane::DelayField { lanes: &w.lanes, buoys: &buoys, c: w.config.c }
+            .between(cc, pos);
+        for _ in 0..((leg + 0.2) / crate::config::DT) as usize {
             w.step(&[]);
         }
         assert!(!w.pending_commands(id).is_empty(), "awaiting echo before the loss");
