@@ -85,8 +85,15 @@ struct Track {
     /// when the light left — a fleet you see berthed may have sailed since,
     /// exactly like everything else on this track.
     docked: Option<sim::DockSite>,
-    /// §course-plan: the fleet's remaining legs, lane-tagged (own-only on the wire).
-    path: Vec<(Vec2, bool)>,
+    /// §course-plan: the fleet's flight plans, RETARDED-FRAME like everything
+    /// else — `(when it took effect, the legs)`. Serving the current plan beside
+    /// a delayed position was visibly wrong: a lane ship outruns its own report,
+    /// so the authoritative route was down to its final warp hop while the ghost
+    /// was still mid-lane, and the drawn path collapsed to a straight line the
+    /// ship was nowhere near. A plan is static between orders, so this is one
+    /// entry per order plus one for the arrival — consumption is a SUFFIX of the
+    /// stored plan and records nothing.
+    plans: VecDeque<(f64, Vec<(Vec2, bool)>)>,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
@@ -193,7 +200,7 @@ impl PositionHistory {
                 gone: None,
                 damage_frac: 0.0,
                 docked: None,
-                path: Vec::new(),
+                plans: VecDeque::new(),
             });
             track.owner = ship.owner;
             track.composition = ship.composition.clone();
@@ -204,7 +211,24 @@ impl PositionHistory {
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
             track.docked = world.dock_of(*id);
-            track.path = ship.route.iter().map(|l| (l.to, l.lane.is_some())).collect();
+            let cur: Vec<(Vec2, bool)> =
+                ship.route.iter().map(|l| (l.to, l.lane.is_some())).collect();
+            let unchanged = track.plans.back().is_some_and(|(_, p)| {
+                // Consumption: the remaining legs are a SUFFIX of the plan in
+                // force — same flight, further along. An empty route is only
+                // "unchanged" against an already-empty plan (arrival records).
+                p.len() >= cur.len()
+                    && p[p.len() - cur.len()..] == cur[..]
+                    && (p.is_empty() || !cur.is_empty())
+            });
+            if !unchanged {
+                track.plans.push_back((now, cur));
+            }
+            while track.plans.len() > 1
+                && track.plans[1].0 <= now - self.horizon
+            {
+                track.plans.pop_front();
+            }
             track.last_seen = now;
             track.cargo = ship.cargo;
             track.passengers = ship.passengers.clone();
@@ -389,7 +413,13 @@ impl PositionHistory {
                 count_class: track.count_class,
                 damage_frac: track.damage_frac,
                 docked: track.docked,
-                path: track.path.clone(),
+                path: track
+                    .plans
+                    .iter()
+                    .rev()
+                    .find(|(t, _)| *t <= sample.time)
+                    .map(|(_, p)| p.clone())
+                    .unwrap_or_default(),
                 composition: &track.composition,
                 loadouts: &track.loadouts,
                 sample,
@@ -1642,7 +1672,7 @@ mod tests {
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
             docked: None,
-            path: Vec::new(),
+            plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: last,
             cargo,
@@ -2792,7 +2822,7 @@ mod tests {
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
             docked: None,
-            path: Vec::new(),
+            plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: 100.0,
             cargo: None,
