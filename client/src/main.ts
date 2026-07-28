@@ -907,7 +907,29 @@ const HYPERLIMIT_SU = 900;
 function regimeCell(g: GhostView): string {
   const sp = g.speed ?? Math.hypot(g.vel.x, g.vel.y);
   if (sp < 0.5) return stat("Transit", `<span class="dim">holding</span>`);
-  const r = g.regime ?? "thrusters";
+  // §course-change: read the layer off the DRIVE. Mid-transition a fleet is on
+  // thrusters — the drive has not caught yet, or has already let go — so the
+  // phase is what explains a warship crawling at cruise speed.
+  const d = g.drive ?? "thrusters";
+  const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
+  const spooling = typeof d === "object" && "spooling" in d ? d.spooling : null;
+  const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
+  const driveName = (k: string) => (k === "hyperspace" ? "hyperspace drive" : "warp drive");
+  if (spooling) {
+    const tip = `${driveName(spooling.to)} spinning up — ${spooling.left.toFixed(1)}s to go. A fleet runs on thrusters until the drive catches, and cannot change course until it does.`;
+    return stat(
+      "Drive",
+      `<span class="dim" title="${esc(tip)}">thrusters · ${esc(driveName(spooling.to))} spinning up <b>${spooling.left.toFixed(1)}s</b></span>`,
+    );
+  }
+  if (dropping) {
+    const tip = `Dropping to thrusters — ${dropping.left.toFixed(1)}s to go. A course change means shutting the drive down first; only then can the fleet come about.`;
+    return stat(
+      "Drive",
+      `<span class="dim" title="${esc(tip)}">thrusters · dropping out <b>${dropping.left.toFixed(1)}s</b></span>`,
+    );
+  }
+  const r = cruising ?? "thrusters";
   // §course-change: WHY thrusters, when it is the well's doing. Computed from
   // the ghost's own retarded position against the (static) star chart, so the
   // reason shown can never disagree with the delayed state beside it — no wire

@@ -1501,14 +1501,14 @@ pub struct GhostView {
     /// rest of the sighting: a fleet you see berthed may have sailed since.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docked: Option<String>,
-    /// §hyperspace: which layer the fleet was moving through — normal space,
-    /// warp, or an aligned lane.
-    ///
-    /// Ungated, like `docked`. It leaks nothing the sighting does not already
-    /// give away: `vel` is right here, and a fleet crossing at fifty times its
-    /// own cruise is visibly in a lane whether or not anyone labels it.
-    #[serde(default)]
-    pub regime: sim::lane::Regime,
+    /// §course-change: what the DRIVES were doing — cruising, spinning up, or
+    /// shutting down. THE one drive field on the wire: the regime is derived
+    /// from it client-side rather than sent alongside, because two fields that
+    /// must agree eventually do not. Spooling looks exactly like thrusters from
+    /// outside, so without this the panel cannot say why a ship is crawling.
+    /// Light-delayed with the rest of the sighting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive: Option<sim::ship::DriveState>,
     /// Speed at the retarded moment (sim units / s) — the magnitude of `vel`,
     /// sent alongside it so the panel does not have to recompute what the server
     /// already knows.

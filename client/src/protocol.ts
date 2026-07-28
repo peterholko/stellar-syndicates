@@ -690,6 +690,13 @@ export interface PathPointView {
   lane: boolean;
 }
 
+/// §course-change: the drive spin-up / shut-down state, as the sim models it.
+export type DriveStateView =
+  | "thrusters"
+  | { spooling: { to: "thrusters" | "warp" | "hyperspace"; left: number } }
+  | { cruising: "thrusters" | "warp" | "hyperspace" }
+  | { dropping: { left: number } };
+
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
@@ -709,8 +716,10 @@ export interface GhostView {
   /// ghosts are grouped into per-system berth counts, so the information moves
   /// from "overlapping sprites" to "a number you can read".
   docked?: string | null;
-  /// §hyperspace: which layer the fleet was moving through when the light left.
-  regime?: "thrusters" | "warp" | "hyperspace";
+  /// §course-change: what the drives were doing when the light left. The regime
+  /// is DERIVED from this rather than sent beside it — a cruising drive names
+  /// its layer; anything mid-transition is on thrusters until it catches.
+  drive?: DriveStateView;
   /// Speed at that retarded moment (su/s).
   speed?: number;
   // Convoys broadcast a route (waypoints); raiders don't (null).

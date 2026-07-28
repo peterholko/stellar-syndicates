@@ -1972,3 +1972,25 @@ mod tests {
         assert_eq!(f2.count(ShipKind::Raider), 3);
     }
 }
+
+#[cfg(test)]
+mod drive_wire {
+    use super::*;
+
+    /// The client hand-parses this shape, so pin it: a rename of a variant that
+    /// only broke the panel would otherwise ship silently.
+    #[test]
+    fn drive_state_serialises_the_shape_the_panel_reads() {
+        let j = |d: DriveState| serde_json::to_string(&d).unwrap();
+        assert_eq!(j(DriveState::Thrusters), "\"thrusters\"");
+        assert_eq!(
+            j(DriveState::Cruising(crate::lane::Regime::Hyperspace)),
+            "{\"cruising\":\"hyperspace\"}"
+        );
+        assert_eq!(
+            j(DriveState::Spooling { to: crate::lane::Regime::Warp, left: 1.5 }),
+            "{\"spooling\":{\"to\":\"warp\",\"left\":1.5}}"
+        );
+        assert_eq!(j(DriveState::Dropping { left: 3.0 }), "{\"dropping\":{\"left\":3.0}}");
+    }
+}
