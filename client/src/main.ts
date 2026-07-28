@@ -562,6 +562,18 @@ function buildShipPanel(): void {
     const act = (b as HTMLElement).dataset.act;
     if (act === "close") {
       deselectShip();
+    } else if (act === "emplace" && state.selectedShipId) {
+      const k = (e.target as HTMLElement).closest(".emplace-btn")?.getAttribute("data-kind") as
+        | "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" | null;
+      if (k) {
+        const same = state.placing === k && state.placingBuilder === state.selectedShipId;
+        state.placing = same ? null : k;
+        state.placingBuilder = same ? null : state.selectedShipId;
+        readout().innerHTML = state.placing
+          ? `Pick a spot on the map. <span class="dim">Esc to cancel.</span>`
+          : "";
+        updateShipPanel();
+      }
     } else if (act === "recall" && state.selectedShipId && net) {
       net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
       delete state.raids[state.selectedShipId]; // break off the intercept estimate
@@ -981,6 +993,8 @@ function ownBody(g: GhostView): string {
   parts.push(compositionSection(g));
   parts.push(orderLifecycleLine(g));
   parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
+  // §emplacements: the siting verbs live on the actor.
+  if (g.kind === "builder") parts.push(emplaceSection(g));
 
   // Cargo + logistics belong to any fleet that CONTAINS convoys — mirroring the
   // sim's `Fleet::cargo_capacity()`, which counts convoy hulls and never looks at
@@ -3105,11 +3119,12 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
       // requirement here so the refusal has a face — the server would just
       // silently decline, and a click that does nothing is the worst outcome
       // a placement mode can have.
-      const idleBuilder = state.ghosts.some(
-        (x) => x.own && x.kind === "builder" && Math.hypot(x.vel.x, x.vel.y) < 0.5,
-      );
-      if (!idleBuilder) {
-        readout().innerHTML = `<span style="color:var(--warn)">No idle Construction Ship — build one at a Shipyard, then site this.</span>`;
+      const builderId = state.placingBuilder;
+      const b = builderId ? state.ghosts.find((x) => x.id === builderId && x.own) : undefined;
+      if (!b) {
+        readout().innerHTML = `<span style="color:var(--warn)">That Construction Ship is gone — reselect one and try again.</span>`;
+        state.placing = null;
+        state.placingBuilder = null;
         return;
       }
       const label =
@@ -3118,14 +3133,15 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
           : state.placing === "deep_space_sensor"
             ? "Deep Space Sensor"
             : "Hyperspace Sensor";
-      net?.send({ type: "BuildEmplacement", emplacement: state.placing, pos: at });
+      net?.send({ type: "BuildEmplacement", builder: builderId!, emplacement: state.placing, pos: at });
       readout().innerHTML =
-        `<b>${label}</b> ordered — your nearest Construction Ship is being dispatched (signal outbound).` +
+        `<b>${label}</b> ordered — this Construction Ship is being dispatched (signal outbound).` +
         (state.placing === "hyperspace_buoy"
           ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
           : "");
       state.placing = null;
-      updateEmplaceBar();
+      state.placingBuilder = null;
+      updateShipPanel();
       return;
     }
     // §aftermath-select: any fresh map click drops the concluded-battle marker
@@ -3455,23 +3471,27 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     }
 }
 
-// §emplacements: the siting toolbar. Two buttons that arm placement mode; the
-// map does the rest. Deliberately NOT a modal or a panel — siting is a decision
-// about WHERE, so the map has to stay visible while you make it.
-function updateEmplaceBar(): void {
-  const bar = document.getElementById("emplace-bar");
-  if (!bar) return;
+// §emplacements: the CONSTRUCTION SHIP's build section — the three siting
+// buttons, on the actor rather than an ambient toolbar. Arming hands control
+// to the map (siting is a decision about WHERE, so the map stays visible);
+// the armed button is unmistakable because the next map click commits.
+function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
     ["hyperspace_buoy", "Hyperspace Buoy", "Relays orders and reports at lane speed — but only between TWO buoys sharing a lane. Must be sited in a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Site it anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must be sited in a lane."],
   ];
-  bar.innerHTML = kinds
+  const busy = !(state.orders[g.id] === undefined && Math.hypot(g.vel.x, g.vel.y) < 0.5);
+  const note = busy
+    ? `<div class="sp-line dim">Under way — it can take a new site when it goes idle.</div>`
+    : `<div class="sp-line dim">Pick a structure, then click the site on the map.</div>`;
+  const btns = kinds
     .map(
       ([k, label, tip]) =>
-        `<button class="emplace-btn${state.placing === k ? " armed" : ""}" data-kind="${k}" title="${esc(tip)}">${label}</button>`,
+        `<button class="emplace-btn${state.placing === k && state.placingBuilder === g.id ? " armed" : ""}" data-act="emplace" data-kind="${k}" title="${esc(tip)}"${busy ? " disabled" : ""}>${label}</button>`,
     )
-    .join("");
+    .join(" ");
+  return `<div class="sp-sec">Construct</div>${note}<div class="sp-line">${btns}</div>`;
 }
 
 // Wire map interaction: zoom (wheel toward cursor + buttons), pan (left-drag on
@@ -3480,16 +3500,6 @@ function updateEmplaceBar(): void {
 function installInteraction(): void {
   const canvas = renderer.canvas;
   // §emplacements: arm a kind, or disarm by clicking the armed one again.
-  $("emplace-bar").addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest(".emplace-btn") as HTMLElement | null;
-    if (!b) return;
-    const k = b.dataset.kind as "hyperspace_buoy" | "deep_space_sensor";
-    state.placing = state.placing === k ? null : k;
-    updateEmplaceBar();
-    readout().innerHTML = state.placing
-      ? `Pick a spot on the map. <span class="dim">Esc to cancel.</span>`
-      : "";
-  });
   // The map has to know where the pointer is to preview the site under it.
   canvas.addEventListener("pointermove", (e) => {
     const r = canvas.getBoundingClientRect();
@@ -3501,7 +3511,8 @@ function installInteraction(): void {
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && state.placing) {
       state.placing = null;
-      updateEmplaceBar();
+      state.placingBuilder = null;
+      updateShipPanel();
       readout().innerHTML = "";
     }
   });
@@ -6688,8 +6699,6 @@ function join(): void {
           $("readout").style.display = "block";
           $("legend").style.display = "block";
           $("zoom-controls").style.display = "flex";
-          $("emplace-bar").style.display = "flex";
-          updateEmplaceBar();
           // Wire the rail (System/Logistics/Doctrine), the navbar Market overlay,
           // and the navbar Log. The rail + Market stay CLOSED on join so the map is
           // uncluttered — opened by clicking a system, S/O/F, or the navbar/M.

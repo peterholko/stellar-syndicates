@@ -5124,41 +5124,26 @@ impl World {
                     f.modules.insert(*module, take);
                 }
             }
-            Command::BuildEmplacement { player_id, emplacement, pos } => {
-                // §emplacements: BUILT BY A SHIP, not conjured from a yard. The
-                // command picks the player's nearest idle Construction Ship,
-                // charges the kit where that ship would load it, and sends the
-                // order out at signal speed like any other — the builder flies
-                // to the site, holds there for the assembly, and is freed when
-                // the emplacement stands.
+            Command::BuildEmplacement { player_id, builder, emplacement, pos } => {
+                // §emplacements: BUILT BY THE NAMED SHIP. The verb sits on the
+                // Construction Ship's own panel, so the command says which one —
+                // no server-side "nearest idle" guesswork to surprise anyone.
                 if crate::emplace::site_check(*emplacement, *pos, &self.lanes, &self.emplacements)
                     .is_err()
                 {
                     return;
                 }
-                // The nearest IDLE builder. Busy ones are not silently retasked:
-                // yanking a mid-job crane because the player clicked again would
-                // abandon work they may not know is running.
                 let Some((builder_id, builder_pos)) = self
                     .fleets
-                    .iter()
-                    .filter(|(_, f)| {
+                    .get(builder)
+                    .filter(|f| {
                         f.owner == *player_id
                             && f.count(ShipKind::Builder) >= 1
                             && matches!(f.order, FleetOrder::Idle)
                     })
-                    .map(|(id, f)| (*id, f.pos))
-                    .min_by(|a, b| a.1.distance(*pos).total_cmp(&b.1.distance(*pos)))
+                    .map(|f| (*builder, f.pos))
                 else {
-                    events.push(Event::new(
-                        self.time,
-                        EventPayload::FuelShortfall {
-                            owner: *player_id,
-                            needed: 0.0,
-                            kind: crate::fuel::ShortfallKind::Move,
-                        },
-                    ));
-                    return; // no idle Construction Ship — nothing to dispatch
+                    return; // not yours, not a builder, or mid-job — refused
                 };
                 // THE KIT, charged from the stockpile nearest the builder — it
                 // loads where it stands. (The pickup leg itself is not flown;
@@ -13147,6 +13132,7 @@ mod tests {
 
         w.step(&[Command::BuildEmplacement {
             player_id: id,
+            builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
             pos: site,
         }]);
@@ -13192,6 +13178,7 @@ mod tests {
         let site = l.at(l.length() * 0.5);
         w.step(&[Command::BuildEmplacement {
             player_id: id,
+            builder: EntityId(555_555), // no such ship
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
             pos: site,
         }]);
@@ -13208,6 +13195,7 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         w.step(&[Command::BuildEmplacement {
             player_id: id,
+            builder: EntityId(555_555),
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
             pos: Vec2::new(9_000_000.0, 0.0),
         }]);

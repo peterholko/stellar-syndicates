@@ -51,6 +51,8 @@ export interface ViewState {
   /// §emplacements: the kind currently being SITED, or null when not placing.
   /// While set, the map previews legality under the cursor and a click commits.
   placing: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" | null;
+  /// §emplacements: WHICH Construction Ship the armed placement dispatches.
+  placingBuilder: string | null;
   market: MarketView | null;
   /// Client-accumulated history of the (light-delayed) hub prices the player has
   /// OBSERVED, per commodity — the data source for the Market sparklines. This is
@@ -149,6 +151,7 @@ export function initialState(): ViewState {
     ghosts: [],
     emplacements: [],
     placing: null,
+    placingBuilder: null,
     market: null,
     priceHistory: {},
     lastPriceSampleAt: -1,

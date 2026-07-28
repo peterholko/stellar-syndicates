@@ -588,21 +588,20 @@
       /* ---- §emplacements: the siting toolbar ------------------------------- */
       /* Sits under the zoom column, on the map rather than in a panel: siting is
          a decision about WHERE, so the map has to stay visible while making it. */
-      #emplace-bar {
-        position: fixed; left: 14px; bottom: 14px;
-        display: none; flex-direction: column; gap: 6px; z-index: 6;
-      }
-      #emplace-bar .emplace-btn {
+      /* §emplacements: the siting buttons live on the CONSTRUCTION SHIP'S
+         panel — the verb belongs to the actor, like raid belongs to the
+         raider. Arming still hands control to the map, which stays visible. */
+      .emplace-btn {
         cursor: pointer; padding: 6px 10px; text-align: left;
         background: rgba(8,12,22,0.82); color: var(--ink);
         border: 1px solid var(--border); border-radius: 6px;
         font: inherit; font-size: 11px; letter-spacing: 0.4px;
         backdrop-filter: blur(4px);
       }
-      #emplace-bar .emplace-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .emplace-btn:hover { border-color: var(--accent); color: var(--accent); }
       /* ARMED reads unmistakably: the next map click commits, so it must not be
          possible to forget you are in this mode. */
-      #emplace-bar .emplace-btn.armed {
+      .emplace-btn.armed {
         border-color: var(--accent); color: var(--accent);
         box-shadow: inset 0 0 0 1px var(--accent);
       }
@@ -1314,7 +1313,6 @@
       across light-minutes — orders and sightings both lag.
     </div>
 
-    <div id="emplace-bar"></div>
     <div id="zoom-controls">
       <button id="zoom-in" type="button" title="Zoom in (scroll up · +)" aria-label="Zoom in">+</button>
       <button id="zoom-reset" type="button" title="Fit galaxy (reset view)" aria-label="Fit galaxy">⊡</button>

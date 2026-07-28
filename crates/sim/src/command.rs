@@ -323,6 +323,9 @@ pub enum Command {
     /// can never be refused for a reason the player was never shown.
     BuildEmplacement {
         player_id: PlayerId,
+        /// THE construction ship doing the job — the verb lives on the actor's
+        /// panel, so the actor is named rather than server-picked.
+        builder: EntityId,
         /// Not `kind`: the enum is internally tagged on that name.
         emplacement: crate::emplace::EmplacementKind,
         pos: crate::math::Vec2,
