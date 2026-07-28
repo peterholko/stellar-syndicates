@@ -793,6 +793,44 @@ impl Ship {
     }
 }
 
+/// §course-change: the drive spin-up / shut-down state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriveState {
+    /// On thrusters. The ONLY state in which a fleet may change heading.
+    #[default]
+    Thrusters,
+    /// Spinning a drive up. Still on thruster speed until it catches.
+    Spooling {
+        /// What it is spinning up INTO.
+        to: crate::lane::Regime,
+        /// Seconds left.
+        left: f64,
+    },
+    /// Under way at `Regime` speed, locked on its current course.
+    Cruising(crate::lane::Regime),
+    /// Shutting down to thrusters. Still moving, still unable to steer.
+    Dropping { left: f64 },
+}
+
+impl DriveState {
+    /// Can the fleet change heading right now? Only on thrusters — which is the
+    /// whole mechanic.
+    pub fn can_steer(self) -> bool {
+        matches!(self, DriveState::Thrusters)
+    }
+
+    /// The regime this state moves at. Transitions run at thruster speed: a
+    /// drive that has not caught yet is not carrying you, and one that is
+    /// shutting down has already let go.
+    pub fn regime(self) -> crate::lane::Regime {
+        match self {
+            DriveState::Cruising(r) => r,
+            _ => crate::lane::Regime::Thrusters,
+        }
+    }
+}
+
 /// A FLEET: the map/sim unit (GDD §13.1). One or more ships of mixed kinds
 /// moving, fighting, and being observed as a SINGLE entity. A fleet-of-one is
 /// the N=1 case and behaves exactly as the old single ship-per-unit world.
@@ -898,6 +936,16 @@ pub struct Fleet {
     /// bookkeeping question and becomes a property of the formation.
     #[serde(default)]
     pub fuel: f64,
+    /// §course-change: what the drives are DOING — cruising, spinning up, or
+    /// shutting down.
+    ///
+    /// A fleet cannot steer above thrusters. Changing course means dropping all
+    /// the way out, turning, and re-entering, and each of those transitions
+    /// takes time. Holding it as a state rather than deriving it per tick is
+    /// what makes the cost real: a reversal is a sequence the fleet has to live
+    /// through, not an instantaneous re-aim.
+    #[serde(default)]
+    pub drive_state: DriveState,
     /// §hyperspace: which layer this fleet is moving through, as of the last
     /// tick it moved. Recorded rather than re-derived so the badge the map shows
     /// is the regime the fleet was actually flown at.
@@ -1037,6 +1085,7 @@ impl Fleet {
             warp: false,
             fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
             regime: crate::lane::Regime::Thrusters,
+            drive_state: DriveState::default(),
             route: Vec::new(),
             stalled: false,
             damage: BTreeMap::new(),
@@ -1484,31 +1533,93 @@ impl Fleet {
         // to bite on and the fleet is running along it, which `factor` answers.
         let under_way = !matches!(self.order, FleetOrder::Idle);
         let drive = self.warp || (under_way && !env.in_well(self.pos));
-        // §roads: THE LEG SAYS WHICH DRIVE IS CARRYING YOU.
+        // §course-change: DRIVE THE STATE MACHINE, then read speed off it.
         //
-        // A fleet rides a lane because its route put it on one, not because it
-        // happens to be standing inside a ribbon pointing the right way. That old
-        // per-tick test answered YES for a fleet merely CROSSING a lane — so a
-        // ship cutting diagonally over one collected full hyperspace speed for a
-        // second and lost it on the way out, about once a second, all trip. Speed
-        // now comes from what the fleet is doing, which cannot flicker.
-        //
-        // The hyperspace drive still only bites near a lane: `boarding` is
-        // checked when the leg is taken up, not re-litigated every tick.
-        let riding = self.route.first().and_then(|l| l.lane).filter(|_| drive);
-        let factor = match riding {
-            Some(_) => crate::lane::WARP_FACTOR * crate::lane::LANE_MULT,
-            None if drive && !env.in_well(self.pos) => crate::lane::WARP_FACTOR,
-            None => 1.0,
+        // A fleet cannot steer above thrusters. To change course it drops all
+        // the way out, turns, and re-enters — and each transition takes time.
+        // That is what makes a reversal cost something, and it replaces the old
+        // bounded-turn-rate model, which decided the same question by geometry
+        // and lost: past the alignment gate a hull's speed fell tenfold and its
+        // turning circle with it, so a Titan could come about inside a ribbon it
+        // was supposedly far too big to turn in.
+        let want = self.route.first().and_then(|l| l.lane).filter(|_| drive).map_or(
+            if drive && !env.in_well(self.pos) {
+                crate::lane::Regime::Warp
+            } else {
+                crate::lane::Regime::Thrusters
+            },
+            |_| crate::lane::Regime::Hyperspace,
+        );
+        // How far the course it WANTS is from the course it is ON.
+        let aim = self.route.first().map_or_else(
+            || match self.order {
+                FleetOrder::MoveTo { dest } => dest - self.pos,
+                _ => Vec2::ZERO,
+            },
+            |l| l.to - self.pos,
+        );
+        let off_course = if heading.length_sq() > 1e-9 && aim.length_sq() > 1e-9 {
+            heading.normalized().dot(aim.normalized()).clamp(-1.0, 1.0).acos()
+        } else {
+            0.0
         };
-        let _ = heading;
-        self.regime = match riding {
-            Some(_) => crate::lane::Regime::Hyperspace,
-            None if drive && !env.in_well(self.pos) => crate::lane::Regime::Warp,
-            None => crate::lane::Regime::Thrusters,
+        self.drive_state = match self.drive_state {
+            // At rest on thrusters: start spinning up if there is anything to
+            // spin up into.
+            DriveState::Thrusters if want != crate::lane::Regime::Thrusters => {
+                DriveState::Spooling { to: want, left: crate::lane::spool_seconds(want) }
+            }
+            DriveState::Thrusters => DriveState::Thrusters,
+            // Mid spin-up: finish, or abandon it if the fleet no longer wants it.
+            // Changed its mind mid spin-up: start the new one from scratch, or
+            // fall back to thrusters if it no longer wants a drive at all.
+            DriveState::Spooling { to, .. } if to != want => {
+                if want == crate::lane::Regime::Thrusters {
+                    DriveState::Thrusters
+                } else {
+                    DriveState::Spooling { to: want, left: crate::lane::spool_seconds(want) }
+                }
+            }
+            DriveState::Spooling { to, left } => {
+                let left = left - dt;
+                if left <= 0.0 { DriveState::Cruising(to) } else { DriveState::Spooling { to, left } }
+            }
+            // Cruising: any change of regime means SHUTTING DOWN first.
+            DriveState::Cruising(r) if r != want => {
+                DriveState::Dropping { left: crate::lane::drop_seconds(r) }
+            }
+            // ...and so does any change of COURSE. In warp nothing is steering,
+            // so wanting to go somewhere other than where you are pointed is not
+            // something you can act on — you drop out, come about on thrusters,
+            // and light it again. A fleet on a LANE is exempt: there the road is
+            // steering, and a road bending is not the ship changing its mind.
+            DriveState::Cruising(crate::lane::Regime::Warp)
+                if off_course > crate::lane::COURSE_LOCK_RAD =>
+            {
+                DriveState::Dropping { left: crate::lane::drop_seconds(crate::lane::Regime::Warp) }
+            }
+            DriveState::Cruising(r) => DriveState::Cruising(r),
+            DriveState::Dropping { left } => {
+                let left = left - dt;
+                if left <= 0.0 { DriveState::Thrusters } else { DriveState::Dropping { left } }
+            }
+        };
+        self.regime = self.drive_state.regime();
+        let factor = match self.regime {
+            crate::lane::Regime::Hyperspace => crate::lane::WARP_FACTOR * crate::lane::LANE_MULT,
+            crate::lane::Regime::Warp => crate::lane::WARP_FACTOR,
+            crate::lane::Regime::Thrusters => 1.0,
         };
         let speed = self.transit_speed() * factor;
-        let radius = crate::lane::TransitEnv::turn_radius(speed);
+        // WHO IS STEERING. On thrusters, the fleet. On a lane, the LANE — a road
+        // bending is not the ship changing course, it is the ship being carried
+        // along one, so a fleet riding a ribbon follows it freely. Everywhere
+        // else the course is locked: in warp there is nothing to follow and no
+        // authority to turn with, so the fleet flies the line it committed to
+        // when it lit the drive.
+        let steered = self.drive_state.can_steer()
+            || matches!(self.drive_state, DriveState::Cruising(crate::lane::Regime::Hyperspace));
+        let radius = if steered { 0.0 } else { f64::INFINITY };
 
         match &mut self.order {
             FleetOrder::Idle => {

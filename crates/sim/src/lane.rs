@@ -60,6 +60,52 @@ pub const LANE_MULT: f64 = 10.0;
 /// before. Tuning one has to be able to move without the other following it.
 pub const GALAXY_SCALE: f64 = 50.0;
 
+/// §course-change: how long a drive takes to spin up or shut down, in seconds.
+///
+/// A ship cannot steer in warp or hyperspace — to change course it drops all the
+/// way back to thrusters, turns, and re-enters. These are what that costs, and
+/// they are the whole reason a course change is a decision rather than a
+/// keystroke. The lane figures are larger because threading a ribbon is a harder
+/// piece of navigation than simply lighting a drive in open space.
+///
+/// This REPLACES the old bounded-turn-rate model. Course changes used to be
+/// governed by a turning circle, which made an in-lane reversal a question of
+/// geometry — and the geometry lost: past the alignment gate a hull's speed fell
+/// tenfold and its turning circle with it, so a Titan could come about inside a
+/// ribbon it was supposedly too big to turn in.
+pub const WARP_SPOOL_S: f64 = 1.5;
+pub const WARP_DROP_S: f64 = 1.0;
+pub const LANE_SPOOL_S: f64 = 4.0;
+pub const LANE_DROP_S: f64 = 3.0;
+
+/// §course-change: how far off its committed heading a WARP fleet may be before
+/// it has to shut down and come about.
+///
+/// Small, because in warp nothing is steering: the fleet flies the line it was
+/// aimed along when the drive caught. Anything beyond a rounding error means the
+/// course it wants is not the course it is on, and the only way to fix that is
+/// to drop out. A fleet riding a LANE is exempt — there the road is steering,
+/// and a road bending is not the ship changing its mind.
+pub const COURSE_LOCK_RAD: f64 = 0.09; // ~5°
+
+/// Seconds to spin a drive up into `to`. Thrusters need no spin-up.
+pub fn spool_seconds(to: Regime) -> f64 {
+    match to {
+        Regime::Thrusters => 0.0,
+        Regime::Warp => WARP_SPOOL_S,
+        Regime::Hyperspace => LANE_SPOOL_S,
+    }
+}
+
+/// Seconds to shut `from` down to thrusters.
+pub fn drop_seconds(from: Regime) -> f64 {
+    match from {
+        Regime::Thrusters => 0.0,
+        Regime::Warp => WARP_DROP_S,
+        Regime::Hyperspace => LANE_DROP_S,
+    }
+}
+
 /// Turn-radius constant: `min_turn_radius = TURN_K × speed`. Constant speed is
 /// preserved (this is emphatically not the flip-and-burn model §7 removed) —
 /// only heading is rate-limited, so `t = d/v` still holds along the flown path
@@ -87,11 +133,6 @@ pub const HYPERLIMIT: f64 = 900.0;
 /// standardized width for v1 — no minor/major/super classes until the standard
 /// model is understood.
 pub const LANE_WIDTH_FRAC: f64 = 0.26;
-
-/// The share of the tightest hull's turning circle a ribbon's half-width may
-/// occupy. Below 1.0 by construction — at 1.0 a Titan could just come about
-/// inside a lane, which is the one thing the width is not allowed to permit.
-const RIBBON_CEILING_FRAC: f64 = 0.9;
 
 /// What fraction of its width a route keeps at its very tip. The taper thins the
 /// frontier; this stops it thinning to a ribbon with no inside.
@@ -1279,7 +1320,12 @@ pub fn generate(
             continue; // already served
         }
         let along = (join - *h).normalized();
-        let start = *h + along * (half_width * 2.0);
+        // Stand off by a fixed slice of SPACING, not by the ribbon's width. Tying
+        // it to half-width made the standoff grow with the ribbon, so widening
+        // lanes pushed each spur further from the very home it exists to serve —
+        // far enough, once the width cap came off, that homes stopped being
+        // connected at all.
+        let start = *h + along * (spacing * 0.05);
         let ctrl = vec![start, start + (join - start) * 0.5, join];
         lanes.push(finish(&mut next_id, ctrl, half_width, false, LaneKind::Spur));
     }
@@ -1461,32 +1507,17 @@ fn fastest_lane_speed() -> f64 {
     115.0 * WARP_FACTOR * LANE_MULT
 }
 
-/// The slowest hull's lane speed, and so the TIGHTEST circle any hull can turn
-/// inside a ribbon. A route's half-width has to stay under it — see `ribbon_half_width`.
-fn slowest_lane_speed() -> f64 {
-    23.0 * WARP_FACTOR * LANE_MULT
-}
-
-/// How wide a ribbon may be, given the systems it threads.
+/// How wide a ribbon is, given the systems it threads.
 ///
-/// Width is a fraction of system spacing, but it is CAPPED, and the cap is the
-/// reason in-lane reversal is impossible rather than merely discouraged. To come
-/// about inside a corridor of width `2h` a hull needs a turning circle of `r <= h`;
-/// keep `h` below the tightest circle any hull can turn — the Titan's — and the
-/// manoeuvre has nowhere to happen. "Exit hyperspace, swing round, re-enter" then
-/// costs what it costs because geometry says so, not because a rule forbids it.
-///
-/// The cap matters because spacing is not a fixed quantity: it moves with player
-/// count and with the luck of a seed, so a width fraction that clears the circle
-/// in a 4-player galaxy can breach it in a 6-player one. Tuning the fraction
-/// against a measured ceiling would leave the invariant one unlucky galaxy from
-/// failing; deriving it here means no galaxy can produce a ribbon a hull can turn
-/// inside of.
+/// No longer capped against a hull's turning circle. That cap existed to make
+/// in-lane reversal geometrically impossible — keep the corridor narrower than
+/// anything could turn inside of — and the argument did not survive contact:
+/// past the alignment gate a hull's speed fell tenfold and its turning circle
+/// with it, so a Titan came about in ~1,000 su inside a 5,900 su ribbon. §course-
+/// change settles it as a RULE instead: you cannot steer above thrusters, so a
+/// reversal costs a full shutdown and restart whatever the corridor's width.
 fn ribbon_half_width(spacing: f64) -> f64 {
-    let from_spacing = spacing * LANE_WIDTH_FRAC * 0.5;
-    // Margin so the ribbon stays clearly under the circle rather than equal to it.
-    let ceiling = TURN_K * slowest_lane_speed() * RIBBON_CEILING_FRAC;
-    from_spacing.min(ceiling)
+    spacing * LANE_WIDTH_FRAC * 0.5
 }
 
 /// Minimum curvature radius of a control polygon, sampled through its spline.
@@ -1715,34 +1746,6 @@ mod tests {
         }
     }
 
-    /// NO IN-LANE U-TURNS, checked against the SLOWEST hull — the one with the
-    /// tightest circle, and therefore the only one that could ever come about
-    /// inside a ribbon. This is what makes "reversal costs you an exit and an
-    /// arc" a geometric fact rather than a rule someone has to enforce.
-    #[test]
-    fn no_hull_can_come_about_inside_a_ribbon() {
-        // ACROSS PLAYER COUNTS AND SEEDS. Width is capped against this circle
-        // rather than tuned to clear it, and the cap is what makes the rule
-        // structural — but median spacing moves with the roster and with the luck
-        // of a seed, so a single 4-player galaxy is not evidence the cap holds.
-        // Measured, the spacing that drives width varies by better than 8%
-        // between rosters, which is enough to swallow a hand-tuned margin.
-        let titan_lane_speed = 23.0 * WARP_FACTOR * LANE_MULT;
-        let tightest = TURN_K * titan_lane_speed;
-        for players in [2usize, 3, 4, 5, 6, 8] {
-            for seed in 0u64..8 {
-                let (n, ..) = net(seed, players);
-                for l in &n.lanes {
-                    assert!(
-                        tightest > l.half_width,
-                        "{players}p seed {seed}: {} is {:.0} half-wide, and a Titan turns in {tightest:.0} — it could come about without ever leaving the lane",
-                        l.name,
-                        l.half_width,
-                    );
-                }
-            }
-        }
-    }
 
 
     /// HOME FAIRNESS. Lanes are the information network as well as the logistics
@@ -2466,6 +2469,74 @@ mod route_flight {
             tapered.half_width_at(len) < tapered.half_width_at(len * 0.5),
             "the frontier should still thin out, just not to nothing",
         );
+    }
+
+    /// §course-change: REVERSING COSTS A FULL SHUTDOWN AND RESTART.
+    ///
+    /// A fleet cannot steer above thrusters, so turning round means dropping all
+    /// the way out, coming about, and spinning back up. This is the rule that
+    /// replaced the old geometric argument — keep ribbons narrower than any hull
+    /// can turn inside of — which did not survive contact: past the alignment
+    /// gate a hull's speed fell tenfold and its turning circle with it, so a
+    /// Titan came about in ~1,000 su inside a 5,900 su ribbon without ever
+    /// leaving it.
+    #[test]
+    fn coming_about_means_dropping_out_of_the_drive_first() {
+        let net = LaneNetwork::default();
+        let env = TransitEnv { lanes: &net, wells: &[] };
+        let mut f = crate::ship::Fleet::single(
+            crate::EntityId(1),
+            crate::PlayerId(1),
+            crate::ship::ShipKind::Raider,
+            Vec2::ZERO,
+            crate::ship::FleetOrder::MoveTo { dest: Vec2::new(400_000.0, 0.0) },
+            None,
+        );
+        f.fuel = 1e9;
+        let dt = 1.0 / 30.0;
+        // Run east until the warp drive has caught.
+        let mut t = 0.0;
+        while t < 10.0 {
+            f.advance(t, dt, &env);
+            t += dt;
+        }
+        assert_eq!(f.regime, Regime::Warp, "under way in warp");
+        assert!(!f.drive_state.can_steer(), "and unable to steer while it is");
+        let east = f.vel;
+
+        // Now send it the other way. It must NOT simply swing round.
+        f.order = crate::ship::FleetOrder::MoveTo { dest: Vec2::new(-400_000.0, 0.0) };
+        f.route.clear();
+        f.advance(t, dt, &env);
+        t += dt;
+        assert!(
+            matches!(f.drive_state, crate::ship::DriveState::Dropping { .. }),
+            "a course reversal shuts the drive down first, got {:?}",
+            f.drive_state,
+        );
+        assert_eq!(f.regime, Regime::Thrusters, "and it is off warp speed immediately");
+
+        // It stays unable to steer until the shutdown finishes.
+        let mut dropped_at = None;
+        while t < 40.0 {
+            f.advance(t, dt, &env);
+            t += dt;
+            if f.drive_state.can_steer() {
+                dropped_at = Some(t);
+                break;
+            }
+        }
+        let dropped = dropped_at.expect("the drive does finish shutting down");
+        assert!(dropped >= WARP_DROP_S, "the shutdown takes its stated time ({dropped:.1}s)");
+        // And only THEN does the heading come round.
+        while t < 80.0 {
+            f.advance(t, dt, &env);
+            t += dt;
+            if f.vel.dot(east) < 0.0 {
+                return; // came about, after paying for it
+            }
+        }
+        panic!("never came about at all");
     }
 
     /// The mechanism the flight above depends on: CROSSING A WAYPOINT IS NOT
