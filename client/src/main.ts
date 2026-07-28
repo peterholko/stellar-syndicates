@@ -901,13 +901,30 @@ function headingCell(g: GhostView): string {
 // this existed the only way to tell them apart was to watch how fast the sprite
 // crawled, which is unreadable at map zoom: a lane transit and a thruster crawl
 // both look like a dot.
+// Mirrors sim lane::HYPERLIMIT — the radius inside which no drive can light.
+const HYPERLIMIT_SU = 900;
+
 function regimeCell(g: GhostView): string {
   const sp = g.speed ?? Math.hypot(g.vel.x, g.vel.y);
   if (sp < 0.5) return stat("Transit", `<span class="dim">holding</span>`);
   const r = g.regime ?? "thrusters";
+  // §course-change: WHY thrusters, when it is the well's doing. Computed from
+  // the ghost's own retarded position against the (static) star chart, so the
+  // reason shown can never disagree with the delayed state beside it — no wire
+  // field, no staleness to manage. Without this the panel just said
+  // "thrusters" while the player wondered why their warship was crawling.
+  if (r === "thrusters" && state.galaxy) {
+    const well = state.galaxy.systems.find(
+      (sys) => Math.hypot(sys.pos.x - g.pos.x, sys.pos.y - g.pos.y) <= HYPERLIMIT_SU,
+    );
+    if (well) {
+      const tip = `Inside ${well.name}'s gravity well: no drive can light within ${HYPERLIMIT_SU} su of a star. The ship crawls clear on thrusters, then the warp drive spools up.`;
+      return stat("Drive", `<span class="dim" title="${esc(tip)}">thrusters · in ${esc(well.name)}'s gravity well</span>`);
+    }
+  }
   const shown = { thrusters: "thrusters", warp: "warp drive", hyperspace: "hyperspace lane" }[r];
   const tip = {
-    thrusters: "Thrusters only — sublight manoeuvring, inside a gravity well or with the warp drive shut down.",
+    thrusters: "Thrusters only — spooling a drive up or down, or running with the warp drive shut off.",
     warp: "Warp drive: five times thruster speed, and it flies anywhere — no lane needed, no heading to hold.",
     hyperspace: "Hyperspace drive, riding a lane: ten times warp again. The drive only engages near a lane, and leaving the ribbon or turning off its heading drops the fleet back to warp.",
   }[r];
