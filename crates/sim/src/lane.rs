@@ -89,6 +89,10 @@ pub const LANE_WIDTH_FRAC: f64 = 0.26;
 /// inside a lane, which is the one thing the width is not allowed to permit.
 const RIBBON_CEILING_FRAC: f64 = 0.9;
 
+/// What fraction of its width a route keeps at its very tip. The taper thins the
+/// frontier; this stops it thinning to a ribbon with no inside.
+const TAPER_FLOOR_FRAC: f64 = 0.35;
+
 /// A heading must lie within this of the local tangent to earn the lane's speed.
 /// The ALIGNMENT GATE: it stops a lane being a free boost for traffic merely
 /// crossing it, makes the directional bands mean something, and makes a reversal
@@ -218,7 +222,14 @@ impl Lane {
         if len - s >= taper || taper <= 0.0 {
             self.half_width
         } else {
-            self.half_width * ((len - s) / taper).clamp(0.0, 1.0)
+            // FADES TO A FLOOR, NOT TO NOTHING. Tapering to zero makes the last
+            // sliver of a route a ribbon with no inside: a fleet sitting exactly
+            // on the centerline at the terminus measures zero offset against a
+            // zero half-width and is ruled OUTSIDE the lane it is standing on.
+            // The frontier is supposed to thin out, not to stop existing — a
+            // route you cannot be on is not a fading route, it is a gap.
+            let frac = ((len - s) / taper).clamp(0.0, 1.0);
+            self.half_width * TAPER_FLOOR_FRAC.mul_add(1.0 - frac, frac)
         }
     }
 
@@ -1669,5 +1680,156 @@ mod tests {
                 assert!(joins, "seed {seed}: {} runs from its home to nowhere", s.name);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod route_flight {
+    use super::tests::*;
+    use super::*;
+    use crate::ship::{Fleet, FleetOrder, ShipKind};
+
+    /// A ROUTED FLIGHT MUST BEAT THE STRAIGHT LINE IT REPLACED.
+    ///
+    /// Following a lane is only worth the detour if the fleet actually holds the
+    /// lane, and it did not: arriving at a waypoint zeroed velocity, `factor`
+    /// reads heading to decide a fleet is riding a lane, and a fleet at rest is
+    /// riding nothing. So a routed fleet dropped to open-hyperspace speed at
+    /// every corner, re-aligned over the next leg, and dropped again — arriving
+    /// LATER than if it had ignored the network altogether. A route that loses to
+    /// a straight line is worse than no route: it burns the detour for nothing.
+    #[test]
+    fn following_a_route_beats_flying_straight() {
+        let (hub, anchors, homes, radius) = galaxy(1, 4);
+        let net = generate(1, hub, &anchors, &homes, radius);
+        let wells: Vec<(Vec2, f64)> = anchors.iter().map(|a| (a.pos, HYPERLIMIT)).collect();
+        let env = TransitEnv { lanes: &net, wells: &wells };
+
+        let from = anchors[0].pos;
+        let to = anchors
+            .iter()
+            .max_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))
+            .unwrap()
+            .pos;
+
+        let fly = |routed: bool| -> f64 {
+            let mut f = Fleet::single(
+                crate::EntityId(1),
+                crate::PlayerId(1),
+                ShipKind::Convoy,
+                from,
+                FleetOrder::MoveTo { dest: to },
+                None,
+            );
+            let base = f.transit_speed();
+            if routed {
+                f.route = net.route(
+                    from,
+                    to,
+                    base * HYPERSPACE_FACTOR,
+                    base * HYPERSPACE_FACTOR * LANE_MULT,
+                );
+                assert!(!f.route.is_empty(), "this leg should have a lane worth taking");
+            }
+            let dt = 1.0 / 30.0;
+            let mut t = 0.0;
+            while !matches!(f.order, FleetOrder::Idle) && t < 100_000.0 {
+                f.advance(t, dt, &env);
+                t += dt;
+            }
+            t
+        };
+
+        let (straight, routed) = (fly(false), fly(true));
+        assert!(
+            routed < straight,
+            "the routed flight took {routed:.0}s against {straight:.0}s flying straight — \
+             the fleet is not holding the lane it was routed onto",
+        );
+    }
+
+    /// A ROUTE ALWAYS HAS AN INSIDE, right out to its tip.
+    ///
+    /// The frontier taper thins a route's last stretch, which is the point — the
+    /// network should fade rather than stop at a hard edge. Thinning it to ZERO
+    /// is a different thing: at the terminus a fleet measures zero offset against
+    /// zero half-width and is ruled outside the very lane it is sitting on, so
+    /// the end of every trunk and chord silently stopped granting the benefit
+    /// that made it a lane.
+    #[test]
+    fn a_tapered_route_still_has_an_inside_at_its_tip() {
+        let (hub, anchors, homes, radius) = galaxy(1, 4);
+        let net = generate(1, hub, &anchors, &homes, radius);
+        for l in net.lanes.iter().filter(|l| l.tapers) {
+            // A point a WHISKER off the centerline at the terminus. Testing the
+            // centerline itself proves nothing: a zero-width ribbon still admits
+            // an offset of exactly zero, so the degenerate case passes.
+            let last = l.samples.last().unwrap();
+            let n = Vec2::new(-last.tangent.y, last.tangent.x).normalized();
+            let just_off = last.pos + n * 1.0;
+            assert!(
+                l.contains(just_off).is_some(),
+                "{} rules out a point 1 su off its own terminus — the ribbon has \
+                 tapered to nothing, so the end of the route is not on the route",
+                l.name,
+            );
+        }
+        // The narrowing itself still happens.
+        let tapered = net.lanes.iter().find(|l| l.tapers).expect("some route tapers");
+        let len = tapered.length();
+        assert!(
+            tapered.half_width_at(len) < tapered.half_width_at(len * 0.5),
+            "the frontier should still thin out, just not to nothing",
+        );
+    }
+
+    /// The mechanism the flight above depends on: CROSSING A WAYPOINT IS NOT
+    /// ARRIVING. A fleet part-way through a route is still under way, so it must
+    /// never be found at rest between two waypoints — velocity is what `factor`
+    /// reads to grant lane speed, and it is what stops a fleet setting off in a
+    /// new direction from nothing, which is how one could turn round inside a
+    /// ribbon without ever leaving it.
+    #[test]
+    fn a_waypoint_is_crossed_not_arrived_at() {
+        let (hub, anchors, homes, radius) = galaxy(1, 4);
+        let net = generate(1, hub, &anchors, &homes, radius);
+        let wells: Vec<(Vec2, f64)> = anchors.iter().map(|a| (a.pos, HYPERLIMIT)).collect();
+        let env = TransitEnv { lanes: &net, wells: &wells };
+        let from = anchors[0].pos;
+        let to = anchors
+            .iter()
+            .max_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))
+            .unwrap()
+            .pos;
+
+        let mut f = Fleet::single(
+            crate::EntityId(1),
+            crate::PlayerId(1),
+            ShipKind::Convoy,
+            from,
+            FleetOrder::MoveTo { dest: to },
+            None,
+        );
+        let base = f.transit_speed();
+        f.route =
+            net.route(from, to, base * HYPERSPACE_FACTOR, base * HYPERSPACE_FACTOR * LANE_MULT);
+        let planned = f.route.len();
+        assert!(planned > 2, "need a multi-waypoint route to cross anything");
+
+        let dt = 1.0 / 30.0;
+        let mut t = 0.0;
+        let mut stalls = 0u32;
+        while !matches!(f.order, FleetOrder::Idle) && t < 100_000.0 {
+            f.advance(t, dt, &env);
+            t += dt;
+            // Mid-route: waypoints still pending, so the fleet is under way.
+            if !f.route.is_empty() && f.vel.length() < 1e-6 {
+                stalls += 1;
+            }
+        }
+        assert_eq!(
+            stalls, 0,
+            "the fleet came to a dead stop {stalls} times while still {planned} waypoints into a route",
+        );
     }
 }

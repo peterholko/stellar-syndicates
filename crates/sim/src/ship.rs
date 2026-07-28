@@ -871,9 +871,25 @@ pub struct Fleet {
     /// fallback when no lane saves time and how every pre-feature fleet loads.
     #[serde(default)]
     pub route: Vec<Vec2>,
+    /// §hyperspace: FUEL IN THE TANKS. Carried, not drawn.
+    ///
+    /// This used to live in system stockpiles, and a moving fleet reached back
+    /// to whichever of its owner's systems could pay — from any distance, every
+    /// tick. That is what made running dry need an invented failure mode, and
+    /// the one that shipped did not work: movement happened first and only
+    /// zeroed velocity afterwards, which `advance` recomputes, so a fleet with
+    /// no fuel flew on regardless. It is also why automation had to PREDICT
+    /// affordability from straight-line estimates, and why hauling fuel needed
+    /// an exemption to avoid deadlocking its own resupply.
+    ///
+    /// Carrying it deletes all of that. A fleet cannot move without fuel because
+    /// moving IS decrementing a number it holds, and range stops being a
+    /// bookkeeping question and becomes a property of the formation.
+    #[serde(default)]
+    pub fuel: f64,
     /// §hyperspace: this fleet has run dry and is holding. A latch, so the
     /// owner-only notice fires once per stall rather than thirty times a second.
-    /// Cleared the tick it is fed again.
+    /// Cleared the tick it is refuelled.
     #[serde(default)]
     pub stalled: bool,
     /// Per-kind DAMAGE POOLS accumulated in an ongoing engagement (Part 2,
@@ -982,6 +998,11 @@ impl Fleet {
     ) -> Self {
         let mut composition = BTreeMap::new();
         composition.insert(kind, 1);
+        // A hull LEAVES THE SLIP FUELLED. The build already charged the yard for
+        // the ship; billing the first tank separately would only add a step that
+        // is never interesting to fail, and a fleet that spawned empty could not
+        // move off its own pad. Every tank after this one is bought at a dock.
+        let hull_mass = kind.hull_mass();
         Fleet {
             id,
             owner,
@@ -998,6 +1019,7 @@ impl Fleet {
             notified_held: false,
             marines_spent: 0,
             hyperdrive: false,
+            fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
             route: Vec::new(),
             stalled: false,
             damage: BTreeMap::new(),
@@ -1339,6 +1361,34 @@ impl Fleet {
         self.hull_mass() + self.cargo_mass()
     }
 
+    /// How much fuel this formation can carry.
+    ///
+    /// Proportional to hull mass, because the per-tick burn is too — which makes
+    /// RANGE roughly independent of fleet size. A capital group is expensive to
+    /// move but not short-legged, so mass buys you cost, not a shorter leash.
+    /// Cargo is excluded: a hold full of ore is not a fuel bunker.
+    pub fn fuel_capacity(&self) -> f64 {
+        self.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS
+    }
+
+    /// Fill from a supply, returning what was actually taken.
+    pub fn refuel(&mut self, available: f64) -> f64 {
+        let room = (self.fuel_capacity() - self.fuel).max(0.0);
+        let taken = room.min(available.max(0.0));
+        self.fuel += taken;
+        taken
+    }
+
+    /// How far this fleet can still go at `factor` (1 normal, H open, H×LANE on
+    /// an aligned lane). Distance, not time — what a range ring is drawn from.
+    pub fn range_at(&self, factor: f64) -> f64 {
+        let per_second = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0);
+        if per_second <= 1e-12 {
+            return f64::INFINITY;
+        }
+        (self.fuel / per_second) * self.transit_speed() * factor
+    }
+
     /// The fleet's TRANSIT speed = formation speed × the throttle fraction
     /// (§Part 4). Full = formation speed (behavior-preserving); Stealth creeps.
     pub fn transit_speed(&self) -> f64 {
@@ -1426,6 +1476,7 @@ impl Fleet {
                 // Steer to the next waypoint of the planned route, or straight at
                 // the destination when there is none.
                 let target = self.route.first().copied().unwrap_or(*dest);
+                let carried = self.vel;
                 let step = crate::movement::advance_turning(self.pos, self.vel, target, speed, dt, radius);
                 self.pos = step.pos;
                 self.vel = step.vel;
@@ -1439,6 +1490,24 @@ impl Fleet {
                         // steer to and the fleet is where it was sent.
                         if self.route.is_empty() {
                             self.order = FleetOrder::Idle;
+                        } else if carried.length_sq() > 1e-9 {
+                            // CARRY THE HEADING THROUGH an intermediate waypoint.
+                            //
+                            // Arrival zeroes velocity, which is right at a
+                            // destination and wrong at a corner: heading is what
+                            // `factor` reads to decide a fleet is riding a lane,
+                            // so a fleet that reaches a waypoint at rest is a
+                            // fleet that has just left the lane. It then re-aligns
+                            // over the next leg, reaches the following waypoint,
+                            // and drops out again — paying open-hyperspace speed
+                            // for most of a route it planned to fly at ten times
+                            // that. Routed trips came out SLOWER than the straight
+                            // line they were meant to beat.
+                            //
+                            // It is also what let a fleet reverse inside a ribbon:
+                            // a waypoint handed it a blank heading, and a blank
+                            // heading may set off in any direction at all.
+                            self.vel = carried.normalized() * speed;
                         }
                     }
                 }

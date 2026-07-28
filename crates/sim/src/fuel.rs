@@ -44,18 +44,32 @@ pub const FUEL_PER_MASS_DISTANCE: f64 = 1.0e-6;
 /// fuel-bearing system is claimed. The home produces no fuel, so this is the
 /// runway that buys time to expand toward fuel deposits. Tunable.
 ///
-/// §hyperspace: scaled with the galaxy. 300 was sized when a full sublight
-/// crossing cost ~36 Fuel; across 400,000 su that same crossing costs 36 ON A
-/// LANE but 360 in open hyperspace, so the old runway did not cover a single
-/// off-network trip. The multiplier is `HYPERSPACE_FACTOR` rather than the full
-/// `GALAXY_SCALE`, deliberately: lane travel is priced exactly as it always was,
-/// so the runway only has to grow by what going OFF the network now costs.
-pub const FUEL_HOME_SEED: f64 = 300.0 * crate::lane::HYPERSPACE_FACTOR;
+/// §hyperspace: sized against STORAGE, because that is what actually binds it.
+/// A system holds 700 units of everything combined and a fresh home already
+/// carries ~190 of starter goods, so a seed scaled for range (1,500, clipped to
+/// the 510 that would fit) did not buy a runway — it filled the warehouse. Ore
+/// came out of the ground with nowhere to go and the colony never built a thing.
+///
+/// That went unnoticed while fuel was drawn from stockpiles: movement drained it
+/// continuously, so the silo emptied itself. Once fleets carry their own, the
+/// seed just sits there, and its real cost shows up. This leaves room for the
+/// economy to breathe while still covering a couple of full refills.
+pub const FUEL_HOME_SEED: f64 = 180.0;
 
 /// The commodity that fuels movement (and so is the one operation kind that is
 /// EXEMPT from the charge — a convoy hauling Fuel must move without needing Fuel,
 /// or a fuel-starved colony could never be resupplied: a deadlock).
 pub const MOVEMENT_FUEL: Commodity = Commodity::Fuel;
+
+/// Tank size per unit of HULL mass.
+///
+/// Burn is `FUEL_PER_MASS_DISTANCE × mass × base_speed × dt`, so a full tank
+/// buys `FUEL_PER_HULL_MASS × factor / FUEL_PER_MASS_DISTANCE` of distance —
+/// mass cancels, and range depends only on which layer you fly in. Calibrated
+/// so a full formation crosses roughly one galaxy radius in open hyperspace and
+/// ten in a lane: enough that a one-way trip out is a decision rather than a
+/// formality, and that a rim campaign wants a tanker behind it.
+pub const FUEL_PER_HULL_MASS: f64 = 0.035;
 
 /// Fuel a fleet of `mass` burns to traverse `distance`. Deterministic; clamps
 /// negatives to zero so a degenerate (already-at-destination) dispatch is free.

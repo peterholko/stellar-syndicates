@@ -1532,6 +1532,7 @@ impl World {
         // 3. Integrate continuous movement (flip-and-burn, patrols, and raider
         //    interception pursuit).
         self.integrate_movement(&mut events);
+        self.refuel_docked();
 
         // 3b. §syndicates Part 3: feed ally GARRISONS from their HOST systems and
         //     set each garrison's fed/unfed flag for THIS tick's defense. Before the
@@ -1761,10 +1762,38 @@ impl World {
             .collect();
         let env = crate::lane::TransitEnv { lanes: &self.lanes, wells: &wells };
         let mut lost_target = Vec::new();
+        let mut ran_dry: Vec<(EntityId, PlayerId, f64)> = Vec::new();
         for (id, ship) in self.fleets.iter_mut() {
             if engaged.contains(id) {
                 ship.vel = Vec2::ZERO; // anchored — the battle holds it in place
                 continue;
+            }
+            // §hyperspace: PAY BEFORE YOU MOVE, out of the fleet's own bunkers.
+            //
+            // The order matters and used to be the other way round: the fleet
+            // moved, then a stockpile was charged, and a failed charge only
+            // zeroed velocity. `advance` recomputes its step from position every
+            // tick, so zeroing velocity stopped nothing — a fleet with no fuel
+            // flew its whole route for free, and the "stall" in the comment
+            // below it never happened. Deducting first makes running dry
+            // unfakeable: there is no position to roll back, because a fleet
+            // that cannot pay never moves.
+            //
+            // Sentinels (pirate packs, Authority freighters) own no economy to
+            // fuel from and are not part of anyone's logistics, so they run on
+            // their own terms.
+            if !ship.owner.is_sentinel() && !matches!(ship.order, FleetOrder::Idle) {
+                let cost = crate::fuel::fuel_tick(ship.mass(), ship.transit_speed(), DT);
+                if ship.fuel + 1e-9 < cost {
+                    ship.vel = Vec2::ZERO;
+                    if !ship.stalled {
+                        ship.stalled = true;
+                        ran_dry.push((*id, ship.owner, cost));
+                    }
+                    continue; // dry: holds position, keeps its guns, waits for a tanker
+                }
+                ship.fuel -= cost;
+                ship.stalled = false;
             }
             // Intercept (raid-commit) and Attack (destroy) both PURSUE a target
             // fleet identically — the only difference is what happens on contact
@@ -1785,62 +1814,19 @@ impl World {
                 ship.advance(time, DT, &env);
             }
         }
-        // §hyperspace: BURN FUEL PER TICK, for every fleet actually under way.
-        //
-        // Charged as it is flown rather than up front, because a course change
-        // mid-flight would otherwise have over-charged for a route never
-        // completed — and refunding the unflown part would leak how much the
-        // route was really going to cost.
-        //
-        // A fleet that cannot pay STALLS: it holds position, keeps its guns,
-        // defends itself normally, and moves again the tick fuel arrives. That is
-        // §7.1's upkeep rule applied to movement rather than a new failure mode,
-        // and it never destroys anything (§5.1). Recoverable by construction: the
-        // draw has no range limit, so "stranded" means "my whole empire is dry",
-        // which is an economic state you fix by producing fuel.
-        let under_way: Vec<(EntityId, PlayerId, Vec2, f64, f64)> = self
-            .fleets
-            .iter()
-            .filter(|(id, f)| !matches!(f.order, FleetOrder::Idle) && !engaged.contains(id))
-            .map(|(id, f)| (*id, f.owner, f.pos, f.mass(), f.transit_speed()))
-            .collect();
-        for (id, owner, pos, mass, base_speed) in under_way {
-            // EVERY movement costs fuel. The old carve-outs — recalls, patrols,
-            // autonomous defence, Fuel hauls — are gone: they existed only
-            // because charging happened at dispatch, and per-tick charging makes
-            // "which verb dispatched this" the wrong question. A fleet burns
-            // because it is moving.
-            //
-            // The one skip is not an exemption: neutral sentinels (pirate packs,
-            // Authority freighters) own no systems, so there is no stockpile to
-            // charge and they would stall permanently on the first tick.
-            if owner.is_sentinel() {
-                continue;
-            }
-            let cost = crate::fuel::fuel_tick(mass, base_speed, DT);
-            if self.charge_fuel(owner, pos, cost) {
-                // Fed again: clear the latch so a later stall re-notifies.
-                if let Some(f) = self.fleets.get_mut(&id) {
-                    f.stalled = false;
-                }
-                continue;
-            }
-            // Dry: stall in place. The order is kept so the fleet resumes the
-            // moment it is fed — nothing is lost, only paused.
-            if let Some(f) = self.fleets.get_mut(&id) {
-                f.vel = Vec2::ZERO;
-                if !f.stalled {
-                    f.stalled = true;
-                    events.push(Event::new(
-                        self.time,
-                        EventPayload::FuelShortfall {
-                            owner,
-                            needed: cost,
-                            kind: crate::fuel::ShortfallKind::Move,
-                        },
-                    ));
-                }
-            }
+        // Running dry is an owner-only notice, fired once per stall by the latch
+        // above rather than thirty times a second. §5.1: it suspends, never
+        // destroys — the order is kept, and the fleet moves again the moment a
+        // tanker reaches it.
+        for (_, owner, needed) in ran_dry {
+            events.push(Event::new(
+                self.time,
+                EventPayload::FuelShortfall {
+                    owner,
+                    needed,
+                    kind: crate::fuel::ShortfallKind::Move,
+                },
+            ));
         }
         // Raiders whose target vanished break off: a defensive patrol RESUMES its
         // patrol (its threat is gone); a manual raider returns home.
@@ -10092,45 +10078,81 @@ impl World {
     /// Could this owner cover `cost` from a system in reach of `origin`? Pure —
     /// spends nothing. Used for the player's WARNING and for automation's hard
     /// check, so both ask exactly the question `charge_fuel` would answer.
-    fn can_cover_fuel(&self, player: PlayerId, origin: Vec2, cost: f64) -> bool {
+    /// §hyperspace: CAN A DISPATCH ACTUALLY MAKE THE TRIP?
+    ///
+    /// A range question now, not a treasury one. It used to ask whether any
+    /// system the player owned held `cost` fuel, which made sense only while a
+    /// moving fleet could reach back into a stockpile from any distance. With
+    /// fuel carried, what decides a run is whether it fits in the tanks.
+    ///
+    /// Two corrections come with that. `cost` is priced in NORMAL space, but
+    /// automation flies open hyperspace, which is `HYPERSPACE_FACTOR` cheaper per
+    /// unit of distance — quoting the sublight price rejected affordable runs by
+    /// a factor of five. And tankage scales with HULL mass, so a heavy load
+    /// shortens the leg it can manage rather than buying itself more fuel.
+    fn can_cover_fuel(&self, _player: PlayerId, _origin: Vec2, cost: f64) -> bool {
         if cost <= 1e-9 {
             return true;
         }
-        let fuel = crate::fuel::MOVEMENT_FUEL;
-        self.systems
-            .iter()
-            .filter(|s| s.owner == Some(player))
-            .filter(|s| s.stockpile.get(&fuel).copied().unwrap_or(0.0) >= cost)
-            .map(|s| s.pos.distance(origin))
-            .fold(f64::INFINITY, f64::min)
-            .is_finite()
+        let burn = cost / crate::lane::HYPERSPACE_FACTOR;
+        let tank = ShipKind::Convoy.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS;
+        burn <= tank
     }
 
-    fn charge_fuel(&mut self, player: PlayerId, origin: Vec2, cost: f64) -> bool {
-        if cost <= 1e-9 {
-            return true;
-        }
-        let fuel = crate::fuel::MOVEMENT_FUEL;
-        let mut best: Option<(f64, EntityId)> = None;
-        for s in &self.systems {
-            if s.owner != Some(player) {
+    /// §hyperspace: TOP UP THE BUNKERS of every docked fleet.
+    ///
+    /// Fuel is carried, so it has to be picked up somewhere, and "somewhere" is
+    /// wherever the fleet is actually parked — a system its owner or an ally
+    /// holds, or the Charterhouse at the hub. `dock_of` already means "at rest,
+    /// not under fire, inside the dock radius", which is exactly the condition
+    /// under which taking on fuel makes sense.
+    ///
+    /// Draws only what the tanks have room for, and only what the store actually
+    /// holds: a dry system refuels nobody, which is what makes a tanker run to
+    /// the rim a real errand rather than a formality.
+    fn refuel_docked(&mut self) {
+        let commodity = crate::fuel::MOVEMENT_FUEL;
+        let ids: Vec<EntityId> = self.fleets.keys().copied().collect();
+        for id in ids {
+            let Some(site) = self.dock_of(id) else { continue };
+            let Some(f) = self.fleets.get(&id) else { continue };
+            let room = (f.fuel_capacity() - f.fuel).max(0.0);
+            if room <= 1e-9 {
                 continue;
             }
-            if s.stockpile.get(&fuel).copied().unwrap_or(0.0) + 1e-9 < cost {
-                continue;
-            }
-            let key = (s.pos.distance(origin), s.id);
-            if best.is_none_or(|b| key < b) {
-                best = Some(key);
+            let owner = f.owner;
+            let taken = match site {
+                crate::ship::DockSite::System(sid) => {
+                    let Some(sys) = self.systems.iter_mut().find(|s| s.id == sid) else { continue };
+                    let have = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
+                    let take = have.min(room);
+                    if take > 1e-9 {
+                        *sys.stockpile.entry(commodity).or_insert(0.0) -= take;
+                    }
+                    take
+                }
+                crate::ship::DockSite::Hub => {
+                    // The Charterhouse settles in whole units out of the owner's
+                    // own warehouse — nobody refuels from a rival's stock.
+                    let Some(corp) = self.players.get_mut(&owner) else { continue };
+                    let have = corp.warehouse.get(&commodity).copied().unwrap_or(0);
+                    let want = room.floor().max(0.0) as u32;
+                    let take = have.min(want);
+                    if take > 0 {
+                        let e = corp.warehouse.entry(commodity).or_insert(0);
+                        *e -= take;
+                        if *e == 0 {
+                            corp.warehouse.remove(&commodity);
+                        }
+                    }
+                    f64::from(take)
+                }
+            };
+            if taken > 1e-9 && let Some(f) = self.fleets.get_mut(&id) {
+                f.refuel(taken);
+                f.stalled = false;
             }
         }
-        let Some((_, sid)) = best else {
-            return false;
-        };
-        if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
-            *s.stockpile.entry(fuel).or_insert(0.0) -= cost;
-        }
-        true
     }
 
     /// Assign an unused home anchor to a player (or append one if the galaxy is
@@ -12849,11 +12871,60 @@ mod tests {
             for _ in 0..200 {
                 w.step(&[]);
             }
-            home_fuel(&w, id)
+            let f = &w.fleets[&convoy];
+            (f.fuel, f.fuel_capacity())
         };
-        let a = run();
-        assert_eq!(a, run(), "the same seed + move burns identical fuel");
-        assert!(a < crate::fuel::FUEL_HOME_SEED, "the move actually spent fuel from the reserve");
+        let (a, cap) = run();
+        assert_eq!((a, cap), run(), "the same seed + move burns identical fuel");
+        // Fuel is carried now, so the burn shows up in the TANKS. It used to be
+        // read off the home stockpile, which a moving fleet reached back into
+        // from any distance — the very thing that let a dry fleet fly on.
+        assert!(a < cap, "the move actually drew down the fleet's bunkers");
+        assert!(a > 0.0, "a short hop must not empty them");
+    }
+
+    /// THE BUG THIS MODEL EXISTS TO KILL: a fleet with dry tanks must not move.
+    ///
+    /// Fuel used to be charged AFTER the move, out of a stockpile the fleet could
+    /// reach from anywhere, and a failed charge only zeroed velocity. `advance`
+    /// recomputes its step from position every tick, so zeroing velocity stopped
+    /// nothing — the fleet flew the whole route unpaid, and the "stall" the code
+    /// described never happened. Carrying fuel and paying BEFORE the step makes
+    /// that unfakeable: there is no position to roll back, because a fleet that
+    /// cannot pay never moves.
+    #[test]
+    fn a_fleet_with_dry_tanks_does_not_move() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let convoy = player_ship(&w, id, ShipKind::Convoy);
+        let far = w.fleets[&convoy].pos + Vec2::new(120_000.0, 0.0);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: far }]);
+
+        // Empty the tanks mid-flight and park it far from any dock, so nothing
+        // refuels it out from under the assertion.
+        w.fleets.get_mut(&convoy).unwrap().fuel = 0.0;
+        let held = w.fleets[&convoy].pos;
+        for _ in 0..200 {
+            w.step(&[]);
+        }
+        let f = &w.fleets[&convoy];
+        assert!(
+            f.pos.distance(held) < 1e-6,
+            "a fleet with no fuel travelled {:.0} su anyway",
+            f.pos.distance(held),
+        );
+        assert!(f.stalled, "and it should say so, once");
+        // §5.1 — suspended, never destroyed: the order survives to be resumed.
+        assert!(matches!(f.order, FleetOrder::MoveTo { .. }), "the order is kept");
+
+        // Fed again, it goes. Same tick it has fuel, it is under way.
+        w.fleets.get_mut(&convoy).unwrap().fuel = 50.0;
+        w.step(&[]);
+        assert!(
+            w.fleets[&convoy].pos.distance(held) > 1e-6,
+            "a refuelled fleet resumes the order it was holding",
+        );
     }
 
     #[test]
@@ -12863,11 +12934,15 @@ mod tests {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let convoy = player_ship(&w, id, ShipKind::Convoy);
         w.step(&[Command::MoveShip { player_id: id, ship_id: convoy, dest: Vec2::new(2000.0, 1500.0) }]);
-        let spent = home_fuel(&w, id);
-        assert!(spent < crate::fuel::FUEL_HOME_SEED, "fuel was spent before the snapshot");
-        // Save → load: the depleted reserve (not the seed) is what reloads.
+        for _ in 0..40 {
+            w.step(&[]);
+        }
+        let spent = w.fleets[&convoy].fuel;
+        assert!(spent < w.fleets[&convoy].fuel_capacity(), "fuel was burned before the snapshot");
+        // Save → load: the PARTLY EMPTY TANKS reload, not a full set. A fleet
+        // that refuelled itself across a save would make range meaningless.
         let w2: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
-        assert!((home_fuel(&w2, id) - spent).abs() < 1e-6, "the spent-fuel reserve persists across a snapshot");
+        assert!((w2.fleets[&convoy].fuel - spent).abs() < 1e-6, "the drawn-down tank persists across a snapshot");
     }
 
     #[test]
