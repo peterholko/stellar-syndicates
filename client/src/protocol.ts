@@ -99,6 +99,7 @@ export type ShipKind =
   | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
   // §ground: the troop transport — an invasion's hull, built at a Garrison.
   | "transport"
+  | "builder"
   // §TCA: the Authority's common carrier — never buildable by a corporation.
   | "freighter";
 

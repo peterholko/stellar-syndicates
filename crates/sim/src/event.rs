@@ -21,6 +21,9 @@ use crate::ship::ShipKind;
 #[serde(rename_all = "snake_case")]
 pub enum OrderKind {
     Move,
+    /// §emplacements: a CONSTRUCT order — send a builder to a site and put a
+    /// buoy or sensor there.
+    Construct,
     Raid,
     Recall,
     /// A mid-battle WITHDRAW (§battles-take-time) — disengage an engaged fleet.
@@ -38,6 +41,7 @@ impl OrderKind {
     pub fn label(self) -> &'static str {
         match self {
             OrderKind::Move => "move",
+            OrderKind::Construct => "construct",
             OrderKind::Raid => "raid",
             OrderKind::Recall => "recall",
             OrderKind::Withdraw => "withdraw",

@@ -82,6 +82,18 @@ pub enum ShipKind {
     /// way settlement does). Built at a GARRISON, not a shipyard — troops come
     /// from barracks, not slipways.
     Transport,
+    /// §emplacements: the CONSTRUCTION SHIP — the working hull that puts
+    /// hyperspace buoys and deep space sensors where they stand. Emplacements
+    /// are not conjured at a yard and teleported out; a builder is ordered to
+    /// the site, holds there for the assembly, and is FREED when it finishes —
+    /// it is the crane, not the kit, so one hull serves a whole programme and
+    /// losing it mid-job costs you the crane.
+    ///
+    /// Named `Builder`, deliberately not `Constructor`: serde's snake_case of
+    /// that word is "constructor", which collides with
+    /// `Object.prototype.constructor` in every plain-object lookup in the
+    /// client — an insidious wrong-value bug, not an error.
+    Builder,
     /// THE AUTHORITY FREIGHTER (§TCA): the scheduled common-carrier hull the
     /// TERRAN CHARTER AUTHORITY runs between the Charterhouse and the colonies.
     /// Owned ONLY by the [`crate::ids::PlayerId::TCA`] sentinel — NOT buildable by
@@ -119,6 +131,7 @@ impl ShipKind {
     pub fn hull_mass(self) -> f64 {
         match self {
             ShipKind::Convoy => 4500.0,
+            ShipKind::Builder => 2500.0, // a crane and its shops — working mass, no bulk hold
             ShipKind::Raider => 200.0,
             ShipKind::Corvette => 800.0,
             ShipKind::Colony => 6000.0, // heaviest CIVILIAN hull — fuel-∝-mass bites
@@ -154,6 +167,7 @@ impl ShipKind {
     pub fn max_speed(self) -> f64 {
         match self {
             ShipKind::Convoy => 40.0,
+            ShipKind::Builder => 35.0, // ponderous — it is a worksite, not a courier
             ShipKind::Raider => 100.0,
             ShipKind::Corvette => 65.0, // keeps station with convoys, can't chase raiders
             ShipKind::Colony => 33.0, // slowest civilian — the long, visible voyage
@@ -220,6 +234,7 @@ impl ShipKind {
     /// Offensive weight when this kind is the AGGRESSOR in an engagement.
     pub fn attack_weight(self) -> f64 {
         match self {
+            ShipKind::Builder => 0.0,  // cranes do not shoot
             ShipKind::Raider => 3.0,   // the hunter
             ShipKind::Corvette => 1.0, // guards; barely bites back
             ShipKind::Convoy => 0.0,   // civilians don't attack
@@ -240,6 +255,7 @@ impl ShipKind {
     /// Defensive weight when this kind is ATTACKED (or screening a defender).
     pub fn defense_weight(self) -> f64 {
         match self {
+            ShipKind::Builder => 1.0,  // a soft worksite that needs escorting
             ShipKind::Raider => 2.0,
             ShipKind::Corvette => 4.0, // the armored screen — built to be attacked
             ShipKind::Convoy => 1.0,
@@ -304,6 +320,7 @@ impl ShipKind {
     /// are where COMBINATIONS live — slots and points both climb. Tunable.
     pub fn module_slots(self) -> u32 {
         match self {
+            ShipKind::Builder => 0, // no hardpoints — its fittings ARE the crane
             ShipKind::Corvette => 2,
             ShipKind::Raider => 2,
             ShipKind::Scout => 1,
@@ -328,6 +345,7 @@ impl ShipKind {
 ///   fits today; intended).
 pub fn fitting_points(kind: ShipKind) -> u32 {
     match kind {
+        ShipKind::Builder => 0,
         ShipKind::Scout => 2,
         ShipKind::Convoy => 2,
         ShipKind::Colony => 2,
@@ -410,7 +428,7 @@ pub fn is_siege_anchor(kind: ShipKind) -> bool {
 /// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A
 /// fleet-of-one resolves to that ship's own kind, so nothing changes for the
 /// N=1 world. Highest precedence first.
-pub const FLAGSHIP_PRECEDENCE: [ShipKind; 12] = [
+pub const FLAGSHIP_PRECEDENCE: [ShipKind; 13] = [
     // §ladder: a capital OUTRANKS everything — a fleet with a Titan IS the
     // Titan (its name, its sprite, its label), down the ladder from there.
     ShipKind::Titan,
@@ -428,12 +446,14 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 12] = [
     ShipKind::Freighter,
     ShipKind::Corvette,
     ShipKind::Raider,
+    // The working hull: shown only when nothing above it rides along.
+    ShipKind::Builder,
     ShipKind::Scout,
 ];
 
 /// All ship kinds, in a fixed deterministic order (composition iteration,
 /// damage-pool distribution, report ordering). Kept in sync with [`ShipKind`].
-pub const ALL_SHIP_KINDS: [ShipKind; 12] = [
+pub const ALL_SHIP_KINDS: [ShipKind; 13] = [
     ShipKind::Convoy,
     ShipKind::Raider,
     ShipKind::Corvette,
@@ -445,6 +465,7 @@ pub const ALL_SHIP_KINDS: [ShipKind; 12] = [
     ShipKind::Dreadnought,
     ShipKind::Titan,
     ShipKind::Transport,
+    ShipKind::Builder,
     ShipKind::Freighter,
 ];
 
@@ -539,6 +560,7 @@ impl CountClass {
 /// never a corporation's cost.
 pub fn upkeep_per_sec(kind: ShipKind) -> f64 {
     match kind {
+        ShipKind::Builder => 0.04,   // a full work crew rides along
         ShipKind::Scout => 0.01,     // a couple of crew and a very good sensor
         ShipKind::Convoy => 0.03,    // civilian hauler: big hull, small crew
         ShipKind::Colony => 0.06,    // the colonists aboard eat too
@@ -695,6 +717,16 @@ pub enum FleetOrder {
     /// names the target for the world's blockade resolution. On arrival the
     /// fleet HOLDS on station (keeps this order — it does not go Idle), and the
     /// world's standing-defense engages it as any hostile contact.
+    /// §emplacements: fly to `site` and BUILD there. The fleet holds at the
+    /// site while the work runs; the world's construction resolver owns the
+    /// clock and frees the fleet when the emplacement stands. `started` is the
+    /// sim time work began, `None` while still in transit.
+    Construct {
+        site: Vec2,
+        emplacement: crate::emplace::EmplacementKind,
+        #[serde(default)]
+        started: Option<f64>,
+    },
     Blockade { system: EntityId, station: Vec2 },
     /// ATTACK a rival fleet to DESTROY it (§offensive-orders Part 1): the targeted
     /// destroy verb. Pursues exactly like [`FleetOrder::Intercept`], but on contact
@@ -1554,6 +1586,7 @@ impl Fleet {
         let aim = self.route.first().map_or_else(
             || match self.order {
                 FleetOrder::MoveTo { dest } => dest - self.pos,
+                FleetOrder::Construct { site, .. } => site - self.pos,
                 _ => Vec2::ZERO,
             },
             |l| l.to - self.pos,
@@ -1665,6 +1698,14 @@ impl Fleet {
                         }
                     }
                 }
+            }
+            FleetOrder::Construct { site, .. } => {
+                // Fly to the worksite and HOLD there — the construction resolver
+                // runs the clock; going Idle would abandon the job.
+                let site = *site;
+                let step = crate::movement::advance_turning(self.pos, self.vel, site, speed, dt, radius);
+                self.pos = step.pos;
+                self.vel = step.vel;
             }
             FleetOrder::Blockade { station, .. } => {
                 // Fly to station, then HOLD there (keep the Blockade order — the

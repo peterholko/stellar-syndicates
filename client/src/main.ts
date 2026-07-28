@@ -329,6 +329,8 @@ const HULL_MASS: Record<ShipKind, number> = {
   transport: 7000,
   // §TCA: the Authority's carrier (mirrors ship.rs).
   freighter: 6000,
+  // §emplacements: the crane (mirrors ship.rs).
+  builder: 2500,
 };
 const CARGO_MASS_PER_UNIT = 28;
 // Mirrors `ShipKind::Convoy.max_speed()` — the cruise of the hull a `StockSystem`
@@ -680,6 +682,7 @@ const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport",
+  builder: "Construction Ship",
   freighter: "Authority Freighter",
 };
 const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
@@ -2227,6 +2230,8 @@ const SHIP_ICON: Record<ShipKind, string> = {
   transport: "action-claim-system",
   // §TCA: the Authority's common carrier — drawn with the hauler glyph.
   freighter: "concept-convoy",
+  // §emplacements: the crane — the hauler glyph stands in.
+  builder: "concept-convoy",
 };
 // One force-strip chip: a ship-class icon + the count still standing. `lost` (own,
 // exact) draws a red "−k"; a fully-wiped class dims + strikes its count. `est`
@@ -3096,10 +3101,21 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
         readout().innerHTML = `<span style="color:var(--warn)">${esc(err)}</span>`;
         return;
       }
+      // §emplacements: emplacements are BUILT BY A SHIP. Mirror the server's
+      // requirement here so the refusal has a face — the server would just
+      // silently decline, and a click that does nothing is the worst outcome
+      // a placement mode can have.
+      const idleBuilder = state.ghosts.some(
+        (x) => x.own && x.kind === "builder" && Math.hypot(x.vel.x, x.vel.y) < 0.5,
+      );
+      if (!idleBuilder) {
+        readout().innerHTML = `<span style="color:var(--warn)">No idle Construction Ship — build one at a Shipyard, then site this.</span>`;
+        return;
+      }
       const label = state.placing === "hyperspace_buoy" ? "Hyperspace Buoy" : "Deep Space Sensor";
       net?.send({ type: "BuildEmplacement", emplacement: state.placing, pos: at });
       readout().innerHTML =
-        `<b>${label}</b> ordered — building at your nearest system, then deployed here.` +
+        `<b>${label}</b> ordered — your nearest Construction Ship is being dispatched (signal outbound).` +
         (state.placing === "hyperspace_buoy"
           ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
           : "");

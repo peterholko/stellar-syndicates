@@ -53,10 +53,12 @@ const MASS: Record<ShipKind, number> = {
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   // §ground: the troop transport — a fat, unarmed hull.
   transport: 7000,
+  builder: 2500, // §emplacements: the crane — mirrors sim hull_mass
   // §TCA: the Authority's carrier — never a combatant, but the type is total.
   freighter: 6000,
 };
 const KIND_LABEL: Record<ShipKind, string> = {
+  builder: "Construction Ship",
   convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport",
@@ -83,6 +85,8 @@ const SHIP_ART: Record<ShipKind, string> = {
   convoy: "cargo_freighter.png",
   // §TCA: the Authority hauler reuses the freighter art; its neutral tint sets it apart.
   freighter: "cargo_freighter.png",
+  // §emplacements: the crane rides the hauler art until it has its own.
+  builder: "cargo_freighter.png",
   raider: "raider_attack_ship.png",
   corvette: "corvette_escort_ship.png",
   colony: "colony_ship.png",

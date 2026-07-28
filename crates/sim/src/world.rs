@@ -1539,6 +1539,7 @@ impl World {
         //    interception pursuit).
         self.integrate_movement(&mut events);
         self.refuel_docked();
+        self.step_constructions(&mut events);
 
         // 3b. §syndicates Part 3: feed ally GARRISONS from their HOST systems and
         //     set each garrison's fed/unfed flag for THIS tick's defense. Before the
@@ -4260,7 +4261,10 @@ impl World {
                         continue;
                     };
                     match &po.new_order {
-                        FleetOrder::MoveTo { dest } => {
+                        // A builder flying to its worksite rides the network
+                        // exactly like a move — same planner, same legs.
+                        FleetOrder::MoveTo { dest }
+                        | FleetOrder::Construct { site: dest, .. } => {
                             let base = ship.transit_speed();
                             self.lanes.route(
                                 ship.pos,
@@ -5006,10 +5010,10 @@ impl World {
                 }
             }
             Command::BuildShip { player_id, system_id, ship_kind, join, loadout } => {
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, loadout.clone(), None, events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Ship { ship: *ship_kind }, *join, loadout.clone(), events);
             }
             Command::BuildModule { player_id, system_id, module } => {
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, crate::module::Loadout::default(), None, events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Module { module: *module }, None, crate::module::Loadout::default(), events);
             }
             Command::RefitShips { player_id, fleet_id, ship, from, to, n } => {
                 self.apply_refit(*player_id, *fleet_id, *ship, from.clone(), to.clone(), *n, events);
@@ -5121,40 +5125,78 @@ impl World {
                 }
             }
             Command::BuildEmplacement { player_id, emplacement, pos } => {
-                // §emplacements: the SAME check the client previewed. Validating
-                // against a different rule than the one the map drew would let a
-                // site look legal and then be refused for an unstated reason.
+                // §emplacements: BUILT BY A SHIP, not conjured from a yard. The
+                // command picks the player's nearest idle Construction Ship,
+                // charges the kit where that ship would load it, and sends the
+                // order out at signal speed like any other — the builder flies
+                // to the site, holds there for the assembly, and is freed when
+                // the emplacement stands.
                 if crate::emplace::site_check(*emplacement, *pos, &self.lanes, &self.emplacements)
                     .is_err()
                 {
                     return;
                 }
-                // Paid for and assembled at the player's NEAREST OWNED SYSTEM —
-                // it has to come out of somebody's yard, and the nearest one is
-                // the one that would plausibly ship it. Nothing to build from
-                // means nothing to build.
-                let Some(sys) = self
+                // The nearest IDLE builder. Busy ones are not silently retasked:
+                // yanking a mid-job crane because the player clicked again would
+                // abandon work they may not know is running.
+                let Some((builder_id, builder_pos)) = self
+                    .fleets
+                    .iter()
+                    .filter(|(_, f)| {
+                        f.owner == *player_id
+                            && f.count(ShipKind::Builder) >= 1
+                            && matches!(f.order, FleetOrder::Idle)
+                    })
+                    .map(|(id, f)| (*id, f.pos))
+                    .min_by(|a, b| a.1.distance(*pos).total_cmp(&b.1.distance(*pos)))
+                else {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::FuelShortfall {
+                            owner: *player_id,
+                            needed: 0.0,
+                            kind: crate::fuel::ShortfallKind::Move,
+                        },
+                    ));
+                    return; // no idle Construction Ship — nothing to dispatch
+                };
+                // THE KIT, charged from the stockpile nearest the builder — it
+                // loads where it stands. (The pickup leg itself is not flown;
+                // a deliberate simplification, noted rather than hidden.)
+                let recipe = crate::build::emplacement_recipe(*emplacement);
+                let Some(sys_id) = self
                     .systems
                     .iter()
                     .filter(|s| s.owner == Some(*player_id))
-                    .min_by(|a, b| a.pos.distance(*pos).total_cmp(&b.pos.distance(*pos)))
+                    .filter(|s| {
+                        recipe.costs.iter().all(|(c, n)| {
+                            s.stockpile.get(c).copied().unwrap_or(0.0) + 1e-9 >= *n
+                        })
+                    })
+                    .min_by(|a, b| {
+                        a.pos
+                            .distance(builder_pos)
+                            .total_cmp(&b.pos.distance(builder_pos))
+                            .then(a.id.cmp(&b.id))
+                    })
                     .map(|s| s.id)
                 else {
-                    return;
+                    return; // nowhere can pay for the kit
                 };
-                self.apply_build(
+                if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
+                    for (c, n) in recipe.costs {
+                        *sys.stockpile.entry(*c).or_insert(0.0) -= n;
+                    }
+                }
+                self.schedule_for_owner(
                     *player_id,
-                    sys,
-                    None,
-                    crate::build::BuildKind::Emplace { emplacement: *emplacement },
-                    None,
-                    crate::module::Loadout::default(),
-                    Some(*pos),
-                    events,
+                    builder_id,
+                    FleetOrder::Construct { site: *pos, emplacement: *emplacement, started: None },
+                    crate::event::OrderKind::Construct,
                 );
             }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
-                self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), None, events);
+                self.apply_build(*player_id, *system_id, *body_id, crate::build::BuildKind::Upgrade { upgrade: *upgrade }, None, crate::module::Loadout::default(), events);
             }
             Command::SetAssignment { player_id, system_id, structure, workers, specialists, body_id } => {
                 // §economy Part 3 → §bodies: INSTANT local administration on ONE
@@ -5257,7 +5299,7 @@ impl World {
                 if !has_academy {
                     return; // soft reject — no Academy standing there
                 }
-                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Train { specialist: *specialist }, None, crate::module::Loadout::default(), None, events);
+                self.apply_build(*player_id, *system_id, None, crate::build::BuildKind::Train { specialist: *specialist }, None, crate::module::Loadout::default(), events);
             }
             Command::TransferSpecialists { player_id, from, to, manifest } => {
                 // §economy Part 4: a dedicated personnel convoy between the
@@ -5660,8 +5702,8 @@ impl World {
     /// forcing the specialization choice. Deducts the recipe NOW and enqueues a job
     /// that resolves at `tick + build_ticks`. Determinism: pure, runs in command
     /// phase so the debit is visible to this tick's accrual + standing orders.
-    #[allow(clippy::too_many_arguments)] // one more knob than clippy likes; splitting it would only scatter the call sites
-    fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, emplace_pos: Option<crate::math::Vec2>, events: &mut Vec<Event>) {
+        #[allow(clippy::too_many_arguments)] // the build knobs genuinely differ per kind
+        fn apply_build(&mut self, player_id: PlayerId, system_id: EntityId, body: Option<u32>, what: crate::build::BuildKind, join: Option<EntityId>, loadout: crate::module::Loadout, events: &mut Vec<Event>) {
         // §TCA: a corporation can never build an Authority Freighter (it is TCA-only
         // and absent from every BUILDABLE menu). Soft-reject BEFORE any recipe lookup
         // — no debit, no job — so `recipe_for`/`required_shipyard_tier` never see it.
@@ -5693,8 +5735,6 @@ impl World {
                 self.research_mod(player_id, ModKey::WarshipBuildTime),
             ),
             crate::build::BuildKind::Ship { .. } => (1.0, 1.0), // civilian hulls untuned
-            // §emplacements: no research line touches these yet.
-            crate::build::BuildKind::Emplace { .. } => (1.0, 1.0),
             crate::build::BuildKind::Module { .. } => (
                 self.research_mod(player_id, ModKey::ModuleCost),
                 self.research_mod(player_id, ModKey::ModuleBuildTime),
@@ -5712,9 +5752,6 @@ impl World {
         // body (`None` = the shared siting rules — old clients keep working);
         // ship jobs display at the best yard's body; courses at the Academy's.
         let body_id = match what {
-            // §emplacements: assembled at the system but DEPLOYED into space, so
-            // it holds no body — nothing about it sits on a planet.
-            crate::build::BuildKind::Emplace { .. } => 0,
             crate::build::BuildKind::Upgrade { upgrade } => body.or_else(|| sys.site_for(upgrade)).unwrap_or(0),
             // §yards: a ship job displays at (and is staffed by) the body holding
             // the best yard OF THE KIND THAT GATES IT — a Battleship's job sits
@@ -6010,8 +6047,6 @@ impl World {
             complete_tick,
             // Join only applies to ship builds; an upgrade always passes None.
             join: if matches!(what, crate::build::BuildKind::Ship { .. }) { join } else { None },
-            // §emplacements: set by the BuildEmplacement handler, None otherwise.
-            emplace_pos,
             // §modules: carry the (validated, debited) loadout to spawn time.
             loadout: if matches!(what, crate::build::BuildKind::Ship { .. }) { loadout } else { crate::module::Loadout::default() },
         });
@@ -6139,30 +6174,6 @@ impl World {
         self.build_queue.retain(|j| j.complete_tick > self.tick);
         for job in due {
             match job.what {
-                crate::build::BuildKind::Emplace { emplacement } => {
-                    // §emplacements: completes OUT IN SPACE, at the site the
-                    // player picked — re-checked, because the network and the
-                    // neighbours may have moved while it was in the yard.
-                    let Some(pos) = job.emplace_pos else { continue };
-                    if crate::emplace::site_check(
-                        emplacement,
-                        pos,
-                        &self.lanes,
-                        &self.emplacements,
-                    )
-                    .is_err()
-                    {
-                        continue;
-                    }
-                    let id = EntityId(self.next_entity_id);
-                    self.next_entity_id += 1;
-                    self.emplacements.push(crate::emplace::Emplacement {
-                        id,
-                        owner: job.owner,
-                        kind: emplacement,
-                        pos,
-                    });
-                }
                 crate::build::BuildKind::Ship { ship } => {
                     let pos = self
                         .systems
@@ -10217,6 +10228,75 @@ impl World {
         burn <= tank
     }
 
+    /// §emplacements: RUN THE WORKSITES. A builder holding at its site starts
+    /// the clock; when the recipe's build time has elapsed the emplacement
+    /// stands and the builder is freed. The site is re-checked at completion —
+    /// the network cannot move, but a rival's buoy may have claimed the spot
+    /// while the builder was in transit — and a refused deployment REFUNDS the
+    /// kit to the nearest owned system (§5.1: suspended or returned, never
+    /// destroyed).
+    fn step_constructions(&mut self, events: &mut Vec<Event>) {
+        let _ = &events;
+        let now = self.time;
+        let ids: Vec<EntityId> = self.fleets.keys().copied().collect();
+        for id in ids {
+            let Some(f) = self.fleets.get(&id) else { continue };
+            let FleetOrder::Construct { site, emplacement, started } = f.order else { continue };
+            let on_site = f.pos.distance(site) <= crate::emplace::CONSTRUCT_RADIUS;
+            match started {
+                None if on_site => {
+                    if let Some(f) = self.fleets.get_mut(&id) {
+                        f.order = FleetOrder::Construct {
+                            site,
+                            emplacement,
+                            started: Some(now),
+                        };
+                    }
+                }
+                Some(t0) => {
+                    let recipe = crate::build::emplacement_recipe(emplacement);
+                    let build_s = recipe.build_ticks as f64 * crate::config::DT;
+                    if now - t0 < build_s {
+                        continue;
+                    }
+                    let owner = f.owner;
+                    let ok = crate::emplace::site_check(
+                        emplacement,
+                        site,
+                        &self.lanes,
+                        &self.emplacements,
+                    )
+                    .is_ok();
+                    if ok {
+                        let eid = EntityId(self.next_entity_id);
+                        self.next_entity_id += 1;
+                        self.emplacements.push(crate::emplace::Emplacement {
+                            id: eid,
+                            owner,
+                            kind: emplacement,
+                            pos: site,
+                        });
+                    } else if let Some(sys) = self
+                        .systems
+                        .iter_mut()
+                        .filter(|s| s.owner == Some(owner))
+                        .min_by(|a, b| {
+                            a.pos.distance(site).total_cmp(&b.pos.distance(site)).then(a.id.cmp(&b.id))
+                        })
+                    {
+                        for (c, n) in recipe.costs {
+                            *sys.stockpile.entry(*c).or_insert(0.0) += n;
+                        }
+                    }
+                    if let Some(f) = self.fleets.get_mut(&id) {
+                        f.order = FleetOrder::Idle; // the crane is freed either way
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
     /// §hyperspace: TOP UP THE BUNKERS of every docked fleet.
     ///
     /// Fuel is carried, so it has to be picked up somewhere, and "somewhere" is
@@ -13010,22 +13090,46 @@ mod tests {
     /// described never happened. Carrying fuel and paying BEFORE the step makes
     /// that unfakeable: there is no position to roll back, because a fleet that
     /// cannot pay never moves.
-    /// §emplacements: THE WHOLE PATH — command, cost, build time, deployment.
+    /// §emplacements: THE WHOLE PATH — a Construction Ship is dispatched,
+    /// flies to the site, works there, and the buoy stands where it worked.
     ///
-    /// A buoy is not placed the instant it is ordered: it is paid for and built
-    /// at a system like anything else, and only then does it appear out in
-    /// space. The site is re-checked at completion, so a legal order cannot
-    /// deploy somewhere that has since stopped being legal.
+    /// Nothing is conjured at a yard: the order rides the signal out to the
+    /// builder like any other, the kit is charged where the builder loads it,
+    /// and the crane is FREED when the job ends — reusable, so losing it later
+    /// costs the crane, not the programme.
     #[test]
-    fn an_ordered_buoy_is_paid_for_built_and_then_deployed() {
+    fn a_builder_flies_to_the_site_and_puts_the_buoy_there() {
         let mut w = test_world();
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        // Somewhere on a lane, which is the only legal site for a buoy.
-        let lane = &w.lanes.lanes[0];
-        let at = lane.at(lane.length() * 0.5);
         let home = w.players[&id].home_system.unwrap();
-        // Stock the yard so the recipe can actually be paid.
+        let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        // A lane point near home, so the signal leg and the flight stay short.
+        let mut site = home_pos;
+        let mut best = f64::INFINITY;
+        for l in &w.lanes.lanes {
+            for k in 1..20 {
+                let p = l.at(l.length() * (k as f64 / 20.0));
+                let d = p.distance(home_pos);
+                if d < best {
+                    best = d;
+                    site = p;
+                }
+            }
+        }
+        // The crane, idle a short hop from the site.
+        let builder = EntityId(777_777);
+        w.fleets.insert(
+            builder,
+            crate::ship::Fleet::single(
+                builder,
+                id,
+                ShipKind::Builder,
+                site + Vec2::new(3_000.0, 0.0),
+                FleetOrder::Idle,
+                None,
+            ),
+        );
         for (c, n) in [
             (Commodity::Alloys, 500.0),
             (Commodity::Electronics, 500.0),
@@ -13044,23 +13148,55 @@ mod tests {
         w.step(&[Command::BuildEmplacement {
             player_id: id,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
-            pos: at,
+            pos: site,
         }]);
-        assert!(w.emplacements.is_empty(), "not placed the instant it is ordered");
-        assert_eq!(w.build_queue.len(), 1, "it is enqueued as a build job");
+        assert!(w.emplacements.is_empty(), "nothing stands the instant it is ordered");
         assert!(
             system_stock(&w, home, Commodity::Electronics) < electronics0,
-            "and the yard was actually charged for it",
+            "the kit is charged where the builder loads it",
+        );
+        assert!(
+            !w.pending_commands(id).is_empty(),
+            "the order travels to the builder at signal speed like any other",
         );
 
-        // Run past the recipe's build time.
-        for _ in 0..(60.0 / crate::config::DT) as usize {
+        // Signal out, flight, and the 45s of work at the site.
+        for _ in 0..(240.0 / crate::config::DT) as usize {
+            if !w.emplacements.is_empty() {
+                break;
+            }
             w.step(&[]);
         }
-        assert_eq!(w.emplacements.len(), 1, "it deploys when the job completes");
+        assert_eq!(w.emplacements.len(), 1, "the buoy stands after the work");
         let e = &w.emplacements[0];
-        assert_eq!(e.owner, id);
-        assert!(e.pos.distance(at) < 1.0, "at the site that was picked, not at the yard");
+        assert!(e.pos.distance(site) < 1.0, "where the builder worked, not at a yard");
+        let f = &w.fleets[&builder];
+        assert!(matches!(f.order, FleetOrder::Idle), "the crane is freed");
+        assert!(f.count(ShipKind::Builder) >= 1, "and survives — it is reusable");
+    }
+
+    /// No Construction Ship, no construction: the command is refused outright
+    /// and NOTHING is charged — materials must never vanish into an order that
+    /// cannot be carried out.
+    #[test]
+    fn no_builder_means_no_emplacement_and_no_charge() {
+        let mut w = test_world();
+        let id = PlayerId(9);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        for (c, n) in [(Commodity::Alloys, 500.0), (Commodity::Electronics, 500.0)] {
+            *w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.entry(c).or_insert(0.0) += n;
+        }
+        let electronics0 = system_stock(&w, home, Commodity::Electronics);
+        let l = &w.lanes.lanes[0];
+        let site = l.at(l.length() * 0.5);
+        w.step(&[Command::BuildEmplacement {
+            player_id: id,
+            emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            pos: site,
+        }]);
+        assert!(w.emplacements.is_empty());
+        assert!((system_stock(&w, home, Commodity::Electronics) - electronics0).abs() < 1e-9);
     }
 
     /// A site the rule refuses is refused at the COMMAND, not silently accepted

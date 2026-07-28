@@ -769,6 +769,7 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
     match world.fleets.get(&id) {
         Some(f) => {
             let k = match f.flagship_kind() {
+                sim::ShipKind::Builder => "construction ship",
                 sim::ShipKind::Convoy => "convoy",
                 sim::ShipKind::Raider => "raider",
                 sim::ShipKind::Corvette => "corvette",
@@ -803,10 +804,7 @@ fn fmt_wait(secs: f64) -> String {
 /// Human label for a build job, for the check-in timeline (§step1).
 fn build_label(what: sim::BuildKind) -> &'static str {
     match what {
-        sim::BuildKind::Emplace { emplacement } => match emplacement {
-            sim::EmplacementKind::HyperspaceBuoy => "a Hyperspace Buoy",
-            sim::EmplacementKind::DeepSpaceSensor => "a Deep Space Sensor",
-        },
+        sim::BuildKind::Ship { ship: sim::ShipKind::Builder } => "a Construction Ship",
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
@@ -843,6 +841,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
 
 fn kind_word(k: ShipKind) -> &'static str {
     match k {
+        ShipKind::Builder => "construction ship",
         ShipKind::Convoy => "convoy",
         ShipKind::Raider => "raider",
         ShipKind::Corvette => "corvette",

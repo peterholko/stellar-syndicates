@@ -82,6 +82,10 @@ pub enum SiteError {
     TooClose,
 }
 
+/// How close a builder must hold to its site for the work to run — a worksite,
+/// not a rendezvous, so it is tight.
+pub const CONSTRUCT_RADIUS: f64 = 600.0;
+
 /// How close two emplacements may be. Stops a player stacking a dozen buoys on
 /// one spot, which would be free redundancy rather than a network.
 pub const MIN_SPACING: f64 = 12_000.0;

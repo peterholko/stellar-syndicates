@@ -1544,6 +1544,8 @@ export class Renderer {
       case "freighter": return this.texConvoy;
       // §ground: the troopship rides the colony hull until it has its own art.
       case "transport": return this.texColony;
+      // §emplacements: the crane rides the bulk-hauler art until it has its own.
+      case "builder": return this.texConvoy;
     }
   }
 
@@ -1568,6 +1570,8 @@ export class Renderer {
       case "titan":
         return null;
       case "freighter": return "freighter";
+      // §emplacements: a builder fleet draws as the single working hull.
+      case "builder": return null;
     }
   }
 

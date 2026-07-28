@@ -1536,6 +1536,9 @@ fn build_options() -> Vec<BuildOptionView> {
     // free — a new SHIP does not, and has to be listed below.
     let ships = [
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
+        // §emplacements: the crane. Buoys and sensors are placed BY this hull —
+        // built here, then dispatched to the site from the map.
+        ("builder", "Construction Ship", BuildKind::Ship { ship: ShipKind::Builder }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
         ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
         ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),

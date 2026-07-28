@@ -95,6 +95,7 @@ pub const ACADEMY_TRAIN_COSTS: &[(crate::cargo::Commodity, f64)] =
 /// over its composition. Tunable.
 pub fn passenger_capacity(kind: ShipKind) -> u32 {
     match kind {
+        ShipKind::Builder => 0, // work crew only — berths are shops
         ShipKind::Convoy => 4,
         ShipKind::Colony => 8,
         // Warships carry crews, not passengers — capitals included (§ladder).

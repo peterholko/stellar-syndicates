@@ -48,6 +48,7 @@ pub const SENSOR_TECH_MULT: f64 = 1.0;
 /// 1.0 — the normalization anchor. Tunable.
 pub fn sig_size(kind: ShipKind) -> f64 {
     match kind {
+        ShipKind::Builder => 2.5, // a lit worksite — cranes, floods, welding arcs
         ShipKind::Scout => 0.5,
         ShipKind::Raider => 1.0, // the reference
         ShipKind::Corvette => 2.0,

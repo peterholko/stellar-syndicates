@@ -1518,10 +1518,7 @@ pub fn visible_manifest(
 /// Stable key string for a buildable thing (matches the client's build commands).
 pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
-        sim::BuildKind::Emplace { emplacement } => match emplacement {
-            sim::EmplacementKind::HyperspaceBuoy => "hyperspace_buoy",
-            sim::EmplacementKind::DeepSpaceSensor => "deep_space_sensor",
-        },
+        sim::BuildKind::Ship { ship: sim::ShipKind::Builder } => "builder",
         sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
         sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
         sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
@@ -1899,11 +1896,11 @@ mod tests {
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
-            sim::BuildJob { id: 1, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None, loadout: Default::default(), emplace_pos: None },
-            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None, loadout: Default::default(), emplace_pos: None },
+            sim::BuildJob { id: 1, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None, loadout: Default::default() },
+            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None, loadout: Default::default() },
             // A second concurrent job of mine, finishing FIRST — the queue list
             // must come back completion-ordered (§build-progress).
-            sim::BuildJob { id: 3, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None, loadout: Default::default(), emplace_pos: None },
+            sim::BuildJob { id: 3, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None, loadout: Default::default() },
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
