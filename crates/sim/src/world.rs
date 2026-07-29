@@ -10461,25 +10461,28 @@ impl World {
             EventPayload::ShipSpawned { id: builder_id, owner, kind: ShipKind::Builder },
         ));
 
-        // Raider ESCORTS the convoy's home↔hub trade lane (so it's positioned to
-        // autonomously defend the convoy via standing doctrine). `nearest` is no
-        // longer used for its route, but kept available for future picket setups.
+        // The raider spawns PARKED AT HOME, awaiting orders.
         //
-        // §hyperspace: this patrol now burns fuel for as long as it runs, which
-        // is intended — but it makes the opening runway a real constraint rather
-        // than a formality. See `FUEL_HOME_SEED`.
-        let _ = nearest;
+        // It used to open on a standing home↔hub patrol, so a fresh player's
+        // first sight of their own map was a hull already under way on a route
+        // they never set — it reads as the ship wandering off on its own. The
+        // patrol also burned the opening fuel seed continuously (§hyperspace,
+        // see `FUEL_HOME_SEED`) for a lap nobody asked for. Patrol is a verb
+        // the player can pick when they want a picket; it is not a state to
+        // wake up in.
+        //
+        // Autonomous defense is unaffected where it matters: `weapons_free_offense`
+        // covers Idle fleets, so a raider set weapons-free still engages what
+        // wanders into its own bubble. Only the convoy-SHADOWING policy needs a
+        // patrol, which is the player's call to make.
+        let _ = (nearest, hub);
         let raider_id = self.alloc_entity_id();
         let raider_fleet = Fleet::single(
             raider_id,
             owner,
             ShipKind::Raider,
             home,
-            FleetOrder::Patrol {
-                waypoints: vec![home, hub],
-                index: 1,
-                dwell_until: 0.0,
-            },
+            FleetOrder::Idle,
             None, // raiders carry no cargo
         );
         self.fleets.insert(raider_id, raider_fleet);
@@ -13316,22 +13319,67 @@ mod tests {
         assert!((w2.fleets[&convoy].fuel - spent).abs() < 1e-6, "the drawn-down tank persists across a snapshot");
     }
 
+    /// The movement integrator actually advances a hull under orders.
+    ///
+    /// This used to assert that SOMETHING in the world had moved a few seconds
+    /// after a join, which passed only because the starting raider woke up on a
+    /// spawn patrol — borrowed premise. The roster now wakes up parked, so the
+    /// test issues the order whose effect it means to measure.
     #[test]
     fn ships_actually_move() {
         let mut w = test_world();
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
-        let start: Vec<Vec2> = w.fleets.values().map(|s| s.pos).collect();
-        // Advance a few seconds.
-        for _ in 0..(5 * crate::config::TICK_HZ) {
+        let ship = find_ship(&mut w, id, ShipKind::Raider);
+        let start = w.fleets[&ship].pos;
+        let dest = start + Vec2::new(20_000.0, 0.0);
+        w.step(&[Command::MoveShip { player_id: id, ship_id: ship, dest }]);
+        // Issued AT the command center this hull is parked at, so the order
+        // reaches it almost at once; a few seconds of flight shows the motion.
+        for _ in 0..(10 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
-        let moved = w
+        assert!(
+            w.fleets[&ship].pos.distance(start) > 10.0,
+            "an ordered fleet should have left its start position"
+        );
+    }
+
+    /// §onboarding: a fresh corporation's hulls WAIT FOR ORDERS. Nothing in the
+    /// starting roster sets off on its own — a new player's first sight of their
+    /// map is a fleet at rest, not a ship wandering a route they never set (and
+    /// not one burning the opening fuel seed on a lap nobody asked for).
+    #[test]
+    fn the_starting_roster_wakes_up_parked() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let mine: Vec<(EntityId, Vec2)> = w
             .fleets
-            .values()
-            .zip(&start)
-            .any(|(s, &p0)| s.pos.distance(p0) > 10.0);
-        assert!(moved, "fleets should have moved from their start positions");
+            .iter()
+            .filter(|(_, f)| f.owner == id)
+            .map(|(fid, f)| (*fid, f.pos))
+            .collect();
+        assert!(!mine.is_empty(), "premise: a join spawns a roster");
+        for (fid, _) in &mine {
+            assert!(
+                matches!(w.fleets[fid].order, FleetOrder::Idle),
+                "a fresh hull holds station, but {:?} woke up on {:?}",
+                w.fleets[fid].flagship_kind(),
+                w.fleets[fid].order
+            );
+        }
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        for (fid, p0) in &mine {
+            let moved = w.fleets[fid].pos.distance(*p0);
+            assert!(
+                moved < 10.0,
+                "and stays put until ordered, but {:?} drifted {moved:.0} su",
+                w.fleets[fid].flagship_kind()
+            );
+        }
     }
 
     fn convoy_id(w: &mut World) -> EntityId {
