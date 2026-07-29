@@ -842,7 +842,15 @@ pub enum DriveState {
     /// Under way at `Regime` speed, locked on its current course.
     Cruising(crate::lane::Regime),
     /// Shutting down to thrusters. Still moving, still unable to steer.
-    Dropping { left: f64 },
+    /// `from` is the drive being shut down — a HYPERSPACE drive winding down is
+    /// still wound into the lane medium, so its shutdown is the last thing the
+    /// lane transmits for it (§coupled); a warp drive's drop stirs nothing.
+    /// serde default = Warp so pre-`from` snapshots load harmlessly.
+    Dropping {
+        #[serde(default = "crate::lane::Regime::warp")]
+        from: crate::lane::Regime,
+        left: f64,
+    },
 }
 
 impl DriveState {
@@ -850,6 +858,19 @@ impl DriveState {
     /// whole mechanic.
     pub fn can_steer(self) -> bool {
         matches!(self, DriveState::Thrusters)
+    }
+
+    /// §coupled: is this drive STIRRING THE LANE MEDIUM? Cruising hyperspace,
+    /// or shutting a hyperspace drive down — the drive stays wound into the
+    /// medium until it is fully out, so the SHUTDOWN is the last thing the lane
+    /// transmits for a departing hull (both to its owner and to a tripwire).
+    /// A warp drive touches no lane, engaged or dropping.
+    pub fn stirs_the_lane(self) -> bool {
+        matches!(
+            self,
+            DriveState::Cruising(crate::lane::Regime::Hyperspace)
+                | DriveState::Dropping { from: crate::lane::Regime::Hyperspace, .. }
+        )
     }
 
     /// The regime this state moves at. Transitions run at thruster speed: a
@@ -1619,7 +1640,7 @@ impl Fleet {
             }
             // Cruising: any change of regime means SHUTTING DOWN first.
             DriveState::Cruising(r) if r != want => {
-                DriveState::Dropping { left: crate::lane::drop_seconds(r) }
+                DriveState::Dropping { from: r, left: crate::lane::drop_seconds(r) }
             }
             // ...and so does any change of COURSE. In warp nothing is steering,
             // so wanting to go somewhere other than where you are pointed is not
@@ -1629,12 +1650,12 @@ impl Fleet {
             DriveState::Cruising(crate::lane::Regime::Warp)
                 if off_course > crate::lane::COURSE_LOCK_RAD =>
             {
-                DriveState::Dropping { left: crate::lane::drop_seconds(crate::lane::Regime::Warp) }
+                DriveState::Dropping { from: crate::lane::Regime::Warp, left: crate::lane::drop_seconds(crate::lane::Regime::Warp) }
             }
             DriveState::Cruising(r) => DriveState::Cruising(r),
-            DriveState::Dropping { left } => {
+            DriveState::Dropping { from, left } => {
                 let left = left - dt;
-                if left <= 0.0 { DriveState::Thrusters } else { DriveState::Dropping { left } }
+                if left <= 0.0 { DriveState::Thrusters } else { DriveState::Dropping { from, left } }
             }
         };
         self.regime = self.drive_state.regime();
@@ -2045,6 +2066,9 @@ mod drive_wire {
             j(DriveState::Spooling { to: crate::lane::Regime::Warp, left: 1.5 }),
             "{\"spooling\":{\"to\":\"warp\",\"left\":1.5}}"
         );
-        assert_eq!(j(DriveState::Dropping { left: 3.0 }), "{\"dropping\":{\"left\":3.0}}");
+        assert_eq!(
+            j(DriveState::Dropping { from: crate::lane::Regime::Hyperspace, left: 3.0 }),
+            "{\"dropping\":{\"from\":\"hyperspace\",\"left\":3.0}}"
+        );
     }
 }

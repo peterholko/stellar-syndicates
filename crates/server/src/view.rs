@@ -1679,8 +1679,7 @@ fn latest_observable(
         // exit gap unhandled a drive-gated cutoff parked ghosts at lane exits
         // and read as a bug. The gap now has an honest hold, the dead-gap
         // creep, and the growing SEEN — so the truthful rule is affordable.
-        let riding =
-            matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let riding = s.drive.stirs_the_lane();
         let mut delay = if own && riding {
             delays.from_coupled(s.pos, cc)
         } else {
@@ -3880,6 +3879,23 @@ mod channel_seam {
              plain light only ({d_plain:.1}s), but it was served {:.1}s stale",
             now - s_park.time
         );
+        // A HYPERSPACE drive winding down still stirs the medium — coupled.
+        let hyper_drop = mk(sim::ship::DriveState::Dropping { from: sim::lane::Regime::Hyperspace, left: 2.0 });
+        let s_hd = latest_observable(&hyper_drop, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_hd.time < d_coupled + 1.5,
+            "a hyperspace drive's SHUTDOWN transmits through its lane, got {:.1}s stale",
+            now - s_hd.time
+        );
+        // A WARP drive dropping in the same ribbon touches no lane — plain light.
+        let warp_drop = mk(sim::ship::DriveState::Dropping { from: sim::lane::Regime::Warp, left: 0.5 });
+        let s_wd = latest_observable(&warp_drop, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_wd.time > d_plain - 1.5,
+            "a warp drop stirs no lane, however deep in the ribbon it happens \
+             ({:.1}s stale vs plain {d_plain:.1}s)",
+            now - s_wd.time
+        );
     }
 
     /// §smooth-light: ACROSS A CHANNEL SEAM, HOLD — don't invent. A hull
@@ -3923,6 +3939,21 @@ mod channel_seam {
             t += dt;
             x += 4_250.0 * dt;
         }
+        // The SHUTDOWN: 3s of the hyperspace drive winding down — still wound
+        // into the medium, so still transmitting (§coupled). The last thing the
+        // lane carries for this hull is its drive going dark.
+        let mut left = 3.0;
+        while left > 0.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, 0.0),
+                vel: sim::Vec2::new(0.0, 85.0),
+                loud: false,
+                drive: sim::ship::DriveState::Dropping { from: sim::lane::Regime::Hyperspace, left },
+            });
+            t += dt;
+            left -= dt;
+        }
         let mut y = 0.0;
         while y < 30_000.0 {
             samples.push_back(Sample {
@@ -3935,14 +3966,18 @@ mod channel_seam {
             t += dt;
             y += 425.0 * dt;
         }
-        // The seam: THE DRIVE CHANGE (§coupled — the drive is the transmitter).
-        // The last RIDING sample is the final lane-coupled report; the first
-        // sample after the drive drops travels by plain light, wherever it
-        // stands — their arrivals bracket the dark window.
-        let riding =
-            |s: &Sample| matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        // The seam: THE DRIVE GOING FULLY DARK (§coupled — the drive is the
+        // transmitter, and its SHUTDOWN is the last thing it transmits). The
+        // final stirring sample is the end of the drop; everything after
+        // travels by plain light — their arrivals bracket the dark window.
+        let riding = |s: &Sample| s.drive.stirs_the_lane();
         let last_in = *samples.iter().filter(|s| riding(s)).last().unwrap();
         let first_out = samples.iter().find(|s| !riding(s)).unwrap();
+        assert!(
+            matches!(last_in.drive, sim::ship::DriveState::Dropping { .. }),
+            "the last coupled sighting IS the shutdown — the command center \
+             watches the drive wind down, then silence"
+        );
         let a_in = last_in.time + field.from_coupled(last_in.pos, cc);
         let a_out = first_out.time + field.between(first_out.pos, cc);
         assert!(

@@ -1058,6 +1058,12 @@ pub enum Regime {
 }
 
 impl Regime {
+    /// serde default for `DriveState::Dropping::from` — snapshots that predate
+    /// the field load as a warp drop, the harmless guess.
+    pub fn warp() -> Self {
+        Regime::Warp
+    }
+
     /// The label the map uses. Kept here so the sim owns the vocabulary and the
     /// client cannot drift from it.
     pub fn label(self) -> &'static str {

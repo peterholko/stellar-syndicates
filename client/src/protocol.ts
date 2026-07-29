@@ -696,7 +696,7 @@ export type DriveStateView =
   | "thrusters"
   | { spooling: { to: "thrusters" | "warp" | "hyperspace"; left: number } }
   | { cruising: "thrusters" | "warp" | "hyperspace" }
-  | { dropping: { left: number } };
+  | { dropping: { from: "thrusters" | "warp" | "hyperspace"; left: number } };
 
 export interface GhostView {
   id: EntityId;

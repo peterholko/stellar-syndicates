@@ -970,10 +970,11 @@ function regimeCell(g: GhostView): string {
     );
   }
   if (dropping) {
-    const tip = `Dropping to thrusters — ${dropping.left.toFixed(1)}s to go. A course change means shutting the drive down first; only then can the fleet come about.`;
+    const name = dropping.from === "hyperspace" ? "hyperspace drive" : "warp drive";
+    const tip = `${name} shutting down — ${dropping.left.toFixed(1)}s to go. A course change means shutting the drive down first; only then can the fleet come about.`;
     return stat(
       "Drive",
-      `<span class="dim" title="${esc(tip)}">thrusters · dropping out <b>${dropping.left.toFixed(1)}s</b></span>`,
+      `<span class="dim" title="${esc(tip)}">thrusters · ${name} shutting down <b>${dropping.left.toFixed(1)}s</b></span>`,
     );
   }
   const r = cruising ?? "thrusters";
