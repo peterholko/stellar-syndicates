@@ -1651,20 +1651,30 @@ fn latest_observable(
     // time — the interpolation bracket's far end.
     let mut newer: Option<(&Sample, f64)> = None;
     for s in samples.iter().rev() {
-        // §coupled: an OWN transmitter anywhere INSIDE a ribbon injects into the
-        // medium — that is literally what a buoy is, a stationary, non-riding
-        // object in a lane that transmits through it. Gating on the drive being
-        // engaged created a seam at every lane EXIT: the moment a fleet began
-        // dropping out, its reports fell back to passive light and its ghost
-        // parked on the lane at the exit point, looking like it never left.
-        // `from_coupled` checks containment itself and degrades to plain
-        // `between` off the network, so it simply always applies to own fleets.
-        let mut delay =
-            if own { delays.from_coupled(s.pos, cc) } else { delays.between(s.pos, cc) };
-        // A rival's WAKE, by contrast, comes from RIDING — the drive stirring
-        // the medium — so the tripwire keeps its drive gate.
+        // §coupled: THE DRIVE IS THE TRANSMITTER (design ruling). A hull talks
+        // through a lane exactly while its hyperspace drive is engaged — the
+        // drive stirring the medium is the coupling, the same physics that
+        // makes a rival's wake audible to a tripwire. Turn the drive off and
+        // the lane goes silent for you at that instant, wherever you stand:
+        // a hull parked in a ribbon, or warping across one, reports by plain
+        // light like anything else. (Buoys transmit while parked because they
+        // ARE purpose-built lane transmitters; a hull's coupling is a side
+        // effect of riding.) Per-sample, so each report travels by the channel
+        // the ship was on WHEN IT SENT IT — reports already in the lane when
+        // the drive drops still arrive; nothing anti-causal cuts them off.
+        //
+        // History: this was containment-gated for a while, because with the
+        // exit gap unhandled a drive-gated cutoff parked ghosts at lane exits
+        // and read as a bug. The gap now has an honest hold, the dead-gap
+        // creep, and the growing SEEN — so the truthful rule is affordable.
         let riding =
             matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let mut delay = if own && riding {
+            delays.from_coupled(s.pos, cc)
+        } else {
+            delays.between(s.pos, cc)
+        };
+        // A rival's wake, heard by the viewer's tripwires — the same drive gate.
         if riding && !ears.is_empty() {
             delay = delay.min(delays.heard(s.pos, cc, ears));
         }
@@ -3799,6 +3809,67 @@ mod lane_smoothness {
 mod channel_seam {
     use super::*;
 
+    /// §coupled: THE DRIVE IS THE TRANSMITTER. An own hull sitting INSIDE a
+    /// ribbon with its hyperspace drive off reports by plain warp light — mere
+    /// presence in the medium transmits nothing (that is what buoys are for).
+    /// The same hull riding (drive engaged) at the same spot is coupled and
+    /// near-fresh. One position, two drive states, opposite freshness.
+    #[test]
+    fn a_hull_in_a_ribbon_couples_only_while_its_drive_is_on() {
+        let ctrl =
+            vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 2_000.0;
+        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let cc = sim::Vec2::new(0.0, 0.0);
+        let pos = sim::Vec2::new(100_000.0, 0.0); // dead centre of the ribbon
+        let mk = |drive: sim::ship::DriveState| {
+            let mut samples: VecDeque<Sample> = VecDeque::new();
+            let mut t = 0.0;
+            while t <= 60.0 {
+                samples.push_back(Sample { time: t, pos, vel: sim::Vec2::ZERO, loud: false, drive });
+                t += 1.0;
+            }
+            samples
+        };
+        let now = 60.0;
+        // The two channels' own delays at this spot — the coupled ride vs the
+        // plain-light baseline (`between` runs at c x WARP_FACTOR).
+        let d_plain = field.between(pos, cc);
+        let d_coupled = field.from_coupled(pos, cc);
+        assert!(
+            d_plain > d_coupled * 3.0,
+            "premise: the lane is much faster than plain light here \
+             (plain {d_plain:.1}s vs coupled {d_coupled:.1}s)"
+        );
+        // Riding: coupled — the report rode the lane, near-fresh.
+        let riding = mk(sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let s_ride = latest_observable(&riding, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_ride.time < d_coupled + 1.5,
+            "a riding hull's own report is lane-fresh, got {:.1}s stale",
+            now - s_ride.time
+        );
+        // Drive off (parked in the ribbon): plain light only.
+        let parked = mk(sim::ship::DriveState::Thrusters);
+        let s_park = latest_observable(&parked, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_park.time > d_plain - 1.5,
+            "a parked hull transmits nothing through the lane it sits in — \
+             plain light only ({d_plain:.1}s), but it was served {:.1}s stale",
+            now - s_park.time
+        );
+    }
+
     /// §smooth-light: ACROSS A CHANNEL SEAM, HOLD — don't invent. A hull
     /// leaving its lane ends the coupled report; the first off-ribbon sample
     /// arrives by plain warp light, tens of seconds later. In that window the
@@ -3852,13 +3923,16 @@ mod channel_seam {
             t += dt;
             y += 425.0 * dt;
         }
-        // The seam: the last sample still inside the ribbon, and the first
-        // beyond it (their arrivals bracket the dark window).
-        let half = 6_000.0;
-        let last_in = *samples.iter().filter(|s| s.pos.y <= half).last().unwrap();
-        let first_out = samples.iter().find(|s| s.pos.y > half).unwrap();
+        // The seam: THE DRIVE CHANGE (§coupled — the drive is the transmitter).
+        // The last RIDING sample is the final lane-coupled report; the first
+        // sample after the drive drops travels by plain light, wherever it
+        // stands — their arrivals bracket the dark window.
+        let riding =
+            |s: &Sample| matches!(s.drive, sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let last_in = *samples.iter().filter(|s| riding(s)).last().unwrap();
+        let first_out = samples.iter().find(|s| !riding(s)).unwrap();
         let a_in = last_in.time + field.from_coupled(last_in.pos, cc);
-        let a_out = first_out.time + field.from_coupled(first_out.pos, cc);
+        let a_out = first_out.time + field.between(first_out.pos, cc);
         assert!(
             a_out - a_in > 5.0,
             "premise: leaving the lane opens a wide arrival gap (got {:.1}s)",
