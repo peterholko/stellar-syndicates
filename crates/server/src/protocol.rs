@@ -1542,13 +1542,15 @@ pub struct GhostView {
     /// yours. (Current-state like `docked`, with the same staleness caveat.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<PathPointView>>,
-    /// §emplacements: OWN fleets only — this crane is mid-Construct and can
-    /// take no other order until the structure stands. Rivals always get
-    /// `false`: what a parked builder is doing is not readable from outside.
-    /// Drives the panel's build-button lockout — without it a stationary
-    /// builder looks idle and a second build click dies in silence.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub working: bool,
+    /// §emplacements: OWN fleets only — how far along this crane's build is
+    /// (0..1), absent when it is not building. Rivals never get it: what a
+    /// parked builder is doing is not readable from outside.
+    ///
+    /// Drives BOTH the panel's progress bar and its build-button lockout —
+    /// without the latter a stationary builder looks idle and a second build
+    /// click dies in silence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_progress: Option<f64>,
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// included under exactly the cargo rule below (empty = none visible).
     pub passengers: BTreeMap<sim::SpecialistKind, u32>,

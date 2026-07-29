@@ -120,6 +120,9 @@ export interface ViewState {
   selectedShipId: string | null;
   /// Currently selected star system (for the claim / ship-production panel).
   selectedSystemId: string | null;
+  /// §emplacements: the selected structure standing in open space (buoy or
+  /// sensor). Shares the right-dock panel with ships — never both at once.
+  selectedEmplacementId: string | null;
   /// Committed raids the player issued (raiderId → targetId), so the renderer can
   /// draw a CRUDE, drifting intercept estimate for each. Cleared on recall, on the
   /// result notification, or when either ship leaves the view.
@@ -177,6 +180,7 @@ export function initialState(): ViewState {
     lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,
+    selectedEmplacementId: null,
     raids: {},
     orders: {},
     commandSignals: [],

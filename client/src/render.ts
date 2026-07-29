@@ -1799,6 +1799,11 @@ export class Renderer {
         g.moveTo(p.x - 5, p.y + 4).lineTo(p.x, p.y - 5).lineTo(p.x + 5, p.y + 4).closePath();
         g.stroke({ width: 1.5, color: col, alpha: 0.9 });
       }
+      // Selection ring — the same affordance a selected fleet gets, so a
+      // structure reads as a clickable object rather than scenery.
+      if (state.selectedEmplacementId === e.id) {
+        g.circle(p.x, p.y, 12).stroke({ width: 1.5, color: col, alpha: 0.95 });
+      }
     }
   }
 

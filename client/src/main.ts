@@ -702,13 +702,26 @@ function buildShipPanel(): void {
 function selectShip(id: string): void {
   state.selectedShipId = id;
   state.selectedSystemId = null; // a ship and a system are never both selected
+  state.selectedEmplacementId = null; // …nor a ship and a structure
   closeRail(); // the ship panel and rail share the right-dock slot
+  $("ship-panel").classList.add("is-open");
+  buildShipPanel();
+  updateShipPanel();
+}
+// §emplacements: select a standing structure — same right-dock panel as a
+// ship, since both answer "what is this thing I clicked".
+function selectEmplacement(id: string): void {
+  state.selectedEmplacementId = id;
+  state.selectedShipId = null;
+  state.selectedSystemId = null;
+  closeRail();
   $("ship-panel").classList.add("is-open");
   buildShipPanel();
   updateShipPanel();
 }
 function deselectShip(): void {
   state.selectedShipId = null;
+  state.selectedEmplacementId = null;
   $("ship-panel").classList.remove("is-open");
 }
 
@@ -1007,7 +1020,9 @@ function regimeCell(g: GhostView): string {
 function ownActivity(g: GhostView): string {
   const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
   if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "signal outbound", "Your command is still crossing space to this fleet.");
-  if (g.working) return a("build", "constructing", "Raising a structure where it stands — committed until the work ends.");
+  if (g.build_progress != null) {
+    return a("build", `constructing ${Math.round(g.build_progress * 100)}%`, "Raising a structure where it stands — committed until the work ends.");
+  }
   if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
   if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
   if (g.route && g.route.length) return a("convoy", "hauling", "En route along its trade route.");
@@ -1175,6 +1190,13 @@ function rivalBody(g: GhostView): string {
 
 function updateShipPanel(): void {
   if (renderDeferred("ship-panel", updateShipPanel)) return; // §single-click
+  // §emplacements: the same dock shows a selected STRUCTURE. Handled first —
+  // the two selections are mutually exclusive, so whichever is set owns the
+  // panel this tick.
+  if (state.selectedEmplacementId) {
+    updateEmplacementPanel();
+    return;
+  }
   if (!state.selectedShipId) return;
   const root = $("ship-panel");
   // §perf/wedge: while the player is working the dockside load controls — the
@@ -3235,6 +3257,22 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
       }
     }
 
+    // §emplacements: YOUR STRUCTURES ARE OBJECTS ON THE MAP, not scenery —
+    // a buoy or sensor takes a click and opens its own panel, through the same
+    // candidate cycling everything else uses (so a buoy sitting on a lane
+    // beside a parked crane doesn't swallow the ship's click).
+    for (const e of state.emplacements) {
+      const s = renderer.worldToScreen(e.pos);
+      const d = Math.hypot(s.x - sx, s.y - sy);
+      if (d < 18) {
+        cands.push({
+          key: `emp:${e.id}`, sortD: d, label: emplacementLabel(e.kind),
+          pick: () => selectEmplacement(e.id),
+          readout: `<b>${esc(emplacementLabel(e.kind))}</b> selected — details in the panel.`,
+        });
+      }
+    }
+
     if (state.galaxy) {
       for (const sys of state.galaxy.systems) {
         const s = renderer.worldToScreen(sys.pos);
@@ -3488,6 +3526,54 @@ function kitAffordable(kind: string): boolean {
   );
 }
 
+// §emplacements: wire slug → display name. `label()` already title-cases the
+// slug, so the vocabulary stays owned by the sim rather than re-typed here.
+function emplacementLabel(kind: string): string {
+  return label(kind);
+}
+
+// §emplacements: what each standing structure IS, in the player's terms —
+// the same sentence the build button promises, so a structure explains itself
+// when clicked months after it was placed.
+const EMPLACEMENT_BLURB: Record<string, string> = {
+  hyperspace_buoy:
+    "Relays your orders and reports at lane speed — but only between TWO buoys sharing a lane. A lone buoy carries nothing; your home system counts as the first one.",
+  deep_space_sensor:
+    "A stationary picket. Watches its bubble like a ship's sensors and reports home at warp speed.",
+  hyperspace_sensor:
+    "A tripwire coupled to its lane. Hears rival traffic riding past and reports home at lane speed — riders can go quiet by dropping to warp and going around.",
+};
+
+// §emplacements: the SELECTED STRUCTURE panel. Structures are stationary and
+// yours, so there is no fog story to tell here — no Seen age, no uncertainty:
+// the position IS where you put it.
+function updateEmplacementPanel(): void {
+  const root = $("ship-panel");
+  const e = state.emplacements.find((x) => x.id === state.selectedEmplacementId);
+  if (!e) {
+    // Destroyed, or a fresh View no longer lists it.
+    setHtml(root, `<div class="sp-body"><div class="sp-line dim">That structure is no longer there.</div></div>`);
+    return;
+  }
+  const name = emplacementLabel(e.kind);
+  const head =
+    `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">Your structure</div>` +
+    `<h2>${name}</h2></div><div class="panel-title__right">${badge("accent", "STANDING")}</div></div>` +
+    `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
+  const stats = statStrip([
+    `<div class="stat"><dt>Position</dt><dd>${fmt(e.pos.x)} · ${fmt(e.pos.y)}</dd></div>`,
+    e.sensor_range > 0
+      ? `<div class="stat" title="Everything inside this radius is watched from here."><dt>Watches</dt><dd>${fmt(e.sensor_range)} su</dd></div>`
+      : `<div class="stat" title="A buoy carries signals; it does not watch."><dt>Watches</dt><dd class="dim">—</dd></div>`,
+  ]);
+  const body =
+    `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
+    (e.kind === "hyperspace_buoy" && state.emplacements.filter((x) => x.kind === "hyperspace_buoy").length < 2
+      ? `<div class="sp-line" style="color:var(--warn)">Relaying nothing yet — it needs a second buoy sharing its lane.</div>`
+      : "");
+  setHtml(root, head + `<div class="sp-body">${stats}${body}</div>`);
+}
+
 // §emplacements: the CONSTRUCTION SHIP's build section — three BUILD-HERE
 // buttons on the actor. The ship builds where it is parked: fly it to the
 // spot with an ordinary move order, then press the button. The status line
@@ -3498,27 +3584,38 @@ function emplaceSection(g: GhostView): string {
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
-  // Busy = MID-CONSTRUCT (`working`, own-only from the wire), an order signal
+  // Busy = MID-CONSTRUCT (`build_progress`, own-only from the wire), an order signal
   // still in its lifecycle (pendingOrders — server-managed, so it EXPIRES),
   // or visibly moving. Not `state.orders`: that record used to persist after
   // arrival, which kept these buttons disabled forever once the ship had
   // moved anywhere — and a disabled button swallows clicks silently.
-  const busy = g.working || state.pendingOrders.has(g.id) || Math.hypot(g.vel.x, g.vel.y) >= 0.5;
+  const busy = g.build_progress != null || state.pendingOrders.has(g.id) || Math.hypot(g.vel.x, g.vel.y) >= 0.5;
   // The spot's verdict, computed where the ship stands (it is parked when the
   // buttons are live, so the light-delayed position IS the position).
   const laneOk = !renderer.siteError("hyperspace_buoy", g.pos, state);
   const openOk = !renderer.siteError("deep_space_sensor", g.pos, state);
-  const note = g.working
-    ? `<div class="sp-line dim">Constructing here — committed until the structure stands.</div>`
-    : busy
-      ? `<div class="sp-line dim">Under way — it builds where it stops, once idle.</div>`
-      : `<div class="sp-line dim">Builds at this spot. ${
-          laneOk
-            ? "In a hyperspace lane — everything can stand here."
-            : openOk
-              ? "Open space — sensors only; move into a lane band for buoys and tripwires."
-              : "Too close to another structure — move on a little."
-        }</div>`;
+  // MID-BUILD: the bar is the whole story, so it replaces the siting advice
+  // (which is about a build you have not started). Reported on the crane's own
+  // channel like a shipyard job — see the wire field's note on why this one
+  // number is NOT light-delayed while the ship's position is.
+  if (g.build_progress != null) {
+    const pct = Math.max(0, Math.min(100, g.build_progress * 100));
+    return (
+      `<div class="sp-sec">Construct</div>` +
+      `<div class="sp-line">${bar(pct)}</div>` +
+      `<div class="sp-line dim">Constructing — <b>${pct.toFixed(0)}%</b>. ` +
+      `Committed until the structure stands.</div>`
+    );
+  }
+  const note = busy
+    ? `<div class="sp-line dim">Under way — it builds where it stops, once idle.</div>`
+    : `<div class="sp-line dim">Builds at this spot. ${
+        laneOk
+          ? "In a hyperspace lane — everything can stand here."
+          : openOk
+            ? "Open space — sensors only; move into a lane band for buoys and tripwires."
+            : "Too close to another structure — move on a little."
+      }</div>`;
   const btns = kinds
     .map(
       ([k, name, tip]) =>

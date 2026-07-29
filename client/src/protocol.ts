@@ -727,9 +727,10 @@ export interface GhostView {
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
   path?: PathPointView[] | null;
-  /// §emplacements: own fleets only — mid-Construct; the crane can take no
-  /// other order until the structure stands (absent = false).
-  working?: boolean;
+  /// §emplacements: own fleets only — how far along this crane's build is
+  /// (0..1); absent when it is not building. Drives the progress bar and the
+  /// build-button lockout.
+  build_progress?: number | null;
   // Cargo present only when this convoy is within your sensor coverage.
   /// Specialist passengers aboard — manifest data, included under exactly the
   /// cargo rule (empty object = none visible / none aboard).
