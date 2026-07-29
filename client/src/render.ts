@@ -2340,10 +2340,35 @@ export class Renderer {
       const gp = this.worldToScreen({ x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
 
       const p = Math.max(0, Math.min(1, sig.pOut));
-      const hx = cc.x + (gp.x - cc.x) * p;
-      const hy = cc.y + (gp.y - cc.y) * p;
-      const d = norm(gp.x - hx, gp.y - hy);
-      dashedLine(g, cc.x, cc.y, hx, hy, 6, 7);
+      // §buoys: the comet traces the RELAY PATH the order actually flies —
+      // screen-space waypoints from cc through each hop, the LAST leg bent
+      // onto the live ghost so arrival lands on the ship wherever its light
+      // has advanced. `fracs` are the server's own hop times, so the comet
+      // sprints along lanes and crawls the warp gaps. No hops = straight run.
+      const pts: { x: number; y: number }[] = [cc];
+      const fracs: number[] = [0];
+      if (sig.hops.length >= 2) {
+        for (let i = 0; i < sig.hops.length - 1; i++) {
+          pts.push(this.worldToScreen(sig.hops[i].pos));
+          fracs.push(sig.hops[i].frac);
+        }
+      }
+      pts.push(gp);
+      fracs.push(1);
+      // The head: find the segment containing `p` and interpolate inside it.
+      let seg = 1;
+      while (seg < fracs.length - 1 && fracs[seg] < p) seg++;
+      const f0 = fracs[seg - 1];
+      const f1 = fracs[seg];
+      const lt = f1 > f0 ? (p - f0) / (f1 - f0) : 1;
+      const hx = pts[seg - 1].x + (pts[seg].x - pts[seg - 1].x) * lt;
+      const hy = pts[seg - 1].y + (pts[seg].y - pts[seg - 1].y) * lt;
+      const d = norm(pts[seg].x - pts[seg - 1].x, pts[seg].y - pts[seg - 1].y);
+      // The traversed path behind the head, dashed along every completed leg.
+      for (let i = 1; i < seg; i++) {
+        dashedLine(g, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, 6, 7);
+      }
+      dashedLine(g, pts[seg - 1].x, pts[seg - 1].y, hx, hy, 6, 7);
       g.stroke({ width: 1, color: COL_COMMAND, alpha: 0.16 });
       for (let k = 1; k <= 4; k++) {
         g.circle(hx - d.x * k * 6, hy - d.y * k * 6, 4.4 - k * 0.8).fill({ color: COL_COMMAND, alpha: 0.42 - k * 0.08 });

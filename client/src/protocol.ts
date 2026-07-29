@@ -1301,6 +1301,9 @@ export type ServerMsg =
       ship_id: EntityId;
       depart_time: number;
       arrive_time: number;
+      /// §buoys: the relay path the order flies — hop positions with arrival
+      /// fractions of the whole window. Absent/empty = straight run.
+      hops?: { pos: Vec2; frac: number }[];
     }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)
   | { type: "Error"; message: string };

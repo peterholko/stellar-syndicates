@@ -18,6 +18,10 @@ export interface CommandSignal {
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
   pOut: number; // 0..1 outbound progress, recomputed each frame
+  /// §buoys: the relay path (hop positions + arrival fractions). The comet
+  /// traces these — sprinting along lanes, crawling the gaps — instead of a
+  /// straight line. Empty = no relays helped; fly direct.
+  hops: { pos: Vec2; frac: number }[];
 }
 
 // NOTE: a raid result has NO inbound travelling signal. The map IS the inbound

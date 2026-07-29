@@ -645,10 +645,22 @@ impl PositionHistory {
     /// is. Used to pace the outbound command
     /// comet so it meets the ghost. `None` if the ship is currently dark.
     pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<f64> {
+        self.observed_sighting(ship_id, cc, delays, now).map(|(_, age)| age)
+    }
+
+    /// The (position, age) of the viewer's CURRENT SIGHTING of their own ship —
+    /// where the ghost stands and how stale it is. What the order comet aims at.
+    pub fn observed_sighting(
+        &self,
+        ship_id: EntityId,
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        now: f64,
+    ) -> Option<(Vec2, f64)> {
         let track = self.tracks.get(&ship_id)?;
-        // observed_age serves the ISSUING player's own ship — coupled applies.
+        // Serves the ISSUING player's own ship — coupled applies.
         let sample = latest_observable(&track.samples, cc, delays, now, true, &[])?;
-        Some(now - sample.time)
+        Some((sample.pos, now - sample.time))
     }
 
     /// Was a (destroyed) raider's ghost — observed at retarded position `ghost_pos`,

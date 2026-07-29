@@ -417,6 +417,11 @@ pub struct Hop {
     pub to: Vec2,
     /// The lane ridden, or `None` for a warp hop across open space.
     pub lane: Option<u32>,
+    /// CUMULATIVE seconds from send until the signal reaches `to` — straight
+    /// from the relay search's arrival times, so an animation that walks the
+    /// hops at these timestamps replays the journey the solver actually found
+    /// (fast along lanes, slow across the gaps) with nothing re-derived.
+    pub t: f64,
 }
 
 /// One step of a planned journey: fly to `to`, and if `lane` is set, do it by
@@ -508,7 +513,8 @@ impl LaneNetwork {
     pub fn signal(&self, a: Vec2, b: Vec2, c: f64, buoys: &[Vec2]) -> (f64, Vec<Hop>) {
         let warp = c * WARP_FACTOR;
         let lane_speed = c * self.signal_factor_on_lane();
-        let direct = (a.distance(b) / warp, vec![Hop { to: b, lane: None }]);
+        let direct =
+            (a.distance(b) / warp, vec![Hop { to: b, lane: None, t: a.distance(b) / warp }]);
         if buoys.len() < 2 {
             return direct; // nothing to relay BETWEEN
         }
@@ -574,9 +580,9 @@ impl LaneNetwork {
                 let (u, v) = (&relays[chain[j]], &relays[i]);
                 u.on.iter().find_map(|(la, _)| v.on.iter().find(|(lb, _)| lb == la).map(|_| *la))
             });
-            hops.push(Hop { to: relays[i].pos, lane });
+            hops.push(Hop { to: relays[i].pos, lane, t: best[i] });
         }
-        hops.push(Hop { to: b, lane: None });
+        hops.push(Hop { to: b, lane: None, t });
         (t, hops)
     }
 
@@ -2311,6 +2317,35 @@ mod tests {
         );
         assert!(hops.iter().any(|h| h.lane == Some(l.id)), "and the path says which road it rode");
         assert_eq!(hops.last().unwrap().to, b, "a signal always ends where it was sent");
+    }
+
+    /// §buoys: THE HOPS CARRY THEIR CLOCK. Each hop's `t` is the cumulative
+    /// arrival time straight from the relay search, so the order comet can
+    /// replay the journey exactly — fast along the lane, slow across the gaps
+    /// — without re-deriving any speed. Monotonic, and the last hop lands at
+    /// precisely the total the field quotes.
+    #[test]
+    fn signal_hops_carry_cumulative_times_that_land_on_the_total() {
+        let (n, ..) = net(1, 4);
+        let l = &n.lanes[0];
+        let (a, b) = (l.at(l.length() * 0.1), l.at(l.length() * 0.9));
+        let c = 400.0;
+        let (total, hops) = n.signal(a, b, c, &[a, b]);
+        assert!(hops.len() >= 2, "a relayed journey has real hops");
+        let mut prev = 0.0;
+        for h in &hops {
+            assert!(h.t > prev - 1e-9, "hop times run forward ({:.2} after {prev:.2})", h.t);
+            prev = h.t;
+        }
+        assert!(
+            (hops.last().unwrap().t - total).abs() < 1e-6,
+            "the last hop arrives exactly at the quoted total ({:.3} vs {total:.3})",
+            hops.last().unwrap().t
+        );
+        // And the unrelayed fallback stamps its single hop with the whole trip.
+        let (direct_t, direct_hops) = n.signal(a, b, c, &[]);
+        assert_eq!(direct_hops.len(), 1);
+        assert!((direct_hops[0].t - direct_t).abs() < 1e-9);
     }
 
     /// §buoys: two buoys sharing NO lane are just two points in space, so the

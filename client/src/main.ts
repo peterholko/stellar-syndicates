@@ -6885,6 +6885,7 @@ function join(): void {
             depart: msg.depart_time,
             arrive: msg.arrive_time,
             pOut: 0,
+            hops: msg.hops ?? [],
           });
           break;
         }

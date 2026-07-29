@@ -172,13 +172,36 @@ impl GameLoop {
         // back to ~0 if just spawned at home. The order reaches the ship one delay
         // out — that's the whole outbound signal; the ship's reaction is then seen
         // directly on the map when its light arrives (no return signal needed).
-        let age = self.history.observed_age(ship_id, cc, &delays, now).unwrap_or(0.0);
+        let (ghost_pos, age) = self
+            .history
+            .observed_sighting(ship_id, cc, &delays, now)
+            .unwrap_or((cc, 0.0));
+        // §buoys: the RELAY PATH the order flies, aimed at the ghost (the
+        // player's own sighting — nothing here reveals true position). Hop
+        // times come from the relay search itself; NORMALISED to fractions of
+        // the whole window so the comet lands exactly at `arrive_time` even
+        // where the ghost's own delay (e.g. a coupled rider) and the plain
+        // field disagree about the total.
+        let hops = if age > 0.05 {
+            let hops = delays.path(cc, ghost_pos);
+            let total = hops.last().map(|h| h.t).unwrap_or(0.0);
+            if hops.len() >= 2 && total > 1e-9 {
+                hops.iter()
+                    .map(|h| crate::protocol::SignalHopView { pos: h.to, frac: h.t / total })
+                    .collect()
+            } else {
+                Vec::new() // a straight run — the client's fallback draws it
+            }
+        } else {
+            Vec::new()
+        };
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandSignal {
                 ship_id,
                 depart_time: now,
                 arrive_time: now + age,
+                hops,
             },
         );
     }

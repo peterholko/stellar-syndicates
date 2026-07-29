@@ -1454,6 +1454,16 @@ pub struct PathPointView {
     pub lane: bool,
 }
 
+/// §buoys: one hop of an order signal's relay path. `frac` is the hop's
+/// arrival as a fraction of the signal's whole travel window, so the client
+/// animates the comet with no speed constants of its own and the last hop is
+/// always exactly 1.0 (landing with `arrive_time`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalHopView {
+    pub pos: Vec2,
+    pub frac: f64,
+}
+
 /// §emplacements: one structure standing in open space.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmplacementView {
@@ -1804,6 +1814,13 @@ pub enum ServerMsg {
         ship_id: EntityId,
         depart_time: f64,
         arrive_time: f64,
+        /// §buoys: the RELAY PATH the order actually flies — each hop's
+        /// position with its arrival as a 0..1 FRACTION of the whole window,
+        /// so the comet traces the network (sprint along lanes, crawl across
+        /// gaps) and still lands exactly at `arrive_time`. Empty = straight
+        /// run (no relays helped), which is also what old clients drew.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hops: Vec<SignalHopView>,
     },
 
     /// A projected engagement estimate the player asked for (§FLEETS Part 3).
