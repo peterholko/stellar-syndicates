@@ -248,9 +248,8 @@ impl Lane {
         self.samples.last().map(|s| s.s).unwrap_or(0.0)
     }
 
-    /// Nearest centerline sample to `p`, and the distance to it.
-    /// The nearest sample, and the distance to the CENTERLINE — measured to the
-    /// polyline through the samples, not to the samples themselves.
+    /// The centerline point nearest `p` — as an INTERPOLATED sample on the
+    /// polyline through the recorded ones — and the distance to it.
     ///
     /// Measuring to discrete samples is granular by half their spacing, and that
     /// is not a rounding error here: samples sit ~13,600 su apart on a long route
@@ -260,26 +259,35 @@ impl Lane {
     /// out of it and back in once per segment, at a factor of ten in speed each
     /// time. That is the stutter seen in playtest — it was never lateral drift,
     /// it was the yardstick.
-    fn nearest(&self, p: Vec2) -> Option<(&LaneSample, f64)> {
+    ///
+    /// The ARC POSITION had the same disease one layer down: distance went
+    /// continuous but `s` still snapped to the nearer recorded sample, so every
+    /// `s`-consumer — the coupled signal's ride length, tripwire earshot, taper
+    /// width — sawtoothed once per segment. For a rider that made the coupled
+    /// delay step BACKWARD at each boundary (arrival reversals, measured -0.09s),
+    /// and the served ghost lurched ~2× its uniform step at every crossing. The
+    /// whole sample interpolates now: pos on the segment, `s` and tangent lerped.
+    fn nearest(&self, p: Vec2) -> Option<(LaneSample, f64)> {
         if self.samples.len() < 2 {
-            return self.samples.first().map(|s| (s, s.pos.distance(p)));
+            return self.samples.first().map(|s| (*s, s.pos.distance(p)));
         }
-        let mut best: Option<(usize, f64)> = None;
-        for (i, w) in self.samples.windows(2).enumerate() {
-            let (a, b) = (w[0].pos, w[1].pos);
-            let ab = b - a;
+        let mut best: Option<(LaneSample, f64)> = None;
+        for w in self.samples.windows(2) {
+            let (a, b) = (&w[0], &w[1]);
+            let ab = b.pos - a.pos;
             let len2 = ab.length_sq();
             // Project p onto the segment, clamped to its ends.
-            let t = if len2 > 1e-12 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
-            let d = p.distance(a + ab * t);
-            // Attribute the hit to whichever end it fell nearer, so the caller
-            // still gets a real sample — and with it a tangent and an arc position.
-            let idx = if t <= 0.5 { i } else { i + 1 };
+            let t = if len2 > 1e-12 { ((p - a.pos).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let pos = a.pos + ab * t;
+            let d = p.distance(pos);
             if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((idx, d));
+                let lerped = a.tangent + (b.tangent - a.tangent) * t;
+                let tangent =
+                    if lerped.length_sq() > 1e-12 { lerped.normalized() } else { a.tangent };
+                best = Some((LaneSample { pos, tangent, s: a.s + (b.s - a.s) * t }, d));
             }
         }
-        best.map(|(i, d)| (&self.samples[i], d))
+        best
     }
 
     /// The ribbon's half-width at arc position `s` — constant, except across a

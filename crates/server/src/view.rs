@@ -1641,6 +1641,9 @@ fn latest_observable(
     own: bool,
     ears: &[sim::lane::Relay],
 ) -> Option<Sample> {
+    // The most recently REJECTED sample (newer than the answer) and its arrival
+    // time — the interpolation bracket's far end.
+    let mut newer: Option<(&Sample, f64)> = None;
     for s in samples.iter().rev() {
         // §coupled: an OWN transmitter anywhere INSIDE a ribbon injects into the
         // medium — that is literally what a buoy is, a stationary, non-riding
@@ -1659,9 +1662,42 @@ fn latest_observable(
         if riding && !ears.is_empty() {
             delay = delay.min(delays.heard(s.pos, cc, ears));
         }
-        if s.time + delay <= now {
+        let arrival = s.time + delay;
+        if arrival <= now {
+            // §smooth-light: light is emitted CONTINUOUSLY, not once per tick.
+            // Between this snapshot's arrival and the next one's, the light
+            // arriving at `cc` left the ship from BETWEEN the two recorded
+            // positions — so serve the arrival-fraction interpolant of TIME and
+            // POSITION, the continuous retarded observation. Serving the raw
+            // snapshot quantized the served retarded time to the tick grid: at
+            // lane speed the 10 Hz Views stepped 425→992 su (measured), a
+            // visible shimmer on the fastest hulls in the game.
+            //
+            // Only the KINEMATIC CONTINUITY interpolates. `vel`, `drive`, and
+            // `loud` are FACTS that hold until the next fact's light arrives —
+            // lerping velocity would smear a throttle-down across the gap and
+            // shift detection: signature reads the retarded sample's velocity
+            // (pinned by the sprint-then-coast flare test), so a stealth cut
+            // takes effect AT its sample, not as an invented ramp before it.
+            //
+            // Guard on strictly increasing arrivals: where a hull outruns its
+            // own light (the rival bow wave), whole spans arrive at once and
+            // the catch-up RUSH is the designed, discrete behaviour — leave it.
+            if let Some((n, na)) = newer {
+                if na > arrival + 1e-9 {
+                    let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
+                    return Some(Sample {
+                        time: s.time + (n.time - s.time) * frac,
+                        pos: s.pos + (n.pos - s.pos) * frac,
+                        vel: s.vel,
+                        loud: s.loud,
+                        drive: s.drive,
+                    });
+                }
+            }
             return Some(*s);
         }
+        newer = Some((s, arrival));
     }
     None
 }
@@ -3657,3 +3693,88 @@ mod tests {
         assert!(out.is_empty(), "a third party who can't sense the site gets no replay");
     }
 }
+
+#[cfg(test)]
+mod lane_smoothness {
+    use super::*;
+
+    /// §smooth-light: A STEADY LANE RIDE IS SERVED SMOOTHLY. The owner's ghost
+    /// of a hull cruising a lane at constant speed must advance uniformly at
+    /// the 10 Hz View cadence — no tick-grid quantization, no lurches.
+    ///
+    /// Two historical defects, both measured before fixing: serving the raw
+    /// 30 Hz snapshot stepped the ghost 425→992 su between Views (the "not
+    /// 100% smooth" raider of playtest), and `Lane::nearest` returned a
+    /// sample-snapped arc position, sawtoothing the coupled delay so arrivals
+    /// locally REVERSED (worst -0.09s) and blocked interpolation once per
+    /// segment. Continuous arc + arrival-fraction interpolation give ratio 1.00.
+    #[test]
+    fn a_steady_lane_ride_serves_uniform_steps_at_view_cadence() {
+        let ctrl =
+            vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 2_000.0;
+        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let cc = sim::Vec2::new(0.0, 0.0);
+        // A rider at hyperspace speed, sampled at the real 30 Hz tick.
+        let speed = 4_250.0;
+        let dt = 1.0 / 30.0;
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let mut t = 0.0;
+        let mut x = 250_000.0;
+        while x > 30_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, 0.0),
+                vel: sim::Vec2::new(-speed, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += dt;
+            x -= speed * dt;
+        }
+        // The coupled channel's arrival must be MONOTONIC along a steady ride —
+        // a backward step means the delay yardstick has gone granular again.
+        let mut prev_a = f64::NEG_INFINITY;
+        for s in samples.iter() {
+            let a = s.time + field.from_coupled(s.pos, cc);
+            assert!(
+                a >= prev_a,
+                "coupled arrival stepped backward ({:.4}s) — the arc yardstick is granular again",
+                a - prev_a
+            );
+            prev_a = a;
+        }
+        // Serve the OWNER's view at the real 10 Hz broadcast cadence.
+        let mut prev: Option<sim::Vec2> = None;
+        let mut steps = Vec::new();
+        let mut now = 30.0;
+        while now < 40.0 {
+            let s = latest_observable(&samples, cc, &field, now, true, &[])
+                .expect("mid-ride, the owner always has a picture");
+            if let Some(p) = prev {
+                steps.push(p.distance(s.pos));
+            }
+            prev = Some(s.pos);
+            now += 0.1;
+        }
+        let min = steps.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = steps.iter().cloned().fold(0.0_f64, f64::max);
+        assert!(
+            max / min < 1.01,
+            "a steady ride must be served uniformly at View cadence, \
+             got steps {min:.1}..{max:.1} su (ratio {:.2})",
+            max / min
+        );
+    }
+}
+
