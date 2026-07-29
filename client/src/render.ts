@@ -131,9 +131,9 @@ const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 // §roads: how much of the sim's swept lane width the drawn band occupies.
 // Purely visual — the gameplay tolerance is unchanged.
 const LANE_DRAW_FRAC = 0.45;
-// §emplacements: kept in step with `emplace::MIN_SPACING` / `DEEP_SPACE_SENSOR_RANGE`.
+// §emplacements: kept in step with `emplace::MIN_SPACING`. (Standing sensors
+// draw their coverage from the wire's `sensor_range` — no mirrored radius.)
 const EMPLACEMENT_MIN_SPACING = 12_000;
-const DEEP_SPACE_SENSOR_RANGE = 60_000;
 const SMOOTH_RATE = 9.0; // e-folds per second
 // RIVALS ONLY: corrections bigger than this snap rather than ease. A rival
 // re-appearing from fog really is new information at a new place — easing it
@@ -1752,8 +1752,9 @@ export class Renderer {
     return tooClose ? "Too close to one of your own." : null;
   }
 
-  /// §emplacements: draw what is standing out there, plus the live siting
-  /// preview while the player is choosing a spot.
+  /// §emplacements: draw what is standing out there. (The build verb lives on
+  /// the Construction Ship's panel and builds where the ship is parked — there
+  /// is no cursor siting preview any more.)
   private drawEmplacements(state: ViewState): void {
     const g = this.emplaceGfx;
     g.clear();
@@ -1781,22 +1782,6 @@ export class Renderer {
         // A sensor reads as a dish: a wedge, so the two never look alike.
         g.moveTo(p.x - 5, p.y + 4).lineTo(p.x, p.y - 5).lineTo(p.x + 5, p.y + 4).closePath();
         g.stroke({ width: 1.5, color: col, alpha: 0.9 });
-      }
-    }
-    // The siting preview — legal in the structure's own colour, refused in red.
-    if (state.placing && this.cursorWorld) {
-      const p = this.worldToScreen(this.cursorWorld);
-      const err = this.siteError(state.placing, this.cursorWorld, state);
-      const col = err
-        ? 0xff6b6b
-        : state.placing === "hyperspace_buoy"
-          ? 0x6fd0ff
-          : state.placing === "hyperspace_sensor"
-            ? 0xd9a8ff
-            : 0x8fe3a0;
-      g.circle(p.x, p.y, 7).stroke({ width: 1.5, color: col, alpha: 0.85 });
-      if (!err && state.placing === "deep_space_sensor") {
-        g.circle(p.x, p.y, DEEP_SPACE_SENSOR_RANGE * this.scale).stroke({ width: 1, color: col, alpha: 0.25 });
       }
     }
   }

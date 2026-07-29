@@ -43,14 +43,14 @@ pub enum ClientMsg {
     /// speed to the ship (§6); the server attaches the issuing player.
     MoveShip { ship_id: EntityId, dest: Vec2 },
 
-    /// §emplacements: send the named Construction Ship to build a structure at
-    /// `pos`. Siting and the kit charge are the sim's business; the server only
+    /// §emplacements: the named Construction Ship builds a structure WHERE IT
+    /// IS PARKED — the player flies it to the spot first, then orders the
+    /// build. Siting and the kit charge are the sim's business; the server only
     /// attaches the issuing player. Field is `emplacement` (not `kind`) because
     /// the enum's own tag is already `type`.
     BuildEmplacement {
         builder: EntityId,
         emplacement: sim::emplace::EmplacementKind,
-        pos: Vec2,
     },
 
     /// Commit one of the player's raiders to intercept a target ship (§8).
@@ -1532,6 +1532,13 @@ pub struct GhostView {
     /// yours. (Current-state like `docked`, with the same staleness caveat.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<PathPointView>>,
+    /// §emplacements: OWN fleets only — this crane is mid-Construct and can
+    /// take no other order until the structure stands. Rivals always get
+    /// `false`: what a parked builder is doing is not readable from outside.
+    /// Drives the panel's build-button lockout — without it a stationary
+    /// builder looks idle and a second build click dies in silence.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub working: bool,
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// included under exactly the cargo rule below (empty = none visible).
     pub passengers: BTreeMap<sim::SpecialistKind, u32>,
@@ -1831,20 +1838,19 @@ pub fn player_id_from_name(name: &str) -> PlayerId {
 mod wire_contract {
     use super::*;
 
-    /// §emplacements: the EXACT JSON the client's map-click sends must parse.
-    /// This variant was missing at launch — the client spoke, the server
-    /// answered "malformed message", and the readout claimed success. A wire
-    /// message the enum can't parse is invisible in play, so the contract is
-    /// pinned here with the client's literal bytes.
+    /// §emplacements: the EXACT JSON the client's build-here button sends must
+    /// parse. This variant was missing at launch — the client spoke, the
+    /// server answered "malformed message", and the readout claimed success. A
+    /// wire message the enum can't parse is invisible in play, so the contract
+    /// is pinned here with the client's literal bytes.
     #[test]
     fn build_emplacement_parses_off_the_wire() {
-        let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"hyperspace_buoy","pos":{"x":278799.16,"y":28292.69}}"#;
+        let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"hyperspace_buoy"}"#;
         let msg: ClientMsg = serde_json::from_str(raw).expect("the client's literal message must parse");
         match msg {
-            ClientMsg::BuildEmplacement { builder, emplacement, pos } => {
+            ClientMsg::BuildEmplacement { builder, emplacement } => {
                 assert_eq!(builder, sim::EntityId(33));
                 assert_eq!(emplacement, sim::emplace::EmplacementKind::HyperspaceBuoy);
-                assert!((pos.x - 278_799.16).abs() < 1e-6);
             }
             other => panic!("parsed into the wrong variant: {other:?}"),
         }

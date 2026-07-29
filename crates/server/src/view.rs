@@ -87,6 +87,11 @@ struct Track {
     /// when the light left — a fleet you see berthed may have sailed since,
     /// exactly like everything else on this track.
     docked: Option<sim::DockSite>,
+    /// §emplacements: the fleet is mid-Construct — the crane is committed and
+    /// can take no other order. Served OWN-ONLY (like `path`): a rival must not
+    /// learn what a parked builder is doing from its ghost. Current-truth per
+    /// tick like `docked`; a stationary builder's own picture is fresh anyway.
+    constructing: bool,
     /// §course-plan: the fleet's flight plans, RETARDED-FRAME like everything
     /// else — `(when it took effect, the legs)`. Serving the current plan beside
     /// a delayed position was visibly wrong: a lane ship outruns its own report,
@@ -202,6 +207,7 @@ impl PositionHistory {
                 gone: None,
                 damage_frac: 0.0,
                 docked: None,
+                constructing: false,
                 plans: VecDeque::new(),
             });
             track.owner = ship.owner;
@@ -213,6 +219,7 @@ impl PositionHistory {
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
             track.docked = world.dock_of(*id);
+            track.constructing = matches!(ship.order, sim::ship::FleetOrder::Construct { .. });
             let cur: Vec<(Vec2, bool)> =
                 ship.route.iter().map(|l| (l.to, l.lane.is_some())).collect();
             let unchanged = track.plans.back().is_some_and(|(_, p)| {
@@ -363,6 +370,8 @@ impl PositionHistory {
             damage_frac: f64,
             /// §dock: the berth this sighting was taken at, if any.
             docked: Option<sim::DockSite>,
+            /// §emplacements: mid-Construct (served own-only as `working`).
+            constructing: bool,
             path: Vec<(Vec2, bool)>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
@@ -419,6 +428,7 @@ impl PositionHistory {
                 count_class: track.count_class,
                 damage_frac: track.damage_frac,
                 docked: track.docked,
+                constructing: track.constructing,
                 path: track
                     .plans
                     .iter()
@@ -570,6 +580,7 @@ impl PositionHistory {
 
             ghosts.push(GhostView {
                 docked,
+                working: own && p.constructing,
                 path: own.then(|| {
                     p.path
                         .iter()
@@ -1829,6 +1840,7 @@ mod tests {
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
             docked: None,
+            constructing: false,
             plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: last,
@@ -2680,6 +2692,27 @@ mod tests {
         track_from(samples, owner, kind)
     }
 
+    /// §emplacements: `working` (mid-Construct) is OWN-ONLY on the wire — the
+    /// owner's panel needs it to lock the build buttons, and a rival must not
+    /// read a parked builder's order off its ghost. Same track, two viewers.
+    #[test]
+    fn a_constructing_crane_reads_working_to_its_owner_only() {
+        let c = 300.0;
+        let cc = Vec2::new(500.0, 0.0);
+        let owner = PlayerId(7);
+        let mut track = still_track(Vec2::ZERO, owner, ShipKind::Builder);
+        track.constructing = true;
+        let hist = history_with(track);
+
+        let g_own = &hist.view_for(owner, cc, &df(c), 50.0)[0];
+        assert!(g_own.own);
+        assert!(g_own.working, "the owner must see the crane is committed");
+
+        let g_rival = &hist.view_for(PlayerId(99), cc, &df(c), 50.0)[0];
+        assert!(!g_rival.own);
+        assert!(!g_rival.working, "a rival must never read the builder's order");
+    }
+
     /// Certainty tracks PROXIMITY to the command center, NOT ownership (§6). An
     /// own ship far from the command center is stale and uncertain — there is no
     /// FTL tether to your own fleet — exactly like an enemy at the same distance.
@@ -2975,6 +3008,7 @@ mod tests {
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
             docked: None,
+            constructing: false,
             plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: 100.0,

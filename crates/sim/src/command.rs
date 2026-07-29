@@ -315,12 +315,15 @@ pub enum Command {
         counts: std::collections::BTreeMap<crate::ship::ShipKind, u32>,
     },
 
-    /// §emplacements: place a structure in OPEN SPACE — a hyperspace buoy or a
-    /// deep space sensor — at a point the player picked on the galaxy map.
+    /// §emplacements: raise a structure in OPEN SPACE — a hyperspace buoy or a
+    /// deep space sensor — WHERE THE NAMED CONSTRUCTION SHIP IS PARKED. The
+    /// player flies the ship to the spot first (an ordinary move order), then
+    /// this order builds in place; there is no separate map-picked site, so a
+    /// stale client position can never divert the build.
     ///
-    /// The site is validated server-side against exactly the rule the client
-    /// previews (`emplace::site_check`), so a placement the map showed as legal
-    /// can never be refused for a reason the player was never shown.
+    /// The spot is validated against exactly the rule the client previews
+    /// (`emplace::site_check`), so a build the panel offered as legal can
+    /// never be refused for a reason the player was never shown.
     BuildEmplacement {
         player_id: PlayerId,
         /// THE construction ship doing the job — the verb lives on the actor's
@@ -328,7 +331,6 @@ pub enum Command {
         builder: EntityId,
         /// Not `kind`: the enum is internally tagged on that name.
         emplacement: crate::emplace::EmplacementKind,
-        pos: crate::math::Vec2,
     },
 
     /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an

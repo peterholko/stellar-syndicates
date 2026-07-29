@@ -727,6 +727,9 @@ export interface GhostView {
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
   path?: PathPointView[] | null;
+  /// §emplacements: own fleets only — mid-Construct; the crane can take no
+  /// other order until the structure stands (absent = false).
+  working?: boolean;
   // Cargo present only when this convoy is within your sensor coverage.
   /// Specialist passengers aboard — manifest data, included under exactly the
   /// cargo rule (empty object = none visible / none aboard).
@@ -808,10 +811,10 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
-  /// §emplacements: build a structure out in open space at a chosen point. The
-  /// field is `emplacement`, not `kind` — the server's Command enum is tagged
-  /// on that name.
-  | { type: "BuildEmplacement"; builder: EntityId; emplacement: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor"; pos: Vec2 }
+  /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
+  /// PARKED (fly it there first; no separate site point). The field is
+  /// `emplacement`, not `kind` — the server's Command enum is tagged on that name.
+  | { type: "BuildEmplacement"; builder: EntityId; emplacement: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }

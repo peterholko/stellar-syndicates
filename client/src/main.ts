@@ -566,12 +566,39 @@ function buildShipPanel(): void {
       const k = (e.target as HTMLElement).closest(".emplace-btn")?.getAttribute("data-kind") as
         | "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" | null;
       if (k) {
-        const same = state.placing === k && state.placingBuilder === state.selectedShipId;
-        state.placing = same ? null : k;
-        state.placingBuilder = same ? null : state.selectedShipId;
-        readout().innerHTML = state.placing
-          ? `Pick a spot on the map. <span class="dim">Esc to cancel.</span>`
-          : "";
+        // §emplacements: BUILD WHERE THE SHIP IS PARKED — the player flies the
+        // Construction Ship to the spot first, then this button raises the
+        // structure in place. No siting mode: every refusal the sim would make
+        // is mirrored here with its reason, because the server declines in
+        // silence (a click that does nothing was the launch bug).
+        const g = state.ghosts.find((x) => x.id === state.selectedShipId && x.own);
+        const pretty =
+          k === "hyperspace_buoy" ? "Hyperspace Buoy"
+          : k === "deep_space_sensor" ? "Deep Space Sensor"
+          : "Hyperspace Sensor";
+        if (!g) {
+          readout().innerHTML = `<span style="color:var(--warn)">That Construction Ship is gone — reselect one and try again.</span>`;
+          return;
+        }
+        const err = renderer.siteError(k, g.pos, state);
+        if (err) {
+          readout().innerHTML =
+            `<span style="color:var(--warn)">Can't raise a <b>${pretty}</b> here: ${esc(err)} ` +
+            `<span class="dim">Move the ship, then build.</span></span>`;
+          return;
+        }
+        if (!kitAffordable(k)) {
+          readout().innerHTML =
+            `<span style="color:var(--warn)">A <b>${pretty}</b> kit needs ${esc(kitCostLabel(k))} ` +
+            `from a single system of yours — none can cover it. Stock up and try again.</span>`;
+          return;
+        }
+        net?.send({ type: "BuildEmplacement", builder: state.selectedShipId, emplacement: k });
+        readout().innerHTML =
+          `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).` +
+          (k === "hyperspace_buoy"
+            ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
+            : "");
         updateShipPanel();
       }
     } else if (act === "recall" && state.selectedShipId && net) {
@@ -979,6 +1006,7 @@ function regimeCell(g: GhostView): string {
 function ownActivity(g: GhostView): string {
   const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
   if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "signal outbound", "Your command is still crossing space to this fleet.");
+  if (g.working) return a("build", "constructing", "Raising a structure where it stands — committed until the work ends.");
   if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
   if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
   if (g.route && g.route.length) return a("convoy", "hauling", "En route along its trade route.");
@@ -3101,62 +3129,6 @@ let clickCycle: { sx: number; sy: number; keys: string; index: number } | null =
 // hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
 // ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
 function handleMapClick(sx: number, sy: number, shift = false): void {
-    // §emplacements: SITING MODE takes the click before anything else. While
-    // placing, the map is a placement surface — a click that also selected a
-    // system or issued a move would make siting feel like a mode you cannot
-    // trust. A refused site is reported and stays in the mode, so the player can
-    // simply try a little further along the lane.
-    if (state.placing) {
-      const at = renderer.screenToWorld(sx, sy);
-      const err = renderer.siteError(state.placing, at, state);
-      if (err) {
-        // Stay in the mode: the player almost certainly wants to try a little
-        // further along, and dropping them out would punish a near miss.
-        readout().innerHTML = `<span style="color:var(--warn)">${esc(err)}</span>`;
-        return;
-      }
-      // §emplacements: emplacements are BUILT BY A SHIP. Mirror the server's
-      // requirement here so the refusal has a face — the server would just
-      // silently decline, and a click that does nothing is the worst outcome
-      // a placement mode can have.
-      const builderId = state.placingBuilder;
-      const b = builderId ? state.ghosts.find((x) => x.id === builderId && x.own) : undefined;
-      if (!b) {
-        readout().innerHTML = `<span style="color:var(--warn)">That Construction Ship is gone — reselect one and try again.</span>`;
-        state.placing = null;
-        state.placingBuilder = null;
-        return;
-      }
-      const name =
-        state.placing === "hyperspace_buoy"
-          ? "Hyperspace Buoy"
-          : state.placing === "deep_space_sensor"
-            ? "Deep Space Sensor"
-            : "Hyperspace Sensor";
-      // §emplacements: THE KIT must be affordable or the server refuses in
-      // silence — this was the launch bug: a success readout over a command
-      // the sim dropped. Mirror the charge rule (EMPLACE_KITS) and refuse
-      // with the price. Trying another site cannot help, so drop the mode.
-      if (!kitAffordable(state.placing)) {
-        readout().innerHTML =
-          `<span style="color:var(--warn)">A <b>${name}</b> kit needs ${esc(kitCostLabel(state.placing))} ` +
-          `from a single system of yours — none can cover it. Stock up and try again.</span>`;
-        state.placing = null;
-        state.placingBuilder = null;
-        updateShipPanel();
-        return;
-      }
-      net?.send({ type: "BuildEmplacement", builder: builderId!, emplacement: state.placing, pos: at });
-      readout().innerHTML =
-        `<b>${name}</b> ordered — this Construction Ship is being dispatched (signal outbound).` +
-        (state.placing === "hyperspace_buoy"
-          ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
-          : "");
-      state.placing = null;
-      state.placingBuilder = null;
-      updateShipPanel();
-      return;
-    }
     // §aftermath-select: any fresh map click drops the concluded-battle marker
     // ring; the aftermath/capture branches below re-set it if they hit a marker.
     renderer.selectedBattleMarkerId = null;
@@ -3513,24 +3485,39 @@ function kitAffordable(kind: string): boolean {
   );
 }
 
-// §emplacements: the CONSTRUCTION SHIP's build section — the three siting
-// buttons, on the actor rather than an ambient toolbar. Arming hands control
-// to the map (siting is a decision about WHERE, so the map stays visible);
-// the armed button is unmistakable because the next map click commits.
+// §emplacements: the CONSTRUCTION SHIP's build section — three BUILD-HERE
+// buttons on the actor. The ship builds where it is parked: fly it to the
+// spot with an ordinary move order, then press the button. The status line
+// says what the current spot allows, so a refusal is never a surprise.
 function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
-    ["hyperspace_buoy", "Hyperspace Buoy", "Relays orders and reports at lane speed — but only between TWO buoys sharing a lane. Must be sited in a lane."],
-    ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Site it anywhere."],
-    ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must be sited in a lane."],
+    ["hyperspace_buoy", "Hyperspace Buoy", "Relays orders and reports at lane speed — but only between TWO buoys sharing a lane. Must stand inside a lane."],
+    ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
+    ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
-  const busy = !(state.orders[g.id] === undefined && Math.hypot(g.vel.x, g.vel.y) < 0.5);
-  const note = busy
-    ? `<div class="sp-line dim">Under way — it can take a new site when it goes idle.</div>`
-    : `<div class="sp-line dim">Pick a structure, then click the site on the map.</div>`;
+  // Busy = moving, under a move order, or MID-CONSTRUCT (`working`, own-only
+  // from the wire). Without that last clause a stationary crane in its 45s of
+  // work looked idle, and a second build click died in the sim's silence.
+  const busy = g.working || !(state.orders[g.id] === undefined && Math.hypot(g.vel.x, g.vel.y) < 0.5);
+  // The spot's verdict, computed where the ship stands (it is parked when the
+  // buttons are live, so the light-delayed position IS the position).
+  const laneOk = !renderer.siteError("hyperspace_buoy", g.pos, state);
+  const openOk = !renderer.siteError("deep_space_sensor", g.pos, state);
+  const note = g.working
+    ? `<div class="sp-line dim">Constructing here — committed until the structure stands.</div>`
+    : busy
+      ? `<div class="sp-line dim">Under way — it builds where it stops, once idle.</div>`
+      : `<div class="sp-line dim">Builds at this spot. ${
+          laneOk
+            ? "In a hyperspace lane — everything can stand here."
+            : openOk
+              ? "Open space — sensors only; move into a lane band for buoys and tripwires."
+              : "Too close to another structure — move on a little."
+        }</div>`;
   const btns = kinds
     .map(
       ([k, name, tip]) =>
-        `<button class="emplace-btn${state.placing === k && state.placingBuilder === g.id ? " armed" : ""}" data-act="emplace" data-kind="${k}" title="${esc(`${tip} Kit: ${kitCostLabel(k)}, charged from one of your systems.`)}"${busy ? " disabled" : ""}>${name}</button>`,
+        `<button class="emplace-btn" data-act="emplace" data-kind="${k}" title="${esc(`${tip} Kit: ${kitCostLabel(k)}, charged from one of your systems.`)}"${busy ? " disabled" : ""}>${name}</button>`,
     )
     .join(" ");
   return `<div class="sp-sec">Construct</div>${note}<div class="sp-line">${btns}</div>`;
@@ -3541,22 +3528,13 @@ function emplaceSection(g: GhostView): string {
 // click (no accidental move orders / raids / selections when panning).
 function installInteraction(): void {
   const canvas = renderer.canvas;
-  // §emplacements: arm a kind, or disarm by clicking the armed one again.
-  // The map has to know where the pointer is to preview the site under it.
+  // The map tracks the pointer for hover affordances (hit outlines etc.).
   canvas.addEventListener("pointermove", (e) => {
     const r = canvas.getBoundingClientRect();
     renderer.cursorWorld = renderer.screenToWorld(e.clientX - r.left, e.clientY - r.top);
   });
   canvas.addEventListener("pointerleave", () => {
     renderer.cursorWorld = null;
-  });
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && state.placing) {
-      state.placing = null;
-      state.placingBuilder = null;
-      updateShipPanel();
-      readout().innerHTML = "";
-    }
   });
   const DRAG_THRESHOLD = 5; // px of motion that turns a press into a pan
   let down = false, panning = false;

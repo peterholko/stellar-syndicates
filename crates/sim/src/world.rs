@@ -5130,15 +5130,11 @@ impl World {
                     f.modules.insert(*module, take);
                 }
             }
-            Command::BuildEmplacement { player_id, builder, emplacement, pos } => {
-                // §emplacements: BUILT BY THE NAMED SHIP. The verb sits on the
-                // Construction Ship's own panel, so the command says which one —
-                // no server-side "nearest idle" guesswork to surprise anyone.
-                if crate::emplace::site_check(*emplacement, *pos, &self.lanes, &self.emplacements)
-                    .is_err()
-                {
-                    return;
-                }
+            Command::BuildEmplacement { player_id, builder, emplacement } => {
+                // §emplacements: BUILT BY THE NAMED SHIP, WHERE IT STANDS. The
+                // verb sits on the Construction Ship's own panel; the player
+                // parks the ship first, so the ship's position IS the site —
+                // resolve the builder before anything else can be judged.
                 let Some((builder_id, builder_pos)) = self
                     .fleets
                     .get(builder)
@@ -5151,6 +5147,11 @@ impl World {
                 else {
                     return; // not yours, not a builder, or mid-job — refused
                 };
+                if crate::emplace::site_check(*emplacement, builder_pos, &self.lanes, &self.emplacements)
+                    .is_err()
+                {
+                    return; // parked somewhere this structure cannot stand
+                }
                 // THE KIT, charged from the stockpile nearest the builder — it
                 // loads where it stands. (The pickup leg itself is not flown;
                 // a deliberate simplification, noted rather than hidden.)
@@ -5182,7 +5183,7 @@ impl World {
                 self.schedule_for_owner(
                     *player_id,
                     builder_id,
-                    FleetOrder::Construct { site: *pos, emplacement: *emplacement, started: None },
+                    FleetOrder::Construct { site: builder_pos, emplacement: *emplacement, started: None },
                     crate::event::OrderKind::Construct,
                 );
             }
@@ -13089,21 +13090,22 @@ mod tests {
     /// described never happened. Carrying fuel and paying BEFORE the step makes
     /// that unfakeable: there is no position to roll back, because a fleet that
     /// cannot pay never moves.
-    /// §emplacements: THE WHOLE PATH — a Construction Ship is dispatched,
-    /// flies to the site, works there, and the buoy stands where it worked.
+    /// §emplacements: THE WHOLE PATH — the player parks the Construction Ship
+    /// on the spot, orders the build, and the buoy rises WHERE THE SHIP STANDS.
+    /// There is no map-picked site: the ship's position is the site.
     ///
     /// Nothing is conjured at a yard: the order rides the signal out to the
     /// builder like any other, the kit is charged where the builder loads it,
     /// and the crane is FREED when the job ends — reusable, so losing it later
     /// costs the crane, not the programme.
     #[test]
-    fn a_builder_flies_to_the_site_and_puts_the_buoy_there() {
+    fn a_parked_builder_raises_the_buoy_where_it_stands() {
         let mut w = test_world();
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let home = w.players[&id].home_system.unwrap();
         let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
-        // A lane point near home, so the signal leg and the flight stay short.
+        // A lane point near home, so the order signal stays short.
         let mut site = home_pos;
         let mut best = f64::INFINITY;
         for l in &w.lanes.lanes {
@@ -13116,18 +13118,11 @@ mod tests {
                 }
             }
         }
-        // The crane, idle a short hop from the site.
+        // The crane, already flown to the spot and parked there.
         let builder = EntityId(777_777);
         w.fleets.insert(
             builder,
-            crate::ship::Fleet::single(
-                builder,
-                id,
-                ShipKind::Builder,
-                site + Vec2::new(3_000.0, 0.0),
-                FleetOrder::Idle,
-                None,
-            ),
+            crate::ship::Fleet::single(builder, id, ShipKind::Builder, site, FleetOrder::Idle, None),
         );
         for (c, n) in [
             (Commodity::Alloys, 500.0),
@@ -13148,7 +13143,6 @@ mod tests {
             player_id: id,
             builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
-            pos: site,
         }]);
         assert!(w.emplacements.is_empty(), "nothing stands the instant it is ordered");
         assert!(
@@ -13160,7 +13154,7 @@ mod tests {
             "the order travels to the builder at signal speed like any other",
         );
 
-        // Signal out, flight, and the 45s of work at the site.
+        // Signal out, then the 45s of work on the spot.
         for _ in 0..(240.0 / crate::config::DT) as usize {
             if !w.emplacements.is_empty() {
                 break;
@@ -13169,7 +13163,7 @@ mod tests {
         }
         assert_eq!(w.emplacements.len(), 1, "the buoy stands after the work");
         let e = &w.emplacements[0];
-        assert!(e.pos.distance(site) < 1.0, "where the builder worked, not at a yard");
+        assert!(e.pos.distance(site) < 1.0, "where the ship was parked, not at a yard");
         let f = &w.fleets[&builder];
         assert!(matches!(f.order, FleetOrder::Idle), "the crane is freed");
         assert!(f.count(ShipKind::Builder) >= 1, "and survives — it is reusable");
@@ -13188,33 +13182,59 @@ mod tests {
             *w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.entry(c).or_insert(0.0) += n;
         }
         let electronics0 = system_stock(&w, home, Commodity::Electronics);
-        let l = &w.lanes.lanes[0];
-        let site = l.at(l.length() * 0.5);
         w.step(&[Command::BuildEmplacement {
             player_id: id,
             builder: EntityId(555_555), // no such ship
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
-            pos: site,
         }]);
         assert!(w.emplacements.is_empty());
         assert!((system_stock(&w, home, Commodity::Electronics) - electronics0).abs() < 1e-9);
     }
 
-    /// A site the rule refuses is refused at the COMMAND, not silently accepted
-    /// and then dropped later — nothing is charged for a build that cannot happen.
+    /// A spot the rule refuses is refused at the COMMAND, not silently accepted
+    /// and then dropped later — nothing is charged for a build that cannot
+    /// happen. The builder is real and idle; only WHERE IT IS PARKED is wrong.
     #[test]
     fn a_buoy_off_the_network_is_refused_outright() {
         let mut w = test_world();
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        for (c, n) in [
+            (Commodity::Alloys, 500.0),
+            (Commodity::Electronics, 500.0),
+            (Commodity::Fuel, 500.0),
+        ] {
+            *w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.entry(c).or_insert(0.0) += n;
+        }
+        let electronics0 = system_stock(&w, home, Commodity::Electronics);
+        // Parked in deep space, far from every lane — no buoy can stand here.
+        let builder = EntityId(555_555);
+        w.fleets.insert(
+            builder,
+            crate::ship::Fleet::single(
+                builder,
+                id,
+                ShipKind::Builder,
+                Vec2::new(9_000_000.0, 0.0),
+                FleetOrder::Idle,
+                None,
+            ),
+        );
         w.step(&[Command::BuildEmplacement {
             player_id: id,
-            builder: EntityId(555_555),
+            builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
-            pos: Vec2::new(9_000_000.0, 0.0),
         }]);
         assert!(w.emplacements.is_empty());
-        assert!(w.build_queue.is_empty(), "nothing enqueued, so nothing charged");
+        assert!(
+            matches!(w.fleets[&builder].order, FleetOrder::Idle),
+            "the refused order never reaches the ship"
+        );
+        assert!(
+            (system_stock(&w, home, Commodity::Electronics) - electronics0).abs() < 1e-9,
+            "nothing accepted, so nothing charged"
+        );
     }
 
     #[test]
@@ -22434,11 +22454,13 @@ mod starter_kit_emplacements {
             .find(|f| f.owner == PlayerId(1) && f.count(ShipKind::Builder) >= 1)
             .map(|f| f.id)
             .expect("premise: the starting roster carries a Construction Ship");
+        // The player's first act: fly the crane onto the lane, then build in
+        // place (the flight itself is ordinary movement, not under test here).
+        w.fleets.get_mut(&builder).unwrap().pos = site;
         w.step(&[Command::BuildEmplacement {
             player_id: PlayerId(1),
             builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
-            pos: site,
         }]);
         assert!(
             matches!(w.fleets[&builder].order, FleetOrder::Construct { .. }),
