@@ -22399,3 +22399,64 @@ mod tests {
         assert!(w3.systems.iter().all(|s| s.trait_.is_none()), "a pre-feature snapshot loads trait-less");
     }
 }
+
+#[cfg(test)]
+mod starter_kit_emplacements {
+    use super::*;
+
+    /// §emplacements: the player STARTS with a Construction Ship, so the home
+    /// starter kit must fund what that ship exists to do. The smallest relay
+    /// that carries anything is a buoy PAIR — assert the first buoy order is
+    /// accepted AND the stock left behind still covers the second kit. This
+    /// pins the Electronics/Alloys seed in `generate_home_system`: with no
+    /// Electronics at spawn the order is silently refused (the launch bug).
+    #[test]
+    fn the_starter_kit_funds_the_buoy_pair_opening() {
+        let mut w = World::new(SimConfig::default());
+        w.step(&[Command::AddPlayer { id: PlayerId(1), name: "P".into() }]);
+        let home = w.players[&PlayerId(1)].home;
+        let site = w
+            .lanes
+            .lanes
+            .iter()
+            .flat_map(|l| l.samples.iter())
+            .min_by(|a, b| a.pos.distance(home).total_cmp(&b.pos.distance(home)))
+            .map(|s| s.pos)
+            .unwrap();
+        assert_eq!(
+            crate::emplace::site_check(crate::emplace::EmplacementKind::HyperspaceBuoy, site, &w.lanes, &w.emplacements),
+            Ok(()),
+            "premise: the nearest lane sample is a legal buoy site"
+        );
+        let builder = w
+            .fleets
+            .values()
+            .find(|f| f.owner == PlayerId(1) && f.count(ShipKind::Builder) >= 1)
+            .map(|f| f.id)
+            .expect("premise: the starting roster carries a Construction Ship");
+        w.step(&[Command::BuildEmplacement {
+            player_id: PlayerId(1),
+            builder,
+            emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            pos: site,
+        }]);
+        assert!(
+            matches!(w.fleets[&builder].order, FleetOrder::Construct { .. }),
+            "the very first buoy order must be fundable from the starter kit, \
+             but the builder stayed {:?}",
+            w.fleets[&builder].order
+        );
+        // The PAIR is the point: after the first kit is charged, one home
+        // system must still afford the second buoy without a market trip.
+        let recipe = crate::build::emplacement_recipe(crate::emplace::EmplacementKind::HyperspaceBuoy);
+        let sys = w.systems.iter().find(|s| s.owner == Some(PlayerId(1))).unwrap();
+        for (c, n) in recipe.costs {
+            let have = sys.stockpile.get(c).copied().unwrap_or(0.0);
+            assert!(
+                have + 1e-9 >= *n,
+                "after the first kit, the home must still cover the second: \
+                 {c:?} has {have:.1}, needs {n}"
+            );
+        }
+    }
+}

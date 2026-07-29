@@ -869,11 +869,20 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
         // the STARTER KIT — enough Machinery/Alloys/Polymers that the first
         // Orbital Warehouse/Habitat/industry doesn't require a market round-trip. (The
         // Fuel movement seed lands on join.) All Tunable.
+        //
+        // §emplacements: the kit also funds the INFRASTRUCTURE OPENING the
+        // starting Construction Ship exists for. A buoy pair (the smallest
+        // relay that carries anything) costs 80 Alloys + 120 Electronics +
+        // 60 Fuel; a lone Deep Space Sensor costs 60/120/40. Electronics 150
+        // and Alloys 100 cover either — pair with spare, or sensor first —
+        // while later kits ride the market. Without this seed the home has
+        // ZERO Electronics and every emplacement order is refused at spawn.
         stockpile: [
             (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
             (Commodity::Machinery, 40.0),
-            (Commodity::Alloys, 60.0),
+            (Commodity::Alloys, 100.0),
             (Commodity::Polymers, 30.0),
+            (Commodity::Electronics, 150.0),
         ]
         .into_iter()
         .collect(),

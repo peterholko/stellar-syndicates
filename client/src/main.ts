@@ -3127,15 +3127,28 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
         state.placingBuilder = null;
         return;
       }
-      const label =
+      const name =
         state.placing === "hyperspace_buoy"
           ? "Hyperspace Buoy"
           : state.placing === "deep_space_sensor"
             ? "Deep Space Sensor"
             : "Hyperspace Sensor";
+      // §emplacements: THE KIT must be affordable or the server refuses in
+      // silence — this was the launch bug: a success readout over a command
+      // the sim dropped. Mirror the charge rule (EMPLACE_KITS) and refuse
+      // with the price. Trying another site cannot help, so drop the mode.
+      if (!kitAffordable(state.placing)) {
+        readout().innerHTML =
+          `<span style="color:var(--warn)">A <b>${name}</b> kit needs ${esc(kitCostLabel(state.placing))} ` +
+          `from a single system of yours — none can cover it. Stock up and try again.</span>`;
+        state.placing = null;
+        state.placingBuilder = null;
+        updateShipPanel();
+        return;
+      }
       net?.send({ type: "BuildEmplacement", builder: builderId!, emplacement: state.placing, pos: at });
       readout().innerHTML =
-        `<b>${label}</b> ordered — this Construction Ship is being dispatched (signal outbound).` +
+        `<b>${name}</b> ordered — this Construction Ship is being dispatched (signal outbound).` +
         (state.placing === "hyperspace_buoy"
           ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
           : "");
@@ -3471,6 +3484,35 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     }
 }
 
+// §emplacements: the KIT each structure consumes, mirrored from the sim's
+// `emplacement_recipe` (build.rs) exactly like siteError mirrors site_check —
+// the server charges silently, so the honest refusal has to live here. Keep
+// in lockstep with the Rust recipes.
+const EMPLACE_KITS: Record<string, [Commodity, number][]> = {
+  hyperspace_buoy: [["alloys", 40], ["electronics", 60], ["fuel", 30]],
+  deep_space_sensor: [["alloys", 60], ["electronics", 120], ["fuel", 40]],
+  hyperspace_sensor: [["alloys", 50], ["electronics", 90], ["fuel", 30]],
+};
+
+// Pretty "40 Alloys + 60 Electronics + 30 Fuel" for tooltips and refusals.
+function kitCostLabel(kind: string): string {
+  return (EMPLACE_KITS[kind] ?? [])
+    .map(([c, n]) => `${n} ${label(c)}`)
+    .join(" + ");
+}
+
+// §emplacements: does ANY system of ours cover the full kit? Mirrors the
+// server's charge rule (one system pays for everything; no pooling across
+// systems). Stockpiles are owner-only in the view, so `stockpile` is present
+// exactly for the systems this rule may draw from.
+function kitAffordable(kind: string): boolean {
+  const kit = EMPLACE_KITS[kind];
+  if (!kit) return true;
+  return state.systems.some(
+    (s) => s.stockpile !== null && kit.every(([c, n]) => (s.stockpile!.find((x) => x.commodity === c)?.units ?? 0) >= n),
+  );
+}
+
 // §emplacements: the CONSTRUCTION SHIP's build section — the three siting
 // buttons, on the actor rather than an ambient toolbar. Arming hands control
 // to the map (siting is a decision about WHERE, so the map stays visible);
@@ -3487,8 +3529,8 @@ function emplaceSection(g: GhostView): string {
     : `<div class="sp-line dim">Pick a structure, then click the site on the map.</div>`;
   const btns = kinds
     .map(
-      ([k, label, tip]) =>
-        `<button class="emplace-btn${state.placing === k && state.placingBuilder === g.id ? " armed" : ""}" data-act="emplace" data-kind="${k}" title="${esc(tip)}"${busy ? " disabled" : ""}>${label}</button>`,
+      ([k, name, tip]) =>
+        `<button class="emplace-btn${state.placing === k && state.placingBuilder === g.id ? " armed" : ""}" data-act="emplace" data-kind="${k}" title="${esc(`${tip} Kit: ${kitCostLabel(k)}, charged from one of your systems.`)}"${busy ? " disabled" : ""}>${name}</button>`,
     )
     .join(" ");
   return `<div class="sp-sec">Construct</div>${note}<div class="sp-line">${btns}</div>`;
