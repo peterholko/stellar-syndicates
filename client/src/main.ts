@@ -1222,17 +1222,19 @@ function updateShipPanel(): void {
   // Information AGE is the headline stat (the game's identity: you always know HOW
   // OLD this sighting is).
   const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${g.age.toFixed(1)}s ago</dd></div>`;
-  // Positional certainty follows the SAME light-delay model for own AND rival ships:
-  // there is no FTL tether to your own fleet — uncertainty = age × max_speed for every
-  // object (server view.rs / protocol GhostView). So read it HONESTLY off g.uncertainty
-  // and never grant your own ships false certainty (a distant own ship is as uncertain
-  // as a rival). A ship at your command center has ~0 lag → "confirmed".
-  const certain = g.uncertainty < 1;
-  // The uncertainty explanation rides the Position stat as a tooltip (§UX-diet).
-  const uncTip = own ? "Delayed sighting — true position uncertain; see the uncertainty cone on the map." : "Last sighting — it could be anywhere within the cone on the map.";
-  const posCell = certain
-    ? `<div class="stat" title="At your command center (or nearly): ~zero light-lag, so the position is effectively certain."><dt>Position</dt><dd><span class="tone-up">confirmed</span></dd></div>`
-    : `<div class="stat" title="${esc(uncTip)}"><dt>Position</dt><dd>±${fmt(g.uncertainty)} su</dd></div>`;
+  // POSITION = the LAST KNOWN COORDINATES: where the light that just arrived
+  // puts this fleet. It headlined the uncertainty RADIUS before (`age × hull
+  // speed`), which read as a mystery number that grew on its own — and the
+  // staleness it encoded is already the Seen cell's job, while the map draws
+  // the cone. The radius keeps its meaning in the tooltip, where it explains
+  // the coordinates rather than replacing them.
+  const posTip =
+    g.uncertainty < 1
+      ? "Where this sighting puts it. At your command center — effectively live."
+      : `Where it was when this light left it. It has flown on since: anywhere within ~${fmt(g.uncertainty)} su of here (the cone on the map).`;
+  const posCell =
+    `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
+    `<dd>${fmt(g.pos.x)} · ${fmt(g.pos.y)}</dd></div>`;
   const strip = statStrip([ageCell, headingCell(g), regimeCell(g), posCell]);
 
   // Preserve an in-progress dockside load selection/qty across the rebuild (the
