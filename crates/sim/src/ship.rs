@@ -860,15 +860,21 @@ impl DriveState {
         matches!(self, DriveState::Thrusters)
     }
 
-    /// §coupled: is this drive STIRRING THE LANE MEDIUM? Cruising hyperspace,
-    /// or shutting a hyperspace drive down — the drive stays wound into the
-    /// medium until it is fully out, so the SHUTDOWN is the last thing the lane
-    /// transmits for a departing hull (both to its owner and to a tripwire).
-    /// A warp drive touches no lane, engaged or dropping.
+    /// §coupled: is this drive STIRRING THE LANE MEDIUM? A hyperspace drive
+    /// does so for its WHOLE engagement — winding up, cruising, and winding
+    /// down. It is wound into the medium from the moment it starts biting to
+    /// the moment it is fully out, so the lane carries a hull's reports from
+    /// its SPIN-UP (the first news of a departure) through to its SHUTDOWN
+    /// (the last news before the dark). Both ends matter and they are the same
+    /// physics — an asymmetry here would mean a lane that hears you leave but
+    /// not arrive. Read identically for the owner's own reports and for a
+    /// tripwire's read of a rival's wake. A warp drive touches no lane in any
+    /// state.
     pub fn stirs_the_lane(self) -> bool {
         matches!(
             self,
             DriveState::Cruising(crate::lane::Regime::Hyperspace)
+                | DriveState::Spooling { to: crate::lane::Regime::Hyperspace, .. }
                 | DriveState::Dropping { from: crate::lane::Regime::Hyperspace, .. }
         )
     }
