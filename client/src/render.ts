@@ -97,6 +97,11 @@ interface GhostSprite {
   /// §hyperspace: the WORLD position actually drawn, which chases the
   /// authoritative one rather than jumping to it. See `drawGhost`.
   shown?: { x: number; y: number };
+  /// §smooth-light: the retarded clock (simTime − age) last served for this
+  /// ghost, and the wall time it last ADVANCED — a clock that stops while
+  /// real time flows means NO new light is arriving (a comms dead gap).
+  servedClock?: number;
+  pinnedWallMs?: number;
 }
 
 // §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
@@ -135,6 +140,12 @@ const LANE_DRAW_FRAC = 0.45;
 // draw their coverage from the wire's `sensor_range` — no mirrored radius.)
 const EMPLACEMENT_MIN_SPACING = 12_000;
 const SMOOTH_RATE = 9.0; // e-folds per second
+// §smooth-light dead-gap creep (own fleets in a comms shadow — see drawGhost):
+// engage only after the served clock has been pinned well past any View hiccup,
+// and creep at a deliberate fraction of the last known speed ("very slowly") so
+// the estimate always trails the truth and fresh light corrects forward.
+const CREEP_AFTER_S = 2.5;
+const CREEP_FRACTION = 0.25;
 // RIVALS ONLY: corrections bigger than this snap rather than ease. A rival
 // re-appearing from fog really is new information at a new place — easing it
 // would paint positions you never observed. YOUR OWN fleets never snap: a
@@ -1791,8 +1802,45 @@ export class Renderer {
     sp.seen = true;
 
     // WHERE THE SERVER SAYS IT IS, dead-reckoned to now.
-    const px = ghost.pos.x + ghost.vel.x * dt;
-    const py = ghost.pos.y + ghost.vel.y * dt;
+    let px = ghost.pos.x + ghost.vel.x * dt;
+    let py = ghost.pos.y + ghost.vel.y * dt;
+
+    // §smooth-light: DEAD-GAP CREEP. When an own fleet sails out of its comms
+    // channel — leaving a lane ends the coupled report, and plain warp light
+    // lags tens of seconds behind — NO new light arrives for a while and the
+    // served ghost pins in place, which reads as "my ship just stopped": the
+    // worst possible read of a healthy flight. The fleet is executing a course
+    // YOU set and the client knows it (own-only `path`), so while the picture
+    // is pinned the glyph creeps slowly along the known plan instead of
+    // parking — deliberately SLOWER than the hull can fly, so fresh light
+    // always corrects FORWARD (a catch-up, never a walk-back). The uncertainty
+    // cone keeps growing through it: this is an estimate, and looks like one.
+    const servedClock = state.simTime - ghost.age;
+    if (sp.servedClock === undefined || servedClock > sp.servedClock + 1e-3) {
+      sp.servedClock = servedClock;
+      sp.pinnedWallMs = performance.now();
+    }
+    const pinnedFor = (performance.now() - (sp.pinnedWallMs ?? performance.now())) / 1000;
+    if (ghost.own && pinnedFor > CREEP_AFTER_S && ghost.path?.length && (ghost.speed ?? 0) > 1) {
+      const creep = (ghost.speed ?? 0) * CREEP_FRACTION * (pinnedFor - CREEP_AFTER_S);
+      let rem = creep;
+      let cur = { x: ghost.pos.x, y: ghost.pos.y };
+      for (const wp of ghost.path) {
+        const seg = Math.hypot(wp.pos.x - cur.x, wp.pos.y - cur.y);
+        if (seg < 1e-9) continue;
+        if (rem <= seg) {
+          const f = rem / seg;
+          cur = { x: cur.x + (wp.pos.x - cur.x) * f, y: cur.y + (wp.pos.y - cur.y) * f };
+          rem = 0;
+          break;
+        }
+        rem -= seg;
+        cur = { x: wp.pos.x, y: wp.pos.y };
+      }
+      // Path exhausted = hold at its terminus (never overshoot the plan).
+      px = cur.x;
+      py = cur.y;
+    }
 
     // CHASE that, do not snap to it — this is what stops the elastic band.
     //

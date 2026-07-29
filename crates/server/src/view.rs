@@ -1633,6 +1633,12 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 /// listening post on that lane hears it and reports home at lane speed. Passive
 /// light still governs everything the wire does not cover, so a raider that
 /// drops to warp and goes around stays quiet — slower, off the tripwire.
+/// §smooth-light: the widest arrival gap the serve-interpolation will bridge.
+/// Consecutive 30 Hz snapshots arrive ~one tick apart (compressed or stretched
+/// a little by the ship's motion along its signal path); anything wider is a
+/// channel seam or a bow-wave rush, where discrete serving is the honest form.
+const SMOOTH_BRACKET_MAX: f64 = 0.5;
+
 fn latest_observable(
     samples: &VecDeque<Sample>,
     cc: Vec2,
@@ -1683,8 +1689,18 @@ fn latest_observable(
             // Guard on strictly increasing arrivals: where a hull outruns its
             // own light (the rival bow wave), whole spans arrive at once and
             // the catch-up RUSH is the designed, discrete behaviour — leave it.
+            //
+            // And guard the OTHER direction: interpolation models continuous
+            // emission between consecutive snapshots, which only holds while
+            // their arrivals are a sample-step apart. At a CHANNEL SEAM — a
+            // hull leaving a lane, where the coupled report ends and plain
+            // warp light takes over — the next arrival can be tens of seconds
+            // later. Nothing arrives in that window (the ship is in its own
+            // comms shadow), and lerping one tick of motion across it painted
+            // a near-frozen crawl from data that does not exist. Past the
+            // bracket cap, hold the last-arrived sample and let it age.
             if let Some((n, na)) = newer {
-                if na > arrival + 1e-9 {
+                if na > arrival + 1e-9 && na - arrival <= SMOOTH_BRACKET_MAX {
                     let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
                     return Some(Sample {
                         time: s.time + (n.time - s.time) * frac,
@@ -3778,3 +3794,88 @@ mod lane_smoothness {
     }
 }
 
+
+#[cfg(test)]
+mod channel_seam {
+    use super::*;
+
+    /// §smooth-light: ACROSS A CHANNEL SEAM, HOLD — don't invent. A hull
+    /// leaving its lane ends the coupled report; the first off-ribbon sample
+    /// arrives by plain warp light, tens of seconds later. In that window the
+    /// viewer receives NOTHING, so the served picture must be the last coupled
+    /// sample exactly — pinned and aging — not a lerp toward data whose light
+    /// has not arrived. (The interpolation bracket is capped at
+    /// SMOOTH_BRACKET_MAX; a seam is far wider.)
+    #[test]
+    fn a_lane_exit_serves_a_pinned_hold_not_an_invented_crawl() {
+        let ctrl =
+            vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 2_000.0;
+        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let cc = sim::Vec2::new(0.0, 0.0);
+        // Ride the lane away from cc to x=100k, then veer straight off the
+        // ribbon at warp — the coupled channel ends at the half-width edge.
+        let dt = 1.0 / 30.0;
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let mut t = 0.0;
+        let mut x = 60_000.0;
+        while x < 100_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, 0.0),
+                vel: sim::Vec2::new(4_250.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += dt;
+            x += 4_250.0 * dt;
+        }
+        let mut y = 0.0;
+        while y < 30_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, y),
+                vel: sim::Vec2::new(0.0, 425.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Warp),
+            });
+            t += dt;
+            y += 425.0 * dt;
+        }
+        // The seam: the last sample still inside the ribbon, and the first
+        // beyond it (their arrivals bracket the dark window).
+        let half = 6_000.0;
+        let last_in = *samples.iter().filter(|s| s.pos.y <= half).last().unwrap();
+        let first_out = samples.iter().find(|s| s.pos.y > half).unwrap();
+        let a_in = last_in.time + field.from_coupled(last_in.pos, cc);
+        let a_out = first_out.time + field.from_coupled(first_out.pos, cc);
+        assert!(
+            a_out - a_in > 5.0,
+            "premise: leaving the lane opens a wide arrival gap (got {:.1}s)",
+            a_out - a_in
+        );
+        // Throughout the dark window, the served sample is the pinned one.
+        let mut probe = a_in + 0.2;
+        while probe < a_out - 0.2 {
+            let s = latest_observable(&samples, cc, &field, probe, true, &[])
+                .expect("the last coupled light has arrived");
+            assert!(
+                s.pos.distance(last_in.pos) < 1e-6,
+                "at now={probe:.1} the ghost must HOLD the last coupled sighting \
+                 (no light is arriving), but drifted {:.1} su from it",
+                s.pos.distance(last_in.pos)
+            );
+            probe += 1.0;
+        }
+    }
+}
