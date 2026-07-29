@@ -3495,10 +3495,12 @@ function emplaceSection(g: GhostView): string {
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
-  // Busy = moving, under a move order, or MID-CONSTRUCT (`working`, own-only
-  // from the wire). Without that last clause a stationary crane in its 45s of
-  // work looked idle, and a second build click died in the sim's silence.
-  const busy = g.working || !(state.orders[g.id] === undefined && Math.hypot(g.vel.x, g.vel.y) < 0.5);
+  // Busy = MID-CONSTRUCT (`working`, own-only from the wire), an order signal
+  // still in its lifecycle (pendingOrders — server-managed, so it EXPIRES),
+  // or visibly moving. Not `state.orders`: that record used to persist after
+  // arrival, which kept these buttons disabled forever once the ship had
+  // moved anywhere — and a disabled button swallows clicks silently.
+  const busy = g.working || state.pendingOrders.has(g.id) || Math.hypot(g.vel.x, g.vel.y) >= 0.5;
   // The spot's verdict, computed where the ship stands (it is parked when the
   // buttons are live, so the light-delayed position IS the position).
   const laneOk = !renderer.siteError("hyperspace_buoy", g.pos, state);
@@ -6770,6 +6772,21 @@ function join(): void {
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
+          // A move order is DONE when its ship is SEEN parked at the ordered
+          // destination. Without this sweep the record lived forever, and
+          // everything keyed on it stayed stale after arrival: the activity
+          // chip read "en route" at rest, the fuel line quoted a spent order,
+          // and — the bug that surfaced it — a Construction Ship's build
+          // buttons stayed disabled for good after its first move, swallowing
+          // clicks with no feedback (a disabled button fires no events).
+          for (const [id, dest] of Object.entries(state.orders)) {
+            const g = state.ghosts.find((x) => x.id === id && x.own);
+            if (!g) continue; // momentary gap — keep the record, not a guess
+            const parked = Math.hypot(g.vel.x, g.vel.y) < 0.5;
+            if (parked && Math.hypot(g.pos.x - dest.x, g.pos.y - dest.y) < 500) {
+              delete state.orders[id];
+            }
+          }
           // Accumulate observed prices every View (fog-safe history for the
           // sparklines), even when the Market tab is closed.
           recordPriceHistory();
