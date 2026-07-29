@@ -146,6 +146,11 @@ const SMOOTH_RATE = 9.0; // e-folds per second
 // the estimate always trails the truth and fresh light corrects forward.
 const CREEP_AFTER_S = 2.5;
 const CREEP_FRACTION = 0.25;
+// Total creep is BOUNDED: a pinned sample's speed can be lane speed, and an
+// uncapped fraction of that outruns the warp leg the ship actually flies after
+// an exit — earning a long walk-back when the light resumes. A short nose
+// forward carries the "under way" signal; the later correction stays subtle.
+const CREEP_MAX_SU = 3_000;
 // RIVALS ONLY: corrections bigger than this snap rather than ease. A rival
 // re-appearing from fog really is new information at a new place — easing it
 // would paint positions you never observed. YOUR OWN fleets never snap: a
@@ -1822,20 +1827,55 @@ export class Renderer {
     }
     const pinnedFor = (performance.now() - (sp.pinnedWallMs ?? performance.now())) / 1000;
     if (ghost.own && pinnedFor > CREEP_AFTER_S && ghost.path?.length && (ghost.speed ?? 0) > 1) {
-      const creep = (ghost.speed ?? 0) * CREEP_FRACTION * (pinnedFor - CREEP_AFTER_S);
-      let rem = creep;
+      // CAPPED: the pinned sample's speed can be LANE speed, so a plain
+      // fraction of it outruns the warp leg the ship is actually flying and
+      // earns a big walk-back when the light resumes. A short bounded nose
+      // forward says "under way" without ranging ahead of any possible truth.
+      const creep = Math.min(
+        CREEP_MAX_SU,
+        (ghost.speed ?? 0) * CREEP_FRACTION * (pinnedFor - CREEP_AFTER_S),
+      );
+      // TRIM TO THE SHIP'S PROGRESS FIRST. The served plan keeps already-flown
+      // waypoints (consumption is a suffix of the stored plan), so path[0] is
+      // usually BEHIND a mid-flight ghost — walking from it marched the glyph
+      // backwards down its own lane at the exit (the "ship reversed" playtest
+      // bug). Project onto the plan polyline, then creep forward from there.
+      const wp = ghost.path;
       let cur = { x: ghost.pos.x, y: ghost.pos.y };
-      for (const wp of ghost.path) {
-        const seg = Math.hypot(wp.pos.x - cur.x, wp.pos.y - cur.y);
+      let next = 0;
+      if (wp.length >= 2) {
+        let bestD = Infinity;
+        for (let i = 1; i < wp.length; i++) {
+          const a = wp[i - 1].pos;
+          const b = wp[i].pos;
+          const abx = b.x - a.x;
+          const aby = b.y - a.y;
+          const len2 = abx * abx + aby * aby;
+          const t = len2 > 1e-9
+            ? Math.max(0, Math.min(1, ((ghost.pos.x - a.x) * abx + (ghost.pos.y - a.y) * aby) / len2))
+            : 0;
+          const qx = a.x + abx * t;
+          const qy = a.y + aby * t;
+          const d = Math.hypot(ghost.pos.x - qx, ghost.pos.y - qy);
+          if (d < bestD) {
+            bestD = d;
+            cur = { x: qx, y: qy };
+            next = i;
+          }
+        }
+      }
+      let rem = creep;
+      for (let i = next; i < wp.length; i++) {
+        const seg = Math.hypot(wp[i].pos.x - cur.x, wp[i].pos.y - cur.y);
         if (seg < 1e-9) continue;
         if (rem <= seg) {
           const f = rem / seg;
-          cur = { x: cur.x + (wp.pos.x - cur.x) * f, y: cur.y + (wp.pos.y - cur.y) * f };
+          cur = { x: cur.x + (wp[i].pos.x - cur.x) * f, y: cur.y + (wp[i].pos.y - cur.y) * f };
           rem = 0;
           break;
         }
         rem -= seg;
-        cur = { x: wp.pos.x, y: wp.pos.y };
+        cur = { x: wp[i].pos.x, y: wp[i].pos.y };
       }
       // Path exhausted = hold at its terminus (never overshoot the plan).
       px = cur.x;
