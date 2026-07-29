@@ -3879,23 +3879,18 @@ mod channel_seam {
              plain light only ({d_plain:.1}s), but it was served {:.1}s stale",
             now - s_park.time
         );
-        // A HYPERSPACE drive winding UP already stirs the medium — coupled from
-        // the moment it bites, so the lane carries the news of a departure as
-        // promptly as it carries the news of an arrival.
+        // SPIN-UP IS THE APPROACH, NOT THE RIDE: a hull lighting its hyperspace
+        // drive has reached the lane but has not joined the flow, so the lane
+        // carries nothing for it yet — its first word is the moment the drive
+        // catches. (Not symmetric with the wind-down below, deliberately: there
+        // the drive HAS bitten and is still wound in.)
         let hyper_spool = mk(sim::ship::DriveState::Spooling { to: sim::lane::Regime::Hyperspace, left: 2.0 });
         let s_hs = latest_observable(&hyper_spool, cc, &field, now, true, &[]).unwrap();
         assert!(
-            now - s_hs.time < d_coupled + 1.5,
-            "a hyperspace drive SPINNING UP transmits through its lane, got {:.1}s stale",
+            now - s_hs.time > d_plain - 1.5,
+            "a hyperspace drive still SPINNING UP has not joined the lane — \
+             plain light only ({d_plain:.1}s), but it was served {:.1}s stale",
             now - s_hs.time
-        );
-        // A WARP drive spinning up in the same ribbon stirs nothing.
-        let warp_spool = mk(sim::ship::DriveState::Spooling { to: sim::lane::Regime::Warp, left: 0.8 });
-        let s_ws = latest_observable(&warp_spool, cc, &field, now, true, &[]).unwrap();
-        assert!(
-            now - s_ws.time > d_plain - 1.5,
-            "a warp spin-up stirs no lane ({:.1}s stale vs plain {d_plain:.1}s)",
-            now - s_ws.time
         );
         // A HYPERSPACE drive winding down still stirs the medium — coupled.
         let hyper_drop = mk(sim::ship::DriveState::Dropping { from: sim::lane::Regime::Hyperspace, left: 2.0 });

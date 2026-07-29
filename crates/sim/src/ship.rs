@@ -860,21 +860,26 @@ impl DriveState {
         matches!(self, DriveState::Thrusters)
     }
 
-    /// §coupled: is this drive STIRRING THE LANE MEDIUM? A hyperspace drive
-    /// does so for its WHOLE engagement — winding up, cruising, and winding
-    /// down. It is wound into the medium from the moment it starts biting to
-    /// the moment it is fully out, so the lane carries a hull's reports from
-    /// its SPIN-UP (the first news of a departure) through to its SHUTDOWN
-    /// (the last news before the dark). Both ends matter and they are the same
-    /// physics — an asymmetry here would mean a lane that hears you leave but
-    /// not arrive. Read identically for the owner's own reports and for a
-    /// tripwire's read of a rival's wake. A warp drive touches no lane in any
-    /// state.
+    /// §coupled: is this drive STIRRING THE LANE MEDIUM — i.e. is the hull IN
+    /// THE LANE? It is from the moment its hyperspace drive CATCHES until that
+    /// drive is fully out: Cruising, and the wind-down that follows.
+    ///
+    /// SPIN-UP IS THE APPROACH, NOT THE RIDE (design ruling). A spooling hull
+    /// has reached the lane and is lighting its drive, but it has not joined
+    /// the flow — the drive has not bitten, which is exactly why `regime()`
+    /// still has it crawling at thruster speed. The wind-down is the mirror
+    /// case and NOT symmetric on purpose: there the drive HAS bitten and is
+    /// still wound in, so the lane carries the shutdown as the last word about
+    /// a departing hull.
+    ///
+    /// So the lane's first word about a hull is the moment it joins the flow,
+    /// and its last is that hull's drive going dark. Read identically for the
+    /// owner's own reports and for a tripwire's read of a rival's wake. A warp
+    /// drive touches no lane in any state.
     pub fn stirs_the_lane(self) -> bool {
         matches!(
             self,
             DriveState::Cruising(crate::lane::Regime::Hyperspace)
-                | DriveState::Spooling { to: crate::lane::Regime::Hyperspace, .. }
                 | DriveState::Dropping { from: crate::lane::Regime::Hyperspace, .. }
         )
     }
