@@ -6923,7 +6923,16 @@ function join(): void {
           addTradeNews(msg.trade);
           break;
         case "Error":
-          joinErr.textContent = msg.message;
+          // Before Welcome this is a join problem and belongs under the name
+          // field. AFTER joining, that element is hidden with the overlay — a
+          // server refusal (e.g. a wire message this server can't parse) must
+          // land in the readout or it is invisible. That invisibility buried
+          // the missing-BuildEmplacement-variant bug.
+          if (state.playerId !== null) {
+            readout().innerHTML = `<span style="color:var(--warn)">Server refused: ${esc(msg.message)}</span>`;
+          } else {
+            joinErr.textContent = msg.message;
+          }
           break;
       }
       setHud();

@@ -328,6 +328,19 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::BuildEmplacement { builder, emplacement, pos } => {
+                    // §emplacements: same shape as MoveShip — the order signal
+                    // travels to the BUILDER; the sim sites, charges, refuses.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, builder);
+                        self.pending.push(Command::BuildEmplacement {
+                            player_id,
+                            builder,
+                            emplacement,
+                            pos,
+                        });
+                    }
+                }
                 ClientMsg::CommitRaid { raider_id, target_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.emit_command_signal(player_id, raider_id);
