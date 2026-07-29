@@ -793,7 +793,7 @@ impl LaneNetwork {
             };
             done[u] = true;
             let (lane, k) = locate(u);
-            let mut relax = |v: usize, w: f64, dist: &mut Vec<f64>, prev: &mut Vec<Option<usize>>| {
+            let relax = |v: usize, w: f64, dist: &mut Vec<f64>, prev: &mut Vec<Option<usize>>| {
                 if du + w < dist[v] {
                     dist[v] = du + w;
                     prev[v] = Some(u);

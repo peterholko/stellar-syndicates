@@ -121,25 +121,29 @@ pub fn intercept_point(p: Vec2, speed: f64, t: Vec2, vt: Vec2) -> Option<Vec2> {
     }
 }
 
-/// One tick of **lead pursuit** (§8, §14.1) at constant speed. The pursuer:
+/// The chase AIM POINT (§8, §14.1). The pursuer:
 ///   1. forms a light-delayed read of where the target IS — the position its
-///      arriving light shows, `target_pos − target_vel·(range/c)` (a
-///      constant-velocity retardation; act on the stale sighting, sharpen as
-///      fresher light arrives, exactly like the fog model);
+///      arriving light shows, `target_pos − target_vel·(range/c)`. The delay
+///      here is the PURSUER'S OWN light lag to its target — sub-second in a
+///      local fight — not the command center's. A fleet hunts on its own
+///      sensors; only ORDERS and NEWS cross the galaxy slowly;
 ///   2. solves the ANALYTIC intercept against that observed constant-velocity
-///      target and steers straight at the lead point at `speed`.
+///      target, falling back to the observed position when no intercept exists.
 ///
-/// Contact itself is decided by the world (within `CONTACT_RADIUS`). Pass
-/// `c = INFINITY` to pursue the true present position (used by tests).
-pub fn pursue_step(pos: Vec2, target_pos: Vec2, target_vel: Vec2, speed: f64, c: f64, dt: f64) -> MoveStep {
-    // (1) Light-delayed observation of the target.
+/// Pure aim: the FLIGHT belongs to `Fleet::advance`, on the same drive
+/// machinery as every other order. Pass `c = INFINITY` for true-present aim.
+pub fn chase_aim(pos: Vec2, speed: f64, target_pos: Vec2, target_vel: Vec2, c: f64) -> Vec2 {
     let range = (target_pos - pos).length();
     let obs_delay = if c.is_finite() && c > 1e-9 { range / c } else { 0.0 };
     let observed = target_pos - target_vel * obs_delay;
+    intercept_point(pos, speed, observed, target_vel).unwrap_or(observed)
+}
 
-    // (2) Analytic lead against the observed constant-velocity target; fall back
-    //     to pure pursuit (aim at it now) when no interception exists.
-    let aim = intercept_point(pos, speed, observed, target_vel).unwrap_or(observed);
+/// One tick of **lead pursuit** at constant speed — [`chase_aim`] flown as a
+/// straight kinematic step. Kept as the self-contained form the aim tests
+/// exercise; the live sim flies chases through the drive state machine instead.
+pub fn pursue_step(pos: Vec2, target_pos: Vec2, target_vel: Vec2, speed: f64, c: f64, dt: f64) -> MoveStep {
+    let aim = chase_aim(pos, speed, target_pos, target_vel, c);
     let to_aim = aim - pos;
     let d = to_aim.length();
     let dir = if d > 1e-9 { to_aim / d } else { Vec2::ZERO };

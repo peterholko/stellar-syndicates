@@ -22,7 +22,6 @@ use crate::galaxy::{generate_home_slots, generate_systems, HomeSlot, StarSystem}
 use crate::ids::{EntityId, PlayerId, SyndicateId};
 use crate::market::{clear_call_auction, LimitOrder, Side};
 use crate::math::Vec2;
-use crate::movement::pursue_step;
 use crate::ship::{DefenseEngagement, DockSite, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 use crate::syndicate::{syndicate_cap, Syndicate};
@@ -364,6 +363,12 @@ const THREAT_CLOSING_COS: f64 = 0.3;
 /// farther than `sensor_range × this` away — it guards its station, it doesn't
 /// chase a fleeing raider across the galaxy.
 const PURSUIT_BREAKOFF_MULT: f64 = 2.5;
+/// §pursuit: how far the chase aim must drift before the flown leg is re-plotted.
+/// In warp nothing steers (§U-turn), so chasing every wobble of the aim would
+/// drop the drive thirty times a second; within this slack the fleet flies the
+/// leg it committed to, and past it, dropping out to come about is the honest
+/// cost of chasing an evader.
+const CHASE_REPLOT: f64 = 1_500.0;
 /// How near a friendly convoy a patrolling raider must be to "adopt" it as the
 /// charge it guards (and then shadow). A picket with NO convoy this close guards
 /// nothing — so WHERE a patrol sits decides what (if anything) it can defend.
@@ -1814,12 +1819,33 @@ impl World {
             if let FleetOrder::Intercept { target } | FleetOrder::Attack { target } = ship.order {
                 match snapshot.get(&target) {
                     Some(&(tp, tv)) => {
-                        // Lead pursuit toward the ANALYTIC intercept of the
-                        // target's light-delayed constant-velocity track, at this
-                        // fleet's formation speed (§14.1) — closed-form, no solver.
-                        let step = pursue_step(ship.pos, tp, tv, ship.max_speed(), c, DT);
-                        ship.pos = step.pos;
-                        ship.vel = step.vel;
+                        // §pursuit: AIM from the pursuer's OWN light (range/c
+                        // stale — sub-second in a local fight), lead solved at
+                        // the speed the drives currently deliver. The FLIGHT
+                        // then goes through `advance` like any other order, so
+                        // a chase lights warp exactly like its prey — the old
+                        // teleport-at-hull-speed step here let warping prey
+                        // outrun every pursuer ever sent after it.
+                        let factor = match ship.regime {
+                            crate::lane::Regime::Hyperspace => {
+                                crate::lane::WARP_FACTOR * crate::lane::LANE_MULT
+                            }
+                            crate::lane::Regime::Warp => crate::lane::WARP_FACTOR,
+                            crate::lane::Regime::Thrusters => 1.0,
+                        };
+                        let aim = crate::movement::chase_aim(
+                            ship.pos,
+                            ship.transit_speed() * factor,
+                            tp,
+                            tv,
+                            c,
+                        );
+                        let stale =
+                            ship.route.last().map_or(true, |l| l.to.distance(aim) > CHASE_REPLOT);
+                        if stale {
+                            ship.route = vec![crate::lane::Leg::warp(aim)];
+                        }
+                        ship.advance(time, DT, &env);
                     }
                     None => lost_target.push(*id), // target gone — break off
                 }
@@ -16108,6 +16134,59 @@ mod tests {
 
     fn engaged_on(w: &World, patrol: EntityId, hostile: EntityId) -> bool {
         w.fleets.get(&patrol).and_then(|s| s.defense.as_ref()).map(|d| d.target == hostile).unwrap_or(false)
+    }
+
+    /// §pursuit: A CHASE FLIES ON THE SAME DRIVES AS ITS PREY. A convoy fleeing
+    /// under warp used to outrun every pursuer, because the chase step moved at
+    /// raw hull speed while the prey's `advance` lit its warp drive — predators
+    /// were the only fleets in the game denied the drive. Deep space, far from
+    /// every lane and well: the faster hull must close and make contact.
+    #[test]
+    fn a_warping_prey_cannot_outrun_a_warping_pursuer() {
+        let mut w = test_world();
+        let (d, a) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: d, name: "Prey".into() },
+            Command::AddPlayer { id: a, name: "Hunter".into() },
+        ]);
+        let convoy = find_ship(&mut w, d, ShipKind::Convoy);
+        let raider = find_ship(&mut w, a, ShipKind::Raider);
+        // Empty deep space: no lanes, no systems, no gravity wells out here.
+        let start = Vec2::new(900_000.0, 900_000.0);
+        {
+            let f = w.fleets.get_mut(&convoy).unwrap();
+            f.pos = start;
+            f.vel = Vec2::ZERO;
+            f.fuel = f.fuel_capacity();
+            // Fleeing dead away; empty route = fly straight, and `advance`
+            // lights the warp drive on its own (under way, outside any well).
+            f.order = FleetOrder::MoveTo { dest: start + Vec2::new(300_000.0, 0.0) };
+            f.route.clear();
+        }
+        {
+            let f = w.fleets.get_mut(&raider).unwrap();
+            f.pos = start - Vec2::new(4_000.0, 0.0); // 4k su behind the prey
+            f.vel = Vec2::ZERO;
+            f.fuel = f.fuel_capacity();
+            f.defense = None;
+            f.order = FleetOrder::Attack { target: convoy };
+        }
+        let mut min_dist = f64::INFINITY;
+        for _ in 0..(90.0 / crate::config::DT) as usize {
+            w.step(&[]);
+            let (Some(p), Some(q)) = (w.fleets.get(&raider), w.fleets.get(&convoy)) else {
+                break; // contact resolved the chase (a fleet died) — caught
+            };
+            min_dist = min_dist.min(p.pos.distance(q.pos));
+            if min_dist < 400.0 {
+                break;
+            }
+        }
+        assert!(
+            min_dist < 400.0,
+            "the faster hull must run its prey down at warp, \
+             but never got closer than {min_dist:.0} su"
+        );
     }
 
     /// A patrolling raider, with NO player action, autonomously breaks off to

@@ -1745,10 +1745,23 @@ impl Fleet {
                     *index = (*index + 1) % waypoints.len();
                 }
             }
-            // Interception AND attack are driven by the world (they need the
-            // target's state), so there is nothing to do in the self-contained
-            // per-fleet advance.
-            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } => {}
+            // §pursuit: the WORLD sets the chase leg (it needs the target's
+            // state to aim), but the FLIGHT is ours — through the same drive
+            // machinery as any other order, so a chase lights warp exactly like
+            // its prey. Contact is the world's call (resolve_raids), so arrival
+            // never ends the order: retire the leg and hold for the next aim.
+            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } => {
+                if let Some(target) = self.route.first().map(|l| l.to) {
+                    let step = crate::movement::advance_turning(self.pos, self.vel, target, speed, dt, radius);
+                    self.pos = step.pos;
+                    self.vel = step.vel;
+                    if step.arrived {
+                        self.route.remove(0);
+                    }
+                } else {
+                    self.vel = Vec2::ZERO;
+                }
+            }
         }
     }
 }
