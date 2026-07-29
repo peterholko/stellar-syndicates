@@ -620,11 +620,11 @@ export interface TimelineEntry {
 }
 
 // A ship as the player perceives it — a delayed "ghost" (§6). `pos` is where
-// the object was when its arriving light left it; `age` is how stale that is;
-// `uncertainty` is how far it could have moved since (`age × max_speed`). This
-// holds for OWN ships too — there is no FTL tether to your fleet, so a distant
-// own ship is as uncertain as a distant enemy; `own` is only a "this is mine"
-// marker, never a certainty grant.
+// the object was when its arriving light left it and `age` is how stale that is;
+// read with `drive` (what its engines were doing) that bounds how far it can
+// have got. This holds for OWN ships too — there is no FTL tether to your fleet,
+// so a distant own ship is as stale as a distant enemy; `own` is only a "this is
+// mine" marker, never a certainty grant.
 // The estimated-size BUCKET for a fleet seen through the fog (§13.1 intel
 // ladder). Deterministic classes `1 · 2–3 · 4–7 · 8–15 · 16–30 · 31+` — an
 // honest, un-invertible size estimate you get even for a far, out-of-coverage
@@ -705,7 +705,6 @@ export interface GhostView {
   pos: Vec2;
   vel: Vec2;
   age: number;
-  uncertainty: number;
   own: boolean;
   /// §dock: the BERTH this sighting was taken at — `"hub"` for the Charterhouse,
   /// otherwise the system's id — or absent if the fleet was under way (or

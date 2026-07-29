@@ -73,7 +73,8 @@ struct Track {
     broadcasts: bool,
     /// The best sensor bubble the fleet projects (max member `sensor_mult`).
     sensor_mult: f64,
-    /// Formation cruise cap (min member `max_speed`) — drives uncertainty.
+    /// Formation cruise cap (min member `max_speed`) — scales the detection
+    /// SIGNATURE (a hull near its own top speed is loud).
     max_speed: f64,
     /// The estimated-size bucket a fog observer sees.
     count_class: CountClass,
@@ -515,16 +516,24 @@ impl PositionHistory {
             let reveal = if p.broadcasts { own || in_coverage } else { true };
             let detected = reveal;
 
-            let age = now - p.sample.time;
             // ONE law governs ALL information — it travels at lightspeed with NO
             // exceptions, including the player's OWN ships (§6). There is no FTL
             // tether to your fleet: certainty is a function of PROXIMITY to the
-            // command center, not ownership. So uncertainty is `age × max_speed`
-            // for every object alike — an own ship far out is known exactly as
-            // poorly as an enemy at the same distance; one close to the command
-            // center is fresh and near-certain because its light barely lags.
-            // `own` remains only a "this is mine" marker, never a certainty grant.
-            let uncertainty = age * p.max_speed;
+            // command center, not ownership. AGE is that certainty, whole: an own
+            // ship far out is known exactly as poorly as an enemy at the same
+            // distance; one close to the command center is fresh because its light
+            // barely lags. `own` remains only a "this is mine" marker, never a
+            // certainty grant.
+            //
+            // There used to be a derived `uncertainty = age × max_speed` here, sent
+            // to draw a circle of "could be anywhere in this". It was deleted: the
+            // hull speed it multiplied is the THRUSTER speed, so for a hull riding a
+            // lane at 50x it understated the reachable distance fifty-fold — and no
+            // circle can be honest in a galaxy where speed depends on whether you
+            // are standing on a road. Age plus the sighting's drive state say the
+            // same thing without the lie, and the intercept estimate answers the
+            // question the circle was reached for.
+            let age = now - p.sample.time;
             let is_convoy = p.flagship == ShipKind::Convoy;
             // Convoy fleets broadcast their route; cargo only within sensor
             // coverage (Tier 2), exactly as before.
@@ -610,7 +619,6 @@ impl PositionHistory {
                 pos: p.sample.pos,
                 vel: p.sample.vel,
                 age,
-                uncertainty,
                 own,
                 route,
                 cargo,
@@ -2807,8 +2815,9 @@ mod tests {
     }
 
     /// Certainty tracks PROXIMITY to the command center, NOT ownership (§6). An
-    /// own ship far from the command center is stale and uncertain — there is no
-    /// FTL tether to your own fleet — exactly like an enemy at the same distance.
+    /// own ship far from the command center is stale — there is no FTL tether to
+    /// your own fleet — exactly as stale as an enemy at the same distance. AGE is
+    /// the whole measure (the derived uncertainty radius is gone).
     #[test]
     fn own_ship_far_is_fogged_like_an_enemy() {
         let c = 300.0;
@@ -2817,39 +2826,47 @@ mod tests {
         let hist = history_with(still_track(Vec2::ZERO, owner, ShipKind::Raider));
 
         let g_own = &hist.view_for(owner, cc, &df(c), 50.0)[0];
-        // Own AND far ⇒ uncertain. No ownership exemption.
+        // Own AND far ⇒ stale. No ownership exemption.
         assert!(g_own.own);
-        assert!(g_own.uncertainty > 0.0, "a distant own ship must be uncertain, not certain");
-        assert!((g_own.uncertainty - g_own.age * ShipKind::Raider.max_speed()).abs() < 1e-6,
-            "own uncertainty must be age × max_speed, the same formula as any object");
+        assert!(g_own.age > 0.0, "a distant own ship must be stale, not live");
+        // `df` normalises the field so its effective signal speed is exactly `c`
+        // (see the helper's note), so the delay here is plain distance / c.
+        let expected = 4000.0 / c;
+        assert!(
+            (g_own.age - expected).abs() < 0.2,
+            "an own sighting ages by its own light delay ({:.2}s vs {expected:.2}s)",
+            g_own.age
+        );
 
-        // An enemy raider on the SAME track is fogged identically — same age, same
-        // uncertainty. Ownership changes only the `own` flag, nothing else.
+        // An enemy raider on the SAME track is fogged identically. Ownership
+        // changes only the `own` flag, nothing else.
         let g_enemy = &hist.view_for(PlayerId(99), cc, &df(c), 50.0)[0];
         assert!(!g_enemy.own);
-        assert!((g_own.uncertainty - g_enemy.uncertainty).abs() < 1e-9,
-            "own and enemy at the same distance from the command center are equally uncertain");
-        assert!((g_own.age - g_enemy.age).abs() < 1e-9, "same distance ⇒ same staleness");
+        assert!(
+            (g_own.age - g_enemy.age).abs() < 1e-9,
+            "same distance ⇒ same staleness, whoever is looking"
+        );
     }
 
     /// An own ship CLOSE to the command center is crisp — small light delay ⇒
-    /// small age ⇒ near-zero uncertainty. Certainty comes from proximity, and a
-    /// nearby own ship is far fresher than the same ship seen from far away.
+    /// small age. Certainty comes from proximity, and a nearby own ship is far
+    /// fresher than the same ship seen from far away.
     #[test]
     fn own_ship_near_is_crisp() {
         let c = 300.0;
         let owner = PlayerId(7);
         let hist = history_with(still_track(Vec2::ZERO, owner, ShipKind::Raider));
 
-        // Command center 30 su away: light delay 0.1 s ⇒ uncertainty ≈ 0.1·max_speed.
         let near = &hist.view_for(owner, Vec2::new(30.0, 0.0), &df(c), 50.0)[0];
-        // Same own ship viewed from 9000 su away: ~30 s stale, far more uncertain.
         let far = &hist.view_for(owner, Vec2::new(9000.0, 0.0), &df(c), 50.0)[0];
 
-        assert!(near.uncertainty < far.uncertainty,
-            "near {} should be far crisper than far {}", near.uncertainty, far.uncertainty);
-        assert!(near.uncertainty <= 0.2 * ShipKind::Raider.max_speed(),
-            "a ship right by the command center is near-certain ({} su)", near.uncertainty);
+        assert!(
+            near.age < far.age,
+            "near {:.2}s should be far crisper than far {:.2}s",
+            near.age,
+            far.age
+        );
+        assert!(near.age <= 0.2, "a ship right by the command center is near-live ({:.2}s)", near.age);
     }
 
     // ---- Two-tier information model (broadcast + sensor range) ----

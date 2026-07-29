@@ -1499,14 +1499,16 @@ pub struct GhostView {
     /// Velocity at that retarded moment (for heading / dead-reckoning).
     pub vel: Vec2,
     /// Light delay in seconds — how stale this sighting is ("seen Xs ago").
+    ///
+    /// This is the WHOLE certainty story, and it applies to every object alike
+    /// including your own ships (§6): there is no FTL tether to your fleet, so
+    /// freshness tracks PROXIMITY to the command center, not ownership. Read
+    /// beside `drive` (what the hull was doing) it also bounds how far it can
+    /// have got — which is why the derived `uncertainty` radius that used to sit
+    /// here is gone: it multiplied age by THRUSTER speed, understating a
+    /// lane-rider's reach fifty-fold, and no circle can be honest where speed
+    /// depends on standing on a road.
     pub age: f64,
-    /// Radius (sim units) the object could have moved since the light left:
-    /// `age · max_speed`. Applies to EVERY object alike, including your own ships
-    /// (§6) — there is no FTL tether to your fleet, so certainty tracks PROXIMITY
-    /// to the command center, not ownership: a ship near home is fresh and
-    /// near-certain (age≈0), a distant own ship is fogged like an enemy at the
-    /// same range. Drives the on-map uncertainty cone.
-    pub uncertainty: f64,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the

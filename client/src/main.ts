@@ -1245,15 +1245,15 @@ function updateShipPanel(): void {
   // OLD this sighting is).
   const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${g.age.toFixed(1)}s ago</dd></div>`;
   // POSITION = the LAST KNOWN COORDINATES: where the light that just arrived
-  // puts this fleet. It headlined the uncertainty RADIUS before (`age × hull
-  // speed`), which read as a mystery number that grew on its own — and the
-  // staleness it encoded is already the Seen cell's job, while the map draws
-  // the cone. The radius keeps its meaning in the tooltip, where it explains
-  // the coordinates rather than replacing them.
+  // puts this fleet. How far it may have flown SINCE is not restated as a
+  // number — that was the deleted uncertainty radius, which multiplied age by
+  // thruster speed and so lied about anything riding a lane. Seen (above) and
+  // Drive (beside) are the honest pair: how old the picture is, and what speed
+  // the hull was making when it left.
   const posTip =
-    g.uncertainty < 1
-      ? "Where this sighting puts it. At your command center — effectively live."
-      : `Where it was when this light left it. It has flown on since: anywhere within ~${fmt(g.uncertainty)} su of here (the cone on the map).`;
+    g.age < 1
+      ? "Where this sighting puts it — near enough to your command center to be effectively live."
+      : "Where it was when this light left it. Read it with Seen and Drive: it has flown on since, at whatever speed its drives were making.";
   const posCell =
     `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
     `<dd>${fmt(g.pos.x)} · ${fmt(g.pos.y)}</dd></div>`;

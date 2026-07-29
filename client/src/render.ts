@@ -1,8 +1,7 @@
 // Pixi.js renderer. Draws the player's DELAYED, FOGGED view (§6) — the heart of
 // the game made visible (Pillar 2: never hide the lag). Each ship is a ghost at
 // the position its arriving light shows; EVERY ghost — own or enemy — carries an
-// uncertainty cone (how far it could have moved since the light left) and an age
-// label, and fades with staleness. There is no FTL tether to your own fleet:
+// age label and fades with staleness. There is no FTL tether to your own fleet:
 // certainty comes from PROXIMITY to the command center, so a distant own ship is
 // just as fogged as a distant enemy, while one nearby is crisp. An own ship under
 // orders also shows a hint of where it has most likely advanced along its course.
@@ -64,7 +63,6 @@ const COL_TCA = 0x7fa6c8;
 const COL_NODE = 0xb98cff;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
-const COL_CONE = 0xff7a6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
@@ -1915,19 +1913,16 @@ export class Renderer {
     const own = ghost.own;
     const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
 
-    // Uncertainty cone: where the object could be NOW given how stale the sighting
-    // is. This is ON-DEMAND inspection detail only — shown when you SELECT a contact
-    // or it is your current intercept TARGET (its staleness is exactly what tells you
-    // how risky the intercept is). It is NEVER drawn ambiently: own ships no longer
-    // carry an always-on uncertainty circle (that was clutter that didn't help), so
-    // the map stays clean around your fleets and the cone is never confused with the
-    // teal sensor bubbles. (The threat ring and selection ring below are unaffected.)
+    // §fog: NO UNCERTAINTY CIRCLE. There used to be one here — radius
+    // `age x hull speed` — drawn when you selected a contact. It was deleted
+    // rather than fixed: the hull speed is the THRUSTER speed, so a lane rider's
+    // reach was understated fifty-fold, and no circle can be honest where speed
+    // depends on standing on a road. The panel's SEEN age and the sighting's
+    // drive state carry the same information without the false precision, and
+    // the amber intercept estimate answers the question the circle was reached
+    // for. `sp.cone` still carries the survey ring, pending badge, threat ring
+    // and signature flare below.
     sp.cone.clear();
-    const inspecting = state.selectedShipId === ghost.id || Object.values(state.raids).includes(ghost.id);
-    if (inspecting && ghost.uncertainty > 0) {
-      const rPx = ghost.uncertainty * this.scale;
-      sp.cone.circle(0, 0, rPx).fill({ color: COL_CONE, alpha: 0.05 }).stroke({ width: 1, color: COL_CONE, alpha: 0.22 });
-    }
     // §explore Part 2: SURVEY PROGRESS RING — owner-only (the field is only ever
     // sent for own fleets): an arc filling clockwise as the dwell runs, in the
     // scout's own cyan. A rival sees none of this — only the louder signature.
@@ -1956,36 +1951,10 @@ export class Renderer {
     const unconfirmed = !!pend && pend.echo_at - pend.delivered_at >= 1.5 && liveSim < pend.echo_at;
     const inTransit = unconfirmed && liveSim < pend!.delivered_at; // phase 1, else phase 2
 
-    // Own ship under orders: it's executing a course YOU set, so hint where it has
-    // most likely advanced — from the ghost, along the commanded heading, up to how
-    // far it could have moved (its uncertainty). Reads as "proceeding on last
-    // orders," not "lost ship." DASHED while the order is unconfirmed.
-    if (own && ghost.uncertainty > 1) {
-      const dest = state.orders[ghost.id];
-      if (dest) {
-        const dx = dest.x - ghost.pos.x;
-        const dy = dest.y - ghost.pos.y;
-        const d = Math.hypot(dx, dy);
-        if (d > 1) {
-          const step = Math.min(ghost.uncertainty, d);
-          const pr = this.worldToScreen({ x: ghost.pos.x + (dx / d) * step, y: ghost.pos.y + (dy / d) * step });
-          const ox = pr.x - s.x;
-          const oy = pr.y - s.y;
-          if (unconfirmed) {
-            // Phase-stepped dashes — a second read, not a new color: in transit
-            // = sparse + dim (pure intention), awaiting echo = tighter + brighter
-            // (being executed, unconfirmed). Both clearly dashed vs the solid
-            // confirmed hint below.
-            if (inTransit) dashedLine(sp.cone, 0, 0, ox, oy, 3, 6);
-            else dashedLine(sp.cone, 0, 0, ox, oy, 5, 3);
-            sp.cone.stroke({ width: 1, color: COL_OWN, alpha: inTransit ? 0.35 : 0.55 });
-          } else {
-            sp.cone.moveTo(0, 0).lineTo(ox, oy).stroke({ width: 1, color: COL_OWN, alpha: 0.3 });
-          }
-          sp.cone.circle(ox, oy, 2.6).stroke({ width: 1.2, color: COL_OWN, alpha: 0.6 });
-        }
-      }
-    }
+    // (No "probably advanced to about here" pip: its length was the uncertainty
+    // radius, and `drawOrders` already draws the fleet's WHOLE commanded route —
+    // the real flight plan, lane legs and all. The pending badge below still
+    // carries the order phase.)
 
     // Pending badge, own-cyan, just off the pip while the order is unconfirmed —
     // a subtle state tag, not an alarm. Gone at echo. The glyph steps with the
