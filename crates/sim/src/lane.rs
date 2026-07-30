@@ -497,10 +497,20 @@ impl LaneNetwork {
     /// §buoys: the fastest way for a SIGNAL to get from `a` to `b`, and the path
     /// it takes.
     ///
-    /// Warp everywhere by default. Hyperspace speed only along a lane BETWEEN TWO
-    /// RELAYS that both sit on it — one buoy relays to nothing, which is why a
-    /// home system being a free first buoy costs nothing and the second one is
-    /// the real purchase.
+    /// Warp everywhere by default. A RELAY ON A LANE INJECTS INTO IT: the signal
+    /// rides that lane at hyperspace speed, leaves at the arc position nearest
+    /// the receiver, and warps only the remainder — exactly the geometry
+    /// [`Self::signal_coupled`] already gives a hull transmitting from inside a
+    /// ribbon. One relay is therefore useful on its own; a second on the same
+    /// lane still helps by carrying the signal further along before the warp leg
+    /// begins, and relays on OTHER lanes open those roads.
+    ///
+    /// This used to demand TWO relays sharing a lane before any lane was used,
+    /// which quietly made buoys near-worthless: the last hop from the final
+    /// relay out to the ship ran at warp, and that leg dominated. Measured on a
+    /// 45k-su shot along the home lane, home + one mid-lane buoy came to 22.5s —
+    /// identical to plain warp — where riding the lane is 2.3s. The player was
+    /// told to build a second buoy and got nothing at all for it.
     ///
     /// Returns the hops as well as the time, because the order graphic has to
     /// trace the path the signal actually took rather than a straight line to
@@ -515,8 +525,8 @@ impl LaneNetwork {
         let lane_speed = c * self.signal_factor_on_lane();
         let direct =
             (a.distance(b) / warp, vec![Hop { to: b, lane: None, t: a.distance(b) / warp }]);
-        if buoys.len() < 2 {
-            return direct; // nothing to relay BETWEEN
+        if buoys.is_empty() {
+            return direct; // no transmitter anywhere — plain warp light
         }
         let relays: Vec<Relay> = buoys.iter().map(|p| self.relay_at(*p)).collect();
         let n = relays.len();
@@ -557,11 +567,34 @@ impl LaneNetwork {
                 }
             }
         }
-        let Some((end, t)) = best
+        // THE TERMINAL LEG. From the last relay, either warp straight at the
+        // receiver, or RIDE one of that relay's own lanes to the arc position
+        // nearest the receiver and warp only what is left. The ride needs no
+        // partner at the far end — the relay is the transmitter and the medium
+        // carries, the same way a coupled hull's report gets home. Returns the
+        // time, plus the lane and exit point when a lane was ridden, so the
+        // order graphic can trace it.
+        let terminal = |i: usize| -> (f64, Option<(u32, Vec2)>) {
+            let r = &relays[i];
+            let mut best_leg: (f64, Option<(u32, Vec2)>) = (r.pos.distance(b) / warp, None);
+            for (lid, s_r) in &r.on {
+                let Some(l) = self.lanes.iter().find(|l| l.id == *lid) else { continue };
+                let Some((exit, _)) = l.nearest(b) else { continue };
+                let t = (s_r - exit.s).abs() / lane_speed + exit.pos.distance(b) / warp;
+                if t < best_leg.0 {
+                    best_leg = (t, Some((*lid, exit.pos)));
+                }
+            }
+            best_leg
+        };
+        let Some((end, t, exit)) = best
             .iter()
             .enumerate()
-            .map(|(i, d)| (i, d + relays[i].pos.distance(b) / warp))
-            .filter(|(_, t)| t.is_finite())
+            .map(|(i, d)| {
+                let (leg, exit) = terminal(i);
+                (i, d + leg, exit)
+            })
+            .filter(|(_, t, _)| t.is_finite())
             .min_by(|x, y| x.1.total_cmp(&y.1))
         else {
             return direct;
@@ -581,6 +614,12 @@ impl LaneNetwork {
                 u.on.iter().find_map(|(la, _)| v.on.iter().find(|(lb, _)| lb == la).map(|_| *la))
             });
             hops.push(Hop { to: relays[i].pos, lane, t: best[i] });
+        }
+        if let Some((lid, exit_pos)) = exit {
+            // The ridden lane, then the short warp off it. `t` is the arrival at
+            // `b`, so stamp the exit with everything but that final remainder.
+            let tail = exit_pos.distance(b) / warp;
+            hops.push(Hop { to: exit_pos, lane: Some(lid), t: (t - tail).max(0.0) });
         }
         hops.push(Hop { to: b, lane: None, t });
         (t, hops)
@@ -2293,18 +2332,32 @@ mod tests {
         assert!(n.route(a, a + Vec2::new(300.0, 0.0), 200.0, 2_000.0).is_empty(), "a hop next door needs no lane");
     }
 
-    /// §buoys: ONE RELAY IS WORTH NOTHING. A lane carries a signal only between
-    /// TWO buoys sitting on it, so a lone buoy — which is what a home system is
-    /// on its own — leaves communication at warp, source to destination.
+    /// §buoys: ONE RELAY ON A LANE IS ALREADY WORTH SOMETHING — it injects into
+    /// the medium, and the signal rides to the point nearest the receiver before
+    /// warping the remainder. No relay at all is plain warp light.
+    ///
+    /// This replaces a rule that demanded a PAIR sharing a lane before any lane
+    /// was used. That made buoys near-worthless in practice: the final hop out to
+    /// the ship ran at warp and dominated, so home + one buoy measured exactly
+    /// the same as no buoys at all.
     #[test]
-    fn a_single_buoy_does_not_speed_anything_up() {
+    fn one_relay_on_a_lane_already_carries_the_signal() {
         let (n, ..) = net(1, 4);
         let l = &n.lanes[0];
         let (a, b) = (l.at(l.length() * 0.15), l.at(l.length() * 0.85));
         let c = 400.0;
         let warp_time = a.distance(b) / (c * WARP_FACTOR);
-        assert!((n.signal(a, b, c, &[]).0 - warp_time).abs() < 1e-6, "no buoys: a plain warp run");
-        assert!((n.signal(a, b, c, &[a]).0 - warp_time).abs() < 1e-6, "one buoy relays to nothing");
+        assert!(
+            (n.signal(a, b, c, &[]).0 - warp_time).abs() < 1e-6,
+            "no relay anywhere: plain warp light"
+        );
+        let (one, hops) = n.signal(a, b, c, &[a]);
+        assert!(
+            one < warp_time * 0.5,
+            "a lone relay on the lane should be far quicker than warp ({one:.1}s vs {warp_time:.1}s)"
+        );
+        assert!(hops.iter().any(|h| h.lane == Some(l.id)), "and the path says which road it rode");
+        assert_eq!(hops.last().unwrap().to, b, "a signal always ends where it was sent");
     }
 
     /// §buoys: TWO ON THE SAME LANE is the purchase — that pair, and only that
@@ -2699,3 +2752,5 @@ mod route_flight {
 
     }
 }
+
+
