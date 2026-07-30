@@ -1551,6 +1551,7 @@ impl World {
         self.integrate_movement(&mut events);
         self.refuel_docked();
         self.step_constructions(&mut events);
+        self.step_demolitions(&mut events);
 
         // 3b. §syndicates Part 3: feed ally GARRISONS from their HOST systems and
         //     set each garrison's fed/unfed flag for THIS tick's defense. Before the
@@ -5211,6 +5212,44 @@ impl World {
                     builder_id,
                     FleetOrder::Construct { site: builder_pos, emplacement: *emplacement, started: None },
                     crate::event::OrderKind::Construct,
+                );
+            }
+            Command::DemolishEmplacement { player_id, fleet, target } => {
+                // §emplacements: TEAR DOWN A RIVAL STRUCTURE. Validated here so a
+                // refusal costs nothing and never leaves a fleet holding an order
+                // it cannot carry out.
+                let Some((owner, site)) = self
+                    .emplacements
+                    .iter()
+                    .find(|e| e.id == *target)
+                    .map(|e| (e.owner, e.pos))
+                else {
+                    return; // no such structure (already gone, or never seen)
+                };
+                // Yours, or a friend's — not a target. The ally check means a
+                // syndicate cannot be tricked into cutting its own network.
+                if owner == *player_id || self.are_allied(owner, *player_id) {
+                    return;
+                }
+                // TEETH REQUIRED: wrecking is a combat act. A crane or a convoy
+                // parked on a buoy does nothing to it.
+                let Some(fleet_id) = self
+                    .fleets
+                    .get(fleet)
+                    .filter(|f| {
+                        f.owner == *player_id
+                            && f.is_combatant()
+                            && matches!(f.order, FleetOrder::Idle)
+                    })
+                    .map(|_| *fleet)
+                else {
+                    return; // not yours, toothless, or already busy
+                };
+                self.schedule_for_owner(
+                    *player_id,
+                    fleet_id,
+                    FleetOrder::Demolish { target: *target, site, started: None },
+                    crate::event::OrderKind::Demolish,
                 );
             }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
@@ -10253,6 +10292,71 @@ impl World {
     /// while the builder was in transit — and a refused deployment REFUNDS the
     /// kit to the nearest owned system (§5.1: suspended or returned, never
     /// destroyed).
+    /// §emplacements: RUN THE WRECKING CREWS. A combatant holding station on a
+    /// rival structure starts the clock; after `DEMOLISH_SECONDS` the structure
+    /// is gone and the fleet is freed. Mirrors `step_constructions`, with three
+    /// differences that matter:
+    ///
+    /// * the target can VANISH under the crew — someone else may have got there
+    ///   first — so a missing target abandons the job instead of stalling on it;
+    /// * leaving the site (recalled, or driven off by a picket) resets the clock
+    ///   rather than banking partial progress: wrecking is a held position;
+    /// * completion emits [`EventPayload::EmplacementDestroyed`], which the view
+    ///   layer delivers to the owner at SIGNAL speed. For a buoy that is the
+    ///   joke landing: the network that would have carried the bad news is the
+    ///   thing that just died, so the report crawls.
+    fn step_demolitions(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let ids: Vec<EntityId> = self.fleets.keys().copied().collect();
+        for id in ids {
+            let Some(f) = self.fleets.get(&id) else { continue };
+            let FleetOrder::Demolish { target, site, started } = f.order else { continue };
+            let by = f.owner;
+            let on_site = f.pos.distance(site) <= crate::emplace::CONSTRUCT_RADIUS;
+            // Gone already? Nothing to wreck — free the crew rather than leave it
+            // grinding at empty space.
+            if !self.emplacements.iter().any(|e| e.id == target) {
+                if let Some(f) = self.fleets.get_mut(&id) {
+                    f.order = FleetOrder::Idle;
+                }
+                continue;
+            }
+            match started {
+                None if on_site => {
+                    if let Some(f) = self.fleets.get_mut(&id) {
+                        f.order = FleetOrder::Demolish { target, site, started: Some(now) };
+                    }
+                }
+                Some(_) if !on_site => {
+                    // Driven off / recalled mid-job: the clock resets.
+                    if let Some(f) = self.fleets.get_mut(&id) {
+                        f.order = FleetOrder::Demolish { target, site, started: None };
+                    }
+                }
+                Some(t0) if now - t0 >= crate::emplace::DEMOLISH_SECONDS => {
+                    let Some(pos) = self.emplacements.iter().position(|e| e.id == target) else {
+                        continue;
+                    };
+                    let gone = self.emplacements.remove(pos);
+                    events.push(Event::new(
+                        now,
+                        EventPayload::EmplacementDestroyed {
+                            emplacement: gone.id,
+                            owner: gone.owner,
+                            by,
+                            kind: gone.kind,
+                            pos: gone.pos,
+                        },
+                    ));
+                    if let Some(f) = self.fleets.get_mut(&id) {
+                        f.order = FleetOrder::Idle; // crew freed, hull survives
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn step_constructions(&mut self, events: &mut Vec<Event>) {
         let _ = &events;
         let now = self.time;
@@ -16182,6 +16286,180 @@ mod tests {
 
     fn engaged_on(w: &World, patrol: EntityId, hostile: EntityId) -> bool {
         w.fleets.get(&patrol).and_then(|s| s.defense.as_ref()).map(|d| d.target == hostile).unwrap_or(false)
+    }
+
+    /// §emplacements: helper — plant a structure owned by `owner` at `pos`.
+    fn plant(w: &mut World, owner: PlayerId, kind: crate::emplace::EmplacementKind, pos: Vec2) -> EntityId {
+        let id = EntityId(w.next_entity_id);
+        w.next_entity_id += 1;
+        w.emplacements.push(crate::emplace::Emplacement { id, owner, kind, pos });
+        id
+    }
+
+    /// A lane point near `who`'s home — so an order to a fleet parked there
+    /// lands in seconds rather than after a galaxy-crossing signal leg.
+    fn lane_spot_near_home(w: &World, who: PlayerId) -> Vec2 {
+        let home = w.players[&who].home;
+        let mut best = (f64::INFINITY, home);
+        for l in &w.lanes.lanes {
+            for s in &l.samples {
+                let d = s.pos.distance(home);
+                if d < best.0 {
+                    best = (d, s.pos);
+                }
+            }
+        }
+        best.1
+    }
+
+    /// §emplacements: THE WRECKING PATH — a rival combatant holds station on a
+    /// buoy and it comes down, the hull survives to do it again, and the owner
+    /// gets a light-delayed EmplacementDestroyed to learn it by.
+    #[test]
+    fn a_combatant_tears_down_a_rival_buoy_and_is_freed() {
+        let mut w = test_world();
+        let (victim, raider_owner) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+            Command::AddPlayer { id: raider_owner, name: "Atk".into() },
+        ]);
+        let site = lane_spot_near_home(&w, raider_owner);
+        let target = plant(&mut w, victim, crate::emplace::EmplacementKind::HyperspaceBuoy, site);
+
+        let raider = find_ship(&mut w, raider_owner, ShipKind::Raider);
+        {
+            let f = w.fleets.get_mut(&raider).unwrap();
+            f.pos = site; // already on station
+            f.vel = Vec2::ZERO;
+            f.fuel = f.fuel_capacity();
+            f.order = FleetOrder::Idle;
+            f.defense = None;
+        }
+        w.step(&[Command::DemolishEmplacement { player_id: raider_owner, fleet: raider, target }]);
+        assert_eq!(w.emplacements.len(), 1, "nothing falls the instant it is ordered");
+
+        let mut destroyed = None;
+        for _ in 0..((crate::emplace::DEMOLISH_SECONDS + 120.0) / crate::config::DT) as usize {
+            let evs = w.step(&[]);
+            if let Some(e) = evs.iter().find_map(|e| match &e.payload {
+                EventPayload::EmplacementDestroyed { owner, by, kind, .. } => Some((*owner, *by, *kind)),
+                _ => None,
+            }) {
+                destroyed = Some(e);
+                break;
+            }
+        }
+        let (owner, by, kind) = destroyed.expect("the buoy must come down");
+        assert_eq!(owner, victim, "the loss is reported against its owner");
+        assert_eq!(by, raider_owner, "and credits the wrecker");
+        assert_eq!(kind, crate::emplace::EmplacementKind::HyperspaceBuoy);
+        assert!(w.emplacements.is_empty(), "it is gone from true space");
+        let f = &w.fleets[&raider];
+        assert!(matches!(f.order, FleetOrder::Idle), "the crew is freed");
+        assert!(f.count(ShipKind::Raider) >= 1, "and the hull survives to do it again");
+    }
+
+    /// §emplacements: WRECKING IS A HELD POSITION. Leave the site mid-job and the
+    /// clock resets — you cannot chip at a buoy in passing, and a picket that
+    /// drives the wrecker off has actually saved it.
+    #[test]
+    fn leaving_the_site_resets_the_demolition_clock() {
+        let mut w = test_world();
+        let (victim, atk) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: victim, name: "Vic".into() },
+            Command::AddPlayer { id: atk, name: "Atk".into() },
+        ]);
+        let site = lane_spot_near_home(&w, atk);
+        let target = plant(&mut w, victim, crate::emplace::EmplacementKind::HyperspaceBuoy, site);
+        let raider = find_ship(&mut w, atk, ShipKind::Raider);
+        {
+            let f = w.fleets.get_mut(&raider).unwrap();
+            f.pos = site;
+            f.vel = Vec2::ZERO;
+            f.fuel = f.fuel_capacity();
+            f.order = FleetOrder::Idle;
+            f.defense = None;
+        }
+        w.step(&[Command::DemolishEmplacement { player_id: atk, fleet: raider, target }]);
+        // Let the order land and the clock start.
+        for _ in 0..(90.0 / crate::config::DT) as usize {
+            w.step(&[]);
+            if matches!(w.fleets[&raider].order, FleetOrder::Demolish { started: Some(_), .. }) {
+                break;
+            }
+        }
+        assert!(
+            matches!(w.fleets[&raider].order, FleetOrder::Demolish { started: Some(_), .. }),
+            "premise: the clock started on station"
+        );
+        // Shove it far off station — the clock must reset, not bank progress.
+        w.fleets.get_mut(&raider).unwrap().pos = site + Vec2::new(50_000.0, 0.0);
+        w.step(&[]);
+        assert!(
+            matches!(w.fleets[&raider].order, FleetOrder::Demolish { started: None, .. }),
+            "off station, the clock resets"
+        );
+        // And it never falls while the wrecker is away.
+        for _ in 0..((crate::emplace::DEMOLISH_SECONDS + 10.0) / crate::config::DT) as usize {
+            w.step(&[]);
+        }
+        assert_eq!(w.emplacements.len(), 1, "a buoy nobody is standing on survives");
+    }
+
+    /// §emplacements: YOU CANNOT SHOOT YOUR OWN, NOR A FRIEND'S, NOR WITH A HULL
+    /// THAT HAS NO TEETH. Three refusals, each of which must leave the structure
+    /// standing AND the fleet unencumbered.
+    #[test]
+    fn demolition_refuses_own_allied_and_toothless() {
+        let mut w = test_world();
+        let (a, b) = (PlayerId(1), PlayerId(2));
+        w.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: b, name: "B".into() },
+        ]);
+        let site = lane_spot_near_home(&w, a);
+        let mine = plant(&mut w, a, crate::emplace::EmplacementKind::HyperspaceBuoy, site);
+        let theirs = plant(&mut w, b, crate::emplace::EmplacementKind::DeepSpaceSensor, site + Vec2::new(30_000.0, 0.0));
+
+        let raider = find_ship(&mut w, a, ShipKind::Raider);
+        let crane = find_ship(&mut w, a, ShipKind::Builder);
+        for id in [raider, crane] {
+            let f = w.fleets.get_mut(&id).unwrap();
+            f.pos = site;
+            f.vel = Vec2::ZERO;
+            f.fuel = f.fuel_capacity();
+            f.order = FleetOrder::Idle;
+            f.defense = None;
+        }
+
+        // (1) MY OWN buoy — refused.
+        w.step(&[Command::DemolishEmplacement { player_id: a, fleet: raider, target: mine }]);
+        assert!(
+            matches!(w.fleets[&raider].order, FleetOrder::Idle),
+            "a fleet is never sent to wreck its owner's own structure"
+        );
+
+        // (2) A hull with NO TEETH against a rival's — refused.
+        w.step(&[Command::DemolishEmplacement { player_id: a, fleet: crane, target: theirs }]);
+        assert!(
+            matches!(w.fleets[&crane].order, FleetOrder::Idle),
+            "a crane cannot wreck: {:?}",
+            w.fleets[&crane].order
+        );
+
+        // (3) An ALLY's — refused. Same rival structure; now B is a syndicate-mate.
+        w.step(&[Command::CreateSyndicate { player_id: a, name: "Pact".into() }]);
+        let sid = w.players[&a].syndicate.unwrap();
+        w.players.get_mut(&b).unwrap().syndicate = Some(sid);
+        assert!(w.are_allied(a, b), "premise: they are allied now");
+        w.step(&[Command::DemolishEmplacement { player_id: a, fleet: raider, target: theirs }]);
+        assert!(
+            matches!(w.fleets[&raider].order, FleetOrder::Idle),
+            "you cannot cut an ally's relay: {:?}",
+            w.fleets[&raider].order
+        );
+        assert_eq!(w.emplacements.len(), 2, "and everything is still standing");
     }
 
     /// §pursuit: A CHASE FLIES ON THE SAME DRIVES AS ITS PREY. A convoy fleeing

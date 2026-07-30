@@ -105,6 +105,12 @@ pub const LANE_LISTEN_RANGE: f64 = 120_000.0;
 /// not a rendezvous, so it is tight.
 pub const CONSTRUCT_RADIUS: f64 = 600.0;
 
+/// §emplacements: seconds a combatant must hold station on a RIVAL structure to
+/// tear it down. Shorter than any build (a buoy takes 45s) — wrecking is easier
+/// than raising — but long enough that the victim's picket, or the news itself,
+/// has a chance to matter. The same `CONSTRUCT_RADIUS` bounds the work.
+pub const DEMOLISH_SECONDS: f64 = 20.0;
+
 /// How close two emplacements may be. Stops a player stacking a dozen buoys on
 /// one spot, which would be free redundancy rather than a network.
 pub const MIN_SPACING: f64 = 12_000.0;

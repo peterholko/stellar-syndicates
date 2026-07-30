@@ -727,6 +727,19 @@ pub enum FleetOrder {
         #[serde(default)]
         started: Option<f64>,
     },
+    /// §emplacements: fly to a RIVAL structure and TEAR IT DOWN. Mirrors
+    /// [`FleetOrder::Construct`] in shape and in flight — hold on station while
+    /// the world's demolition resolver runs the clock — but needs the target's
+    /// id as well as its position, because the thing being worked on already
+    /// exists and has to be found again to remove it. `site` is captured at
+    /// issue so the self-contained advance can steer without a world lookup;
+    /// structures never move, so it cannot go stale.
+    Demolish {
+        target: EntityId,
+        site: Vec2,
+        #[serde(default)]
+        started: Option<f64>,
+    },
     Blockade { system: EntityId, station: Vec2 },
     /// ATTACK a rival fleet to DESTROY it (§offensive-orders Part 1): the targeted
     /// destroy verb. Pursues exactly like [`FleetOrder::Intercept`], but on contact
@@ -1618,7 +1631,7 @@ impl Fleet {
         let aim = self.route.first().map_or_else(
             || match self.order {
                 FleetOrder::MoveTo { dest } => dest - self.pos,
-                FleetOrder::Construct { site, .. } => site - self.pos,
+                FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => site - self.pos,
                 _ => Vec2::ZERO,
             },
             |l| l.to - self.pos,
@@ -1731,9 +1744,10 @@ impl Fleet {
                     }
                 }
             }
-            FleetOrder::Construct { site, .. } => {
-                // Fly to the worksite and HOLD there — the construction resolver
-                // runs the clock; going Idle would abandon the job.
+            FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => {
+                // Fly to the worksite and HOLD there — the construction /
+                // demolition resolver runs the clock; going Idle would abandon
+                // the job.
                 let site = *site;
                 let step = crate::movement::advance_turning(self.pos, self.vel, site, speed, dt, radius);
                 self.pos = step.pos;

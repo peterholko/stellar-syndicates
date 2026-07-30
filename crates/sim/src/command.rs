@@ -333,6 +333,20 @@ pub enum Command {
         emplacement: crate::emplace::EmplacementKind,
     },
 
+    /// §emplacements: send one of the player's COMBATANT fleets to tear down a
+    /// RIVAL's structure. The fleet flies to it and holds station while the work
+    /// runs; the world's demolition resolver owns the clock.
+    ///
+    /// Refused for your own structures and your allies' — you cannot shoot a
+    /// friend's relay — and for hulls with no teeth (a crane cannot wreck).
+    DemolishEmplacement {
+        player_id: PlayerId,
+        /// The fleet doing the wrecking — named, like the builder in
+        /// `BuildEmplacement`, so there is no server-side guesswork.
+        fleet: EntityId,
+        target: EntityId,
+    },
+
     /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an
     /// Extractor tier that raises its output. Same deduct-and-enqueue semantics as
     /// `BuildShip`; on completion the upgrade is applied (only if still owned).

@@ -24,6 +24,9 @@ pub enum OrderKind {
     /// §emplacements: a CONSTRUCT order — send a builder to a site and put a
     /// buoy or sensor there.
     Construct,
+    /// §emplacements: a DEMOLISH order — send a combatant to a rival's structure
+    /// and tear it down.
+    Demolish,
     Raid,
     Recall,
     /// A mid-battle WITHDRAW (§battles-take-time) — disengage an engaged fleet.
@@ -42,6 +45,7 @@ impl OrderKind {
         match self {
             OrderKind::Move => "move",
             OrderKind::Construct => "construct",
+            OrderKind::Demolish => "demolish",
             OrderKind::Raid => "raid",
             OrderKind::Recall => "recall",
             OrderKind::Withdraw => "withdraw",
@@ -139,6 +143,23 @@ pub enum EventPayload {
         ship: EntityId,
         owner: PlayerId,
         kind: ShipKind,
+        pos: crate::math::Vec2,
+    },
+
+    /// §emplacements: a structure standing in open space was TORN DOWN by a
+    /// rival combatant. Like [`EventPayload::ShipDestroyed`], this is a
+    /// per-player DELAYED disappearance: it is gone from true space now, but
+    /// the owner keeps seeing it until the news reaches their command center.
+    ///
+    /// Deliciously self-punishing for a buoy: killing a relay makes the report
+    /// of its own death travel slower, because the network that would have
+    /// carried it is what just died. Nothing special-cases that — it falls out
+    /// of pricing the delay against the network as it stands AFTER the loss.
+    EmplacementDestroyed {
+        emplacement: EntityId,
+        owner: PlayerId,
+        by: PlayerId,
+        kind: crate::emplace::EmplacementKind,
         pos: crate::math::Vec2,
     },
 
