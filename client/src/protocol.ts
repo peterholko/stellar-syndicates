@@ -683,6 +683,9 @@ export interface EmplacementView {
   pos: Vec2;
   /// The bubble it watches, 0 for a buoy.
   sensor_range: number;
+  /// Yours, or a rival's. A rival's appears only inside your sensor coverage,
+  /// and only a rival's can be torn down.
+  own?: boolean;
 }
 
 /// §course-plan: one step of an own fleet's planned flight.
@@ -726,10 +729,11 @@ export interface GhostView {
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
   path?: PathPointView[] | null;
-  /// §emplacements: own fleets only — how far along this crane's build is
-  /// (0..1); absent when it is not building. Drives the progress bar and the
-  /// build-button lockout.
-  build_progress?: number | null;
+  /// §emplacements: own fleets only — the timed job this hull is holding
+  /// station to finish (raising a structure, or wrecking a rival's) and how far
+  /// along it is. Absent when neither. Drives the progress bar and the order
+  /// lockout.
+  job?: { kind: "building" | "demolishing"; progress: number } | null;
   // Cargo present only when this convoy is within your sensor coverage.
   /// Specialist passengers aboard — manifest data, included under exactly the
   /// cargo rule (empty object = none visible / none aboard).
@@ -815,6 +819,8 @@ export type ClientMsg =
   /// PARKED (fly it there first; no separate site point). The field is
   /// `emplacement`, not `kind` — the server's Command enum is tagged on that name.
   | { type: "BuildEmplacement"; builder: EntityId; emplacement: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" }
+  /// §emplacements: send a COMBATANT fleet to tear down a rival's structure.
+  | { type: "DemolishEmplacement"; fleet: EntityId; target: EntityId }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }

@@ -1776,7 +1776,12 @@ export class Renderer {
       const p = this.worldToScreen(e.pos);
       const buoy = e.kind === "hyperspace_buoy";
       const listener = e.kind === "hyperspace_sensor";
-      const col = buoy ? 0x6fd0ff : listener ? 0xd9a8ff : 0x8fe3a0;
+      // §emplacements: a RIVAL's structure wears the threat colour, like their
+      // ghosts — the shape still says which kind it is, the colour says whose.
+      // (A rival's is only ever listed inside your sensor coverage.)
+      const col = e.own === false
+        ? COL_THREAT
+        : buoy ? 0x6fd0ff : listener ? 0xd9a8ff : 0x8fe3a0;
       // A sensor's coverage is the reason it exists, so it is drawn.
       if (e.sensor_range > 0) {
         g.circle(p.x, p.y, e.sensor_range * this.scale).stroke({ width: 1, color: col, alpha: 0.18 });

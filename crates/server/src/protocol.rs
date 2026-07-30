@@ -53,6 +53,10 @@ pub enum ClientMsg {
         emplacement: sim::emplace::EmplacementKind,
     },
 
+    /// §emplacements: send the named COMBATANT fleet to tear down a rival's
+    /// structure. The sim validates ownership, teeth, and the ally rule.
+    DemolishEmplacement { fleet: EntityId, target: EntityId },
+
     /// Commit one of the player's raiders to intercept a target ship (§8).
     CommitRaid { raider_id: EntityId, target_id: EntityId },
 
@@ -1454,6 +1458,24 @@ pub struct PathPointView {
     pub lane: bool,
 }
 
+/// §emplacements: the timed job a hull is holding station to finish. One shape
+/// for both directions of the same mechanic — raising a structure and wrecking
+/// one — so the panel needs no per-order special case, and a future repair or
+/// refit job slots in without another wire field.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    Building,
+    Demolishing,
+}
+
+/// §emplacements: a hull's job and how far along it is (0..1).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct JobView {
+    pub kind: JobKind,
+    pub progress: f64,
+}
+
 /// §buoys: one hop of an order signal's relay path. `frac` is the hop's
 /// arrival as a fraction of the signal's whole travel window, so the client
 /// animates the comet with no speed constants of its own and the last hop is
@@ -1470,6 +1492,11 @@ pub struct EmplacementView {
     pub id: EntityId,
     pub kind: sim::EmplacementKind,
     pub pos: Vec2,
+    /// Yours, or a rival's. A rival's structures appear only inside your sensor
+    /// coverage (they are stationary, so once seen there is nothing further to
+    /// learn about where they are) — and are the only ones you may tear down.
+    #[serde(default)]
+    pub own: bool,
     /// The bubble it watches, or 0 for a buoy — so the map can draw coverage
     /// without needing the sim's constants.
     pub sensor_range: f64,
@@ -1544,15 +1571,15 @@ pub struct GhostView {
     /// yours. (Current-state like `docked`, with the same staleness caveat.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<PathPointView>>,
-    /// §emplacements: OWN fleets only — how far along this crane's build is
-    /// (0..1), absent when it is not building. Rivals never get it: what a
-    /// parked builder is doing is not readable from outside.
+    /// §emplacements: OWN fleets only — the timed job this hull is holding
+    /// station to finish (raising a structure, or tearing a rival's down) and
+    /// how far along it is. Absent when it is doing neither. Rivals never get
+    /// it: what a parked hull is working on is not readable from outside.
     ///
-    /// Drives BOTH the panel's progress bar and its build-button lockout —
-    /// without the latter a stationary builder looks idle and a second build
-    /// click dies in silence.
+    /// Drives BOTH the panel's progress bar and its order lockout — without the
+    /// latter a stationary worker looks idle and a second order dies in silence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build_progress: Option<f64>,
+    pub job: Option<JobView>,
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// included under exactly the cargo rule below (empty = none visible).
     pub passengers: BTreeMap<sim::SpecialistKind, u32>,
@@ -1864,6 +1891,23 @@ mod wire_contract {
     /// server answered "malformed message", and the readout claimed success. A
     /// wire message the enum can't parse is invisible in play, so the contract
     /// is pinned here with the client's literal bytes.
+    /// §emplacements: the demolish order's literal bytes must parse. Same
+    /// discipline as the build message — a ClientMsg variant that does not exist
+    /// fails SILENTLY in play (the socket answers "malformed" into a dialog
+    /// nobody is looking at), so the contract is pinned here.
+    #[test]
+    fn demolish_emplacement_parses_off_the_wire() {
+        let raw = r#"{"type":"DemolishEmplacement","fleet":"34","target":"41"}"#;
+        let msg: ClientMsg = serde_json::from_str(raw).expect("the client's literal message must parse");
+        match msg {
+            ClientMsg::DemolishEmplacement { fleet, target } => {
+                assert_eq!(fleet, sim::EntityId(34));
+                assert_eq!(target, sim::EntityId(41));
+            }
+            other => panic!("parsed into the wrong variant: {other:?}"),
+        }
+    }
+
     #[test]
     fn build_emplacement_parses_off_the_wire() {
         let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"hyperspace_buoy"}"#;

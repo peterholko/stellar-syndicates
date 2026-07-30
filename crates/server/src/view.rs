@@ -88,9 +88,9 @@ struct Track {
     /// when the light left — a fleet you see berthed may have sailed since,
     /// exactly like everything else on this track.
     docked: Option<sim::DockSite>,
-    /// §emplacements: how far along this crane's build is (0..1), or `None`
-    /// when it is not building. Served OWN-ONLY (like `path`): a rival must not
-    /// learn what a parked builder is doing from its ghost.
+    /// §emplacements: the timed job this hull is holding station to finish, or
+    /// `None`. Served OWN-ONLY (like `path`): a rival must not learn what a
+    /// parked hull is working on from its ghost.
     ///
     /// CURRENT-TRUTH per tick, deliberately — the same treatment your own
     /// system builds get (`BuildStateView::complete_time` is `now + remaining`,
@@ -98,7 +98,7 @@ struct Track {
     /// three have to agree: a retarded bar beside an undelayed structure would
     /// have the buoy appear while the bar still read 60%. Your own installation
     /// work reports on its own channel; it is the SHIP's position that is dark.
-    build_progress: Option<f64>,
+    job: Option<crate::protocol::JobView>,
     /// §course-plan: the fleet's flight plans, RETARDED-FRAME like everything
     /// else — `(when it took effect, the legs)`. Serving the current plan beside
     /// a delayed position was visibly wrong: a lane ship outruns its own report,
@@ -214,7 +214,7 @@ impl PositionHistory {
                 gone: None,
                 damage_frac: 0.0,
                 docked: None,
-                build_progress: None,
+                job: None,
                 plans: VecDeque::new(),
             });
             track.owner = ship.owner;
@@ -226,14 +226,27 @@ impl PositionHistory {
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
             track.docked = world.dock_of(*id);
-            track.build_progress = match ship.order {
+            use crate::protocol::{JobKind, JobView};
+            let frac = |t0: f64, secs: f64| {
+                if secs > 0.0 { ((now - t0) / secs).clamp(0.0, 1.0) } else { 1.0 }
+            };
+            track.job = match ship.order {
                 sim::ship::FleetOrder::Construct { emplacement, started: Some(t0), .. } => {
-                    let secs = sim::build::emplacement_recipe(emplacement).build_ticks as f64
-                        * sim::config::DT;
-                    Some(if secs > 0.0 { ((now - t0) / secs).clamp(0.0, 1.0) } else { 1.0 })
+                    let secs =
+                        sim::build::emplacement_recipe(emplacement).build_ticks as f64 * sim::config::DT;
+                    Some(JobView { kind: JobKind::Building, progress: frac(t0, secs) })
                 }
+                sim::ship::FleetOrder::Demolish { started: Some(t0), .. } => Some(JobView {
+                    kind: JobKind::Demolishing,
+                    progress: frac(t0, sim::emplace::DEMOLISH_SECONDS),
+                }),
                 // Ordered but not yet on site (flying there): committed, no clock.
-                sim::ship::FleetOrder::Construct { started: None, .. } => Some(0.0),
+                sim::ship::FleetOrder::Construct { started: None, .. } => {
+                    Some(JobView { kind: JobKind::Building, progress: 0.0 })
+                }
+                sim::ship::FleetOrder::Demolish { started: None, .. } => {
+                    Some(JobView { kind: JobKind::Demolishing, progress: 0.0 })
+                }
                 _ => None,
             };
             let cur: Vec<(Vec2, bool)> =
@@ -344,6 +357,36 @@ impl PositionHistory {
         self.view_for_with_arrays(viewer, cc, delays, now, &[], &[], &BTreeSet::new(), NodeEffects::default())
     }
 
+    /// §emplacements: the viewer's SENSOR COVERAGE as `(center, radius)` sources
+    /// — their command center, their own fleets' bubbles at the RETARDED
+    /// positions their light shows, and any standing arrays.
+    ///
+    /// This is the same union `view_for_with_arrays` builds for dark-fleet
+    /// detection, exposed so STATIONARY structures can be gated by exactly that
+    /// predicate instead of a second copy of it that would drift. Own fleet
+    /// bubbles ride the retarded sample deliberately: a picket cannot reveal
+    /// something with vision it only has in the present.
+    pub fn coverage_for(
+        &self,
+        viewer: PlayerId,
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        now: f64,
+        arrays: &[(Vec2, f64)],
+    ) -> Vec<(Vec2, f64)> {
+        let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
+        coverage.extend_from_slice(arrays);
+        for track in self.tracks.values() {
+            if track.owner != viewer {
+                continue;
+            }
+            if let Some(s) = latest_observable(&track.samples, cc, delays, now, true, &[]) {
+                coverage.push((s.pos, self.sensor_range * track.sensor_mult));
+            }
+        }
+        coverage
+    }
+
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
     /// step 2b): standing `(position, radius)` sources from the viewer's own
     /// array systems (`World::array_sensor_sources` — the shared coverage source
@@ -387,7 +430,7 @@ impl PositionHistory {
             /// §dock: the berth this sighting was taken at, if any.
             docked: Option<sim::DockSite>,
             /// §emplacements: build progress (served own-only).
-            build_progress: Option<f64>,
+            job: Option<crate::protocol::JobView>,
             path: Vec<(Vec2, bool)>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
@@ -444,7 +487,7 @@ impl PositionHistory {
                 count_class: track.count_class,
                 damage_frac: track.damage_frac,
                 docked: track.docked,
-                build_progress: track.build_progress,
+                job: track.job,
                 path: track
                     .plans
                     .iter()
@@ -604,7 +647,7 @@ impl PositionHistory {
 
             ghosts.push(GhostView {
                 docked,
-                build_progress: if own { p.build_progress } else { None },
+                job: if own { p.job } else { None },
                 path: own.then(|| {
                     p.path
                         .iter()
@@ -1641,7 +1684,7 @@ impl PriceHistory {
 /// Is `p` inside any coverage source `(center, radius)`? Sources carry their own
 /// radii so ship bubbles (global range) and sensor-array bubbles (per-tier range)
 /// share one union — the single coverage predicate.
-fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
+pub(crate) fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
     sources.iter().any(|(center, radius)| p.distance(*center) <= *radius)
 }
 
@@ -1936,7 +1979,7 @@ mod tests {
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
             docked: None,
-            build_progress: None,
+            job: None,
             plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: last,
@@ -2798,20 +2841,23 @@ mod tests {
         let cc = Vec2::new(500.0, 0.0);
         let owner = PlayerId(7);
         let mut track = still_track(Vec2::ZERO, owner, ShipKind::Builder);
-        track.build_progress = Some(0.4);
+        track.job = Some(crate::protocol::JobView {
+            kind: crate::protocol::JobKind::Building,
+            progress: 0.4,
+        });
         let hist = history_with(track);
 
         let g_own = &hist.view_for(owner, cc, &df(c), 50.0)[0];
         assert!(g_own.own);
         assert_eq!(
-            g_own.build_progress,
+            g_own.job.map(|j| j.progress),
             Some(0.4),
             "the owner sees how far along the work is"
         );
 
         let g_rival = &hist.view_for(PlayerId(99), cc, &df(c), 50.0)[0];
         assert!(!g_rival.own);
-        assert_eq!(g_rival.build_progress, None, "a rival reads nothing of the builder's work");
+        assert_eq!(g_rival.job, None, "a rival reads nothing of the builder's work");
     }
 
     /// Certainty tracks PROXIMITY to the command center, NOT ownership (§6). An
@@ -3118,7 +3164,7 @@ mod tests {
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
             docked: None,
-            build_progress: None,
+            job: None,
             plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: 100.0,

@@ -1020,8 +1020,11 @@ function regimeCell(g: GhostView): string {
 function ownActivity(g: GhostView): string {
   const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
   if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "signal outbound", "Your command is still crossing space to this fleet.");
-  if (g.build_progress != null) {
-    return a("build", `constructing ${Math.round(g.build_progress * 100)}%`, "Raising a structure where it stands — committed until the work ends.");
+  if (g.job) {
+    const pct = Math.round(g.job.progress * 100);
+    return g.job.kind === "demolishing"
+      ? a("raid", `demolishing ${pct}%`, "Tearing down a rival structure — committed until the work ends.")
+      : a("build", `constructing ${pct}%`, "Raising a structure where it stands — committed until the work ends.");
   }
   if (state.raids[g.id]) return a("raid", "raiding", "Pursuing a rival contact. Press R to recall (break off).");
   if (state.orders[g.id]) return a("move", "en route", "Proceeding on your last move order.");
@@ -3257,18 +3260,38 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
       }
     }
 
-    // §emplacements: YOUR STRUCTURES ARE OBJECTS ON THE MAP, not scenery —
-    // a buoy or sensor takes a click and opens its own panel, through the same
-    // candidate cycling everything else uses (so a buoy sitting on a lane
-    // beside a parked crane doesn't swallow the ship's click).
+    // §emplacements: STRUCTURES ARE OBJECTS ON THE MAP, not scenery — a buoy or
+    // sensor takes a click, through the same candidate cycling everything else
+    // uses (so a buoy sitting on a lane beside a parked crane doesn't swallow
+    // the ship's click).
+    //
+    // With one of your ARMED fleets selected, clicking a RIVAL structure orders
+    // its demolition — the same grammar as "raider + click a rival contact =
+    // raid", so the verb needs no new UI. Anything else inspects.
     for (const e of state.emplacements) {
       const s = renderer.worldToScreen(e.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d < 18) {
+      if (d >= 18) continue;
+      const striker = e.own ? undefined : armedSelection();
+      const name = emplacementLabel(e.kind);
+      if (striker) {
         cands.push({
-          key: `emp:${e.id}`, sortD: d, label: emplacementLabel(e.kind),
+          key: `emp:${e.id}`, sortD: d, label: `demolish ${name}`,
+          pick: () => {
+            net?.send({ type: "DemolishEmplacement", fleet: striker.id, target: e.id });
+            readout().innerHTML =
+              `<b>${esc(shipKindLabel(striker.kind))}</b> ordered to tear down a rival <b>${esc(name)}</b> ` +
+              `<span class="dim">(signal outbound). It must hold station there to finish the job — ` +
+              `driven off, the work resets.</span>`;
+            updateShipPanel();
+          },
+          readout: "",
+        });
+      } else {
+        cands.push({
+          key: `emp:${e.id}`, sortD: d, label: name,
           pick: () => selectEmplacement(e.id),
-          readout: `<b>${esc(emplacementLabel(e.kind))}</b> selected — details in the panel.`,
+          readout: `<b>${esc(name)}</b> selected — details in the panel.`,
         });
       }
     }
@@ -3526,6 +3549,21 @@ function kitAffordable(kind: string): boolean {
   );
 }
 
+// §emplacements: the player's currently selected fleet IF it has teeth — the
+// client mirror of the sim's `is_combatant()` gate on demolition, read off the
+// same per-hull attack weights the panel shows. A crane or a convoy is not a
+// wrecking crew, so selecting one leaves a rival structure merely inspectable.
+function armedSelection(): GhostView | undefined {
+  const g = state.selectedShipId
+    ? state.ghosts.find((x) => x.id === state.selectedShipId && x.own)
+    : undefined;
+  if (!g) return undefined;
+  const armed = g.composition?.length
+    ? g.composition.some((c) => (SHIP_STATS[c.kind]?.atk ?? 0) > 0)
+    : (SHIP_STATS[g.kind]?.atk ?? 0) > 0;
+  return armed ? g : undefined;
+}
+
 // §emplacements: wire slug → display name. `label()` already title-cases the
 // slug, so the vocabulary stays owned by the sim rather than re-typed here.
 function emplacementLabel(kind: string): string {
@@ -3556,9 +3594,10 @@ function updateEmplacementPanel(): void {
     return;
   }
   const name = emplacementLabel(e.kind);
+  const mine = e.own !== false;
   const head =
-    `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">Your structure</div>` +
-    `<h2>${name}</h2></div><div class="panel-title__right">${badge("accent", "STANDING")}</div></div>` +
+    `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${mine ? "Your structure" : "Rival structure"}</div>` +
+    `<h2>${name}</h2></div><div class="panel-title__right">${badge(mine ? "accent" : "warn", mine ? "STANDING" : "HOSTILE")}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
   const stats = statStrip([
     `<div class="stat"><dt>Position</dt><dd>${fmt(e.pos.x)} · ${fmt(e.pos.y)}</dd></div>`,
@@ -3568,9 +3607,16 @@ function updateEmplacementPanel(): void {
   ]);
   const body =
     `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
-    (e.kind === "hyperspace_buoy" && state.emplacements.filter((x) => x.kind === "hyperspace_buoy").length < 2
-      ? `<div class="sp-line" style="color:var(--warn)">Relaying nothing yet — it needs a second buoy sharing its lane.</div>`
-      : "");
+    (mine
+      ? // A LONE buoy of your own relays nothing — the standing reminder.
+        e.kind === "hyperspace_buoy" &&
+        state.emplacements.filter((x) => x.kind === "hyperspace_buoy" && x.own !== false).length < 2
+        ? `<div class="sp-line" style="color:var(--warn)">Relaying nothing yet — it needs a second buoy sharing its lane.</div>`
+        : ""
+      : // A rival's: say how to be rid of it. The verb lives on the map, in the
+        // same grammar as raiding, so the panel teaches rather than adds a button.
+        `<div class="sp-line dim">Seen from inside your sensor coverage. Select an <b>armed fleet</b>, ` +
+        `then click this structure to send it to tear the structure down — it must hold station there to finish.</div>`);
   setHtml(root, head + `<div class="sp-body">${stats}${body}</div>`);
 }
 
@@ -3589,7 +3635,7 @@ function emplaceSection(g: GhostView): string {
   // or visibly moving. Not `state.orders`: that record used to persist after
   // arrival, which kept these buttons disabled forever once the ship had
   // moved anywhere — and a disabled button swallows clicks silently.
-  const busy = g.build_progress != null || state.pendingOrders.has(g.id) || Math.hypot(g.vel.x, g.vel.y) >= 0.5;
+  const busy = !!g.job || state.pendingOrders.has(g.id) || Math.hypot(g.vel.x, g.vel.y) >= 0.5;
   // The spot's verdict, computed where the ship stands (it is parked when the
   // buttons are live, so the light-delayed position IS the position).
   const laneOk = !renderer.siteError("hyperspace_buoy", g.pos, state);
@@ -3598,13 +3644,14 @@ function emplaceSection(g: GhostView): string {
   // (which is about a build you have not started). Reported on the crane's own
   // channel like a shipyard job — see the wire field's note on why this one
   // number is NOT light-delayed while the ship's position is.
-  if (g.build_progress != null) {
-    const pct = Math.max(0, Math.min(100, g.build_progress * 100));
+  if (g.job) {
+    const pct = Math.max(0, Math.min(100, g.job.progress * 100));
+    const wrecking = g.job.kind === "demolishing";
     return (
-      `<div class="sp-sec">Construct</div>` +
-      `<div class="sp-line">${bar(pct)}</div>` +
-      `<div class="sp-line dim">Constructing — <b>${pct.toFixed(0)}%</b>. ` +
-      `Committed until the structure stands.</div>`
+      `<div class="sp-sec">${wrecking ? "Demolition" : "Construct"}</div>` +
+      `<div class="sp-line">${bar(pct, wrecking ? "is-negative" : "")}</div>` +
+      `<div class="sp-line dim">${wrecking ? "Demolishing" : "Constructing"} — <b>${pct.toFixed(0)}%</b>. ` +
+      `Committed until the ${wrecking ? "structure falls" : "structure stands"}.</div>`
     );
   }
   const note = busy

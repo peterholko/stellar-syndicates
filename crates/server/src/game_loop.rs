@@ -48,6 +48,20 @@ pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
 /// viewer keeps seeing the in-progress icon — and its participants suppressed —
 /// until `ended_at + distance/c`, the exact instant the aftermath lands: a clean
 /// in-progress → aftermath handoff with no re-appearing fleets.
+/// §emplacements: a structure that is GONE from true space but whose loss has
+/// not yet been seen by everyone who could see it standing. Retained exactly
+/// like [`ConcludedBattle`]: the wreck is served to a viewer until the news
+/// reaches their command center, so nobody learns of a demolition faster than
+/// light. Pruned once even the farthest possible viewer must have heard.
+struct GoneEmplacement {
+    id: sim::EntityId,
+    owner: sim::PlayerId,
+    kind: sim::EmplacementKind,
+    pos: sim::Vec2,
+    /// Sim time it came down.
+    at: f64,
+}
+
 struct ConcludedBattle {
     id: sim::EntityId,
     pos: sim::Vec2,
@@ -97,6 +111,8 @@ struct GameLoop {
     /// to some viewer — kept so the in-progress icon lingers until the aftermath
     /// lands (see [`ConcludedBattle`]). Ephemeral awareness state, like `reports`.
     concluded_battles: Vec<ConcludedBattle>,
+    /// §emplacements: demolished structures still visible on old light.
+    gone_emplacements: Vec<GoneEmplacement>,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
     persistence: PersistenceHandle,
@@ -134,6 +150,7 @@ impl GameLoop {
             timeline: Timeline::new(),
             timeline_sent: HashMap::new(),
             concluded_battles: Vec::new(),
+            gone_emplacements: Vec::new(),
             pending: Vec::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
@@ -349,6 +366,14 @@ impl GameLoop {
                             ship_id,
                             dest,
                         });
+                    }
+                }
+                ClientMsg::DemolishEmplacement { fleet, target } => {
+                    // §emplacements: same shape as the build order — the signal
+                    // travels to the FLEET; the sim validates and runs the clock.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.emit_command_signal(player_id, fleet);
+                        self.pending.push(Command::DemolishEmplacement { player_id, fleet, target });
                     }
                 }
                 ClientMsg::BuildEmplacement { builder, emplacement } => {
@@ -724,6 +749,26 @@ impl GameLoop {
             self.concluded_battles
                 .retain(|cb| now - cb.ended_at <= max_delay + 1.0);
         }
+        // §emplacements: remember demolished structures so their owner (and any
+        // rival who had eyes on them) keeps seeing the wreck standing until the
+        // news arrives. Same retention bound as concluded battles: once even the
+        // slowest possible signal must have landed, nothing references them.
+        for e in &events {
+            if let sim::EventPayload::EmplacementDestroyed { emplacement, owner, kind, pos, .. } = e.payload {
+                self.gone_emplacements.push(GoneEmplacement {
+                    id: emplacement,
+                    owner,
+                    kind,
+                    pos,
+                    at: e.time,
+                });
+            }
+        }
+        if !self.gone_emplacements.is_empty() {
+            let max_delay = (2.0 * self.world.config.galaxy_radius) / self.world.config.c;
+            let now = self.world.time;
+            self.gone_emplacements.retain(|g| now - g.at <= max_delay + 1.0);
+        }
 
         // Record true positions into the view filter's history every tick so
         // the retarded-time boundary resolves at full temporal resolution.
@@ -881,6 +926,53 @@ impl GameLoop {
                 player_id, cc, &delays, now, &arrays, &ears, &battle_reveal,
                 view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
             );
+            // §emplacements: WHICH STRUCTURES THIS VIEWER CAN SEE.
+            //
+            // Yours are always listed (your own installations report on their own
+            // channel, like a shipyard's build queue). A RIVAL's appears only
+            // inside your sensor coverage — the same union that detects dark
+            // fleets, at your fleets' RETARDED positions — and that visibility is
+            // what makes it a target: you cannot order a demolition on something
+            // you have never seen.
+            //
+            // Structures are STATIONARY, so once a rival's is in coverage there is
+            // nothing further to learn about where it is; the delay that matters is
+            // the LOSS, handled below.
+            let coverage = self.history.coverage_for(player_id, cc, &delays, now, &arrays);
+            let mut emplacements_view: Vec<crate::protocol::EmplacementView> = self
+                .world
+                .emplacements
+                .iter()
+                .filter(|e| e.owner == player_id || view::within_coverage(&coverage, e.pos))
+                .map(|e| crate::protocol::EmplacementView {
+                    id: e.id,
+                    kind: e.kind,
+                    pos: e.pos,
+                    sensor_range: e.kind.sensor_range(),
+                    own: e.owner == player_id,
+                })
+                .collect();
+            // …plus the ones already TORN DOWN whose news has not reached this
+            // command center. The wreck keeps standing on the map exactly as a
+            // destroyed ship's ghost keeps flying: learning of a demolition is
+            // itself information, and it travels at signal speed. For a buoy the
+            // report crawls, because the relay that would have carried it is the
+            // thing that just died.
+            for g in &self.gone_emplacements {
+                let seen_standing = g.owner == player_id || view::within_coverage(&coverage, g.pos);
+                if !seen_standing {
+                    continue;
+                }
+                if now < g.at + delays.between(g.pos, cc) {
+                    emplacements_view.push(crate::protocol::EmplacementView {
+                        id: g.id,
+                        kind: g.kind,
+                        pos: g.pos,
+                        sensor_range: g.kind.sensor_range(),
+                        own: g.owner == player_id,
+                    });
+                }
+            }
             // §offensive-orders Part 2: attach each OWN fleet's engagement posture
             // (owner-only, fresh — a private standing policy like the corp doctrine;
             // rivals keep `None`, so it never leaks). The history-view can't see the
@@ -1268,18 +1360,7 @@ impl GameLoop {
                     anchors,
                     systems,
                     ghosts,
-                    emplacements: self
-                        .world
-                        .emplacements
-                        .iter()
-                        .filter(|e| e.owner == player_id)
-                        .map(|e| crate::protocol::EmplacementView {
-                            id: e.id,
-                            kind: e.kind,
-                            pos: e.pos,
-                            sensor_range: e.kind.sensor_range(),
-                        })
-                        .collect(),
+                    emplacements: emplacements_view,
                     market,
                     wallet,
                     charter,
