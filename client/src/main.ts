@@ -597,7 +597,7 @@ function buildShipPanel(): void {
         readout().innerHTML =
           `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).` +
           (k === "hyperspace_buoy"
-            ? ` <span class="dim">It relays nothing until a second buoy shares its lane.</span>`
+            ? ` <span class="dim">It will open this lane to your signals.</span>`
             : "");
         updateShipPanel();
       }
@@ -3575,7 +3575,7 @@ function emplacementLabel(kind: string): string {
 // when clicked months after it was placed.
 const EMPLACEMENT_BLURB: Record<string, string> = {
   hyperspace_buoy:
-    "Relays your orders and reports at lane speed — but only between TWO buoys sharing a lane. A lone buoy carries nothing; your home system counts as the first one.",
+    "Opens its lane to your signals: orders and reports ride it at hyperspace speed instead of crawling out at warp. It also lets a signal cross onto its lane where the roads meet, so buoys build an expanding network. Your home system already covers the lane it sits on.",
   deep_space_sensor:
     "A stationary picket. Watches its bubble like a ship's sensors and reports home at warp speed.",
   hyperspace_sensor:
@@ -3608,10 +3608,12 @@ function updateEmplacementPanel(): void {
   const body =
     `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
     (mine
-      ? // A LONE buoy of your own relays nothing — the standing reminder.
-        e.kind === "hyperspace_buoy" &&
-        state.emplacements.filter((x) => x.kind === "hyperspace_buoy" && x.own !== false).length < 2
-        ? `<div class="sp-line" style="color:var(--warn)">Relaying nothing yet — it needs a second buoy sharing its lane.</div>`
+      ? // Working from the moment it stands — one relay on a lane already
+        // carries. (It used to warn that a second buoy was needed; that was
+        // wrong twice over, since a lone relay does carry and the home system
+        // already counts as one.)
+        e.kind === "hyperspace_buoy"
+        ? `<div class="sp-line dim">Carrying signals along its lane. Place more on the lanes your fleets actually fly — each one you cover joins the network at its crossings.</div>`
         : ""
       : // A rival's: say how to be rid of it. The verb lives on the map, in the
         // same grammar as raiding, so the panel teaches rather than adds a button.
@@ -3626,7 +3628,7 @@ function updateEmplacementPanel(): void {
 // says what the current spot allows, so a refusal is never a surprise.
 function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
-    ["hyperspace_buoy", "Hyperspace Buoy", "Relays orders and reports at lane speed — but only between TWO buoys sharing a lane. Must stand inside a lane."],
+    ["hyperspace_buoy", "Hyperspace Buoy", "Opens its lane to your signals — orders and reports ride it at hyperspace speed instead of crawling out at warp, and cross onto it where the roads meet. Must stand inside a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];

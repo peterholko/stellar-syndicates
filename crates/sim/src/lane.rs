@@ -529,9 +529,43 @@ impl LaneNetwork {
             return direct; // no transmitter anywhere — plain warp light
         }
         let relays: Vec<Relay> = buoys.iter().map(|p| self.relay_at(*p)).collect();
+        // §junction-signal: A COVERED LANE is one you have a relay ON. The signal
+        // may ride any covered lane, and CROSS between two covered lanes at a
+        // junction — the ribbons overlap there, so the medium is continuous and a
+        // signal riding one is already inside the other.
+        //
+        // This is what a buoy buys: not a pair, but a LANE. Home sits on a lane
+        // (measured: 4/4 home slots), so your first road is free and every
+        // further one is a buoy you placed — which is also why cutting a buoy
+        // severs a branch of the network rather than merely slowing it.
+        //
+        // Without the crossing, information could not follow the route its own
+        // ships fly: a hull that junctioned onto a second lane reported home at
+        // barely better than warp (measured 133.6s against warp's 170.8s on a
+        // 341k-su leg, where the lanes end to end are 17.1s).
+        let covered: std::collections::BTreeSet<u32> =
+            relays.iter().flat_map(|r| r.on.iter().map(|(l, _)| *l)).collect();
+        // The graph's nodes: every relay, plus each junction BETWEEN TWO COVERED
+        // LANES as a pure transfer point. A junction is not a transmitter — it
+        // cannot be reached by warping to it and re-entering — so it starts
+        // unreachable and only lane rides can arrive there.
+        let n_relays = relays.len();
+        let mut nodes: Vec<Relay> = relays;
+        for j in &self.junctions {
+            let (la, lb) = (j.a as u32, j.b as u32);
+            if la != lb && covered.contains(&la) && covered.contains(&lb) {
+                nodes.push(Relay { pos: j.pos, on: vec![(la, j.sa), (lb, j.sb)] });
+            }
+        }
+        let relays = nodes;
+        let is_relay = |i: usize| i < n_relays;
         let n = relays.len();
 
-        let mut best: Vec<f64> = relays.iter().map(|r| a.distance(r.pos) / warp).collect();
+        let mut best: Vec<f64> = (0..n)
+            .map(|i| {
+                if is_relay(i) { a.distance(relays[i].pos) / warp } else { f64::INFINITY }
+            })
+            .collect();
         let mut prev: Vec<Option<usize>> = vec![None; n];
         let mut done = vec![false; n];
         loop {
@@ -550,17 +584,26 @@ impl LaneNetwork {
                 if done[v] {
                     continue;
                 }
-                // A LANE edge exists only where both relays sit on the SAME lane.
+                // A LANE edge exists where both nodes sit on the same COVERED
+                // lane — that is the ride, and it is what a junction node uses
+                // to bridge from one road to the other.
                 let mut w = f64::INFINITY;
                 for (la, sa) in &relays[u].on {
+                    if !covered.contains(la) {
+                        continue;
+                    }
                     for (lb, sb) in &relays[v].on {
                         if la == lb {
                             w = w.min((sa - sb).abs() / lane_speed);
                         }
                     }
                 }
-                // Failing that they can still talk, just at warp.
-                w = w.min(relays[u].pos.distance(relays[v].pos) / warp);
+                // Failing that, two TRANSMITTERS can still talk across open
+                // space at warp. A junction is not a transmitter, so nothing
+                // warps to or from one — it is reachable only by riding.
+                if is_relay(u) && is_relay(v) {
+                    w = w.min(relays[u].pos.distance(relays[v].pos) / warp);
+                }
                 if du + w < best[v] {
                     best[v] = du + w;
                     prev[v] = Some(u);
@@ -576,8 +619,15 @@ impl LaneNetwork {
         // order graphic can trace it.
         let terminal = |i: usize| -> (f64, Option<(u32, Vec2)>) {
             let r = &relays[i];
-            let mut best_leg: (f64, Option<(u32, Vec2)>) = (r.pos.distance(b) / warp, None);
+            let mut best_leg: (f64, Option<(u32, Vec2)>) = if is_relay(i) {
+                (r.pos.distance(b) / warp, None)
+            } else {
+                (f64::INFINITY, None) // a junction can only pass the signal ALONG a lane
+            };
             for (lid, s_r) in &r.on {
+                if !covered.contains(lid) {
+                    continue; // not your road to ride
+                }
                 let Some(l) = self.lanes.iter().find(|l| l.id == *lid) else { continue };
                 let Some((exit, _)) = l.nearest(b) else { continue };
                 let t = (s_r - exit.s).abs() / lane_speed + exit.pos.distance(b) / warp;
@@ -633,23 +683,30 @@ impl LaneNetwork {
     /// the point nearest the receiver, and crosses the rest at warp (through
     /// whatever buoys the owner has, via the ordinary path).
     ///
-    /// Deliberately bounded: the report rides THE ONE LANE the fleet is in. It
-    /// does not transfer at junctions — crossing onto another lane needs a
-    /// transmitter parked there, which is what buoys are for. Without that line
-    /// this rule would quietly resurrect the free pre-buoy network.
+    /// A coupled hull IS A TRANSMITTER ON ITS LANE, so it simply joins the
+    /// network for the length of this query and [`Self::signal`] does the rest —
+    /// riding, junction crossings onto your other covered lanes, and the warp
+    /// remainder. Off the network entirely it is just a warp-light source.
+    ///
+    /// It used to hand-roll a ride along THE ONE LANE the hull sat in and refuse
+    /// junctions outright, which meant information could not follow the route
+    /// the ship itself had flown: a hull that crossed onto a second lane
+    /// reported home at barely better than warp. Measured on a 341k-su leg:
+    /// 133.6s coupled against 170.8s plain warp, where the lanes end to end are
+    /// 17.1s. Crossings are still bounded — the far lane must be COVERED by one
+    /// of your relays — so this does not resurrect the free pre-buoy network.
     pub fn signal_coupled(&self, p: Vec2, b: Vec2, c: f64, buoys: &[Vec2]) -> f64 {
-        let mut best = self.signal(p, b, c, buoys).0;
-        let lane_speed = c * self.signal_factor_on_lane();
-        for l in &self.lanes {
-            let Some((on, d)) = l.nearest(p) else { continue };
-            if d > l.half_width_at(on.s) {
-                continue; // not in this ribbon — not coupled to it
-            }
-            let Some((exit, _)) = l.nearest(b) else { continue };
-            let t = (on.s - exit.s).abs() / lane_speed + self.signal(exit.pos, b, c, buoys).0;
-            best = best.min(t);
+        let inside = self
+            .lanes
+            .iter()
+            .any(|l| l.nearest(p).is_some_and(|(on, d)| d <= l.half_width_at(on.s)));
+        if !inside {
+            return self.signal(p, b, c, buoys).0;
         }
-        best
+        let mut with_hull: Vec<Vec2> = Vec::with_capacity(buoys.len() + 1);
+        with_hull.extend_from_slice(buoys);
+        with_hull.push(p);
+        self.signal(p, b, c, &with_hull).0
     }
 
     /// §coupled: the delay for a viewer to HEAR a coupled hull at `p` through
@@ -2407,6 +2464,56 @@ mod tests {
         assert!((direct_hops[0].t - direct_t).abs() < 1e-9);
     }
 
+    /// §junction-signal: A SIGNAL CROSSES WHERE THE ROADS CROSS — but only
+    /// between lanes you have a relay ON. Two lanes meeting at right angles: a
+    /// relay on the first alone leaves the far end of the second at warp; a
+    /// relay on each lets the signal ride through the crossing.
+    ///
+    /// This is what lets information follow the route a ship actually flies.
+    /// Without it a hull that junctioned onto a second lane reported home at
+    /// barely better than warp (measured 133.6s vs warp's 170.8s on a 341k-su
+    /// leg, where riding end to end is 17.1s).
+    #[test]
+    fn a_signal_crosses_a_junction_between_covered_lanes() {
+        let ctrl_a = vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
+        let ctrl_b =
+            vec![Vec2::new(150_000.0, -150_000.0), Vec2::new(150_000.0, 0.0), Vec2::new(150_000.0, 150_000.0)];
+        let mk = |id: u32, ctrl: Vec<Vec2>| Lane {
+            id,
+            kind: LaneKind::Trunk,
+            name: format!("L{id}"),
+            samples: bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let n = LaneNetwork::of(vec![mk(0, ctrl_a), mk(1, ctrl_b)]);
+        assert!(!n.junctions.is_empty(), "premise: the two lanes cross somewhere");
+        let c = 400.0;
+        let src = Vec2::new(10_000.0, 0.0); // on lane 0, near its start
+        let dst = Vec2::new(150_000.0, 140_000.0); // far up lane 1
+        let warp_time = src.distance(dst) / (c * WARP_FACTOR);
+
+        // A relay on lane 0 only: it can ride lane 0 to the crossing, but lane 1
+        // is not covered, so the rest is warp.
+        let one_lane = n.signal(src, dst, c, &[src]).0;
+        // A relay on each: the crossing opens and the whole path rides.
+        let both = n.signal(src, dst, c, &[src, dst]).0;
+        assert!(
+            both < one_lane * 0.6,
+            "covering the second lane should open the crossing ({both:.1}s vs {one_lane:.1}s)"
+        );
+        assert!(both < warp_time * 0.25, "and be far quicker than warp ({both:.1}s vs {warp_time:.1}s)");
+
+        // §coupled: a HULL riding lane 1 is itself the transmitter on that lane,
+        // so its report crosses back onto lane 0 without a buoy of its own.
+        let coupled = n.signal_coupled(dst, src, c, &[src]);
+        assert!(
+            coupled < warp_time * 0.25,
+            "a riding hull reports home through the crossing ({coupled:.1}s vs warp {warp_time:.1}s)"
+        );
+    }
+
     /// §buoys: two buoys sharing NO lane are just two points in space, so the
     /// signal stays at warp. Building them anywhere is not building a network.
     #[test]
@@ -2752,5 +2859,6 @@ mod route_flight {
 
     }
 }
+
 
 
