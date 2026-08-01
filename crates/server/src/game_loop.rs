@@ -1041,6 +1041,7 @@ impl GameLoop {
                     kind: e.kind,
                     pos: e.pos,
                     sensor_range: e.kind.sensor_range(),
+                    relay_throw: e.kind.throw(),
                     own: e.owner == player_id,
                 })
                 .collect();
@@ -1061,6 +1062,7 @@ impl GameLoop {
                         kind: g.kind,
                         pos: g.pos,
                         sensor_range: g.kind.sensor_range(),
+                        relay_throw: g.kind.throw(),
                         own: g.owner == player_id,
                     });
                 }

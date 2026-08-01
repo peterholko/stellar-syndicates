@@ -1513,6 +1513,10 @@ pub struct EmplacementView {
     /// The bubble it watches, or 0 for a buoy — so the map can draw coverage
     /// without needing the sim's constants.
     pub sensor_range: f64,
+    /// Lane-network arc reach of this communications site, or 0 for sensors.
+    /// Served from `EmplacementKind::throw()` so the map never mirrors balance
+    /// constants when it draws a selected site's nominal coverage radius.
+    pub relay_throw: f64,
 }
 
 /// A FLEET as a player perceives it: a delayed "ghost" — the position the light
