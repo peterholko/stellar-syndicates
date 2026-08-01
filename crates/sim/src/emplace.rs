@@ -1,11 +1,11 @@
 //! §emplacements: STRUCTURES YOU PLACE IN OPEN SPACE, rather than in a system's
 //! build slots.
 //!
-//! Two kinds so far, and they exist for opposite halves of the same problem —
-//! getting information home. A HYPERSPACE BUOY makes the trip faster; a DEEP
-//! SPACE SENSOR makes the trip start closer to what you want to watch.
+//! Communications and sensing solve opposite halves of getting information
+//! home. Gateways board signals onto a covered lane corridor, repeaters extend
+//! that wire, and sensors make the observation start closer to the target.
 //!
-//! Both are sited by the player on the galaxy map, both are owned, and both can
+//! All are sited by the player on the galaxy map, all are owned, and all can
 //! be taken away — which is the point. It is what turns the lane network from
 //! geography you were handed into infrastructure you build, defend, and cut.
 
@@ -22,6 +22,9 @@ pub enum EmplacementKind {
     /// an ordinary instance of this same kind; home itself is not a relay.
     /// Buildable only on a lane; see [`EmplacementKind::needs_a_lane`].
     HyperspaceBuoy,
+    /// Deaf hyperspace WIRE. Its larger coverage bubble extends a continuous
+    /// lane ride, but no signal may enter or leave hyperspace here.
+    HyperspaceRepeater,
     /// A stationary sensor picket. Watches like a ship's sensors would and sends
     /// what it sees home at warp — so it shortens the *observation* leg rather
     /// than the transmission, which is the half a buoy cannot help with.
@@ -36,8 +39,9 @@ pub enum EmplacementKind {
 }
 
 impl EmplacementKind {
-    pub const ALL: [EmplacementKind; 3] = [
+    pub const ALL: [EmplacementKind; 4] = [
         EmplacementKind::HyperspaceBuoy,
+        EmplacementKind::HyperspaceRepeater,
         EmplacementKind::DeepSpaceSensor,
         EmplacementKind::HyperspaceSensor,
     ];
@@ -45,27 +49,49 @@ impl EmplacementKind {
     pub fn label(self) -> &'static str {
         match self {
             EmplacementKind::HyperspaceBuoy => "Hyperspace Buoy",
+            EmplacementKind::HyperspaceRepeater => "Hyperspace Repeater",
             EmplacementKind::DeepSpaceSensor => "Deep Space Sensor",
             EmplacementKind::HyperspaceSensor => "Hyperspace Sensor",
         }
     }
 
-    /// A buoy relays ALONG a lane, so it has to be on one. A sensor watches open
-    /// space and may be put anywhere — the frontier is exactly where it earns
-    /// its keep.
+    /// Hyperspace communications and tripwires live on a lane. A deep-space
+    /// sensor watches open space and may be put anywhere — the frontier is
+    /// exactly where it earns its keep.
     pub fn needs_a_lane(self) -> bool {
-        matches!(self, EmplacementKind::HyperspaceBuoy | EmplacementKind::HyperspaceSensor)
+        matches!(
+            self,
+            EmplacementKind::HyperspaceBuoy
+                | EmplacementKind::HyperspaceRepeater
+                | EmplacementKind::HyperspaceSensor
+        )
     }
 
-    /// The bubble a deep space sensor projects. Zero for a buoy, which relays
-    /// but does not watch.
+    /// The bubble a deep space sensor projects. Zero for communications sites,
+    /// which carry signals but do not watch.
     pub fn sensor_range(self) -> f64 {
         match self {
             EmplacementKind::HyperspaceBuoy => 0.0,
+            EmplacementKind::HyperspaceRepeater => 0.0,
             EmplacementKind::DeepSpaceSensor => DEEP_SPACE_SENSOR_RANGE,
             // A lane listener hears the MEDIUM, not open space.
             EmplacementKind::HyperspaceSensor => 0.0,
         }
+    }
+
+    /// Arc distance this structure's communication coverage reaches along the
+    /// lane graph. Sensors are not relays.
+    pub const fn throw(self) -> f64 {
+        match self {
+            EmplacementKind::HyperspaceBuoy => 40_000.0,
+            EmplacementKind::HyperspaceRepeater => 80_000.0,
+            EmplacementKind::DeepSpaceSensor | EmplacementKind::HyperspaceSensor => 0.0,
+        }
+    }
+
+    /// Whether a signal may transfer between warp and a covered lane here.
+    pub const fn gateway(self) -> bool {
+        matches!(self, EmplacementKind::HyperspaceBuoy)
     }
 }
 
@@ -89,7 +115,7 @@ pub struct Emplacement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SiteError {
-    /// A buoy has to sit in a lane to relay along it.
+    /// A lane-bound emplacement has to sit in a lane.
     NotOnALane,
     /// Something of yours is already here.
     TooClose,
@@ -106,13 +132,13 @@ pub const LANE_LISTEN_RANGE: f64 = 120_000.0;
 pub const CONSTRUCT_RADIUS: f64 = 600.0;
 
 /// §emplacements: seconds a combatant must hold station on a RIVAL structure to
-/// tear it down. Shorter than any build (a buoy takes 45s) — wrecking is easier
+/// tear it down. Shorter than even the 25s repeater build — wrecking is easier
 /// than raising — but long enough that the victim's picket, or the news itself,
 /// has a chance to matter. The same `CONSTRUCT_RADIUS` bounds the work.
 pub const DEMOLISH_SECONDS: f64 = 20.0;
 
-/// How close two emplacements may be. Stops a player stacking a dozen buoys on
-/// one spot, which would be free redundancy rather than a network.
+/// How close two emplacements may be. Stops a player stacking a dozen relay
+/// sites on one spot, which would be free redundancy rather than a network.
 pub const MIN_SPACING: f64 = 12_000.0;
 
 /// Is `pos` a legal site for `kind`, given the network and what is already out
@@ -159,15 +185,20 @@ mod tests {
     /// site — and the rule is checked here, where the client can ask it too, so
     /// the map can refuse the click rather than the server refusing the order.
     #[test]
-    fn a_hyperspace_buoy_only_goes_on_a_lane() {
+    fn hyperspace_comms_only_go_on_a_lane() {
         let (lanes, _) = net();
         let on_lane = lanes.lanes[0].at(lanes.lanes[0].length() * 0.5);
         assert_eq!(site_check(EmplacementKind::HyperspaceBuoy, on_lane, &lanes, &[]), Ok(()));
+        assert_eq!(site_check(EmplacementKind::HyperspaceRepeater, on_lane, &lanes, &[]), Ok(()));
 
         // Far outside the galaxy, where no ribbon reaches.
         let nowhere = Vec2::new(2_000_000.0, 0.0);
         assert_eq!(
             site_check(EmplacementKind::HyperspaceBuoy, nowhere, &lanes, &[]),
+            Err(SiteError::NotOnALane),
+        );
+        assert_eq!(
+            site_check(EmplacementKind::HyperspaceRepeater, nowhere, &lanes, &[]),
             Err(SiteError::NotOnALane),
         );
     }

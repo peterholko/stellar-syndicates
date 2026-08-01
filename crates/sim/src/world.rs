@@ -544,9 +544,9 @@ pub struct World {
     /// center (§order-lifecycle, owner-only). serde default so old snaps load.
     #[serde(default)]
     pending_echoes: Vec<PendingEcho>,
-    /// §emplacements: structures placed in OPEN SPACE — hyperspace buoys and
-    /// deep space sensors. Kept in id order for determinism. `#[serde(default)]`
-    /// so pre-feature snapshots load with none.
+    /// §emplacements: structures placed in OPEN SPACE — hyperspace communications
+    /// and sensors. Kept in id order for determinism. `#[serde(default)]` so
+    /// pre-feature snapshots load with none.
     #[serde(default)]
     pub emplacements: Vec<crate::emplace::Emplacement>,
     /// Monotonic allocator for entity ids.
@@ -5705,17 +5705,20 @@ impl World {
     /// coverage rendering — so everything that keys off sensor range inherits
     /// arrays consistently. Systems are static, so including them in the View's
     /// delayed composite frame is exactly as leak-free as ship bubbles.
-    /// §buoys: this player's RELAY NETWORK — every hyperspace buoy they own.
+    /// §comms-infra: this player's RELAY NETWORK — every owned buoy gateway and
+    /// repeater, carrying its throw and boarding capability as data.
     /// Home itself is only the command endpoint; the granted starter buoy is the
     /// corporation's first physical lane gateway and can be destroyed or rebuilt
     /// like any other emplacement.
-    pub fn relay_network(&self, owner: PlayerId) -> Vec<Vec2> {
+    pub fn relay_network(&self, owner: PlayerId) -> Vec<crate::lane::CommSite> {
         self.emplacements
             .iter()
-            .filter(|e| {
-                e.owner == owner && e.kind == crate::emplace::EmplacementKind::HyperspaceBuoy
+            .filter(|e| e.owner == owner && e.kind.throw() > 0.0)
+            .map(|e| crate::lane::CommSite {
+                pos: e.pos,
+                throw: e.kind.throw(),
+                gateway: e.kind.gateway(),
             })
-            .map(|e| e.pos)
             .collect()
     }
 
@@ -10296,17 +10299,17 @@ impl World {
         // never desync from what the map shows. `relay_factor` is 1.0 with no node.
         let relay = self.relay_factor(player_id, ship_pos);
         // §one-clock: the order travels through the SAME MEDIUM as everything
-        // the player watches — warp-speed signal, boosted where their buoys
-        // relay it — not bare normal-space `c`. Split clocks here were directly
+        // the player watches — warp-speed signal, boosted across their covered
+        // gateway-and-wire corridors — not bare normal-space `c`. Split clocks here were directly
         // visible at the desk: the client's comet and ETA said 45 seconds (it
         // reads the signal field), then the authoritative pending-order arrival
         // said three minutes (this code, at c), and the ship finally moved at a
         // moment that matched neither. One medium, one countdown.
         let buoys = self.relay_network(player_id);
-        let field = crate::lane::DelayField { lanes: &self.lanes, buoys: &buoys, c };
+        let field = crate::lane::DelayField { lanes: &self.lanes, sites: &buoys, c };
         // A fleet actively riding a lane is a receiver inside the medium; an
-        // off-lane fleet can be reached from hyperspace only by exiting at home
-        // or an owned buoy and warping the remainder. Solve the signal/ship
+        // off-lane fleet can be reached from hyperspace only by exiting at an
+        // owned buoy and warping the remainder. Solve the signal/ship
         // MEETING rather than timing the signal only to the issue-time position:
         // inbound ships are met earlier, outbound ships later. Coupling is fixed
         // from the drive state at issue time throughout the refinement — we do
@@ -13655,6 +13658,12 @@ mod tests {
             .find(|e| e.owner == id && e.kind == crate::emplace::EmplacementKind::HyperspaceBuoy)
             .expect("the joining corporation has its starter buoy")
             .pos = cc;
+        plant(
+            &mut w,
+            id,
+            crate::emplace::EmplacementKind::HyperspaceRepeater,
+            cc + Vec2::new(60_000.0, 0.0),
+        );
         let ship_pos = cc + Vec2::new(100_000.0, 0.0);
         let fid = player_ship(&mut w, id, ShipKind::Raider);
         {
@@ -13667,7 +13676,7 @@ mod tests {
         let relays = w.relay_network(id);
         let old_single_pass = crate::lane::DelayField {
             lanes: &w.lanes,
-            buoys: &relays,
+            sites: &relays,
             c: w.config.c,
         }
         .to_coupled(cc, ship_pos);
@@ -13686,7 +13695,7 @@ mod tests {
         let relays = w.relay_network(id);
         let required_at_meeting = crate::lane::DelayField {
             lanes: &w.lanes,
-            buoys: &relays,
+            sites: &relays,
             c: w.config.c,
         }
         .to_coupled(cc, ship_pos + velocity * delivered_delay);
@@ -13740,7 +13749,7 @@ mod tests {
         // §one-clock: the order travels the SIGNAL medium (warp, buoy-boosted),
         // the same one the player's ETAs read — not bare normal-space c.
         let buoys = w.relay_network(id);
-        let expected_delay = crate::lane::DelayField { lanes: &w.lanes, buoys: &buoys, c: w.config.c }
+        let expected_delay = crate::lane::DelayField { lanes: &w.lanes, sites: &buoys, c: w.config.c }
             .between(cc, ship_pos);
         assert!(expected_delay > 1.0, "convoy should be well away from home");
 
@@ -19710,7 +19719,7 @@ mod tests {
         // medium every player-facing ETA reads. The fleet is Idle so the delivery
         // point is its current pos → the echo is one more identical leg.
         let buoys = w.relay_network(id);
-        let leg = crate::lane::DelayField { lanes: &w.lanes, buoys: &buoys, c }.between(cc, pos);
+        let leg = crate::lane::DelayField { lanes: &w.lanes, sites: &buoys, c }.between(cc, pos);
         assert!((pc.delivered_at - (t0 + leg)).abs() < 1e-6, "delivered_at = issue + signal leg");
         assert!((pc.echo_at - (t0 + 2.0 * leg)).abs() < 1e-6, "echo_at = delivered_at + signal leg");
         assert_eq!(pc.kind, crate::event::OrderKind::Move);
@@ -19783,7 +19792,7 @@ mod tests {
         // out. §one-clock: a leg is the signal delay, not distance/c, so the
         // window is computed from the same field the sim schedules with.
         let buoys = w.relay_network(id);
-        let leg = crate::lane::DelayField { lanes: &w.lanes, buoys: &buoys, c: w.config.c }
+        let leg = crate::lane::DelayField { lanes: &w.lanes, sites: &buoys, c: w.config.c }
             .between(cc, pos);
         for _ in 0..((leg + 0.2) / crate::config::DT) as usize {
             w.step(&[]);
@@ -23139,74 +23148,51 @@ mod starter_kit_emplacements {
                 "{}'s buoy is not at the nearest lane point",
                 corp.name
             );
-            assert_eq!(w.relay_network(corp.id), vec![mine[0].pos]);
+            assert_eq!(
+                w.relay_network(corp.id),
+                vec![crate::lane::CommSite {
+                    pos: mine[0].pos,
+                    throw: mine[0].kind.throw(),
+                    gateway: true,
+                }]
+            );
         }
     }
 
-    /// §emplacements: the player STARTS with a Construction Ship, so the home
-    /// starter kit must fund what that ship exists to do. One buoy on home's
-    /// lane completes the opening link; assert that order is accepted and the
-    /// stock left behind still covers an extension buoy. This pins the
-    /// Electronics/Alloys seed in `generate_home_system`: with no Electronics
-    /// at spawn the order is silently refused (the launch bug).
+    /// §comms-infra: after the free home gateway, the seeded HOME STOCKPILE can
+    /// fund one forward gateway plus three repeaters of opening wire. Fuel is
+    /// supplied by `FUEL_HOME_SEED` during AddPlayer; it is not part of the
+    /// static home-system recipe.
     #[test]
-    fn the_starter_kit_funds_the_home_link_and_an_extension_buoy() {
+    fn the_starter_kit_funds_a_forward_gateway_and_its_wire() {
         let mut w = World::new(SimConfig::default());
         w.step(&[Command::AddPlayer { id: PlayerId(1), name: "P".into() }]);
-        let starter = w
-            .emplacements
-            .iter()
-            .find(|e| e.owner == PlayerId(1))
-            .expect("the free home gateway exists");
-        let (lane_id, starter_s) = w.lanes.relay_at(starter.pos).on[0];
-        let lane = w.lanes.lanes.iter().find(|lane| lane.id == lane_id).unwrap();
-        let site = if starter_s + crate::emplace::MIN_SPACING * 2.0 <= lane.length() {
-            lane.at(starter_s + crate::emplace::MIN_SPACING * 2.0)
-        } else {
-            lane.at(starter_s - crate::emplace::MIN_SPACING * 2.0)
-        };
-        assert_eq!(
-            crate::emplace::site_check(crate::emplace::EmplacementKind::HyperspaceBuoy, site, &w.lanes, &w.emplacements),
-            Ok(()),
-            "premise: the nearest lane sample is a legal buoy site"
+        let gateway = crate::build::emplacement_recipe(
+            crate::emplace::EmplacementKind::HyperspaceBuoy,
         );
-        let builder = w
-            .fleets
-            .values()
-            .find(|f| f.owner == PlayerId(1) && f.count(ShipKind::Builder) >= 1)
-            .map(|f| f.id)
-            .expect("premise: the starting roster carries a Construction Ship");
-        // The player's first act: fly the crane onto the lane, then build in
-        // place (the flight itself is ordinary movement, not under test here).
-        w.fleets.get_mut(&builder).unwrap().pos = site;
-        w.step(&[Command::BuildEmplacement {
-            player_id: PlayerId(1),
-            builder,
-            emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
-        }]);
-        for _ in 0..(60.0 / crate::config::DT) as usize {
-            if matches!(w.fleets[&builder].order, FleetOrder::Construct { .. }) {
-                break;
-            }
-            w.step(&[]);
-        }
-        assert!(
-            matches!(w.fleets[&builder].order, FleetOrder::Construct { .. }),
-            "the very first buoy order must be fundable from the starter kit, \
-             but the builder stayed {:?}",
-            w.fleets[&builder].order
+        let repeater = crate::build::emplacement_recipe(
+            crate::emplace::EmplacementKind::HyperspaceRepeater,
         );
-        // After the home-link kit is charged, the home system still affords an
-        // extension buoy without a market trip.
-        let recipe = crate::build::emplacement_recipe(crate::emplace::EmplacementKind::HyperspaceBuoy);
         let sys = w.systems.iter().find(|s| s.owner == Some(PlayerId(1))).unwrap();
-        for (c, n) in recipe.costs {
-            let have = sys.stockpile.get(c).copied().unwrap_or(0.0);
+        for commodity in [
+            crate::cargo::Commodity::Alloys,
+            crate::cargo::Commodity::Electronics,
+            crate::cargo::Commodity::Fuel,
+        ] {
+            let in_recipe = |recipe: &crate::build::Recipe| {
+                recipe
+                    .costs
+                    .iter()
+                    .find(|(c, _)| *c == commodity)
+                    .map_or(0.0, |(_, n)| *n)
+            };
+            let needed = in_recipe(gateway) + 3.0 * in_recipe(repeater);
+            let have = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
             assert!(
-                have + 1e-9 >= *n,
-                "after the first kit, the home must still cover the second: \
-                 {c:?} has {have:.1}, needs {n}"
+                have + 1e-9 >= needed,
+                "opening gateway + wire: {commodity:?} has {have:.1}, needs {needed:.1}"
             );
         }
+        assert_eq!(crate::fuel::FUEL_HOME_SEED, 180.0, "Fuel closes through AddPlayer's reserve");
     }
 }

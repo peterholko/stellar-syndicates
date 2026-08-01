@@ -1831,7 +1831,7 @@ mod tests {
     static NO_LANES: std::sync::LazyLock<sim::lane::LaneNetwork> =
         std::sync::LazyLock::new(|| sim::lane::LaneNetwork::of(Vec::new()));
     fn df(c: f64) -> sim::lane::DelayField<'static> {
-        sim::lane::DelayField { lanes: &NO_LANES, buoys: &[], c: c / sim::lane::WARP_FACTOR }
+        sim::lane::DelayField { lanes: &NO_LANES, sites: &[], c: c / sim::lane::WARP_FACTOR }
     }
 
     use super::*;
@@ -1858,8 +1858,16 @@ mod tests {
         };
         let net = sim::lane::LaneNetwork::of(vec![lane]);
         let c = 400.0;
-        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
         let cc = Vec2::new(0.0, 0.0);
+        let sites = [
+            sim::lane::CommSite { pos: cc, throw: 40_000.0, gateway: true },
+            sim::lane::CommSite {
+                pos: Vec2::new(120_000.0, 0.0),
+                throw: 80_000.0,
+                gateway: false,
+            },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
 
         // A hull riding the lane TOWARD the cc at 5,000 su/s — 2.5× the 2,000
         // su/s warp signal, the exact geometry of every playtest teleport.
@@ -1918,7 +1926,7 @@ mod tests {
         };
         let net = sim::lane::LaneNetwork::of(vec![lane]);
         let c = 400.0;
-        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let field = sim::lane::DelayField { lanes: &net, sites: &[], c };
         let cc = Vec2::new(0.0, 0.0);
         // The tripwire: a post on the lane 60k out, well inside listening range
         // of the rider's approach.
@@ -3837,7 +3845,7 @@ mod lane_smoothness {
         };
         let net = sim::lane::LaneNetwork::of(vec![lane]);
         let c = 2_000.0;
-        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
+        let field = sim::lane::DelayField { lanes: &net, sites: &[], c };
         let cc = sim::Vec2::new(0.0, 0.0);
         // A rider at hyperspace speed, sampled at the real 30 Hz tick.
         let speed = 4_250.0;
@@ -3899,7 +3907,8 @@ mod channel_seam {
 
     /// §coupled: THE DRIVE IS THE TRANSMITTER. An own hull sitting INSIDE a
     /// ribbon with its hyperspace drive off reports by plain warp light — mere
-    /// presence in the medium transmits nothing (that is what buoys are for).
+    /// presence in the medium transmits nothing. A covered gateway-and-wire
+    /// corridor can carry only the engaged hull's transmission.
     /// The same hull riding (drive engaged) at the same spot is coupled and
     /// near-fresh. One position, two drive states, opposite freshness.
     #[test]
@@ -3917,9 +3926,17 @@ mod channel_seam {
         };
         let net = sim::lane::LaneNetwork::of(vec![lane]);
         let c = 2_000.0;
-        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
         let cc = sim::Vec2::new(0.0, 0.0);
         let pos = sim::Vec2::new(100_000.0, 0.0); // dead centre of the ribbon
+        let sites = [
+            sim::lane::CommSite { pos: cc, throw: 40_000.0, gateway: true },
+            sim::lane::CommSite {
+                pos: sim::Vec2::new(60_000.0, 0.0),
+                throw: 80_000.0,
+                gateway: false,
+            },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
         let mk = |drive: sim::ship::DriveState| {
             let mut samples: VecDeque<Sample> = VecDeque::new();
             let mut t = 0.0;
@@ -4010,8 +4027,16 @@ mod channel_seam {
         };
         let net = sim::lane::LaneNetwork::of(vec![lane]);
         let c = 2_000.0;
-        let field = sim::lane::DelayField { lanes: &net, buoys: &[], c };
         let cc = sim::Vec2::new(0.0, 0.0);
+        let sites = [
+            sim::lane::CommSite { pos: cc, throw: 40_000.0, gateway: true },
+            sim::lane::CommSite {
+                pos: sim::Vec2::new(60_000.0, 0.0),
+                throw: 80_000.0,
+                gateway: false,
+            },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
         // Ride the lane away from cc to x=100k, then veer straight off the
         // ribbon at warp — the coupled channel ends at the half-width edge.
         let dt = 1.0 / 30.0;

@@ -1946,6 +1946,24 @@ mod wire_contract {
     }
 
     #[test]
+    fn hyperspace_repeater_round_trips_off_the_wire() {
+        let kind = sim::emplace::EmplacementKind::HyperspaceRepeater;
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, r#""hyperspace_repeater""#);
+        assert_eq!(serde_json::from_str::<sim::emplace::EmplacementKind>(&json).unwrap(), kind);
+
+        let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"hyperspace_repeater"}"#;
+        let msg: ClientMsg = serde_json::from_str(raw).expect("the repeater build message must parse");
+        assert!(matches!(
+            msg,
+            ClientMsg::BuildEmplacement {
+                builder: sim::EntityId(33),
+                emplacement: sim::emplace::EmplacementKind::HyperspaceRepeater,
+            }
+        ));
+    }
+
+    #[test]
     fn preview_route_parses_off_the_wire() {
         let raw = r#"{"type":"PreviewRoute","ship_id":"33","dest":{"x":123.0,"y":-45.0}}"#;
         let msg: ClientMsg =

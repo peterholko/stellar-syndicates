@@ -60,7 +60,7 @@ impl Timeline {
         // relay network to read. Warp-only here is the conservative reading — a
         // notice never arrives EARLIER than the medium allows.
         let delays =
-            sim::lane::DelayField { lanes: &world.lanes, buoys: &[], c: world.config.c };
+            sim::lane::DelayField { lanes: &world.lanes, sites: &[], c: world.config.c };
         for e in events {
             match &e.payload {
                 // Own economy / automation — observable on your own clock now.

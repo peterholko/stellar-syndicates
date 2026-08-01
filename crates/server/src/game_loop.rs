@@ -231,7 +231,7 @@ impl GameLoop {
         // §hyperspace: information delay is a shortest-TIME path through a medium
         // whose speed varies, so the lane network travels with `c` now.
         let buoys = self.world.relay_network(player_id);
-        let delays = sim::lane::DelayField { lanes: &self.world.lanes, buoys: &buoys, c };
+        let delays = sim::lane::DelayField { lanes: &self.world.lanes, sites: &buoys, c };
         // Aim from the player's observed ship position and velocity, never its
         // hidden true state. A just-spawned hull at home degenerates to a
         // zero-length signal.
@@ -239,7 +239,7 @@ impl GameLoop {
             .history
             .observed_sighting(ship_id, cc, &delays, depart_time)
             .unwrap_or((cc, sim::Vec2::ZERO, false));
-        // §buoys: one outbound route supplies BOTH the geometry and its clock;
+        // §comms-infra: one outbound route supplies BOTH geometry and its clock;
         // the fixed-point solve makes that route end where it meets the moving
         // ghost rather than where the ghost stood when the order was issued.
         let (travel_time, hops) =
@@ -424,7 +424,7 @@ impl GameLoop {
                     let buoys = self.world.relay_network(player_id);
                     let delays = sim::lane::DelayField {
                         lanes: &self.world.lanes,
-                        buoys: &buoys,
+                        sites: &buoys,
                         c: self.world.config.c,
                     };
                     let Some((sighting_pos, _, _)) =
@@ -922,9 +922,9 @@ impl GameLoop {
     /// guarantee, enforced by [`PositionHistory::view_for`].
     fn broadcast(&mut self) {
         let c = self.world.config.c;
-        // §buoys: the delay field is PER PLAYER now — a relay network is built,
-        // owned, and cuttable, so a rival's buoys carry nothing of yours. Built
-        // inside the loop below rather than shared across it.
+        // §comms-infra: the delay field is PER PLAYER — gateway-and-wire
+        // infrastructure is owned and cuttable, so a rival's sites carry
+        // nothing of yours. Built inside the loop rather than shared across it.
         let now = self.world.time;
         let tick = self.world.tick;
         let hub = self.world.hub;
@@ -949,7 +949,7 @@ impl GameLoop {
         let rankings_sig = sig_of(&self.world.rankings);
         for player_id in self.sessions.online_players() {
             let buoys = self.world.relay_network(player_id);
-            let delays = sim::lane::DelayField { lanes: &self.world.lanes, buoys: &buoys, c };
+            let delays = sim::lane::DelayField { lanes: &self.world.lanes, sites: &buoys, c };
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
             };
@@ -1760,7 +1760,7 @@ fn build_options() -> Vec<BuildOptionView> {
     // free — a new SHIP does not, and has to be listed below.
     let ships = [
         ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
-        // §emplacements: the crane. Buoys and sensors are placed BY this hull —
+        // §emplacements: the crane. Communications and sensors are placed BY this hull —
         // built here, then dispatched to the site from the map.
         ("builder", "Construction Ship", BuildKind::Ship { ship: ShipKind::Builder }),
         ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
@@ -1979,9 +1979,13 @@ pub async fn run(
 mod tests {
     use super::*;
     use sim::{
-        lane::{bake_for_tests, Lane, LaneKind, LaneNetwork, WARP_FACTOR},
+        lane::{bake_for_tests, CommSite, Lane, LaneKind, LaneNetwork, WARP_FACTOR},
         Vec2,
     };
+
+    fn wide_gateway(pos: Vec2) -> CommSite {
+        CommSite { pos, throw: 1_000_000.0, gateway: true }
+    }
 
     fn signal_bow() -> LaneNetwork {
         let control = vec![
@@ -2027,8 +2031,8 @@ mod tests {
         let home = lane.at(lane.length() * 0.05);
         let buoy = lane.at(lane.length() * 0.35);
         let hull = lane.at(lane.length() * 0.95);
-        let relays = [home, buoy];
-        let field = sim::lane::DelayField { lanes: &lanes, buoys: &relays, c: 400.0 };
+        let relays = [wide_gateway(home), wide_gateway(buoy)];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
         let (travel_time, hops) =
             command_signal_plan(&field, home, hull, Vec2::ZERO, true);
@@ -2055,8 +2059,8 @@ mod tests {
         let home = lane.at(lane.length() * 0.05);
         let ghost_pos = lane.at(lane.length() * 0.95);
         let ghost_vel = Vec2::new(-1_000.0, 0.0);
-        let relays = [home];
-        let field = sim::lane::DelayField { lanes: &lanes, buoys: &relays, c: 400.0 };
+        let relays = [wide_gateway(home)];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let old_sighting_time = field.to_coupled(home, ghost_pos);
 
         let (total, hops) =
@@ -2082,32 +2086,23 @@ mod tests {
         assert!((final_hop.frac - 1.0).abs() < 1e-9);
     }
 
-    /// §coupled: THE RIDING HULL COMPLETES THE PAIR (design ruling from
-    /// playtest). Home plus a hull riding home's lane IS an access pair, so an
-    /// order flies the route the ship itself took — a lane ride, not a warp
-    /// chord — on the ride's own clock.
-    ///
-    /// This test previously pinned the opposite (home alone sends a straight
-    /// warp order even to a coupled hull). Playtest overruled it: the panel
-    /// read "Hyperdrive engaged · Hyperspace" while the order comet crawled a
-    /// straight warp line, and the coupling that carries the ship's reports
-    /// home plainly carries an order the other way. The original concern —
-    /// never squeeze a straight chord into a lane-fast clock — survives as the
-    /// clock/route agreement assertions.
+    /// §comms-infra: A RIDING HULL IS ITS OWN TERMINAL GATEWAY. Covered wire
+    /// reaches the hull directly in either direction, while home remains only
+    /// the warp endpoint. Geometry and clock must describe that same ride.
     #[test]
-    fn an_order_to_a_riding_hull_flies_the_lane_home_covers() {
+    fn an_order_to_a_riding_hull_flies_the_covered_wire() {
         let lanes = signal_bow();
         let lane = &lanes.lanes[0];
         let home = lane.at(lane.length() * 0.05);
         let hull = lane.at(lane.length() * 0.95);
-        let relays = [home];
-        let field = sim::lane::DelayField { lanes: &lanes, buoys: &relays, c: 400.0 };
+        let relays = [wide_gateway(home)];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let inbound = field.from_coupled(hull, home);
 
         let (outbound, hops) =
             command_signal_plan(&field, home, hull, Vec2::ZERO, true);
         let warp = home.distance(hull) / (field.c * WARP_FACTOR);
-        assert!(!hops.is_empty(), "the order rides — the coupled hull is the second relay");
+        assert!(!hops.is_empty(), "the order rides — the coupled hull is its terminal gateway");
         assert!(
             outbound < warp * 0.5,
             "far quicker than the warp chord ({outbound:.1}s vs {warp:.1}s)"

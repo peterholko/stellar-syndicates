@@ -101,7 +101,7 @@ pub fn prepare_estimate(
     // §hyperspace: the estimator reads the SAME delayed view the player does, so
     // it must resolve staleness through the same medium the map does.
     let buoys = world.relay_network(viewer);
-    let delays = sim::lane::DelayField { lanes: &world.lanes, buoys: &buoys, c };
+    let delays = sim::lane::DelayField { lanes: &world.lanes, sites: &buoys, c };
     let ears: Vec<sim::lane::Relay> = world
         .emplacements
         .iter()

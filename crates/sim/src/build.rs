@@ -424,12 +424,18 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
     }
 }
 
-/// §emplacements: a BUOY is electronics and a power plant, not much metal — the
-/// cost is in siting it, not in building it. Cheap enough that a second one is a
-/// real option early, which matters because one buoy relays nothing.
+/// §comms-infra: a BUOY is the gateway instrument: the expensive hardware that
+/// transfers a signal between warp and a covered hyperspace corridor.
 static HYPERSPACE_BUOY_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 40.0), (Commodity::Electronics, 60.0), (Commodity::Fuel, 30.0)],
-    build_ticks: 45 * HZ,
+    costs: &[(Commodity::Alloys, 50.0), (Commodity::Electronics, 100.0), (Commodity::Fuel, 30.0)],
+    build_ticks: 60 * HZ,
+};
+
+/// §comms-infra: repeaters are cheap, deaf lengths of wire. They extend relay
+/// coverage but contain none of a gateway's boarding instrument.
+static HYPERSPACE_REPEATER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 15.0), (Commodity::Electronics, 15.0), (Commodity::Fuel, 10.0)],
+    build_ticks: 25 * HZ,
 };
 
 /// A SENSOR is the expensive one: it is an instrument, and it is what lets you
@@ -453,6 +459,7 @@ static BUILDER_RECIPE: Recipe = Recipe {
 pub fn emplacement_recipe(kind: crate::emplace::EmplacementKind) -> &'static Recipe {
     match kind {
         crate::emplace::EmplacementKind::HyperspaceBuoy => &HYPERSPACE_BUOY_RECIPE,
+        crate::emplace::EmplacementKind::HyperspaceRepeater => &HYPERSPACE_REPEATER_RECIPE,
         crate::emplace::EmplacementKind::DeepSpaceSensor => &DEEP_SPACE_SENSOR_RECIPE,
         crate::emplace::EmplacementKind::HyperspaceSensor => &HYPERSPACE_SENSOR_RECIPE,
     }
