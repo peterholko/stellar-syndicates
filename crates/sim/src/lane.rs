@@ -1604,23 +1604,24 @@ pub struct DelayField<'a> {
 }
 
 impl DelayField<'_> {
-    /// Solve when a signal sent from `source` meets a receiver moving at a
-    /// constant velocity.
+    /// Solve when a signal sent from `source` meets a moving receiver.
     ///
-    /// The first delay reaches the receiver's position at issue time. Each
-    /// refinement advances the receiver by that delay and re-routes to the new
-    /// point. Four passes are ample because every signal regime outruns every
-    /// hull; stop earlier once another pass changes the clock by less than one
-    /// simulation tick. `coupled` is deliberately fixed by the receiver's drive
-    /// state at issue time rather than guessed again from each extrapolated point.
-    /// `delay_factor` carries regional command-tempo effects without changing
-    /// the path geometry.
+    /// A known remaining `route` advances by `|velocity| * delay` along that
+    /// polyline and clamps at its terminus. Without one, a coupled receiver
+    /// advances along its nearest lane arc (also clamped at the route end), while
+    /// an uncoupled receiver keeps the straight-line fallback. An uncatchable
+    /// hull is therefore met exactly where its known path ends, never beyond it.
+    /// Iterate to one simulation tick, capped at eight refinements. `coupled` is
+    /// deliberately fixed by the receiver's drive state at issue time rather
+    /// than guessed again from each candidate point. `delay_factor` carries
+    /// regional command-tempo effects without changing the path geometry.
     pub fn meeting_delay(
         &self,
         source: Vec2,
         receiver_pos: Vec2,
         receiver_vel: Vec2,
         coupled: bool,
+        route: Option<&[Vec2]>,
         delay_factor: f64,
     ) -> (f64, Vec2) {
         let travel_time = |target| {
@@ -1631,10 +1632,53 @@ impl DelayField<'_> {
             };
             raw * delay_factor
         };
+        let advance_route = |path: &[Vec2], distance: f64| {
+            if path.is_empty() || distance <= 1e-9 {
+                return receiver_pos;
+            }
+            let mut current = receiver_pos;
+            let mut remaining = distance;
+            for target in path {
+                let leg = current.distance(*target);
+                if leg > 1e-9 {
+                    if remaining <= leg {
+                        return current + (*target - current) * (remaining / leg);
+                    }
+                    remaining -= leg;
+                }
+                current = *target;
+            }
+            current
+        };
+        let advance_lane = |distance: f64| {
+            let nearest = self
+                .lanes
+                .lanes
+                .iter()
+                .filter_map(|lane| lane.nearest(receiver_pos).map(|(on, d)| (lane, on, d)))
+                .min_by(|a, b| a.2.total_cmp(&b.2));
+            let Some((lane, on, _)) = nearest else {
+                return receiver_pos + receiver_vel * (distance / receiver_vel.length().max(1e-9));
+            };
+            let direction = if on.tangent.dot(receiver_vel) >= 0.0 { 1.0 } else { -1.0 };
+            lane.at((on.s + direction * distance).clamp(0.0, lane.length()))
+        };
+        let extrapolate = |delay: f64| {
+            let distance = receiver_vel.length() * delay;
+            if distance <= 1e-9 {
+                receiver_pos
+            } else if let Some(path) = route {
+                advance_route(path, distance)
+            } else if coupled {
+                advance_lane(distance)
+            } else {
+                receiver_pos + receiver_vel * delay
+            }
+        };
         let mut delay = travel_time(receiver_pos);
         let mut meeting = receiver_pos;
-        for _ in 0..4 {
-            meeting = receiver_pos + receiver_vel * delay;
+        for _ in 0..8 {
+            meeting = extrapolate(delay);
             let next = travel_time(meeting);
             let converged = (next - delay).abs() < crate::config::DT;
             delay = next;
@@ -2670,6 +2714,65 @@ mod tests {
             WARP_FACTOR,
             "clear of the well, the drive lights",
         );
+    }
+
+    #[test]
+    fn a_signal_that_cannot_catch_a_hull_meets_it_at_the_end_of_its_path() {
+        let net = signal_line(100_000.0);
+        let field = DelayField { lanes: &net, sites: &[], c: 400.0 };
+        let source = Vec2::ZERO;
+        let receiver = Vec2::new(20_000.0, 0.0);
+        let terminus = Vec2::new(100_000.0, 0.0);
+        let route = [terminus];
+        let (delay, meeting) = field.meeting_delay(
+            source,
+            receiver,
+            Vec2::new(5_000.0, 0.0),
+            true,
+            Some(&route),
+            1.0,
+        );
+        let expected = field.to_coupled(source, terminus);
+        assert!(meeting.distance(terminus) < 1e-6, "the bounded path ends at {terminus:?}");
+        assert!(
+            (delay - expected).abs() < crate::config::DT,
+            "the chase reaches the waiting hull at the terminus ({delay:.3}s vs {expected:.3}s)",
+        );
+    }
+
+    #[test]
+    fn a_rider_heading_home_is_met_on_its_route_not_beyond_it() {
+        let net = signal_line(100_000.0);
+        let field = DelayField { lanes: &net, sites: &[], c: 400.0 };
+        let source = Vec2::ZERO;
+        let receiver = Vec2::new(90_000.0, 0.0);
+        let terminus = Vec2::new(10_000.0, 0.0);
+        let route = [terminus];
+        let (_, meeting) = field.meeting_delay(
+            source,
+            receiver,
+            Vec2::new(-5_000.0, 0.0),
+            true,
+            Some(&route),
+            1.0,
+        );
+        assert!(
+            (terminus.x..=receiver.x).contains(&meeting.x) && meeting.y.abs() < 1e-6,
+            "the meeting stays on the known homeward path ({meeting:?})",
+        );
+    }
+
+    #[test]
+    fn a_parked_receiver_is_met_where_it_stands() {
+        let net = LaneNetwork::default();
+        let field = DelayField { lanes: &net, sites: &[], c: 400.0 };
+        let source = Vec2::ZERO;
+        let receiver = Vec2::new(30_000.0, -4_000.0);
+        let route = [Vec2::new(90_000.0, 20_000.0)];
+        let (delay, meeting) =
+            field.meeting_delay(source, receiver, Vec2::ZERO, false, Some(&route), 1.0);
+        assert_eq!(meeting, receiver);
+        assert!((delay - field.between(source, receiver)).abs() < 1e-9);
     }
 
     /// THE HEADLINE OF THE MILESTONE: a fleet at lane speed CANNOT come about

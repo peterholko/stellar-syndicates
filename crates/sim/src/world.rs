@@ -240,6 +240,27 @@ fn pending_order_subject(
     }
 }
 
+/// The authoritative fleet's remaining finite flight path at order issue.
+/// Routed movement already carries every unflown leg; direct movement falls
+/// back to its current order destination so the meeting solve can stop there.
+fn remaining_flight_path(fleet: &Fleet) -> Vec<Vec2> {
+    if !fleet.route.is_empty() {
+        return fleet.route.iter().map(|leg| leg.to).collect();
+    }
+    match &fleet.order {
+        FleetOrder::MoveTo { dest } => vec![*dest],
+        FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => vec![*site],
+        FleetOrder::Blockade { station, .. } | FleetOrder::Survey { station, .. } => vec![*station],
+        FleetOrder::Patrol { waypoints, index, .. } if !waypoints.is_empty() => {
+            vec![waypoints[*index % waypoints.len()]]
+        }
+        FleetOrder::Idle
+        | FleetOrder::Patrol { .. }
+        | FleetOrder::Intercept { .. }
+        | FleetOrder::Attack { .. } => Vec::new(),
+    }
+}
+
 /// A DELIVERED order whose confirming light hasn't yet reached the command center
 /// (the AWAITING-ECHO phase). Owner-only; transient lifecycle bookkeeping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10292,6 +10313,7 @@ impl World {
         let ship_pos = ship.pos;
         let ship_vel = ship.vel;
         let ship_coupled = ship.drive_state.stirs_the_lane();
+        let ship_route = remaining_flight_path(ship);
         // §node Relay Anchor: if the issuer holds an active black-hole node whose
         // region covers the fleet, its command loop through that neighbourhood runs
         // at half the light-time. Evaluated at the fleet's CURRENT position (the
@@ -10314,8 +10336,9 @@ impl World {
         // inbound ships are met earlier, outbound ships later. Coupling is fixed
         // from the drive state at issue time throughout the refinement — we do
         // not invent future drive transitions while extrapolating this order.
+        let known_route = (!ship_route.is_empty()).then_some(ship_route.as_slice());
         let (delay, delivery_point) =
-            field.meeting_delay(cc, ship_pos, ship_vel, ship_coupled, relay);
+            field.meeting_delay(cc, ship_pos, ship_vel, ship_coupled, known_route, relay);
         let delivered_at = self.time + delay;
         // The echo — the first light of the new behavior — leaves from the solved
         // delivery point and reaches the command center one signal-delay later.
