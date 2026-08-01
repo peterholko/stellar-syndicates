@@ -1181,13 +1181,6 @@ pub struct CargoView {
 /// `arrives_at`, then awaiting the estimated response until `response_at`. Both
 /// stamps are solved once from the served ghost at issue — never authoritative
 /// fleet truth — so the panel and outbound comet share one command-center clock.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct ProjectedPointView {
-    pub pos: Vec2,
-    /// Estimated sim-time at which the ordered fleet reaches `pos`.
-    pub t: f64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrderView {
     pub id: u64,
@@ -1202,11 +1195,10 @@ pub struct PendingOrderView {
     pub target_id: Option<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emplacement: Option<sim::emplace::EmplacementKind>,
-    /// Owner-only dead-reckoned course, derived at issue from the served ghost,
-    /// public lane geometry, and the owner's known fleet speed. Empty means the
-    /// order has no honest fixed-destination projection.
+    /// Owner-only intended route from the served sighting to a fixed destination.
+    /// Positions only: this line never claims the fleet has advanced along it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub projected: Vec<ProjectedPointView>,
+    pub intent_path: Vec<Vec2>,
 }
 
 /// An ongoing BATTLE as any observer perceives it (§battles-take-time), STRICTLY
@@ -2000,31 +1992,37 @@ mod wire_contract {
     #[test]
     fn pending_order_queue_parses_off_the_wire() {
         let raw = r#"[
-            {"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"kind":"move","dest":{"x":287450.0,"y":35020.0},"projected":[{"pos":{"x":100.0,"y":200.0},"t":18.0},{"pos":{"x":287450.0,"y":35020.0},"t":44.0}]},
-            {"id":18,"fleet_id":"33","issued_at":15.0,"arrives_at":22.0,"response_at":30.0,"kind":"construct","dest":{"x":900.0,"y":1200.0},"emplacement":"hyperspace_buoy"}
+            {"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"kind":"move","dest":{"x":287450.0,"y":35020.0},"intent_path":[{"x":100.0,"y":200.0},{"x":287450.0,"y":35020.0}]},
+            {"id":18,"fleet_id":"33","issued_at":15.0,"arrives_at":22.0,"response_at":30.0,"kind":"construct","dest":{"x":900.0,"y":1200.0},"emplacement":"hyperspace_buoy"},
+            {"id":19,"fleet_id":"33","issued_at":16.0,"arrives_at":23.0,"response_at":31.0,"kind":"attack","target_id":"44"}
         ]"#;
         let queue: Vec<PendingOrderView> =
             serde_json::from_str(raw).expect("the client's literal queue shape must parse");
-        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.len(), 3);
         assert_eq!(queue[0].id, 17);
         assert_eq!(queue[0].fleet_id, sim::EntityId(33));
         assert_eq!(queue[0].arrives_at, 18.0);
         assert_eq!(queue[0].response_at, 26.0);
         assert_eq!(queue[0].dest, Some(sim::Vec2::new(287_450.0, 35_020.0)));
-        assert_eq!(queue[0].projected.len(), 2);
-        assert_eq!(queue[0].projected[0].pos, sim::Vec2::new(100.0, 200.0));
-        assert_eq!(queue[0].projected[0].t, 18.0);
+        assert_eq!(queue[0].intent_path, vec![
+            sim::Vec2::new(100.0, 200.0),
+            sim::Vec2::new(287_450.0, 35_020.0),
+        ]);
         assert_eq!(queue[1].id, 18);
         assert_eq!(queue[1].kind, sim::event::OrderKind::Construct);
-        assert!(queue[1].projected.is_empty());
+        assert!(queue[1].intent_path.is_empty());
         assert_eq!(
             queue[1].emplacement,
             Some(sim::emplace::EmplacementKind::HyperspaceBuoy)
         );
+        assert_eq!(queue[2].kind, sim::event::OrderKind::Attack);
+        assert_eq!(queue[2].target_id, Some(sim::EntityId(44)));
+        assert!(queue[2].intent_path.is_empty());
         let encoded = serde_json::to_value(&queue[0]).unwrap();
         assert!(encoded.get("arrives_at").is_some());
         assert!(encoded.get("response_at").is_some());
-        assert!(encoded.get("projected").is_some());
+        assert!(encoded.get("intent_path").is_some());
+        assert!(encoded.get("projected").is_none());
         assert!(encoded.get("delivered_at").is_none());
         assert!(encoded.get("echo_at").is_none());
     }
