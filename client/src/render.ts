@@ -174,19 +174,18 @@ const CREEP_MAX_SU = 3_000;
 const SMOOTH_SNAP_SU = 4_000;
 const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
-// Deep-zoom ramps use two bands. Ships and emplacements begin at r=12 and keep
-// their established growth curve; stars and the hub wait until r=18. That gives
-// the map three readable phases: comparable indicators far out, world spacing
-// opening through mid zoom, then bodies blooming over the last quarter and
-// reaching their unchanged maxima exactly at ZOOM_MAX_FACTOR.
-const SHIP_NATIVE_ZOOM_START = 12;
+// Deep zoom deliberately begins with a SPACING plateau: once map indicators
+// reach their normal cap, ships, emplacements, stars, and the hub all hold their
+// screen size while world-space distances continue opening. At r=18 the detail
+// ramp begins; ships/buoys grow modestly while bodies bloom steeply, and every
+// class reaches its unchanged maximum exactly at ZOOM_MAX_FACTOR.
+const SHIP_NATIVE_ZOOM_START = 18;
 // THE body-bloom playtest knob: 16 = earlier/gentler, 20 = later/snappier.
 const BODY_ZOOM_START = 18;
 
 // §size-hierarchy: per-class DEEP-ZOOM size targets (screen px at max zoom).
-// One smoothstep shape serves both bands, with a per-class start ratio. At max
-// zoom the map still reads with a true scale hierarchy: the hub is monumental,
-// stars are huge, ships are small machines flying past them.
+// One late smoothstep band starts after the spacing phase. The different targets
+// provide the hierarchy: modest ship/buoy growth versus the steep body bloom.
 const SHIP_MAX_PX = 120; // a ship at max zoom (was: the art's native 256 — too big next to bodies)
 const STAR_MAX_PX = 480; // a star icon's CANVAS at max zoom — a uniform 1.875× upscale of the 256px icons; visible disks land at 96–413px by type (see starRenderedDiameter)
 // The hub has NO fixed max target: its deep-zoom ceiling is the landmark
@@ -1839,7 +1838,7 @@ export class Renderer {
     return sp;
   }
 
-  /// §size-hierarchy: the shared smoothstep shape behind two deep-zoom bands.
+  /// §size-hierarchy: the shared smoothstep shape after the spacing plateau.
   /// Below `startR` the object stays at its normal-zoom `basePx`, then ramps to
   /// its per-class `maxPx` exactly at ZOOM_MAX_FACTOR. Zero-slope endpoints make
   /// both the chosen threshold and max zoom seamless, with no size pop.
@@ -1854,10 +1853,10 @@ export class Renderer {
   /// On-screen ship size (px) as a function of the current zoom, in TWO phases:
   ///  1. Normal / indicator: base × clamp(r, SHIP_ZOOM_MIN, SHIP_ZOOM_MAX) — the
   ///     small map markers, unchanged, across the whole normal zoom range.
-  ///  2. Deep-zoom: the shared curve (deepZoomPx) ramps the indicator up to
-  ///     SHIP_MAX_PX — deliberately far below the star/hub targets, so at max
-  ///     zoom a ship reads as a small machine against monumental bodies (it
-  ///     previously ramped to the art's native 256px, which dwarfed the stars).
+  ///  2. Deep-zoom: after the spacing plateau, the shared curve (deepZoomPx)
+  ///     ramps the indicator up to SHIP_MAX_PX — deliberately far below the
+  ///     star/hub targets, so at max zoom a ship reads as a small machine
+  ///     against monumental bodies.
   /// All kinds converge to the SAME max size: up close the art's SHAPE
   /// distinguishes convoy vs raider, so identical max size is intended.
   private shipSizePx(kind: ShipKind): number {
@@ -1880,8 +1879,8 @@ export class Renderer {
   }
 
   /// On-screen size for a completed open-space structure. It follows the same
-  /// two-phase zoom language as ships: compact map marker first, inspectable art
-  /// only in the deep-zoom band.
+  /// zoom language as ships: compact map marker through the spacing plateau,
+  /// then inspectable art only in the final deep-zoom band.
   private emplacementSizePx(): number {
     const r = this.scale / this.fitScale();
     const indicator = EMPLACEMENT_PX * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
