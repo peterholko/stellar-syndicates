@@ -129,6 +129,13 @@ pub const TURN_K: f64 = 5.7;
 /// blockade station radius, which is the established "at the system" scale.
 pub const HYPERLIMIT: f64 = 900.0;
 
+/// Minimum CENTERLINE clearance every lane keeps from every gravity well.
+///
+/// The ribbon may visually brush the protected circle; the road itself never
+/// threads a system. Fleets leave the lane and cross the remaining gap in open
+/// hyperspace before the well forces them down to thrusters.
+pub const WELL_STANDOFF: f64 = HYPERLIMIT * 2.5;
+
 /// Ribbon width as a fraction of the median neighbouring-system distance. One
 /// standardized width for v1 — no minor/major/super classes until the standard
 /// model is understood.
@@ -180,11 +187,8 @@ const SAMPLES_PER_SEGMENT: usize = 12;
 const OFF_NETWORK_FLOOR: f64 = 0.30;
 
 /// How far past a ribbon's edge a system still counts as served — the short hop
-/// from a world to the highway beside it. Was expressed as a multiple of the
-/// gravity well back when routes had to dodge one; a well says nothing about
-/// reach now that they can run straight over it, so it is stated against system
-/// spacing directly. The total (ribbon + hop) is unchanged, so the density the
-/// chord pass generates to is the same.
+/// from a world to the highway beside it. Reach is stated against system spacing
+/// rather than the well clearance because those are independent design scales.
 const SERVED_HOP_FRAC: f64 = 0.30;
 
 // --- GEOMETRY ----------------------------------------------------------------
@@ -226,7 +230,8 @@ pub struct Lane {
     /// What grew it. See `LaneKind` — a spur's contract differs from a trunk's.
     #[serde(default = "LaneKind::default_trunk")]
     pub kind: LaneKind,
-    /// The control points the spline passes through (already well-offset).
+    /// The route-shaping points, after the baked centerline's well-clearance
+    /// relaxation. The authoritative centerline passes through each one.
     pub control: Vec<Vec2>,
     /// The baked centerline.
     pub samples: Vec<LaneSample>,
@@ -1708,7 +1713,7 @@ pub fn generate(
             .iter()
             .find_map(|r| grow(&mut rng, hub, *b, anchors, spacing, radius, true, *r));
         if let Some(ctrl) = ctrl {
-            lanes.push(finish(&mut next_id, ctrl, half_width, true, LaneKind::Trunk));
+            lanes.push(finish(&mut next_id, ctrl, anchors, half_width, true, LaneKind::Trunk));
         }
     }
 
@@ -1716,7 +1721,7 @@ pub fn generate(
     //     systems does not have to go in to the hub and back out.
     for frac in [0.4, 0.7] {
         if let Some(ctrl) = arc(hub, radius * frac, anchors, spacing) {
-            lanes.push(finish(&mut next_id, ctrl, half_width, false, LaneKind::Arc));
+            lanes.push(finish(&mut next_id, ctrl, anchors, half_width, false, LaneKind::Arc));
         }
     }
 
@@ -1752,7 +1757,7 @@ pub fn generate(
             ctrl.extend(f.into_iter().skip(1));
         }
         if ctrl.len() >= 3 {
-            lanes.push(finish(&mut next_id, ctrl, half_width, true, LaneKind::Chord));
+            lanes.push(finish(&mut next_id, ctrl, anchors, half_width, true, LaneKind::Chord));
         }
     }
 
@@ -1774,14 +1779,11 @@ pub fn generate(
             continue; // already served
         }
         let along = (join - *h).normalized();
-        // Stand off by a fixed slice of SPACING, not by the ribbon's width. Tying
-        // it to half-width made the standoff grow with the ribbon, so widening
-        // lanes pushed each spur further from the very home it exists to serve —
-        // far enough, once the width cap came off, that homes stopped being
-        // connected at all.
-        let start = *h + along * (spacing * 0.05);
+        // A home-facing route terminates at the same explicit well-clearance
+        // ring as every other centerline. The fleet covers the rest off-lane.
+        let start = *h + along * WELL_STANDOFF;
         let ctrl = vec![start, start + (join - start) * 0.5, join];
-        lanes.push(finish(&mut next_id, ctrl, half_width, false, LaneKind::Spur));
+        lanes.push(finish(&mut next_id, ctrl, anchors, half_width, false, LaneKind::Spur));
     }
 
     let mut net = LaneNetwork { lanes, ..Default::default() };
@@ -1904,8 +1906,8 @@ fn arc(hub: Vec2, r: f64, anchors: &[LaneAnchor], spacing: f64) -> Option<Vec<Ve
     // the radius twice over. Every seed's worst corner was an arc under exactly
     // that error. So back the pull off until the BAKED curve clears the bar.
     //
-    // The margin absorbs the well offsets `finish` applies afterwards, which
-    // perturb the ring again on the way to the final geometry.
+    // The margin absorbs the broad well-clearance relaxation `finish` applies
+    // afterwards, which perturbs the ring again on the way to final geometry.
     let mut pull = spacing * 0.8;
     for _ in 0..10 {
         let ctrl = ring(pull);
@@ -1925,33 +1927,145 @@ fn arc(hub: Vec2, r: f64, anchors: &[LaneAnchor], spacing: f64) -> Option<Vec<Ve
 fn finish(
     next_id: &mut u32,
     ctrl: Vec<Vec2>,
+    anchors: &[LaneAnchor],
     half_width: f64,
     tapers: bool,
     kind: LaneKind,
 ) -> Lane {
     let id = *next_id;
     *next_id += 1;
-    // NO POST-PROCESSING. A route is exactly what it was grown to be.
-    //
-    // This used to be a relaxation between two constraints that could not both be
-    // met: dodge every gravity well, and stay inside the fastest hull's turning
-    // circle. Lanes may now run straight over a system, so the dodge is gone —
-    // and with it the smoothing, the tether and the retreat that existed only to
-    // arbitrate the two. What is left is what the module always claimed: a route
-    // is navigable BY CONSTRUCTION, because a growth walk caps its turn and
-    // floors its leg length, an arc measures itself against the bar before it
-    // settles, and a spur is three collinear points. Nothing downstream can bend
-    // a route into something no hull can fly, because nothing downstream bends it
-    // at all.
+    // Growth establishes the topology and its broad turns. The final relaxation
+    // then moves the baked centerline away from every well. Each displacement is
+    // spread across several fastest-hull turning radii; this is why a 2.25k berth
+    // does not introduce a 2.25k corner into a road a Scout must hold at speed.
+    let (control, samples) = stand_off_from_wells(&ctrl, anchors);
     Lane {
         id,
         kind,
         name: route_name(id),
-        samples: bake(&ctrl),
-        control: ctrl,
+        samples,
+        control,
         half_width,
         tapers,
     }
+}
+
+/// Relax a baked route away from gravity wells without tightening its turns.
+///
+/// The baked polyline is the mechanical centerline used by containment,
+/// routing, rendering, and junction discovery. Working on that representation
+/// makes the clearance guarantee continuous between samples instead of merely a
+/// promise about sparse control vertices. A raised-cosine shoulder distributes
+/// each correction over a broad arc; repeated projection closes the tiny error
+/// left when several nearby wells push on the same stretch.
+fn stand_off_from_wells(ctrl: &[Vec2], anchors: &[LaneAnchor]) -> (Vec<Vec2>, Vec<LaneSample>) {
+    let baked = bake(ctrl);
+    if baked.len() < 2 || anchors.is_empty() {
+        return (ctrl.to_vec(), baked);
+    }
+
+    let mut points: Vec<Vec2> = baked.iter().map(|sample| sample.pos).collect();
+    let shoulder = fastest_lane_speed() * TURN_K * 3.0;
+    let target = WELL_STANDOFF + 8.0;
+    let mut dodge_directions = vec![None; anchors.len()];
+
+    for _ in 0..96 {
+        let samples = samples_from_polyline(&points);
+        let collisions: Vec<_> = anchors
+            .iter()
+            .enumerate()
+            .filter_map(|(index, anchor)| {
+                nearest_on_samples(&samples, anchor.pos)
+                    .filter(|(_, _, d)| *d < target)
+                    .map(|(on, tangent, d)| (index, anchor.pos, on, tangent, d))
+            })
+            .collect();
+        if collisions.is_empty() {
+            break;
+        }
+
+        let mut shifts = vec![Vec2::ZERO; points.len()];
+        for (index, well, on, tangent, _distance) in collisions {
+            // Always pass a well on the route's LEFT flank. Choosing whichever
+            // side is initially nearest makes a string of anchor hits alternate
+            // left/right, and their deliberately broad shoulders then cancel.
+            let direction = *dodge_directions[index]
+                .get_or_insert_with(|| Vec2::new(-tangent.y, tangent.x).normalized());
+            let signed = (on.pos - well).dot(direction);
+            let push = target - signed + 8.0;
+            for (shift, sample) in shifts.iter_mut().zip(samples.iter()) {
+                let along = (sample.s - on.s).abs();
+                if along >= shoulder {
+                    continue;
+                }
+                let phase = std::f64::consts::FRAC_PI_2 * along / shoulder;
+                let weight = phase.cos().powi(2);
+                *shift = *shift + direction * (push * weight);
+            }
+        }
+        for (point, shift) in points.iter_mut().zip(shifts) {
+            *point = *point + shift;
+        }
+    }
+
+    let samples = samples_from_polyline(&points);
+    if cfg!(debug_assertions) {
+        let worst = anchors
+            .iter()
+            .enumerate()
+            .filter_map(|(i, anchor)| {
+                nearest_on_samples(&samples, anchor.pos).map(|(_, _, d)| (i, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        debug_assert!(
+            worst.is_none_or(|(_, d)| d + 1e-6 >= WELL_STANDOFF),
+            "well relaxation stopped short: {worst:?}"
+        );
+    }
+
+    // Every original Catmull control point occurs at this exact baked index.
+    // Carry those relaxed positions forward so diagnostics and topology tests
+    // describe the same centerline the sim flies.
+    let control = (0..ctrl.len())
+        .map(|i| points[(i * SAMPLES_PER_SEGMENT).min(points.len() - 1)])
+        .collect();
+    (control, samples)
+}
+
+fn samples_from_polyline(points: &[Vec2]) -> Vec<LaneSample> {
+    let mut out = Vec::with_capacity(points.len());
+    let mut s = 0.0;
+    for (i, pos) in points.iter().copied().enumerate() {
+        if i > 0 {
+            s += points[i - 1].distance(pos);
+        }
+        let tangent = match (i.checked_sub(1), points.get(i + 1)) {
+            (Some(prev), Some(next)) => (*next - points[prev]).normalized(),
+            (_, Some(next)) => (*next - pos).normalized(),
+            (Some(prev), None) => (pos - points[prev]).normalized(),
+            _ => Vec2::ZERO,
+        };
+        out.push(LaneSample { pos, tangent, s });
+    }
+    out
+}
+
+/// Nearest point on the continuous polyline through `samples`.
+fn nearest_on_samples(samples: &[LaneSample], p: Vec2) -> Option<(LaneSample, Vec2, f64)> {
+    samples
+        .windows(2)
+        .filter_map(|w| {
+            let d = w[1].pos - w[0].pos;
+            let len_sq = d.length_sq();
+            if len_sq <= 1e-12 {
+                return None;
+            }
+            let t = ((p - w[0].pos).dot(d) / len_sq).clamp(0.0, 1.0);
+            let pos = w[0].pos + d * t;
+            let s = w[0].s + (w[1].s - w[0].s) * t;
+            Some((LaneSample { pos, tangent: d.normalized(), s }, d.normalized(), p.distance(pos)))
+        })
+        .min_by(|a, b| a.2.total_cmp(&b.2))
 }
 
 /// The fastest hull's lane speed — what every route must be navigable at. Kept
@@ -2219,6 +2333,28 @@ mod tests {
                     .filter_map(|l| l.nearest(*h).map(|(_, d)| d))
                     .fold(f64::INFINITY, f64::min);
                 assert!(best <= reach, "seed {seed}: home {i} is {best:.0} from any lane (max {reach:.0})");
+            }
+        }
+    }
+
+    /// GRAVITY WELLS ARE HOLES IN THE ROAD NETWORK. The centerline must keep
+    /// its full berth continuously, including between baked vertices and from
+    /// systems that were not selected as this route's own control points.
+    #[test]
+    fn every_lane_keeps_its_standoff_from_every_well() {
+        for players in [2usize, 4, 6] {
+            for seed in [1u64, 2, 7, 99, 2024] {
+                let (n, anchors, ..) = net(seed, players);
+                for lane in &n.lanes {
+                    for (well, anchor) in anchors.iter().enumerate() {
+                        let clearance = lane.nearest(anchor.pos).unwrap().1;
+                        assert!(
+                            clearance + 1e-6 >= WELL_STANDOFF,
+                            "{players}p seed {seed}: {} passes well {well} at {clearance:.2} su (< {WELL_STANDOFF:.2})",
+                            lane.name,
+                        );
+                    }
+                }
             }
         }
     }
@@ -3059,8 +3195,11 @@ mod tests {
                 let head = *s.control.first().unwrap();
                 let tail = *s.control.last().unwrap();
                 assert!(
-                    homes.iter().any(|h| h.distance(head) <= s.half_width * 4.0),
-                    "seed {seed}: {} starts at no home", s.name,
+                    homes.iter().any(|h| {
+                        let d = h.distance(head);
+                        (WELL_STANDOFF..=WELL_STANDOFF + s.half_width * 4.0).contains(&d)
+                    }),
+                    "seed {seed}: {} does not terminate on a home's standoff ring", s.name,
                 );
                 let joins = n.lanes.iter().filter(|o| o.id != s.id).any(|o| {
                     o.nearest(tail).is_some_and(|(_, d)| d <= o.half_width + s.half_width)
