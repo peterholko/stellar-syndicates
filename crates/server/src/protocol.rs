@@ -28,7 +28,7 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +42,11 @@ pub enum ClientMsg {
     /// Order one of the player's own ships to a destination. Travels at light
     /// speed to the ship (§6); the server attaches the issuing player.
     MoveShip { ship_id: EntityId, dest: Vec2 },
+
+    /// UI-only, fog-safe route assistance for a prospective move. The reply is
+    /// computed from this player's served sighting, never the fleet's true
+    /// position, and does not enqueue an in-fiction order.
+    PreviewRoute { ship_id: EntityId, dest: Vec2 },
 
     /// §emplacements: the named Construction Ship builds a structure WHERE IT
     /// IS PARKED — the player flies it to the spot first, then orders the
@@ -1176,12 +1181,20 @@ pub struct CargoView {
 /// AWAITING ECHO until `echo_at`, then confirmed (the entry drops). Both stamps
 /// are exact (computed at issue), so the client ticks precise countdowns with no
 /// per-second server traffic.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PendingOrderView {
+    pub id: u64,
     pub fleet_id: EntityId,
+    pub issued_at: f64,
     pub delivered_at: f64,
     pub echo_at: f64,
     pub kind: OrderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest: Option<Vec2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emplacement: Option<sim::emplace::EmplacementKind>,
 }
 
 /// An ongoing BATTLE as any observer perceives it (§battles-take-time), STRICTLY
@@ -1833,15 +1846,17 @@ pub enum ServerMsg {
     /// flight (§6, "commanding into the past"). Sent immediately to the issuing
     /// player, carrying authoritative sim-times:
     ///   * `depart_time` — the order leaves the command center;
-    ///   * `arrive_time` — it reaches the ship (as the player observes it): the
-    ///     violet comet travels command-center → ghost over this window.
+    ///   * `arrive_time` — the routed outbound signal reaches the moving meeting
+    ///     point projected from the ship's currently observed ghost.
     ///
     /// This is the one thing the MAP can't show — your command crossing space,
     /// not yet arrived. The ship's *reaction* needs no signal: the player simply
     /// sees the ghost change course on the map when its light arrives (the map IS
-    /// the inbound channel). Both times derive from the player's OBSERVED light
-    /// delay to the ship (its ghost staleness), so nothing reveals true distance.
+    /// the inbound channel). The route is calculated only from the player's
+    /// OBSERVED ghost position and velocity, never the hidden true fleet, and
+    /// its own hop total supplies the clock.
     CommandSignal {
+        order_id: u64,
         ship_id: EntityId,
         depart_time: f64,
         arrive_time: f64,
@@ -1852,6 +1867,15 @@ pub enum ServerMsg {
         /// run (no relays helped), which is also what old clients drew.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hops: Vec<SignalHopView>,
+    },
+
+    /// Immediate UI assistance for a prospective move. `path` is the same
+    /// lane/warp plan the sim uses, rooted at the issuing player's own served
+    /// sighting of the fleet rather than its hidden true position.
+    RoutePreview {
+        ship_id: EntityId,
+        dest: Vec2,
+        path: Vec<PathPointView>,
     },
 
     /// A projected engagement estimate the player asked for (§FLEETS Part 3).
@@ -1919,5 +1943,43 @@ mod wire_contract {
             }
             other => panic!("parsed into the wrong variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn preview_route_parses_off_the_wire() {
+        let raw = r#"{"type":"PreviewRoute","ship_id":"33","dest":{"x":123.0,"y":-45.0}}"#;
+        let msg: ClientMsg =
+            serde_json::from_str(raw).expect("the client's literal message must parse");
+        match msg {
+            ClientMsg::PreviewRoute { ship_id, dest } => {
+                assert_eq!(ship_id, sim::EntityId(33));
+                assert_eq!(dest, sim::Vec2::new(123.0, -45.0));
+            }
+            other => panic!("parsed into the wrong variant: {other:?}"),
+        }
+    }
+
+    /// The View's order queue is consumed directly by the rebuilt ship panel.
+    /// Pin the literal list shape—including identity and subject—so silently
+    /// dropping back to one anonymous lifecycle cannot masquerade as a valid
+    /// payload.
+    #[test]
+    fn pending_order_queue_parses_off_the_wire() {
+        let raw = r#"[
+            {"id":17,"fleet_id":"33","issued_at":10.0,"delivered_at":18.0,"echo_at":26.0,"kind":"move","dest":{"x":287450.0,"y":35020.0}},
+            {"id":18,"fleet_id":"33","issued_at":15.0,"delivered_at":22.0,"echo_at":30.0,"kind":"construct","dest":{"x":900.0,"y":1200.0},"emplacement":"hyperspace_buoy"}
+        ]"#;
+        let queue: Vec<PendingOrderView> =
+            serde_json::from_str(raw).expect("the client's literal queue shape must parse");
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue[0].id, 17);
+        assert_eq!(queue[0].fleet_id, sim::EntityId(33));
+        assert_eq!(queue[0].dest, Some(sim::Vec2::new(287_450.0, 35_020.0)));
+        assert_eq!(queue[1].id, 18);
+        assert_eq!(queue[1].kind, sim::event::OrderKind::Construct);
+        assert_eq!(
+            queue[1].emplacement,
+            Some(sim::emplace::EmplacementKind::HyperspaceBuoy)
+        );
     }
 }

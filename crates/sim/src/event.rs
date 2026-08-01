@@ -79,6 +79,16 @@ pub enum EventPayload {
     /// and took effect.
     OrderApplied { ship_id: EntityId },
 
+    /// OWNER-ONLY reporting seam: a validated player order entered the
+    /// light-delayed command queue. The id is allocated by the sim at the one
+    /// scheduling choke point, so the server's comet and the lifecycle row can
+    /// identify the same command without changing its delivery behavior.
+    OrderScheduled {
+        id: u64,
+        owner: PlayerId,
+        fleet: EntityId,
+    },
+
     /// OWNER-ONLY (§order-lifecycle): the player's order has been DELIVERED to the
     /// fleet (its outbound light arrived and the fleet is now executing) — but the
     /// light showing the new behavior hasn't returned. `echo_at` is exactly when

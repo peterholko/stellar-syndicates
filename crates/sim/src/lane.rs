@@ -390,10 +390,8 @@ pub struct LaneNetwork {
     /// other, and the stop lists that turn the network into a graph.
     ///
     /// DERIVED from `lanes` — see [`LaneNetwork::rebuild_junctions`]. Carried in
-    /// the snapshot rather than rebuilt on load because it is small (tens of
-    /// entries) and that keeps the load path free of a fixup step; a pre-junction
-    /// snapshot deserialises to an empty graph, which degrades routing to the
-    /// single-lane behaviour it had before rather than breaking it.
+    /// snapshots for completeness and rebuilt by the world's load fixup so
+    /// crossing-algorithm improvements also repair existing galaxies.
     #[serde(default)]
     pub junctions: Vec<Junction>,
     /// Per lane, the arc positions that bound its graph edges: every junction on
@@ -467,6 +465,49 @@ pub struct Junction {
     pub turn: f64,
 }
 
+/// Closest points on two finite line segments, returned as
+/// `(fraction_on_a, fraction_on_b, point_on_a, point_on_b, distance)`.
+///
+/// Lane centerlines are baked polylines. Junction discovery must compare their
+/// CONTINUOUS segments, not just the baked vertices: a perfectly visible
+/// crossing can lie halfway between every sample on both lanes.
+fn segment_closest(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> (f64, f64, Vec2, Vec2, f64) {
+    let cross = |u: Vec2, v: Vec2| u.x * v.y - u.y * v.x;
+    let (ad, bd) = (a1 - a0, b1 - b0);
+    let denom = cross(ad, bd);
+    if denom.abs() > 1e-12 {
+        let delta = b0 - a0;
+        let (ta, tb) = (cross(delta, bd) / denom, cross(delta, ad) / denom);
+        if (0.0..=1.0).contains(&ta) && (0.0..=1.0).contains(&tb) {
+            let p = a0 + ad * ta;
+            return (ta, tb, p, p, 0.0);
+        }
+    }
+
+    let project = |p: Vec2, s0: Vec2, s1: Vec2| {
+        let d = s1 - s0;
+        let t = if d.length_sq() > 1e-12 {
+            ((p - s0).dot(d) / d.length_sq()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (t, s0 + d * t)
+    };
+    let (tb0, qb0) = project(a0, b0, b1);
+    let (tb1, qb1) = project(a1, b0, b1);
+    let (ta0, qa0) = project(b0, a0, a1);
+    let (ta1, qa1) = project(b1, a0, a1);
+    [
+        (0.0, tb0, a0, qb0, a0.distance(qb0)),
+        (1.0, tb1, a1, qb1, a1.distance(qb1)),
+        (ta0, 0.0, qa0, b0, qa0.distance(b0)),
+        (ta1, 1.0, qa1, b1, qa1.distance(b1)),
+    ]
+    .into_iter()
+    .min_by(|x, y| x.4.total_cmp(&y.4))
+    .unwrap()
+}
+
 impl LaneNetwork {
     /// Build from lanes, deriving the junction graph.
     pub fn of(lanes: Vec<Lane>) -> Self {
@@ -497,20 +538,15 @@ impl LaneNetwork {
     /// §buoys: the fastest way for a SIGNAL to get from `a` to `b`, and the path
     /// it takes.
     ///
-    /// Warp everywhere by default. A RELAY ON A LANE INJECTS INTO IT: the signal
-    /// rides that lane at hyperspace speed, leaves at the arc position nearest
-    /// the receiver, and warps only the remainder — exactly the geometry
-    /// [`Self::signal_coupled`] already gives a hull transmitting from inside a
-    /// ribbon. One relay is therefore useful on its own; a second on the same
-    /// lane still helps by carrying the signal further along before the warp leg
-    /// begins, and relays on OTHER lanes open those roads.
+    /// Warp everywhere by default. Hyperspace speed is available only BETWEEN
+    /// TWO RELAYS that share a lane. The home system is one relay, so the first
+    /// buoy built on its lane completes the opening link; home alone cannot
+    /// inject an outbound order into the ribbon or peel it off near a receiver.
     ///
-    /// This used to demand TWO relays sharing a lane before any lane was used,
-    /// which quietly made buoys near-worthless: the last hop from the final
-    /// relay out to the ship ran at warp, and that leg dominated. Measured on a
-    /// 45k-su shot along the home lane, home + one mid-lane buoy came to 22.5s —
-    /// identical to plain warp — where riding the lane is 2.3s. The player was
-    /// told to build a second buoy and got nothing at all for it.
+    /// That pair is the ACCESS GATE, not a pair-per-lane toll. Once injected,
+    /// the signal follows the connected lane graph through junctions exactly as
+    /// a ship can. Junctions are transfer points, not portals: an off-lane signal
+    /// may enter or leave only at home or an owned buoy.
     ///
     /// Returns the hops as well as the time, because the order graphic has to
     /// trace the path the signal actually took rather than a straight line to
@@ -521,45 +557,89 @@ impl LaneNetwork {
     /// view filter then ran per history sample per ghost. A handful of relays is
     /// a handful of distance computations.
     pub fn signal(&self, a: Vec2, b: Vec2, c: f64, buoys: &[Vec2]) -> (f64, Vec<Hop>) {
+        self.signal_routed(a, b, c, buoys, true)
+    }
+
+    /// Does this owner have the physical access pair needed to inject an
+    /// ordinary off-lane signal into hyperspace?
+    fn has_access_pair(&self, buoys: &[Vec2]) -> bool {
+        if buoys.len() < 2 {
+            return false;
+        }
+        let mut relay_count: std::collections::BTreeMap<u32, usize> =
+            std::collections::BTreeMap::new();
+        for relay in buoys.iter().map(|p| self.relay_at(*p)) {
+            for (lane, _) in relay.on {
+                *relay_count.entry(lane).or_default() += 1;
+            }
+        }
+        relay_count.values().any(|count| *count >= 2)
+    }
+
+    /// The shared junction-aware signal search.
+    ///
+    /// `needs_access_pair` is retained for signature stability but no longer
+    /// gates anything: by design ruling, every relay (home included) injects
+    /// into the lanes it sits on. It was true for ordinary outbound orders
+    /// back when two owned relays had to share a lane before the network could
+    /// be entered.
+    fn signal_routed(
+        &self,
+        a: Vec2,
+        b: Vec2,
+        c: f64,
+        buoys: &[Vec2],
+        needs_access_pair: bool,
+    ) -> (f64, Vec<Hop>) {
         let warp = c * WARP_FACTOR;
         let lane_speed = c * self.signal_factor_on_lane();
         let direct =
             (a.distance(b) / warp, vec![Hop { to: b, lane: None, t: a.distance(b) / warp }]);
         if buoys.is_empty() {
-            return direct; // no transmitter anywhere — plain warp light
+            return direct;
         }
         let relays: Vec<Relay> = buoys.iter().map(|p| self.relay_at(*p)).collect();
-        // §junction-signal: A COVERED LANE is one you have a relay ON. The signal
-        // may ride any covered lane, and CROSS between two covered lanes at a
-        // junction — the ribbons overlap there, so the medium is continuous and a
-        // signal riding one is already inside the other.
-        //
-        // This is what a buoy buys: not a pair, but a LANE. Home sits on a lane
-        // (measured: 4/4 home slots), so your first road is free and every
-        // further one is a buoy you placed — which is also why cutting a buoy
-        // severs a branch of the network rather than merely slowing it.
-        //
-        // Without the crossing, information could not follow the route its own
-        // ships fly: a hull that junctioned onto a second lane reported home at
-        // barely better than warp (measured 133.6s against warp's 170.8s on a
-        // 341k-su leg, where the lanes end to end are 17.1s).
-        let covered: std::collections::BTreeSet<u32> =
-            relays.iter().flat_map(|r| r.on.iter().map(|(l, _)| *l)).collect();
-        // The graph's nodes: every relay, plus each junction BETWEEN TWO COVERED
-        // LANES as a pure transfer point. A junction is not a transmitter — it
-        // cannot be reached by warping to it and re-entering — so it starts
-        // unreachable and only lane rides can arrive there.
+        // §buoys: EVERY RELAY INJECTS INTO ITS OWN LANES (design ruling from
+        // playtest, superseding the access-pair rule). The home system acts
+        // like a buoy — an entry and exit for hyperlane communication — so a
+        // fresh corporation's signals already ride the lane home sits on,
+        // exiting at the arc nearest the receiver and warping the remainder.
+        // What a BUILT buoy buys is reach: coverage of another lane, junction
+        // crossings onto it, and a further-along exit before the warp leg.
+        let _ = needs_access_pair;
+        // The graph's nodes: every relay, plus every junction as a pure transfer
+        // point. A junction cannot receive a warp hop; it becomes reachable only
+        // by riding from an injected relay or already-coupled source.
         let n_relays = relays.len();
         let mut nodes: Vec<Relay> = relays;
         for j in &self.junctions {
             let (la, lb) = (j.a as u32, j.b as u32);
-            if la != lb && covered.contains(&la) && covered.contains(&lb) {
+            if la != lb {
                 nodes.push(Relay { pos: j.pos, on: vec![(la, j.sa), (lb, j.sb)] });
             }
         }
         let relays = nodes;
         let is_relay = |i: usize| i < n_relays;
         let n = relays.len();
+        // The cheapest shared-lane edge between two graph nodes. Keep the lane
+        // id with its cost: the path renderer needs the SAME road the shortest-
+        // time search priced, not merely the first lane both endpoints happen
+        // to touch at a junction.
+        let lane_edge = |u: usize, v: usize| -> Option<(u32, f64)> {
+            let mut edge: Option<(u32, f64)> = None;
+            for (la, sa) in &relays[u].on {
+                for (lb, sb) in &relays[v].on {
+                    if la != lb {
+                        continue;
+                    }
+                    let t = (sa - sb).abs() / lane_speed;
+                    if edge.is_none_or(|(_, best)| t < best) {
+                        edge = Some((*la, t));
+                    }
+                }
+            }
+            edge
+        };
 
         let mut best: Vec<f64> = (0..n)
             .map(|i| {
@@ -584,20 +664,10 @@ impl LaneNetwork {
                 if done[v] {
                     continue;
                 }
-                // A LANE edge exists where both nodes sit on the same COVERED
-                // lane — that is the ride, and it is what a junction node uses
-                // to bridge from one road to the other.
-                let mut w = f64::INFINITY;
-                for (la, sa) in &relays[u].on {
-                    if !covered.contains(la) {
-                        continue;
-                    }
-                    for (lb, sb) in &relays[v].on {
-                        if la == lb {
-                            w = w.min((sa - sb).abs() / lane_speed);
-                        }
-                    }
-                }
+                // A LANE edge exists where both nodes sit on the same lane. Once
+                // access is established, junction nodes carry the signal across
+                // the whole connected graph.
+                let mut w = lane_edge(u, v).map_or(f64::INFINITY, |(_, t)| t);
                 // Failing that, two TRANSMITTERS can still talk across open
                 // space at warp. A junction is not a transmitter, so nothing
                 // warps to or from one — it is reachable only by riding.
@@ -610,41 +680,18 @@ impl LaneNetwork {
                 }
             }
         }
-        // THE TERMINAL LEG. From the last relay, either warp straight at the
-        // receiver, or RIDE one of that relay's own lanes to the arc position
-        // nearest the receiver and warp only what is left. The ride needs no
-        // partner at the far end — the relay is the transmitter and the medium
-        // carries, the same way a coupled hull's report gets home. Returns the
-        // time, plus the lane and exit point when a lane was ridden, so the
-        // order graphic can trace it.
-        let terminal = |i: usize| -> (f64, Option<(u32, Vec2)>) {
-            let r = &relays[i];
-            let mut best_leg: (f64, Option<(u32, Vec2)>) = if is_relay(i) {
-                (r.pos.distance(b) / warp, None)
-            } else {
-                (f64::INFINITY, None) // a junction can only pass the signal ALONG a lane
-            };
-            for (lid, s_r) in &r.on {
-                if !covered.contains(lid) {
-                    continue; // not your road to ride
-                }
-                let Some(l) = self.lanes.iter().find(|l| l.id == *lid) else { continue };
-                let Some((exit, _)) = l.nearest(b) else { continue };
-                let t = (s_r - exit.s).abs() / lane_speed + exit.pos.distance(b) / warp;
-                if t < best_leg.0 {
-                    best_leg = (t, Some((*lid, exit.pos)));
-                }
-            }
-            best_leg
-        };
-        let Some((end, t, exit)) = best
+        // THE TERMINAL LEG may leave hyperspace only at an actual owned relay
+        // (or at a coupled hull explicitly added as a query endpoint). A
+        // junction and an arbitrary nearest point on a lane are not portals.
+        let Some((end, t)) = best
             .iter()
             .enumerate()
             .map(|(i, d)| {
-                let (leg, exit) = terminal(i);
-                (i, d + leg, exit)
+                let leg =
+                    if is_relay(i) { relays[i].pos.distance(b) / warp } else { f64::INFINITY };
+                (i, d + leg)
             })
-            .filter(|(_, t, _)| t.is_finite())
+            .filter(|(_, t)| t.is_finite())
             .min_by(|x, y| x.1.total_cmp(&y.1))
         else {
             return direct;
@@ -660,53 +707,136 @@ impl LaneNetwork {
         let mut hops: Vec<Hop> = Vec::with_capacity(chain.len() + 1);
         for (k, &i) in chain.iter().enumerate() {
             let lane = k.checked_sub(1).and_then(|j| {
-                let (u, v) = (&relays[chain[j]], &relays[i]);
-                u.on.iter().find_map(|(la, _)| v.on.iter().find(|(lb, _)| lb == la).map(|_| *la))
+                let u = chain[j];
+                let (lane, lane_t) = lane_edge(u, i)?;
+                let warp_t = if is_relay(u) && is_relay(i) {
+                    relays[u].pos.distance(relays[i].pos) / warp
+                } else {
+                    f64::INFINITY
+                };
+                (lane_t <= warp_t).then_some(lane)
             });
             hops.push(Hop { to: relays[i].pos, lane, t: best[i] });
-        }
-        if let Some((lid, exit_pos)) = exit {
-            // The ridden lane, then the short warp off it. `t` is the arrival at
-            // `b`, so stamp the exit with everything but that final remainder.
-            let tail = exit_pos.distance(b) / warp;
-            hops.push(Hop { to: exit_pos, lane: Some(lid), t: (t - tail).max(0.0) });
         }
         hops.push(Hop { to: b, lane: None, t });
         (t, hops)
     }
 
+    /// Expand the graph-level hops of a signal into the baked geometry of every
+    /// lane it rode.
+    ///
+    /// Delay queries deliberately keep their compact relay/junction path: they
+    /// run for every historical sighting and need only the total. The outbound
+    /// order animation is low-volume and needs the actual curve, so its path
+    /// alone is expanded here. Intermediate samples inherit cumulative times
+    /// from the exact graph edge the shortest-path search already priced.
+    fn trace_signal_hops(&self, start: Vec2, hops: &[Hop]) -> Vec<Hop> {
+        let mut traced = Vec::new();
+        let mut edge_start = start;
+        let mut edge_start_t = 0.0;
+        for hop in hops {
+            if let Some(lane_id) = hop.lane
+                && let Some(lane) = self.lanes.iter().find(|lane| lane.id == lane_id)
+                && let (Some((from, _)), Some((to, _))) =
+                    (lane.nearest(edge_start), lane.nearest(hop.to))
+            {
+                let arc = (to.s - from.s).abs();
+                if arc > 1e-9 {
+                    let mut samples: Vec<&LaneSample> = lane
+                        .samples
+                        .iter()
+                        .filter(|sample| {
+                            let progress = if to.s >= from.s {
+                                (sample.s - from.s) / arc
+                            } else {
+                                (from.s - sample.s) / arc
+                            };
+                            progress > 1e-9 && progress < 1.0 - 1e-9
+                        })
+                        .collect();
+                    if to.s < from.s {
+                        samples.reverse();
+                    }
+                    for sample in samples {
+                        let progress = if to.s >= from.s {
+                            (sample.s - from.s) / arc
+                        } else {
+                            (from.s - sample.s) / arc
+                        };
+                        traced.push(Hop {
+                            to: sample.pos,
+                            lane: Some(lane_id),
+                            t: edge_start_t + (hop.t - edge_start_t) * progress,
+                        });
+                    }
+                }
+            }
+            traced.push(*hop);
+            edge_start = hop.to;
+            edge_start_t = hop.t;
+        }
+        traced
+    }
+
+    /// An outbound order whose RECEIVER is actively riding a lane. The hull's
+    /// engaged drive couples it to the medium, so it counts as a relay for the
+    /// access-pair test — home plus a hull riding home's lane is a pair, and
+    /// the order rides the route the ship itself took. See the ruling inside.
+    pub fn signal_to_coupled(
+        &self,
+        a: Vec2,
+        p: Vec2,
+        c: f64,
+        buoys: &[Vec2],
+    ) -> (f64, Vec<Hop>) {
+        let inside = self
+            .lanes
+            .iter()
+            .any(|lane| lane.nearest(p).is_some_and(|(on, d)| d <= lane.half_width_at(on.s)));
+        if !inside {
+            return self.signal(a, p, c, buoys);
+        }
+        // §coupled: an engaged hyperdrive is a transmitter wound into the
+        // medium — the same coupling that carries its reports home receives an
+        // order the last stretch in. The hull joins the graph as a relay, so
+        // the order can ride all the way to the ship instead of exiting at the
+        // nearest arc and warping the gap.
+        let mut with_hull: Vec<Vec2> = Vec::with_capacity(buoys.len() + 1);
+        with_hull.extend_from_slice(buoys);
+        with_hull.push(p);
+        self.signal_routed(a, p, c, &with_hull, false)
+    }
+
     /// §coupled: the signal delay from a fleet that is RIDING A LANE to `b`.
     ///
-    /// A hull with its hyperspace drive engaged is coupled to the lane medium —
-    /// which is exactly what a buoy is, a transmitter parked in a lane — so its
-    /// own report rides the lane it is in at full lane signal speed, exits at
-    /// the point nearest the receiver, and crosses the rest at warp (through
-    /// whatever buoys the owner has, via the ordinary path).
+    /// A hull with its hyperspace drive engaged is a transmitter inside the
+    /// medium, so its own report may ride the lane it occupies before exiting
+    /// toward the receiver. The outbound direction mirrors this
+    /// (`signal_to_coupled`): the same coupling counts the hull as a relay for
+    /// the access-pair test, so an order to a hull riding one of the owner's
+    /// covered lanes flies the route the ship itself took.
     ///
-    /// A coupled hull IS A TRANSMITTER ON ITS LANE, so it simply joins the
-    /// network for the length of this query and [`Self::signal`] does the rest —
-    /// riding, junction crossings onto your other covered lanes, and the warp
-    /// remainder. Off the network entirely it is just a warp-light source.
-    ///
-    /// It used to hand-roll a ride along THE ONE LANE the hull sat in and refuse
-    /// junctions outright, which meant information could not follow the route
-    /// the ship itself had flown: a hull that crossed onto a second lane
-    /// reported home at barely better than warp. Measured on a 341k-su leg:
-    /// 133.6s coupled against 170.8s plain warp, where the lanes end to end are
-    /// 17.1s. Crossings are still bounded — the far lane must be COVERED by one
-    /// of your relays — so this does not resurrect the free pre-buoy network.
+    /// The hull joins the lane graph as its injection point for this query, so
+    /// its report follows every connected junction back toward home without
+    /// demanding a separate buoy pair on each lane.
     pub fn signal_coupled(&self, p: Vec2, b: Vec2, c: f64, buoys: &[Vec2]) -> f64 {
         let inside = self
             .lanes
             .iter()
-            .any(|l| l.nearest(p).is_some_and(|(on, d)| d <= l.half_width_at(on.s)));
+            .any(|lane| lane.nearest(p).is_some_and(|(on, d)| d <= lane.half_width_at(on.s)));
         if !inside {
             return self.signal(p, b, c, buoys).0;
         }
         let mut with_hull: Vec<Vec2> = Vec::with_capacity(buoys.len() + 1);
         with_hull.extend_from_slice(buoys);
         with_hull.push(p);
-        self.signal(p, b, c, &with_hull).0
+        // `b` is the receiving command center. Production relay networks already
+        // include home; adding it idempotently also keeps this primitive honest
+        // in isolated tests and for any future caller that supplies only buoys.
+        if !with_hull.iter().any(|relay| relay.distance(b) < 1e-6) {
+            with_hull.push(b);
+        }
+        self.signal_routed(p, b, c, &with_hull, false).0
     }
 
     /// §coupled: the delay for a viewer to HEAR a coupled hull at `p` through
@@ -740,7 +870,8 @@ impl LaneNetwork {
                     if along > crate::emplace::LANE_LISTEN_RANGE {
                         continue; // a wake attenuates — out of earshot
                     }
-                    let t = along / lane_speed + self.signal(ear.pos, b, c, buoys).0;
+                    let t =
+                        along / lane_speed + self.signal_coupled(ear.pos, b, c, buoys);
                     best = best.min(t);
                 }
             }
@@ -752,51 +883,107 @@ impl LaneNetwork {
     ///
     /// Two routes cross where their ribbons overlap — a fleet standing there is
     /// inside both, so it can change from one to the other without ever dropping
-    /// out of the network. A long shallow overlap is ONE crossing, not one per
-    /// sample: contiguous overlapping stretches are collapsed to their midpoint,
-    /// or a pair of routes running alongside each other would contribute
-    /// hundreds of identical junctions and swamp the search.
+    /// out of the network.
+    ///
+    /// Compare continuous baked SEGMENTS, never just their vertices. Vertex-only
+    /// discovery missed crossings that fell between samples; the route planner
+    /// then stayed on an arc almost all the way around to the next registered
+    /// junction instead of making the obvious corner the map showed.
+    ///
+    /// A long shallow overlap is ONE crossing, not one per segment pair:
+    /// adjacent overlapping pairs are collapsed to their closest handoff, or
+    /// two routes running alongside each other would contribute hundreds of
+    /// identical junctions and swamp the search.
     pub fn rebuild_junctions(&mut self) {
+        #[derive(Clone, Copy)]
+        struct Candidate {
+            ia: usize,
+            ib: usize,
+            sa: f64,
+            sb: f64,
+            pa: Vec2,
+            pb: Vec2,
+            ta: Vec2,
+            tb: Vec2,
+            distance: f64,
+        }
+
         self.junctions.clear();
         let n = self.lanes.len();
         for i in 0..n {
             for j in (i + 1)..n {
                 let (a, b) = (&self.lanes[i], &self.lanes[j]);
-                let reach = a.half_width + b.half_width;
-                // Walk a's samples; for each, the closest point on b within reach.
-                let mut run: Vec<(usize, usize, f64)> = Vec::new();
-                let flush = |run: &mut Vec<(usize, usize, f64)>, out: &mut Vec<Junction>| {
-                    if run.is_empty() {
-                        return;
-                    }
-                    let (ia, ib, _) = run[run.len() / 2];
-                    let (sa, sb) = (a.samples[ia], b.samples[ib]);
-                    let dot = sa.tangent.dot(sb.tangent).abs().clamp(0.0, 1.0);
-                    out.push(Junction {
-                        a: i,
-                        b: j,
-                        sa: sa.s,
-                        sb: sb.s,
-                        pos: (sa.pos + sb.pos) * 0.5,
-                        turn: dot.acos(),
-                    });
-                    run.clear();
-                };
-                for (ia, sa) in a.samples.iter().enumerate() {
-                    let near = b
-                        .samples
-                        .iter()
-                        .enumerate()
-                        .map(|(ib, sb)| (ib, sa.pos.distance(sb.pos)))
-                        .min_by(|x, y| x.1.total_cmp(&y.1));
-                    match near {
-                        Some((ib, d)) if d <= reach => run.push((ia, ib, d)),
-                        _ => flush(&mut run, &mut self.junctions),
+                let mut candidates = Vec::new();
+                for (ia, aw) in a.samples.windows(2).enumerate() {
+                    for (ib, bw) in b.samples.windows(2).enumerate() {
+                        let (fa, fb, pa, pb, distance) =
+                            segment_closest(aw[0].pos, aw[1].pos, bw[0].pos, bw[1].pos);
+                        let sa = aw[0].s + (aw[1].s - aw[0].s) * fa;
+                        let sb = bw[0].s + (bw[1].s - bw[0].s) * fb;
+                        if distance > a.half_width_at(sa) + b.half_width_at(sb) {
+                            continue;
+                        }
+                        let ta = (aw[0].tangent + (aw[1].tangent - aw[0].tangent) * fa).normalized();
+                        let tb = (bw[0].tangent + (bw[1].tangent - bw[0].tangent) * fb).normalized();
+                        candidates.push(Candidate {
+                            ia,
+                            ib,
+                            sa,
+                            sb,
+                            pa,
+                            pb,
+                            ta,
+                            tb,
+                            distance,
+                        });
                     }
                 }
-                flush(&mut run, &mut self.junctions);
+
+                // Connected components in segment-pair space collapse the many
+                // adjacent candidates around one crossing/overlap while keeping
+                // two geometrically separate crossings between the same routes.
+                while let Some(seed) = candidates.pop() {
+                    let mut cluster = vec![seed];
+                    loop {
+                        let before = candidates.len();
+                        let mut k = 0;
+                        while k < candidates.len() {
+                            let c = candidates[k];
+                            let touches = cluster.iter().any(|x| {
+                                x.ia.abs_diff(c.ia) <= 1 && x.ib.abs_diff(c.ib) <= 1
+                            });
+                            if touches {
+                                cluster.push(candidates.swap_remove(k));
+                            } else {
+                                k += 1;
+                            }
+                        }
+                        if candidates.len() == before {
+                            break;
+                        }
+                    }
+                    let best = cluster
+                        .into_iter()
+                        .min_by(|x, y| x.distance.total_cmp(&y.distance))
+                        .unwrap();
+                    let dot = best.ta.dot(best.tb).abs().clamp(0.0, 1.0);
+                    self.junctions.push(Junction {
+                        a: i,
+                        b: j,
+                        sa: best.sa,
+                        sb: best.sb,
+                        pos: (best.pa + best.pb) * 0.5,
+                        turn: dot.acos(),
+                    });
+                }
             }
         }
+        self.junctions.sort_by(|x, y| {
+            x.a.cmp(&y.a)
+                .then(x.b.cmp(&y.b))
+                .then(x.sa.total_cmp(&y.sa))
+                .then(x.sb.total_cmp(&y.sb))
+        });
         // Stops per lane: every junction on it, plus both ends.
         self.stops = self
             .lanes
@@ -1164,9 +1351,9 @@ impl Regime {
     /// client cannot drift from it.
     pub fn label(self) -> &'static str {
         match self {
-            Regime::Thrusters => "thrusters",
+            Regime::Thrusters => "impulse",
             Regime::Warp => "warp",
-            Regime::Hyperspace => "hyperspace lane",
+            Regime::Hyperspace => "hyperspace",
         }
     }
 }
@@ -1291,6 +1478,47 @@ pub struct DelayField<'a> {
 }
 
 impl DelayField<'_> {
+    /// Solve when a signal sent from `source` meets a receiver moving at a
+    /// constant velocity.
+    ///
+    /// The first delay reaches the receiver's position at issue time. Each
+    /// refinement advances the receiver by that delay and re-routes to the new
+    /// point. Four passes are ample because every signal regime outruns every
+    /// hull; stop earlier once another pass changes the clock by less than one
+    /// simulation tick. `coupled` is deliberately fixed by the receiver's drive
+    /// state at issue time rather than guessed again from each extrapolated point.
+    /// `delay_factor` carries regional command-tempo effects without changing
+    /// the path geometry.
+    pub fn meeting_delay(
+        &self,
+        source: Vec2,
+        receiver_pos: Vec2,
+        receiver_vel: Vec2,
+        coupled: bool,
+        delay_factor: f64,
+    ) -> (f64, Vec2) {
+        let travel_time = |target| {
+            let raw = if coupled {
+                self.to_coupled(source, target)
+            } else {
+                self.between(source, target)
+            };
+            raw * delay_factor
+        };
+        let mut delay = travel_time(receiver_pos);
+        let mut meeting = receiver_pos;
+        for _ in 0..4 {
+            meeting = receiver_pos + receiver_vel * delay;
+            let next = travel_time(meeting);
+            let converged = (next - delay).abs() < crate::config::DT;
+            delay = next;
+            if converged {
+                break;
+            }
+        }
+        (delay, meeting)
+    }
+
     /// Seconds for information to get from `a` to `b`.
     ///
     /// Symmetric, because a lane is not a current and carries information equally
@@ -1303,7 +1531,21 @@ impl DelayField<'_> {
     /// The same journey, with the HOPS it takes — what the order graphic traces
     /// so the line on the map is the path the signal actually flew.
     pub fn path(&self, a: Vec2, b: Vec2) -> Vec<Hop> {
-        self.lanes.signal(a, b, self.c, self.buoys).1
+        let hops = self.lanes.signal(a, b, self.c, self.buoys).1;
+        self.lanes.trace_signal_hops(a, &hops)
+    }
+
+    /// Seconds for an outbound order whose receiver is actively coupled to a
+    /// lane. Off-lane receivers must use [`Self::between`] and a physical relay
+    /// as their hyperspace exit.
+    pub fn to_coupled(&self, a: Vec2, p: Vec2) -> f64 {
+        self.lanes.signal_to_coupled(a, p, self.c, self.buoys).0
+    }
+
+    /// The drawable form of [`Self::to_coupled`].
+    pub fn path_to_coupled(&self, a: Vec2, p: Vec2) -> Vec<Hop> {
+        let hops = self.lanes.signal_to_coupled(a, p, self.c, self.buoys).1;
+        self.lanes.trace_signal_hops(a, &hops)
     }
 
     /// §coupled: `between`, for a sender RIDING A LANE — its report goes out
@@ -1363,11 +1605,20 @@ impl LaneNetwork {
             return Vec::new();
         };
         let mut legs: Vec<Leg> = Vec::new();
-        // GETTING ON: a warp hop to the first point of the ride.
+        // GETTING ON: reach the first point of the ride. This is a warp hop only
+        // when the hull starts outside the ribbon.
         if let Some(&(l0, s0)) = pairs.first() {
             let entry = self.lanes[l0].at(s0);
             if entry.distance(from) > 1.0 {
-                legs.push(Leg::warp(entry));
+                // A parked hull can be off the centerline while still inside
+                // the ribbon. It is already coupled there, so converging on the
+                // lane's centerline must not masquerade as an open-space hop and
+                // force the drive down before its next order.
+                legs.push(if self.lanes[l0].contains(from).is_some() {
+                    Leg::riding(entry, self.lanes[l0].id)
+                } else {
+                    Leg::warp(entry)
+                });
             }
         }
         for w in pairs.windows(2) {
@@ -1388,8 +1639,20 @@ impl LaneNetwork {
         while legs.first().is_some_and(|l| l.to.distance(from) < 1.0) {
             legs.remove(0);
         }
-        // GETTING OFF: the last hop to the destination is open space again.
-        legs.push(Leg::warp(to));
+        // GETTING OFF — unless the destination itself is still inside the
+        // ribbon. The old unconditional warp leg made a fleet drop its
+        // hyperspace drive for the last few pixels of an otherwise lane-bound
+        // trip, then sit disconnected while the player waited to issue the next
+        // order. A destination inside the final ribbon is a lane arrival: fly
+        // the short remainder without leaving the medium.
+        let arrival_lane = pairs
+            .last()
+            .and_then(|(li, _)| self.lanes[*li].contains(to).map(|_| self.lanes[*li].id));
+        legs.push(match arrival_lane {
+            Some(lane) => Leg::riding(to, lane),
+            None => Leg::warp(to),
+        });
+        legs.dedup_by(|x, y| x.to.distance(y.to) < 1.0 && x.lane == y.lane);
         legs
     }
 }
@@ -2371,6 +2634,59 @@ mod tests {
         assert_eq!(a.stops, b.stops);
     }
 
+    /// A crossing BETWEEN baked vertices is still a junction. The old detector
+    /// compared only the four endpoints in this fixture, found them all far
+    /// apart, and omitted the obvious corner at the origin. On an arc that makes
+    /// the route continue almost a full revolution before another junction lets
+    /// it change lanes.
+    #[test]
+    fn a_crossing_between_samples_creates_the_corner_it_visibly_has() {
+        let lane = |id: u32, a: Vec2, b: Vec2| {
+            let tangent = (b - a).normalized();
+            Lane {
+                id,
+                kind: LaneKind::Trunk,
+                name: format!("Sparse {id}"),
+                control: vec![a, b],
+                samples: vec![
+                    LaneSample { pos: a, tangent, s: 0.0 },
+                    LaneSample { pos: b, tangent, s: a.distance(b) },
+                ],
+                half_width: 10.0,
+                tapers: false,
+            }
+        };
+        let n = LaneNetwork::of(vec![
+            lane(0, Vec2::new(-1_000.0, 0.0), Vec2::new(1_000.0, 0.0)),
+            lane(1, Vec2::new(0.0, -1_000.0), Vec2::new(0.0, 1_000.0)),
+        ]);
+        assert_eq!(n.junctions.len(), 1, "the continuous centerlines cross once");
+        assert!(
+            n.junctions[0].pos.distance(Vec2::ZERO) < 1e-9,
+            "the handoff belongs at the actual crossing, got {:?}",
+            n.junctions[0].pos,
+        );
+
+        let route = n.route(
+            Vec2::new(-900.0, 0.0),
+            Vec2::new(0.0, 900.0),
+            1.0,
+            100.0,
+        );
+        let used: std::collections::BTreeSet<u32> =
+            route.iter().filter_map(|leg| leg.lane).collect();
+        assert_eq!(used, [0, 1].into_iter().collect(), "the route turns at that crossing");
+        let corner = route
+            .windows(2)
+            .find(|w| w[0].lane != w[1].lane)
+            .expect("the path changes lanes");
+        assert!(
+            corner[0].to.distance(Vec2::ZERO) < 1e-9
+                && corner[1].to.distance(Vec2::ZERO) < 1e-9,
+            "both centerlines hand off at the same proper corner",
+        );
+    }
+
     /// When no lane helps, the route is EMPTY — the common case near home, and
     /// the fallback that keeps every pre-lane behaviour intact.
     ///
@@ -2389,38 +2705,54 @@ mod tests {
         assert!(n.route(a, a + Vec2::new(300.0, 0.0), 200.0, 2_000.0).is_empty(), "a hop next door needs no lane");
     }
 
-    /// §buoys: ONE RELAY ON A LANE IS ALREADY WORTH SOMETHING — it injects into
-    /// the medium, and the signal rides to the point nearest the receiver before
-    /// warping the remainder. No relay at all is plain warp light.
-    ///
-    /// This replaces a rule that demanded a PAIR sharing a lane before any lane
-    /// was used. That made buoys near-worthless in practice: the final hop out to
-    /// the ship ran at warp and dominated, so home + one buoy measured exactly
-    /// the same as no buoys at all.
+    /// §buoys: HOME ALONE CANNOT INJECT AN OUTBOUND ORDER INTO ITS LANE. The
+    /// receiver is deliberately off the ribbon, matching the playtest failure:
+    /// without a built buoy sharing home's lane, the order must fly straight at
+    /// warp. Adding that buoy opens access to the connected lane graph, but the
+    /// off-lane receiver still needs a straight warp hop from that physical buoy.
     #[test]
-    fn one_relay_on_a_lane_already_carries_the_signal() {
-        let (n, ..) = net(1, 4);
-        let l = &n.lanes[0];
-        let (a, b) = (l.at(l.length() * 0.15), l.at(l.length() * 0.85));
+    fn home_relay_alone_sends_an_off_lane_order_straight_at_warp() {
+        let ctrl = vec![Vec2::new(0.0, 0.0), Vec2::new(100_000.0, 0.0)];
+        let n = LaneNetwork::of(vec![Lane {
+            id: 0,
+            kind: LaneKind::Trunk,
+            name: "Home lane".into(),
+            samples: bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 2_000.0,
+            tapers: false,
+        }]);
+        let home = Vec2::new(10_000.0, 0.0);
+        let buoy = Vec2::new(70_000.0, 0.0);
+        let raider = Vec2::new(90_000.0, 30_000.0);
         let c = 400.0;
-        let warp_time = a.distance(b) / (c * WARP_FACTOR);
+        let warp_time = home.distance(raider) / (c * WARP_FACTOR);
         assert!(
-            (n.signal(a, b, c, &[]).0 - warp_time).abs() < 1e-6,
-            "no relay anywhere: plain warp light"
+            (n.signal(home, raider, c, &[]).0 - warp_time).abs() < 1e-6,
+            "no relay anywhere is plain warp light"
         );
-        let (one, hops) = n.signal(a, b, c, &[a]);
+        let (home_only, hops) = n.signal(home, raider, c, &[home]);
         assert!(
-            one < warp_time * 0.5,
-            "a lone relay on the lane should be far quicker than warp ({one:.1}s vs {warp_time:.1}s)"
+            (home_only - warp_time).abs() < 1e-6,
+            "home alone must still be plain warp ({home_only:.1}s vs {warp_time:.1}s)"
         );
-        assert!(hops.iter().any(|h| h.lane == Some(l.id)), "and the path says which road it rode");
-        assert_eq!(hops.last().unwrap().to, b, "a signal always ends where it was sent");
+        assert_eq!(hops.len(), 1, "the order takes one straight hop");
+        assert_eq!(hops[0].to, raider);
+        assert_eq!(hops[0].lane, None, "the home-only order claims no lane");
+
+        let (paired, hops) = n.signal(home, raider, c, &[home, buoy]);
+        assert!(paired < warp_time, "home plus a built buoy should open lane access");
+        assert!(
+            hops.iter().any(|h| h.to == buoy && h.lane == Some(0)),
+            "the paired order exits the lane at the built buoy"
+        );
+        assert_eq!(hops.last().unwrap().lane, None, "the off-lane remainder is warp");
     }
 
-    /// §buoys: TWO ON THE SAME LANE is the purchase — that pair, and only that
-    /// pair, unlocks hyperspace-speed relay along the route between them.
+    /// §buoys: TWO RELAYS ON THE SAME LANE are the access purchase. In the world
+    /// model either endpoint may be the home system.
     #[test]
-    fn two_buoys_on_one_lane_carry_the_signal_at_lane_speed() {
+    fn two_relays_on_one_lane_carry_the_signal_at_lane_speed() {
         let (n, ..) = net(1, 4);
         let l = &n.lanes[0];
         let (a, b) = (l.at(l.length() * 0.1), l.at(l.length() * 0.9));
@@ -2429,7 +2761,7 @@ mod tests {
         let (relayed, hops) = n.signal(a, b, c, &[a, b]);
         assert!(
             relayed < warp_only * 0.5,
-            "two buoys on one lane should be far quicker ({relayed:.1}s vs {warp_only:.1}s)",
+            "two relays on one lane should be far quicker ({relayed:.1}s vs {warp_only:.1}s)",
         );
         assert!(hops.iter().any(|h| h.lane == Some(l.id)), "and the path says which road it rode");
         assert_eq!(hops.last().unwrap().to, b, "a signal always ends where it was sent");
@@ -2464,17 +2796,64 @@ mod tests {
         assert!((direct_hops[0].t - direct_t).abs() < 1e-9);
     }
 
-    /// §junction-signal: A SIGNAL CROSSES WHERE THE ROADS CROSS — but only
-    /// between lanes you have a relay ON. Two lanes meeting at right angles: a
-    /// relay on the first alone leaves the far end of the second at warp; a
-    /// relay on each lets the signal ride through the crossing.
-    ///
-    /// This is what lets information follow the route a ship actually flies.
-    /// Without it a hull that junctioned onto a second lane reported home at
-    /// barely better than warp (measured 133.6s vs warp's 170.8s on a 341k-su
-    /// leg, where riding end to end is 17.1s).
+    /// The order comet must trace the CURVE whose arc length supplied its fast
+    /// arrival time. Relay and endpoint nodes alone draw the chord between them,
+    /// making a lane-speed order look as though it crossed open space in a
+    /// straight line.
     #[test]
-    fn a_signal_crosses_a_junction_between_covered_lanes() {
+    fn a_coupled_order_path_contains_the_lane_curve_not_just_its_endpoints() {
+        let control = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(100_000.0, 60_000.0),
+            Vec2::new(200_000.0, 0.0),
+        ];
+        let n = LaneNetwork::of(vec![Lane {
+            id: 42,
+            kind: LaneKind::Trunk,
+            name: "Signal Bow".into(),
+            samples: bake_for_tests(&control),
+            control,
+            half_width: 2_000.0,
+            tapers: false,
+        }]);
+        let lane = &n.lanes[0];
+        let home = lane.at(lane.length() * 0.05);
+        let buoy = lane.at(lane.length() * 0.35);
+        let hull = lane.at(lane.length() * 0.95);
+        let buoys = [home, buoy];
+        let field = DelayField { lanes: &n, buoys: &buoys, c: 400.0 };
+
+        let coarse = n.signal_to_coupled(home, hull, field.c, &buoys).1;
+        let traced = field.path_to_coupled(home, hull);
+        assert!(
+            traced.len() > coarse.len() + 3,
+            "the drawable path should gain centerline samples ({} coarse, {} traced)",
+            coarse.len(),
+            traced.len(),
+        );
+        let peak = traced.iter().map(|hop| hop.to.y).fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            peak > 40_000.0,
+            "the path should follow the lane's 60k-su bow instead of its near-horizontal chord (peak {peak:.0})",
+        );
+        let mut previous = 0.0;
+        for hop in &traced {
+            assert!(hop.t >= previous - 1e-9, "expanded hop times must remain monotonic");
+            previous = hop.t;
+        }
+        assert!(
+            (traced.last().unwrap().t - field.to_coupled(home, hull)).abs() < 1e-9,
+            "expanding the curve must not alter the authoritative arrival time",
+        );
+    }
+
+    /// §junction-signal: EVERY RELAY INJECTS ITS OWN LANES, and junctions
+    /// bridge two covered lanes (design ruling: the home system acts like a
+    /// buoy — an entry/exit that injects into hyperspace by itself). One relay
+    /// on each crossing road therefore routes across the junction; a buoy on
+    /// home's own lane instead buys a further-along exit before the warp leg.
+    #[test]
+    fn relays_inject_their_own_lanes_and_junctions_bridge_them() {
         let ctrl_a = vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
         let ctrl_b =
             vec![Vec2::new(150_000.0, -150_000.0), Vec2::new(150_000.0, 0.0), Vec2::new(150_000.0, 150_000.0)];
@@ -2490,27 +2869,64 @@ mod tests {
         let n = LaneNetwork::of(vec![mk(0, ctrl_a), mk(1, ctrl_b)]);
         assert!(!n.junctions.is_empty(), "premise: the two lanes cross somewhere");
         let c = 400.0;
-        let src = Vec2::new(10_000.0, 0.0); // on lane 0, near its start
-        let dst = Vec2::new(150_000.0, 140_000.0); // far up lane 1
-        let warp_time = src.distance(dst) / (c * WARP_FACTOR);
+        let home = Vec2::new(10_000.0, 0.0);
+        let buoy = Vec2::new(130_000.0, 0.0);
+        let hull = Vec2::new(150_000.0, 140_000.0);
+        let off_lane_target = Vec2::new(170_000.0, 140_000.0);
+        let warp_time = home.distance(off_lane_target) / (c * WARP_FACTOR);
 
-        // A relay on lane 0 only: it can ride lane 0 to the crossing, but lane 1
-        // is not covered, so the rest is warp.
-        let one_lane = n.signal(src, dst, c, &[src]).0;
-        // A relay on each: the crossing opens and the whole path rides.
-        let both = n.signal(src, dst, c, &[src, dst]).0;
+        // Home injects lane 0; a relay on the OTHER lane covers lane 1; the
+        // junction bridges them — the signal rides both roads to the target's
+        // neighbourhood instead of crossing the whole way at warp.
+        let (cross, cross_hops) = n.signal(home, off_lane_target, c, &[home, hull]);
         assert!(
-            both < one_lane * 0.6,
-            "covering the second lane should open the crossing ({both:.1}s vs {one_lane:.1}s)"
+            cross < warp_time * 0.5,
+            "one relay on each crossing lane routes through the junction \
+             ({cross:.1}s vs warp {warp_time:.1}s)"
         );
-        assert!(both < warp_time * 0.25, "and be far quicker than warp ({both:.1}s vs {warp_time:.1}s)");
+        assert!(cross_hops.iter().any(|h| h.lane == Some(0)), "rides home's lane");
+        assert!(cross_hops.iter().any(|h| h.lane == Some(1)), "and crosses onto the other");
 
-        // §coupled: a HULL riding lane 1 is itself the transmitter on that lane,
-        // so its report crosses back onto lane 0 without a buoy of its own.
-        let coupled = n.signal_coupled(dst, src, c, &[src]);
+        // Home + buoy share lane 0. For an OFF-LANE target, the buoy is the
+        // physical exit: the order may not ride lane 1 merely because it passes
+        // closer to the receiver.
+        let (routed, off_lane_hops) = n.signal(home, off_lane_target, c, &[home, buoy]);
         assert!(
-            coupled < warp_time * 0.25,
-            "a riding hull reports home through the crossing ({coupled:.1}s vs warp {warp_time:.1}s)"
+            routed < warp_time,
+            "the buoy should improve the off-lane trip ({routed:.1}s vs warp {warp_time:.1}s)"
+        );
+        assert!(
+            off_lane_hops.iter().any(|h| h.to == buoy && h.lane == Some(0)),
+            "the order leaves hyperspace at the owned buoy"
+        );
+        assert!(
+            off_lane_hops.iter().all(|h| h.lane != Some(1)),
+            "an off-lane receiver does not turn lane 1 into a free exit"
+        );
+        assert_eq!(off_lane_hops.last().unwrap().lane, None, "the final hop is warp");
+
+        // A hull actively RIDING lane 1 is itself coupled at the receiving end.
+        // With the access pair in place, its outbound order crosses the junction
+        // and reaches the hull directly through both lanes.
+        let hull_warp = home.distance(hull) / (c * WARP_FACTOR);
+        let (to_hull, hull_hops) = n.signal_to_coupled(home, hull, c, &[home, buoy]);
+        assert!(
+            to_hull < hull_warp * 0.25,
+            "an order to a lane-riding hull crosses the junction \
+             ({to_hull:.1}s vs warp {hull_warp:.1}s)"
+        );
+        assert!(hull_hops.iter().any(|h| h.lane == Some(0)), "the order rides lane 0");
+        assert!(hull_hops.iter().any(|h| h.lane == Some(1)), "the order rides lane 1");
+
+        // §coupled: once the hull changes onto lane 1, it is itself the source
+        // in the medium. Its return information crosses back onto lane 0 even
+        // with only the home relay present.
+        let coupled_warp = hull.distance(home) / (c * WARP_FACTOR);
+        let coupled = n.signal_coupled(hull, home, c, &[home]);
+        assert!(
+            coupled < coupled_warp * 0.25,
+            "a lane-riding hull reports home through the crossing \
+             ({coupled:.1}s vs warp {coupled_warp:.1}s)"
         );
     }
 
@@ -2858,7 +3274,93 @@ mod route_flight {
 
 
     }
+
+    /// A destination inside the lane ribbon is a PARKING POINT in hyperspace,
+    /// not an excuse to drop the drive for a tiny final warp hop. Remaining
+    /// coupled keeps the ship reachable while the player chooses its next
+    /// order, and that next lane-bound route must depart without cycling the
+    /// drive merely because the parked point is off the exact centerline.
+    #[test]
+    fn an_in_ribbon_arrival_stays_coupled_for_the_next_order() {
+        let control = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(150_000.0, 0.0),
+            Vec2::new(300_000.0, 0.0),
+        ];
+        let net = LaneNetwork::of(vec![Lane {
+            id: 7,
+            kind: LaneKind::Trunk,
+            name: "Parking Lane".into(),
+            samples: bake(&control),
+            control,
+            half_width: 2_000.0,
+            tapers: false,
+        }]);
+        let env = TransitEnv { lanes: &net, wells: &[] };
+        let from = Vec2::new(10_000.0, 0.0);
+        let destination = Vec2::new(200_000.0, 1_000.0);
+        let mut fleet = Fleet::single(
+            crate::EntityId(1),
+            crate::PlayerId(1),
+            ShipKind::Raider,
+            from,
+            FleetOrder::MoveTo { dest: destination },
+            None,
+        );
+        let base = fleet.transit_speed();
+        fleet.route =
+            net.route(from, destination, base * WARP_FACTOR, base * WARP_FACTOR * LANE_MULT);
+        assert_eq!(
+            fleet.route.last().and_then(|leg| leg.lane),
+            Some(7),
+            "the final in-ribbon leg must not be tagged as open-space warp",
+        );
+
+        let dt = 1.0 / 30.0;
+        let mut time = 0.0;
+        while !matches!(fleet.order, FleetOrder::Idle) && time < 1_000.0 {
+            fleet.advance(time, dt, &env);
+            time += dt;
+        }
+        assert!(matches!(fleet.order, FleetOrder::Idle), "the fleet arrived");
+        assert_eq!(fleet.pos, destination);
+        assert_eq!(
+            fleet.drive_state,
+            crate::ship::DriveState::Cruising(Regime::Hyperspace),
+            "arrival inside the ribbon keeps the hyperspace drive engaged",
+        );
+        assert!(
+            fleet.drive_state.stirs_the_lane(),
+            "the parked hull remains command-coupled"
+        );
+
+        // Waiting for the player does not quietly wind the drive down.
+        for _ in 0..300 {
+            fleet.advance(time, dt, &env);
+            time += dt;
+        }
+        assert_eq!(
+            fleet.drive_state,
+            crate::ship::DriveState::Cruising(Regime::Hyperspace),
+            "ten idle seconds leave the parked drive engaged",
+        );
+
+        // A subsequent order farther along the same ribbon uses that existing
+        // coupling, including the short off-centre return to the centerline.
+        let next = Vec2::new(280_000.0, 500.0);
+        fleet.order = FleetOrder::MoveTo { dest: next };
+        fleet.route =
+            net.route(fleet.pos, next, base * WARP_FACTOR, base * WARP_FACTOR * LANE_MULT);
+        assert_eq!(
+            fleet.route.first().and_then(|leg| leg.lane),
+            Some(7),
+            "an in-ribbon origin is already on the lane",
+        );
+        fleet.advance(time, dt, &env);
+        assert_eq!(
+            fleet.drive_state,
+            crate::ship::DriveState::Cruising(Regime::Hyperspace),
+            "the next lane order does not cycle the drive",
+        );
+    }
 }
-
-
-

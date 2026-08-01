@@ -2,7 +2,7 @@
 
 import { Net } from "./net";
 import { Renderer } from "./render";
-import { initialState, type LinkStatus, type ViewState } from "./state";
+import { initialState, type LinkStatus, type PendingIntent, type ViewState } from "./state";
 import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
@@ -16,7 +16,7 @@ const state: ViewState = initialState();
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
 // Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 7;
+const EXPECTED_PROTOCOL_VERSION = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -280,7 +280,7 @@ const bar = (pct: number, tone = "") =>
   `<div class="bar"><div class="bar__fill ${tone}" style="width:${Math.max(0, Math.min(100, pct))}%"></div></div>`;
 const stat = (label: string, value: string, tone = "") =>
   `<div class="stat"><dt>${esc(label)}</dt><dd class="${tone}">${value}</dd></div>`;
-const statStrip = (cells: string[]) => `<div class="stat-strip">${cells.join("")}</div>`;
+const statStrip = (cells: string[], cls = "") => `<div class="stat-strip${cls ? ` ${cls}` : ""}">${cells.join("")}</div>`;
 
 // Sparkline as inline SVG — no deps. Stroke auto-colors by trend (first vs last).
 function spark(data: number[], w = 60, h = 18): string {
@@ -552,6 +552,10 @@ function buildRail(): void {
 // layer over GhostView — it shows ONLY what the per-player view already reveals, so
 // a rival's cargo/route/internal state never leaks. ------------------------------
 let shipPanelBuilt = false;
+// The panel is rebuilt with every fresh View, so disclosure state must outlive
+// its DOM. Sets make the default collapsed and keep each fleet's choice stable.
+const expandedShipPolicies = new Set<string>();
+const expandedShipManagement = new Set<string>();
 function buildShipPanel(): void {
   if (shipPanelBuilt) return;
   shipPanelBuilt = true;
@@ -562,6 +566,22 @@ function buildShipPanel(): void {
     const act = (b as HTMLElement).dataset.act;
     if (act === "close") {
       deselectShip();
+    } else if (act === "select-order" && state.selectedShipId) {
+      const id = Number((b as HTMLElement).dataset.orderId);
+      const exists = (state.pendingOrders.get(state.selectedShipId) ?? []).some((p) => p.id === id);
+      if (exists) {
+        state.selectedOrderId = state.selectedOrderId === id ? null : id;
+        renderer.stateVersion++;
+        updateShipPanel();
+      }
+    } else if (act === "toggle-policy" && state.selectedShipId) {
+      if (expandedShipPolicies.has(state.selectedShipId)) expandedShipPolicies.delete(state.selectedShipId);
+      else expandedShipPolicies.add(state.selectedShipId);
+      updateShipPanel();
+    } else if (act === "toggle-management" && state.selectedShipId) {
+      if (expandedShipManagement.has(state.selectedShipId)) expandedShipManagement.delete(state.selectedShipId);
+      else expandedShipManagement.add(state.selectedShipId);
+      updateShipPanel();
     } else if (act === "emplace" && state.selectedShipId) {
       const k = (e.target as HTMLElement).closest(".emplace-btn")?.getAttribute("data-kind") as
         | "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" | null;
@@ -597,18 +617,10 @@ function buildShipPanel(): void {
         readout().innerHTML =
           `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).` +
           (k === "hyperspace_buoy"
-            ? ` <span class="dim">It will open this lane to your signals.</span>`
+            ? ` <span class="dim">It is an entry/exit for off-lane signals once another owned relay shares this lane; your home system counts as one.</span>`
             : "");
         updateShipPanel();
       }
-    } else if (act === "recall" && state.selectedShipId && net) {
-      net.send({ type: "RecallRaid", raider_id: state.selectedShipId });
-      delete state.raids[state.selectedShipId]; // break off the intercept estimate
-      updateShipPanel();
-    } else if (act === "withdraw" && state.selectedShipId && net) {
-      // §battles-take-time: light-delayed break-off; the echo lifecycle tracks it.
-      net.send({ type: "Withdraw", fleet_id: state.selectedShipId });
-      updateShipPanel();
     } else if (act === "split" && state.selectedShipId && net) {
       const kind = (b as HTMLElement).dataset.kind as ShipKind | undefined;
       if (kind) {
@@ -619,13 +631,6 @@ function buildShipPanel(): void {
       if (from) {
         net.send({ type: "MergeFleets", into: state.selectedShipId, from });
       }
-    } else if (act === "transit" && state.selectedShipId && net) {
-      const mode = (b as HTMLElement).dataset.mode as "full" | "stealth" | undefined;
-      if (mode) {
-        transitModes.set(state.selectedShipId, mode);
-        net.send({ type: "SetFleetTransit", fleet_id: state.selectedShipId, mode });
-        updateShipPanel();
-      }
     } else if (act === "posture" && state.selectedShipId && net) {
       const posture = (b as HTMLElement).dataset.mode as EngagementPosture | undefined;
       if (posture) {
@@ -633,39 +638,10 @@ function buildShipPanel(): void {
         net.send({ type: "SetFleetPosture", fleet_id: state.selectedShipId, posture });
         updateShipPanel();
       }
-    } else if (act === "refitmod") {
-      // §modules Part B4: toggle a module into the composed REFIT target (≤2).
-      const m = (b as HTMLElement).dataset.mod as ModuleKind | undefined;
-      if (m) {
-        const i = pendingRefit.indexOf(m);
-        if (i >= 0) pendingRefit.splice(i, 1);
-        else if (pendingRefit.length < 2) pendingRefit.push(m);
-        updateShipPanel();
-      }
-    } else if (act === "refitfit") {
-      // §fitting: one click composes the refit target from a saved doctrine fit.
-      const f = (state.syndicate?.fits ?? []).find((x) => x.name === (b as HTMLElement).dataset.fitname);
-      if (f) {
-        pendingRefit = [...f.modules];
-        updateShipPanel();
-      }
     } else if (act === "nameflagship" && net) {
       // §ladder B4: christen the syndicate's Titan (empty clears the name).
       const name = window.prompt("Flagship name (≤24 chars — empty to un-name):", state.syndicate?.flagship_name ?? "");
       if (name !== null) net.send({ type: "NameFlagship", name: name.trim() });
-    } else if (act === "refit" && state.selectedShipId && net) {
-      // §modules Part B4: refit the named (kind, from) stack to the composed
-      // target (clamped to the hull's slots). The server enforces the docked-yard
-      // + ledger-delta gate; a soft reject leaves the fleet unchanged.
-      const el = b as HTMLElement;
-      const ship = el.dataset.kind as ShipKind | undefined;
-      const n = Number(el.dataset.n) || 0;
-      if (ship && n > 0) {
-        const from = el.dataset.from ? el.dataset.from.split(",").filter(Boolean) as ModuleKind[] : [];
-        const to = pendingRefit.slice(0, MODULE_SLOTS[ship] ?? 0);
-        net.send({ type: "RefitShips", fleet_id: state.selectedShipId, ship, from, to, n });
-        $("readout").innerHTML = `Refit ordered: <b>${n}× ${esc(shipKindLabel(ship))}</b> → ${to.length ? to.map((m) => MODULE_GLYPH[m]).join(" ") : "stock"} <span class="dim">(at a docked Shipyard; needs the added modules in the system ledger).</span>`;
-      }
     } else if (act === "engage-freight" && state.selectedShipId && net) {
       const turningOn = (b as HTMLElement).dataset.on === "1";
       if (turningOn && !confirmAuthorityHostility("Engage Authority freight arriving at this blockade?")) {
@@ -700,6 +676,10 @@ function buildShipPanel(): void {
   });
 }
 function selectShip(id: string): void {
+  if (state.selectedShipId !== id) {
+    clearPendingIntent();
+    state.selectedOrderId = null;
+  }
   state.selectedShipId = id;
   state.selectedSystemId = null; // a ship and a system are never both selected
   state.selectedEmplacementId = null; // …nor a ship and a structure
@@ -711,6 +691,8 @@ function selectShip(id: string): void {
 // §emplacements: select a standing structure — same right-dock panel as a
 // ship, since both answer "what is this thing I clicked".
 function selectEmplacement(id: string): void {
+  clearPendingIntent();
+  state.selectedOrderId = null;
   state.selectedEmplacementId = id;
   state.selectedShipId = null;
   state.selectedSystemId = null;
@@ -720,6 +702,8 @@ function selectEmplacement(id: string): void {
   updateShipPanel();
 }
 function deselectShip(): void {
+  clearPendingIntent();
+  state.selectedOrderId = null;
   state.selectedShipId = null;
   state.selectedEmplacementId = null;
   $("ship-panel").classList.remove("is-open");
@@ -739,12 +723,236 @@ const SHIP_KIND_LABEL: Record<ShipKind, string> = {
 };
 const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
+// --- Deliberate map orders: preview first, transmit only on confirmation. ----
+let intentBarBuilt = false;
+
+function samePoint(a: Vec2 | undefined, b: Vec2 | undefined): boolean {
+  return !!a && !!b && Math.hypot(a.x - b.x, a.y - b.y) < 1e-6;
+}
+
+function intentTargetLabel(intent: PendingIntent): string {
+  if (intent.verb === "raid" || intent.verb === "attack") {
+    const target = state.ghosts.find((g) => g.id === intent.targetId);
+    return target ? `rival ${shipKindLabel(target.kind)}` : "rival contact";
+  }
+  if (intent.verb === "blockade" || intent.verb === "survey") {
+    return state.galaxy?.systems.find((s) => s.id === intent.targetId)?.name ?? "target system";
+  }
+  if (intent.verb === "demolish") {
+    const target = state.emplacements.find((e) => e.id === intent.targetId);
+    return target ? `rival ${emplacementLabel(target.kind)}` : "rival structure";
+  }
+  return "this destination";
+}
+
+function intentSummary(intent: PendingIntent): string {
+  const ship = state.ghosts.find((g) => g.id === intent.shipId && g.own);
+  const shipName = ship ? shipKindLabel(ship.kind) : "fleet";
+  const signal = ship ? `${ship.age.toFixed(0)}s` : "?";
+  const target = intentTargetLabel(intent);
+  let summary = "";
+  switch (intent.verb) {
+    case "move": summary = `Move ${shipName} → ${target} · signal ~${signal}`; break;
+    case "raid": summary = `RAID ${target} — intercept and steal cargo · signal ~${signal}`; break;
+    case "attack": summary = `ATTACK ${target} — full battle, destroys it · signal ~${signal}`; break;
+    case "blockade": summary = `BLOCKADE ${target} — strangle its logistics · signal ~${signal}`; break;
+    case "demolish": summary = `DEMOLISH ${target} — hold station until it falls · signal ~${signal}`; break;
+    case "survey": summary = `SURVEY ${target} — active sensing, ~${SURVEY_SECS_UI}s on-site · signal ~${signal}`; break;
+  }
+  const authority = (intent.verb === "raid" || intent.verb === "attack")
+    && state.ghosts.find((g) => g.id === intent.targetId)?.tca;
+  return authority
+    ? `${summary} · Authority citation projects ${projectedBand(TCA_INCIDENT_LOSS_UI)}`
+    : summary;
+}
+
+function renderIntentBar(): void {
+  const root = $("intent-bar");
+  const intent = state.pendingIntent;
+  root.classList.toggle("is-open", intent !== null);
+  setHtml(root, intent
+    ? `<div class="intent-bar__summary">${esc(intentSummary(intent))}</div>` +
+      `<div class="intent-bar__actions">` +
+      `<button class="act act--primary" data-act="confirm-intent">Confirm <span class="dim">Enter</span></button>` +
+      `<button class="act" data-act="cancel-intent">Cancel <span class="dim">Esc</span></button></div>`
+    : "");
+}
+
+function buildIntentBar(): void {
+  if (intentBarBuilt) return;
+  intentBarBuilt = true;
+  $("intent-bar").addEventListener("click", (e) => {
+    const button = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+    if (button?.dataset.act === "confirm-intent") confirmPendingIntent();
+    else if (button?.dataset.act === "cancel-intent") clearPendingIntent();
+  });
+}
+
+function clearPendingIntent(preserveReadout = false): void {
+  if (state.pendingIntent === null) return;
+  state.pendingIntent = null;
+  renderer.stateVersion++;
+  renderIntentBar();
+  if (!preserveReadout) {
+    const selected = state.selectedShipId
+      ? state.ghosts.find((g) => g.id === state.selectedShipId && g.own)
+      : undefined;
+    if (selected) {
+      readout().innerHTML = `<b>${esc(shipKindLabel(selected.kind))}</b> selected — details in the panel. ` +
+        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
+    }
+  }
+}
+
+function previewReadout(intent: PendingIntent): void {
+  const target = intentTargetLabel(intent);
+  const ship = state.ghosts.find((g) => g.id === intent.shipId && g.own);
+  switch (intent.verb) {
+    case "move":
+      readout().innerHTML = `Prospective route for your <b>${esc(ship ? shipKindLabel(ship.kind) : "fleet")}</b>. ` +
+        `<span class="dim">Compare the lighter dashed course with the solid current route, then confirm or cancel.</span>`;
+      break;
+    case "raid":
+      readout().innerHTML = `Raid preview: pursue <b>${esc(target)}</b> to intercept and steal cargo. ` +
+        `<span class="dim">The target will be pursued from its true position when the order arrives.</span>`;
+      break;
+    case "attack":
+      readout().innerHTML = `Attack preview: your fleet will pursue <b>${esc(target)}</b> into a <b>FULL battle</b> to destroy it; cargo is lost with the fleet.`;
+      break;
+    case "blockade":
+      readout().innerHTML = `Blockade preview: take station at <b>${esc(target)}</b> and strangle its logistics; standing defense will contest it.`;
+      break;
+    case "demolish":
+      readout().innerHTML = `Demolition preview: tear down <b>${esc(target)}</b>. ` +
+        `<span class="dim">The fleet must hold station there to finish the job; driven off, the work resets.</span>`;
+      break;
+    case "survey":
+      readout().innerHTML = `Survey preview: fly to <b>${esc(target)}</b> and dwell ~${SURVEY_SECS_UI}s — active sensing is LOUD. ` +
+        `<span class="dim">The exact geology travels home at light speed.</span>`;
+      break;
+  }
+}
+
+function beginPendingIntent(intent: PendingIntent): void {
+  buildIntentBar();
+  state.pendingIntent = intent;
+  renderer.stateVersion++;
+  renderIntentBar();
+  previewReadout(intent);
+  if (intent.verb === "move" && intent.dest && net) {
+    net.send({ type: "PreviewRoute", ship_id: intent.shipId, dest: intent.dest });
+  }
+}
+
+function moveOrderReadout(ship: GhostView, dest: Vec2): string {
+  const out = ship.age; // ≈ light delay command-center → ship
+  // §explore Part 4: a COLONY ship sent toward an UNSURVEYED system is a
+  // blind claim — informational friction only (never blocks the order).
+  let blind = "";
+  if (ship.kind === "colony" && state.galaxy) {
+    const near = state.galaxy.systems.find((sys) => Math.hypot(sys.pos.x - dest.x, sys.pos.y - dest.y) <= 150);
+    if (near && knownDeposits(near.id) === null) {
+      blind = ` <span style="color:var(--warn)">Heading to <b>${esc(near.name)}</b> (${esc(near.band.toUpperCase())} band) — unsurveyed, claiming blind: the composition and any hidden trait are a gamble.</span>`;
+    }
+  }
+  return `Order away to <b>${esc(shipKindLabel(ship.kind))}</b>. ` +
+    `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
+    `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
+    `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>` + blind +
+    (out > 8
+      ? ` <span style="color:var(--warn)">That sighting is stale — the fleet has flown on since, and its picture will catch up in a rush once fresher light arrives.</span>`
+      : "");
+}
+
+function confirmPendingIntent(): void {
+  const intent = state.pendingIntent;
+  const ship = intent ? state.ghosts.find((g) => g.id === intent.shipId && g.own) : undefined;
+  if (!intent || !ship || !net) {
+    clearPendingIntent();
+    return;
+  }
+  const targetGhost = state.ghosts.find((g) => g.id === intent.targetId);
+  const hubPos = state.galaxy?.hub;
+  const targetPos = targetGhost?.pos ?? intent.dest;
+  const believedSheltered = !!hubPos && !!targetPos
+    && Math.hypot(targetPos.x - hubPos.x, targetPos.y - hubPos.y) < TCA_SOVEREIGN_RADIUS;
+  const shelterNote = believedSheltered
+    ? ` <span class="warn">Its last-seen position is inside the Authority's sovereign zone — the order will be refused unless it has left the bubble.</span>`
+    : "";
+
+  switch (intent.verb) {
+    case "move":
+      if (!intent.dest) break;
+      net.send({ type: "MoveShip", ship_id: ship.id, dest: intent.dest });
+      state.orders[ship.id] = intent.dest;
+      readout().innerHTML = moveOrderReadout(ship, intent.dest);
+      break;
+    case "raid":
+      if (!intent.targetId) break;
+      net.send({ type: "CommitRaid", raider_id: ship.id, target_id: intent.targetId });
+      net.send({ type: "EstimateEngagement", attacker: ship.id, target: intent.targetId });
+      if (!believedSheltered) state.raids[ship.id] = intent.targetId;
+      delete state.orders[ship.id];
+      readout().innerHTML =
+        `Raid committed: your <b>${esc(shipKindLabel(ship.kind))}</b> → rival <b>${esc(targetGhost?.kind ?? "contact")}</b>. ` +
+        `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
+        `not the <b>${(targetGhost?.age ?? 0).toFixed(0)}s</b>-old ghost you see. ` +
+        (ship.composition?.some((c) => c.kind === "raider")
+          ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>`
+          : `<span class="dim">Press R to recall — it may arrive too late.</span>`) + shelterNote;
+      break;
+    case "attack":
+      if (!intent.targetId) break;
+      net.send({ type: "AttackFleet", fleet_id: ship.id, target_id: intent.targetId });
+      net.send({ type: "EstimateEngagement", attacker: ship.id, target: intent.targetId });
+      if (!believedSheltered) state.raids[ship.id] = intent.targetId;
+      delete state.orders[ship.id];
+      readout().innerHTML =
+        `Attack committed: your <b>${esc(shipKindLabel(ship.kind))}</b> → rival <b>${esc(targetGhost?.kind ?? "contact")}</b> to <b>destroy</b> it. ` +
+        `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
+        `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>` + shelterNote;
+      break;
+    case "blockade": {
+      if (!intent.targetId) break;
+      const system = state.galaxy?.systems.find((s) => s.id === intent.targetId);
+      net.send({ type: "BlockadeSystem", fleet_id: ship.id, system_id: intent.targetId });
+      delete state.orders[ship.id];
+      readout().innerHTML =
+        `Blockade ordered: your <b>raider fleet</b> → <b>${esc(system?.name ?? "target system")}</b>. ` +
+        `It sets off at light speed to take station and strangle the system's logistics; ` +
+        `standing defense will contest it. <span class="dim">Recall (R) to break off.</span>`;
+      break;
+    }
+    case "demolish": {
+      if (!intent.targetId) break;
+      const target = state.emplacements.find((e) => e.id === intent.targetId);
+      net.send({ type: "DemolishEmplacement", fleet: ship.id, target: intent.targetId });
+      readout().innerHTML =
+        `<b>${esc(shipKindLabel(ship.kind))}</b> ordered to tear down a rival <b>${esc(target ? emplacementLabel(target.kind) : "structure")}</b> ` +
+        `<span class="dim">(signal outbound). It must hold station there to finish the job — ` +
+        `driven off, the work resets.</span>`;
+      break;
+    }
+    case "survey": {
+      if (!intent.targetId) break;
+      const system = state.galaxy?.systems.find((s) => s.id === intent.targetId);
+      net.send({ type: "SurveySystem", fleet_id: ship.id, system_id: intent.targetId });
+      delete state.orders[ship.id];
+      readout().innerHTML =
+        `Survey ordered: your <b>scout fleet</b> → <b>${esc(system?.name ?? "target system")}</b>${system ? ` (${esc(system.band.toUpperCase())} band)` : ""}. ` +
+        `It flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detectable farther). ` +
+        `<span class="dim">The exact geology travels home at light speed; allies receive a relayed copy.</span>`;
+      break;
+    }
+  }
+  updateShipPanel();
+  clearPendingIntent(true);
+}
+
 // --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED ----------------
 // Below this, phases collapse to ~instant (a fleet near the command center) —
 // suppress the noisy sub-second states.
 const LIFECYCLE_MIN_S = 1.5;
-// After a lifecycle drops (confirmed), flash "✓ confirmed" for a moment.
-const confirmedFlashUntil = new Map<string, number>();
 
 // Live sim-time, extrapolated from the last View's wall-clock stamp so the
 // countdowns tick smoothly between messages.
@@ -752,17 +960,27 @@ function liveSimTime(): number {
   return state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
 }
 
-// Replace the tracked lifecycles from the View; a lifecycle that DROPS while its
-// fleet is still visible has just CONFIRMED — flash it briefly.
+// Replace the tracked lifecycles from the View. The wire is a flat owner-only
+// list; group it per fleet for panel/map lookup and preserve oldest-first order.
 function syncOrderLifecycles(list: PendingOrderView[], _simTime: number): void {
-  const next = new Map<string, PendingOrderView>();
-  for (const p of list) next.set(p.fleet_id, p);
-  for (const [fid] of state.pendingOrders) {
-    if (!next.has(fid) && state.ghosts.some((g) => g.id === fid && g.own)) {
-      confirmedFlashUntil.set(fid, performance.now() + 5000);
-    }
+  const next = new Map<string, PendingOrderView[]>();
+  for (const p of list) {
+    const queue = next.get(p.fleet_id) ?? [];
+    queue.push(p);
+    next.set(p.fleet_id, queue);
+  }
+  for (const queue of next.values()) {
+    queue.sort((a, b) => a.issued_at - b.issued_at || a.id - b.id);
   }
   state.pendingOrders = next;
+  if (state.selectedOrderId !== null && !list.some((p) => p.id === state.selectedOrderId)) {
+    state.selectedOrderId = null;
+  }
+}
+
+function latestPendingOrder(fleetId: string): PendingOrderView | undefined {
+  const queue = state.pendingOrders.get(fleetId);
+  return queue?.[queue.length - 1];
 }
 
 const fmtCountdown = (secs: number): string => {
@@ -793,46 +1011,51 @@ function notifyNewBattles(battles: import("./protocol").BattleView[]): void {
   for (const k of nowKeys) seenBattles.add(k);
 }
 
-// The order-lifecycle status line for the fleet panel (the star).
-function orderLifecycleLine(g: GhostView): string {
-  const p = state.pendingOrders.get(g.id);
-  if (!p) {
-    const exp = confirmedFlashUntil.get(g.id);
-    if (exp && performance.now() < exp) {
-      return `<div class="sp-sec">Order</div><div class="sp-line">${badgeChip("confirmed", "confirmed", "positive", "Confirmed — the response light has returned; you can see the fleet complying.")}</div>`;
+const orderEta = (secs: number): string => `~${Math.max(0, Math.ceil(secs))}s`;
+const orderPoint = (p: Vec2): string =>
+  `(${Math.round(p.x).toLocaleString()} · ${Math.round(p.y).toLocaleString()})`;
+
+function orderObject(p: PendingOrderView): string {
+  const target = p.target_id ? state.ghosts.find((g) => g.id === p.target_id) : undefined;
+  const emplacement = p.target_id ? state.emplacements.find((e) => e.id === p.target_id) : undefined;
+  switch (p.kind) {
+    case "move": return `Move → ${p.dest ? orderPoint(p.dest) : "destination"}`;
+    case "raid": return `Raid → ${target ? `rival ${shipKindLabel(target.kind)}` : "rival contact"}`;
+    case "attack": return "Attack → rival contact";
+    case "construct": {
+      const what = p.emplacement === "hyperspace_buoy" ? "Hyperspace Buoy"
+        : p.emplacement === "deep_space_sensor" ? "Deep Space Sensor"
+        : p.emplacement === "hyperspace_sensor" ? "Hyperspace Sensor"
+        : "structure";
+      return `Construct → ${what}`;
     }
-    return "";
+    case "demolish": return `Demolish → ${emplacement ? label(emplacement.kind) : "rival structure"}`;
+    case "blockade": return `Blockade → ${p.target_id ? systemName(p.target_id) : "rival system"}`;
+    case "survey": return `Survey → ${p.target_id ? systemName(p.target_id) : "system"}`;
+    case "recall": return "Recall → home";
+    case "withdraw": return "Withdraw → home";
   }
-  // Near-zero (fleet at the command center): don't flash noisy sub-second states.
-  if (p.echo_at - p.delivered_at < LIFECYCLE_MIN_S) return "";
-  const now = liveSimTime();
-  // §one-clock: the two visible phases are SYMMETRIC on purpose — one signal
-  // out, one response back, each with its countdown. The player learns a
-  // single metaphor and reuses it; "awaiting echo" made the return leg sound
-  // like a different mechanism than the outbound one, when it is the same
-  // light crossing the same space the other way.
-  const line = now < p.delivered_at
-    ? chip("delivered", `<span class="dim">signal outbound</span> ${fmtCountdown(p.delivered_at - now)}`, `SIGNAL OUTBOUND — your ${p.kind} order is crossing space; it reaches the fleet in ${fmtCountdown(p.delivered_at - now)}.`)
-    : chip("echo", `<span class="dim">response in transit</span> ${fmtCountdown(p.echo_at - now)}`, `RESPONSE IN TRANSIT — the fleet received your ${p.kind} order and is presumed complying; the light showing it reaches you in ${fmtCountdown(p.echo_at - now)}.`);
-  return `<div class="sp-sec">Order</div><div class="sp-line">${line}</div>`;
 }
 
-// §Part 4: the player's chosen transit throttle per own fleet (optimistic —
-// echoes the SetFleetTransit command; defaults to Full).
-const transitModes = new Map<string, "full" | "stealth">();
-
-// The Transit control (§Part 4) — Full/Stealth toggle for an own DARK fleet
-// (only dark fleets benefit from running quiet; broadcasters are seen anyway).
-function transitSection(g: GhostView): string {
-  // Only meaningful for a fleet that can run dark (no broadcasting member) — i.e.
-  // its flagship is a raider or scout.
-  if (g.kind !== "raider" && g.kind !== "scout") return "";
-  const mode = transitModes.get(g.id) ?? "full";
-  const btn = (m: "full" | "stealth", label: string, hint: string) =>
-    `<button class="act${mode === m ? " is-on" : ""}" data-act="transit" data-mode="${m}" title="${esc(hint)}">${label}</button>`;
-  // Short labels; the trade-off lives in the button tooltips (§UX-diet).
-  return `<div class="sp-sec">${icon(mode === "stealth" ? "stealth" : "flank", "sm")} Transit</div>` +
-    `<div class="sp-line">${btn("full", "Full", "Full speed — fastest, but flank speed lights you up (high sensor signature).")} ${btn("stealth", "Stealth", "Stealth — creep at ~half speed (about 2× trip time) for a much smaller signature.")}</div>`;
+function ordersZone(g: GhostView): string {
+  const queue = state.pendingOrders.get(g.id) ?? [];
+  if (!queue.length) return "";
+  const now = liveSimTime();
+  const rows = queue.map((p) => {
+    const outbound = now < p.delivered_at;
+    const selected = state.selectedOrderId === p.id;
+    const phase = outbound ? "◈" : "◔";
+    const eta = outbound
+      ? `signal outbound · arrives ${orderEta(p.delivered_at - now)}`
+      : `response in transit · response ${orderEta(p.echo_at - now)}`;
+    const tip = outbound
+      ? `SIGNAL OUTBOUND — this ${p.kind} order reaches the fleet in ${orderEta(p.delivered_at - now)}.`
+      : `RESPONSE IN TRANSIT — the fleet received this ${p.kind} order; its compliance light returns in ${orderEta(p.echo_at - now)}.`;
+    return `<button class="sp-order${selected ? " is-selected" : ""}" data-act="select-order" data-order-id="${p.id}" aria-pressed="${selected}" title="${esc(tip)}">` +
+      `<span class="sp-order__phase" aria-hidden="true">${phase}</span>` +
+      `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>${eta}</small></span></button>`;
+  }).join("");
+  return shipZone("Orders", rows, "sp-zone--orders");
 }
 
 // §offensive-orders Part 2: the player's chosen engagement POSTURE per own fleet
@@ -899,7 +1122,7 @@ function compositionSection(g: GhostView): string {
       flagship = `<div class="sp-line">${icon("fleet", "sm")} flagship: <b>${name ? esc(name) : "<span class=\"dim\">unnamed</span>"}</b> ` +
         `<button class="act" style="width:auto;padding:2px 7px;font-size:11px" data-act="nameflagship" title="Christen your syndicate's Titan — the name shows on your fleet and in participant battle records.">${name ? "rename" : "name it"}…</button></div>`;
     }
-    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>${flagship}${damageLine(g)}${supplyLine(g)}`;
+    return `<div class="sp-sec">Composition</div><div class="sp-line">${items} <span class="dim">(${total} ship${total > 1 ? "s" : ""})</span></div>${flagship}${damageLine(g)}${supplyLine(g)}${splitControls(g)}`;
   }
   return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
@@ -922,28 +1145,27 @@ function coLocatedOwnFleet(g: GhostView): GhostView | null {
   return best;
 }
 
-// Fleet-management controls (§FLEETS v1): split off a ship, or merge a co-located
-// fleet. Only meaningful for your own fleet at an owned berth — offered by the
-// client, enforced (idle + owned system) by the server.
-function fleetManagementSection(g: GhostView): string {
-  const parts: string[] = [];
+// Split controls belong to the fleet payload: they change the composition being
+// described, rather than the standing policy or the merge-only management fold.
+function splitControls(g: GhostView): string {
+  if (!g.own) return "";
   const comp = g.composition ?? [];
   const total = comp.reduce((a, c) => a + c.count, 0);
+  if (total < 2) return "";
+  const buttons = [...comp]
+    .sort((a, b) => FLAGSHIP_ORDER.indexOf(a.kind) - FLAGSHIP_ORDER.indexOf(b.kind))
+    .filter((c) => c.count >= 1)
+    .map((c) => `<button class="act" data-act="split" data-kind="${c.kind}" title="Detach one ${esc(shipKindLabel(c.kind))} into a new fleet (at an owned system)">Split 1 ${esc(shipKindLabel(c.kind))}</button>`)
+    .join("");
+  return `<div class="sp-split">${buttons}</div>`;
+}
+
+// Fleet management now owns only MERGE. It is revealed behind a persistent
+// module-state fold; split stays beside the composition it changes.
+function fleetManagementSection(g: GhostView): string {
   const merge = coLocatedOwnFleet(g);
-  if (total < 2 && !merge) return "";
-  parts.push(`<div class="sp-sec">Fleet management</div>`);
-  if (total >= 2) {
-    const splitBtns = [...comp]
-      .sort((a, b) => FLAGSHIP_ORDER.indexOf(a.kind) - FLAGSHIP_ORDER.indexOf(b.kind))
-      .filter((c) => c.count >= 1)
-      .map((c) => `<button class="act" data-act="split" data-kind="${c.kind}" title="Detach one ${esc(shipKindLabel(c.kind))} into a new fleet (at an owned system)">Split 1 ${esc(shipKindLabel(c.kind))}</button>`)
-      .join("");
-    parts.push(`<div class="sp-line">${splitBtns}</div>`);
-  }
-  if (merge) {
-    parts.push(`<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one — works only at one of your owned systems (idle).">${icon("fleet", "sm")} Merge co-located fleet</button>`);
-  }
-  return parts.join("");
+  if (!merge) return "";
+  return `<button class="act" data-act="merge" data-from="${merge.id}" title="Merge the co-located fleet into this one — works only at one of your owned systems (idle).">${icon("fleet", "sm")} Merge co-located fleet</button>`;
 }
 
 // Heading arrow + speed, computed in SCREEN space so it matches the map exactly.
@@ -964,55 +1186,86 @@ function headingCell(g: GhostView): string {
 // Mirrors sim lane::HYPERLIMIT — the radius inside which no drive can light.
 const HYPERLIMIT_SU = 900;
 
+// §course-change: the DRIVE row — one of five values, in the sighting's own
+// retarded frame: Impulse, Warp, Hyperdrive spinning up, Hyperdrive engaged,
+// Hyperdrive shutting down. The warp drive's own (sub-2s) transitions read as
+// Impulse — that IS the speed being made — with the detail in the tooltip; the
+// hyperdrive's transitions get named because they are the game's doorway
+// moments (the lane starts and stops carrying this ship's reports on them).
 function regimeCell(g: GhostView): string {
   const sp = g.speed ?? Math.hypot(g.vel.x, g.vel.y);
-  if (sp < 0.5) return stat("Transit", `<span class="dim">holding</span>`);
-  // §course-change: read the layer off the DRIVE. Mid-transition a fleet is on
-  // thrusters — the drive has not caught yet, or has already let go — so the
-  // phase is what explains a warship crawling at cruise speed.
   const d = g.drive ?? "thrusters";
   const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
   const spooling = typeof d === "object" && "spooling" in d ? d.spooling : null;
   const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
-  const driveName = (k: string) => (k === "hyperspace" ? "hyperspace drive" : "warp drive");
-  if (spooling) {
-    const tip = `${driveName(spooling.to)} spinning up — ${spooling.left.toFixed(1)}s to go. A fleet runs on thrusters until the drive catches, and cannot change course until it does.`;
+  if (spooling?.to === "hyperspace") {
+    const tip = `Hyperdrive spinning up — ${spooling.left.toFixed(1)}s to go. The fleet runs on impulse until it catches, and cannot change course until it does. It has not entered hyperspace yet.`;
     return stat(
       "Drive",
-      `<span class="dim" title="${esc(tip)}">thrusters · ${esc(driveName(spooling.to))} spinning up <b>${spooling.left.toFixed(1)}s</b></span>`,
+      `<span class="dim" title="${esc(tip)}">Hyperdrive spinning up</span>`,
     );
   }
-  if (dropping) {
-    const name = dropping.from === "hyperspace" ? "hyperspace drive" : "warp drive";
-    const tip = `${name} shutting down — ${dropping.left.toFixed(1)}s to go. A course change means shutting the drive down first; only then can the fleet come about.`;
+  if (dropping?.from === "hyperspace") {
+    const tip = `Hyperdrive shutting down — ${dropping.left.toFixed(1)}s to go. Still wound into the lane until it is fully out; this shutdown is the last thing the lane transmits for the ship.`;
     return stat(
       "Drive",
-      `<span class="dim" title="${esc(tip)}">thrusters · ${name} shutting down <b>${dropping.left.toFixed(1)}s</b></span>`,
+      `<span class="dim" title="${esc(tip)}">Hyperdrive shutting down</span>`,
     );
   }
-  const r = cruising ?? "thrusters";
-  // §course-change: WHY thrusters, when it is the well's doing. Computed from
+  if (cruising === "hyperspace") {
+    const tip = "Hyperdrive engaged, riding a lane: ten times warp. It only engages near a lane, and leaving the ribbon or turning off its heading drops the fleet out.";
+    return stat("Drive", `<span class="tone-up" title="${esc(tip)}">Hyperdrive engaged</span>`);
+  }
+  if (cruising === "warp") {
+    const tip = "Warp drive: five times impulse, and it flies anywhere — no lane needed, no heading to hold.";
+    return stat("Drive", `<span title="${esc(tip)}">Warp</span>`);
+  }
+  // Everything else is IMPULSE — parked, crawling, mid-warp-transition, or
+  // pinned inside a gravity well. The tooltip says which.
+  if (sp < 0.5) {
+    return stat("Drive", `<span class="dim" title="Holding station — impulse engines idle.">Impulse</span>`);
+  }
+  // §course-change: WHY impulse, when it is the well's doing. Computed from
   // the ghost's own retarded position against the (static) star chart, so the
   // reason shown can never disagree with the delayed state beside it — no wire
-  // field, no staleness to manage. Without this the panel just said
-  // "thrusters" while the player wondered why their warship was crawling.
-  if (r === "thrusters" && state.galaxy) {
+  // field, no staleness to manage.
+  if (state.galaxy) {
     const well = state.galaxy.systems.find(
       (sys) => Math.hypot(sys.pos.x - g.pos.x, sys.pos.y - g.pos.y) <= HYPERLIMIT_SU,
     );
     if (well) {
-      const tip = `Inside ${well.name}'s gravity well: no drive can light within ${HYPERLIMIT_SU} su of a star. The ship crawls clear on thrusters, then the warp drive spools up.`;
-      return stat("Drive", `<span class="dim" title="${esc(tip)}">thrusters · in ${esc(well.name)}'s gravity well</span>`);
+      const tip = `Inside ${well.name}'s gravity well: no drive can light within ${HYPERLIMIT_SU} su of a star. The ship crawls clear on impulse, then the warp drive spools up.`;
+      return stat("Drive", `<span class="dim" title="${esc(tip)}">Impulse · in ${esc(well.name)}'s gravity well</span>`);
     }
   }
-  const shown = { thrusters: "thrusters", warp: "warp drive", hyperspace: "hyperspace lane" }[r];
-  const tip = {
-    thrusters: "Thrusters only — spooling a drive up or down, or running with the warp drive shut off.",
-    warp: "Warp drive: five times thruster speed, and it flies anywhere — no lane needed, no heading to hold.",
-    hyperspace: "Hyperspace drive, riding a lane: ten times warp again. The drive only engages near a lane, and leaving the ribbon or turning off its heading drops the fleet back to warp.",
-  }[r];
-  const tone = r === "hyperspace" ? "tone-up" : r === "thrusters" ? "dim" : "";
-  return stat("Drive", `<span class="${tone}" title="${esc(tip)}">${shown}</span>`);
+  const tip = spooling
+    ? `Impulse while the warp drive spins up — ${spooling.left.toFixed(1)}s to go.`
+    : dropping
+      ? `Impulse while the warp drive shuts down — ${dropping.left.toFixed(1)}s to go.`
+      : "Impulse engines only — running with the warp drive shut off.";
+  return stat("Drive", `<span class="dim" title="${esc(tip)}">Impulse</span>`);
+}
+
+// §hyperspace: the DOMAIN row — which space the hull is in. REALSPACE is
+// ordinary space, where impulse and warp operate; HYPERSPACE is the lane
+// medium. The boundary follows the drive by design ruling: a hull is in
+// hyperspace from the moment its hyperdrive CATCHES until it is fully out —
+// so "Hyperspace" here is exactly the span in which the lane itself carries
+// the ship's reports home (spin-up is still the approach, in realspace).
+function domainCell(g: GhostView): string {
+  const d = g.drive ?? "thrusters";
+  const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
+  const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
+  const inHyper = cruising === "hyperspace" || dropping?.from === "hyperspace";
+  return inHyper
+    ? stat(
+        "Domain",
+        `<span class="tone-up" title="Inside the lane medium. While here, the lane itself carries this ship's reports home at hyperspace speed.">Hyperspace</span>`,
+      )
+    : stat(
+        "Domain",
+        `<span class="dim" title="Ordinary space — impulse and warp operate here, and reports travel home as warp-speed light.">Realspace</span>`,
+      );
 }
 
 // Inferred activity for an OWN ship — there is NO server order field, so this reads
@@ -1033,94 +1286,103 @@ function ownActivity(g: GhostView): string {
   return a("move", "under way", "Under way.");
 }
 
-// OWN ship: full knowledge — activity, cargo + route (you always know your own),
-// the shared FLEET fuel reserve, and the relevant actions.
-function ownBody(g: GhostView): string {
-  const parts: string[] = [];
-  parts.push(compositionSection(g));
-  parts.push(orderLifecycleLine(g));
-  parts.push(`<div class="sp-sec">Activity</div><div class="sp-line">${ownActivity(g)}</div>`);
-  // §emplacements: the siting verbs live on the actor.
-  if (g.kind === "builder") parts.push(emplaceSection(g));
+function shipZone(title: string, body: string, modifier = ""): string {
+  if (!body) return "";
+  return `<section class="sp-zone${modifier ? ` ${modifier}` : ""}"><div class="sp-zone__title">${esc(title)}</div>${body}</section>`;
+}
 
-  // Cargo + logistics belong to any fleet that CONTAINS convoys — mirroring the
-  // sim's `Fleet::cargo_capacity()`, which counts convoy hulls and never looks at
-  // the flagship. Keying this on `g.kind === "convoy"` hid the whole section the
-  // moment a warship escorted the lot and took over as flagship, even though the
-  // server would still have accepted every load/unload/haul command.
+function jobProgress(g: GhostView): string {
+  if (!g.job) return "";
+  const pct = Math.max(0, Math.min(100, g.job.progress * 100));
+  const wrecking = g.job.kind === "demolishing";
+  const verb = wrecking ? "Demolishing" : "Constructing";
+  return `<div class="sp-job"><div class="sp-job__meta"><span>${verb}</span><b>${pct.toFixed(0)}%</b></div>${bar(pct, wrecking ? "is-negative" : "")}</div>`;
+}
+
+function nowZone(g: GhostView): string {
+  const body = `<div class="sp-now-row"><span class="sp-now__label">Activity</span><div class="sp-line">${ownActivity(g)}</div></div>` +
+    jobProgress(g);
+  return shipZone("Now", body, "sp-zone--now");
+}
+
+function fuelSection(g: GhostView): string {
+  const reserve = state.wallet ? state.wallet.fuel_total : 0;
+  const rate = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g);
+  const dest = state.orders[g.id];
+  let primary = `Burn ~${rate.toFixed(1)}/1k su`;
+  let secondary = "this fleet at its current mass";
+  if (dest) {
+    const cost = FUEL_PER_MASS_DISTANCE * Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) * shipMass(g);
+    primary = `Current order ~${fmt(cost)}`;
+    secondary = `burn ${rate.toFixed(1)}/1k su`;
+  }
+  return `<div class="sp-sec">${icon("fuel", "sm")} Fuel</div><div class="sp-fuel">` +
+    `<span class="sp-fuel__burn" title="This fleet's fuel burn at its current mass, and the cost of its current order when one exists."><b>${primary}</b><small>${secondary}</small></span>` +
+    `${chip("fuel", `corp reserve ${fmt(reserve)}`, "Corporation-wide reserve shared by every fleet — not this ship's tank.", "sm")}</div>`;
+}
+
+function authorityFreightSection(g: GhostView): string {
+  if (g.engage_freight === null || g.engage_freight === undefined) return "";
+  const on = g.engage_freight;
+  return `<div class="sp-sec">${icon("blockade", "sm")} Authority freight</div>` +
+    `<div class="sp-line"><button class="act${on ? " is-on" : ""}" data-act="engage-freight" data-on="${on ? "0" : "1"}" ` +
+    `title="While blockading, also engage Terran Charter Authority freighters arriving here. OFF: they land and unload through your blockade — a small leak, self-limiting because the Authority already refuses NEW bookings to a blockaded system. ON: an arriving freighter becomes an ordinary hostile contact.">` +
+    `${on ? "Engaging" : "Ignoring"} Authority freight arriving here</button></div>`;
+}
+
+function standingPolicyZone(g: GhostView): string {
+  const hasPosture = !!g.composition?.some((c) => c.kind === "raider");
+  const hasFreight = g.engage_freight !== null && g.engage_freight !== undefined;
+  const garrison = garrisonSection(g);
+  if (!hasPosture && !hasFreight && !garrison) return "";
+  const summary: string[] = [];
+  if (hasPosture) {
+    const cur = postureModes.get(g.id) ?? g.posture ?? "passive";
+    summary.push(`Posture ${POSTURE_META.find((p) => p.key === cur)?.label ?? "Passive"}`);
+  }
+  if (hasFreight) summary.push(`Freight ${g.engage_freight ? "engaging" : "ignoring"}`);
+  if (g.garrison_host) summary.push(`Garrison ${g.garrison_fed === false ? "unfed" : "fed"}`);
+  const open = expandedShipPolicies.has(g.id);
+  const controls = postureSection(g) + authorityFreightSection(g);
+  return `<section class="sp-zone sp-zone--fold"><button class="sp-fold" data-act="toggle-policy" aria-expanded="${open}">` +
+    `<span><span class="sp-zone__title">Standing policy</span><span class="sp-fold__summary">${esc(summary.join(" · "))}</span></span>` +
+    `<span class="sp-fold__chev" aria-hidden="true">${open ? "▾" : "▸"}</span></button>${garrison}` +
+    (open && controls ? `<div class="sp-fold__body">${controls}</div>` : "") + `</section>`;
+}
+
+function managementZone(g: GhostView): string {
+  const controls = fleetManagementSection(g);
+  if (!controls) return "";
+  const open = expandedShipManagement.has(g.id);
+  return `<section class="sp-zone sp-zone--fold"><button class="sp-fold" data-act="toggle-management" aria-expanded="${open}">` +
+    `<span><span class="sp-zone__title">Fleet management</span><span class="sp-fold__summary">Merge co-located fleets</span></span>` +
+    `<span class="sp-fold__chev" aria-hidden="true">${open ? "▾" : "▸"}</span></button>` +
+    (open ? `<div class="sp-fold__body">${controls}</div>` : "") + `</section>`;
+}
+
+// OWN ship: NOW first, then what it carries, then contextual verbs and the two
+// deliberately quiet disclosure zones. No command shortcuts live in this panel.
+function ownBody(g: GhostView): string {
+  const payload: string[] = [compositionSection(g)];
   if (hauls(g)) {
     const cargo = g.cargo
       ? `<div class="sp-cargo">${commodityIcon(g.cargo.commodity, "md")} <b>${fmt(g.cargo.units)}</b> ${esc(label(g.cargo.commodity))}</div>`
       : `<span class="dim">empty hold</span>`;
-    parts.push(`<div class="sp-sec">Cargo</div>${cargo}`);
+    payload.push(`<div class="sp-sec">Cargo</div>${cargo}`);
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
-      parts.push(`<div class="sp-sec">Route</div><div class="sp-line" title="The waypoints this convoy will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
+      payload.push(`<div class="sp-sec">Route</div><div class="sp-line" title="The waypoints this convoy will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
     }
-    parts.push(logisticsSection(g));
+    payload.push(logisticsSection(g));
   }
-  // §TCA: a BLOCKADING fleet chooses whether to touch Authority freight.
-  if (g.engage_freight !== null && g.engage_freight !== undefined) {
-    const on = g.engage_freight;
-    parts.push(
-      `<div class="sp-sec">${icon("blockade", "sm")} Authority freight</div>` +
-      `<div class="sp-line"><button class="act${on ? " is-on" : ""}" data-act="engage-freight" data-on="${on ? "0" : "1"}" ` +
-      `title="While blockading, also engage Terran Charter Authority freighters arriving here. OFF: they land and unload through your blockade — a small leak, self-limiting because the Authority already refuses NEW bookings to a blockaded system. ON: an arriving freighter becomes an ordinary hostile contact.">` +
-      `${on ? "Engaging" : "Ignoring"} Authority freight arriving here</button></div>`,
-    );
-  }
+  payload.push(fuelSection(g));
 
-  // Fleet fuel reserve (corp-wide, shared across ALL your ships) + this ship's burn
-  // rate. Framed honestly: it's the operating reserve every ship spends, not a tank
-  // on this one ship. (See the per-ship deepening note in the README.)
-  const reserve = state.wallet ? state.wallet.fuel_total : 0;
-  const rate = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g);
-  const dest = state.orders[g.id];
-  let burn = `~${rate.toFixed(1)}/1k su`;
-  if (dest) {
-    const cost = FUEL_PER_MASS_DISTANCE * Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) * shipMass(g);
-    burn = `order ~${fmt(cost)} · ${rate.toFixed(1)}/1k su`;
-  }
-  parts.push(
-    `<div class="sp-sec">${icon("fuel", "sm")} Fuel</div>` +
-    `<div class="sp-line">${chip("fuel", fmt(reserve), "Fleet fuel reserve — one pool shared across ALL your systems; every ship draws on it to move (not a tank on this one ship).")} <span class="dim" title="This ship's fuel burn at its current mass (and the cost of its current order, if any).">${burn}</span></div>`,
-  );
-
-  // Role summaries: a one-liner on screen, the full doctrine in the tooltip.
-  if (g.kind === "colony") {
-    parts.push(`<div class="sp-sec">${icon("colony", "sm")} Settlement</div><div class="sp-line" title="Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.">Send to an <b>unclaimed system</b> → it becomes yours (ship consumed). Slow &amp; visible — escort it.</div>`);
-  }
-  if (g.kind === "corvette") {
-    parts.push(`<div class="sp-sec">${icon("corvette", "sm")} Escort · Garrison</div><div class="sp-line" title="A dedicated defender: any raid contact on one of your convoys within its protect radius must fight THROUGH this corvette first. Park it beside a convoy (escort) or at an owned system (garrison — stacks with a Defense Platform). It cannot raid.">Defends convoys (escort) &amp; systems (garrison). Can't raid.</div>`);
-  }
-  if (g.kind === "scout") {
-    const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
-    parts.push(`<div class="sp-sec">${icon("sensor", "sm")} Sensors</div><div class="sp-line" title="Projects a ×${mult} sensor bubble — mobile vision. Sweep it through rival space to reveal dark contacts and convoy cargo; near a rival system it captures an intel snapshot of their defenses. No cargo, no weapons: if anything engages it, it dies — cheap on purpose.">${chip("sensorRange", `×${mult}`, "Mobile sensor bubble — sweep rival space for dark contacts, cargo &amp; defense intel.")} — dies if engaged (no weapons).</div>`);
-    // §explore Part 2: the scout's SECOND job — click-to-survey (blockade idiom).
-    parts.push(`<div class="sp-line dim" title="Click an UNSURVEYED system (its geology shows '?') to order a survey: the scout flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detected farther) — then the exact geology travels home at light speed. Allies receive a relayed copy. Already-surveyed systems select normally.">${icon("intel", "sm")} <b>Survey:</b> click an unsurveyed system.</div>`);
-  }
-  parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div>`);
-  // §battles-take-time: WITHDRAW when this fleet is in/near a visible battle.
-  const inBattle = state.battles.some((b) => Math.hypot(b.pos.x - g.pos.x, b.pos.y - g.pos.y) <= 220);
-  if (inBattle && (g.kind === "raider" || g.kind === "corvette")) {
-    parts.push(`<button class="act" data-act="withdraw" title="Break off and flee home — light-delayed; your formation speed decides the escape (escorts cover you).">${icon("withdraw", "sm")} Withdraw</button>`);
-  }
-  if (g.kind === "raider") {
-    parts.push(`<button class="act" data-act="recall" title="Recall to home (R) — travels at light speed; it may arrive too late.">${icon("recall", "sm")} Recall</button>`);
-  }
-  const strike = !!g.composition?.some((c) => c.kind === "raider");
-  // Compact glyph legend replacing the how-to-click prose — words live in tooltips.
-  const legend: string[] = [`${icon("mouse", "sm", "Click empty space on the map to MOVE this fleet.")} move`];
-  if (g.kind === "raider") legend.push(`${icon("raid", "sm", "Click a rival contact on the map to RAID it — seize its cargo (brevity-capped skirmish).")} raid`);
-  if (strike) legend.push(`${icon("shift", "sm", "Shift+click a rival to ATTACK — a full battle that destroys it (a convoy's cargo is lost with it).")} ${icon("attack", "sm")} attack`);
-  if (g.kind === "raider") legend.push(`${icon("blockade", "sm", "Click a rival SYSTEM to blockade it — take station and strangle its logistics; its defenses fight you first.")} blockade`);
-  parts.push(`<div class="sp-line dim sp-legend">${legend.join(" · ")}</div>`);
-  parts.push(transitSection(g));
-  parts.push(postureSection(g));
-  parts.push(garrisonSection(g));
-  parts.push(fleetManagementSection(g));
-  parts.push(refitSection(g));
-  return parts.join("");
+  return nowZone(g) +
+    ordersZone(g) +
+    shipZone("Payload", payload.join("")) +
+    (g.kind === "builder" ? shipZone("Construct", emplaceSection(g), "sp-zone--construct") : "") +
+    standingPolicyZone(g) +
+    managementZone(g);
 }
 
 // §syndicates Part 3: if this OWN fleet is stationed as an ally GARRISON, show its
@@ -1133,7 +1395,7 @@ function garrisonSection(g: GhostView): string {
   const tip = fed
     ? `Stationed at ally ${hostName}, joining its defense per your doctrine. The host is feeding this garrison its Provisions upkeep.`
     : `Stationed at ally ${hostName}, but the host is OUT of Provisions — this garrison's defense is SUSPENDED until fed (nothing is destroyed).`;
-  return `<div class="sp-sec">${icon("garrison", "sm")} Garrison</div><div class="sp-line">` +
+  return `<div class="sp-policy-note">${icon("garrison", "sm")} ` +
     `${badgeChip("garrison", `${hostName} · ${fed ? "fed" : "UNFED"}`, fed ? "positive" : "negative", tip)}</div>`;
 }
 
@@ -1187,8 +1449,21 @@ function rivalBody(g: GhostView): string {
       parts.push(`<div class="sp-line">${chip("delay", `${g.signature.toFixed(2)}×`, `Detection signature — how LOUD this contact is: ${loud}.`)}</div>`);
     }
   }
-  parts.push(`<div class="sp-sec">${icon("build", "sm", "Actions")} Actions</div><div class="sp-line dim sp-legend">${icon("raid", "sm", "Click this contact on the map to commit a RAID with your selected raider.")} raid · ${icon("shift", "sm", "Shift+click to ATTACK — a full battle that destroys it (needs a raider in your selected fleet).")} ${icon("attack", "sm")} attack</div>`);
-  return parts.join("");
+  return shipZone("Payload", parts.join(""));
+}
+
+function shipRoleLore(g: GhostView): string {
+  if (g.kind === "colony") {
+    return "Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.";
+  }
+  if (g.kind === "corvette") {
+    return "A dedicated defender: any raid contact on one of your convoys within its protect radius must fight through this corvette first. Park it beside a convoy as an escort or at an owned system as a garrison; it cannot raid.";
+  }
+  if (g.kind === "scout") {
+    const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
+    return `Projects a ×${mult} mobile sensor bubble. Sweep rival space to reveal dark contacts, cargo, and defense intel. It carries no cargo or weapons and dies if engaged.`;
+  }
+  return "";
 }
 
 function updateShipPanel(): void {
@@ -1238,10 +1513,11 @@ function updateShipPanel(): void {
     : shipKindLabel(g.kind);
   const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
   const stale = g.age >= 8;
+  const roleLore = own ? shipRoleLore(g) : "";
 
   const head =
     `<div class="sp-head"><div class="panel-title"><div><div class="eyebrow">${esc(eyebrow)}</div>` +
-    `<h2>${svgIcon(g.kind === "convoy" || g.kind === "freighter" ? "concept-convoy" : "concept-fleet", "md")} ${esc(title)}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
+    `<h2${roleLore ? ` title="${esc(roleLore)}"` : ""}>${svgIcon(g.kind === "convoy" || g.kind === "freighter" ? "concept-convoy" : "concept-fleet", "md")} ${esc(title)}${roleLore ? ` <span class="sp-role-info" aria-label="Role information" title="${esc(roleLore)}">ⓘ</span>` : ""}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
@@ -1260,7 +1536,7 @@ function updateShipPanel(): void {
   const posCell =
     `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
     `<dd>${fmt(g.pos.x)} · ${fmt(g.pos.y)}</dd></div>`;
-  const strip = statStrip([ageCell, headingCell(g), regimeCell(g), posCell]);
+  const strip = statStrip([ageCell, regimeCell(g), domainCell(g), headingCell(g), posCell], "sp-status-strip");
 
   // Preserve an in-progress dockside load selection/qty across the rebuild (the
   // fresh <input> would otherwise snap back to its default 50, the fresh <select>
@@ -2395,9 +2671,9 @@ function updateOngoingBattlePanel(): void {
   // suppressed, so these are the only handle. A tiny echo tag if an order is pending.
   const withdrawRow = ownFleets.length
     ? `<div class="wd-row">` + ownFleets.map((g) => {
-        const pend = state.pendingOrders.get(g.id);
+        const pend = latestPendingOrder(g.id);
         let echo = "";
-        if (pend && pend.echo_at - pend.delivered_at >= 1.5) {
+        if (pend && pend.echo_at - pend.delivered_at >= LIFECYCLE_MIN_S) {
           const inTransit = now < pend.delivered_at;
           echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
         }
@@ -3160,11 +3436,11 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     // §aftermath-select: any fresh map click drops the concluded-battle marker
     // ring; the aftermath/capture branches below re-set it if they hit a marker.
     renderer.selectedBattleMarkerId = null;
-    // §contestable-territory Part 1: BLOCKADE-ON-CLICK. With one of your RAIDER
-    // fleets selected, clicking a rival-owned system orders a blockade there —
+    // §contestable-territory Part 1: BLOCKADE PREVIEW. With one of your RAIDER
+    // fleets selected, clicking a rival-owned system proposes a blockade there —
     // the raider's second verb, mirroring "click a rival contact to raid." Runs
-    // BEFORE ordinary selection so the click commits the order rather than just
-    // selecting the system. (A raider is required; the sim re-checks.)
+    // BEFORE ordinary selection so the click previews the order rather than just
+    // selecting the system. (A raider is required; the sim re-checks on confirm.)
     {
       const selF = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
       if (selF && selF.own && selF.kind === "raider" && net && state.galaxy) {
@@ -3178,13 +3454,7 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
         const dyn = hitSys ? state.systems.find((s) => s.id === hitSys!.id) : undefined;
         const rival = dyn && dyn.owner !== null && dyn.owner !== state.playerId;
         if (hitSys && rival) {
-          net.send({ type: "BlockadeSystem", fleet_id: selF.id, system_id: hitSys.id });
-          delete state.orders[selF.id];
-          updateShipPanel();
-          readout().innerHTML =
-            `Blockade ordered: your <b>raider fleet</b> → <b>${esc(hitSys.name)}</b>. ` +
-            `It sets off at light speed to take station and strangle the system's logistics; ` +
-            `standing defense will contest it. <span class="dim">Recall (R) to break off.</span>`;
+          beginPendingIntent({ shipId: selF.id, verb: "blockade", targetId: hitSys.id, dest: hitSys.pos });
           return;
         }
       }
@@ -3201,13 +3471,7 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
           if (d < Math.max(15, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; hitSys = sys; }
         }
         if (hitSys && knownDeposits(hitSys.id) === null) {
-          net.send({ type: "SurveySystem", fleet_id: selF.id, system_id: hitSys.id });
-          delete state.orders[selF.id];
-          updateShipPanel();
-          readout().innerHTML =
-            `Survey ordered: your <b>scout fleet</b> → <b>${esc(hitSys.name)}</b> (${esc(hitSys.band.toUpperCase())} band). ` +
-            `It flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detectable farther). ` +
-            `<span class="dim">The exact geology travels home at light speed; allies receive a relayed copy.</span>`;
+          beginPendingIntent({ shipId: selF.id, verb: "survey", targetId: hitSys.id, dest: hitSys.pos });
           return;
         }
       }
@@ -3271,21 +3535,15 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     for (const e of state.emplacements) {
       const s = renderer.worldToScreen(e.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d >= 18) continue;
+      if (d >= renderer.emplacementHitRadius()) continue;
       const striker = e.own ? undefined : armedSelection();
       const name = emplacementLabel(e.kind);
       if (striker) {
         cands.push({
           key: `emp:${e.id}`, sortD: d, label: `demolish ${name}`,
-          pick: () => {
-            net?.send({ type: "DemolishEmplacement", fleet: striker.id, target: e.id });
-            readout().innerHTML =
-              `<b>${esc(shipKindLabel(striker.kind))}</b> ordered to tear down a rival <b>${esc(name)}</b> ` +
-              `<span class="dim">(signal outbound). It must hold station there to finish the job — ` +
-              `driven off, the work resets.</span>`;
-            updateShipPanel();
-          },
-          readout: "",
+          pick: () => beginPendingIntent({ shipId: striker.id, verb: "demolish", targetId: e.id, dest: e.pos }),
+          readout: `Demolition preview: tear down a rival <b>${esc(name)}</b>. ` +
+            `<span class="dim">The fleet must hold station there to finish the job; driven off, the work resets.</span>`,
         });
       } else {
         cands.push({
@@ -3393,50 +3651,14 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
 
     if (enemy) {
       const tgt = state.ghosts.find((x) => x.id === enemy)!;
-      // §TCA sovereignty: is the target's LAST-SEEN position inside the Authority
-      // bubble? The server judges on the TRUE position, so the order still goes —
-      // but claiming success and painting a pursuit overlay for an order the
-      // Authority will almost certainly refuse is a lie; hedge instead.
-      const hubPos = state.galaxy?.hub;
-      const believedSheltered = !!hubPos && Math.hypot(tgt.pos.x - hubPos.x, tgt.pos.y - hubPos.y) < TCA_SOVEREIGN_RADIUS;
-      const shelterNote = believedSheltered
-        ? ` <span class="warn">Its last-seen position is inside the Authority's sovereign zone — the order will be refused unless it has left the bubble.</span>`
-        : "";
       if (shift && haveStrike && net) {
         // §offensive-orders Part 1: ATTACK to DESTROY (shift+click) — a full battle,
         // a convoy's cargo is lost with it (RAID steals, ATTACK kills).
-        // §TCA Phase 2: hostility against an AUTHORITY hull is priced, not
-        // forbidden — warn with the projected band, then do what was asked. The
-        // confirm wraps only the hostile act, never a mere inspection click.
-        if (tgt.tca && !confirmAuthorityHostility(`Attack a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
-          return;
-        }
-        net.send({ type: "AttackFleet", fleet_id: sel!.id, target_id: tgt.id });
-        net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
-        if (!believedSheltered) state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
-        delete state.orders[sel!.id];
-        updateShipPanel();
-        readout().innerHTML =
-          `Attack committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b> to <b>destroy</b> it. ` +
-          `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
-          `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>` + shelterNote;
+        // The fixed confirm bar is also the Authority warning: its summary names
+        // the projected citation band, so map orders never fall back to a modal.
+        beginPendingIntent({ shipId: sel!.id, verb: "attack", targetId: tgt.id, dest: tgt.pos });
       } else if (haveRaider && net) {
-        if (tgt.tca && !confirmAuthorityHostility(`Raid a Terran Charter Authority ${shipKindLabel(tgt.kind)}?`)) {
-          return;
-        }
-        // Direct your selected ship to raid the rival's TRUE position.
-        net.send({ type: "CommitRaid", raider_id: sel!.id, target_id: tgt.id });
-        // §FLEETS Part 3: ask for a projected engagement estimate to show at
-        // commit time (computed server-side from your own view data).
-        net.send({ type: "EstimateEngagement", attacker: sel!.id, target: tgt.id });
-        if (!believedSheltered) state.raids[sel!.id] = tgt.id; // drive the soft intercept-estimate overlay
-        delete state.orders[sel!.id];
-        updateShipPanel();
-        readout().innerHTML =
-          `Raid committed: your <b>${esc(shipKindLabel(sel!.kind))}</b> → rival <b>${esc(tgt.kind)}</b>. ` +
-          `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
-          `not the <b>${tgt.age.toFixed(0)}s</b>-old ghost you see. ` +
-          (haveStrike ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>` : `<span class="dim">Press R to recall — it may arrive too late.</span>`) + shelterNote;
+        beginPendingIntent({ shipId: sel!.id, verb: "raid", targetId: tgt.id, dest: tgt.pos });
       } else {
         // Nothing of yours selected to attack with → INSPECT the rival (panel).
         selectShip(enemy);
@@ -3496,27 +3718,7 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     // Empty space → move order for the selected OWN ship (a rival can't be moved).
     if (haveOwn && net) {
       const dest = renderer.screenToWorld(sx, sy);
-      net.send({ type: "MoveShip", ship_id: sel!.id, dest });
-      state.orders[sel!.id] = dest;
-      updateShipPanel();
-      const out = sel!.age; // ≈ light delay command-center → ship
-      // §explore Part 4: a COLONY ship sent toward an UNSURVEYED system is a
-      // blind claim — informational friction only (never blocks the order).
-      let blind = "";
-      if (sel!.kind === "colony" && state.galaxy) {
-        const near = state.galaxy.systems.find((sys) => Math.hypot(sys.pos.x - dest.x, sys.pos.y - dest.y) <= 150);
-        if (near && knownDeposits(near.id) === null) {
-          blind = ` <span style="color:var(--warn)">Heading to <b>${esc(near.name)}</b> (${esc(near.band.toUpperCase())} band) — unsurveyed, claiming blind: the composition and any hidden trait are a gamble.</span>`;
-        }
-      }
-      readout().innerHTML =
-        `Order away to <b>${esc(shipKindLabel(sel!.kind))}</b>. ` +
-        `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
-        `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-        `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>` + blind +
-        (out > 8
-          ? ` <span style="color:var(--warn)">That sighting is stale — the fleet has flown on since, and its picture will catch up in a rush once fresher light arrives.</span>`
-          : "");
+      beginPendingIntent({ shipId: sel!.id, verb: "move", dest });
     }
 }
 
@@ -3575,7 +3777,7 @@ function emplacementLabel(kind: string): string {
 // when clicked months after it was placed.
 const EMPLACEMENT_BLURB: Record<string, string> = {
   hyperspace_buoy:
-    "Opens its lane to your signals: orders and reports ride it at hyperspace speed instead of crawling out at warp. It also lets a signal cross onto its lane where the roads meet, so buoys build an expanding network. Your home system already covers the lane it sits on.",
+    "An entry and exit between open-space warp signals and hyperspace communications. Your home system counts as one relay; two sharing a lane open the connected network through intersections.",
   deep_space_sensor:
     "A stationary picket. Watches its bubble like a ship's sensors and reports home at warp speed.",
   hyperspace_sensor:
@@ -3604,16 +3806,15 @@ function updateEmplacementPanel(): void {
     e.sensor_range > 0
       ? `<div class="stat" title="Everything inside this radius is watched from here."><dt>Watches</dt><dd>${fmt(e.sensor_range)} su</dd></div>`
       : `<div class="stat" title="A buoy carries signals; it does not watch."><dt>Watches</dt><dd class="dim">—</dd></div>`,
-  ]);
+  ], "sp-status-strip sp-status-strip--emplacement");
   const body =
     `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
     (mine
-      ? // Working from the moment it stands — one relay on a lane already
-        // carries. (It used to warn that a second buoy was needed; that was
-        // wrong twice over, since a lone relay does carry and the home system
-        // already counts as one.)
+      ? // Explain the pair rule without guessing whether this buoy shares a
+        // lane with home or another buoy; the client has drawable lane geometry,
+        // but the authoritative router owns relay membership.
         e.kind === "hyperspace_buoy"
-        ? `<div class="sp-line dim">Carrying signals along its lane. Place more on the lanes your fleets actually fly — each one you cover joins the network at its crossings.</div>`
+        ? `<div class="sp-line dim">Off-lane orders and reports enter or leave hyperspace only at home or an owned buoy. A ship actively riding a lane is already coupled.</div>`
         : ""
       : // A rival's: say how to be rid of it. The verb lives on the map, in the
         // same grammar as raiding, so the panel teaches rather than adds a button.
@@ -3628,7 +3829,7 @@ function updateEmplacementPanel(): void {
 // says what the current spot allows, so a refusal is never a surprise.
 function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
-    ["hyperspace_buoy", "Hyperspace Buoy", "Opens its lane to your signals — orders and reports ride it at hyperspace speed instead of crawling out at warp, and cross onto it where the roads meet. Must stand inside a lane."],
+    ["hyperspace_buoy", "Hyperspace Buoy", "An entry/exit for off-lane signals. Pair it with another owned relay on the same lane to open communications across the connected network; your home system counts as one. Must stand inside a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
@@ -3642,22 +3843,8 @@ function emplaceSection(g: GhostView): string {
   // buttons are live, so the light-delayed position IS the position).
   const laneOk = !renderer.siteError("hyperspace_buoy", g.pos, state);
   const openOk = !renderer.siteError("deep_space_sensor", g.pos, state);
-  // MID-BUILD: the bar is the whole story, so it replaces the siting advice
-  // (which is about a build you have not started). Reported on the crane's own
-  // channel like a shipyard job — see the wire field's note on why this one
-  // number is NOT light-delayed while the ship's position is.
-  if (g.job) {
-    const pct = Math.max(0, Math.min(100, g.job.progress * 100));
-    const wrecking = g.job.kind === "demolishing";
-    return (
-      `<div class="sp-sec">${wrecking ? "Demolition" : "Construct"}</div>` +
-      `<div class="sp-line">${bar(pct, wrecking ? "is-negative" : "")}</div>` +
-      `<div class="sp-line dim">${wrecking ? "Demolishing" : "Constructing"} — <b>${pct.toFixed(0)}%</b>. ` +
-      `Committed until the ${wrecking ? "structure falls" : "structure stands"}.</div>`
-    );
-  }
   const note = busy
-    ? `<div class="sp-line dim">Under way — it builds where it stops, once idle.</div>`
+    ? `<div class="sp-line dim">${g.job ? "Committed to the current job; new construction unlocks when it finishes." : "Under way — it builds where it stops, once idle."}</div>`
     : `<div class="sp-line dim">Builds at this spot. ${
         laneOk
           ? "In a hyperspace lane — everything can stand here."
@@ -3671,7 +3858,7 @@ function emplaceSection(g: GhostView): string {
         `<button class="emplace-btn" data-act="emplace" data-kind="${k}" title="${esc(`${tip} Kit: ${kitCostLabel(k)}, charged from one of your systems.`)}"${busy ? " disabled" : ""}>${name}</button>`,
     )
     .join(" ");
-  return `<div class="sp-sec">Construct</div>${note}<div class="sp-line">${btns}</div>`;
+  return note + `<div class="sp-line">${btns}</div>`;
 }
 
 // Wire map interaction: zoom (wheel toward cursor + buttons), pan (left-drag on
@@ -3771,11 +3958,15 @@ function installInteraction(): void {
   $("zoom-out").addEventListener("click", () => renderer.zoomByFactor(1 / 1.3));
   $("zoom-reset").addEventListener("click", () => renderer.resetView());
 
-  // Keyboard: R = recall selected raider; M = toggle the Hub Exchange panel.
+  // Keyboard: Enter/Esc commit or cancel a map-order preview; R recalls the
+  // selected raider; M toggles the Hub Exchange panel.
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
     const selShip = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
-    if ((e.key === "r" || e.key === "R") && selShip?.own && net) {
+    if (e.key === "Enter" && state.pendingIntent) {
+      e.preventDefault();
+      confirmPendingIntent();
+    } else if ((e.key === "r" || e.key === "R") && selShip?.own && net) {
       net.send({ type: "RecallRaid", raider_id: selShip.id });
       delete state.raids[selShip.id]; // break off the intercept estimate
       updateShipPanel();
@@ -3801,8 +3992,12 @@ function installInteraction(): void {
     } else if (e.key === "c" || e.key === "C") {
       toggleFaction(); // §TCA: your charter with the Authority
     } else if (e.key === "Escape") {
+      // A prospective order is the topmost map interaction: cancel it without
+      // also closing the selection/panels beneath it.
+      if (state.pendingIntent) {
+        clearPendingIntent();
       // §battle-records: the replay overlay is topmost — Escape closes it first.
-      if ($("battle-viewer").classList.contains("is-open")) {
+      } else if ($("battle-viewer").classList.contains("is-open")) {
         closeBattleViewer();
       } else if ($("build-panel").classList.contains("is-open") || $("build-ship-panel").classList.contains("is-open")) {
         closeBuildPanel(); // back out of either builder before the planet panel
@@ -4223,8 +4418,6 @@ function moduleRecipeValue(m: ModuleKind): number | null {
 }
 // The FIT the player is composing for the next warship build (module slugs, ≤2).
 let pendingFit: ModuleKind[] = [];
-// The target FIT the player is composing for a REFIT (own-fleet panel, ≤2).
-let pendingRefit: ModuleKind[] = [];
 // The module ledger at a system (owner-only; {} if unseen).
 function moduleLedgerAt(sid: string): Record<string, number> {
   return state.systems.find((s) => s.id === sid)?.modules ?? {};
@@ -4263,63 +4456,6 @@ function fitPicker(dyn: SystemStateView | undefined): string {
   return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Raider/Corvette 2, Scout 1).">${svgIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
     `<div class="fit-row">${chips}</div>`;
 }
-// §modules Part B4: the REFIT section on an OWN fleet — its warship STACKS
-// (kind × loadout, fitted + the unfitted remainder) each with a "Refit →"
-// button to the composed target fit. Offered whenever the fleet has warships;
-// the server enforces the docked-Shipyard + ledger-delta gate (a soft reject
-// leaves the fleet untouched). Empty for logistics-only fleets.
-function refitSection(g: GhostView): string {
-  if (!g.own) return "";
-  const comp = g.composition ?? [];
-  const warKinds = comp.filter((c) => (MODULE_SLOTS[c.kind] ?? 0) > 0 && c.count > 0);
-  if (!warKinds.length) return "";
-  const loadouts = g.loadouts ?? [];
-  // Build (kind, from, n) stacks: each fitted stack + the unfitted remainder.
-  const stacks: { kind: ShipKind; from: ModuleKind[]; n: number }[] = [];
-  for (const c of warKinds) {
-    let fittedTotal = 0;
-    for (const l of loadouts.filter((l) => l.kind === c.kind)) {
-      stacks.push({ kind: c.kind, from: l.modules, n: l.n });
-      fittedTotal += l.n;
-    }
-    const unfit = c.count - fittedTotal;
-    if (unfit > 0) stacks.push({ kind: c.kind, from: [], n: unfit });
-  }
-  const chips = MODULE_ALL.map((m) => {
-    const on = pendingRefit.includes(m);
-    return `<button class="act fit-chip${on ? " is-on" : ""}" data-act="refitmod" data-mod="${m}" title="${esc(MODULE_TIP[m])} Costs ${MODULE_FIT_COST[m]} fitting pts.">${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}${on ? " ✓" : ""}</button>`;
-  }).join("");
-  // §fitting: saved doctrine fits matching this fleet's warship kinds — one
-  // click composes the target (and the fitting bar tracks the budget).
-  const kindsHere = new Set(warKinds.map((c) => c.kind));
-  const fitChips = (state.syndicate?.fits ?? []).filter((f) => kindsHere.has(f.kind)).map((f) =>
-    `<button class="act fit-chip" data-act="refitfit" data-fitname="${esc(f.name)}" title="Apply doctrine fit (${esc(shipKindLabel(f.kind))}): ${f.modules.map((m) => esc(MODULE_LABEL[m])).join(" + ") || "stock"}">${esc(f.name)}</button>`).join(" ");
-  const targetTxt = pendingRefit.length ? pendingRefit.map((m) => `${MODULE_GLYPH[m]} ${esc(MODULE_LABEL[m])}`).join(" · ") : "stock (strip all fits)";
-  const rows = stacks.map((s) => {
-    const fromTxt = s.from.length ? s.from.map((m) => MODULE_GLYPH[m]).join("") : "stock";
-    const to = pendingRefit.slice(0, MODULE_SLOTS[s.kind] ?? 0);
-    const same = [...s.from].sort().join(",") === [...to].sort().join(",");
-    // §fitting: a grandfathered stack that exceeds today's budget keeps flying
-    // but is flagged — it may only refit INTO legality.
-    const legacy = s.from.length > 0 && !fitLegal(s.kind, s.from)
-      ? ` <span class="fit-legacy" title="This stack's fit exceeds the hull's current fitting budget (${fitCost(s.from)}/${FITTING_POINTS[s.kind] ?? 0} pts). It keeps flying as-is; a refit must land on a legal fit.">legacy fit</span>`
-      : "";
-    const overBudget = to.length > 0 && !fitLegal(s.kind, to);
-    const aff = affinityLine(s.kind, s.from);
-    return `<div class="sp-line" style="justify-content:space-between;gap:6px">` +
-      `<span title="${s.n} ${esc(shipKindLabel(s.kind))} currently fitted: ${fromTxt}${aff ? ` — ${esc(aff)}` : ""}">${s.n}× ${esc(shipKindLabel(s.kind))} · ${fromTxt}${aff ? ` <span class="tone-up" title="${esc(aff)}">×1.25</span>` : ""}${legacy}</span>` +
-      `<button class="act" data-act="refit" data-kind="${s.kind}" data-from="${s.from.join(",")}" data-n="${s.n}" ${same || overBudget ? "disabled" : ""} title="${overBudget ? `The target fit exceeds the ${esc(shipKindLabel(s.kind))}'s fitting budget (${fitCost(to)}/${FITTING_POINTS[s.kind] ?? 0} pts).` : `Refit these ${s.n} ship(s) to the target fit — done at a docked Shipyard you own/ally; the added modules come from that system's ledger, removed ones return to it.`}">Refit →</button>` +
-      `</div>`;
-  }).join("");
-  // The bar tracks the FIRST warship kind's budget (per-row gating is exact).
-  const barKind = warKinds[0].kind;
-  return `<div class="sp-sec">${svgIcon("action-build", "sm")} Refit</div>` +
-    `<div class="mhint" style="margin:2px 0" title="Pick the target fit (≤2), then Refit a stack. The ships enter the yard and rejoin fitted; requires a docked Shipyard and the added modules in that system's ledger.">target: <b>${targetTxt}</b> · ${fittingBar(barKind, pendingRefit)} — at a docked Shipyard</div>` +
-    `<div class="fit-row">${chips}</div>` +
-    (fitChips ? `<div class="mhint" style="margin:2px 0">doctrine fits:</div><div class="fit-row">${fitChips}</div>` : "") +
-    rows;
-}
-
 // (buildOptionRow removed — the inline structure/ship rows it drew are gone; the
 //  dedicated build panels now own that gating via structOption / shipOption.)
 
@@ -6386,7 +6522,7 @@ function locName(pos: Vec2): string {
   return best ? best.name : `(${Math.round(pos.x)}, ${Math.round(pos.y)})`;
 }
 // Deep-link actions (close the inbox, focus the relevant panel/target).
-function inboxFocusSystem(id: string): void { state.selectedShipId = null; state.selectedSystemId = id; closeCheckin(); openRail("system"); }
+function inboxFocusSystem(id: string): void { state.selectedShipId = null; state.selectedOrderId = null; state.selectedSystemId = id; closeCheckin(); openRail("system"); }
 function inboxFocusFleet(id: string): void { closeCheckin(); selectShip(id); }
 function inboxOpenLogistics(): void { closeCheckin(); openRail("logistics"); }
 const dismissAct = (key: string): InboxAction => ({ label: "Dismiss", run: () => { dismissedInbox.add(key); renderInbox(); } });
@@ -6675,7 +6811,9 @@ function nextDecisionLabel(): string {
     for (const b of s.builds ?? []) consider(b.complete_time, `a build completes at ${systemName(s.id)}`);
     if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
   }
-  for (const p of state.pendingOrders.values()) consider(p.echo_at, "an order confirms");
+  for (const queue of state.pendingOrders.values()) {
+    for (const p of queue) consider(p.echo_at, "an order confirms");
+  }
   // §explore Part 4: an in-flight survey DWELL — its completion is often the
   // soonest thing worth waiting for (owner-only live progress, honest estimate).
   for (const g of state.ghosts) {
@@ -7026,16 +7164,29 @@ function join(): void {
         }
         case "CommandSignal": {
           // Your order is crossing space to your ship (the violet comet); you'll
-          // see the ship react on the map when its light arrives. Replace any
-          // in-flight signal for the same ship (a newer order supersedes).
-          state.commandSignals = state.commandSignals.filter((s) => s.shipId !== msg.ship_id);
+          // see the ship react on the map when its light arrives. Identity is per
+          // ORDER: multiple commands to one fleet genuinely coexist in flight.
+          state.commandSignals = state.commandSignals.filter((s) => s.orderId !== msg.order_id);
           state.commandSignals.push({
+            orderId: msg.order_id,
             shipId: msg.ship_id,
             depart: msg.depart_time,
             arrive: msg.arrive_time,
             pOut: 0,
             hops: msg.hops ?? [],
           });
+          break;
+        }
+        case "RoutePreview": {
+          // Replies are immediate but still asynchronous. A second destination,
+          // cancel, or ship change makes an older reply stale; never resurrect it.
+          const intent = state.pendingIntent;
+          if (intent?.verb === "move"
+            && intent.shipId === msg.ship_id
+            && samePoint(intent.dest, msg.dest)) {
+            intent.path = msg.path;
+            renderer.stateVersion++;
+          }
           break;
         }
         case "Report": {

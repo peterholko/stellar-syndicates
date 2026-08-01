@@ -21,8 +21,8 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{
-    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView,
-    ServerMsg, StockSlot, SystemInfo, WalletView,
+    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PathPointView,
+    PriceView, ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
@@ -36,6 +36,48 @@ const BROADCAST_EVERY: u64 = 3;
 /// Default full-world snapshot cadence: every 10 s at the tick rate. Bounds how
 /// much progress a restart can lose (the snapshot is the restart basis, §14).
 pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
+
+/// Build the exact drawable route and clock for an outbound command aimed at the
+/// moving meeting point projected from the player's current ghost of a ship.
+///
+/// A ship riding a lane is coupled to the medium in BOTH directions: its report
+/// rides home, and an order to it counts the hull as the relay completing the
+/// access pair (`signal_to_coupled`), so the comet flies the route the ship
+/// itself took. The channels can still differ in detail, so the ghost's AGE is
+/// not necessarily the time this outbound route takes. The purple comet must use
+/// the total attached to THESE hops; otherwise a plain-warp chord can be squeezed
+/// into a hyperspace-fast inbound window and look like an FTL straight line.
+fn command_signal_plan(
+    delays: &sim::lane::DelayField<'_>,
+    cc: sim::Vec2,
+    ghost_pos: sim::Vec2,
+    ghost_vel: sim::Vec2,
+    ghost_coupled: bool,
+) -> (f64, Vec<crate::protocol::SignalHopView>) {
+    // §6: solve only from the SERVED sighting. This is the same fixed-point
+    // meeting equation as authoritative delivery, but fed the player's ghost
+    // position/velocity so neither the route nor its clock leaks true space.
+    let (_, meeting_point) =
+        delays.meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, 1.0);
+    let route = if ghost_coupled {
+        delays.path_to_coupled(cc, meeting_point)
+    } else {
+        delays.path(cc, meeting_point)
+    };
+    let travel_time = route.last().map(|hop| hop.t).unwrap_or(0.0);
+    let hops = if route.len() >= 2 && travel_time > 1e-9 {
+        route
+            .iter()
+            .map(|hop| crate::protocol::SignalHopView {
+                pos: hop.to,
+                frac: hop.t / travel_time,
+            })
+            .collect()
+    } else {
+        Vec::new() // a straight run — the client's fallback draws it
+    };
+    (travel_time, hops)
+}
 
 /// A battle whose engagement has CONCLUDED in true space but whose conclusion
 /// light hasn't yet reached every viewer (§battles-take-time). The sim removes
@@ -165,7 +207,13 @@ impl GameLoop {
     /// staleness of that ship (its ghost age), so it meets the ghost and reveals
     /// no true distance. Skipped if the player doesn't own the ship or it's
     /// currently dark to them.
-    fn emit_command_signal(&self, player_id: PlayerId, ship_id: sim::EntityId) {
+    fn emit_command_signal(
+        &self,
+        player_id: PlayerId,
+        ship_id: sim::EntityId,
+        order_id: u64,
+        depart_time: f64,
+    ) {
         let Some(corp) = self.world.players.get(&player_id) else {
             return;
         };
@@ -184,40 +232,25 @@ impl GameLoop {
         // whose speed varies, so the lane network travels with `c` now.
         let buoys = self.world.relay_network(player_id);
         let delays = sim::lane::DelayField { lanes: &self.world.lanes, buoys: &buoys, c };
-        let now = self.world.time;
-        // Observed one-way light delay to the ship (its ghost staleness). Falls
-        // back to ~0 if just spawned at home. The order reaches the ship one delay
-        // out — that's the whole outbound signal; the ship's reaction is then seen
-        // directly on the map when its light arrives (no return signal needed).
-        let (ghost_pos, age) = self
+        // Aim from the player's observed ship position and velocity, never its
+        // hidden true state. A just-spawned hull at home degenerates to a
+        // zero-length signal.
+        let (ghost_pos, ghost_vel, ghost_coupled) = self
             .history
-            .observed_sighting(ship_id, cc, &delays, now)
-            .unwrap_or((cc, 0.0));
-        // §buoys: the RELAY PATH the order flies, aimed at the ghost (the
-        // player's own sighting — nothing here reveals true position). Hop
-        // times come from the relay search itself; NORMALISED to fractions of
-        // the whole window so the comet lands exactly at `arrive_time` even
-        // where the ghost's own delay (e.g. a coupled rider) and the plain
-        // field disagree about the total.
-        let hops = if age > 0.05 {
-            let hops = delays.path(cc, ghost_pos);
-            let total = hops.last().map(|h| h.t).unwrap_or(0.0);
-            if hops.len() >= 2 && total > 1e-9 {
-                hops.iter()
-                    .map(|h| crate::protocol::SignalHopView { pos: h.to, frac: h.t / total })
-                    .collect()
-            } else {
-                Vec::new() // a straight run — the client's fallback draws it
-            }
-        } else {
-            Vec::new()
-        };
+            .observed_sighting(ship_id, cc, &delays, depart_time)
+            .unwrap_or((cc, sim::Vec2::ZERO, false));
+        // §buoys: one outbound route supplies BOTH the geometry and its clock;
+        // the fixed-point solve makes that route end where it meets the moving
+        // ghost rather than where the ghost stood when the order was issued.
+        let (travel_time, hops) =
+            command_signal_plan(&delays, cc, ghost_pos, ghost_vel, ghost_coupled);
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandSignal {
+                order_id,
                 ship_id,
-                depart_time: now,
-                arrive_time: now + age,
+                depart_time,
+                arrive_time: depart_time + travel_time,
                 hops,
             },
         );
@@ -360,7 +393,6 @@ impl GameLoop {
                 ClientMsg::MoveShip { ship_id, dest } => {
                     // Attach the issuing player (the sim enforces ownership).
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, ship_id);
                         self.pending.push(Command::MoveShip {
                             player_id,
                             ship_id,
@@ -368,11 +400,67 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::PreviewRoute { ship_id, dest } => {
+                    let Some(player_id) = self.sessions.player_of(conn_id) else {
+                        return;
+                    };
+                    // Ownership and formation throttle determine the speed, but
+                    // the route origin is exclusively the player's served
+                    // sighting. In particular, never substitute `fleet.pos`:
+                    // this reply is UI assistance, not a leak of true space.
+                    let Some(base_speed) = self
+                        .world
+                        .fleets
+                        .get(&ship_id)
+                        .filter(|fleet| fleet.owner == player_id)
+                        .map(|fleet| fleet.transit_speed())
+                    else {
+                        return;
+                    };
+                    let Some(corp) = self.world.players.get(&player_id) else {
+                        return;
+                    };
+                    let cc = corp.command_center;
+                    let buoys = self.world.relay_network(player_id);
+                    let delays = sim::lane::DelayField {
+                        lanes: &self.world.lanes,
+                        buoys: &buoys,
+                        c: self.world.config.c,
+                    };
+                    let Some((sighting_pos, _, _)) =
+                        self.history
+                            .observed_sighting(ship_id, cc, &delays, self.world.time)
+                    else {
+                        return;
+                    };
+                    let path = self
+                        .world
+                        .lanes
+                        .route(
+                            sighting_pos,
+                            dest,
+                            base_speed * sim::lane::WARP_FACTOR,
+                            base_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT,
+                        )
+                        .into_iter()
+                        .map(|leg| PathPointView {
+                            pos: leg.to,
+                            lane: leg.lane.is_some(),
+                        })
+                        .collect();
+                    self.sessions.send_to_conn(
+                        conn_id,
+                        ServerMsg::RoutePreview {
+                            ship_id,
+                            dest,
+                            path,
+                        },
+                    );
+                }
                 ClientMsg::DemolishEmplacement { fleet, target } => {
                     // §emplacements: same shape as the build order — the signal
                     // travels to the FLEET; the sim validates and runs the clock.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, fleet);
                         self.pending.push(Command::DemolishEmplacement { player_id, fleet, target });
                     }
                 }
@@ -381,7 +469,6 @@ impl GameLoop {
                     // travels to the BUILDER, which builds where it is parked;
                     // the sim sites, charges, refuses.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, builder);
                         self.pending.push(Command::BuildEmplacement {
                             player_id,
                             builder,
@@ -391,7 +478,6 @@ impl GameLoop {
                 }
                 ClientMsg::CommitRaid { raider_id, target_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, raider_id);
                         self.pending.push(Command::CommitRaid {
                             player_id,
                             raider_id,
@@ -402,21 +488,18 @@ impl GameLoop {
                 ClientMsg::BlockadeSystem { fleet_id, system_id } => {
                     // §contestable-territory Part 1: light-delayed like a move.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, fleet_id);
                         self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
                     }
                 }
                 ClientMsg::SurveySystem { fleet_id, system_id } => {
                     // §explore Part 2: light-delayed like a move.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, fleet_id);
                         self.pending.push(Command::SurveySystem { player_id, fleet_id, system_id });
                     }
                 }
                 ClientMsg::AttackFleet { fleet_id, target_id } => {
                     // §offensive-orders Part 1: light-delayed like a raid.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, fleet_id);
                         self.pending.push(Command::AttackFleet { player_id, fleet_id, target_id });
                     }
                 }
@@ -479,7 +562,6 @@ impl GameLoop {
                 }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.emit_command_signal(player_id, raider_id);
                         self.pending.push(Command::RecallRaid { player_id, raider_id });
                     }
                 }
@@ -705,6 +787,16 @@ impl GameLoop {
             .collect();
         let systems_before = self.world.systems.len();
         let events = self.world.step(&commands);
+        // A comet is emitted only after the sim has validated and scheduled the
+        // command, so its id is the authoritative queue identity allocated at
+        // `schedule_for_owner`. Do this before recording the post-step sample:
+        // the route remains rooted in the player's picture at issue time, just
+        // as it was when signals were emitted directly from `handle_input`.
+        for event in &events {
+            if let sim::EventPayload::OrderScheduled { id, owner, fleet } = event.payload {
+                self.emit_command_signal(owner, fleet, id, event.time);
+            }
+        }
         // §over-capacity homes: a join past the pre-generated slot pool MINTS a
         // new home system mid-run — public geography that every connected
         // client's Welcome snapshot predates. Re-broadcast the star chart so
@@ -1374,10 +1466,15 @@ impl GameLoop {
                         .pending_commands(player_id)
                         .into_iter()
                         .map(|p| crate::protocol::PendingOrderView {
+                            id: p.id,
                             fleet_id: p.fleet,
+                            issued_at: p.issued_at,
                             delivered_at: p.delivered_at,
                             echo_at: p.echo_at,
                             kind: p.kind,
+                            dest: p.dest,
+                            target_id: p.target,
+                            emplacement: p.emplacement,
                         })
                         .collect(),
                     battles,
@@ -1881,7 +1978,245 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sim::Vec2;
+    use sim::{
+        lane::{bake_for_tests, Lane, LaneKind, LaneNetwork, WARP_FACTOR},
+        Vec2,
+    };
+
+    fn signal_bow() -> LaneNetwork {
+        let control = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(100_000.0, 60_000.0),
+            Vec2::new(200_000.0, 0.0),
+        ];
+        LaneNetwork::of(vec![Lane {
+            id: 42,
+            kind: LaneKind::Trunk,
+            name: "Signal Bow".into(),
+            samples: bake_for_tests(&control),
+            control,
+            half_width: 2_000.0,
+            tapers: false,
+        }])
+    }
+
+    fn signal_line() -> LaneNetwork {
+        let control = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(100_000.0, 0.0),
+            Vec2::new(200_000.0, 0.0),
+        ];
+        LaneNetwork::of(vec![Lane {
+            id: 43,
+            kind: LaneKind::Trunk,
+            name: "Signal Line".into(),
+            samples: bake_for_tests(&control),
+            control,
+            half_width: 2_000.0,
+            tapers: false,
+        }])
+    }
+
+    /// The live CommandSignal payload must retain the expanded lane curve, not
+    /// merely the solver's relay endpoints. This pins the server-side seam after
+    /// the lane solver: the client cannot draw geometry the wire discarded.
+    #[test]
+    fn command_signal_plan_sends_the_curved_hyperspace_route() {
+        let lanes = signal_bow();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(lane.length() * 0.05);
+        let buoy = lane.at(lane.length() * 0.35);
+        let hull = lane.at(lane.length() * 0.95);
+        let relays = [home, buoy];
+        let field = sim::lane::DelayField { lanes: &lanes, buoys: &relays, c: 400.0 };
+
+        let (travel_time, hops) =
+            command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        assert!(hops.len() > 6, "the wire route should contain baked curve samples");
+        assert!(
+            hops.iter().map(|hop| hop.pos.y).fold(f64::NEG_INFINITY, f64::max) > 40_000.0,
+            "the wire route should follow the lane's bow rather than its endpoint chord",
+        );
+        assert!(
+            (travel_time - field.to_coupled(home, hull)).abs() < 1e-9,
+            "the animation clock must come from the same outbound path",
+        );
+        assert!((hops.last().unwrap().frac - 1.0).abs() < 1e-9);
+    }
+
+    /// The comet aims where the player's SERVED ghost and its served velocity
+    /// say the signal will meet the hull. For an inbound rider that is before
+    /// the sighting along the lane; targeting the sighting itself makes the
+    /// comet fly through the hull and land beyond it.
+    #[test]
+    fn command_signal_plan_ends_at_the_inbound_ghosts_meeting_point() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(lane.length() * 0.05);
+        let ghost_pos = lane.at(lane.length() * 0.95);
+        let ghost_vel = Vec2::new(-1_000.0, 0.0);
+        let relays = [home];
+        let field = sim::lane::DelayField { lanes: &lanes, buoys: &relays, c: 400.0 };
+        let old_sighting_time = field.to_coupled(home, ghost_pos);
+
+        let (total, hops) =
+            command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+        let final_hop = hops.last().expect("a coupled route has drawable hops");
+        assert!(
+            final_hop.pos.distance(ghost_pos) > 1_000.0,
+            "the route must not end on the stale sighting",
+        );
+        assert!(
+            final_hop.pos.distance(ghost_pos + ghost_vel * total)
+                <= ghost_vel.length() * DT + 1e-6,
+            "the final hop is the iterated meeting point",
+        );
+        assert!(
+            total < old_sighting_time,
+            "an inbound ghost is met earlier ({total:.6}s vs sighting {old_sighting_time:.6}s)",
+        );
+        assert!(
+            (field.to_coupled(home, final_hop.pos) - total).abs() < 1e-9,
+            "the final hop's cumulative time is the quoted total",
+        );
+        assert!((final_hop.frac - 1.0).abs() < 1e-9);
+    }
+
+    /// §coupled: THE RIDING HULL COMPLETES THE PAIR (design ruling from
+    /// playtest). Home plus a hull riding home's lane IS an access pair, so an
+    /// order flies the route the ship itself took — a lane ride, not a warp
+    /// chord — on the ride's own clock.
+    ///
+    /// This test previously pinned the opposite (home alone sends a straight
+    /// warp order even to a coupled hull). Playtest overruled it: the panel
+    /// read "Hyperdrive engaged · Hyperspace" while the order comet crawled a
+    /// straight warp line, and the coupling that carries the ship's reports
+    /// home plainly carries an order the other way. The original concern —
+    /// never squeeze a straight chord into a lane-fast clock — survives as the
+    /// clock/route agreement assertions.
+    #[test]
+    fn an_order_to_a_riding_hull_flies_the_lane_home_covers() {
+        let lanes = signal_bow();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(lane.length() * 0.05);
+        let hull = lane.at(lane.length() * 0.95);
+        let relays = [home];
+        let field = sim::lane::DelayField { lanes: &lanes, buoys: &relays, c: 400.0 };
+        let inbound = field.from_coupled(hull, home);
+
+        let (outbound, hops) =
+            command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        let warp = home.distance(hull) / (field.c * WARP_FACTOR);
+        assert!(!hops.is_empty(), "the order rides — the coupled hull is the second relay");
+        assert!(
+            outbound < warp * 0.5,
+            "far quicker than the warp chord ({outbound:.1}s vs {warp:.1}s)"
+        );
+        assert!(
+            (outbound - inbound).abs() <= inbound * 0.5,
+            "the two coupled channels are the same physics now ({outbound:.2}s vs {inbound:.2}s)"
+        );
+        assert!(
+            (hops.last().unwrap().frac - 1.0).abs() < 1e-9,
+            "clock and route come from the same plan — no FTL chords"
+        );
+    }
+
+    /// The server-facing lifecycle source must expose the real command queue,
+    /// not collapse it to the latest entry for a fleet. Five seconds separates
+    /// these orders, but the first signal is still crossing space when the
+    /// second leaves; both remain identifiable until the existing delivery /
+    /// supersession / echo rules expire them.
+    #[test]
+    fn two_orders_to_one_fleet_are_reported_until_their_existing_expiry() {
+        let mut world = World::new(sim::SimConfig::for_players(0x0DDE_2, 4));
+        let owner = PlayerId(700);
+        world.step(&[Command::AddPlayer {
+            id: owner,
+            name: "Queue Test".into(),
+        }]);
+        let cc = world.players[&owner].command_center;
+        let fleet = *world
+            .fleets
+            .iter()
+            .find(|(_, f)| f.owner == owner)
+            .map(|(id, _)| id)
+            .expect("the player starts with a fleet");
+        let pos = cc + Vec2::new(120_000.0, 40_000.0);
+        {
+            let f = world.fleets.get_mut(&fleet).unwrap();
+            f.pos = pos;
+            f.vel = Vec2::ZERO;
+            f.order = sim::ship::FleetOrder::Idle;
+            f.route.clear();
+        }
+
+        let first_dest = pos + Vec2::new(5_000.0, 0.0);
+        let first_events = world.step(&[Command::MoveShip {
+            player_id: owner,
+            ship_id: fleet,
+            dest: first_dest,
+        }]);
+        let first_id = first_events
+            .iter()
+            .find_map(|e| match &e.payload {
+                sim::EventPayload::OrderScheduled { id, fleet: f, .. } if *f == fleet => Some(*id),
+                _ => None,
+            })
+            .expect("the first validated order has an id");
+
+        for _ in 0..(5 * sim::TICK_HZ) {
+            world.step(&[]);
+        }
+        let second_dest = pos + Vec2::new(0.0, 9_000.0);
+        let second_events = world.step(&[Command::MoveShip {
+            player_id: owner,
+            ship_id: fleet,
+            dest: second_dest,
+        }]);
+        let second_id = second_events
+            .iter()
+            .find_map(|e| match &e.payload {
+                sim::EventPayload::OrderScheduled { id, fleet: f, .. } if *f == fleet => Some(*id),
+                _ => None,
+            })
+            .expect("the second validated order has an id");
+
+        let queue = world.pending_commands(owner);
+        assert_eq!(queue.len(), 2, "both outbound orders are reported");
+        assert_ne!(first_id, second_id, "each scheduled command has a stable distinct id");
+        assert_eq!(queue.iter().map(|p| p.id).collect::<Vec<_>>(), vec![first_id, second_id]);
+        assert_eq!(queue[0].dest, Some(first_dest));
+        assert_eq!(queue[1].dest, Some(second_dest));
+        for p in &queue {
+            assert!(p.delivered_at > p.issued_at, "outbound clock follows issue");
+            assert!(p.echo_at > p.delivered_at, "echo clock follows delivery");
+        }
+
+        let first_delivery = queue[0].delivered_at;
+        let second_delivery = queue[1].delivered_at;
+        while world.time < first_delivery + sim::DT {
+            world.step(&[]);
+        }
+        assert_eq!(
+            world.pending_commands(owner).len(),
+            2,
+            "the delivered first order and outbound second order coexist",
+        );
+
+        while world.time < second_delivery + sim::DT {
+            world.step(&[]);
+        }
+        let after_supersession = world.pending_commands(owner);
+        assert_eq!(after_supersession.len(), 1, "the existing supersession expiry removes the older echo");
+        assert_eq!(after_supersession[0].id, second_id);
+
+        let echo = after_supersession[0].echo_at;
+        while world.time < echo + sim::DT {
+            world.step(&[]);
+        }
+        assert!(world.pending_commands(owner).is_empty(), "the final row expires when its echo is observed");
+    }
 
     /// The build CATALOGUE must offer every hull a corporation can actually
     /// build, and every structure. Structures ride `StructureKind::ALL` and so

@@ -871,12 +871,13 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
         // Fuel movement seed lands on join.) All Tunable.
         //
         // §emplacements: the kit also funds the INFRASTRUCTURE OPENING the
-        // starting Construction Ship exists for. A buoy pair (the smallest
-        // relay that carries anything) costs 80 Alloys + 120 Electronics +
-        // 60 Fuel; a lone Deep Space Sensor costs 60/120/40. Electronics 150
-        // and Alloys 100 cover either — pair with spare, or sensor first —
-        // while later kits ride the market. Without this seed the home has
-        // ZERO Electronics and every emplacement order is refused at spawn.
+        // starting Construction Ship exists for. One buoy on home's lane
+        // completes the first relay link; the reserve funds a second buoy to
+        // extend it. Two buoy kits cost 80 Alloys + 120 Electronics + 60 Fuel;
+        // a Deep Space Sensor costs 60/120/40. Electronics 150 and Alloys 100
+        // cover either opening while later kits ride the market. Without this
+        // seed the home has ZERO Electronics and every emplacement order is
+        // refused at spawn.
         stockpile: [
             (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
             (Commodity::Machinery, 40.0),

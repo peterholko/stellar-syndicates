@@ -705,28 +705,22 @@ impl PositionHistory {
         ghosts
     }
 
-    /// The staleness (light delay, seconds) of a ship's ghost as the command
-    /// center at `cc` observes it — the age of the latest sample whose light has
-    /// arrived. This is exactly how far behind the player's view of that ship
-    /// is. Used to pace the outbound command
-    /// comet so it meets the ghost. `None` if the ship is currently dark.
-    pub fn observed_age(&self, ship_id: EntityId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Option<f64> {
-        self.observed_sighting(ship_id, cc, delays, now).map(|(_, age)| age)
-    }
-
-    /// The (position, age) of the viewer's CURRENT SIGHTING of their own ship —
-    /// where the ghost stands and how stale it is. What the order comet aims at.
+    /// The (position, velocity, coupled) of the viewer's CURRENT SIGHTING of
+    /// their own ship — where the ghost stands, how the served picture says it
+    /// is moving, and whether its drive was actively joined to a lane in that
+    /// same retarded frame. These are the only inputs the order comet may use to
+    /// solve its meeting point; the hidden true fleet never enters the graphic.
     pub fn observed_sighting(
         &self,
         ship_id: EntityId,
         cc: Vec2,
         delays: &sim::lane::DelayField<'_>,
         now: f64,
-    ) -> Option<(Vec2, f64)> {
+    ) -> Option<(Vec2, Vec2, bool)> {
         let track = self.tracks.get(&ship_id)?;
         // Serves the ISSUING player's own ship — coupled applies.
         let sample = latest_observable(&track.samples, cc, delays, now, true, &[])?;
-        Some((sample.pos, now - sample.time))
+        Some((sample.pos, sample.vel, sample.drive.stirs_the_lane()))
     }
 
     /// Was a (destroyed) raider's ghost — observed at retarded position `ghost_pos`,

@@ -31,6 +31,16 @@
           "png": "celestial_sprites/mining_station.png"
         },
         {
+          "slug": "hyperspace-buoy",
+          "title": "Hyperspace Communication Buoy",
+          "png": "celestial_sprites/hyperspace_buoy.png"
+        },
+        {
+          "slug": "deep-space-sensor",
+          "title": "Deep Space Sensor",
+          "png": "celestial_sprites/deep_space_sensor.png"
+        },
+        {
           "slug": "asteroid-a",
           "title": "Asteroid A",
           "png": "celestial_sprites/asteroid_a.png"

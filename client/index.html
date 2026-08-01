@@ -117,6 +117,30 @@
       #readout b { color: var(--accent); font-weight: 700; }
       #readout .dim { color: var(--dim); }
 
+      /* Deliberate map-order confirmation — fixed beside the readout so the
+         player can keep comparing the current and prospective routes. */
+      #intent-bar {
+        position: fixed; left: 402px; right: 412px; bottom: 14px;
+        display: none;
+        max-width: 520px;
+        padding: 9px 11px;
+        background: rgba(8, 12, 22, 0.94);
+        border: 1px solid #31543d;
+        border-left: 2px solid #b8f3c3;
+        border-radius: 6px;
+        z-index: 6;
+        backdrop-filter: blur(6px);
+        align-items: center;
+        gap: 12px;
+      }
+      #intent-bar.is-open { display: flex; }
+      .intent-bar__summary { color: #d8f8df; font-size: 12px; line-height: 1.4; }
+      .intent-bar__actions { display: flex; gap: 6px; flex: none; }
+      .intent-bar__actions .act { width: auto; margin: 0; white-space: nowrap; }
+      @media (max-width: 1100px) {
+        #intent-bar { left: 14px; right: 14px; bottom: 100px; max-width: none; }
+      }
+
       /* System panel (claim / ship production) — left, above the readout */
 
       /* Legend (bottom-right) */
@@ -238,7 +262,7 @@
       /* ---- right-docked rail ---- */
       #rail {
         position: fixed; top: 58px; right: 14px; bottom: 14px;
-        width: 320px;
+        width: min(400px, calc(100vw - 28px));
         display: none; flex-direction: column;
         background: var(--panel-bg);
         border: 1px solid var(--border);
@@ -285,7 +309,7 @@
       /* ---- Ship details panel — shares the right-dock slot with the rail ---- */
       #ship-panel {
         position: fixed; top: 58px; right: 14px; bottom: 14px;
-        width: 320px;
+        width: min(400px, calc(100vw - 28px));
         display: none; flex-direction: column;
         background: var(--panel-bg);
         border: 1px solid var(--border);
@@ -297,21 +321,71 @@
       #ship-panel.is-open { display: flex; }
       #ship-panel .sp-head {
         display: flex; align-items: flex-start; justify-content: space-between;
-        gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border);
+        gap: 8px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border);
       }
       #ship-panel .sp-close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #ship-panel .sp-close:hover { color: var(--ink); }
-      #ship-panel .sp-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+      #ship-panel .sp-body { flex: 1; overflow-y: auto; padding: 0 14px 12px; }
       #ship-panel .sp-age { font-variant-numeric: tabular-nums; }
       #ship-panel .sp-age.is-stale dd { color: var(--negative); }
       #ship-panel .sp-arrow { display: inline-block; color: var(--accent); }
       #ship-panel .sp-note { color: var(--dim); line-height: 1.45; margin: 2px 0 10px; }
-      #ship-panel .sp-fuel { display: flex; align-items: center; gap: 8px; padding: 7px 9px; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; background: rgba(20,26,40,0.5); }
-      #ship-panel .sp-fuel .sp-fuel-v { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 700; }
+      #ship-panel .sp-status-strip {
+        display: grid; grid-template-columns: minmax(62px, .7fr) minmax(178px, 1.8fr) minmax(84px, 1fr);
+        grid-template-areas: "seen drive domain" "heading position position";
+        gap: 9px 12px; margin: 0; padding: 11px 0 12px; border-bottom: 1px solid var(--border);
+      }
+      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(1) { grid-area: seen; }
+      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(2) { grid-area: drive; }
+      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(3) { grid-area: domain; }
+      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(4) { grid-area: heading; }
+      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(5) { grid-area: position; }
+      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(2) dd { white-space: nowrap; font-size: 12px; }
+      #ship-panel .sp-status-strip--emplacement { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-areas: none; }
+      #ship-panel .sp-zone { padding: 12px 0; border-bottom: 1px solid rgba(79,195,255,0.10); }
+      #ship-panel .sp-zone:last-child { border-bottom: 0; }
+      #ship-panel .sp-zone__title { color: var(--ink); text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: 0.9px; margin-bottom: 8px; }
+      #ship-panel .sp-zone--now { margin: 11px 0 0; padding: 10px 11px; border: 1px solid rgba(79,195,255,0.18); border-left: 3px solid var(--accent); border-radius: 7px; background: rgba(20,31,47,0.62); }
+      #ship-panel .sp-zone--now .sp-zone__title { color: var(--accent); }
+      #ship-panel .sp-now-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; align-items: start; margin-top: 6px; line-height: 1.4; }
+      #ship-panel .sp-now-row:first-of-type { margin-top: 0; }
+      #ship-panel .sp-now__label { color: var(--dim); font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; padding-top: 2px; }
+      #ship-panel .sp-zone--orders { padding-top: 13px; }
+      #ship-panel .sp-order {
+        display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 7px; align-items: center;
+        width: 100%; margin: 0 0 6px; padding: 8px 9px; text-align: left;
+        color: var(--ink); background: rgba(20,26,40,0.45);
+        border: 1px solid rgba(79,195,255,0.12); border-radius: 6px;
+        font: inherit; cursor: pointer;
+      }
+      #ship-panel .sp-order:last-child { margin-bottom: 0; }
+      #ship-panel .sp-order:hover, #ship-panel .sp-order:focus-visible { border-color: rgba(197,107,255,0.7); outline: none; }
+      #ship-panel .sp-order.is-selected { border-color: #c56bff; background: rgba(197,107,255,0.12); box-shadow: inset 2px 0 #c56bff; }
+      #ship-panel .sp-order__phase { color: #c56bff; font-size: 17px; line-height: 1; text-align: center; }
+      #ship-panel .sp-order__copy { min-width: 0; line-height: 1.25; }
+      #ship-panel .sp-order__copy b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+      #ship-panel .sp-order__copy small { display: block; margin-top: 3px; color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+      #ship-panel .sp-job { margin-top: 9px; }
+      #ship-panel .sp-job__meta { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; font-variant-numeric: tabular-nums; }
+      #ship-panel .sp-fuel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 6px; background: rgba(20,26,40,0.5); }
+      #ship-panel .sp-fuel__burn { min-width: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+      #ship-panel .sp-fuel__burn b { display: block; }
+      #ship-panel .sp-fuel__burn small { display: block; margin-top: 2px; color: var(--dim); font-size: 9px; }
       #ship-panel .sp-cargo { display: flex; align-items: center; gap: 6px; }
-      #ship-panel .sp-sec { display: flex; align-items: center; gap: var(--icon-gap); color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin: 12px 0 5px; min-height: var(--icon-sm); }
+      #ship-panel .sp-sec { display: flex; align-items: center; gap: var(--icon-gap); color: var(--dim); text-transform: uppercase; font-size: 9px; letter-spacing: 0.6px; margin: 10px 0 5px; min-height: var(--icon-sm); }
+      #ship-panel .sp-zone > .sp-sec:first-child { margin-top: 0; }
       #ship-panel .sp-line { line-height: 1.45; }
       #ship-panel .dim { color: var(--dim); }
+      #ship-panel .sp-split { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+      #ship-panel .sp-split .act { width: auto; margin-top: 0; padding: 4px 8px; }
+      #ship-panel .sp-fold { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      #ship-panel .sp-fold:hover .sp-zone__title, #ship-panel .sp-fold:focus-visible .sp-zone__title { color: var(--accent); }
+      #ship-panel .sp-fold .sp-zone__title { display: block; margin-bottom: 2px; }
+      #ship-panel .sp-fold__summary { color: var(--dim); font-size: 10px; line-height: 1.35; }
+      #ship-panel .sp-fold__chev { color: var(--accent); font-size: 12px; flex: none; }
+      #ship-panel .sp-fold__body { margin-top: 9px; padding-top: 4px; border-top: 1px solid rgba(79,195,255,0.10); }
+      #ship-panel .sp-policy-note { margin-top: 7px; font-size: 10px; line-height: 1.4; }
+      #ship-panel .sp-role-info { color: var(--accent); font-size: 11px; cursor: help; vertical-align: 1px; }
       #ship-panel .act {
         display: inline-flex; align-items: center; justify-content: center; gap: 6px;
         width: 100%; padding: 7px 10px; margin-top: 4px;
@@ -320,8 +394,8 @@
         font: inherit; font-size: 11px; cursor: pointer;
       }
       #ship-panel .act:hover { border-color: var(--accent); color: var(--accent); }
-      /* The SELECTED option in a toggle group (transit throttle, engagement
-         posture) is highlighted like a segmented control's active segment. */
+      /* The SELECTED engagement posture is highlighted like a segmented
+         control's active segment. */
       #ship-panel .act.is-on { background: var(--accent); color: #04121d; border-color: var(--accent); font-weight: 700; }
       #ship-panel .act.is-on:hover { color: #04121d; }
 
@@ -351,6 +425,7 @@
       .bar__fill { height: 100%; background: var(--accent); border-radius: 3px; }
       .bar__fill.is-warn { background: var(--warn); }
       .bar__fill.is-positive { background: var(--positive); }
+      .bar__fill.is-negative { background: var(--negative); }
 
       .spark { display: block; width: 100%; height: 18px; }
       .is-stale { color: var(--fg-stale) !important; }
@@ -377,7 +452,7 @@
       .seg button:focus-visible, .tab .act:focus-visible, #rail .rail__close:focus-visible,
       #svm-body .act:focus-visible, #sysview-manage .svm-close:focus-visible, #planet-panel .act:focus-visible,
       .board__row:focus-visible, .sysrail__row:focus-visible,
-      #ship-panel .act:focus-visible, #ship-panel .sp-close:focus-visible {
+      #ship-panel .act:focus-visible, #ship-panel .sp-close:focus-visible, #ship-panel .sp-fold:focus-visible {
         outline: 2px solid var(--accent); outline-offset: -2px;
       }
 
@@ -413,7 +488,6 @@
       .ichip + .ichip { margin-left: 12px; }
       .badge.ichip { gap: 4px; }
       /* Compact glyph legends (fleet actions, etc.) — flex-wrap, no baseline hacks. */
-      .sp-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; }
       .dep-row .dep-name { color: var(--ink); }
       .dep-row .dep-r { text-align: right; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
       .sysrail { margin-bottom: 10px; max-height: 132px; overflow-y: auto; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
@@ -1306,6 +1380,7 @@
       Ship</b>; richer deposits lie toward the dangerous frontier. You command
       across light-minutes — orders and sightings both lag.
     </div>
+    <div id="intent-bar" aria-live="polite"></div>
 
     <div id="zoom-controls">
       <button id="zoom-in" type="button" title="Zoom in (scroll up · +)" aria-label="Zoom in">+</button>

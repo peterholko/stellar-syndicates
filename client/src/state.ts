@@ -3,7 +3,7 @@
 // verification); in M3 it becomes a delayed, fogged picture.
 
 import type {
-  EmplacementView, AnchorView, CharterView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+  EmplacementView, AnchorView, CharterView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
@@ -14,6 +14,7 @@ export type LinkStatus = "connecting" | "online" | "offline";
 // "response" leg: the ship's reaction is seen directly on the map in delayed
 // light, so animating a confirmation travelling home would just duplicate the map.
 export interface CommandSignal {
+  orderId: number;
   shipId: string;
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
@@ -22,6 +23,19 @@ export interface CommandSignal {
   /// traces these — sprinting along lanes, crawling the gaps — instead of a
   /// straight line. Empty = no relays helped; fly direct.
   hops: { pos: Vec2; frac: number }[];
+}
+
+export type OrderVerb = "move" | "raid" | "attack" | "blockade" | "demolish" | "survey";
+
+/// A map order the player is comparing but has not committed. This lives in
+/// module state (not the 10 Hz rebuilt DOM), so replacing/cancelling an intent
+/// always removes both its confirm affordance and its map preview together.
+export interface PendingIntent {
+  shipId: string;
+  verb: OrderVerb;
+  dest?: Vec2;
+  targetId?: string;
+  path?: PathPointView[];
 }
 
 // NOTE: a raid result has NO inbound travelling signal. The map IS the inbound
@@ -76,9 +90,9 @@ export interface ViewState {
   standingOrders: StandingOrder[];
   /// The player's own fleet doctrine (§16), fresh from the View.
   doctrine: FleetDoctrine;
-  /// §order-lifecycle: the player's in-flight order timestamps, keyed by fleet id
-  /// (owner-only). Drives the panel countdowns + map dashed hint / echo badge.
-  pendingOrders: Map<string, PendingOrderView>;
+  /// §order-lifecycle: every own in-flight order, grouped by fleet and sorted
+  /// oldest first. Drives the queue, comets, and map echo badge.
+  pendingOrders: Map<string, PendingOrderView[]>;
   /// §battles-take-time: ongoing battles visible to this player (light-gated).
   battles: import("./protocol").BattleView[];
   /// §battle-aftermath: retained concluded battles this player was IN — present
@@ -131,6 +145,11 @@ export interface ViewState {
   /// purely for drawing the "commanded into the dark" line. The server never
   /// echoes orders back (that's internal truth).
   orders: Record<string, Vec2>;
+  /// Deliberate map-order preview. No command is sent until this is confirmed.
+  pendingIntent: PendingIntent | null;
+  /// Order queue selection is persistent module state, never DOM-only—the ship
+  /// panel is rebuilt at view cadence. Rows are its only selection surface.
+  selectedOrderId: number | null;
 
   // The OUTBOUND order/recall signal (command center → ship). Stays — it depicts
   // a real channel (your command crossing space) the player can't otherwise see.
@@ -183,6 +202,8 @@ export function initialState(): ViewState {
     selectedEmplacementId: null,
     raids: {},
     orders: {},
+    pendingIntent: null,
+    selectedOrderId: null,
     commandSignals: [],
   };
 }

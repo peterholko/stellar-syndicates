@@ -1606,10 +1606,22 @@ impl Fleet {
         // this a fleet would fly a route planned at warp speeds on thrusters,
         // taking the long way round a lane's bow for nothing.
         //
-        // The HYPERSPACE drive needs no flag: it engages wherever there is a lane
-        // to bite on and the fleet is running along it, which `factor` answers.
+        // The HYPERSPACE drive needs no flag: lane-tagged route legs engage it,
+        // and an in-ribbon arrival keeps that existing coupling while idle.
         let under_way = !matches!(self.order, FleetOrder::Idle);
-        let drive = self.warp || (under_way && !env.in_well(self.pos));
+        // A fleet that ARRIVES inside a ribbon with its hyperspace drive already
+        // engaged holds that coupling while idle. Dropping it merely because the
+        // current order finished made the ship's command latency jump while the
+        // player was choosing its next order. This does not light a drive for an
+        // idle ship that was already on thrusters, and gravity wells still force
+        // every drive down.
+        let holding_lane = matches!(
+            self.drive_state,
+            DriveState::Cruising(crate::lane::Regime::Hyperspace)
+        ) && !under_way
+            && !env.in_well(self.pos)
+            && env.lanes.on_lane(self.pos);
+        let drive = self.warp || ((under_way || holding_lane) && !env.in_well(self.pos));
         // §course-change: DRIVE THE STATE MACHINE, then read speed off it.
         //
         // A fleet cannot steer above thrusters. To change course it drops all
@@ -1620,7 +1632,9 @@ impl Fleet {
         // turning circle with it, so a Titan could come about inside a ribbon it
         // was supposedly far too big to turn in.
         let want = self.route.first().and_then(|l| l.lane).filter(|_| drive).map_or(
-            if drive && !env.in_well(self.pos) {
+            if holding_lane {
+                crate::lane::Regime::Hyperspace
+            } else if drive && !env.in_well(self.pos) {
                 crate::lane::Regime::Warp
             } else {
                 crate::lane::Regime::Thrusters

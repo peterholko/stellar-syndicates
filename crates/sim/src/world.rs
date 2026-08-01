@@ -162,6 +162,9 @@ pub struct IntelSnapshot {
 /// recall-as-return-home).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrder {
+    /// Stable identity shared by the queue row and its outbound comet.
+    #[serde(default)]
+    id: u64,
     /// Sim time at which the order's light reaches the ship (= `delivered_at`).
     apply_time: f64,
     ship_id: EntityId,
@@ -180,6 +183,13 @@ struct PendingOrder {
     /// The order flavor, for the lifecycle panel/digest.
     #[serde(default = "default_order_kind")]
     kind: crate::event::OrderKind,
+    /// Player-known subject of the issued command, retained for queue copy.
+    #[serde(default)]
+    dest: Option<Vec2>,
+    #[serde(default)]
+    target: Option<EntityId>,
+    #[serde(default)]
+    emplacement: Option<crate::emplace::EmplacementKind>,
 }
 
 /// serde default for [`Corporation::tca_standing`] (§TCA Phase 2) — a pre-law
@@ -201,16 +211,53 @@ fn default_entity() -> EntityId {
     EntityId(0)
 }
 
+/// The player-known object of an issued fleet order. These values are copied
+/// into lifecycle bookkeeping at issue time so the queue can keep naming the
+/// order after delivery without consulting mutable world truth.
+fn pending_order_subject(
+    order: &FleetOrder,
+) -> (
+    Option<Vec2>,
+    Option<EntityId>,
+    Option<crate::emplace::EmplacementKind>,
+) {
+    match order {
+        FleetOrder::MoveTo { dest } => (Some(*dest), None, None),
+        FleetOrder::Intercept { target } | FleetOrder::Attack { target } => {
+            (None, Some(*target), None)
+        }
+        FleetOrder::Construct {
+            site,
+            emplacement,
+            ..
+        } => (Some(*site), None, Some(*emplacement)),
+        FleetOrder::Demolish { target, site, .. } => (Some(*site), Some(*target), None),
+        FleetOrder::Blockade { system, station } => (Some(*station), Some(*system), None),
+        FleetOrder::Survey {
+            system, station, ..
+        } => (Some(*station), Some(*system), None),
+        FleetOrder::Idle | FleetOrder::Patrol { .. } => (None, None, None),
+    }
+}
+
 /// A DELIVERED order whose confirming light hasn't yet reached the command center
 /// (the AWAITING-ECHO phase). Owner-only; transient lifecycle bookkeeping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingEcho {
+    #[serde(default)]
+    id: u64,
     owner: PlayerId,
     fleet: EntityId,
     delivered_at: f64,
     echo_at: f64,
     issued_at: f64,
     kind: crate::event::OrderKind,
+    #[serde(default)]
+    dest: Option<Vec2>,
+    #[serde(default)]
+    target: Option<EntityId>,
+    #[serde(default)]
+    emplacement: Option<crate::emplace::EmplacementKind>,
 }
 
 /// A light-gate summary of an ongoing BATTLE for the server's View
@@ -233,11 +280,15 @@ pub struct BattleInfo {
 /// command data — trivially fog-safe.
 #[derive(Debug, Clone, Copy)]
 pub struct PendingCommandView {
+    pub id: u64,
     pub fleet: EntityId,
     pub delivered_at: f64,
     pub echo_at: f64,
     pub issued_at: f64,
     pub kind: crate::event::OrderKind,
+    pub dest: Option<Vec2>,
+    pub target: Option<EntityId>,
+    pub emplacement: Option<crate::emplace::EmplacementKind>,
 }
 
 /// §research R6: one Academy's live contribution to its syndicate's ACTIVE
@@ -485,6 +536,10 @@ pub struct World {
     next_order_id: u64,
     /// Orders that have been issued but whose light has not yet reached the ship.
     pending_orders: Vec<PendingOrder>,
+    /// Monotonic identity allocator for player-issued, light-delayed commands.
+    /// Separate from Exchange order ids; serde default keeps old snapshots valid.
+    #[serde(default)]
+    next_command_id: u64,
     /// DELIVERED orders whose confirming light hasn't yet returned to the command
     /// center (§order-lifecycle, owner-only). serde default so old snaps load.
     #[serde(default)]
@@ -825,6 +880,7 @@ impl World {
             book: Vec::new(),
             next_order_id: 1,
             pending_orders: Vec::new(),
+            next_command_id: 0,
             pending_echoes: Vec::new(),
             next_entity_id,
             build_queue: Vec::new(),
@@ -922,6 +978,33 @@ impl World {
     ///   within `SURVEY_INITIAL_RADIUS` of home as surveyed, so live playtest
     ///   corps don't wake up amnesiac about their own holdings.
     pub fn fixup_after_load(&mut self) {
+        // §junction migration: junctions are derived geometry. Rebuild them so
+        // a saved galaxy made under the old vertex-only crossing test gains the
+        // continuous segment intersections visible on its map. Pure,
+        // deterministic, and idempotent; active routes finish as saved while
+        // every newly planned route uses the repaired graph.
+        self.lanes.rebuild_junctions();
+        // §order-queue migration: pre-identity snapshots deserialize pending
+        // commands as id 0. Preserve every lifecycle and assign each legacy
+        // entry a distinct id before the next command is scheduled.
+        let mut next_command_id = self
+            .pending_orders
+            .iter()
+            .map(|p| p.id)
+            .chain(self.pending_echoes.iter().map(|e| e.id))
+            .fold(self.next_command_id, u64::max);
+        for id in self
+            .pending_orders
+            .iter_mut()
+            .map(|p| &mut p.id)
+            .chain(self.pending_echoes.iter_mut().map(|e| &mut e.id))
+        {
+            if *id == 0 {
+                next_command_id += 1;
+                *id = next_command_id;
+            }
+        }
+        self.next_command_id = next_command_id;
         // §roster: synthesize the individual-hull roster for any PRE-ROSTER
         // fleet (snapshots that carried only `composition` + `loadouts`). One
         // record per counted hull, fitted stacks first so the fits land on real
@@ -1159,9 +1242,9 @@ impl World {
         }
     }
 
-    /// The player's in-flight ORDER LIFECYCLES (§order-lifecycle) — the LATEST
-    /// order per fleet, covering both the in-transit pending orders and the
-    /// delivered-but-awaiting-echo ones. OWNER-ONLY (a rival gets nothing). The
+    /// The player's in-flight ORDER LIFECYCLES (§order-lifecycle) — every order
+    /// still outbound or delivered-but-awaiting-echo. OWNER-ONLY (a rival gets
+    /// nothing). The
     /// client ticks the IN-TRANSIT / AWAITING-ECHO countdowns from the two
     /// timestamps against `sim_time`, and flips its dashed heading to solid at
     /// `echo_at`.
@@ -1190,32 +1273,39 @@ impl World {
     }
 
     pub fn pending_commands(&self, owner: PlayerId) -> Vec<PendingCommandView> {
-        let mut latest: BTreeMap<EntityId, PendingCommandView> = BTreeMap::new();
-        let mut consider = |v: PendingCommandView| match latest.get(&v.fleet) {
-            Some(cur) if cur.issued_at >= v.issued_at => {}
-            _ => {
-                latest.insert(v.fleet, v);
-            }
-        };
+        let mut pending = Vec::new();
         for po in self.pending_orders.iter().filter(|p| p.owner == owner) {
-            consider(PendingCommandView {
+            pending.push(PendingCommandView {
+                id: po.id,
                 fleet: po.ship_id,
                 delivered_at: po.apply_time,
                 echo_at: po.echo_at,
                 issued_at: po.issued_at,
                 kind: po.kind,
+                dest: po.dest,
+                target: po.target,
+                emplacement: po.emplacement,
             });
         }
         for e in self.pending_echoes.iter().filter(|e| e.owner == owner) {
-            consider(PendingCommandView {
+            pending.push(PendingCommandView {
+                id: e.id,
                 fleet: e.fleet,
                 delivered_at: e.delivered_at,
                 echo_at: e.echo_at,
                 issued_at: e.issued_at,
                 kind: e.kind,
+                dest: e.dest,
+                target: e.target,
+                emplacement: e.emplacement,
             });
         }
-        latest.into_values().collect()
+        pending.sort_by(|a, b| {
+            a.issued_at
+                .total_cmp(&b.issued_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        pending
     }
 
     /// Ongoing BATTLES for the server's light-gated View (§battles-take-time):
@@ -4341,17 +4431,22 @@ impl World {
                     }
                 }
                 // §order-lifecycle: the order is DELIVERED. A newer order for the
-                // same fleet supersedes any older awaiting-echo entry (only the
-                // LATEST order's lifecycle is shown / confirmed).
+                // same fleet supersedes any older awaiting-echo entry. Reporting
+                // now shows the whole queue, but this existing expiry rule is the
+                // designed command-in-the-past behavior and remains unchanged.
                 self.pending_echoes.retain(|e| e.fleet != po.ship_id || e.issued_at > po.issued_at);
                 if !self.pending_echoes.iter().any(|e| e.fleet == po.ship_id && e.issued_at >= po.issued_at) {
                     self.pending_echoes.push(PendingEcho {
+                        id: po.id,
                         owner: po.owner,
                         fleet: po.ship_id,
                         delivered_at: now,
                         echo_at: po.echo_at,
                         issued_at: po.issued_at,
                         kind: po.kind,
+                        dest: po.dest,
+                        target: po.target,
+                        emplacement: po.emplacement,
                     });
                     events.push(Event::new(
                         now,
@@ -4612,7 +4707,7 @@ impl World {
                         },
                     ));
                 }
-                self.schedule_for_owner(*player_id, *ship_id, FleetOrder::MoveTo { dest: *dest }, crate::event::OrderKind::Move);
+                self.schedule_for_owner(*player_id, *ship_id, FleetOrder::MoveTo { dest: *dest }, crate::event::OrderKind::Move, events);
             }
             Command::CommitRaid {
                 player_id,
@@ -4688,6 +4783,7 @@ impl World {
                     *raider_id,
                     FleetOrder::Intercept { target: *target_id },
                     crate::event::OrderKind::Raid,
+                    events,
                 );
             }
             Command::RecallRaid {
@@ -4697,7 +4793,7 @@ impl World {
                 let Some(home) = self.players.get(player_id).map(|c| c.home) else {
                     return;
                 };
-                self.schedule_for_owner(*player_id, *raider_id, FleetOrder::MoveTo { dest: home }, crate::event::OrderKind::Recall);
+                self.schedule_for_owner(*player_id, *raider_id, FleetOrder::MoveTo { dest: home }, crate::event::OrderKind::Recall, events);
             }
             Command::MarketBuy {
                 player_id,
@@ -5212,6 +5308,7 @@ impl World {
                     builder_id,
                     FleetOrder::Construct { site: builder_pos, emplacement: *emplacement, started: None },
                     crate::event::OrderKind::Construct,
+                    events,
                 );
             }
             Command::DemolishEmplacement { player_id, fleet, target } => {
@@ -5250,6 +5347,7 @@ impl World {
                     fleet_id,
                     FleetOrder::Demolish { target: *target, site, started: None },
                     crate::event::OrderKind::Demolish,
+                    events,
                 );
             }
             Command::DevelopSystem { player_id, system_id, upgrade, body_id } => {
@@ -5419,7 +5517,7 @@ impl World {
                 // command center has a SHORTER command delay than the attacker's.
                 let home = self.players.get(player_id).map(|c| c.home);
                 if let Some(home) = home {
-                    self.schedule_for_owner(*player_id, *fleet_id, FleetOrder::MoveTo { dest: home }, crate::event::OrderKind::Withdraw);
+                    self.schedule_for_owner(*player_id, *fleet_id, FleetOrder::MoveTo { dest: home }, crate::event::OrderKind::Withdraw, events);
                 }
             }
             Command::SetFleetTransit { player_id, fleet_id, mode } => {
@@ -5472,6 +5570,7 @@ impl World {
                     *fleet_id,
                     FleetOrder::Blockade { system: *system_id, station },
                     crate::event::OrderKind::Blockade,
+                    events,
                 );
             }
             Command::SurveySystem { player_id, fleet_id, system_id } => {
@@ -5512,6 +5611,7 @@ impl World {
                     *fleet_id,
                     FleetOrder::Survey { system: *system_id, station, dwell_since: None },
                     crate::event::OrderKind::Survey,
+                    events,
                 );
             }
             Command::AttackFleet { player_id, fleet_id, target_id } => {
@@ -5579,6 +5679,7 @@ impl World {
                     *fleet_id,
                     FleetOrder::Attack { target: *target_id },
                     crate::event::OrderKind::Attack,
+                    events,
                 );
             }
             Command::SetFleetPosture { player_id, fleet_id, posture } => {
@@ -5607,10 +5708,11 @@ impl World {
     /// §buoys: this player's RELAY NETWORK — every hyperspace buoy they own,
     /// plus their home system, which counts as their first buoy.
     ///
-    /// Home is free and deliberately worth nothing on its own: a lane relays
-    /// only BETWEEN two buoys, so the first one buys nothing and the second is
-    /// the real purchase. That is what makes siting a decision rather than a
-    /// formality.
+    /// Home is free and deliberately worth nothing on its own: lane relaying
+    /// needs an ACCESS PAIR of two owned relays sharing a lane. A built buoy on
+    /// home's lane completes that pair, after which signals traverse its whole
+    /// connected lane graph through junctions. Off-lane signals enter or leave
+    /// that graph only at home or an owned buoy.
     pub fn relay_network(&self, owner: PlayerId) -> Vec<Vec2> {
         let mut v: Vec<Vec2> = self
             .players
@@ -10185,6 +10287,7 @@ impl World {
         ship_id: EntityId,
         new_order: FleetOrder,
         kind: crate::event::OrderKind,
+        events: &mut Vec<Event>,
     ) {
         let Some(ship) = self.fleets.get(&ship_id) else {
             return;
@@ -10199,6 +10302,7 @@ impl World {
         let c = self.config.c;
         let ship_pos = ship.pos;
         let ship_vel = ship.vel;
+        let ship_coupled = ship.drive_state.stirs_the_lane();
         // §node Relay Anchor: if the issuer holds an active black-hole node whose
         // region covers the fleet, its command loop through that neighbourhood runs
         // at half the light-time. Evaluated at the fleet's CURRENT position (the
@@ -10214,17 +10318,31 @@ impl World {
         // moment that matched neither. One medium, one countdown.
         let buoys = self.relay_network(player_id);
         let field = crate::lane::DelayField { lanes: &self.lanes, buoys: &buoys, c };
-        let delay = field.between(cc, ship_pos) * relay;
+        // A fleet actively riding a lane is a receiver inside the medium; an
+        // off-lane fleet can be reached from hyperspace only by exiting at home
+        // or an owned buoy and warping the remainder. Solve the signal/ship
+        // MEETING rather than timing the signal only to the issue-time position:
+        // inbound ships are met earlier, outbound ships later. Coupling is fixed
+        // from the drive state at issue time throughout the refinement — we do
+        // not invent future drive transitions while extrapolating this order.
+        let (delay, delivery_point) =
+            field.meeting_delay(cc, ship_pos, ship_vel, ship_coupled, relay);
         let delivered_at = self.time + delay;
-        // The DELIVERY POINT: where the fleet will be when the order lands, by
-        // constant-velocity extrapolation of its current motion (§14.1). The echo
-        // — the first light of the new behavior — leaves there at delivery and
-        // reaches the command center one signal-delay later. Exactly computable
-        // now. The return leg is relayed too when the point stays in region.
-        let delivery_point = ship_pos + ship_vel * delay;
+        // The echo — the first light of the new behavior — leaves from the solved
+        // delivery point and reaches the command center one signal-delay later.
+        // The return leg is relayed too when the point stays in region.
         let echo_relay = self.relay_factor(player_id, delivery_point);
-        let echo_at = delivered_at + field.between(delivery_point, cc) * echo_relay;
+        let echo_delay = if ship_coupled {
+            field.from_coupled(delivery_point, cc)
+        } else {
+            field.between(delivery_point, cc)
+        };
+        let echo_at = delivered_at + echo_delay * echo_relay;
+        self.next_command_id += 1;
+        let id = self.next_command_id;
+        let (dest, target, emplacement) = pending_order_subject(&new_order);
         self.pending_orders.push(PendingOrder {
+            id,
             apply_time: delivered_at,
             ship_id,
             new_order,
@@ -10232,7 +10350,18 @@ impl World {
             echo_at,
             issued_at: self.time,
             kind,
+            dest,
+            target,
+            emplacement,
         });
+        events.push(Event::new(
+            self.time,
+            EventPayload::OrderScheduled {
+                id,
+                owner: player_id,
+                fleet: ship_id,
+            },
+        ));
     }
 
     /// Try to draw `cost` Fuel from the player's owned system NEAREST `origin` that
@@ -10552,8 +10681,8 @@ impl World {
 
         // §emplacements: the player STARTS WITH A CONSTRUCTION SHIP, not a
         // convoy. The opening act of the hyperspace game is infrastructure —
-        // a buoy pair for comms, a tripwire on the approach — and the hull that
-        // does it should be in hand from the first minute rather than gated
+        // a home-to-buoy comms link, a tripwire on the approach — and the hull
+        // that does it should be in hand from the first minute rather than gated
         // behind the first 50s build. The opening cargo haul went with the
         // convoy: a builder lifts nothing, so the introduction to the market is
         // now buying your first freighter, not watching one arrive pre-loaded.
@@ -13496,6 +13625,87 @@ mod tests {
         player_ship(w, owner, ShipKind::Convoy)
     }
 
+    fn moving_lane_order_timing(velocity: Vec2) -> (f64, f64, f64) {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let cc = w.players[&id].command_center;
+        let control = vec![cc, cc + Vec2::new(100_000.0, 0.0), cc + Vec2::new(200_000.0, 0.0)];
+        w.lanes = crate::lane::LaneNetwork::of(vec![crate::lane::Lane {
+            id: 77,
+            kind: crate::lane::LaneKind::Trunk,
+            name: "Order Intercept".into(),
+            samples: crate::lane::bake_for_tests(&control),
+            control,
+            half_width: 2_000.0,
+            tapers: false,
+        }]);
+        let ship_pos = cc + Vec2::new(100_000.0, 0.0);
+        let fid = player_ship(&mut w, id, ShipKind::Raider);
+        {
+            let fleet = w.fleets.get_mut(&fid).unwrap();
+            fleet.pos = ship_pos;
+            fleet.vel = velocity;
+            fleet.drive_state =
+                crate::ship::DriveState::Cruising(crate::lane::Regime::Hyperspace);
+        }
+        let relays = w.relay_network(id);
+        let old_single_pass = crate::lane::DelayField {
+            lanes: &w.lanes,
+            buoys: &relays,
+            c: w.config.c,
+        }
+        .to_coupled(cc, ship_pos);
+
+        w.step(&[Command::MoveShip {
+            player_id: id,
+            ship_id: fid,
+            dest: ship_pos + Vec2::new(0.0, 10_000.0),
+        }]);
+        let pending = w
+            .pending_commands(id)
+            .into_iter()
+            .find(|p| p.fleet == fid)
+            .expect("the moving hull's order is scheduled");
+        let delivered_delay = pending.delivered_at - pending.issued_at;
+        let relays = w.relay_network(id);
+        let required_at_meeting = crate::lane::DelayField {
+            lanes: &w.lanes,
+            buoys: &relays,
+            c: w.config.c,
+        }
+        .to_coupled(cc, ship_pos + velocity * delivered_delay);
+        (old_single_pass, delivered_delay, required_at_meeting)
+    }
+
+    #[test]
+    fn an_inbound_lane_rider_is_met_before_the_old_single_pass_clock() {
+        let (old, delivered, required) =
+            moving_lane_order_timing(Vec2::new(-1_000.0, 0.0));
+        assert!(
+            delivered < old - DT,
+            "the inbound meeting is strictly earlier ({delivered:.6}s vs old {old:.6}s)",
+        );
+        assert!(
+            (required - delivered).abs() < DT,
+            "delivered_at solves the moving meeting within one tick ({delivered:.6}s vs {required:.6}s)",
+        );
+    }
+
+    #[test]
+    fn an_outbound_lane_rider_is_met_after_the_old_single_pass_clock() {
+        let (old, delivered, required) =
+            moving_lane_order_timing(Vec2::new(1_000.0, 0.0));
+        assert!(
+            delivered > old + DT,
+            "the outbound meeting is strictly later ({delivered:.6}s vs old {old:.6}s)",
+        );
+        assert!(
+            (required - delivered).abs() < DT,
+            "delivered_at solves the moving meeting within one tick ({delivered:.6}s vs {required:.6}s)",
+        );
+    }
+
     #[test]
     fn move_order_applies_only_after_light_travel_delay() {
         let mut w = test_world();
@@ -13548,6 +13758,51 @@ mod tests {
             FleetOrder::MoveTo { dest: d } => assert_eq!(d, dest),
             ref other => panic!("expected MoveTo after delay, got {other:?}"),
         }
+    }
+
+    /// §buoys: injection conjures no shortcuts. Home injects into its own lane
+    /// (it acts like a buoy), but for an off-lane fleet sitting perpendicular
+    /// to that lane no ride helps — the router must still choose one straight
+    /// warp-speed signal, and the scheduling layer must agree with it.
+    #[test]
+    fn home_alone_schedules_an_off_lane_order_at_plain_warp() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let cc = w.players[&id].command_center;
+        let relays = w.relay_network(id);
+        assert_eq!(relays, vec![cc], "a fresh corporation has only its home relay");
+
+        let ship_pos = (0..32)
+            .map(|k| {
+                let angle = k as f64 * std::f64::consts::TAU / 32.0;
+                cc + Vec2::new(angle.cos(), angle.sin()) * 50_000.0
+            })
+            .find(|p| w.lanes.relay_at(*p).on.is_empty())
+            .expect("there is open space off the lane network near home");
+        let fid = *w.fleets.iter().find(|(_, f)| f.owner == id).unwrap().0;
+        {
+            let fleet = w.fleets.get_mut(&fid).unwrap();
+            fleet.pos = ship_pos;
+            fleet.vel = Vec2::ZERO;
+            fleet.order = FleetOrder::Idle;
+        }
+
+        let issued_at = w.time;
+        let warp_delay = cc.distance(ship_pos) / (w.config.c * crate::lane::WARP_FACTOR);
+        w.step(&[Command::MoveShip {
+            player_id: id,
+            ship_id: fid,
+            dest: ship_pos + Vec2::new(1_000.0, 0.0),
+        }]);
+        let pending =
+            w.pending_commands(id).into_iter().find(|p| p.fleet == fid).expect("order scheduled");
+        assert!(
+            (pending.delivered_at - issued_at - warp_delay).abs() < 1e-6,
+            "home alone must schedule plain warp ({:.3}s), got {:.3}s",
+            warp_delay,
+            pending.delivered_at - issued_at
+        );
     }
 
     #[test]
@@ -19482,18 +19737,21 @@ mod tests {
     }
 
     #[test]
-    fn superseding_order_restarts_the_lifecycle_with_the_latest() {
+    fn multiple_outbound_orders_keep_distinct_lifecycles() {
         let mut w = test_world();
         let id = PlayerId(1);
         let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
         w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 400.0) }]);
-        let first_echo = w.pending_commands(id)[0].echo_at;
-        // A second, farther move restarts the tracked lifecycle.
+        let first = w.pending_commands(id)[0];
+        // A second, farther move joins the reported queue while both signals are
+        // outbound. Delivery still applies the existing supersession rule.
         w.step(&[]); // advance a tick so issued_at differs
         w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest: pos + Vec2::new(0.0, 4000.0) }]);
         let pcs = w.pending_commands(id);
-        assert_eq!(pcs.iter().filter(|p| p.fleet == fid).count(), 1, "one lifecycle shown per fleet — the latest");
-        assert!(pcs[0].echo_at != first_echo, "the panel tracks the newer order");
+        assert_eq!(pcs.iter().filter(|p| p.fleet == fid).count(), 2, "both outbound commands remain visible");
+        assert_ne!(pcs[0].id, pcs[1].id);
+        assert_eq!(pcs[0].id, first.id);
+        assert!(pcs[1].issued_at > pcs[0].issued_at, "oldest-first reporting is stable");
     }
 
     #[test]
@@ -22830,13 +23088,13 @@ mod starter_kit_emplacements {
     use super::*;
 
     /// §emplacements: the player STARTS with a Construction Ship, so the home
-    /// starter kit must fund what that ship exists to do. The smallest relay
-    /// that carries anything is a buoy PAIR — assert the first buoy order is
-    /// accepted AND the stock left behind still covers the second kit. This
-    /// pins the Electronics/Alloys seed in `generate_home_system`: with no
-    /// Electronics at spawn the order is silently refused (the launch bug).
+    /// starter kit must fund what that ship exists to do. One buoy on home's
+    /// lane completes the opening link; assert that order is accepted and the
+    /// stock left behind still covers an extension buoy. This pins the
+    /// Electronics/Alloys seed in `generate_home_system`: with no Electronics
+    /// at spawn the order is silently refused (the launch bug).
     #[test]
-    fn the_starter_kit_funds_the_buoy_pair_opening() {
+    fn the_starter_kit_funds_the_home_link_and_an_extension_buoy() {
         let mut w = World::new(SimConfig::default());
         w.step(&[Command::AddPlayer { id: PlayerId(1), name: "P".into() }]);
         let home = w.players[&PlayerId(1)].home;
@@ -22873,8 +23131,8 @@ mod starter_kit_emplacements {
              but the builder stayed {:?}",
             w.fleets[&builder].order
         );
-        // The PAIR is the point: after the first kit is charged, one home
-        // system must still afford the second buoy without a market trip.
+        // After the home-link kit is charged, the home system still affords an
+        // extension buoy without a market trip.
         let recipe = crate::build::emplacement_recipe(crate::emplace::EmplacementKind::HyperspaceBuoy);
         let sys = w.systems.iter().find(|s| s.owner == Some(PlayerId(1))).unwrap();
         for (c, n) in recipe.costs {

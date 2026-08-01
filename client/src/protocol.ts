@@ -815,6 +815,7 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
+  | { type: "PreviewRoute"; ship_id: EntityId; dest: Vec2 }
   /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
   /// PARKED (fly it there first; no separate site point). The field is
   /// `emplacement`, not `kind` — the server's Command enum is tagged on that name.
@@ -1074,7 +1075,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
+export type OrderKind = "move" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
@@ -1209,10 +1210,15 @@ export interface CaptureReportView {
 // the phase from `sim_time`: IN TRANSIT until `delivered_at`, AWAITING ECHO until
 // `echo_at`, then confirmed (the entry drops). Both stamps are exact.
 export interface PendingOrderView {
+  id: number;
   fleet_id: EntityId;
+  issued_at: number;
   delivered_at: number;
   echo_at: number;
   kind: OrderKind;
+  dest?: Vec2;
+  target_id?: EntityId;
+  emplacement?: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor";
 }
 
 // Server → client.
@@ -1304,6 +1310,7 @@ export type ServerMsg =
       // [depart, arrive]. The server owns the clock-times; the client interpolates.
       // (No return leg — the ship's reaction is seen directly on the map.)
       type: "CommandSignal";
+      order_id: number;
       ship_id: EntityId;
       depart_time: number;
       arrive_time: number;
@@ -1311,5 +1318,6 @@ export type ServerMsg =
       /// fractions of the whole window. Absent/empty = straight run.
       hops?: { pos: Vec2; frac: number }[];
     }
+  | { type: "RoutePreview"; ship_id: EntityId; dest: Vec2; path: PathPointView[] }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)
   | { type: "Error"; message: string };
