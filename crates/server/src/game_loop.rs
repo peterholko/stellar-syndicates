@@ -22,7 +22,7 @@ use sim::{Command, PlayerId, World, DT, TICK_HZ};
 use crate::persistence::{to_json, PersistJob, PersistenceHandle};
 use crate::protocol::{
     BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PathPointView,
-    PriceView, ServerMsg, StockSlot, SystemInfo, WalletView,
+    PriceView, ProjectedPointView, ServerMsg, StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
@@ -47,18 +47,25 @@ pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
 /// not necessarily the time this outbound route takes. The purple comet must use
 /// the total attached to THESE hops; otherwise a plain-warp chord can be squeezed
 /// into a hyperspace-fast inbound window and look like an FTL straight line.
+#[derive(Debug, Clone)]
+struct CommandSignalPlan {
+    travel_time: f64,
+    meeting_point: sim::Vec2,
+    hops: Vec<crate::protocol::SignalHopView>,
+}
+
 fn command_signal_plan(
     delays: &sim::lane::DelayField<'_>,
     cc: sim::Vec2,
     ghost_pos: sim::Vec2,
     ghost_vel: sim::Vec2,
     ghost_coupled: bool,
-) -> (f64, Vec<crate::protocol::SignalHopView>) {
+) -> CommandSignalPlan {
     // §6: solve only from the SERVED sighting. This is the same fixed-point
     // meeting equation as authoritative delivery, but fed the player's ghost
     // position/velocity so neither the route nor its clock leaks true space.
     let (_, meeting_point) =
-        delays.meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, 1.0);
+        delays.meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, None, 1.0);
     let route = if ghost_coupled {
         delays.path_to_coupled(cc, meeting_point)
     } else {
@@ -76,7 +83,110 @@ fn command_signal_plan(
     } else {
         Vec::new() // a straight run — the client's fallback draws it
     };
-    (travel_time, hops)
+    CommandSignalPlan { travel_time, meeting_point, hops }
+}
+
+#[derive(Debug, Clone)]
+struct ObservedOrderPlan {
+    arrives_at: f64,
+    response_at: f64,
+    meeting_point: sim::Vec2,
+    projected: Vec<ProjectedPointView>,
+}
+
+fn observed_order_plan(
+    delays: &sim::lane::DelayField<'_>,
+    cc: sim::Vec2,
+    ghost_pos: sim::Vec2,
+    ghost_vel: sim::Vec2,
+    ghost_coupled: bool,
+    depart_time: f64,
+) -> (ObservedOrderPlan, CommandSignalPlan) {
+    let signal = command_signal_plan(delays, cc, ghost_pos, ghost_vel, ghost_coupled);
+    let arrives_at = depart_time + signal.travel_time;
+    let response_at = arrives_at + delays.between(signal.meeting_point, cc);
+    (
+        ObservedOrderPlan {
+            arrives_at,
+            response_at,
+            meeting_point: signal.meeting_point,
+            projected: Vec::new(),
+        },
+        signal,
+    )
+}
+
+/// Timestamp the public fastest route from the ghost-solved delivery point to
+/// a fixed destination. This is a forecast, not a second simulation: drive
+/// spool/drop pauses can move the real arrival slightly. Both geometry and
+/// speed inputs are owner-known; no authoritative fleet position enters.
+fn dead_reckoned_projection(
+    lanes: &sim::lane::LaneNetwork,
+    meeting_point: sim::Vec2,
+    dest: sim::Vec2,
+    arrives_at: f64,
+    transit_speed: f64,
+) -> Vec<ProjectedPointView> {
+    if meeting_point.distance(dest) <= 1e-6 || transit_speed <= 1e-9 {
+        return Vec::new();
+    }
+    let warp_speed = transit_speed * sim::lane::WARP_FACTOR;
+    let lane_speed = warp_speed * sim::lane::LANE_MULT;
+    let mut legs = lanes.route(meeting_point, dest, warp_speed, lane_speed);
+    if legs.is_empty() {
+        legs.push(sim::lane::Leg::warp(dest));
+    }
+
+    let mut projected = vec![ProjectedPointView { pos: meeting_point, t: arrives_at }];
+    let mut from = meeting_point;
+    let mut t = arrives_at;
+    for leg in legs {
+        let distance = from.distance(leg.to);
+        if distance <= 1e-9 {
+            continue;
+        }
+        let speed = if leg.lane.is_some() { lane_speed } else { warp_speed };
+        t += distance / speed;
+        projected.push(ProjectedPointView { pos: leg.to, t });
+        from = leg.to;
+    }
+    projected
+}
+
+fn has_fixed_flight_projection(kind: sim::event::OrderKind, target: Option<sim::EntityId>) -> bool {
+    target.is_none()
+        && matches!(
+            kind,
+            sim::event::OrderKind::Move
+                | sim::event::OrderKind::Recall
+                | sim::event::OrderKind::Withdraw
+        )
+}
+
+fn pending_order_views(
+    world: &World,
+    viewer: PlayerId,
+    observed_plans: &HashMap<(PlayerId, u64), ObservedOrderPlan>,
+) -> Vec<crate::protocol::PendingOrderView> {
+    world
+        .pending_commands(viewer)
+        .into_iter()
+        .filter_map(|pending| {
+            let observed = observed_plans.get(&(viewer, pending.id))?;
+            Some(crate::protocol::PendingOrderView {
+                id: pending.id,
+                fleet_id: pending.fleet,
+                issued_at: pending.issued_at,
+                arrives_at: observed.arrives_at,
+                response_at: observed.response_at,
+                kind: pending.kind,
+                dest: pending.dest,
+                target_id: pending.target,
+                emplacement: pending.emplacement,
+                projected: observed.projected.clone(),
+            })
+        })
+        .collect()
 }
 
 /// A battle whose engagement has CONCLUDED in true space but whose conclusion
@@ -157,6 +267,9 @@ struct GameLoop {
     gone_emplacements: Vec<GoneEmplacement>,
     /// Commands accumulated since the last tick, applied at the next boundary.
     pending: Vec<Command>,
+    /// Owner-only order clocks solved once from the served ghost at issue time.
+    /// The sim's authoritative delivery/echo stamps never enter a player View.
+    observed_order_plans: HashMap<(PlayerId, u64), ObservedOrderPlan>,
     persistence: PersistenceHandle,
     /// Take a snapshot every this many ticks.
     snapshot_every: u64,
@@ -194,6 +307,7 @@ impl GameLoop {
             concluded_battles: Vec::new(),
             gone_emplacements: Vec::new(),
             pending: Vec::new(),
+            observed_order_plans: HashMap::new(),
             persistence,
             snapshot_every: snapshot_every.max(1),
             status_tx,
@@ -208,7 +322,7 @@ impl GameLoop {
     /// no true distance. Skipped if the player doesn't own the ship or it's
     /// currently dark to them.
     fn emit_command_signal(
-        &self,
+        &mut self,
         player_id: PlayerId,
         ship_id: sim::EntityId,
         order_id: u64,
@@ -242,16 +356,34 @@ impl GameLoop {
         // §comms-infra: one outbound route supplies BOTH geometry and its clock;
         // the fixed-point solve makes that route end where it meets the moving
         // ghost rather than where the ghost stood when the order was issued.
-        let (travel_time, hops) =
-            command_signal_plan(&delays, cc, ghost_pos, ghost_vel, ghost_coupled);
+        let (mut observed, signal) =
+            observed_order_plan(&delays, cc, ghost_pos, ghost_vel, ghost_coupled, depart_time);
+        if let Some(subject) = self
+            .world
+            .pending_commands(player_id)
+            .into_iter()
+            .find(|pending| pending.id == order_id)
+            && has_fixed_flight_projection(subject.kind, subject.target)
+            && let Some(dest) = subject.dest
+            && let Some(transit_speed) = self.world.fleets.get(&ship_id).map(|fleet| fleet.transit_speed())
+        {
+            observed.projected = dead_reckoned_projection(
+                &self.world.lanes,
+                observed.meeting_point,
+                dest,
+                observed.arrives_at,
+                transit_speed,
+            );
+        }
+        self.observed_order_plans.insert((player_id, order_id), observed.clone());
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandSignal {
                 order_id,
                 ship_id,
                 depart_time,
-                arrive_time: depart_time + travel_time,
-                hops,
+                arrive_time: observed.arrives_at,
+                hops: signal.hops,
             },
         );
     }
@@ -921,6 +1053,22 @@ impl GameLoop {
     /// receives true positions or another player's view — the fairness
     /// guarantee, enforced by [`PositionHistory::view_for`].
     fn broadcast(&mut self) {
+        // These issue-time estimates are ephemeral view state. Retire them with
+        // the authoritative lifecycle they describe so completed orders cannot
+        // accumulate forever, while still keeping every owner's private plan.
+        let active_orders: HashSet<(PlayerId, u64)> = self
+            .world
+            .players
+            .keys()
+            .flat_map(|owner| {
+                self.world
+                    .pending_commands(*owner)
+                    .into_iter()
+                    .map(move |pending| (*owner, pending.id))
+            })
+            .collect();
+        self.observed_order_plans.retain(|key, _| active_orders.contains(key));
+
         let c = self.world.config.c;
         // §comms-infra: the delay field is PER PLAYER — gateway-and-wire
         // infrastructure is owned and cuttable, so a rival's sites carry
@@ -1463,22 +1611,11 @@ impl GameLoop {
                     doctrine: corp.doctrine,
                     // The player's own in-flight order lifecycles (§order-lifecycle)
                     // — owner-only private command data, like the wallet.
-                    pending_orders: self
-                        .world
-                        .pending_commands(player_id)
-                        .into_iter()
-                        .map(|p| crate::protocol::PendingOrderView {
-                            id: p.id,
-                            fleet_id: p.fleet,
-                            issued_at: p.issued_at,
-                            delivered_at: p.delivered_at,
-                            echo_at: p.echo_at,
-                            kind: p.kind,
-                            dest: p.dest,
-                            target_id: p.target,
-                            emplacement: p.emplacement,
-                        })
-                        .collect(),
+                    pending_orders: pending_order_views(
+                        &self.world,
+                        player_id,
+                        &self.observed_order_plans,
+                    ),
                     battles,
                     syndicate,
                     syndicate_invites,
@@ -2036,18 +2173,17 @@ mod tests {
         let relays = [wide_gateway(home), wide_gateway(buoy)];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
-        let (travel_time, hops) =
-            command_signal_plan(&field, home, hull, Vec2::ZERO, true);
-        assert!(hops.len() > 6, "the wire route should contain baked curve samples");
+        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        assert!(plan.hops.len() > 6, "the wire route should contain baked curve samples");
         assert!(
-            hops.iter().map(|hop| hop.pos.y).fold(f64::NEG_INFINITY, f64::max) > 40_000.0,
+            plan.hops.iter().map(|hop| hop.pos.y).fold(f64::NEG_INFINITY, f64::max) > 40_000.0,
             "the wire route should follow the lane's bow rather than its endpoint chord",
         );
         assert!(
-            (travel_time - field.to_coupled(home, hull)).abs() < 1e-9,
+            (plan.travel_time - field.to_coupled(home, hull)).abs() < 1e-9,
             "the animation clock must come from the same outbound path",
         );
-        assert!((hops.last().unwrap().frac - 1.0).abs() < 1e-9);
+        assert!((plan.hops.last().unwrap().frac - 1.0).abs() < 1e-9);
     }
 
     /// The comet aims where the player's SERVED ghost and its served velocity
@@ -2065,9 +2201,9 @@ mod tests {
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let old_sighting_time = field.to_coupled(home, ghost_pos);
 
-        let (total, hops) =
-            command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
-        let final_hop = hops.last().expect("a coupled route has drawable hops");
+        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+        let total = plan.travel_time;
+        let final_hop = plan.hops.last().expect("a coupled route has drawable hops");
         assert!(
             final_hop.pos.distance(ghost_pos) > 1_000.0,
             "the route must not end on the stale sighting",
@@ -2101,10 +2237,10 @@ mod tests {
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let inbound = field.from_coupled(hull, home);
 
-        let (outbound, hops) =
-            command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        let outbound = plan.travel_time;
         let warp = home.distance(hull) / (field.c * WARP_FACTOR);
-        assert!(!hops.is_empty(), "the order rides — the coupled hull is its terminal gateway");
+        assert!(!plan.hops.is_empty(), "the order rides — the coupled hull is its terminal gateway");
         assert!(
             outbound < warp * 0.5,
             "far quicker than the warp chord ({outbound:.1}s vs {warp:.1}s)"
@@ -2114,9 +2250,160 @@ mod tests {
             "the two coupled channels are the same physics now ({outbound:.2}s vs {inbound:.2}s)"
         );
         assert!(
-            (hops.last().unwrap().frac - 1.0).abs() < 1e-9,
+            (plan.hops.last().unwrap().frac - 1.0).abs() < 1e-9,
             "clock and route come from the same plan — no FTL chords"
         );
+    }
+
+    #[test]
+    fn the_orders_panel_clock_is_solved_from_the_ghost_not_the_truth() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(lane.length() * 0.05);
+        let ghost_pos = lane.at(lane.length() * 0.90);
+        let true_pos = lane.at(lane.length() * 0.35);
+        let ghost_vel = Vec2::new(-2_000.0, 0.0);
+        let relays = [wide_gateway(home)];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
+        let depart = 73.0;
+
+        let (observed, signal) =
+            observed_order_plan(&field, home, ghost_pos, ghost_vel, true, depart);
+        let ghost_signal = command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+        assert!((observed.arrives_at - (depart + ghost_signal.travel_time)).abs() < 1e-9);
+        assert!(observed.meeting_point.distance(ghost_signal.meeting_point) < 1e-9);
+        assert!(
+            (observed.response_at
+                - (observed.arrives_at + field.between(observed.meeting_point, home)))
+                .abs()
+                < 1e-9,
+            "the response estimate returns from the same ghost-derived meeting point",
+        );
+        assert!((signal.travel_time - ghost_signal.travel_time).abs() < 1e-9);
+
+        let (truth_fed, _) =
+            observed_order_plan(&field, home, true_pos, ghost_vel, true, depart);
+        assert!(
+            (observed.arrives_at - truth_fed.arrives_at).abs() > 1.0
+                && (observed.response_at - truth_fed.response_at).abs() > 1.0,
+            "a ship long past the stale sighting would leak different clocks",
+        );
+
+        let newer_sighting = lane.at(lane.length() * 0.70);
+        let (refreshed, _) =
+            observed_order_plan(&field, home, newer_sighting, ghost_vel, true, depart);
+        assert!(
+            (refreshed.arrives_at - observed.arrives_at).abs() > 1.0,
+            "the estimate moves when, and only when, the served sighting moves",
+        );
+    }
+
+    #[test]
+    fn the_projection_is_plotted_from_the_ghost_not_the_truth() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(lane.length() * 0.05);
+        let ghost_pos = lane.at(lane.length() * 0.80);
+        let true_pos = lane.at(lane.length() * 0.30);
+        let dest = lane.at(lane.length() * 0.10);
+        let relays = [wide_gateway(home)];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
+        let (ghost_clock, _) =
+            observed_order_plan(&field, home, ghost_pos, Vec2::new(-2_000.0, 0.0), true, 50.0);
+        let (truth_clock, _) =
+            observed_order_plan(&field, home, true_pos, Vec2::new(-2_000.0, 0.0), true, 50.0);
+
+        let track = dead_reckoned_projection(
+            &lanes,
+            ghost_clock.meeting_point,
+            dest,
+            ghost_clock.arrives_at,
+            100.0,
+        );
+        assert_eq!(track.first().unwrap().pos, ghost_clock.meeting_point);
+        assert_eq!(track.first().unwrap().t, ghost_clock.arrives_at);
+        assert_eq!(track.last().unwrap().pos, dest);
+        assert!(
+            track.first().unwrap().pos.distance(truth_clock.meeting_point) > 1_000.0,
+            "hidden true space must not move the start of the plotted track",
+        );
+    }
+
+    #[test]
+    fn a_projection_rides_the_lanes_home_with_monotone_clocks() {
+        let lanes = signal_line();
+        let from = Vec2::new(20_000.0, 8_000.0);
+        let dest = Vec2::new(180_000.0, -8_000.0);
+        let track = dead_reckoned_projection(&lanes, from, dest, 20.0, 100.0);
+        assert_eq!(track.first().unwrap().pos, from);
+        assert_eq!(track.last().unwrap().pos, dest);
+        assert!(track.windows(2).all(|w| w[1].t > w[0].t), "every plotted clock advances");
+
+        let implied_speeds: Vec<f64> = track
+            .windows(2)
+            .map(|w| w[0].pos.distance(w[1].pos) / (w[1].t - w[0].t))
+            .collect();
+        let slowest = implied_speeds.iter().copied().fold(f64::INFINITY, f64::min);
+        let fastest = implied_speeds.iter().copied().fold(0.0_f64, f64::max);
+        assert!(
+            fastest > slowest * 5.0,
+            "lane legs must cover distance faster than the deep-space approach/exit ({slowest:.0} vs {fastest:.0} su/s)",
+        );
+    }
+
+    #[test]
+    fn no_destination_or_target_chase_produces_no_projected_track() {
+        assert!(!has_fixed_flight_projection(sim::event::OrderKind::Attack, Some(sim::EntityId(9))));
+        assert!(!has_fixed_flight_projection(sim::event::OrderKind::Raid, Some(sim::EntityId(9))));
+        assert!(!has_fixed_flight_projection(sim::event::OrderKind::Construct, None));
+        assert!(has_fixed_flight_projection(sim::event::OrderKind::Move, None));
+    }
+
+    #[test]
+    fn a_rival_view_never_receives_an_owners_projection() {
+        let mut world = World::new(sim::SimConfig::for_players(0xC0_771, 4));
+        let owner = PlayerId(710);
+        let rival = PlayerId(711);
+        world.step(&[
+            Command::AddPlayer { id: owner, name: "Plotter".into() },
+            Command::AddPlayer { id: rival, name: "Observer".into() },
+        ]);
+        let fleet = *world
+            .fleets
+            .iter()
+            .find(|(_, fleet)| fleet.owner == owner)
+            .map(|(id, _)| id)
+            .unwrap();
+        let cc = world.players[&owner].command_center;
+        {
+            let fleet = world.fleets.get_mut(&fleet).unwrap();
+            fleet.pos = cc + Vec2::new(50_000.0, 0.0);
+            fleet.vel = Vec2::ZERO;
+            fleet.supplied = true;
+        }
+        let dest = cc;
+        let events = world.step(&[Command::MoveShip { player_id: owner, ship_id: fleet, dest }]);
+        let pending = world
+            .pending_commands(owner)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("move should schedule an owner lifecycle; events={events:?}"));
+        let projected = vec![
+            ProjectedPointView { pos: world.fleets[&fleet].pos, t: pending.issued_at + 2.0 },
+            ProjectedPointView { pos: dest, t: pending.issued_at + 12.0 },
+        ];
+        let plans = HashMap::from([(
+            (owner, pending.id),
+            ObservedOrderPlan {
+                arrives_at: pending.issued_at + 2.0,
+                response_at: pending.issued_at + 20.0,
+                meeting_point: projected[0].pos,
+                projected,
+            },
+        )]);
+
+        assert!(!pending_order_views(&world, owner, &plans)[0].projected.is_empty());
+        assert!(pending_order_views(&world, rival, &plans).is_empty());
     }
 
     /// The server-facing lifecycle source must expose the real command queue,
