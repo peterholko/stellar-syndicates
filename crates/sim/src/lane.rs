@@ -131,9 +131,9 @@ pub const HYPERLIMIT: f64 = 900.0;
 
 /// Minimum CENTERLINE clearance every lane keeps from every gravity well.
 ///
-/// The ribbon may visually brush the protected circle; the road itself never
-/// threads a system. Fleets leave the lane and cross the remaining gap in open
-/// hyperspace before the well forces them down to thrusters.
+/// Together with `ribbon_half_width`'s cap at `WELL_STANDOFF - HYPERLIMIT`,
+/// this guarantees the entire ribbon stays outside every well: the corridor
+/// threads between systems rather than swallowing their impulse-only space.
 pub const WELL_STANDOFF: f64 = HYPERLIMIT * 2.5;
 
 /// Ribbon width as a fraction of the median neighbouring-system distance. One
@@ -1891,20 +1891,31 @@ pub fn generate(
     //     what it would grow.
     let reach = spacing * 0.25;
     for h in homes {
-        let nearest = lanes
+        let mut joins: Vec<_> = lanes
             .iter()
             .filter_map(|l| l.nearest(*h).map(|(sm, d)| (sm.pos, d)))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        let Some((join, d)) = nearest else { continue };
-        if d <= reach {
+            .collect();
+        joins.sort_by(|a, b| a.1.total_cmp(&b.1));
+        if joins.first().is_some_and(|(_, d)| *d <= reach) {
             continue; // already served
         }
-        let along = (join - *h).normalized();
-        // A home-facing route terminates at the same explicit well-clearance
-        // ring as every other centerline. The fleet covers the rest off-lane.
-        let start = *h + along * WELL_STANDOFF;
-        let ctrl = vec![start, start + (join - start) * 0.5, join];
-        lanes.push(finish(&mut next_id, ctrl, anchors, half_width, false, LaneKind::Spur));
+        for (join, _) in joins {
+            let along = (join - *h).normalized();
+            // A home-facing route terminates at the same explicit well-clearance
+            // ring as every other centerline. The fleet covers the rest off-lane.
+            let start = *h + along * WELL_STANDOFF;
+            let ctrl = vec![start, start + (join - start) * 0.5, join];
+            let mut trial_id = next_id;
+            let spur = finish(&mut trial_id, ctrl, anchors, half_width, false, LaneKind::Spur);
+            let connects = lanes.iter().any(|lane| {
+                !LaneNetwork::of(vec![lane.clone(), spur.clone()]).junctions.is_empty()
+            });
+            if connects {
+                next_id = trial_id;
+                lanes.push(spur);
+                break;
+            }
+        }
     }
 
     let mut net = LaneNetwork { lanes, ..Default::default() };
@@ -2198,15 +2209,11 @@ fn fastest_lane_speed() -> f64 {
 
 /// How wide a ribbon is, given the systems it threads.
 ///
-/// No longer capped against a hull's turning circle. That cap existed to make
-/// in-lane reversal geometrically impossible — keep the corridor narrower than
-/// anything could turn inside of — and the argument did not survive contact:
-/// past the alignment gate a hull's speed fell tenfold and its turning circle
-/// with it, so a Titan came about in ~1,000 su inside a 5,900 su ribbon. §course-
-/// change settles it as a RULE instead: you cannot steer above thrusters, so a
-/// reversal costs a full shutdown and restart whatever the corridor's width.
+/// Spacing still scales ribbons on tiny galaxies, but well clearance is the
+/// hard ceiling: `half_width <= WELL_STANDOFF - HYPERLIMIT`. Composed with the
+/// centerline standoff, that makes ribbon and gravity-well interiors disjoint.
 fn ribbon_half_width(spacing: f64) -> f64 {
-    spacing * LANE_WIDTH_FRAC * 0.5
+    (spacing * LANE_WIDTH_FRAC * 0.5).min(WELL_STANDOFF - HYPERLIMIT)
 }
 
 /// Minimum curvature radius of a control polygon, sampled through its spline.
@@ -2499,6 +2506,32 @@ mod tests {
                             "{players}p seed {seed}: {} passes well {well} at {clearance:.2} su (< {WELL_STANDOFF:.2})",
                             lane.name,
                         );
+                    }
+                }
+            }
+        }
+    }
+
+    /// THE WHOLE RIBBON, NOT JUST ITS AXIS, STAYS OUT OF GRAVITY WELLS. Drive
+    /// regimes are spatially disjoint: hyperspace inside the ribbon, impulse
+    /// inside a well, and ordinary warp between them.
+    #[test]
+    fn no_ribbon_ever_overlaps_a_gravity_well() {
+        for players in [2usize, 4, 6] {
+            for seed in [1u64, 2, 7, 99, 2024] {
+                let (n, anchors, ..) = net(seed, players);
+                for lane in &n.lanes {
+                    for sample in &lane.samples {
+                        for (well, anchor) in anchors.iter().enumerate() {
+                            let clearance = sample.pos.distance(anchor.pos);
+                            let required = HYPERLIMIT + lane.half_width_at(sample.s);
+                            assert!(
+                                clearance + 1e-6 >= required,
+                                "{players}p seed {seed}: {} ribbon overlaps well {well} at s={:.2}: {clearance:.2} su < {required:.2} su",
+                                lane.name,
+                                sample.s,
+                            );
+                        }
                     }
                 }
             }
@@ -3381,22 +3414,30 @@ mod tests {
     /// a highway connection the home does not have.
     #[test]
     fn a_spur_joins_its_home_to_a_real_route() {
-        for seed in [2024u64, 1, 7] {
-            let (n, _, homes, _) = net(seed, 4);
-            for s in n.lanes.iter().filter(|l| l.kind == LaneKind::Spur) {
-                let head = *s.control.first().unwrap();
-                let tail = *s.control.last().unwrap();
-                assert!(
-                    homes.iter().any(|h| {
-                        let d = h.distance(head);
-                        (WELL_STANDOFF..=WELL_STANDOFF + s.half_width * 4.0).contains(&d)
-                    }),
-                    "seed {seed}: {} does not terminate on a home's standoff ring", s.name,
-                );
-                let joins = n.lanes.iter().filter(|o| o.id != s.id).any(|o| {
-                    o.nearest(tail).is_some_and(|(_, d)| d <= o.half_width + s.half_width)
-                });
-                assert!(joins, "seed {seed}: {} runs from its home to nowhere", s.name);
+        for players in [2usize, 4, 6] {
+            for seed in [1u64, 2, 7, 99, 2024] {
+                let (n, _, homes, _) = net(seed, players);
+                for s in n.lanes.iter().filter(|l| l.kind == LaneKind::Spur) {
+                    let head = *s.control.first().unwrap();
+                    assert!(
+                        homes.iter().any(|h| {
+                            let d = h.distance(head);
+                            (WELL_STANDOFF..=WELL_STANDOFF + s.half_width * 4.0).contains(&d)
+                        }),
+                        "{players}p seed {seed}: {} does not terminate on a home's standoff ring",
+                        s.name,
+                    );
+                    let index = n.lanes.iter().position(|lane| lane.id == s.id).unwrap();
+                    let joins = n
+                        .junctions
+                        .iter()
+                        .any(|junction| junction.a == index || junction.b == index);
+                    assert!(
+                        joins,
+                        "{players}p seed {seed}: {} has no physical junction with the route network",
+                        s.name,
+                    );
+                }
             }
         }
     }
