@@ -584,7 +584,7 @@ function buildShipPanel(): void {
       updateShipPanel();
     } else if (act === "emplace" && state.selectedShipId) {
       const k = (e.target as HTMLElement).closest(".emplace-btn")?.getAttribute("data-kind") as
-        | "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" | null;
+        | "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor" | null;
       if (k) {
         // §emplacements: BUILD WHERE THE SHIP IS PARKED — the player flies the
         // Construction Ship to the spot first, then this button raises the
@@ -594,6 +594,7 @@ function buildShipPanel(): void {
         const g = state.ghosts.find((x) => x.id === state.selectedShipId && x.own);
         const pretty =
           k === "hyperspace_buoy" ? "Hyperspace Buoy"
+          : k === "hyperspace_repeater" ? "Hyperspace Repeater"
           : k === "deep_space_sensor" ? "Deep Space Sensor"
           : "Hyperspace Sensor";
         if (!g) {
@@ -616,8 +617,10 @@ function buildShipPanel(): void {
         net?.send({ type: "BuildEmplacement", builder: state.selectedShipId, emplacement: k });
         readout().innerHTML =
           `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).` +
-          (k === "hyperspace_buoy"
-            ? ` <span class="dim">It is an entry/exit for off-lane signals once another owned relay shares this lane; your home system counts as one.</span>`
+            (k === "hyperspace_buoy"
+            ? ` <span class="dim">It is an entry/exit for off-lane signals; overlapping relays carry its hyperspace wire onward.</span>`
+            : k === "hyperspace_repeater"
+              ? ` <span class="dim">It extends overlapping wire, but signals cannot enter or leave hyperspace here.</span>`
             : "");
         updateShipPanel();
       }
@@ -1024,6 +1027,7 @@ function orderObject(p: PendingOrderView): string {
     case "attack": return "Attack → rival contact";
     case "construct": {
       const what = p.emplacement === "hyperspace_buoy" ? "Hyperspace Buoy"
+        : p.emplacement === "hyperspace_repeater" ? "Hyperspace Repeater"
         : p.emplacement === "deep_space_sensor" ? "Deep Space Sensor"
         : p.emplacement === "hyperspace_sensor" ? "Hyperspace Sensor"
         : "structure";
@@ -2695,12 +2699,10 @@ function updateOngoingBattlePanel(): void {
     `<h2>Engagement ${esc(nearestSystemName(b.pos))}</h2></div></div>` +
     `<button class="pp-close" data-act="close" title="Close" aria-label="Close">✕</button></div>`;
   const ragingLine = `<div class="sp-line dim">Raging <b style="color:var(--ink)">${fmtCountdown(observed)}</b> · forces remaining by your light</div>`;
-  // §battle-records: WATCH THIS FIGHT LIVE (if a record for it has reached us
-  // — participants always have one, an observer only when their sensors cover
-  // the site). The viewer opens pinned LIGHT-LIVE and chase-plays each round
-  // as its light arrives — you are watching the battle at your light delay.
+  // §battle-records: the established click door remains an ordinary replay.
+  // The viewer itself offers Follow live; semantic map zoom enters it directly.
   const viewBtn = state.battleRecords.some((r) => r.id === b.id)
-    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Watch the fight as its light reaches you — rounds stream in live, delayed by distance.">${svgIcon("concept-fleet", "sm")} ◉ Watch live</button>`
+    ? `<button class="act" data-act="viewbattle" data-record="${b.id}" title="Open the arrived-light replay; use Follow live inside to chase new arrivals.">${svgIcon("concept-fleet", "sm")} View battle replay</button>`
     : "";
   const body =
     ragingLine +
@@ -2735,7 +2737,16 @@ let bvAccum = 0; // fractional-round playback accumulator
 let bvLastTs = 0;
 let bvLoopRunning = false;
 let lastBattleViewerSig = ""; // §perf: skip identical 10 Hz viewer rebuilds
+let bvSemantic = false; // entered by map zoom (the click door remains a replay overlay)
+let bvClosing = false;
+let bvLastBattleAge: number | null = null; // last SERVED BattleView.age, never geometry-derived
+let bvLastFrontier = -1;
+let bvLastArrivalWallMs = 0;
+let bvAftermathTimer: number | null = null;
+let bvHandoffArmed = false; // only a conclusion consumed while following auto-hands off
 const BV_ROUND_SECS = 0.55; // wall-seconds per round at 1× playback
+const BV_STALE_MS = 4500;
+const BV_TRANSITION_MS = 480; // matches render.ts's semantic-view crossfade
 
 const bvRecordFor = (id: string): BattleRecordView | undefined => state.battleRecords.find((r) => r.id === id);
 /// §battle-records: a concluded aftermath report has a DIFFERENT id space than
@@ -2759,25 +2770,65 @@ function buildBattleViewer(): void {
         closeBattleViewer();
         break;
       case "play":
-        // Replaying a finished battle from its end → restart from the top.
-        if (!bvPlaying && rec && rec.outcome !== null && bvRound >= frontier) { bvRound = 0; bvLive = false; }
+        // Every transport action is an explicit replay decision. It drops the
+        // arrival-frontier follow even if the user happens to be at that round.
+        bvLive = false;
+        bvHandoffArmed = false;
+        if (!bvPlaying && rec && bvRound >= frontier) bvRound = 0;
         bvPlaying = !bvPlaying;
         bvAccum = 0;
+        clearBattleAftermathTimer();
         renderBattleViewer();
         break;
       case "speed":
+        bvLive = false;
+        bvHandoffArmed = false;
+        bvPlaying = false;
         bvSpeed = Number(el.dataset.speed) || 1;
+        bvAccum = 0;
+        clearBattleAftermathTimer();
         renderBattleViewer();
         break;
       case "round": {
         bvRound = Number(el.dataset.round) || 0;
-        bvLive = rec !== undefined && rec.outcome === null && bvRound >= frontier;
+        bvLive = false;
+        bvHandoffArmed = false;
         bvPlaying = false;
+        bvAccum = 0;
+        clearBattleAftermathTimer();
         renderBattleViewer();
         break;
       }
+      case "follow":
+        if (rec && rec.outcome === null) {
+          bvLive = true;
+          bvHandoffArmed = bvSemantic;
+          bvPlaying = false;
+          bvRound = Math.max(0, frontier);
+          bvAccum = 0;
+          renderBattleViewer();
+        }
+        break;
     }
   });
+  // The theater has its own tactical camera wheel. In semantic mode an outward
+  // wheel gesture instead mirrors System View and returns to the galaxy; replay
+  // overlays keep the theater's existing wheel controls unchanged.
+  let zoomOutAccum = 0;
+  $("battle-viewer").addEventListener("wheel", (e: WheelEvent) => {
+    if (!bvSemantic) return;
+    if (e.deltaY > 0) {
+      zoomOutAccum += e.deltaY;
+      if (zoomOutAccum > 60) {
+        e.preventDefault();
+        e.stopPropagation();
+        zoomOutAccum = 0;
+        closeBattleViewer();
+      }
+    } else {
+      zoomOutAccum = 0;
+    }
+  }, { passive: false, capture: true });
 }
 
 // ============ §ground G3: THE GROUND VIEWER =================================
@@ -2950,19 +3001,50 @@ function renderGroundViewer(): void {
   groundTheaterSetTime(gvRound, gvFrac, gvLive && gvRound >= frontier);
 }
 
-function openBattleViewer(id: string): void {
+type BattleViewerOpenOpts = { follow?: boolean; semantic?: boolean };
+
+function clearBattleAftermathTimer(): void {
+  if (bvAftermathTimer !== null) {
+    clearTimeout(bvAftermathTimer);
+    bvAftermathTimer = null;
+  }
+}
+
+function battleReportForRecord(rec: BattleRecordView): BattleReportView | undefined {
+  return state.battleReports.find((r) => r.pos.x === rec.pos.x && r.pos.y === rec.pos.y);
+}
+
+function openBattleViewer(id: string, opts: BattleViewerOpenOpts = {}): void {
   const rec = bvRecordFor(id);
   if (!rec) return; // no access → no viewer (fog); the affordance is guarded too
   buildBattleViewer();
+  clearBattleAftermathTimer();
+  bvClosing = false;
+  bvSemantic = opts.semantic === true;
   openBattleViewerId = id;
   const running = rec.outcome === null;
   const frontier = rec.rounds.length - 1;
-  bvLive = running;
-  bvRound = running ? Math.max(0, frontier) : 0;
-  bvPlaying = !running && frontier > 0; // auto-play a concluded replay from the top
+  bvLive = opts.follow === true && running;
+  bvHandoffArmed = bvSemantic && bvLive;
+  bvRound = bvLive ? Math.max(0, frontier) : 0;
+  // The longstanding click door is an ordinary replay, including while a fight
+  // is running. Zoom entry (and the explicit button) are the only follow doors.
+  bvPlaying = !bvLive && frontier > 0;
   bvAccum = 0;
   bvLastTs = 0;
+  bvLastFrontier = frontier;
+  bvLastArrivalWallMs = performance.now();
+  bvLastBattleAge = state.battles.find((b) => b.id === id)?.age ?? null;
   lastBattleViewerSig = ""; // force a fresh paint on (re)open
+  const viewer = $("battle-viewer");
+  viewer.classList.toggle("is-semantic", bvSemantic);
+  viewer.classList.remove("is-leaving");
+  if (bvSemantic) {
+    viewer.classList.add("is-entering");
+    requestAnimationFrame(() => requestAnimationFrame(() => viewer.classList.remove("is-entering")));
+  } else {
+    viewer.classList.remove("is-entering");
+  }
   renderBattleViewer();
   if (!bvLoopRunning) {
     bvLoopRunning = true;
@@ -2970,11 +3052,65 @@ function openBattleViewer(id: string): void {
   }
 }
 
-function closeBattleViewer(): void {
+function finishBattleViewerClose(after?: () => void, semanticClosed = false): void {
   openBattleViewerId = null;
   bvPlaying = false;
-  $("battle-viewer").classList.remove("is-open");
+  bvLive = false;
+  bvHandoffArmed = false;
+  bvClosing = false;
+  const viewer = $("battle-viewer");
+  viewer.classList.remove("is-open", "is-semantic", "is-entering", "is-leaving");
+  // A compact replay can be opened over System View; closing it must not tear
+  // down that view's breadcrumb. Only the semantic battle doorway owns it.
+  if (semanticClosed) $("breadcrumb").classList.remove("is-open", "is-battle");
   theaterClose(); // stop the theater's ticker — the map is never affected
+  after?.();
+}
+
+function closeBattleViewer(after?: () => void): void {
+  clearBattleAftermathTimer();
+  if (!bvSemantic) {
+    finishBattleViewerClose(after);
+    return;
+  }
+  if (bvClosing) return;
+  bvClosing = true;
+  renderer.exitBattleView();
+  $("battle-viewer").classList.add("is-leaving");
+  window.setTimeout(() => {
+    bvSemantic = false;
+    finishBattleViewerClose(after, true);
+  }, BV_TRANSITION_MS);
+}
+
+/// Optional semantic-zoom doorway. Every input is already in the player's
+/// light-gated view: the observed battle marker supplies both position and age,
+/// and the record supplies only the arrived round prefix.
+function enterBattleViewer(id: string): void {
+  const battle = state.battles.find((b) => b.id === id);
+  if (!battle || !bvRecordFor(id)) return;
+  renderer.enterBattleView(id, battle.pos);
+  showBreadcrumb(`BATTLE ${nearestSystemName(battle.pos)}`);
+  $("breadcrumb").classList.add("is-battle");
+  closePlanetPanel();
+  closeSysviewManage();
+  closeRail();
+  openOngoingBattleId = null;
+  $("battle-panel").classList.remove("is-open");
+  openBattleViewer(id, { follow: true, semantic: true });
+}
+
+/// Once the final arrived frame has played, wait for the ordinary delayed
+/// aftermath report. Participants hand off through that existing panel; sensor
+/// observers (who have no private report) remain on the concluded replay.
+function maybeScheduleBattleAftermath(rec: BattleRecordView): void {
+  if (!bvSemantic || bvClosing || !bvHandoffArmed || bvLive || rec.outcome === null || bvAftermathTimer !== null) return;
+  const report = battleReportForRecord(rec);
+  if (!report) return;
+  bvAftermathTimer = window.setTimeout(() => {
+    bvAftermathTimer = null;
+    closeBattleViewer(() => openBattlePanel(report.id));
+  }, 900);
 }
 
 /// The playback clock — advances the shown round while playing, clamped to the
@@ -2984,6 +3120,12 @@ function bvTick(ts: number): void {
   const rec = bvRecordFor(openBattleViewerId);
   if (!rec) { closeBattleViewer(); bvLoopRunning = false; return; }
   const frontier = rec.rounds.length - 1;
+  if (frontier !== bvLastFrontier) {
+    bvLastFrontier = frontier;
+    bvLastArrivalWallMs = ts;
+  }
+  const battleAge = state.battles.find((b) => b.id === rec.id)?.age;
+  if (battleAge !== undefined) bvLastBattleAge = battleAge;
   const dt = bvLastTs ? Math.min(0.25, (ts - bvLastTs) / 1000) : 0;
   if (bvLive && frontier >= 0) {
     // LIGHT-LIVE is a CHASE, not a slideshow: each newly-arrived round plays
@@ -3006,6 +3148,7 @@ function bvTick(ts: number): void {
         bvLive = false;
         bvPlaying = false;
         renderBattleViewer();
+        maybeScheduleBattleAftermath(rec);
       }
     }
   } else if (bvPlaying && frontier >= 0) {
@@ -3014,11 +3157,14 @@ function bvTick(ts: number): void {
     while (bvAccum >= 1 && bvRound < frontier) { bvRound++; bvAccum -= 1; changed = true; }
     if (bvRound >= frontier) {
       bvAccum = 0;
-      if (rec.outcome !== null) { bvPlaying = false; changed = true; } // end of a finished replay
-      else { bvLive = true; } // caught up to a running fight's light frontier
+      // Reaching the arrived frontier in replay does not silently opt back into
+      // live-follow. The explicit Follow live control is the only way back.
+      bvPlaying = false;
+      changed = true;
     }
     if (changed) renderBattleViewer();
   }
+  if (!bvLive && rec.outcome !== null && bvRound >= frontier) maybeScheduleBattleAftermath(rec);
   // §theater: push transport time every frame — round + fractional progress
   // drives the theater's interpolation; LIGHT-LIVE pins it to the frontier.
   // bvAccum simply stops advancing while paused, so a pause holds the scene
@@ -3031,6 +3177,15 @@ function bvTick(ts: number): void {
 /// Keep an open viewer live as new light arrives (called from the View handler).
 function refreshOpenBattleViewer(): void {
   if (openBattleViewerId === null || !$("battle-viewer").classList.contains("is-open")) return;
+  const rec = bvRecordFor(openBattleViewerId);
+  if (rec) {
+    const battleAge = state.battles.find((b) => b.id === rec.id)?.age;
+    if (battleAge !== undefined) bvLastBattleAge = battleAge;
+    if (rec.rounds.length - 1 !== bvLastFrontier) {
+      bvLastFrontier = rec.rounds.length - 1;
+      bvLastArrivalWallMs = performance.now();
+    }
+  }
   renderBattleViewer();
 }
 
@@ -3185,13 +3340,20 @@ function renderBattleViewer(): void {
   const frontier = rec.rounds.length - 1;
   if (bvLive && frontier >= 0) bvRound = Math.min(bvRound, frontier); // the chase advances; never snap-jump
   bvRound = Math.max(0, Math.min(bvRound, Math.max(0, frontier)));
+  const wallNow = performance.now();
+  const stalled = running && bvLastArrivalWallMs > 0 && wallNow - bvLastArrivalWallMs >= BV_STALE_MS;
+  const stale = running && ((bvLastBattleAge ?? 0) >= 8 || stalled);
 
   // §perf: this rebuilds the whole overlay AND re-mounts the WebGL canvas; it ran
   // 10x/s off the View while a replay was open. Skip when nothing that affects the
   // render changed — the 1 s liveSimTime() heartbeat keeps the "light reached you
   // N ago" line ticking at its whole-second cadence; new light (rounds.length),
   // scrubbing/playback (bvRound/bvPlaying/bvSpeed) and the outcome all invalidate.
-  const bvSig = JSON.stringify([openBattleViewerId, rec.rounds.length, rec.outcome, bvRound, bvPlaying, bvSpeed, Math.floor(liveSimTime())]);
+  const bvSig = JSON.stringify([
+    openBattleViewerId, rec.rounds.length, rec.outcome, bvRound, bvPlaying, bvSpeed,
+    bvLive, bvSemantic, bvLastBattleAge === null ? null : Math.ceil(bvLastBattleAge),
+    stale, Math.floor(wallNow / 1000),
+  ]);
   if (bvSig === lastBattleViewerSig && $("battle-viewer").childElementCount) return;
   lastBattleViewerSig = bvSig;
 
@@ -3203,9 +3365,17 @@ function renderBattleViewer(): void {
 
   const label0 = rec.own_side === 0 ? "You" : "Attackers";
   const label1 = rec.own_side === 1 ? "You" : "Defenders";
-  const statusChip = rec.outcome ? bvOutcomeChip(rec, rec.outcome) : badge("warn", "◉ LIGHT-LIVE");
+  const statusChip = rec.outcome
+    ? bvOutcomeChip(rec, rec.outcome)
+    : bvLive ? badge("warn", "◉ LIGHT-LIVE") : badge("neutral", "REPLAY · ARRIVED LIGHT");
   const counter = frontier < 0 ? "no rounds yet" : `round ${bvRound + 1} / ${rec.rounds.length}${running ? " +" : ""}`;
   const sub = `<div class="bv-sub"><span class="bv-vs"><span class="${rec.own_side === 0 ? "you" : "foe"}">${esc(label0)}</span> vs <span class="${rec.own_side === 1 ? "you" : "foe"}">${esc(label1)}</span></span> ${statusChip}<span class="bv-count">${esc(counter)}</span></div>`;
+  const ageText = bvLastBattleAge === null ? "arrival frontier" : `as of ~${Math.ceil(bvLastBattleAge)}s ago`;
+  const liveBar = running
+    ? `<div class="bv-livebar${stale ? " is-stale" : ""}${bvLive ? " is-following" : ""}">` +
+      `<span class="bv-livedot"></span><b>${bvLive ? "LIVE" : "REPLAY"}</b> · ${esc(ageText)}` +
+      `${stalled ? `<span class="bv-stall">light in transit · holding last arrival</span>` : ""}</div>`
+    : `<div class="bv-livebar is-complete"><span class="bv-livedot"></span><b>COMPLETE</b> · conclusion light arrived</div>`;
 
   let arena = `<div class="bv-empty">Awaiting the first round's light…</div>`;
   let notes = "";
@@ -3240,24 +3410,24 @@ function renderBattleViewer(): void {
     }
     notes = rd.notes.length ? `<div class="bv-notes">${rd.notes.map(bvNoteBanner).join("")}</div>` : "";
     const intoFight = Math.max(0, rd.tick / state.tickHz - rec.started_at);
-    const delay = state.commandCenter && state.galaxy
-      ? Math.hypot(rec.pos.x - state.commandCenter.x, rec.pos.y - state.commandCenter.y) / state.galaxy.c
-      : 0;
-    const seenAgo = Math.max(0, liveSimTime() - (rd.tick / state.tickHz + delay));
-    agoline = `<div class="bv-agoline">at +${fmtCountdown(intoFight)} into the fight · this round's light reached you ${fmtCountdown(seenAgo)} ago${participant ? "" : " · size estimates only"}</div>`;
+    agoline = `<div class="bv-agoline">at +${fmtCountdown(intoFight)} into the fight · arrived record round ${bvRound + 1}${participant ? "" : " · size estimates only"}</div>`;
   }
 
   const playIcon = bvPlaying ? "❚❚ Pause" : "▶ Play";
   const speeds = [1, 4, 16].map((sp) => `<button class="bv-btn${bvSpeed === sp ? " on" : ""}" data-act="speed" data-speed="${sp}">${sp}×</button>`).join("");
   const ticks = rec.rounds.map((_r, i) => `<div class="bv-tick${i < bvRound ? " seen" : ""}${i === bvRound ? " cur" : ""}" data-act="round" data-round="${i}" title="round ${i + 1}"></div>`).join("");
   const hatch = running ? `<div class="bv-hatch" title="beyond your light cone — later rounds haven't reached you yet"></div>` : "";
-  const transport = frontier < 0 ? "" :
-    `<div class="bv-transport">` +
-    `<button class="bv-btn" data-act="play">${playIcon}</button>` +
-    `<span class="bv-speeds">${speeds}</span>` +
-    `<div class="bv-scrub">${ticks || `<div class="bv-tick cur"></div>`}${hatch}</div></div>${agoline}`;
+  const follow = running
+    ? `<button class="bv-btn bv-follow${bvLive ? " on" : ""}" data-act="follow" title="Jump to the newest round whose light has arrived and follow future arrivals">◉ ${bvLive ? "Following live" : "Follow live"}</button>`
+    : "";
+  const transport = frontier < 0
+    ? (follow ? `<div class="bv-transport">${follow}</div>` : "")
+    : `<div class="bv-transport">` +
+      `<button class="bv-btn" data-act="play">${playIcon}</button>` +
+      `<span class="bv-speeds">${speeds}</span>` +
+      `<div class="bv-scrub">${ticks || `<div class="bv-tick cur"></div>`}${hatch}</div>${follow}</div>${agoline}`;
 
-  setHtml($("battle-viewer"), head + sub + arena + notes + transport);
+  setHtml($("battle-viewer"), head + liveBar + sub + arena + notes + transport);
   $("battle-viewer").classList.add("is-open");
   // §theater: (re)mount the persistent canvas into the fresh DOM — the holder
   // is re-appended, so the WebGL context survives innerHTML rebuilds.
@@ -3373,7 +3543,7 @@ function theaterDemoLive(intervalMs = 1800): void {
     refreshOpenBattleViewer();
   };
   install();
-  openBattleViewer(full.id); // opens pinned LIGHT-LIVE on the "running" fight
+  openBattleViewer(full.id, { follow: true }); // isolate arrival-frontier following without a map transition
   demoLiveTimer = window.setInterval(() => {
     upto++;
     install();
@@ -3727,7 +3897,8 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
 // the server charges silently, so the honest refusal has to live here. Keep
 // in lockstep with the Rust recipes.
 const EMPLACE_KITS: Record<string, [Commodity, number][]> = {
-  hyperspace_buoy: [["alloys", 40], ["electronics", 60], ["fuel", 30]],
+  hyperspace_buoy: [["alloys", 50], ["electronics", 100], ["fuel", 30]],
+  hyperspace_repeater: [["alloys", 15], ["electronics", 15], ["fuel", 10]],
   deep_space_sensor: [["alloys", 60], ["electronics", 120], ["fuel", 40]],
   hyperspace_sensor: [["alloys", 50], ["electronics", 90], ["fuel", 30]],
 };
@@ -3777,7 +3948,9 @@ function emplacementLabel(kind: string): string {
 // when clicked months after it was placed.
 const EMPLACEMENT_BLURB: Record<string, string> = {
   hyperspace_buoy:
-    "An entry and exit between open-space warp signals and hyperspace communications. Your home system counts as one relay; two sharing a lane open the connected network through intersections.",
+    "A gateway between open-space warp signals and hyperspace communications. Its 40,000 su throw joins overlapping relays into a wire.",
+  hyperspace_repeater:
+    "A relay-only span of hyperspace wire with an 80,000 su throw. It extends an overlapping chain, but signals never enter or leave hyperspace here.",
   deep_space_sensor:
     "A stationary picket. Watches its bubble like a ship's sensors and reports home at warp speed.",
   hyperspace_sensor:
@@ -3810,11 +3983,12 @@ function updateEmplacementPanel(): void {
   const body =
     `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
     (mine
-      ? // Explain the pair rule without guessing whether this buoy shares a
-        // lane with home or another buoy; the client has drawable lane geometry,
-        // but the authoritative router owns relay membership.
+      ? // The authoritative router owns exact corridor membership; the panel
+        // states only the stable gateway/wire role of the selected structure.
         e.kind === "hyperspace_buoy"
-        ? `<div class="sp-line dim">Off-lane orders and reports enter or leave hyperspace only at home or an owned buoy. A ship actively riding a lane is already coupled.</div>`
+        ? `<div class="sp-line dim">Off-lane orders and reports enter or leave hyperspace only at an owned buoy. A ship actively riding a lane is its own gateway.</div>`
+        : e.kind === "hyperspace_repeater"
+          ? `<div class="sp-line dim">Repeaters are wire only: overlap their coverage with gateways or other repeaters. Nothing boards or leaves at one.</div>`
         : ""
       : // A rival's: say how to be rid of it. The verb lives on the map, in the
         // same grammar as raiding, so the panel teaches rather than adds a button.
@@ -3823,13 +3997,14 @@ function updateEmplacementPanel(): void {
   setHtml(root, head + `<div class="sp-body">${stats}${body}</div>`);
 }
 
-// §emplacements: the CONSTRUCTION SHIP's build section — three BUILD-HERE
+// §emplacements: the CONSTRUCTION SHIP's build section — BUILD-HERE
 // buttons on the actor. The ship builds where it is parked: fly it to the
 // spot with an ordinary move order, then press the button. The status line
 // says what the current spot allows, so a refusal is never a surprise.
 function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
-    ["hyperspace_buoy", "Hyperspace Buoy", "An entry/exit for off-lane signals. Pair it with another owned relay on the same lane to open communications across the connected network; your home system counts as one. Must stand inside a lane."],
+    ["hyperspace_buoy", "Hyperspace Buoy", "A 40,000 su gateway where off-lane signals enter or leave hyperspace. Overlap it with repeaters or gateways to carry the wire onward. Must stand inside a lane."],
+    ["hyperspace_repeater", "Hyperspace Repeater", "An 80,000 su relay-only span of wire. Signals ride through it but never enter or leave hyperspace there. Must stand inside a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
@@ -3849,7 +4024,7 @@ function emplaceSection(g: GhostView): string {
         laneOk
           ? "In a hyperspace lane — everything can stand here."
           : openOk
-            ? "Open space — sensors only; move into a lane band for buoys and tripwires."
+            ? "Open space — sensors only; move into a lane band for buoys, repeaters, and tripwires."
             : "Too close to another structure — move on a little."
       }</div>`;
   const btns = kinds
@@ -3905,7 +4080,7 @@ function installInteraction(): void {
     // Shift+tap on the galaxy map is the ATTACK modifier (destroy vs raid).
     if (!panning) {
       if (renderer.viewMode.type === "system") handleSystemClick(e.clientX, e.clientY);
-      else handleMapClick(e.clientX, e.clientY, e.shiftKey);
+      else if (renderer.viewMode.type === "galaxy") handleMapClick(e.clientX, e.clientY, e.shiftKey);
     }
     panning = false;
   };
@@ -3921,6 +4096,7 @@ function installInteraction(): void {
   let sysZoomOutAccum = 0;
   canvas.addEventListener("wheel", (e: WheelEvent) => {
     e.preventDefault();
+    if (renderer.viewMode.type === "battle") return; // the overlay owns its zoom-out gesture
     if (renderer.viewMode.type === "system") {
       if (e.deltaY > 0) { // scrolling out
         sysZoomOutAccum += e.deltaY;
@@ -3932,9 +4108,13 @@ function installInteraction(): void {
     }
     // Galaxy mode: if already at max zoom and the user keeps zooming IN, dive into
     // the system under the cursor (or the selected one).
+    const battleHit = renderer.battlePick(e.clientX, e.clientY);
+    const wasBattleZoom = renderer.atBattleZoomThreshold();
     const wasMax = renderer.atMaxZoom();
     renderer.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0016));
-    if (e.deltaY < 0 && wasMax) {
+    if (e.deltaY < 0 && battleHit !== null && wasBattleZoom) {
+      enterBattleViewer(battleHit);
+    } else if (e.deltaY < 0 && wasMax) {
       const sys = systemUnderCursor(e.clientX, e.clientY)
         ?? (state.selectedSystemId ? state.galaxy?.systems.find((s) => s.id === state.selectedSystemId) ?? null : null);
       if (sys) enterSystem(sys);
@@ -3949,14 +4129,15 @@ function installInteraction(): void {
     if (sys) enterSystem(sys);
   });
 
-  // Breadcrumb: GALAXY / Back both return to the galaxy map.
-  $("bc-galaxy").addEventListener("click", exitSystem);
-  $("bc-back").addEventListener("click", exitSystem);
+  // Breadcrumb: GALAXY / Back both return from whichever semantic level is open.
+  const exitSemantic = () => renderer.viewMode.type === "battle" ? closeBattleViewer() : exitSystem();
+  $("bc-galaxy").addEventListener("click", exitSemantic);
+  $("bc-back").addEventListener("click", exitSemantic);
 
   // On-screen zoom controls.
   $("zoom-in").addEventListener("click", () => renderer.zoomByFactor(1.3));
-  $("zoom-out").addEventListener("click", () => renderer.zoomByFactor(1 / 1.3));
-  $("zoom-reset").addEventListener("click", () => renderer.resetView());
+  $("zoom-out").addEventListener("click", () => renderer.viewMode.type === "battle" ? closeBattleViewer() : renderer.zoomByFactor(1 / 1.3));
+  $("zoom-reset").addEventListener("click", () => renderer.viewMode.type === "battle" ? closeBattleViewer() : renderer.resetView());
 
   // Keyboard: Enter/Esc commit or cancel a map-order preview; R recalls the
   // selected raider; M toggles the Hub Exchange panel.
@@ -4016,7 +4197,8 @@ function installInteraction(): void {
     } else if (e.key === "+" || e.key === "=") {
       renderer.zoomByFactor(1.3);
     } else if (e.key === "-" || e.key === "_") {
-      renderer.zoomByFactor(1 / 1.3);
+      if (renderer.viewMode.type === "battle") closeBattleViewer();
+      else renderer.zoomByFactor(1 / 1.3);
     } else if (e.key === "ArrowLeft") {
       renderer.panBy(60, 0);
     } else if (e.key === "ArrowRight") {

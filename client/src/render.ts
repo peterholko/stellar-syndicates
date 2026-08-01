@@ -23,7 +23,10 @@ import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./sys
 // change, NOT a second scale of gameplay — see the hard-boundary note in
 // systemview.ts. Ships/convoys/raiders/fog/combat/movement ALL stay on the galaxy
 // map; the System View is presentation only.
-export type MapViewMode = { type: "galaxy" } | { type: "system"; systemId: string };
+export type MapViewMode =
+  | { type: "galaxy" }
+  | { type: "system"; systemId: string }
+  | { type: "battle"; battleId: string };
 
 // Crossfade + camera-push transition between the two scenes.
 const TRANS_MS = 480;
@@ -31,6 +34,7 @@ const easeInOut = (t: number): number => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 
 const clamp01 = (x: number): number => Math.max(0, Math.min(1, x));
 interface Transition {
   dir: "in" | "out";
+  target: "system" | "battle";
   start: number;
   camFrom: { cx: number; cy: number; scale: number };
   camTo: { cx: number; cy: number; scale: number };
@@ -170,19 +174,19 @@ const CREEP_MAX_SU = 3_000;
 const SMOOTH_SNAP_SU = 4_000;
 const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
-// Deep-zoom NATIVE-size ramp: the zoom ratio r (= scale / fitScale) at which
-// ships BEGIN ramping from their indicator size (base × SHIP_ZOOM_MAX) up to
-// their TRUE NATIVE texture size, reaching native exactly at ZOOM_MAX_FACTOR.
-// Below this, ships stay small map indicators exactly as before. ~12 is the top
-// half of the 0.9→24 zoom range. Tunable — set it near ZOOM_MAX_FACTOR for a
-// last-sliver "snap," or lower for an earlier, gentler ramp.
+// Deep-zoom ramps use two bands. Ships and emplacements begin at r=12 and keep
+// their established growth curve; stars and the hub wait until r=18. That gives
+// the map three readable phases: comparable indicators far out, world spacing
+// opening through mid zoom, then bodies blooming over the last quarter and
+// reaching their unchanged maxima exactly at ZOOM_MAX_FACTOR.
 const SHIP_NATIVE_ZOOM_START = 12;
+// THE body-bloom playtest knob: 16 = earlier/gentler, 20 = later/snappier.
+const BODY_ZOOM_START = 18;
 
 // §size-hierarchy: per-class DEEP-ZOOM size targets (screen px at max zoom).
-// One shared curve (deepZoomPx) grows ships AND bodies through the deep-zoom
-// band, so at max zoom the map reads with a true scale hierarchy: the hub is
-// monumental, stars are huge, ships are small machines flying past them.
-// Normal zoom (r ≤ SHIP_NATIVE_ZOOM_START) is pixel-identical to before.
+// One smoothstep shape serves both bands, with a per-class start ratio. At max
+// zoom the map still reads with a true scale hierarchy: the hub is monumental,
+// stars are huge, ships are small machines flying past them.
 const SHIP_MAX_PX = 120; // a ship at max zoom (was: the art's native 256 — too big next to bodies)
 const STAR_MAX_PX = 480; // a star icon's CANVAS at max zoom — a uniform 1.875× upscale of the 256px icons; visible disks land at 96–413px by type (see starRenderedDiameter)
 // The hub has NO fixed max target: its deep-zoom ceiling is the landmark
@@ -382,6 +386,7 @@ export class Renderer {
   private texStation: Texture | null = null;
   private texHub: Texture | null = null; // the wormhole aperture + station landmark
   private texHyperspaceBuoy: Texture | null = null;
+  private texHyperspaceRepeater: Texture | null = null;
   private texDeepSpaceSensor: Texture | null = null;
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
@@ -513,10 +518,11 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [hub, station, hyperspaceBuoy, deepSpaceSensor, convoy, raider, corvette, colony, scout] = await Promise.all([
+    const [hub, station, hyperspaceBuoy, hyperspaceRepeater, deepSpaceSensor, convoy, raider, corvette, colony, scout] = await Promise.all([
       load("/art/wormhole_hub.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/celestial_sprites/hyperspace_buoy.png"),
+      load("/art/celestial_sprites/hyperspace_communication_buoy.png"),
       load("/art/celestial_sprites/deep_space_sensor.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
@@ -546,10 +552,11 @@ export class Renderer {
     this.texStation = station;
     // These 256px structure cutouts spend most of their life at ~34px. Mipmaps
     // keep engraved edges and antenna spars stable while the camera moves.
-    for (const t of [hyperspaceBuoy, deepSpaceSensor]) {
+    for (const t of [hyperspaceBuoy, hyperspaceRepeater, deepSpaceSensor]) {
       if (t) t.source.autoGenerateMipmaps = true;
     }
     this.texHyperspaceBuoy = hyperspaceBuoy;
+    this.texHyperspaceRepeater = hyperspaceRepeater;
     this.texDeepSpaceSensor = deepSpaceSensor;
     this.texConvoy = convoy;
     this.texRaider = raider;
@@ -669,6 +676,13 @@ export class Renderer {
   atMaxZoom(): boolean {
     return this.scale >= this.fitScale() * ZOOM_MAX_FACTOR - 1e-3;
   }
+  /// Ongoing battles get their own semantic-zoom band: deep enough that the
+  /// player is unmistakably aiming at the marker, but before a system's final
+  /// inspection threshold. The next inward gesture over the marker enters the
+  /// theater; stars retain their existing max-zoom doorway unchanged.
+  atBattleZoomThreshold(): boolean {
+    return this.scale >= this.fitScale() * (ZOOM_MAX_FACTOR * 0.62) - 1e-3;
+  }
   /// Camera to restore when leaving the System View (the player's pre-enter view).
   private savedGalaxyCam: { cx: number; cy: number; scale: number } | null = null;
 
@@ -692,7 +706,7 @@ export class Renderer {
     this.systemScene.root.alpha = 0;
     this.mode = { type: "system", systemId: sys.id };
     this.userView = true;
-    this.transition = { dir: "in", start: performance.now(), camFrom, camTo };
+    this.transition = { dir: "in", target: "system", start: performance.now(), camFrom, camTo };
   }
 
   /// EXIT back to the galaxy, restoring the pre-enter camera as the schematic
@@ -703,7 +717,31 @@ export class Renderer {
     const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
     this.systemScene.clearSelection();
     this.mode = { type: "galaxy" };
-    this.transition = { dir: "out", start: performance.now(), camFrom, camTo: restore };
+    this.transition = { dir: "out", target: "system", start: performance.now(), camFrom, camTo: restore };
+  }
+
+  /// ENTER the light-delayed battle theater. The theater itself is a DOM/Pixi
+  /// overlay owned by main.ts; this renderer supplies the same camera-push and
+  /// galaxy crossfade language as System View, centered on the observed marker.
+  enterBattleView(battleId: string, pos: Vec2): void {
+    if (this.mode.type === "battle" && this.mode.battleId === battleId) return;
+    this.savedGalaxyCam = { cx: this.cx, cy: this.cy, scale: this.scale };
+    const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
+    const toScale = this.fitScale() * ZOOM_MAX_FACTOR;
+    const camTo = { cx: this.viewW / 2 - pos.x * toScale, cy: this.viewH / 2 - pos.y * toScale, scale: toScale };
+    this.mode = { type: "battle", battleId };
+    this.userView = true;
+    this.transition = { dir: "in", target: "battle", start: performance.now(), camFrom, camTo };
+  }
+
+  /// EXIT a semantic battle view, restoring the exact galaxy camera from which
+  /// it was entered. Replay overlays opened by clicking never change viewMode.
+  exitBattleView(): void {
+    if (this.mode.type !== "battle") return;
+    const restore = this.savedGalaxyCam ?? { cx: this.viewW / 2, cy: this.viewH / 2, scale: this.fitScale() };
+    const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
+    this.mode = { type: "galaxy" };
+    this.transition = { dir: "out", target: "battle", start: performance.now(), camFrom, camTo: restore };
   }
 
   /// Hit-test a planet/moon in the System View (opens a details panel — the ONLY
@@ -1114,7 +1152,7 @@ export class Renderer {
 
   /// §size-hierarchy: a system's star VISIBLE diameter — `base` at normal zoom
   /// (the deposit-value 20–46px, unchanged) and `rendered` at the current zoom
-  /// (the shared deep-zoom curve). One place computes both so the body sprite,
+  /// (the late body-bloom curve). One place computes both so the body sprite,
   /// its ownership rings/label, and the click hit-test all agree.
   /// The deep-zoom target is the icon CANVAS at STAR_MAX_PX (a uniform ~1.875×
   /// upscale of the 256px icons), NOT the visible disk — each type's visible
@@ -1127,7 +1165,7 @@ export class Renderer {
     // range (public info, identical for every viewer; no geology leak).
     const base = BAND_SIZE[sys.band] ?? BAND_SIZE.poor; // target VISIBLE diameter, normal zoom
     const ratio = starVisualRatio(starTypeFor(sys.id)); // visible fraction of the canvas
-    return { base, rendered: this.deepZoomPx(base / ratio, STAR_MAX_PX) * ratio };
+    return { base, rendered: this.deepZoomPx(base / ratio, STAR_MAX_PX, BODY_ZOOM_START) * ratio };
   }
 
   /// A system's click hit radius: half its rendered disk, capped so a max-zoom
@@ -1625,10 +1663,10 @@ export class Renderer {
 
   /// The hub body: the WORMHOLE landmark sprite (swirling aperture + station)
   /// at the hub, over its teal glow (which stays in the background). Sized to
-  /// out-scale every star on the map at every zoom: HUB_PX at normal zoom, the
-  /// shared deep-zoom curve growing it to the monumental HUB_MAX_PX at max —
-  /// the top of the size hierarchy. The old mining-station sprite remains the
-  /// fallback until the landmark art loads. Positioned each frame (zoom/pan).
+  /// out-scale every star on the map at every zoom: HUB_PX through mid zoom,
+  /// then the late body-bloom curve grows it to its monumental native size at
+  /// max — the top of the size hierarchy. The old mining-station sprite remains
+  /// the fallback until the landmark art loads. Positioned each frame (zoom/pan).
   private drawHubBody(): void {
     const tex = this.texHub ?? this.texStation;
     if (!this.galaxy || !tex) return;
@@ -1645,14 +1683,14 @@ export class Renderer {
     );
   }
 
-  /// The hub landmark's rendered VISIBLE size at the current zoom. The deep-zoom
-  /// target is the texture's NATIVE extent (fill × width = 0.93 × 1254 ≈ 1166px
-  /// visible), so the sprite-scale math below lands at exactly 1.0 at max zoom —
-  /// the hub is never upscaled. Before the landmark loads, stay at the marker
-  /// size (the station fallback has no deep-zoom treatment anyway).
+  /// The hub landmark's rendered VISIBLE size at the current zoom. Its late
+  /// body band still targets the texture's NATIVE extent (fill × width = 0.93 ×
+  /// 1254 ≈ 1166px visible), so the sprite-scale math below lands at exactly 1.0
+  /// at max zoom — the hub is never upscaled. Before the landmark loads, stay at
+  /// the marker size (the station fallback has no deep-zoom treatment anyway).
   private hubRenderedPx(): number {
     const maxPx = this.texHub ? HUB_ART_FILL * this.texHub.width : HUB_PX;
-    return this.deepZoomPx(HUB_PX, maxPx);
+    return this.deepZoomPx(HUB_PX, maxPx, BODY_ZOOM_START);
   }
 
   /// Half the hub landmark's on-screen size — its click hit radius (main.ts) —
@@ -1801,15 +1839,14 @@ export class Renderer {
     return sp;
   }
 
-  /// §size-hierarchy: the SHARED deep-zoom growth curve for ships AND bodies.
-  /// Below SHIP_NATIVE_ZOOM_START the object stays at its normal-zoom size
-  /// `basePx` — pixel-identical to the pre-hierarchy map — then smoothstep-ramps
-  /// up to its per-class `maxPx`, reaching it exactly at ZOOM_MAX_FACTOR.
-  /// Seamless at the threshold: both sides evaluate to basePx there, no pop.
-  private deepZoomPx(basePx: number, maxPx: number): number {
+  /// §size-hierarchy: the shared smoothstep shape behind two deep-zoom bands.
+  /// Below `startR` the object stays at its normal-zoom `basePx`, then ramps to
+  /// its per-class `maxPx` exactly at ZOOM_MAX_FACTOR. Zero-slope endpoints make
+  /// both the chosen threshold and max zoom seamless, with no size pop.
+  private deepZoomPx(basePx: number, maxPx: number, startR = SHIP_NATIVE_ZOOM_START): number {
     const r = this.scale / this.fitScale();
-    if (r <= SHIP_NATIVE_ZOOM_START) return basePx;
-    const t = Math.min((r - SHIP_NATIVE_ZOOM_START) / (ZOOM_MAX_FACTOR - SHIP_NATIVE_ZOOM_START), 1);
+    if (r <= startR) return basePx;
+    const t = Math.min((r - startR) / (ZOOM_MAX_FACTOR - startR), 1);
     const s = t * t * (3 - 2 * t); // smoothstep — gentle growth, not linear
     return basePx + (maxPx - basePx) * s;
   }
@@ -1874,7 +1911,7 @@ export class Renderer {
   /// placement UI must not have. Kept next to the drawing so the two cannot
   /// drift without someone noticing.
   siteError(kind: string, p: { x: number; y: number }, state: ViewState): string | null {
-    if (kind === "hyperspace_buoy" || kind === "hyperspace_sensor") {
+    if (kind === "hyperspace_buoy" || kind === "hyperspace_repeater" || kind === "hyperspace_sensor") {
       const lanes = state.galaxy?.lanes ?? [];
       const onALane = lanes.some((l) => {
         // Distance to the CENTERLINE, not to the nearest point — same fix the
@@ -1895,8 +1932,10 @@ export class Renderer {
       });
       if (!onALane)
         return kind === "hyperspace_buoy"
-          ? "A hyperspace buoy has to sit in a lane — it relays along one."
-          : "A hyperspace sensor has to sit in a lane — it listens to one.";
+          ? "A hyperspace buoy has to sit in a lane — it is a signal gateway."
+          : kind === "hyperspace_repeater"
+            ? "A hyperspace repeater has to sit in a lane — it extends the wire."
+            : "A hyperspace sensor has to sit in a lane — it listens to one.";
     }
     const tooClose = (state.emplacements ?? []).some(
       (e) => Math.hypot(e.pos.x - p.x, e.pos.y - p.y) < EMPLACEMENT_MIN_SPACING,
@@ -1916,19 +1955,21 @@ export class Renderer {
     for (const e of state.emplacements ?? []) {
       const p = this.worldToScreen(e.pos);
       const buoy = e.kind === "hyperspace_buoy";
+      const repeater = e.kind === "hyperspace_repeater";
       const listener = e.kind === "hyperspace_sensor";
       // §emplacements: a RIVAL's structure wears the threat colour, like their
       // ghosts — the shape still says which kind it is, the colour says whose.
       // (A rival's is only ever listed inside your sensor coverage.)
       const col = e.own === false
         ? COL_THREAT
-        : buoy ? 0x6fd0ff : listener ? 0xd9a8ff : 0x8fe3a0;
+        : buoy ? 0x6fd0ff : repeater ? 0x8fe3a0 : listener ? 0xd9a8ff : 0x8fe3a0;
       // A sensor's coverage is the reason it exists, so it is drawn.
       if (e.sensor_range > 0) {
         g.circle(p.x, p.y, e.sensor_range * this.scale).stroke({ width: 1, color: col, alpha: 0.18 });
       }
       const tex = buoy
         ? this.texHyperspaceBuoy
+        : repeater ? this.texHyperspaceRepeater
         : e.kind === "deep_space_sensor" ? this.texDeepSpaceSensor : null;
       if (tex) {
         let sp = this.emplacementSprites.get(e.id);
@@ -1941,17 +1982,18 @@ export class Renderer {
           sp.texture = tex;
         }
         sp.position.set(p.x, p.y);
-        sp.scale.set(this.emplacementSizePx() / tex.width);
+        const size = this.emplacementSizePx() * (repeater ? 0.78 : 1);
+        sp.scale.set(size / tex.width);
         // Preserve the established map grammar: own structures use their
         // natural cyan/green art; a revealed rival structure is threat-red.
         sp.tint = e.own === false ? COL_THREAT : 0xffffff;
         sp.alpha = e.own === false ? 0.94 : 1;
         sp.visible = true;
         seenSprites.add(e.id);
-      } else if (buoy) {
-        // A buoy reads as a relay node: a ring on the lane it serves.
+      } else if (buoy || repeater) {
+        // Gateways are full rings; the smaller relay-only fallback is a node.
         g.circle(p.x, p.y, 5).stroke({ width: 1.5, color: col, alpha: 0.9 });
-        g.circle(p.x, p.y, 1.5).fill({ color: col, alpha: 0.9 });
+        g.circle(p.x, p.y, repeater ? 1 : 1.5).fill({ color: col, alpha: 0.9 });
       } else if (listener) {
         // A tripwire reads as a bracket ACROSS the lane — a thing you pass
         // through, not a node you talk to.
@@ -1967,7 +2009,17 @@ export class Renderer {
       // Selection ring — the same affordance a selected fleet gets, so a
       // structure reads as a clickable object rather than scenery.
       if (state.selectedEmplacementId === e.id) {
-        const radius = tex ? this.emplacementSizePx() / 2 + 4 : 12;
+        // §comms-infra: selected communications sites disclose their nominal
+        // throw in WORLD su. The actual usable wire still follows lane arcs and
+        // needs overlapping sites; this ring makes the balance radius legible
+        // without pretending every standing relay is a sensor.
+        if ((buoy || repeater) && e.relay_throw > 0) {
+          const commRadius = e.relay_throw * this.scale;
+          const dashPairs = Math.max(12, Math.min(360, Math.ceil(Math.PI * 2 * commRadius / 12)));
+          dashedCircle(selection, p.x, p.y, commRadius, dashPairs * 2);
+          selection.stroke({ width: 1.4, color: col, alpha: 0.72 });
+        }
+        const radius = tex ? this.emplacementSizePx() * (repeater ? 0.78 : 1) / 2 + 4 : 12;
         selection.circle(p.x, p.y, radius).stroke({ width: 1.5, color: col, alpha: 0.95 });
       }
     }
@@ -2483,29 +2535,31 @@ export class Renderer {
 
     if (tr.dir === "in") {
       this.galaxyRoot.alpha = 1 - clamp01((raw - 0.35) / 0.65);
-      this.systemScene.root.alpha = clamp01((raw - 0.25) / 0.75);
+      if (tr.target === "system") this.systemScene.root.alpha = clamp01((raw - 0.25) / 0.75);
     } else {
       this.galaxyRoot.alpha = clamp01((raw - 0.25) / 0.75);
-      this.systemScene.root.alpha = 1 - clamp01((raw - 0.35) / 0.65);
+      if (tr.target === "system") this.systemScene.root.alpha = 1 - clamp01((raw - 0.35) / 0.65);
     }
 
     if (raw >= 1) {
       if (tr.dir === "in") {
         this.galaxyRoot.alpha = 0;
-        this.galaxyRoot.visible = false; // system view is live — stop drawing the galaxy
-        this.systemScene.root.alpha = 1;
+        this.galaxyRoot.visible = false; // semantic detail is live — stop drawing the galaxy
+        if (tr.target === "system") this.systemScene.root.alpha = 1;
       } else {
         this.galaxyRoot.alpha = 1;
         this.galaxyRoot.visible = true;
-        this.systemScene.root.visible = false;
-        this.systemScene.root.alpha = 1;
+        if (tr.target === "system") {
+          this.systemScene.root.visible = false;
+          this.systemScene.root.alpha = 1;
+        }
         this.cx = tr.camTo.cx; this.cy = tr.camTo.cy; this.scale = tr.camTo.scale; // restore exactly
       }
       this.transition = null;
     } else {
       this.galaxyRoot.visible = true;
     }
-    return { drawGalaxy: true, drawSystem: true };
+    return { drawGalaxy: true, drawSystem: tr.target === "system" };
   }
 
   /// Draw the OUTBOUND command signal (server-timed; we only place it at its

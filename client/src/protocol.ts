@@ -679,10 +679,12 @@ export interface LoadoutStack {
 /// §emplacements: one structure standing in open space.
 export interface EmplacementView {
   id: string;
-  kind: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor";
+  kind: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
   pos: Vec2;
   /// The bubble it watches, 0 for a buoy.
   sensor_range: number;
+  /// Lane-network arc reach, in su; 0 for non-communication structures.
+  relay_throw: number;
   /// Yours, or a rival's. A rival's appears only inside your sensor coverage,
   /// and only a rival's can be torn down.
   own?: boolean;
@@ -819,7 +821,7 @@ export type ClientMsg =
   /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
   /// PARKED (fly it there first; no separate site point). The field is
   /// `emplacement`, not `kind` — the server's Command enum is tagged on that name.
-  | { type: "BuildEmplacement"; builder: EntityId; emplacement: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor" }
+  | { type: "BuildEmplacement"; builder: EntityId; emplacement: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor" }
   /// §emplacements: send a COMBATANT fleet to tear down a rival's structure.
   | { type: "DemolishEmplacement"; fleet: EntityId; target: EntityId }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
@@ -1218,7 +1220,7 @@ export interface PendingOrderView {
   kind: OrderKind;
   dest?: Vec2;
   target_id?: EntityId;
-  emplacement?: "hyperspace_buoy" | "deep_space_sensor" | "hyperspace_sensor";
+  emplacement?: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
 }
 
 // Server → client.

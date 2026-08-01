@@ -685,6 +685,7 @@
         z-index: 7; backdrop-filter: blur(4px);
       }
       #breadcrumb.is-open { display: flex; }
+      #breadcrumb.is-battle { z-index: 13; border-left-color: #d08a5a; }
       #breadcrumb .bc-link { background: none; border: 0; color: var(--dim); cursor: pointer; font: inherit; letter-spacing: 0.6px; padding: 0; }
       #breadcrumb .bc-link:hover { color: var(--accent); }
       #breadcrumb .bc-sep { color: var(--dim); }
@@ -1050,6 +1051,17 @@
         font-size: 12px; z-index: 11;
       }
       #battle-viewer.is-open { display: block; }
+      /* Optional map-zoom doorway: the same viewer becomes the semantic scene,
+         while click-opened replays retain the compact centered overlay above. */
+      #battle-viewer.is-semantic {
+        inset: 0; left: 0; transform: none;
+        width: 100vw; height: 100vh; max-height: 100vh;
+        box-sizing: border-box; border-radius: 0;
+        padding-top: 54px;
+        transition: opacity 0.48s ease;
+      }
+      #battle-viewer.is-semantic.is-entering,
+      #battle-viewer.is-semantic.is-leaving { opacity: 0; pointer-events: none; }
       #battle-viewer .pp-close { cursor: pointer; color: var(--dim); font-size: 14px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #battle-viewer .pp-close:hover { color: var(--ink); }
       /* §ground G3: the ground theater shares the battle viewer's chrome — same
@@ -1080,6 +1092,22 @@
       .bv-sub .bv-vs .you { color: var(--accent); }
       .bv-sub .bv-vs .foe { color: #e88a8a; }
       .bv-sub .bv-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+      .bv-livebar {
+        display: flex; align-items: center; gap: 5px; min-height: 24px;
+        margin: 6px 0 8px; padding: 5px 9px;
+        color: var(--dim); background: rgba(79,195,255,0.055);
+        border: 1px solid rgba(79,195,255,0.22); border-radius: 5px;
+        letter-spacing: 0.35px; font-variant-numeric: tabular-nums;
+      }
+      .bv-livebar.is-following { color: var(--ink); border-color: rgba(95,208,138,0.48); background: rgba(95,208,138,0.07); }
+      .bv-livebar .bv-livedot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--fg-stale); }
+      .bv-livebar.is-following:not(.is-stale) .bv-livedot { background: var(--positive); box-shadow: 0 0 8px rgba(95,208,138,0.75); animation: bv-live-pulse 1.4s ease-in-out infinite; }
+      .bv-livebar.is-stale { color: var(--negative); border-color: rgba(224,87,75,0.42); background: rgba(224,87,75,0.07); }
+      .bv-livebar.is-stale .bv-livedot { background: var(--negative); box-shadow: none; animation: none; }
+      .bv-livebar.is-complete { border-color: var(--border); background: rgba(255,255,255,0.025); }
+      .bv-livebar.is-complete .bv-livedot { background: #d08a5a; }
+      .bv-stall { margin-left: auto; color: inherit; font-size: 10px; }
+      @keyframes bv-live-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
       /* Arena: two facing sides + a central salvo gutter. */
       .bv-arena { display: grid; grid-template-columns: 1fr 92px 1fr; gap: 6px; align-items: stretch; margin: 4px 0 8px;
         background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 7px; padding: 10px 10px; }
@@ -1123,6 +1151,8 @@
       .bv-btn { cursor: pointer; background: var(--btn-bg, #141d30); color: var(--ink); border: 1px solid var(--field-bd, #243049); border-radius: 5px; font: inherit; font-size: 11px; padding: 3px 8px; }
       .bv-btn:hover { border-color: var(--accent); }
       .bv-btn.on { background: #1d2b44; border-color: var(--accent); color: var(--accent); }
+      .bv-follow { margin-left: auto; white-space: nowrap; border-color: rgba(95,208,138,0.48); color: var(--positive); }
+      .bv-follow.on { background: rgba(95,208,138,0.10); border-color: var(--positive); color: var(--positive); }
       .bv-speeds { display: inline-flex; gap: 3px; }
       .bv-scrub { flex: 1; min-width: 120px; display: flex; align-items: stretch; height: 16px; gap: 1px; }
       .bv-tick { flex: 1; min-width: 2px; background: rgba(255,255,255,0.10); border-radius: 1px; cursor: pointer; }
