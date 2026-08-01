@@ -424,8 +424,10 @@ pub struct CommSite {
     pub gateway: bool,
 }
 
-/// A coupled hull is a gateway for itself, with the same short throw as a buoy.
-pub const HULL_THROW: f64 = 40_000.0;
+/// A coupled hull is an endpoint gateway for itself, but contributes no relay
+/// coverage. Built infrastructure must already reach the hull's position; the
+/// receiver cannot silently double a buoy's displayed throw.
+pub const HULL_THROW: f64 = 0.0;
 
 #[derive(Debug, Clone)]
 struct LaneRide {
@@ -913,8 +915,9 @@ impl LaneNetwork {
     }
 
     /// An outbound order whose RECEIVER is actively riding a lane. Its engaged
-    /// drive makes the hull a gateway for itself, with `HULL_THROW`; it receives
-    /// a lane-fast order only when covered wire reaches that moving endpoint.
+    /// drive makes the hull an endpoint gateway for itself, with zero relay
+    /// throw; it receives a lane-fast order only when built coverage reaches
+    /// that moving endpoint.
     pub fn signal_to_coupled(
         &self,
         a: Vec2,
@@ -929,11 +932,11 @@ impl LaneNetwork {
         if !inside {
             return self.signal(a, p, c, sites);
         }
-        // §coupled: an engaged hyperdrive is a transmitter wound into the
-        // medium — the same coupling that carries its reports home receives an
-        // order the last stretch in. The hull joins the graph as a gateway for
-        // itself, so covered wire can ride all the way to the ship instead of
-        // exiting at a buoy and warping the gap.
+        // §coupled: an engaged hyperdrive is a terminal wound into the medium —
+        // the same coupling that carries its reports home receives an order at
+        // the hull. It joins the graph as a zero-throw gateway, so built wire
+        // may terminate at the ship but the ship cannot extend that wire beyond
+        // the selected relay's displayed coverage boundary.
         let mut with_hull = sites.to_vec();
         with_hull.push(CommSite { pos: p, throw: HULL_THROW, gateway: true });
         self.signal_routed(a, p, c, &with_hull)
@@ -941,11 +944,12 @@ impl LaneNetwork {
 
     /// §coupled: the signal delay from a fleet that is RIDING A LANE to `b`.
     ///
-    /// A hull with its hyperspace drive engaged is a transmitter inside the
-    /// medium, so its own report may ride the lane it occupies before exiting
+    /// A hull with its hyperspace drive engaged is a terminal inside the
+    /// medium, so its own report may ride covered lane wire before exiting
     /// toward the receiver. The outbound direction mirrors this
-    /// (`signal_to_coupled`): the same coupling makes the hull its own terminal
-    /// gateway, so an order rides only when the owner's covered wire reaches it.
+    /// (`signal_to_coupled`): the same coupling makes the hull its own zero-throw
+    /// gateway, so an order rides only when the owner's built coverage reaches
+    /// the hull itself.
     ///
     /// The hull joins the lane graph as its origin gateway for this query. Its
     /// report can follow covered wire through junctions, then leave hyperspace
@@ -3207,6 +3211,32 @@ mod tests {
         let warp = entry.distance(hull) / (c * WARP_FACTOR);
         assert!(delay < warp * 0.5, "the midpoint hull remains on the covered corridor");
         assert!(hops.iter().any(|hop| hop.lane == Some(77)));
+    }
+
+    /// A coupled hull is only a terminal on wire that already reaches it. It
+    /// must not contribute another buoy-sized coverage bubble of its own: once
+    /// the hull crosses the selected buoy's 40k-su boundary, both orders and
+    /// reports fall back to ordinary warp.
+    #[test]
+    fn a_riding_hull_does_not_extend_a_buoys_throw() {
+        let n = signal_line(100_000.0);
+        let home = Vec2::ZERO;
+        let inside = Vec2::new(39_999.0, 0.0);
+        let outside = Vec2::new(40_001.0, 0.0);
+        let sites = [gateway(home)];
+        let c = 400.0;
+
+        let (inside_order, inside_hops) = n.signal_to_coupled(home, inside, c, &sites);
+        let inside_warp = home.distance(inside) / (c * WARP_FACTOR);
+        assert!(inside_order < inside_warp * 0.5, "a hull inside the buoy radius rides the wire");
+        assert!(inside_hops.iter().any(|hop| hop.lane == Some(77)));
+
+        let outside_warp = home.distance(outside) / (c * WARP_FACTOR);
+        let (outside_order, outside_hops) = n.signal_to_coupled(home, outside, c, &sites);
+        let outside_report = n.signal_coupled(outside, home, c, &sites);
+        assert!((outside_order - outside_warp).abs() < 1e-9, "an order beyond the buoy radius uses warp");
+        assert!((outside_report - outside_warp).abs() < 1e-9, "a report beyond the buoy radius uses warp");
+        assert!(outside_hops.iter().all(|hop| hop.lane.is_none()));
     }
 
     #[test]

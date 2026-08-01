@@ -148,9 +148,10 @@ A **Hyperspace Buoy** is a gateway where ordinary warp signals enter or leave a 
 40,000 su throw must overlap the next relay. A **Hyperspace Repeater** is cheaper wire with
 an 80,000 su throw: it carries a signal through an unbroken chain, including across lane
 junctions, but nothing boards or leaves there. A hull actively riding a lane is its own
-40,000 su endpoint gateway. Home is not a relay; each corporation instead begins with one
-ordinary, destructible buoy on the lane nearest home. Any break removes the entire lane
-ride and the signal falls back to another complete corridor or ordinary warp.
+zero-throw endpoint gateway: it can send or receive through the lane only where the built
+relay coverage already reaches its position. Home is not a relay; each corporation instead
+begins with one ordinary, destructible buoy on the lane nearest home. Any break removes the
+entire lane ride and the signal falls back to another complete corridor or ordinary warp.
 
 This principle is *generative* — players internalize it once and can then predict the
 behaviour of any new situation.
