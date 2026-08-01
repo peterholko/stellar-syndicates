@@ -18,12 +18,9 @@ use crate::PlayerId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmplacementKind {
-    /// Relays signals at hyperspace speed — but only BETWEEN TWO owned relays
-    /// sharing a lane. The home system counts as one, so the first built buoy is
-    /// useful when it shares home's lane; that access pair opens the connected
-    /// lane graph through junctions. Home and buoys are the only entry/exit
-    /// points for off-lane signals. Buildable only on a lane; see
-    /// [`EmplacementKind::needs_a_lane`].
+    /// A physical hyperspace communications gateway. The free starter buoy is
+    /// an ordinary instance of this same kind; home itself is not a relay.
+    /// Buildable only on a lane; see [`EmplacementKind::needs_a_lane`].
     HyperspaceBuoy,
     /// A stationary sensor picket. Watches like a ship's sensors would and sends
     /// what it sees home at warp — so it shortens the *observation* leg rather

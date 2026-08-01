@@ -272,7 +272,7 @@ impl Lane {
     /// delay step BACKWARD at each boundary (arrival reversals, measured -0.09s),
     /// and the served ghost lurched ~2× its uniform step at every crossing. The
     /// whole sample interpolates now: pos on the segment, `s` and tangent lerped.
-    fn nearest(&self, p: Vec2) -> Option<(LaneSample, f64)> {
+    pub fn nearest(&self, p: Vec2) -> Option<(LaneSample, f64)> {
         if self.samples.len() < 2 {
             return self.samples.first().map(|s| (*s, s.pos.distance(p)));
         }
@@ -543,15 +543,9 @@ impl LaneNetwork {
     /// §buoys: the fastest way for a SIGNAL to get from `a` to `b`, and the path
     /// it takes.
     ///
-    /// Warp everywhere by default. Hyperspace speed is available only BETWEEN
-    /// TWO RELAYS that share a lane. The home system is one relay, so the first
-    /// buoy built on its lane completes the opening link; home alone cannot
-    /// inject an outbound order into the ribbon or peel it off near a receiver.
-    ///
-    /// That pair is the ACCESS GATE, not a pair-per-lane toll. Once injected,
-    /// the signal follows the connected lane graph through junctions exactly as
-    /// a ship can. Junctions are transfer points, not portals: an off-lane signal
-    /// may enter or leave only at home or an owned buoy.
+    /// Warp everywhere by default. Owned physical relays can inject onto the
+    /// lanes they occupy and carry a signal through junctions. The command center
+    /// is only the journey endpoint: home never enters the relay carrier.
     ///
     /// Returns the hops as well as the time, because the order graphic has to
     /// trace the path the signal actually took rather than a straight line to
@@ -584,10 +578,8 @@ impl LaneNetwork {
     /// The shared junction-aware signal search.
     ///
     /// `needs_access_pair` is retained for signature stability but no longer
-    /// gates anything: by design ruling, every relay (home included) injects
-    /// into the lanes it sits on. It was true for ordinary outbound orders
-    /// back when two owned relays had to share a lane before the network could
-    /// be entered.
+    /// gates anything: every supplied physical relay injects into the lane it
+    /// occupies. The owner's home is deliberately absent from that supplied set.
     fn signal_routed(
         &self,
         a: Vec2,
@@ -604,13 +596,9 @@ impl LaneNetwork {
             return direct;
         }
         let relays: Vec<Relay> = buoys.iter().map(|p| self.relay_at(*p)).collect();
-        // §buoys: EVERY RELAY INJECTS INTO ITS OWN LANES (design ruling from
-        // playtest, superseding the access-pair rule). The home system acts
-        // like a buoy — an entry and exit for hyperlane communication — so a
-        // fresh corporation's signals already ride the lane home sits on,
-        // exiting at the arc nearest the receiver and warping the remainder.
-        // What a BUILT buoy buys is reach: coverage of another lane, junction
-        // crossings onto it, and a further-along exit before the warp leg.
+        // §buoys: EVERY SUPPLIED PHYSICAL RELAY injects into its own lanes. Home
+        // is deliberately not supplied by `World::relay_network`; a fresh
+        // corporation's granted buoy is its first actual entry/exit point.
         let _ = needs_access_pair;
         // The graph's nodes: every relay, plus every junction as a pure transfer
         // point. A junction cannot receive a warp hop; it becomes reachable only
@@ -2841,13 +2829,11 @@ mod tests {
         assert!(n.route(a, a + Vec2::new(300.0, 0.0), 200.0, 2_000.0).is_empty(), "a hop next door needs no lane");
     }
 
-    /// §buoys: HOME ALONE CANNOT INJECT AN OUTBOUND ORDER INTO ITS LANE. The
-    /// receiver is deliberately off the ribbon, matching the playtest failure:
-    /// without a built buoy sharing home's lane, the order must fly straight at
-    /// warp. Adding that buoy opens access to the connected lane graph, but the
-    /// off-lane receiver still needs a straight warp hop from that physical buoy.
+    /// §buoys: A CORPORATION WITH NO COMM SITES has no hyperspace entry point.
+    /// Its command center is an endpoint, not a relay, so every order travels at
+    /// plain warp until physical infrastructure is present.
     #[test]
-    fn home_relay_alone_sends_an_off_lane_order_straight_at_warp() {
+    fn a_corp_with_no_comm_sites_sends_every_order_at_plain_warp() {
         let ctrl = vec![Vec2::new(0.0, 0.0), Vec2::new(100_000.0, 0.0)];
         let n = LaneNetwork::of(vec![Lane {
             id: 0,
@@ -2859,7 +2845,6 @@ mod tests {
             tapers: false,
         }]);
         let home = Vec2::new(10_000.0, 0.0);
-        let buoy = Vec2::new(70_000.0, 0.0);
         let raider = Vec2::new(90_000.0, 30_000.0);
         let c = 400.0;
         let warp_time = home.distance(raider) / (c * WARP_FACTOR);
@@ -2867,22 +2852,11 @@ mod tests {
             (n.signal(home, raider, c, &[]).0 - warp_time).abs() < 1e-6,
             "no relay anywhere is plain warp light"
         );
-        let (home_only, hops) = n.signal(home, raider, c, &[home]);
-        assert!(
-            (home_only - warp_time).abs() < 1e-6,
-            "home alone must still be plain warp ({home_only:.1}s vs {warp_time:.1}s)"
-        );
+        let (home_only, hops) = n.signal(home, raider, c, &[]);
+        assert!((home_only - warp_time).abs() < 1e-6);
         assert_eq!(hops.len(), 1, "the order takes one straight hop");
         assert_eq!(hops[0].to, raider);
-        assert_eq!(hops[0].lane, None, "the home-only order claims no lane");
-
-        let (paired, hops) = n.signal(home, raider, c, &[home, buoy]);
-        assert!(paired < warp_time, "home plus a built buoy should open lane access");
-        assert!(
-            hops.iter().any(|h| h.to == buoy && h.lane == Some(0)),
-            "the paired order exits the lane at the built buoy"
-        );
-        assert_eq!(hops.last().unwrap().lane, None, "the off-lane remainder is warp");
+        assert_eq!(hops[0].lane, None, "the no-site order claims no lane");
     }
 
     /// §buoys: TWO RELAYS ON THE SAME LANE are the access purchase. In the world

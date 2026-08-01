@@ -853,9 +853,8 @@ impl World {
         }
         systems.extend(home_systems);
 
-        // §hyperspace: grow the lane network over the finished star chart. A
-        // route may run straight over a system — the ribbon is a highway, not a
-        // corridor threaded between stars — so an anchor is only a position.
+        // §hyperspace: grow the lane network over the finished star chart. Each
+        // anchor is a gravity well the finished centerline must stand clear of.
         let lanes = {
             let anchors: Vec<crate::lane::LaneAnchor> = systems
                 .iter()
@@ -4487,6 +4486,7 @@ impl World {
                     return;
                 }
                 let (home, home_system) = self.assign_home(*id);
+                self.grant_starter_buoy(*id, home);
                 // Seed the home system with a Fuel reserve so fleets move from turn
                 // one (§step1 part 2) — the home produces no fuel, so this is the
                 // runway that buys time to expand toward fuel-bearing systems.
@@ -5705,32 +5705,18 @@ impl World {
     /// coverage rendering — so everything that keys off sensor range inherits
     /// arrays consistently. Systems are static, so including them in the View's
     /// delayed composite frame is exactly as leak-free as ship bubbles.
-    /// §buoys: this player's RELAY NETWORK — every hyperspace buoy they own,
-    /// plus their home system, which counts as their first buoy.
-    ///
-    /// Home is free and deliberately worth nothing on its own: lane relaying
-    /// needs an ACCESS PAIR of two owned relays sharing a lane. A built buoy on
-    /// home's lane completes that pair, after which signals traverse its whole
-    /// connected lane graph through junctions. Off-lane signals enter or leave
-    /// that graph only at home or an owned buoy.
+    /// §buoys: this player's RELAY NETWORK — every hyperspace buoy they own.
+    /// Home itself is only the command endpoint; the granted starter buoy is the
+    /// corporation's first physical lane gateway and can be destroyed or rebuilt
+    /// like any other emplacement.
     pub fn relay_network(&self, owner: PlayerId) -> Vec<Vec2> {
-        let mut v: Vec<Vec2> = self
-            .players
-            .get(&owner)
-            .and_then(|c| c.home_system)
-            .and_then(|id| self.systems.iter().find(|s| s.id == id))
-            .map(|s| s.pos)
-            .into_iter()
-            .collect();
-        v.extend(
-            self.emplacements
-                .iter()
-                .filter(|e| {
-                    e.owner == owner && e.kind == crate::emplace::EmplacementKind::HyperspaceBuoy
-                })
-                .map(|e| e.pos),
-        );
-        v
+        self.emplacements
+            .iter()
+            .filter(|e| {
+                e.owner == owner && e.kind == crate::emplace::EmplacementKind::HyperspaceBuoy
+            })
+            .map(|e| e.pos)
+            .collect()
     }
 
     pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
@@ -10672,6 +10658,27 @@ impl World {
         }
     }
 
+    /// Grant a joining corporation its one free lane gateway. The site is the
+    /// exact continuous centerline point nearest home, not merely the nearest
+    /// baked vertex, so the visual and mechanical placement agree.
+    fn grant_starter_buoy(&mut self, owner: PlayerId, home: Vec2) {
+        let site = self
+            .lanes
+            .lanes
+            .iter()
+            .filter_map(|lane| lane.nearest(home))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(on, _)| on.pos);
+        let Some(pos) = site else { return };
+        let id = self.alloc_entity_id();
+        self.emplacements.push(crate::emplace::Emplacement {
+            id,
+            owner,
+            kind: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            pos,
+        });
+    }
+
     /// Spawn the M2 demo fleet (one convoy, one raider) at a home anchor, set to
     /// patrol so the shared world is visibly alive. (Player-issued orders arrive
     /// in M4/M5.)
@@ -13365,6 +13372,7 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let emplacements0 = w.emplacements.len();
         let home = w.players[&id].home_system.unwrap();
         let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
         // A lane point near home, so the order signal stays short.
@@ -13406,7 +13414,7 @@ mod tests {
             builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
         }]);
-        assert!(w.emplacements.is_empty(), "nothing stands the instant it is ordered");
+        assert_eq!(w.emplacements.len(), emplacements0, "nothing new stands the instant it is ordered");
         assert!(
             system_stock(&w, home, Commodity::Electronics) < electronics0,
             "the kit is charged where the builder loads it",
@@ -13418,13 +13426,13 @@ mod tests {
 
         // Signal out, then the 45s of work on the spot.
         for _ in 0..(240.0 / crate::config::DT) as usize {
-            if !w.emplacements.is_empty() {
+            if w.emplacements.len() > emplacements0 {
                 break;
             }
             w.step(&[]);
         }
-        assert_eq!(w.emplacements.len(), 1, "the buoy stands after the work");
-        let e = &w.emplacements[0];
+        assert_eq!(w.emplacements.len(), emplacements0 + 1, "the buoy stands after the work");
+        let e = w.emplacements.iter().find(|e| e.pos.distance(site) < 1.0).unwrap();
         assert!(e.pos.distance(site) < 1.0, "where the ship was parked, not at a yard");
         let f = &w.fleets[&builder];
         assert!(matches!(f.order, FleetOrder::Idle), "the crane is freed");
@@ -13439,6 +13447,7 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let emplacements0 = w.emplacements.len();
         let home = w.players[&id].home_system.unwrap();
         for (c, n) in [(Commodity::Alloys, 500.0), (Commodity::Electronics, 500.0)] {
             *w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.entry(c).or_insert(0.0) += n;
@@ -13449,7 +13458,7 @@ mod tests {
             builder: EntityId(555_555), // no such ship
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
         }]);
-        assert!(w.emplacements.is_empty());
+        assert_eq!(w.emplacements.len(), emplacements0);
         assert!((system_stock(&w, home, Commodity::Electronics) - electronics0).abs() < 1e-9);
     }
 
@@ -13461,6 +13470,7 @@ mod tests {
         let mut w = test_world();
         let id = PlayerId(9);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let emplacements0 = w.emplacements.len();
         let home = w.players[&id].home_system.unwrap();
         for (c, n) in [
             (Commodity::Alloys, 500.0),
@@ -13488,7 +13498,7 @@ mod tests {
             builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
         }]);
-        assert!(w.emplacements.is_empty());
+        assert_eq!(w.emplacements.len(), emplacements0);
         assert!(
             matches!(w.fleets[&builder].order, FleetOrder::Idle),
             "the refused order never reaches the ship"
@@ -13640,6 +13650,11 @@ mod tests {
             half_width: 2_000.0,
             tapers: false,
         }]);
+        w.emplacements
+            .iter_mut()
+            .find(|e| e.owner == id && e.kind == crate::emplace::EmplacementKind::HyperspaceBuoy)
+            .expect("the joining corporation has its starter buoy")
+            .pos = cc;
         let ship_pos = cc + Vec2::new(100_000.0, 0.0);
         let fid = player_ship(&mut w, id, ShipKind::Raider);
         {
@@ -13760,18 +13775,17 @@ mod tests {
         }
     }
 
-    /// §buoys: injection conjures no shortcuts. Home injects into its own lane
-    /// (it acts like a buoy), but for an off-lane fleet sitting perpendicular
-    /// to that lane no ride helps — the router must still choose one straight
-    /// warp-speed signal, and the scheduling layer must agree with it.
+    /// §buoys: without a physical comm site, the command center is not a hidden
+    /// relay. The scheduling layer and the primitive both stay at plain warp.
     #[test]
-    fn home_alone_schedules_an_off_lane_order_at_plain_warp() {
+    fn a_corp_with_no_comm_sites_schedules_at_plain_warp() {
         let mut w = test_world();
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
         let cc = w.players[&id].command_center;
+        w.emplacements.retain(|e| e.owner != id);
         let relays = w.relay_network(id);
-        assert_eq!(relays, vec![cc], "a fresh corporation has only its home relay");
+        assert!(relays.is_empty(), "the test removed every physical comm site");
 
         let ship_pos = (0..32)
             .map(|k| {
@@ -13799,7 +13813,7 @@ mod tests {
             w.pending_commands(id).into_iter().find(|p| p.fleet == fid).expect("order scheduled");
         assert!(
             (pending.delivered_at - issued_at - warp_delay).abs() < 1e-6,
-            "home alone must schedule plain warp ({:.3}s), got {:.3}s",
+            "no-site order must schedule plain warp ({:.3}s), got {:.3}s",
             warp_delay,
             pending.delivered_at - issued_at
         );
@@ -16580,6 +16594,7 @@ mod tests {
         ]);
         let site = lane_spot_near_home(&w, raider_owner);
         let target = plant(&mut w, victim, crate::emplace::EmplacementKind::HyperspaceBuoy, site);
+        let standing = w.emplacements.len();
 
         let raider = find_ship(&mut w, raider_owner, ShipKind::Raider);
         {
@@ -16591,7 +16606,7 @@ mod tests {
             f.defense = None;
         }
         w.step(&[Command::DemolishEmplacement { player_id: raider_owner, fleet: raider, target }]);
-        assert_eq!(w.emplacements.len(), 1, "nothing falls the instant it is ordered");
+        assert_eq!(w.emplacements.len(), standing, "nothing falls the instant it is ordered");
 
         let mut destroyed = None;
         for _ in 0..((crate::emplace::DEMOLISH_SECONDS + 120.0) / crate::config::DT) as usize {
@@ -16608,7 +16623,8 @@ mod tests {
         assert_eq!(owner, victim, "the loss is reported against its owner");
         assert_eq!(by, raider_owner, "and credits the wrecker");
         assert_eq!(kind, crate::emplace::EmplacementKind::HyperspaceBuoy);
-        assert!(w.emplacements.is_empty(), "it is gone from true space");
+        assert_eq!(w.emplacements.len(), standing - 1, "only the target is gone from true space");
+        assert!(w.emplacements.iter().all(|e| e.id != target));
         let f = &w.fleets[&raider];
         assert!(matches!(f.order, FleetOrder::Idle), "the crew is freed");
         assert!(f.count(ShipKind::Raider) >= 1, "and the hull survives to do it again");
@@ -16627,6 +16643,7 @@ mod tests {
         ]);
         let site = lane_spot_near_home(&w, atk);
         let target = plant(&mut w, victim, crate::emplace::EmplacementKind::HyperspaceBuoy, site);
+        let standing = w.emplacements.len();
         let raider = find_ship(&mut w, atk, ShipKind::Raider);
         {
             let f = w.fleets.get_mut(&raider).unwrap();
@@ -16659,7 +16676,8 @@ mod tests {
         for _ in 0..((crate::emplace::DEMOLISH_SECONDS + 10.0) / crate::config::DT) as usize {
             w.step(&[]);
         }
-        assert_eq!(w.emplacements.len(), 1, "a buoy nobody is standing on survives");
+        assert_eq!(w.emplacements.len(), standing, "a buoy nobody is standing on survives");
+        assert!(w.emplacements.iter().any(|e| e.id == target));
     }
 
     /// §emplacements: YOU CANNOT SHOOT YOUR OWN, NOR A FRIEND'S, NOR WITH A HULL
@@ -16676,6 +16694,7 @@ mod tests {
         let site = lane_spot_near_home(&w, a);
         let mine = plant(&mut w, a, crate::emplace::EmplacementKind::HyperspaceBuoy, site);
         let theirs = plant(&mut w, b, crate::emplace::EmplacementKind::DeepSpaceSensor, site + Vec2::new(30_000.0, 0.0));
+        let standing = w.emplacements.len();
 
         let raider = find_ship(&mut w, a, ShipKind::Raider);
         let crane = find_ship(&mut w, a, ShipKind::Builder);
@@ -16714,7 +16733,7 @@ mod tests {
             "you cannot cut an ally's relay: {:?}",
             w.fleets[&raider].order
         );
-        assert_eq!(w.emplacements.len(), 2, "and everything is still standing");
+        assert_eq!(w.emplacements.len(), standing, "and everything is still standing");
     }
 
     /// §pursuit: A CHASE FLIES ON THE SAME DRIVES AS ITS PREY. A convoy fleeing
@@ -23087,6 +23106,43 @@ mod tests {
 mod starter_kit_emplacements {
     use super::*;
 
+    /// §comms-infra: every joining corporation owns exactly one free, ordinary
+    /// buoy at the continuous lane point nearest its assigned home.
+    #[test]
+    fn every_player_starts_with_one_buoy_on_their_nearest_lane() {
+        let mut w = World::new(SimConfig::default());
+        for raw in 1..=w.config.max_players {
+            w.step(&[Command::AddPlayer {
+                id: PlayerId(u64::from(raw)),
+                name: format!("P{raw}"),
+            }]);
+        }
+        for corp in w.players.values() {
+            let mine: Vec<_> = w
+                .emplacements
+                .iter()
+                .filter(|e| e.owner == corp.id)
+                .collect();
+            assert_eq!(mine.len(), 1, "{} should receive exactly one emplacement", corp.name);
+            assert_eq!(mine[0].kind, crate::emplace::EmplacementKind::HyperspaceBuoy);
+            let nearest = w
+                .lanes
+                .lanes
+                .iter()
+                .filter_map(|lane| lane.nearest(corp.home))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap()
+                .0
+                .pos;
+            assert!(
+                mine[0].pos.distance(nearest) < 1e-6,
+                "{}'s buoy is not at the nearest lane point",
+                corp.name
+            );
+            assert_eq!(w.relay_network(corp.id), vec![mine[0].pos]);
+        }
+    }
+
     /// §emplacements: the player STARTS with a Construction Ship, so the home
     /// starter kit must fund what that ship exists to do. One buoy on home's
     /// lane completes the opening link; assert that order is accepted and the
@@ -23097,15 +23153,18 @@ mod starter_kit_emplacements {
     fn the_starter_kit_funds_the_home_link_and_an_extension_buoy() {
         let mut w = World::new(SimConfig::default());
         w.step(&[Command::AddPlayer { id: PlayerId(1), name: "P".into() }]);
-        let home = w.players[&PlayerId(1)].home;
-        let site = w
-            .lanes
-            .lanes
+        let starter = w
+            .emplacements
             .iter()
-            .flat_map(|l| l.samples.iter())
-            .min_by(|a, b| a.pos.distance(home).total_cmp(&b.pos.distance(home)))
-            .map(|s| s.pos)
-            .unwrap();
+            .find(|e| e.owner == PlayerId(1))
+            .expect("the free home gateway exists");
+        let (lane_id, starter_s) = w.lanes.relay_at(starter.pos).on[0];
+        let lane = w.lanes.lanes.iter().find(|lane| lane.id == lane_id).unwrap();
+        let site = if starter_s + crate::emplace::MIN_SPACING * 2.0 <= lane.length() {
+            lane.at(starter_s + crate::emplace::MIN_SPACING * 2.0)
+        } else {
+            lane.at(starter_s - crate::emplace::MIN_SPACING * 2.0)
+        };
         assert_eq!(
             crate::emplace::site_check(crate::emplace::EmplacementKind::HyperspaceBuoy, site, &w.lanes, &w.emplacements),
             Ok(()),
@@ -23125,6 +23184,12 @@ mod starter_kit_emplacements {
             builder,
             emplacement: crate::emplace::EmplacementKind::HyperspaceBuoy,
         }]);
+        for _ in 0..(60.0 / crate::config::DT) as usize {
+            if matches!(w.fleets[&builder].order, FleetOrder::Construct { .. }) {
+                break;
+            }
+            w.step(&[]);
+        }
         assert!(
             matches!(w.fleets[&builder].order, FleetOrder::Construct { .. }),
             "the very first buoy order must be fundable from the starter kit, \
