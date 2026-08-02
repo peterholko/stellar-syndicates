@@ -296,8 +296,9 @@ struct PendingOrder {
     /// until `news_at` — the loss and the relay casualty share one wavefront.
     #[serde(default)]
     loss: Option<PendingOrderLoss>,
-    /// This response is confirmed by the hull physically re-entering a live
-    /// comm bubble, rather than by a precomputed fallback light timestamp.
+    /// This response is emitted when the hull physically re-enters a live comm
+    /// bubble, rather than from a precomputed fallback timestamp. Re-entry is
+    /// only the emission event: its light must still reach the command center.
     #[serde(default)]
     response_on_reentry: bool,
 }
@@ -391,6 +392,11 @@ struct PendingEcho {
     emplacement: Option<crate::emplace::EmplacementKind>,
     #[serde(default)]
     response_on_reentry: bool,
+    /// Hidden physical arrival time of the response emitted at the bubble edge.
+    /// It is deliberately absent from `PendingCommandView`: learning that this
+    /// value exists would itself reveal the true re-entry before its light lands.
+    #[serde(default)]
+    reentry_response_at: Option<f64>,
 }
 
 /// A relay that existed, contributed this exact coverage site, and then died.
@@ -4632,6 +4638,7 @@ impl World {
                         target: po.target,
                         emplacement: po.emplacement,
                         response_on_reentry: po.response_on_reentry,
+                        reentry_response_at: None,
                     });
                     events.push(Event::new(
                         now,
@@ -4644,10 +4651,12 @@ impl World {
         }
     }
 
-    /// §order-lifecycle: resolve DELIVERED orders whose expected response has now
-    /// arrived — either comm-bubble reacquisition or the fallback confirming
-    /// light. A fleet destroyed first drops silently (the delayed destruction
-    /// report is what the owner sees — no false "confirmed").
+    /// §order-lifecycle: resolve DELIVERED orders whose response light has now
+    /// reached the command center. Re-entering a comm bubble EMITS that response;
+    /// it does not disclose the hidden crossing instantly. The routed home leg is
+    /// frozen at emission like every other information path. A fleet destroyed
+    /// first drops silently (the delayed destruction report is what the owner
+    /// sees — no false "confirmed").
     fn resolve_order_echoes(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
         let mut i = 0;
@@ -4655,13 +4664,8 @@ impl World {
             let e = &self.pending_echoes[i];
             if !self.fleets.contains_key(&e.fleet) {
                 self.pending_echoes.remove(i); // destroyed — no confirmation
-            } else if e.response_on_reentry {
-                let sites = self.relay_network(e.owner);
-                let reentered = self
-                    .fleets
-                    .get(&e.fleet)
-                    .is_some_and(|fleet| crate::lane::in_comm_bubble(fleet.pos, &sites, 0.0));
-                if !reentered {
+            } else if e.response_on_reentry && e.reentry_response_at.is_some() {
+                if e.reentry_response_at.unwrap() > now {
                     i += 1;
                     continue;
                 }
@@ -4675,6 +4679,31 @@ impl World {
                         kind: e.kind,
                     },
                 ));
+            } else if e.response_on_reentry {
+                let sites = self.relay_network(e.owner);
+                let Some(fleet) = self.fleets.get(&e.fleet) else {
+                    unreachable!("fleet existence was checked above");
+                };
+                if !crate::lane::in_comm_bubble(fleet.pos, &sites, 0.0) {
+                    i += 1;
+                    continue;
+                }
+                let cc = self
+                    .players
+                    .get(&e.owner)
+                    .map_or(fleet.pos, |corp| corp.command_center);
+                let field = crate::lane::DelayField {
+                    lanes: &self.lanes,
+                    sites: &sites,
+                    c: self.config.c,
+                };
+                let delay = if fleet.drive_state.stirs_the_lane() {
+                    field.from_coupled(fleet.pos, cc)
+                } else {
+                    field.between(fleet.pos, cc)
+                } * self.relay_factor(e.owner, fleet.pos);
+                self.pending_echoes[i].reentry_response_at = Some(now + delay);
+                i += 1;
             } else if e.echo_at <= now {
                 let e = self.pending_echoes.remove(i);
                 events.push(Event::new(
@@ -20218,7 +20247,7 @@ mod tests {
     fn confirmation_requires_arrived_evidence() {
         let mut w = test_world();
         let id = PlayerId(1);
-        let (fid, _cc, _) = lifecycle_setup(&mut w, id, 0.0);
+        let (fid, cc, _) = lifecycle_setup(&mut w, id, 0.0);
         let site = w.relay_network(id)[0];
         let outside = site.pos + Vec2::new(site.throw + 20_000.0, 0.0);
         {
@@ -20258,12 +20287,51 @@ mod tests {
             "the lifecycle remains presumed after its estimate expires",
         );
 
-        w.fleets.get_mut(&fid).unwrap().pos = site.pos;
+        let reentry_pos = site.pos + Vec2::new(site.throw, 0.0);
+        {
+            let fleet = w.fleets.get_mut(&fid).unwrap();
+            fleet.pos = reentry_pos;
+            fleet.vel = Vec2::ZERO;
+            fleet.drive_state = crate::ship::DriveState::Thrusters;
+        }
+        let reentry_at = w.time;
+        let sites = w.relay_network(id);
+        let response_field = crate::lane::DelayField {
+            lanes: &w.lanes,
+            sites: &sites,
+            c: w.config.c,
+        };
+        let response_delay = response_field.between(reentry_pos, cc)
+            * w.relay_factor(id, reentry_pos);
         let events = w.step(&[]);
-        assert!(events.iter().any(|event| matches!(
-            event.payload,
-            EventPayload::OrderConfirmed { id: confirmed, .. } if confirmed == pending.id
-        )));
+        assert!(
+            !events.iter().any(|event| matches!(
+                event.payload,
+                EventPayload::OrderConfirmed { id: confirmed, .. } if confirmed == pending.id
+            )),
+            "physical re-entry emits a response but is not yet command-center knowledge",
+        );
+        assert!(w.pending_commands(id).iter().any(|order| order.id == pending.id));
+
+        let mut confirmed_at = None;
+        while w.time <= reentry_at + response_delay + DT {
+            for event in w.step(&[]) {
+                if matches!(
+                    event.payload,
+                    EventPayload::OrderConfirmed { id: confirmed, .. } if confirmed == pending.id
+                ) {
+                    confirmed_at = Some(event.time);
+                }
+            }
+            if confirmed_at.is_some() {
+                break;
+            }
+        }
+        let confirmed_at = confirmed_at.expect("the re-entry response light arrived");
+        assert!(
+            (confirmed_at - (reentry_at + response_delay)).abs() <= DT + 1e-9,
+            "confirmation waits for the full bubble-edge to command-center delay",
+        );
         assert!(w.pending_commands(id).iter().all(|order| order.id != pending.id));
     }
 
