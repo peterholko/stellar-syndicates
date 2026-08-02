@@ -21,10 +21,7 @@
 //! object moves slower than light (all ships do, by construction). So
 //! `arrival` is **strictly increasing**: scanning samples newest→oldest, the
 //! first one with `arrival ≤ now` is the unique latest observable state. We show
-//! that one and nothing fresher — provably no leak. §comms-v3 makes one explicit
-//! own-fleet presentation exception inside an owned relay's 2D bubble: a delayed
-//! emission-time replay advances at true hull speed. Outside those bubbles, and
-//! for every rival, the strict arrival gate remains unchanged.
+//! that one and nothing fresher — provably no leak.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -37,33 +34,8 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity, GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity, GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView, WakeFixView,
 };
-
-/// §comms-v3: presentation bubbles use ordinary 2D distance, independently of
-/// the lane graph that carries the reports home. The band prevents a ship
-/// dithering across the boundary at tick precision.
-const BUBBLE_HYST: f64 = 2_000.0;
-/// Seconds over which the live replay delay slews toward the current route.
-const D_SMOOTH_S: f64 = 5.0;
-/// A positive replay delay keeps the live picture behind simulation truth even
-/// when a relay and command center coincide.
-const LIVE_DELAY_FLOOR_S: f64 = 0.05;
-
-fn presentation_bubble_contains(
-    pos: Vec2,
-    sites: &[sim::lane::CommSite],
-    was_in_comms: bool,
-) -> bool {
-    sites.iter().any(|site| {
-        let radius = if was_in_comms {
-            site.throw + BUBBLE_HYST
-        } else {
-            (site.throw - BUBBLE_HYST).max(0.0)
-        };
-        pos.distance(site.pos) <= radius
-    })
-}
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -85,24 +57,50 @@ struct Sample {
     /// warp velocity, and a fleet that had already stopped still
     /// claimed to be in hyperspace.
     drive: sim::ship::DriveState,
-    /// Whether this report was emitted while the true hull was in one of its
-    /// owner's presentation bubbles. Per-sample so an exit cannot retroactively
-    /// reroute already-emitted live reports onto the slow dark channel.
-    in_comms: bool,
 }
 
-impl Sample {
-    fn interpolate(older: &Self, newer: &Self, frac: f64) -> Self {
-        let frac = frac.clamp(0.0, 1.0);
+/// One arrived view sample. `vel` remains the factual velocity emitted by the
+/// older bracket sample; `vel_obs` is the rate at which the arrived position
+/// stream advances at the command center. Kept separate from [`Sample`] so
+/// report-path geometry never contaminates stored simulation history.
+#[derive(Clone, Copy)]
+struct ServedSample {
+    time: f64,
+    pos: Vec2,
+    vel: Vec2,
+    vel_obs: Vec2,
+    loud: bool,
+    drive: sim::ship::DriveState,
+}
+
+impl ServedSample {
+    fn held(sample: &Sample) -> Self {
+        Self {
+            time: sample.time,
+            pos: sample.pos,
+            vel: sample.vel,
+            vel_obs: Vec2::ZERO,
+            loud: sample.loud,
+            drive: sample.drive,
+        }
+    }
+
+    fn interpolated(
+        older: &Sample,
+        newer: &Sample,
+        arrival: f64,
+        newer_arrival: f64,
+        now: f64,
+    ) -> Self {
+        let arrival_span = newer_arrival - arrival;
+        let frac = ((now - arrival) / arrival_span).clamp(0.0, 1.0);
         Self {
             time: older.time + (newer.time - older.time) * frac,
             pos: older.pos + (newer.pos - older.pos) * frac,
-            // Facts change only when the newer report is reached; only the
-            // kinematic continuum is interpolated between recorded ticks.
             vel: older.vel,
+            vel_obs: (newer.pos - older.pos) / arrival_span,
             loud: older.loud,
             drive: older.drive,
-            in_comms: older.in_comms,
         }
     }
 }
@@ -131,10 +129,6 @@ struct Track {
     /// exact count the `count_class` bucket exists to hide. Gated on coverage
     /// exactly like `composition`.
     damage_frac: f64,
-    /// Current true-position presentation mode, hysteretic at relay boundaries.
-    in_comms: bool,
-    /// Smoothed report delay used as the emission horizon in live mode.
-    live_delay: f64,
     /// §dock: WHERE this fleet is berthed, if it is. Sampled per tick like any
     /// other track state, so a light-delayed sighting reports the dock as it was
     /// when the light left — a fleet you see berthed may have sailed since,
@@ -248,24 +242,6 @@ impl PositionHistory {
     pub fn record(&mut self, world: &World) {
         let now = world.time;
         for (id, ship) in &world.fleets {
-            let sites = world.relay_network(ship.owner);
-            let was_in_comms = self.tracks.get(id).is_some_and(|track| track.in_comms);
-            let in_comms = presentation_bubble_contains(ship.pos, &sites, was_in_comms);
-            let cc = world
-                .players
-                .get(&ship.owner)
-                .map_or(ship.pos, |corp| corp.command_center);
-            let delays = sim::lane::DelayField {
-                lanes: &world.lanes,
-                sites: &sites,
-                c: world.config.c,
-            };
-            let target_delay = if ship.drive_state.stirs_the_lane() {
-                delays.from_coupled(ship.pos, cc)
-            } else {
-                delays.between(ship.pos, cc)
-            }
-            .max(LIVE_DELAY_FLOOR_S);
             let track = self.tracks.entry(*id).or_insert_with(|| Track {
                 owner: ship.owner,
                 composition: BTreeMap::new(),
@@ -283,8 +259,6 @@ impl PositionHistory {
                 route: None,
                 gone: None,
                 damage_frac: 0.0,
-                in_comms: false,
-                live_delay: target_delay,
                 docked: None,
                 job: None,
                 plans: VecDeque::new(),
@@ -297,17 +271,6 @@ impl PositionHistory {
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
-            let entered_comms = in_comms && !track.in_comms;
-            if entered_comms {
-                // Re-entry deliberately catches the live horizon up at once;
-                // the client celebrates that discontinuity with the streak.
-                track.live_delay = target_delay;
-            } else if in_comms {
-                let alpha = 1.0 - (-sim::config::DT / D_SMOOTH_S).exp();
-                track.live_delay += (target_delay - track.live_delay) * alpha;
-                track.live_delay = track.live_delay.max(LIVE_DELAY_FLOOR_S);
-            }
-            track.in_comms = in_comms;
             track.docked = world.dock_of(*id);
             use crate::protocol::{JobKind, JobView};
             let frac = |t0: f64, secs: f64| {
@@ -362,7 +325,6 @@ impl PositionHistory {
                 vel: ship.vel,
                 loud: ship.surveying(),
                 drive: ship.drive_state,
-                in_comms,
             });
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
@@ -464,7 +426,7 @@ impl PositionHistory {
             if track.owner != viewer {
                 continue;
             }
-            if let Some(s) = serve_track(track, cc, delays, now, true, &[]) {
+            if let Some(s) = latest_observable(&track.samples, cc, delays, now, true, &[]) {
                 coverage.push((s.pos, self.sensor_range * track.sensor_mult));
             }
         }
@@ -518,14 +480,13 @@ impl PositionHistory {
             path: Vec<(Vec2, bool)>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
-            sample: Sample,
+            sample: ServedSample,
             cargo: Option<Cargo>,
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
-            /// Whether the owner's TRUE hull is currently inside a presentation
-            /// bubble. It is the only own-fleet marker mode sent to the client.
-            in_comms: bool,
+            /// Owner-only coded-drive kinematics, independently light-gated.
+            wake: Option<ServedSample>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
             /// detection to that pre-destruction frame so a *post*-destruction
@@ -535,6 +496,11 @@ impl PositionHistory {
             destroyed_detected: bool,
         }
         let mut pre = Vec::new();
+        // §comms-v2: every owned comm structure is also an ear for the coded
+        // carrier in this owner's drives. These are NOT the dedicated sensor
+        // ears above: the latter hear rivals through the existing full contact
+        // path, while this private channel can only populate `wake` on own ships.
+        let comm_ears = WakeEars::new(cc, delays);
         // Coverage as (center, radius) sources: the command center + own ship
         // ghosts at the global range, plus any standing array bubbles (each with
         // its OWN radius — a developed array outsees a ship).
@@ -550,9 +516,12 @@ impl PositionHistory {
                 continue; // the destruction has been observed — it's gone
             }
             let own = track.owner == viewer;
-            let Some(sample) = serve_track(track, cc, delays, now, own, ears) else {
+            let Some(sample) = latest_observable(&track.samples, cc, delays, now, own, ears) else {
                 continue; // dark — no light from this object has arrived yet
             };
+            let wake = own
+                .then(|| latest_wake(&track.samples, delays, now, &comm_ears))
+                .flatten();
             if track.owner == viewer {
                 // Each own fleet projects its best bubble — a scout aboard gives
                 // an oversized one (`sensor_mult`: mobile vision).
@@ -589,7 +558,7 @@ impl PositionHistory {
                 passengers: &track.passengers,
                 modules: &track.modules,
                 route: &track.route,
-                in_comms: own && track.in_comms,
+                wake,
                 destroyed_detected,
             });
         }
@@ -749,8 +718,14 @@ impl PositionHistory {
                 kind: p.flagship,
                 pos: p.sample.pos,
                 vel: p.sample.vel,
+                vel_obs: p.sample.vel_obs,
                 age,
-                in_comms: p.in_comms,
+                wake: p.wake.map(|wake| WakeFixView {
+                    pos: wake.pos,
+                    vel: wake.vel,
+                    vel_obs: wake.vel_obs,
+                    t: wake.time,
+                }),
                 own,
                 route,
                 cargo,
@@ -807,7 +782,16 @@ impl PositionHistory {
         now: f64,
     ) -> Option<(Vec2, Vec2, bool)> {
         let track = self.tracks.get(&ship_id)?;
-        let sample = serve_track(track, cc, delays, now, true, &[])?;
+        // Serves the ISSUING player's own ship — coupled applies.
+        let sample = latest_observable(&track.samples, cc, delays, now, true, &[])?;
+        let comm_ears = WakeEars::new(cc, delays);
+        if let Some(wake) = latest_wake(&track.samples, delays, now, &comm_ears)
+            && wake.time > sample.time
+        {
+            // A wake is player-known kinematics and proof of coupling, so it is
+            // also the honest picture from which to aim a newly issued order.
+            return Some((wake.pos, wake.vel, true));
+        }
         Some((sample.pos, sample.vel, sample.drive.stirs_the_lane()))
     }
 
@@ -1799,44 +1783,6 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 /// channel seam or a bow-wave rush, where discrete serving is the honest form.
 const SMOOTH_BRACKET_MAX: f64 = 0.5;
 
-fn serve_track(
-    track: &Track,
-    cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    now: f64,
-    own: bool,
-    ears: &[sim::lane::Relay],
-) -> Option<Sample> {
-    if own && track.in_comms {
-        // LIVE is a delayed replay, not extrapolated truth: advance the emission
-        // horizon at one sim-second per sim-second using the eased route delay.
-        latest_emitted(&track.samples, now - track.live_delay)
-    } else {
-        // DARK remains the strict arrival gate. The last report emitted inside
-        // the bubble retains its fast channel and therefore pins the arrow at
-        // the exit until the first post-exit warp report actually arrives.
-        latest_observable(&track.samples, cc, delays, now, own, ears)
-    }
-}
-
-fn latest_emitted(samples: &VecDeque<Sample>, horizon: f64) -> Option<Sample> {
-    let mut older: Option<&Sample> = None;
-    for sample in samples {
-        if sample.time > horizon {
-            return match older {
-                Some(previous) if sample.time > previous.time + 1e-9 => {
-                    let frac = (horizon - previous.time) / (sample.time - previous.time);
-                    Some(Sample::interpolate(previous, sample, frac))
-                }
-                Some(previous) => Some(*previous),
-                None => Some(*sample),
-            };
-        }
-        older = Some(sample);
-    }
-    older.copied()
-}
-
 fn latest_observable(
     samples: &VecDeque<Sample>,
     cc: Vec2,
@@ -1844,23 +1790,33 @@ fn latest_observable(
     now: f64,
     own: bool,
     ears: &[sim::lane::Relay],
-) -> Option<Sample> {
+) -> Option<ServedSample> {
     // The most recently REJECTED sample (newer than the answer) and its arrival
     // time — the interpolation bracket's far end.
     let mut newer: Option<(&Sample, f64)> = None;
     for s in samples.iter().rev() {
-        // Own reports remember the presentation mode at EMISSION. This makes
-        // the bubble boundary causal: the final inside report keeps its fast
-        // routed channel, while every outside report uses plain warp light.
-        // Rival tripwires remain the separate drive-coupled sensor mechanism.
+        // §coupled: THE DRIVE IS THE TRANSMITTER (design ruling). A hull talks
+        // through a lane exactly while its hyperspace drive is engaged — the
+        // drive stirring the medium is the coupling, the same physics that
+        // makes a rival's wake audible to a tripwire. Turn the drive off and
+        // the lane goes silent for you at that instant, wherever you stand:
+        // a hull parked in a ribbon, or warping across one, reports by plain
+        // light like anything else. (Buoys transmit while parked because they
+        // ARE purpose-built lane transmitters; a hull's coupling is a side
+        // effect of riding.) Per-sample, so each report travels by the channel
+        // the ship was on WHEN IT SENT IT — reports already in the lane when
+        // the drive drops still arrive; nothing anti-causal cuts them off.
+        //
+        // History: this was containment-gated for a while, because with the
+        // exit gap unhandled a drive-gated cutoff parked ghosts at lane exits
+        // and read as a bug. The gap now has an honest hold, the dead-gap
+        // creep, and the growing SEEN — so the truthful rule is affordable.
         let riding = s.drive.stirs_the_lane();
         let mut delay = if own {
-            if s.in_comms && riding {
+            if riding {
                 delays.from_coupled(s.pos, cc)
-            } else if s.in_comms {
-                delays.between(s.pos, cc)
             } else {
-                delays.passive(s.pos, cc)
+                delays.between(s.pos, cc)
             }
         } else {
             // Relay wire is private infrastructure, not a collector of ambient
@@ -1894,16 +1850,91 @@ fn latest_observable(
             // own light (the rival bow wave), whole spans arrive at once and
             // the catch-up RUSH is the designed, discrete behaviour — leave it.
             //
-            // At a channel seam the next arrival can be tens of seconds later.
-            // Past the bracket cap there is no continuum to invent: hold the
-            // final arrived report, which is the frozen dark arrow.
+            // And guard the OTHER direction: interpolation models continuous
+            // emission between consecutive snapshots, which only holds while
+            // their arrivals are a sample-step apart. At a CHANNEL SEAM — a
+            // hull leaving covered wire, where the coupled full report ends
+            // and plain warp light takes over — the next arrival can be tens
+            // of seconds later. Nothing arrives in that window (the ship is in its own
+            // comms shadow), and lerping one tick of motion across it painted
+            // a near-frozen crawl from data that does not exist. Past the
+            // bracket cap, hold the last-arrived full sample and let it age;
+            // the separate wake-fix channel may still update kinematics.
             if let Some((n, na)) = newer {
                 if na > arrival + 1e-9 && na - arrival <= SMOOTH_BRACKET_MAX {
-                    let frac = (now - arrival) / (na - arrival);
-                    return Some(Sample::interpolate(s, n, frac));
+                    return Some(ServedSample::interpolated(s, n, arrival, na, now));
                 }
             }
-            return Some(*s);
+            return Some(ServedSample::held(s));
+        }
+        newer = Some((s, arrival));
+    }
+    None
+}
+
+/// A viewer's owned wake ears plus their sample-independent routes home.
+struct WakeEars {
+    relays: Vec<sim::lane::Relay>,
+    home_delays: Vec<f64>,
+}
+
+impl WakeEars {
+    fn new(cc: Vec2, delays: &sim::lane::DelayField<'_>) -> Self {
+        let relays: Vec<_> = delays
+            .sites
+            .iter()
+            .map(|site| delays.lanes.relay_at(site.pos))
+            .collect();
+        Self::from_relays(cc, delays, relays)
+    }
+
+    fn from_relays(
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        relays: Vec<sim::lane::Relay>,
+    ) -> Self {
+        // This is the expensive, sample-independent route: solve it once per
+        // viewer and reuse it across every fleet history scanned in this View.
+        let home_delays: Vec<_> = relays
+            .iter()
+            .map(|ear| delays.from_coupled(ear.pos, cc))
+            .collect();
+        Self { relays, home_delays }
+    }
+}
+
+/// The freshest ARRIVED owner-coded wake heard by an owned comm structure.
+/// This is intentionally a parallel kinematic channel rather than a synthetic
+/// full sample: callers may use only its position, velocity, and emission time.
+fn latest_wake(
+    samples: &VecDeque<Sample>,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+    ears: &WakeEars,
+) -> Option<ServedSample> {
+    let mut newer: Option<(&Sample, f64)> = None;
+    for s in samples.iter().rev() {
+        if !s.drive.stirs_the_lane() {
+            continue;
+        }
+        let delay = delays.heard_within_precomputed(
+            s.pos,
+            &ears.relays,
+            &ears.home_delays,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        if !delay.is_finite() {
+            continue;
+        }
+        let arrival = s.time + delay;
+        if arrival <= now {
+            if let Some((n, na)) = newer
+                && na > arrival + 1e-9
+                && na - arrival <= SMOOTH_BRACKET_MAX
+            {
+                return Some(ServedSample::interpolated(s, n, arrival, na, now));
+            }
+            return Some(ServedSample::held(s));
         }
         newer = Some((s, arrival));
     }
@@ -1947,6 +1978,174 @@ mod tests {
 
     use super::*;
 
+    fn constant_velocity_samples(origin: Vec2, vel: Vec2) -> VecDeque<Sample> {
+        (0..=100)
+            .map(|i| {
+                let time = i as f64 * 0.1;
+                Sample {
+                    time,
+                    pos: origin + vel * time,
+                    vel,
+                    loud: false,
+                    drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_receding_riders_stream_advances_at_the_stretched_rate() {
+        let c = 1_000.0;
+        let speed = 200.0;
+        let samples =
+            constant_velocity_samples(Vec2::new(1_000.0, 0.0), Vec2::new(speed, 0.0));
+        let field = df(c);
+        let first = latest_observable(&samples, Vec2::ZERO, &field, 1.45, false, &[]).unwrap();
+        let second = latest_observable(&samples, Vec2::ZERO, &field, 1.51, false, &[]).unwrap();
+        let expected = speed / (1.0 + speed / c);
+        let served_rate = (second.pos.x - first.pos.x) / 0.06;
+
+        assert!(
+            (served_rate - expected).abs() < 1e-6,
+            "served positions must advance at {expected:.6}, got {served_rate:.6}"
+        );
+        assert!(
+            (second.vel_obs.x - expected).abs() < 1e-6,
+            "apparent velocity must follow the stretched arrival stream"
+        );
+        assert_eq!(
+            second.vel,
+            Vec2::new(speed, 0.0),
+            "the factual velocity remains what the hull reported"
+        );
+    }
+
+    #[test]
+    fn an_approaching_riders_stream_compresses() {
+        let c = 1_000.0;
+        let speed = 200.0;
+        let samples =
+            constant_velocity_samples(Vec2::new(5_000.0, 0.0), Vec2::new(-speed, 0.0));
+        let field = df(c);
+        let served = latest_observable(&samples, Vec2::ZERO, &field, 5.43, false, &[]).unwrap();
+        let expected = speed / (1.0 - speed / c);
+
+        assert!(
+            (served.vel_obs.x + expected).abs() < 1e-6,
+            "approaching stream must compress to -{expected:.6}, got {:.6}",
+            served.vel_obs.x
+        );
+        assert!(
+            served.vel_obs.length() > served.vel.length(),
+            "compressed light must advance faster than the factual hull speed"
+        );
+        assert_eq!(served.vel, Vec2::new(-speed, 0.0));
+    }
+
+    #[test]
+    fn a_comms_seam_serves_zero_apparent_rate() {
+        let factual = Vec2::new(200.0, 0.0);
+        let samples = VecDeque::from([
+            Sample {
+                time: 0.0,
+                pos: Vec2::new(1_000.0, 0.0),
+                vel: factual,
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            },
+            Sample {
+                time: 0.1,
+                pos: Vec2::new(3_000.0, 0.0),
+                vel: factual,
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            },
+        ]);
+        let served =
+            latest_observable(&samples, Vec2::ZERO, &df(1_000.0), 2.0, false, &[])
+                .unwrap();
+
+        assert_eq!(
+            served.vel_obs,
+            Vec2::ZERO,
+            "a held picture must not invent motion across a channel seam"
+        );
+        assert_eq!(
+            served.vel, factual,
+            "the held picture still reports the older factual velocity"
+        );
+    }
+
+    /// §coupled: A FLEET RIDING A LANE TRANSMITS THROUGH IT — its own report
+    /// rides at lane signal speed, so the owner's picture of it stays fresh even
+    /// when the hull outruns warp-speed light. A RIVAL watching the same fleet
+    /// gets only passive light: the lane transit still arrives ahead of the news
+    /// of it. One track, two viewers, opposite freshness — that asymmetry is the
+    /// mechanic (the bow wave stops being friendly fire and stays a weapon).
+    #[test]
+    fn a_lane_rider_is_fresh_to_its_owner_and_stale_to_a_rival() {
+        // A straight lane running along x, viewer's CC at the origin end.
+        let ctrl =
+            vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 400.0;
+        let cc = Vec2::new(0.0, 0.0);
+        let sites = [
+            sim::lane::CommSite { pos: cc, throw: 40_000.0 },
+            sim::lane::CommSite {
+                pos: Vec2::new(120_000.0, 0.0),
+                throw: 80_000.0,
+            },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
+
+        // A hull riding the lane TOWARD the cc at 5,000 su/s — 2.5× the 2,000
+        // su/s warp signal, the exact geometry of every playtest teleport.
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let mut t = 0.0;
+        let mut x = 250_000.0;
+        while x > 20_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: Vec2::new(x, 0.0),
+                vel: Vec2::new(-5_000.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += 1.0;
+            x -= 5_000.0;
+        }
+        let now = t; // the moment the hull nears the cc
+
+        let own = latest_observable(&samples, cc, &field, now, true, &[]).expect("owner sees it");
+        let rival = latest_observable(&samples, cc, &field, now, false, &[]);
+        let own_age = now - own.time;
+        assert!(
+            own_age < 8.0,
+            "the owner's picture should be near-live (report rides the lane), got {own_age:.1}s stale",
+        );
+        match rival {
+            None => {} // still dark — the hull is ahead of its own light entirely
+            Some(r) => {
+                let rival_age = now - r.time;
+                assert!(
+                    rival_age > own_age + 10.0,
+                    "a rival's passive light must lag far behind the owner's coupled report \
+                     (rival {rival_age:.1}s vs own {own_age:.1}s)",
+                );
+            }
+        }
+    }
+
     /// §coupled: A HYPERSPACE SENSOR HEARS THE LANE. A rival hull riding a
     /// listened lane makes a wake the post reports home at lane speed — so it
     /// can no longer arrive ahead of the news of it past a tripwire. Without
@@ -1983,7 +2182,6 @@ mod tests {
                 vel: Vec2::new(-5_000.0, 0.0),
                 loud: false,
                 drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: false,
             });
             t += 1.0;
             x -= 5_000.0;
@@ -2006,162 +2204,317 @@ mod tests {
         );
     }
 
-    fn moving_samples(in_comms: bool) -> Vec<Sample> {
-        (0..=100)
-            .map(|i| {
-                let time = i as f64 * 0.1;
-                Sample {
-                    time,
-                    pos: Vec2::new(10_000.0 + 5_000.0 * time, 0.0),
-                    vel: Vec2::new(5_000.0, 0.0),
-                    loud: false,
-                    drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Warp),
-                    in_comms,
-                }
-            })
-            .collect()
-    }
-
-    #[test]
-    fn an_own_ship_in_the_bubble_replays_at_hull_speed() {
-        let mut track = track_from(moving_samples(true), PlayerId(1), ShipKind::Raider);
-        track.in_comms = true;
-        track.live_delay = 2.0;
-        let field = df(1_000.0);
-        let first = serve_track(&track, Vec2::ZERO, &field, 8.0, true, &[]).unwrap();
-        let second = serve_track(&track, Vec2::ZERO, &field, 9.0, true, &[]).unwrap();
-
-        assert!((second.pos.x - first.pos.x - 5_000.0).abs() < 1e-6);
-        assert!((second.time - first.time - 1.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn the_bubble_picture_still_trails_the_truth() {
-        let samples = moving_samples(true);
-        let truth = samples.last().unwrap().pos;
-        let mut track = track_from(samples, PlayerId(1), ShipKind::Raider);
-        track.in_comms = true;
-        track.live_delay = 2.0;
-        let served = serve_track(&track, Vec2::ZERO, &df(1_000.0), 10.0, true, &[]).unwrap();
-
-        assert!(served.pos.x < truth.x, "live presentation must never expose true position");
-        assert!((truth.x - served.pos.x - 10_000.0).abs() < 1e-6);
-    }
-
-    fn bubble_exit_fixture() -> (
-        Track,
-        sim::lane::LaneNetwork,
-        [sim::lane::CommSite; 1],
-    ) {
-        let control = vec![Vec2::ZERO, Vec2::new(100_000.0, 0.0), Vec2::new(200_000.0, 0.0)];
-        let lanes = sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
-            id: 72,
+    fn wake_test_line() -> sim::lane::LaneNetwork {
+        let control = vec![Vec2::ZERO, Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
+        sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
+            id: 61,
             kind: sim::lane::LaneKind::Trunk,
-            name: "Bubble seam".into(),
+            name: "Carrier Test".into(),
             samples: sim::lane::bake_for_tests(&control),
             control,
-            half_width: 1_350.0,
+            half_width: 2_000.0,
             tapers: false,
-        }]);
-        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 80_000.0 }];
-        let samples = vec![
-            Sample {
-                time: 0.0,
-                pos: Vec2::new(75_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: true,
-            },
-            Sample {
-                time: 1.0,
-                pos: Vec2::new(80_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: true,
-            },
-            Sample {
-                time: 2.0,
-                pos: Vec2::new(85_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: false,
-            },
-        ];
-        let mut track = track_from(samples, PlayerId(1), ShipKind::Raider);
-        track.in_comms = false;
-        (track, lanes, sites)
+        }])
+    }
+
+    fn riding_sample(time: f64, x: f64) -> Sample {
+        Sample {
+            time,
+            pos: Vec2::new(x, 0.0),
+            vel: Vec2::new(5_000.0, 0.0),
+            loud: false,
+            drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+        }
     }
 
     #[test]
-    fn an_exit_pins_the_arrow_at_the_boundary() {
-        let (track, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let boundary = track.samples[1];
-        let outside = track.samples[2];
-        let boundary_arrival = boundary.time + field.from_coupled(boundary.pos, Vec2::ZERO);
-        let outside_arrival = outside.time + field.passive(outside.pos, Vec2::ZERO);
-        assert!(outside_arrival > boundary_arrival + SMOOTH_BRACKET_MAX);
+    fn a_receding_wake_stream_advances_at_the_stretched_rate() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 40_000.0,
+        };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = vec![net.relay_at(site.pos)];
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.clone());
+        let speed = 5_000.0;
+        let samples: VecDeque<_> = (0..=100)
+            .map(|i| {
+                let time = i as f64 * 0.1;
+                riding_sample(time, 110_000.0 + speed * time)
+            })
+            .collect();
+        let first_arrival = samples[0].time
+            + field.heard_within(samples[0].pos, cc, &ears, sim::emplace::COMM_WAKE_EARSHOT);
+        let first = latest_wake(&samples, &field, first_arrival + 0.45, &wake_ears).unwrap();
+        let second = latest_wake(&samples, &field, first_arrival + 0.51, &wake_ears).unwrap();
+        let signal_speed = field.c * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT;
+        let expected = speed / (1.0 + speed / signal_speed);
+        let served_rate = (second.pos.x - first.pos.x) / 0.06;
 
-        let served = serve_track(
-            &track,
+        assert!(
+            (served_rate - expected).abs() < 1e-6,
+            "wake positions must advance at {expected:.6}, got {served_rate:.6}"
+        );
+        assert!(
+            (second.vel_obs.x - expected).abs() < 1e-6,
+            "wake apparent velocity must follow its arrival stream"
+        );
+        assert_eq!(second.vel, Vec2::new(speed, 0.0));
+    }
+
+    #[test]
+    fn a_wake_comms_seam_serves_zero_apparent_rate() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 40_000.0,
+        };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = vec![net.relay_at(site.pos)];
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.clone());
+        let factual = Vec2::new(5_000.0, 0.0);
+        let samples = VecDeque::from([
+            riding_sample(0.0, 110_000.0),
+            riding_sample(0.1, 130_000.0),
+        ]);
+        let first_arrival = samples[0].time
+            + field.heard_within(samples[0].pos, cc, &ears, sim::emplace::COMM_WAKE_EARSHOT);
+        let served = latest_wake(&samples, &field, first_arrival + 0.6, &wake_ears).unwrap();
+
+        assert_eq!(
+            served.vel_obs,
             Vec2::ZERO,
-            &field,
-            (boundary_arrival + outside_arrival) * 0.5,
-            true,
-            &[],
-        )
-        .unwrap();
-        assert_eq!(served.pos, boundary.pos);
-        assert_eq!(served.time, boundary.time);
+            "a wake hold must not extrapolate across a comms seam"
+        );
+        assert_eq!(
+            served.vel, factual,
+            "wake facts remain the older hull report"
+        );
+    }
+
+    fn latest_wake_brute_force(
+        samples: &VecDeque<Sample>,
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        now: f64,
+        ears: &[sim::lane::Relay],
+    ) -> Option<Sample> {
+        let mut newer: Option<(&Sample, f64)> = None;
+        for s in samples.iter().rev() {
+            if !s.drive.stirs_the_lane() {
+                continue;
+            }
+            let delay = delays.heard_within(
+                s.pos,
+                cc,
+                ears,
+                sim::emplace::COMM_WAKE_EARSHOT,
+            );
+            if !delay.is_finite() {
+                continue;
+            }
+            let arrival = s.time + delay;
+            if arrival <= now {
+                if let Some((n, na)) = newer
+                    && na > arrival + 1e-9
+                    && na - arrival <= SMOOTH_BRACKET_MAX
+                {
+                    let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
+                    return Some(Sample {
+                        time: s.time + (n.time - s.time) * frac,
+                        pos: s.pos + (n.pos - s.pos) * frac,
+                        vel: s.vel,
+                        loud: s.loud,
+                        drive: s.drive,
+                    });
+                }
+                return Some(*s);
+            }
+            newer = Some((s, arrival));
+        }
+        None
     }
 
     #[test]
-    fn beyond_the_bubble_serving_is_strictly_arrival_gated() {
-        let (track, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let outside = track.samples[2];
-        let outside_arrival = outside.time + field.passive(outside.pos, Vec2::ZERO);
+    fn wake_serving_cost_is_flat_in_history_depth() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let sites = [
+            sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 },
+            sim::lane::CommSite { pos: Vec2::new(120_000.0, 0.0), throw: 40_000.0 },
+            sim::lane::CommSite { pos: Vec2::new(140_000.0, 0.0), throw: 40_000.0 },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears: Vec<_> = sites.iter().map(|site| net.relay_at(site.pos)).collect();
+        let samples: VecDeque<_> = (0..2_000)
+            .map(|i| riding_sample(i as f64 * 0.1, 180_000.0))
+            .collect();
+        // The answer lies in this small prefix; the other 1,950 samples are
+        // deliberately too young to have arrived and exercise history depth.
+        let reference_samples: VecDeque<_> = samples.iter().take(50).copied().collect();
+        let base_delay = field.heard_within(
+            samples[0].pos,
+            cc,
+            &ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        let now = base_delay + 4.25;
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.clone());
 
-        let before = serve_track(&track, Vec2::ZERO, &field, outside_arrival - 1e-6, true, &[])
-            .unwrap();
-        assert!(before.time < outside.time);
-        let after = serve_track(&track, Vec2::ZERO, &field, outside_arrival + 1e-6, true, &[])
-            .unwrap();
-        assert_eq!(after.time, outside.time);
-        assert_eq!(after.pos, outside.pos);
+        let deep_started = std::time::Instant::now();
+        let actual = latest_wake(&samples, &field, now, &wake_ears)
+            .expect("the deep history should yield an arrived wake fix");
+        let deep_elapsed = deep_started.elapsed();
+        let reference_started = std::time::Instant::now();
+        let expected = latest_wake_brute_force(&reference_samples, cc, &field, now, &ears)
+            .expect("the brute-force reference window should contain the same fix");
+        let reference_elapsed = reference_started.elapsed();
 
+        assert_eq!(actual.time, expected.time);
+        assert_eq!(actual.pos, expected.pos);
+        assert_eq!(actual.vel, expected.vel);
+        eprintln!(
+            "wake serving: history=2000 ears=3 deep={deep_elapsed:?} brute_force_50={reference_elapsed:?}",
+        );
+    }
+
+    #[test]
+    fn an_own_wake_is_heard_by_comm_structures_at_lane_speed() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = [net.relay_at(site.pos)];
+        let sample = riding_sample(10.0, 180_000.0);
+        let samples = VecDeque::from([sample]);
+        let expected = field.heard_within(
+            sample.pos,
+            cc,
+            &ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        assert!(expected.is_finite());
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.to_vec());
+
+        assert!(latest_wake(&samples, &field, sample.time + expected - 1e-6, &wake_ears).is_none());
+        let heard = latest_wake(&samples, &field, sample.time + expected + 1e-6, &wake_ears)
+            .expect("the coded carrier should arrive on the heard() clock");
+        assert_eq!(heard.pos, sample.pos);
+        assert_eq!(heard.vel, sample.vel);
+        assert_eq!(heard.time, sample.time);
+    }
+
+    #[test]
+    fn beyond_earshot_the_wake_goes_silent() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = [net.relay_at(site.pos)];
+        let sample = riding_sample(10.0, 220_001.0);
+        let samples = VecDeque::from([sample]);
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.to_vec());
+
+        assert!(
+            latest_wake(&samples, &field, 10_000.0, &wake_ears).is_none(),
+            "a comm structure must not hear one su beyond its wake earshot",
+        );
+    }
+
+    #[test]
+    fn a_wake_carries_kinematics_never_telemetry_and_never_rides_a_rival_wire() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = [net.relay_at(site.pos)];
+        let old_full = Sample {
+            time: 0.0,
+            pos: cc,
+            vel: Vec2::ZERO,
+            loud: false,
+            drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Warp),
+        };
+        let wake = riding_sample(10.0, 180_000.0);
+        let wake_delay = field.heard_within(
+            wake.pos,
+            cc,
+            &ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        let full_delay = field.from_coupled(wake.pos, cc);
+        assert!(wake_delay < full_delay, "the fixture needs wake to outrun telemetry");
+        let now = wake.time + wake_delay + 1e-3;
+
+        let viewer = PlayerId(99);
+        let rival = PlayerId(100);
+        let mut own_track = track_from(vec![old_full, wake], viewer, ShipKind::Convoy);
+        own_track.damage_frac = 0.42;
+        let rival_track = track_from(vec![old_full, wake], rival, ShipKind::Convoy);
         let history = PositionHistory {
-            tracks: HashMap::from([(EntityId(1), track)]),
+            tracks: HashMap::from([
+                (EntityId(1), own_track),
+                (EntityId(2), rival_track),
+            ]),
             horizon: 1_000.0,
             sensor_range: 1_000.0,
         };
-        let ghosts = history.view_for(PlayerId(1), Vec2::ZERO, &field, outside_arrival + 1e-6);
-        let wire = serde_json::to_value(&ghosts[0]).unwrap();
-        assert_eq!(wire["in_comms"], false);
-        assert!(wire.get("wake").is_none());
-        assert!(wire.get("vel_obs").is_none());
-    }
+        let ghosts = history.view_for_with_arrays(
+            viewer,
+            cc,
+            &field,
+            now,
+            &[],
+            &[],
+            &BTreeSet::new(),
+            NodeEffects::default(),
+        );
+        let own = ghosts.iter().find(|ghost| ghost.id == EntityId(1)).unwrap();
+        assert_eq!(own.pos, old_full.pos, "full position stays on the full channel");
+        assert_eq!(
+            own.vel_obs,
+            Vec2::ZERO,
+            "a single held telemetry sample has zero apparent rate"
+        );
+        assert_eq!(own.drive, Some(old_full.drive), "wake cannot update drive telemetry");
+        assert_eq!(own.damage, Some(0.42), "wake cannot synthesize a damage update");
+        let fix = own.wake.expect("the independent wake fix should have arrived");
+        assert_eq!(fix.pos, wake.pos);
+        assert_eq!(fix.vel, wake.vel);
+        assert_eq!(
+            fix.vel_obs,
+            Vec2::ZERO,
+            "a single held wake fix has zero apparent rate"
+        );
+        assert_eq!(fix.t, wake.time);
 
-    #[test]
-    fn the_mode_flips_with_hysteresis() {
-        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 40_000.0 }];
-        assert!(!presentation_bubble_contains(Vec2::new(38_001.0, 0.0), &sites, false));
-        assert!(presentation_bubble_contains(Vec2::new(38_000.0, 0.0), &sites, false));
-        assert!(presentation_bubble_contains(Vec2::new(41_999.0, 0.0), &sites, true));
-        assert!(presentation_bubble_contains(Vec2::new(42_000.0, 0.0), &sites, true));
-        assert!(!presentation_bubble_contains(Vec2::new(42_001.0, 0.0), &sites, true));
-
-        let mut mode = false;
-        let mut transitions = 0;
-        for radius in [43_000.0, 38_500.0, 38_000.0, 39_000.0, 41_900.0, 40_500.0, 42_001.0] {
-            let next = presentation_bubble_contains(Vec2::new(radius, 0.0), &sites, mode);
-            transitions += usize::from(next != mode);
-            mode = next;
-        }
-        assert_eq!(transitions, 2, "edge-skimming must yield one enter and one exit");
+        let rival = ghosts.iter().find(|ghost| ghost.id == EntityId(2)).unwrap();
+        assert!(rival.wake.is_none(), "owner comm structures never decode a rival wake");
+        let wire = serde_json::to_value(&ghosts).unwrap();
+        let own_json = wire.as_array().unwrap().iter().find(|g| g["id"] == "1").unwrap();
+        let rival_json = wire.as_array().unwrap().iter().find(|g| g["id"] == "2").unwrap();
+        assert!(own_json.get("wake").is_some(), "own GhostView carries wake on the wire");
+        assert!(
+            own_json.get("vel_obs").is_some(),
+            "every GhostView carries its apparent stream rate"
+        );
+        assert!(
+            own_json["wake"].get("vel_obs").is_some(),
+            "the wake fix carries its own apparent stream rate"
+        );
+        assert!(
+            rival_json.get("vel_obs").is_some(),
+            "rivals use the same apparent-rate wire contract"
+        );
+        assert!(rival_json.get("wake").is_none(), "rival GhostView omits wake from the wire");
     }
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
@@ -2181,8 +2534,6 @@ mod tests {
             max_speed: kind.max_speed(),
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
-            in_comms: false,
-            live_delay: LIVE_DELAY_FLOOR_S,
             docked: None,
             job: None,
             plans: VecDeque::new(),
@@ -2206,7 +2557,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -2242,7 +2593,6 @@ mod tests {
                 vel: Vec2::ZERO,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
-                in_comms: false,
             });
             t += 0.1;
         }
@@ -2278,7 +2628,6 @@ mod tests {
                 vel: Vec2::new(0.0, 5.0),
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
-                in_comms: false,
             });
             t += 0.1;
         }
@@ -2308,7 +2657,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
@@ -3032,7 +3381,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         track_from(samples, owner, kind)
@@ -3179,7 +3528,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         track.samples = samples.into();
@@ -3215,7 +3564,7 @@ mod tests {
         let mut t = 0.0;
         while t <= 8.0 {
             let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
-            samples.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
@@ -3351,7 +3700,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
@@ -3370,8 +3719,6 @@ mod tests {
             max_speed: f.max_speed(),
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
-            in_comms: false,
-            live_delay: LIVE_DELAY_FLOOR_S,
             docked: None,
             job: None,
             plans: VecDeque::new(),
@@ -3617,7 +3964,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 10.0 {
-            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
@@ -3647,7 +3994,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 20.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         let dpos = Vec2::new(200.0, 0.0);
@@ -3763,7 +4110,7 @@ mod tests {
         let mut s = Vec::new();
         let mut t = 0.0;
         while t <= t_end + 1e-9 {
-            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         s
@@ -3781,7 +4128,7 @@ mod tests {
             } else {
                 (start + unit * (speed * (t - t_turn)), unit * speed)
             };
-            s.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            s.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters });
             t += 0.1;
         }
         s
@@ -4020,5 +4367,283 @@ mod tests {
         // No coverage of the site → no access (only the news/wreck reach them).
         let out = battle_record_views(&recs, x, cc, &df(1.0), 1000.0, &[]);
         assert!(out.is_empty(), "a third party who can't sense the site gets no replay");
+    }
+}
+
+#[cfg(test)]
+mod lane_smoothness {
+    use super::*;
+
+    /// §smooth-light: A STEADY LANE RIDE IS SERVED SMOOTHLY. The owner's ghost
+    /// of a hull cruising a lane at constant speed must advance uniformly at
+    /// the 10 Hz View cadence — no tick-grid quantization, no lurches.
+    ///
+    /// Two historical defects, both measured before fixing: serving the raw
+    /// 30 Hz snapshot stepped the ghost 425→992 su between Views (the "not
+    /// 100% smooth" raider of playtest), and `Lane::nearest` returned a
+    /// sample-snapped arc position, sawtoothing the coupled delay so arrivals
+    /// locally REVERSED (worst -0.09s) and blocked interpolation once per
+    /// segment. Continuous arc + arrival-fraction interpolation give ratio 1.00.
+    #[test]
+    fn a_steady_lane_ride_serves_uniform_steps_at_view_cadence() {
+        let ctrl =
+            vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 2_000.0;
+        let field = sim::lane::DelayField { lanes: &net, sites: &[], c };
+        let cc = sim::Vec2::new(0.0, 0.0);
+        // A rider at hyperspace speed, sampled at the real 30 Hz tick.
+        let speed = 4_250.0;
+        let dt = 1.0 / 30.0;
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let mut t = 0.0;
+        let mut x = 250_000.0;
+        while x > 30_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, 0.0),
+                vel: sim::Vec2::new(-speed, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += dt;
+            x -= speed * dt;
+        }
+        // The coupled channel's arrival must be MONOTONIC along a steady ride —
+        // a backward step means the delay yardstick has gone granular again.
+        let mut prev_a = f64::NEG_INFINITY;
+        for s in samples.iter() {
+            let a = s.time + field.from_coupled(s.pos, cc);
+            assert!(
+                a >= prev_a,
+                "coupled arrival stepped backward ({:.4}s) — the arc yardstick is granular again",
+                a - prev_a
+            );
+            prev_a = a;
+        }
+        // Serve the OWNER's view at the real 10 Hz broadcast cadence.
+        let mut prev: Option<sim::Vec2> = None;
+        let mut steps = Vec::new();
+        let mut now = 30.0;
+        while now < 40.0 {
+            let s = latest_observable(&samples, cc, &field, now, true, &[])
+                .expect("mid-ride, the owner always has a picture");
+            if let Some(p) = prev {
+                steps.push(p.distance(s.pos));
+            }
+            prev = Some(s.pos);
+            now += 0.1;
+        }
+        let min = steps.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = steps.iter().cloned().fold(0.0_f64, f64::max);
+        assert!(
+            max / min < 1.01,
+            "a steady ride must be served uniformly at View cadence, \
+             got steps {min:.1}..{max:.1} su (ratio {:.2})",
+            max / min
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod channel_seam {
+    use super::*;
+
+    /// §comms-v2: FULL WIRE IS A PLACE, not a hull capability. Once a covered
+    /// arc reaches an own hull, any of its signals may enter there whether its
+    /// drive is riding, spinning, or dark. Drive state matters again outside
+    /// wire, where only an engaged hull leaves the lighter wake channel.
+    #[test]
+    fn a_hull_inside_covered_arc_has_full_comms_regardless_of_drive() {
+        let ctrl =
+            vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 2_000.0;
+        let cc = sim::Vec2::new(0.0, 0.0);
+        let pos = sim::Vec2::new(100_000.0, 0.0); // dead centre of the ribbon
+        let sites = [
+            sim::lane::CommSite { pos: cc, throw: 40_000.0 },
+            sim::lane::CommSite {
+                pos: sim::Vec2::new(60_000.0, 0.0),
+                throw: 80_000.0,
+            },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
+        let mk = |drive: sim::ship::DriveState| {
+            let mut samples: VecDeque<Sample> = VecDeque::new();
+            let mut t = 0.0;
+            while t <= 60.0 {
+                samples.push_back(Sample { time: t, pos, vel: sim::Vec2::ZERO, loud: false, drive });
+                t += 1.0;
+            }
+            samples
+        };
+        let now = 60.0;
+        // Every ordinary signal can board at this exact covered point. Adding a
+        // zero-throw coupled endpoint therefore changes nothing here.
+        let d_plain = field.between(pos, cc);
+        let d_coupled = field.from_coupled(pos, cc);
+        assert!(
+            (d_plain - d_coupled).abs() < 1e-9,
+            "covered arc is full comms for either drive state \
+             ({d_plain:.1}s vs {d_coupled:.1}s)"
+        );
+        // Riding: coupled — the report rode the lane, near-fresh.
+        let riding = mk(sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
+        let s_ride = latest_observable(&riding, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_ride.time < d_coupled + 1.5,
+            "a riding hull's own report is lane-fresh, got {:.1}s stale",
+            now - s_ride.time
+        );
+        // Drive off: still full wire, because the hull remains at a covered arc.
+        let parked = mk(sim::ship::DriveState::Thrusters);
+        let s_park = latest_observable(&parked, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_park.time < d_plain + 1.5,
+            "a parked hull inside full wire stays fresh ({d_plain:.1}s), got {:.1}s stale",
+            now - s_park.time
+        );
+        // Spin-up is not a wake, but full wire still carries its telemetry.
+        let hyper_spool = mk(sim::ship::DriveState::Spooling { to: sim::lane::Regime::Hyperspace, left: 2.0 });
+        let s_hs = latest_observable(&hyper_spool, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_hs.time < d_plain + 1.5,
+            "spin-up telemetry inside full wire stays fresh, got {:.1}s stale",
+            now - s_hs.time
+        );
+        // A HYPERSPACE drive winding down still stirs the medium — coupled.
+        let hyper_drop = mk(sim::ship::DriveState::Dropping { from: sim::lane::Regime::Hyperspace, left: 2.0 });
+        let s_hd = latest_observable(&hyper_drop, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_hd.time < d_coupled + 1.5,
+            "a hyperspace drive's SHUTDOWN transmits through its lane, got {:.1}s stale",
+            now - s_hd.time
+        );
+        // A warp drop leaves no wake either, but its full-wire telemetry remains.
+        let warp_drop = mk(sim::ship::DriveState::Dropping { from: sim::lane::Regime::Warp, left: 0.5 });
+        let s_wd = latest_observable(&warp_drop, cc, &field, now, true, &[]).unwrap();
+        assert!(
+            now - s_wd.time < d_plain + 1.5,
+            "warp-drop telemetry inside full wire stays fresh \
+             ({:.1}s stale vs wire {d_plain:.1}s)",
+            now - s_wd.time
+        );
+    }
+
+    /// §comms-v2: leaving the physical ribbon does not create a false blackout
+    /// while the hull is still beside a covered arc. Its next full signal warps
+    /// the tiny lateral gap into the wire, so arrival remains continuous. The
+    /// real fidelity boundary is the along-lane end of wire, then wake earshot.
+    #[test]
+    fn a_lane_exit_inside_wire_keeps_full_telemetry_continuous() {
+        let ctrl =
+            vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
+        let lane = sim::lane::Lane {
+            id: 0,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Test".into(),
+            samples: sim::lane::bake_for_tests(&ctrl),
+            control: ctrl,
+            half_width: 6_000.0,
+            tapers: false,
+        };
+        let net = sim::lane::LaneNetwork::of(vec![lane]);
+        let c = 2_000.0;
+        let cc = sim::Vec2::new(0.0, 0.0);
+        let sites = [
+            sim::lane::CommSite { pos: cc, throw: 40_000.0 },
+            sim::lane::CommSite {
+                pos: sim::Vec2::new(60_000.0, 0.0),
+                throw: 80_000.0,
+            },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
+        // Ride the lane away from cc to x=100k, then veer straight off the
+        // ribbon at warp — the coupled channel ends at the half-width edge.
+        let dt = 1.0 / 30.0;
+        let mut samples: VecDeque<Sample> = VecDeque::new();
+        let mut t = 0.0;
+        let mut x = 60_000.0;
+        while x < 100_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, 0.0),
+                vel: sim::Vec2::new(4_250.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            });
+            t += dt;
+            x += 4_250.0 * dt;
+        }
+        // The SHUTDOWN: 3s of the hyperspace drive winding down — still wound
+        // into the medium, so still transmitting (§coupled). The last thing the
+        // lane carries for this hull is its drive going dark.
+        let mut left = 3.0;
+        while left > 0.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, 0.0),
+                vel: sim::Vec2::new(0.0, 85.0),
+                loud: false,
+                drive: sim::ship::DriveState::Dropping { from: sim::lane::Regime::Hyperspace, left },
+            });
+            t += dt;
+            left -= dt;
+        }
+        let mut y = 0.0;
+        while y < 30_000.0 {
+            samples.push_back(Sample {
+                time: t,
+                pos: sim::Vec2::new(x, y),
+                vel: sim::Vec2::new(0.0, 425.0),
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Warp),
+            });
+            t += dt;
+            y += 425.0 * dt;
+        }
+        // The drive goes dark, but the hull is still beside covered wire.
+        let riding = |s: &Sample| s.drive.stirs_the_lane();
+        let last_in = *samples.iter().filter(|s| riding(s)).last().unwrap();
+        let first_out = samples.iter().find(|s| !riding(s)).unwrap();
+        assert!(
+            matches!(last_in.drive, sim::ship::DriveState::Dropping { .. }),
+            "the last coupled sighting IS the shutdown — the command center \
+             watches the drive wind down, then silence"
+        );
+        let a_in = last_in.time + field.from_coupled(last_in.pos, cc);
+        let a_out = first_out.time + field.between(first_out.pos, cc);
+        assert!(
+            (a_out - a_in).abs() <= SMOOTH_BRACKET_MAX,
+            "a covered arc prevents an invented channel gap (got {:.3}s)",
+            a_out - a_in
+        );
+        let probe = a_out + 0.2;
+        let served = latest_observable(&samples, cc, &field, probe, true, &[])
+            .expect("the continuous full-wire report has arrived");
+        assert!(
+            served.time > last_in.time,
+            "the view must advance onto off-lane telemetry instead of pinning a false dark hold",
+        );
     }
 }
