@@ -1523,6 +1523,17 @@ pub struct EmplacementView {
     pub relay_throw: f64,
 }
 
+/// §comms-v2: one arrived coded-drive wake fix. Deliberately kinematics only:
+/// it proves an own hull is riding hyperspace at this position and heading, but
+/// carries none of the hull's drive detail, health, activity, or flight plan.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WakeFixView {
+    pub pos: Vec2,
+    pub vel: Vec2,
+    /// Sim time when the hull emitted this fix.
+    pub t: f64,
+}
+
 /// A FLEET as a player perceives it: a delayed "ghost" — the position the light
 /// now arriving at their command center shows, plus how stale that is and how
 /// much the object could have moved since (§6). This is the ONLY fleet
@@ -1557,6 +1568,11 @@ pub struct GhostView {
     /// lane-rider's reach fifty-fold, and no circle can be honest where speed
     /// depends on standing on a road.
     pub age: f64,
+    /// Owner-only coded-drive wake, independently delayed from the full
+    /// telemetry sighting. Absent for every rival, even when a dedicated sensor
+    /// hears that rival's raw wake through its existing detection channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wake: Option<WakeFixView>,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the

@@ -34,7 +34,7 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity, GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity, GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView, WakeFixView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -439,6 +439,8 @@ impl PositionHistory {
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
+            /// Owner-only coded-drive kinematics, independently light-gated.
+            wake: Option<Sample>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
             /// detection to that pre-destruction frame so a *post*-destruction
@@ -448,6 +450,15 @@ impl PositionHistory {
             destroyed_detected: bool,
         }
         let mut pre = Vec::new();
+        // §comms-v2: every owned comm structure is also an ear for the coded
+        // carrier in this owner's drives. These are NOT the dedicated sensor
+        // ears above: the latter hear rivals through the existing full contact
+        // path, while this private channel can only populate `wake` on own ships.
+        let comm_ears: Vec<sim::lane::Relay> = delays
+            .sites
+            .iter()
+            .map(|site| delays.lanes.relay_at(site.pos))
+            .collect();
         // Coverage as (center, radius) sources: the command center + own ship
         // ghosts at the global range, plus any standing array bubbles (each with
         // its OWN radius — a developed array outsees a ship).
@@ -466,6 +477,9 @@ impl PositionHistory {
             let Some(sample) = latest_observable(&track.samples, cc, delays, now, own, ears) else {
                 continue; // dark — no light from this object has arrived yet
             };
+            let wake = own
+                .then(|| latest_wake(&track.samples, cc, delays, now, &comm_ears))
+                .flatten();
             if track.owner == viewer {
                 // Each own fleet projects its best bubble — a scout aboard gives
                 // an oversized one (`sensor_mult`: mobile vision).
@@ -502,6 +516,7 @@ impl PositionHistory {
                 passengers: &track.passengers,
                 modules: &track.modules,
                 route: &track.route,
+                wake,
                 destroyed_detected,
             });
         }
@@ -662,6 +677,11 @@ impl PositionHistory {
                 pos: p.sample.pos,
                 vel: p.sample.vel,
                 age,
+                wake: p.wake.map(|wake| WakeFixView {
+                    pos: wake.pos,
+                    vel: wake.vel,
+                    t: wake.time,
+                }),
                 own,
                 route,
                 cargo,
@@ -720,6 +740,18 @@ impl PositionHistory {
         let track = self.tracks.get(&ship_id)?;
         // Serves the ISSUING player's own ship — coupled applies.
         let sample = latest_observable(&track.samples, cc, delays, now, true, &[])?;
+        let comm_ears: Vec<sim::lane::Relay> = delays
+            .sites
+            .iter()
+            .map(|site| delays.lanes.relay_at(site.pos))
+            .collect();
+        if let Some(wake) = latest_wake(&track.samples, cc, delays, now, &comm_ears)
+            && wake.time > sample.time
+        {
+            // A wake is player-known kinematics and proof of coupling, so it is
+            // also the honest picture from which to aim a newly issued order.
+            return Some((wake.pos, wake.vel, true));
+        }
         Some((sample.pos, sample.vel, sample.drive.stirs_the_lane()))
     }
 
@@ -1740,10 +1772,17 @@ fn latest_observable(
         // and read as a bug. The gap now has an honest hold, the dead-gap
         // creep, and the growing SEEN — so the truthful rule is affordable.
         let riding = s.drive.stirs_the_lane();
-        let mut delay = if own && riding {
-            delays.from_coupled(s.pos, cc)
+        let mut delay = if own {
+            if riding {
+                delays.from_coupled(s.pos, cc)
+            } else {
+                delays.between(s.pos, cc)
+            }
         } else {
-            delays.between(s.pos, cc)
+            // Relay wire is private infrastructure, not a collector of ambient
+            // rival telemetry. Without a dedicated sensor, rival light stays on
+            // the warp channel even when it crosses this viewer's lit lane.
+            delays.passive(s.pos, cc)
         };
         // A rival's wake, heard by the viewer's tripwires — the same drive gate.
         if riding && !ears.is_empty() {
@@ -1791,6 +1830,52 @@ fn latest_observable(
                         drive: s.drive,
                     });
                 }
+            }
+            return Some(*s);
+        }
+        newer = Some((s, arrival));
+    }
+    None
+}
+
+/// The freshest ARRIVED owner-coded wake heard by an owned comm structure.
+/// This is intentionally a parallel kinematic channel rather than a synthetic
+/// full sample: callers may use only its position, velocity, and emission time.
+fn latest_wake(
+    samples: &VecDeque<Sample>,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+    ears: &[sim::lane::Relay],
+) -> Option<Sample> {
+    let mut newer: Option<(&Sample, f64)> = None;
+    for s in samples.iter().rev() {
+        if !s.drive.stirs_the_lane() {
+            continue;
+        }
+        let delay = delays.heard_within(
+            s.pos,
+            cc,
+            ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        if !delay.is_finite() {
+            continue;
+        }
+        let arrival = s.time + delay;
+        if arrival <= now {
+            if let Some((n, na)) = newer
+                && na > arrival + 1e-9
+                && na - arrival <= SMOOTH_BRACKET_MAX
+            {
+                let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
+                return Some(Sample {
+                    time: s.time + (n.time - s.time) * frac,
+                    pos: s.pos + (n.pos - s.pos) * frac,
+                    vel: s.vel,
+                    loud: s.loud,
+                    drive: s.drive,
+                });
             }
             return Some(*s);
         }
@@ -1911,7 +1996,7 @@ mod tests {
     /// can no longer arrive ahead of the news of it past a tripwire. Without
     /// the ear, passive light rules and the same rider stays dark.
     #[test]
-    fn a_lane_tripwire_hears_a_rival_rider_that_passive_light_misses() {
+    fn a_rival_wake_still_needs_a_sensor() {
         let ctrl =
             vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
         let lane = sim::lane::Lane {
@@ -1952,6 +2037,8 @@ mod tests {
         let now = t + 10.0;
         let ears = [ear];
         let heard = latest_observable(&samples, cc, &field, now, false, &ears);
+        // A rival has no coded comm-structure channel. Only explicitly passing
+        // the dedicated raw-wake sensor creates this earlier observation.
         let deaf = latest_observable(&samples, cc, &field, now, false, &[]);
         let heard_age = now - heard.expect("the wire hears the rider").time;
         let deaf_age = deaf.map(|s| now - s.time);
@@ -1960,6 +2047,139 @@ mod tests {
             "without the ear the same rider must be dark or far staler \
              ({deaf_age:?} vs heard {heard_age:.1}s)",
         );
+    }
+
+    fn wake_test_line() -> sim::lane::LaneNetwork {
+        let control = vec![Vec2::ZERO, Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
+        sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
+            id: 61,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Carrier Test".into(),
+            samples: sim::lane::bake_for_tests(&control),
+            control,
+            half_width: 2_000.0,
+            tapers: false,
+        }])
+    }
+
+    fn riding_sample(time: f64, x: f64) -> Sample {
+        Sample {
+            time,
+            pos: Vec2::new(x, 0.0),
+            vel: Vec2::new(5_000.0, 0.0),
+            loud: false,
+            drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+        }
+    }
+
+    #[test]
+    fn an_own_wake_is_heard_by_comm_structures_at_lane_speed() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = [net.relay_at(site.pos)];
+        let sample = riding_sample(10.0, 180_000.0);
+        let samples = VecDeque::from([sample]);
+        let expected = field.heard_within(
+            sample.pos,
+            cc,
+            &ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        assert!(expected.is_finite());
+
+        assert!(latest_wake(&samples, cc, &field, sample.time + expected - 1e-6, &ears).is_none());
+        let heard = latest_wake(&samples, cc, &field, sample.time + expected + 1e-6, &ears)
+            .expect("the coded carrier should arrive on the heard() clock");
+        assert_eq!(heard.pos, sample.pos);
+        assert_eq!(heard.vel, sample.vel);
+        assert_eq!(heard.time, sample.time);
+    }
+
+    #[test]
+    fn beyond_earshot_the_wake_goes_silent() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = [net.relay_at(site.pos)];
+        let sample = riding_sample(10.0, 220_001.0);
+        let samples = VecDeque::from([sample]);
+
+        assert!(
+            latest_wake(&samples, cc, &field, 10_000.0, &ears).is_none(),
+            "a comm structure must not hear one su beyond its wake earshot",
+        );
+    }
+
+    #[test]
+    fn a_wake_carries_kinematics_never_telemetry_and_never_rides_a_rival_wire() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = [net.relay_at(site.pos)];
+        let old_full = Sample {
+            time: 0.0,
+            pos: cc,
+            vel: Vec2::ZERO,
+            loud: false,
+            drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Warp),
+        };
+        let wake = riding_sample(10.0, 180_000.0);
+        let wake_delay = field.heard_within(
+            wake.pos,
+            cc,
+            &ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        let full_delay = field.from_coupled(wake.pos, cc);
+        assert!(wake_delay < full_delay, "the fixture needs wake to outrun telemetry");
+        let now = wake.time + wake_delay + 1e-3;
+
+        let viewer = PlayerId(99);
+        let rival = PlayerId(100);
+        let mut own_track = track_from(vec![old_full, wake], viewer, ShipKind::Convoy);
+        own_track.damage_frac = 0.42;
+        let rival_track = track_from(vec![old_full, wake], rival, ShipKind::Convoy);
+        let history = PositionHistory {
+            tracks: HashMap::from([
+                (EntityId(1), own_track),
+                (EntityId(2), rival_track),
+            ]),
+            horizon: 1_000.0,
+            sensor_range: 1_000.0,
+        };
+        let ghosts = history.view_for_with_arrays(
+            viewer,
+            cc,
+            &field,
+            now,
+            &[],
+            &[],
+            &BTreeSet::new(),
+            NodeEffects::default(),
+        );
+        let own = ghosts.iter().find(|ghost| ghost.id == EntityId(1)).unwrap();
+        assert_eq!(own.pos, old_full.pos, "full position stays on the full channel");
+        assert_eq!(own.drive, Some(old_full.drive), "wake cannot update drive telemetry");
+        assert_eq!(own.damage, Some(0.42), "wake cannot synthesize a damage update");
+        let fix = own.wake.expect("the independent wake fix should have arrived");
+        assert_eq!(fix.pos, wake.pos);
+        assert_eq!(fix.vel, wake.vel);
+        assert_eq!(fix.t, wake.time);
+
+        let rival = ghosts.iter().find(|ghost| ghost.id == EntityId(2)).unwrap();
+        assert!(rival.wake.is_none(), "owner comm structures never decode a rival wake");
+        let wire = serde_json::to_value(&ghosts).unwrap();
+        let own_json = wire.as_array().unwrap().iter().find(|g| g["id"] == "1").unwrap();
+        let rival_json = wire.as_array().unwrap().iter().find(|g| g["id"] == "2").unwrap();
+        assert!(own_json.get("wake").is_some(), "own GhostView carries wake on the wire");
+        assert!(rival_json.get("wake").is_none(), "rival GhostView omits wake from the wire");
     }
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
@@ -3904,14 +4124,12 @@ mod lane_smoothness {
 mod channel_seam {
     use super::*;
 
-    /// §coupled: THE DRIVE IS THE TRANSMITTER. An own hull sitting INSIDE a
-    /// ribbon with its hyperspace drive off reports by plain warp light — mere
-    /// presence in the medium transmits nothing. A covered gateway-and-wire
-    /// corridor can carry only the engaged hull's transmission.
-    /// The same hull riding (drive engaged) at the same spot is coupled and
-    /// near-fresh. One position, two drive states, opposite freshness.
+    /// §comms-v2: FULL WIRE IS A PLACE, not a hull capability. Once a covered
+    /// arc reaches an own hull, any of its signals may enter there whether its
+    /// drive is riding, spinning, or dark. Drive state matters again outside
+    /// wire, where only an engaged hull leaves the lighter wake channel.
     #[test]
-    fn a_hull_in_a_ribbon_couples_only_while_its_drive_is_on() {
+    fn a_hull_inside_covered_arc_has_full_comms_regardless_of_drive() {
         let ctrl =
             vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
         let lane = sim::lane::Lane {
@@ -3945,14 +4163,14 @@ mod channel_seam {
             samples
         };
         let now = 60.0;
-        // The two channels' own delays at this spot — the coupled ride vs the
-        // plain-light baseline (`between` runs at c x WARP_FACTOR).
+        // Every ordinary signal can board at this exact covered point. Adding a
+        // zero-throw coupled endpoint therefore changes nothing here.
         let d_plain = field.between(pos, cc);
         let d_coupled = field.from_coupled(pos, cc);
         assert!(
-            d_plain > d_coupled * 3.0,
-            "premise: the lane is much faster than plain light here \
-             (plain {d_plain:.1}s vs coupled {d_coupled:.1}s)"
+            (d_plain - d_coupled).abs() < 1e-9,
+            "covered arc is full comms for either drive state \
+             ({d_plain:.1}s vs {d_coupled:.1}s)"
         );
         // Riding: coupled — the report rode the lane, near-fresh.
         let riding = mk(sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace));
@@ -3962,26 +4180,20 @@ mod channel_seam {
             "a riding hull's own report is lane-fresh, got {:.1}s stale",
             now - s_ride.time
         );
-        // Drive off (parked in the ribbon): plain light only.
+        // Drive off: still full wire, because the hull remains at a covered arc.
         let parked = mk(sim::ship::DriveState::Thrusters);
         let s_park = latest_observable(&parked, cc, &field, now, true, &[]).unwrap();
         assert!(
-            now - s_park.time > d_plain - 1.5,
-            "a parked hull transmits nothing through the lane it sits in — \
-             plain light only ({d_plain:.1}s), but it was served {:.1}s stale",
+            now - s_park.time < d_plain + 1.5,
+            "a parked hull inside full wire stays fresh ({d_plain:.1}s), got {:.1}s stale",
             now - s_park.time
         );
-        // SPIN-UP IS THE APPROACH, NOT THE RIDE: a hull lighting its hyperspace
-        // drive has reached the lane but has not joined the flow, so the lane
-        // carries nothing for it yet — its first word is the moment the drive
-        // catches. (Not symmetric with the wind-down below, deliberately: there
-        // the drive HAS bitten and is still wound in.)
+        // Spin-up is not a wake, but full wire still carries its telemetry.
         let hyper_spool = mk(sim::ship::DriveState::Spooling { to: sim::lane::Regime::Hyperspace, left: 2.0 });
         let s_hs = latest_observable(&hyper_spool, cc, &field, now, true, &[]).unwrap();
         assert!(
-            now - s_hs.time > d_plain - 1.5,
-            "a hyperspace drive still SPINNING UP has not joined the lane — \
-             plain light only ({d_plain:.1}s), but it was served {:.1}s stale",
+            now - s_hs.time < d_plain + 1.5,
+            "spin-up telemetry inside full wire stays fresh, got {:.1}s stale",
             now - s_hs.time
         );
         // A HYPERSPACE drive winding down still stirs the medium — coupled.
@@ -3992,26 +4204,23 @@ mod channel_seam {
             "a hyperspace drive's SHUTDOWN transmits through its lane, got {:.1}s stale",
             now - s_hd.time
         );
-        // A WARP drive dropping in the same ribbon touches no lane — plain light.
+        // A warp drop leaves no wake either, but its full-wire telemetry remains.
         let warp_drop = mk(sim::ship::DriveState::Dropping { from: sim::lane::Regime::Warp, left: 0.5 });
         let s_wd = latest_observable(&warp_drop, cc, &field, now, true, &[]).unwrap();
         assert!(
-            now - s_wd.time > d_plain - 1.5,
-            "a warp drop stirs no lane, however deep in the ribbon it happens \
-             ({:.1}s stale vs plain {d_plain:.1}s)",
+            now - s_wd.time < d_plain + 1.5,
+            "warp-drop telemetry inside full wire stays fresh \
+             ({:.1}s stale vs wire {d_plain:.1}s)",
             now - s_wd.time
         );
     }
 
-    /// §smooth-light: ACROSS A CHANNEL SEAM, HOLD — don't invent. A hull
-    /// leaving its lane ends the coupled report; the first off-ribbon sample
-    /// arrives by plain warp light, tens of seconds later. In that window the
-    /// viewer receives NOTHING, so the served picture must be the last coupled
-    /// sample exactly — pinned and aging — not a lerp toward data whose light
-    /// has not arrived. (The interpolation bracket is capped at
-    /// SMOOTH_BRACKET_MAX; a seam is far wider.)
+    /// §comms-v2: leaving the physical ribbon does not create a false blackout
+    /// while the hull is still beside a covered arc. Its next full signal warps
+    /// the tiny lateral gap into the wire, so arrival remains continuous. The
+    /// real fidelity boundary is the along-lane end of wire, then wake earshot.
     #[test]
-    fn a_lane_exit_serves_a_pinned_hold_not_an_invented_crawl() {
+    fn a_lane_exit_inside_wire_keeps_full_telemetry_continuous() {
         let ctrl =
             vec![sim::Vec2::new(0.0, 0.0), sim::Vec2::new(150_000.0, 0.0), sim::Vec2::new(300_000.0, 0.0)];
         let lane = sim::lane::Lane {
@@ -4078,10 +4287,7 @@ mod channel_seam {
             t += dt;
             y += 425.0 * dt;
         }
-        // The seam: THE DRIVE GOING FULLY DARK (§coupled — the drive is the
-        // transmitter, and its SHUTDOWN is the last thing it transmits). The
-        // final stirring sample is the end of the drop; everything after
-        // travels by plain light — their arrivals bracket the dark window.
+        // The drive goes dark, but the hull is still beside covered wire.
         let riding = |s: &Sample| s.drive.stirs_the_lane();
         let last_in = *samples.iter().filter(|s| riding(s)).last().unwrap();
         let first_out = samples.iter().find(|s| !riding(s)).unwrap();
@@ -4093,22 +4299,16 @@ mod channel_seam {
         let a_in = last_in.time + field.from_coupled(last_in.pos, cc);
         let a_out = first_out.time + field.between(first_out.pos, cc);
         assert!(
-            a_out - a_in > 5.0,
-            "premise: leaving the lane opens a wide arrival gap (got {:.1}s)",
+            (a_out - a_in).abs() <= SMOOTH_BRACKET_MAX,
+            "a covered arc prevents an invented channel gap (got {:.3}s)",
             a_out - a_in
         );
-        // Throughout the dark window, the served sample is the pinned one.
-        let mut probe = a_in + 0.2;
-        while probe < a_out - 0.2 {
-            let s = latest_observable(&samples, cc, &field, probe, true, &[])
-                .expect("the last coupled light has arrived");
-            assert!(
-                s.pos.distance(last_in.pos) < 1e-6,
-                "at now={probe:.1} the ghost must HOLD the last coupled sighting \
-                 (no light is arriving), but drifted {:.1} su from it",
-                s.pos.distance(last_in.pos)
-            );
-            probe += 1.0;
-        }
+        let probe = a_out + 0.2;
+        let served = latest_observable(&samples, cc, &field, probe, true, &[])
+            .expect("the continuous full-wire report has arrived");
+        assert!(
+            served.time > last_in.time,
+            "the view must advance onto off-lane telemetry instead of pinning a false dark hold",
+        );
     }
 }

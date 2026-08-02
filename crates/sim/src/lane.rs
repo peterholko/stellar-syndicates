@@ -1131,6 +1131,28 @@ impl LaneNetwork {
         c: f64,
         sites: &[CommSite],
     ) -> f64 {
+        self.signal_heard_within(
+            p,
+            ears,
+            crate::emplace::LANE_LISTEN_RANGE,
+            b,
+            c,
+            sites,
+        )
+    }
+
+    /// The same wake path with an explicit earshot. Communications structures
+    /// and dedicated wake sensors currently share a range, but they are separate
+    /// balance knobs and, more importantly, separate information channels.
+    pub fn signal_heard_within(
+        &self,
+        p: Vec2,
+        ears: &[Relay],
+        earshot: f64,
+        b: Vec2,
+        c: f64,
+        sites: &[CommSite],
+    ) -> f64 {
         let lane_speed = c * self.signal_factor_on_lane();
         let mut best = f64::INFINITY;
         for l in &self.lanes {
@@ -1144,7 +1166,7 @@ impl LaneNetwork {
                         continue;
                     }
                     let along = (on.s - s_ear).abs();
-                    if along > crate::emplace::LANE_LISTEN_RANGE {
+                    if along > earshot {
                         continue; // a wake attenuates — out of earshot
                     }
                     let t =
@@ -1846,6 +1868,13 @@ impl DelayField<'_> {
         self.lanes.signal(a, b, self.c, self.sites).0
     }
 
+    /// Passive light that belongs to no relay owner. A player's infrastructure
+    /// carries their signals, not ambient rival telemetry; outside a dedicated
+    /// wake sensor a rival remains visible only by ordinary warp-speed light.
+    pub fn passive(&self, a: Vec2, b: Vec2) -> f64 {
+        a.distance(b) / (self.c * WARP_FACTOR)
+    }
+
     /// The same journey, with the HOPS it takes — what the order graphic traces
     /// so the line on the map is the path the signal actually flew.
     pub fn path(&self, a: Vec2, b: Vec2) -> Vec<Hop> {
@@ -1877,6 +1906,11 @@ impl DelayField<'_> {
     /// `between`. See `LaneNetwork::signal_heard`.
     pub fn heard(&self, p: Vec2, b: Vec2, ears: &[Relay]) -> f64 {
         self.lanes.signal_heard(p, ears, b, self.c, self.sites)
+    }
+
+    /// A wake-hearing path with a channel-specific earshot.
+    pub fn heard_within(&self, p: Vec2, b: Vec2, ears: &[Relay], earshot: f64) -> f64 {
+        self.lanes.signal_heard_within(p, ears, earshot, b, self.c, self.sites)
     }
 }
 
