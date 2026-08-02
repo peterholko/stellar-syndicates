@@ -2,8 +2,8 @@
 
 import { Net } from "./net";
 import { Renderer } from "./render";
-import { initialState, type LinkStatus, type PendingIntent, type ViewState } from "./state";
-import { countClassLabel, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { GHOST_STALE_AGE_S, ghostPositionChannel, initialState, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -232,6 +232,13 @@ function morphElement(target: Element, source: Element): void {
 
 // --- Renderer --------------------------------------------------------------
 const renderer = new Renderer();
+renderer.onCommsReacquired = (ghost) => {
+  addTransientReport(
+    "⌁",
+    "good",
+    `<b>COMMS RE-ESTABLISHED</b> — ${esc(shipKindLabel(ghost.kind))}`,
+  );
+};
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
@@ -246,6 +253,13 @@ async function startRenderer(): Promise<void> {
   const frame = () => {
     updateSignals();
     renderer.update(state);
+    const scrubEndpoint = renderer.consumeSystemScrubEndpoint();
+    if (scrubEndpoint?.type === "system") {
+      const sys = state.galaxy?.systems.find((s) => s.id === scrubEndpoint.systemId);
+      if (sys) showSystemUi(sys);
+    } else if (scrubEndpoint?.type === "galaxy") {
+      hideSystemUi();
+    }
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -617,11 +631,9 @@ function buildShipPanel(): void {
         net?.send({ type: "BuildEmplacement", builder: state.selectedShipId, emplacement: k });
         readout().innerHTML =
           `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).` +
-            (k === "hyperspace_buoy"
-            ? ` <span class="dim">It is an entry/exit for off-lane signals; overlapping relays carry its hyperspace wire onward.</span>`
-            : k === "hyperspace_repeater"
-              ? ` <span class="dim">It extends overlapping wire, but signals cannot enter or leave hyperspace here.</span>`
-            : "");
+            (k === "hyperspace_buoy" || k === "hyperspace_repeater"
+              ? ` <span class="dim">Every comm structure lights nearby lane wire for signals to enter, ride, and leave.</span>`
+              : "");
         updateShipPanel();
       }
     } else if (act === "split" && state.selectedShipId && net) {
@@ -952,7 +964,7 @@ function confirmPendingIntent(): void {
   clearPendingIntent(true);
 }
 
-// --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED ----------------
+// --- §order-lifecycle: IN TRANSIT → RESPONSE EXPECTED → CONFIRMED ------------
 // Below this, phases collapse to ~instant (a fleet near the command center) —
 // suppress the noisy sub-second states.
 const LIFECYCLE_MIN_S = 1.5;
@@ -991,6 +1003,19 @@ const fmtCountdown = (secs: number): string => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
+// Shared transient report path: battle alerts, delayed results, and comms
+// reacquisition all use the same capped/fading HUD stream.
+function addTransientReport(iconText: string, cls: "good" | "bad", html: string): HTMLDivElement {
+  const log = $("reports-log");
+  const el = document.createElement("div");
+  el.className = `report ${cls}`;
+  el.innerHTML = `<span class="ic">${iconText}</span> ${html}`;
+  log.prepend(el);
+  while (log.children.length > 6) log.removeChild(log.lastChild!);
+  setTimeout(() => el.classList.add("fade"), 12000);
+  return el;
+}
+
 // §battles-take-time: notify ONCE when a battle first becomes visible (light-
 // gated by the server). Keyed by a coarse location so it re-fires only for a
 // genuinely new battle after an old one ends.
@@ -1001,13 +1026,11 @@ function notifyNewBattles(battles: import("./protocol").BattleView[]): void {
     const key = `${Math.round(b.pos.x / 200)},${Math.round(b.pos.y / 200)}`;
     nowKeys.add(key);
     if (!seenBattles.has(key)) {
-      const log = $("reports-log");
-      const el = document.createElement("div");
-      el.className = "report bad";
-      el.innerHTML = `<span class="ic">⚔</span> <b>Battle raging</b> near (${b.pos.x.toFixed(0)}, ${b.pos.y.toFixed(0)}) <span class="dim">— as of ${fmtCountdown(b.age)} ago${b.own ? " · your fleet is engaged" : ""}</span>`;
-      log.prepend(el);
-      while (log.children.length > 6) log.removeChild(log.lastChild!);
-      setTimeout(() => el.classList.add("fade"), 12000);
+      addTransientReport(
+        "⚔",
+        "bad",
+        `<b>Battle raging</b> near (${b.pos.x.toFixed(0)}, ${b.pos.y.toFixed(0)}) <span class="dim">— as of ${fmtCountdown(b.age)} ago${b.own ? " · your fleet is engaged" : ""}</span>`,
+      );
     }
   }
   seenBattles.clear();
@@ -1046,18 +1069,19 @@ function ordersZone(g: GhostView): string {
   if (!queue.length) return "";
   const now = liveSimTime();
   const rows = queue.map((p) => {
-    const outbound = now < p.delivered_at;
+    const outbound = now < p.arrives_at;
     const selected = state.selectedOrderId === p.id;
     const phase = outbound ? "◈" : "◔";
     const eta = outbound
-      ? `signal outbound · arrives ${orderEta(p.delivered_at - now)}`
-      : `response in transit · response ${orderEta(p.echo_at - now)}`;
+      ? `signal outbound · estimated arrival ${orderEta(p.arrives_at - now)}`
+      : `response expected · estimate ${orderEta(p.response_at - now)}`;
+    const comms = p.beyond_comms ? " · beyond comms · light speed" : "";
     const tip = outbound
-      ? `SIGNAL OUTBOUND — this ${p.kind} order reaches the fleet in ${orderEta(p.delivered_at - now)}.`
-      : `RESPONSE IN TRANSIT — the fleet received this ${p.kind} order; its compliance light returns in ${orderEta(p.echo_at - now)}.`;
+      ? `SIGNAL OUTBOUND — from the command center's served picture, this ${p.kind} order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
+      : `RESPONSE EXPECTED — estimated compliance light in ${orderEta(p.response_at - now)}.`;
     return `<button class="sp-order${selected ? " is-selected" : ""}" data-act="select-order" data-order-id="${p.id}" aria-pressed="${selected}" title="${esc(tip)}">` +
       `<span class="sp-order__phase" aria-hidden="true">${phase}</span>` +
-      `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>${eta}</small></span></button>`;
+      `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>${eta}${comms}</small></span></button>`;
   }).join("");
   return shipZone("Orders", rows, "sp-zone--orders");
 }
@@ -1100,13 +1124,19 @@ function supplyLine(g: GhostView): string {
 /// fleet is real intel. An AGGREGATE: the per-hull roster never leaves the sim.
 function damageLine(g: GhostView): string {
   const d = g.damage ?? 0;
-  if (d <= 0.001) return "";
+  const wake = g.own && ghostPositionChannel(g, state.simTime).fidelity === "wake";
+  if (d <= 0.001) {
+    return wake
+      ? `<div class="sp-line"><span class="dim">hull <b>100%</b> — pristine</span> <small class="dim">full telemetry · ${g.age.toFixed(1)}s old</small></div>`
+      : "";
+  }
   const pct = Math.round(d * 100);
   const tone = d > 0.5 ? "negative" : d > 0.2 ? "warn" : "dim";
   const word = d > 0.5 ? "crippled" : d > 0.2 ? "mauled" : "scratched";
   const who = g.own ? "Dock at an Ordnance Foundry to repair." : "A wounded formation is the best target on the map.";
+  const age = wake ? ` <small class="dim">full telemetry · ${g.age.toFixed(1)}s old</small>` : "";
   return `<div class="sp-line"><span class="${tone}" title="${esc(pct + "% of this formation's hull is gone. Damage persists between battles until a foundry services it. " + who)}">` +
-    `hull <b>${100 - pct}%</b> — ${word}</span></div>`;
+    `hull <b>${100 - pct}%</b> — ${word}</span>${age}</div>`;
 }
 
 // full composition for own fleets and rivals inside sensor coverage; a bucket-only
@@ -1256,7 +1286,13 @@ function regimeCell(g: GhostView): string {
 // hyperspace from the moment its hyperdrive CATCHES until it is fully out —
 // so "Hyperspace" here is exactly the span in which the lane itself carries
 // the ship's reports home (spin-up is still the approach, in realspace).
-function domainCell(g: GhostView): string {
+function domainCell(g: GhostView, wake = false): string {
+  if (wake) {
+    return stat(
+      "Domain",
+      `<span class="tone-up" title="A fresh coded-drive wake proves this hull is coupled to the lane medium.">Hyperspace</span>`,
+    );
+  }
   const d = g.drive ?? "thrusters";
   const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
   const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
@@ -1516,7 +1552,11 @@ function updateShipPanel(): void {
       : "Authority Enforcement"
     : shipKindLabel(g.kind);
   const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
-  const stale = g.age >= 8;
+  const channel = own
+    ? ghostPositionChannel(g, state.simTime)
+    : { fidelity: "full" as const, pos: g.pos, vel: g.vel, t: state.simTime - g.age, age: g.age };
+  const stale = channel.fidelity === "dark";
+  const wake = channel.fidelity === "wake";
   const roleLore = own ? shipRoleLore(g) : "";
 
   const head =
@@ -1526,7 +1566,7 @@ function updateShipPanel(): void {
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
   // OLD this sighting is).
-  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${g.age.toFixed(1)}s ago</dd></div>`;
+  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${wake ? "wake · " : ""}${channel.age.toFixed(1)}s ago</dd></div>`;
   // POSITION = the LAST KNOWN COORDINATES: where the light that just arrived
   // puts this fleet. How far it may have flown SINCE is not restated as a
   // number — that was the deleted uncertainty radius, which multiplied age by
@@ -1534,13 +1574,23 @@ function updateShipPanel(): void {
   // Drive (beside) are the honest pair: how old the picture is, and what speed
   // the hull was making when it left.
   const posTip =
-    g.age < 1
-      ? "Where this sighting puts it — near enough to your command center to be effectively live."
-      : "Where it was when this light left it. Read it with Seen and Drive: it has flown on since, at whatever speed its drives were making.";
+    wake
+      ? "Where the latest coded-drive wake puts it. This is arrived kinematics only; drive detail, damage, activity, and plan remain on the older full-telemetry sighting."
+      : channel.age < 1
+        ? "Where this sighting puts it — near enough to your command center to be effectively live."
+        : "Where it was when this light left it. Read it with Seen and Drive: it has flown on since, at whatever speed its drives were making.";
   const posCell =
     `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
-    `<dd>${fmt(g.pos.x)} · ${fmt(g.pos.y)}</dd></div>`;
-  const strip = statStrip([ageCell, regimeCell(g), domainCell(g), headingCell(g), posCell], "sp-status-strip");
+    `<dd>${fmt(channel.pos.x)} · ${fmt(channel.pos.y)}</dd></div>`;
+  const positionGhost: GhostView = { ...g, pos: channel.pos, vel: channel.vel };
+  const fullDrive = regimeCell(g);
+  const driveCell = wake
+    ? fullDrive.replace("</dd>", ` <small class="dim">full · ${g.age.toFixed(1)}s old</small></dd>`)
+    : fullDrive;
+  const strip = statStrip(
+    [ageCell, driveCell, domainCell(g, wake), headingCell(positionGhost), posCell],
+    "sp-status-strip",
+  );
 
   // Preserve an in-progress dockside load selection/qty across the rebuild (the
   // fresh <input> would otherwise snap back to its default 50, the fresh <select>
@@ -1951,8 +2001,7 @@ function showBreadcrumb(name: string): void {
   $("bc-system").textContent = name;
   $("breadcrumb").classList.add("is-open");
 }
-function enterSystem(sys: SystemInfo): void {
-  renderer.enterSystemView(sys, state.systems.find((s) => s.id === sys.id)?.bodies ?? []);
+function showSystemUi(sys: SystemInfo): void {
   state.selectedSystemId = sys.id; // keep the galaxy selection in sync (rail shows it)
   showBreadcrumb(sys.name);
   closePlanetPanel();
@@ -1968,13 +2017,20 @@ function enterSystem(sys: SystemInfo): void {
     : `<b>${esc(sys.name)}</b> — schematic system view. <span class="dim">Click a planet for details · Esc / Back / zoom out returns to the galaxy. ` +
       `Geography is public — every corporation sees these worlds; a rival's development is not.</span>`;
 }
-function exitSystem(): void {
-  if (renderer.viewMode.type !== "system") return;
-  renderer.exitSystemView();
+function hideSystemUi(): void {
   $("breadcrumb").classList.remove("is-open");
   closePlanetPanel();
   closeSysviewManage();
   renderer.setSystemDynamic([], [], true);
+}
+function enterSystem(sys: SystemInfo): void {
+  renderer.enterSystemView(sys, state.systems.find((s) => s.id === sys.id)?.bodies ?? []);
+  showSystemUi(sys);
+}
+function exitSystem(): void {
+  if (renderer.viewMode.type !== "system") return;
+  renderer.exitSystemView();
+  hideSystemUi();
 }
 
 // --- §management-home: the System View is where an OWNED system is RUN --------
@@ -2677,9 +2733,9 @@ function updateOngoingBattlePanel(): void {
     ? `<div class="wd-row">` + ownFleets.map((g) => {
         const pend = latestPendingOrder(g.id);
         let echo = "";
-        if (pend && pend.echo_at - pend.delivered_at >= LIFECYCLE_MIN_S) {
-          const inTransit = now < pend.delivered_at;
-          echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.delivered_at : pend.echo_at) - now)}</span>`;
+        if (pend && pend.response_at - pend.arrives_at >= LIFECYCLE_MIN_S) {
+          const inTransit = now < pend.arrives_at;
+          echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.arrives_at : pend.response_at) - now)}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
           `↩ ${svgIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
@@ -3678,7 +3734,10 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     for (const g of state.ghosts) {
       if (!g.own) continue;
       if (engagedIds.has(g.id)) continue;
-      const s = renderer.worldToScreen(g.pos);
+      const channel = ghostPositionChannel(g, state.simTime);
+      const fullT = state.simTime - g.age;
+      if (g.docked && channel.t <= fullT + 1e-6) continue;
+      const s = renderer.worldToScreen(channel.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the MARKER's current on-screen size (formation sprite
       // included), so it grows with the sprite in the deep-zoom native-size band;
@@ -3948,9 +4007,9 @@ function emplacementLabel(kind: string): string {
 // when clicked months after it was placed.
 const EMPLACEMENT_BLURB: Record<string, string> = {
   hyperspace_buoy:
-    "A gateway between open-space warp signals and hyperspace communications. Its 40,000 su throw joins overlapping relays into a wire.",
+    "The long-throw comm relay. Its 80,000 su coverage lights lane wire for signals to enter, ride, and leave.",
   hyperspace_repeater:
-    "A relay-only span of hyperspace wire with an 80,000 su throw. It extends an overlapping chain, but signals never enter or leave hyperspace here.",
+    "The short-throw comm relay. Its 40,000 su coverage has the same full signal function as a buoy, at lower cost.",
   deep_space_sensor:
     "A stationary picket. Watches its bubble like a ship's sensors and reports home at warp speed.",
   hyperspace_sensor:
@@ -3983,12 +4042,8 @@ function updateEmplacementPanel(): void {
   const body =
     `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
     (mine
-      ? // The authoritative router owns exact corridor membership; the panel
-        // states only the stable gateway/wire role of the selected structure.
-        e.kind === "hyperspace_buoy"
-        ? `<div class="sp-line dim">Off-lane orders and reports enter or leave hyperspace only at an owned buoy. A ship actively riding a lane is its own gateway.</div>`
-        : e.kind === "hyperspace_repeater"
-          ? `<div class="sp-line dim">Repeaters are wire only: overlap their coverage with gateways or other repeaters. Nothing boards or leaves at one.</div>`
+      ? (e.kind === "hyperspace_buoy" || e.kind === "hyperspace_repeater")
+        ? `<div class="sp-line dim">Comm structures light up the lanes around them. They also hear the coded carrier of your own hyperspace drives farther along that lane; dedicated sensors hear everyone.</div>`
         : ""
       : // A rival's: say how to be rid of it. The verb lives on the map, in the
         // same grammar as raiding, so the panel teaches rather than adds a button.
@@ -4003,8 +4058,8 @@ function updateEmplacementPanel(): void {
 // says what the current spot allows, so a refusal is never a surprise.
 function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
-    ["hyperspace_buoy", "Hyperspace Buoy", "A 40,000 su gateway where off-lane signals enter or leave hyperspace. Overlap it with repeaters or gateways to carry the wire onward. Must stand inside a lane."],
-    ["hyperspace_repeater", "Hyperspace Repeater", "An 80,000 su relay-only span of wire. Signals ride through it but never enter or leave hyperspace there. Must stand inside a lane."],
+    ["hyperspace_buoy", "Hyperspace Buoy", "The expensive 80,000 su comm relay. Signals enter, ride, and leave anywhere in its covered lane arc. Must stand inside a lane."],
+    ["hyperspace_repeater", "Hyperspace Repeater", "The cheap 40,000 su comm relay. Same full signal function as a buoy, with shorter reach. Must stand inside a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
     ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
@@ -4068,7 +4123,9 @@ function installInteraction(): void {
       // Pan only the galaxy camera. The System View has a fixed fit camera (no
       // intra-system pan/zoom — zoom-out is an EXIT gesture), so a drag there just
       // suppresses the click.
-      if (renderer.viewMode.type === "galaxy") { renderer.panBy(e.clientX - lastX, e.clientY - lastY); }
+      if (renderer.viewMode.type === "galaxy" && !renderer.isSystemScrubbing()) {
+        renderer.panBy(e.clientX - lastX, e.clientY - lastY);
+      }
       lastX = e.clientX; lastY = e.clientY;
     }
   });
@@ -4078,7 +4135,7 @@ function installInteraction(): void {
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
     // A tap (no pan) runs the click action for the ACTIVE scene; a pan suppresses it.
     // Shift+tap on the galaxy map is the ATTACK modifier (destroy vs raid).
-    if (!panning) {
+    if (!panning && !renderer.isSystemScrubbing()) {
       if (renderer.viewMode.type === "system") handleSystemClick(e.clientX, e.clientY);
       else if (renderer.viewMode.type === "galaxy") handleMapClick(e.clientX, e.clientY, e.shiftKey);
     }
@@ -4089,48 +4146,59 @@ function installInteraction(): void {
 
   // Mouse wheel zooms toward the cursor. preventDefault stops the page scrolling;
   // over a panel the wheel hits the panel (not the canvas), so panels still scroll.
-  // Wheel also drives the semantic-zoom LOD change: zooming IN past the galaxy's
-  // max zoom (with a system under the cursor) ENTERS the System View; zooming OUT
-  // in the System View EXITS back to the galaxy. Both are explicit LOD changes
-  // (a crossfade), not a literal zoom through space.
-  let sysZoomOutAccum = 0;
+  // Past max zoom, the wheel directly scrubs the existing semantic transition.
+  // Its accumulated target advances in deliberate chunks while the renderer
+  // smooths the visible progress, giving mouse wheels and trackpads one gesture.
+  const SYSTEM_SCRUB_STEP = 0.18;
   canvas.addEventListener("wheel", (e: WheelEvent) => {
     e.preventDefault();
     if (renderer.viewMode.type === "battle") return; // the overlay owns its zoom-out gesture
+
+    if (renderer.isSystemScrubbing()) {
+      renderer.adjustSystemScrub(e.deltaY < 0 ? SYSTEM_SCRUB_STEP : -SYSTEM_SCRUB_STEP);
+      return;
+    }
+
     if (renderer.viewMode.type === "system") {
-      if (e.deltaY > 0) { // scrolling out
-        sysZoomOutAccum += e.deltaY;
-        if (sysZoomOutAccum > 60) { exitSystem(); sysZoomOutAccum = 0; }
-      } else {
-        sysZoomOutAccum = 0; // scrolling in — reset (no deeper level to zoom into)
+      if (e.deltaY > 0) {
+        const mode = renderer.viewMode;
+        const sys = mode.type === "system" ? state.galaxy?.systems.find((s) => s.id === mode.systemId) : undefined;
+        if (sys && renderer.beginSystemScrubOut(sys)) renderer.adjustSystemScrub(-SYSTEM_SCRUB_STEP);
       }
       return;
     }
-    // Galaxy mode: if already at max zoom and the user keeps zooming IN, dive into
-    // the system under the cursor (or the selected one).
+
+    // Galaxy mode: battle keeps its old semantic threshold. At the system max,
+    // only a star actually under the zoom anchor can begin the scrubbed handoff.
     const battleHit = renderer.battlePick(e.clientX, e.clientY);
     const wasBattleZoom = renderer.atBattleZoomThreshold();
     const wasMax = renderer.atMaxZoom();
-    renderer.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0016));
     if (e.deltaY < 0 && battleHit !== null && wasBattleZoom) {
       enterBattleViewer(battleHit);
     } else if (e.deltaY < 0 && wasMax) {
-      const sys = systemUnderCursor(e.clientX, e.clientY)
-        ?? (state.selectedSystemId ? state.galaxy?.systems.find((s) => s.id === state.selectedSystemId) ?? null : null);
-      if (sys) enterSystem(sys);
+      const sys = systemUnderCursor(e.clientX, e.clientY);
+      if (sys && renderer.beginSystemScrubIn(sys, state.systems.find((s) => s.id === sys.id)?.bodies ?? [])) {
+        renderer.adjustSystemScrub(SYSTEM_SCRUB_STEP);
+      }
+    } else {
+      renderer.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0016));
     }
   }, { passive: false });
 
   // Double-click a star system → enter its System View (the primary explicit
   // enter gesture; single-click still just selects it, see handleMapClick).
   canvas.addEventListener("dblclick", (e: MouseEvent) => {
-    if (renderer.viewMode.type !== "galaxy") return;
+    if (renderer.viewMode.type !== "galaxy" || renderer.isSystemScrubbing()) return;
     const sys = systemUnderCursor(e.clientX, e.clientY, 16);
     if (sys) enterSystem(sys);
   });
 
   // Breadcrumb: GALAXY / Back both return from whichever semantic level is open.
-  const exitSemantic = () => renderer.viewMode.type === "battle" ? closeBattleViewer() : exitSystem();
+  const exitSemantic = () => {
+    if (renderer.isSystemScrubbing()) renderer.cancelSystemScrub();
+    else if (renderer.viewMode.type === "battle") closeBattleViewer();
+    else exitSystem();
+  };
   $("bc-galaxy").addEventListener("click", exitSemantic);
   $("bc-back").addEventListener("click", exitSemantic);
 
@@ -4177,6 +4245,8 @@ function installInteraction(): void {
       // also closing the selection/panels beneath it.
       if (state.pendingIntent) {
         clearPendingIntent();
+      } else if (renderer.isSystemScrubbing()) {
+        renderer.cancelSystemScrub();
       // §battle-records: the replay overlay is topmost — Escape closes it first.
       } else if ($("battle-viewer").classList.contains("is-open")) {
         closeBattleViewer();
@@ -5292,13 +5362,69 @@ function ownedSystemsRail(): string {
   }).join("") + `</div>`;
 }
 
+/// Own fleets the player's SERVED picture places at this system. Deliberately
+/// never corrected from server truth or client projection: a departed fleet
+/// remains listed until its departure light reaches the command center.
+function dockedAtSystem(g: GhostView, systemId: string): boolean {
+  // DockSite currently reaches the client through Display ("E29") while
+  // SystemInfo uses the EntityId wire form ("29"). Keep that transport quirk at
+  // this seam so every system-facing client view still compares one identity.
+  return g.docked === systemId || g.docked === `E${systemId}`;
+}
+
+function systemFleetsAt(sys: SystemInfo): GhostView[] {
+  return state.ghosts
+    .filter((g) => g.own && (
+      dockedAtSystem(g, sys.id)
+      || (g.docked == null && Math.hypot(g.pos.x - sys.pos.x, g.pos.y - sys.pos.y) <= HYPERLIMIT_SU)
+    ))
+    .sort((a, b) => {
+      const docked = Number(dockedAtSystem(b, sys.id)) - Number(dockedAtSystem(a, sys.id));
+      if (docked !== 0) return docked;
+      return shipKindLabel(a.kind).localeCompare(shipKindLabel(b.kind)) || a.id.localeCompare(b.id);
+    });
+}
+
+function systemFleetsSection(sys: SystemInfo, fleets: GhostView[]): string {
+  if (fleets.length === 0) return "";
+  const rows = fleets.map((g) => {
+    const exact = fleetExactCount(g);
+    const count = exact === null
+      ? `est. ${countClassLabel(g.count_class)} ships`
+      : `${exact} ship${exact === 1 ? "" : "s"}`;
+    const composition = (g.composition ?? [])
+      .filter((c) => c.count > 0)
+      .map((c) => `${c.count}× ${shipKindLabel(c.kind)}`)
+      .join(" · ");
+    const summary = composition ? `${count} · ${composition}` : count;
+    const speed = Math.hypot(g.vel.x, g.vel.y);
+    const status = dockedAtSystem(g, sys.id) ? "docked" : speed > 1 ? "under way" : "holding";
+    const tone = status === "docked" ? "accent" : status === "holding" ? "positive" : "neutral";
+    const stale = g.age >= GHOST_STALE_AGE_S
+      ? `<span class="sysfleet__seen is-stale">Seen ${g.age.toFixed(1)}s ago</span>`
+      : "";
+    const flagship = g.kind === "titan" ? state.syndicate?.flagship_name?.trim() : null;
+    const name = flagship || `${shipKindLabel(g.kind)} fleet`;
+    return `<button class="sysfleet__row" data-act="select-fleet" data-fleet="${esc(g.id)}" title="Select ${esc(name)}">` +
+      `<span class="sysfleet__main"><b class="sysfleet__name">${esc(name)}</b>` +
+      `<span class="sysfleet__summary">${esc(summary)}</span></span>` +
+      `<span class="sysfleet__meta">${badge(tone, status)}${stale}</span></button>`;
+  }).join("");
+  return `<section class="sysfleet"><div class="deps-head">Fleets</div>${rows}</section>`;
+}
+
 let systemTabBuilt = false;
 function buildSystemTab(): void {
   if (systemTabBuilt) return;
   systemTabBuilt = true;
   $("tab-system").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-action],[data-sys],[data-build],[data-crew]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-action],[data-act],[data-sys],[data-build],[data-crew]") as HTMLElement | null;
     if (!el) return;
+    if (el.dataset.act === "select-fleet") {
+      const id = el.dataset.fleet;
+      if (id && state.ghosts.some((g) => g.id === id && g.own)) selectShip(id);
+      return;
+    }
     if (el.dataset.sys) {
       state.selectedSystemId = el.dataset.sys; // re-selects; map highlights it too
       updateSystemTab();
@@ -5382,13 +5508,20 @@ function updateSystemTab(): void {
   if (!systemTabBuilt) return;
   if (renderDeferred("tab-system", updateSystemTab)) return; // §single-click
   const root = $("tab-system");
+  const sid = state.selectedSystemId;
+  const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
+  const fleets = sys ? systemFleetsAt(sys) : [];
   // §perf: the rail panel (incl. its star concept <img>) rebuilt on every View at
   // 10 Hz. Skip when nothing it shows changed — it reads the selected system's
-  // dynamic slice, the owned-holdings rail, and syndicate/research affordances; a
-  // 1 s simTime heartbeat keeps any siege/build ETA ticking at whole-second cadence.
+  // dynamic slice, served fleets in its well, the owned-holdings rail, and
+  // syndicate/research affordances; a 1 s heartbeat keeps ages and ETAs ticking.
   const stSig = JSON.stringify([
     state.selectedSystemId,
     state.systems,
+    fleets.map((g) => [
+      g.id, g.kind, g.docked, Math.hypot(g.vel.x, g.vel.y) > 1,
+      Math.floor(g.age), g.count_class, g.composition,
+    ]),
     state.syndicate,
     state.research?.programmes.map((p) => p.state) ?? null,
     state.anchors.length,
@@ -5397,8 +5530,6 @@ function updateSystemTab(): void {
   if (stSig === lastSystemTabSig && root.innerHTML) return;
   lastSystemTabSig = stSig;
   const rail = ownedSystemsRail();
-  const sid = state.selectedSystemId;
-  const sys = sid && state.galaxy ? state.galaxy.systems.find((s) => s.id === sid) : undefined;
   if (!sys) {
     root.innerHTML = rail +
       `<div class="mhint" title="Click a star system on the map to inspect its geology, claim it, or ship its output${rail ? " — or pick one of your holdings above" : ""}.">${icon("mouse", "sm")} Select a star system${rail ? ", or a holding above" : ""}.</div>`;
@@ -5607,12 +5738,11 @@ function updateSystemTab(): void {
   // §ground: the landing readout sits with the siege badge — this is the panel a
   // BESIEGER stares at while their guns work, so the marine requirement has to
   // be here and not only on the owner's own colony sheet.
-  setHtml(root, rail + header + starFeature + nodeBlock + groundLine(dyn) + berthLine(sys.id) + strip + storageBar + attention + geology + intelBlock + actions + hint);
+  setHtml(root, rail + header + starFeature + nodeBlock + groundLine(dyn) + berthLine(sys.id) + systemFleetsSection(sys, fleets) + strip + storageBar + attention + geology + intelBlock + actions + hint);
 }
 
 // --- Delayed reports log -----------------------------------------------------
 function addReport(r: import("./protocol").RaidReport): void {
-  const log = $("reports-log");
   const mine = r.you === "attacker" ? r.attacker_kind : r.target_kind; // your ship in this fight
   const theirs = r.you === "attacker" ? r.target_kind : r.attacker_kind;
   let icon = "◦", cls = "good", text = "";
@@ -5657,16 +5787,15 @@ function addReport(r: import("./protocol").RaidReport): void {
   if (yoursStr || rivalsStr) {
     lossLine = `<div class="sp-line dim" style="margin-top:2px">You lost: ${yoursStr || "nothing"} · They lost: ${rivalsStr || "nothing"}</div>`;
   }
-  const el = document.createElement("div");
-  el.className = "report " + cls;
+  const el = addTransientReport(
+    icon,
+    cls as "good" | "bad",
+    `${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>${lossLine}`,
+  );
   // §battle-aftermath: the news toast and the retained report share an id —
   // clicking the log entry opens the same results panel as the map marker.
   el.dataset.reportId = String(r.report_id);
   el.title = "Open the full battle results";
-  el.innerHTML = `<span class="ic">${icon}</span> ${text} <span class="dim">— delayed news, ${r.age.toFixed(0)}s old</span>${lossLine}`;
-  log.prepend(el);
-  while (log.children.length > 6) log.removeChild(log.lastChild!);
-  setTimeout(() => el.classList.add("fade"), 12000);
 }
 
 // §FLEETS Part 3: the commit-time STALE-INTEL battle calculator panel. Renders
@@ -6591,7 +6720,7 @@ function landingOddsLine(o: LandingOddsView | null | undefined): string {
 /// information, in a form you can actually read when six convoys are stacked on
 /// one star. `site` is a system id, or "hub" for the Charterhouse.
 function berthed(site: string): GhostView[] {
-  return state.ghosts.filter((g) => g.docked === site);
+  return state.ghosts.filter((g) => dockedAtSystem(g, site));
 }
 
 /// The berth readout for a system panel: how many hulls are parked here, and
@@ -6603,12 +6732,12 @@ function berthLine(systemId: string): string {
   if (all.length === 0) return "";
   const mine = all.filter((g) => g.own);
   const others = all.length - mine.length;
-  const chip = (n: number, what: string, tone: "positive" | "warn") =>
-    badgeChip("garrison", `${n} ${what}${n === 1 ? "" : "s"}`, tone,
+  const chip = (n: number, singular: string, plural: string, tone: "positive" | "warn") =>
+    badgeChip("garrison", `${n} ${n === 1 ? singular : plural}`, tone,
       `Hulls berthed here — at rest, and available for loading, repair and refit. They are not drawn on the galaxy map; a docked ship belongs to the system view.`);
   return `<div class="deps-head" style="margin-top:6px">⚓ Berths ` +
-    (mine.length > 0 ? chip(mine.length, "of yours", "positive") : "") +
-    (others > 0 ? ` ${chip(others, "other hull", "warn")}` : "") +
+    (mine.length > 0 ? chip(mine.length, "of yours", "of yours", "positive") : "") +
+    (others > 0 ? ` ${chip(others, "other hull", "other hulls", "warn")}` : "") +
     `</div>`;
 }
 
@@ -6994,7 +7123,7 @@ function nextDecisionLabel(): string {
     if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
   }
   for (const queue of state.pendingOrders.values()) {
-    for (const p of queue) consider(p.echo_at, "an order confirms");
+    for (const p of queue) consider(p.response_at, "an order response is expected");
   }
   // §explore Part 4: an in-flight survey DWELL — its completion is often the
   // soonest thing worth waiting for (owner-only live progress, honest estimate).
@@ -7356,6 +7485,7 @@ function join(): void {
             arrive: msg.arrive_time,
             pOut: 0,
             hops: msg.hops ?? [],
+            beyondComms: msg.beyond_comms ?? false,
           });
           break;
         }

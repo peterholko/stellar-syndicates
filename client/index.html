@@ -451,7 +451,7 @@
       /* Keyboard focus visibility on all rail controls (WCAG 2.4.7). */
       .seg button:focus-visible, .tab .act:focus-visible, #rail .rail__close:focus-visible,
       #svm-body .act:focus-visible, #sysview-manage .svm-close:focus-visible, #planet-panel .act:focus-visible,
-      .board__row:focus-visible, .sysrail__row:focus-visible,
+      .board__row:focus-visible, .sysrail__row:focus-visible, .sysfleet__row:focus-visible,
       #ship-panel .act:focus-visible, #ship-panel .sp-close:focus-visible, #ship-panel .sp-fold:focus-visible {
         outline: 2px solid var(--accent); outline-offset: -2px;
       }
@@ -501,6 +501,20 @@
       .sysrail__row.is-active { background: rgba(79,195,255,0.10); border-left-color: var(--accent); }
       .sysrail__row .sysrail__sub { color: var(--dim); font-size: 10px; }
       .sysrail__row .sysrail__chev { margin-left: auto; color: var(--dim); }
+      .sysfleet { margin: 8px 0 10px; padding-top: 2px; }
+      .sysfleet__row {
+        display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
+        width: 100%; padding: 6px 8px; color: var(--ink); background: transparent;
+        border: 0; border-bottom: 1px solid rgba(255,255,255,0.055); border-radius: 4px;
+        font: inherit; text-align: left; cursor: pointer;
+      }
+      .sysfleet__row:hover { background: rgba(255,255,255,0.04); }
+      .sysfleet__main { min-width: 0; }
+      .sysfleet__name, .sysfleet__summary, .sysfleet__seen { display: block; }
+      .sysfleet__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .sysfleet__summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 10px; margin-top: 2px; }
+      .sysfleet__meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+      .sysfleet__seen { font-size: 9px; white-space: nowrap; }
       .sys-prod { display: grid; grid-template-columns: var(--icon-resource) 1fr auto auto; align-items: center; gap: 8px; padding: 2px 0; min-height: calc(var(--icon-resource) + 4px); }
       /* Structure / commodity NAME cell: never wrap a building name mid-word;
          truncate with an ellipsis only in the rare case it can't fit. */

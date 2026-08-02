@@ -33,7 +33,7 @@
 // ============================================================================
 
 import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
-import type { Commodity, Deposit, PlayerId, SystemInfo, BodyView } from "./protocol";
+import type { Commodity, Deposit, PlayerId, SystemInfo, BodyView, Vec2 } from "./protocol";
 import { starAnchor, starTypeFor, starVisualRatio, type StarType } from "./stars";
 import { hashId, mulberry32 } from "./prng";
 
@@ -47,6 +47,10 @@ export type PlanetKind =
   | "gas_giant"
   | "lava"
   | "barren";
+
+// The established System View star size. Galaxy-map bloom must meet this
+// existing visible diameter; the planetary scene itself is not resized.
+const SYSTEM_STAR_VISIBLE_UNITS = 0.17;
 
 export interface VisualMoon {
   id: string;
@@ -312,6 +316,9 @@ function ellipsePath(g: Graphics, x: number, y: number, rx: number, ry: number, 
 export class SystemViewScene {
   readonly root = new Container();
   private vignette = new Graphics(); // screen-space backdrop
+  /// All schematic content shares this transition-only transform. The vignette
+  /// deliberately remains outside: it is a viewport backdrop, not local space.
+  readonly content = new Container();
   private worldRoot = new Container(); // scaled schematic space (STATIC, cached)
   private orbitsGfx = new Graphics(); // orbit rings + belt dust (static)
   private beltChunks = new Container(); // asteroid-chunk sprites on the belts (static)
@@ -356,11 +363,15 @@ export class SystemViewScene {
   private viewW = 0;
   private viewH = 0;
   private sceneScale = 1;
+  private starLayout: Vec2 = { x: 0, y: 0 };
 
   constructor() {
     this.starLayer.addChild(this.starGfx);
+    // Orbits + belts stay below the fixed-size transition star, so their early
+    // scaled-down rings emerge from behind its disk rather than drawing over it.
     this.worldRoot.addChild(this.orbitsGfx, this.beltChunks, this.starLayer, this.bodySprites, this.bodiesGfx);
-    this.root.addChild(this.vignette, this.worldRoot, this.markers, this.overlay, this.labels);
+    this.content.addChild(this.worldRoot, this.markers, this.overlay, this.labels);
+    this.root.addChild(this.vignette, this.content);
     this.root.visible = false;
     // Non-blocking: fallback circles render immediately; the scene rebuilds
     // once (cached thereafter) when the art lands.
@@ -412,6 +423,30 @@ export class SystemViewScene {
     return this.vis?.systemId ?? null;
   }
 
+  /// The schematic star's untransformed layout position. Transition choreography
+  /// pivots here; normal System View rendering keeps `content` neutral.
+  starLayoutPosition(): Vec2 {
+    return { ...this.starLayout };
+  }
+
+  starVisibleDiameterPx(): number {
+    return SYSTEM_STAR_VISIBLE_UNITS * this.sceneScale;
+  }
+
+  /// `starLayer` lives at normalized schematic origin; worldRoot maps that origin
+  /// to `starLayout`. Inverting the parent content scale here therefore holds the
+  /// sprite and procedural glow at full size about the exact star anchor.
+  setStarCounterScale(contentScale: number): void {
+    this.starLayer.scale.set(1 / Math.max(contentScale, 1e-6));
+  }
+
+  resetContentTransform(): void {
+    this.content.pivot.set(0, 0);
+    this.content.position.set(0, 0);
+    this.content.scale.set(1);
+    this.setStarCounterScale(1);
+  }
+
   clearSelection(): void {
     this.selected = null;
   }
@@ -459,7 +494,7 @@ export class SystemViewScene {
       const sp = new Sprite(starTex);
       const a = starAnchor(st);
       sp.anchor.set(a[0], a[1]);
-      sp.scale.set(0.17 / (starVisualRatio(st) * starTex.width)); // visible star ≈ 0.17 units
+      sp.scale.set(SYSTEM_STAR_VISIBLE_UNITS / (starVisualRatio(st) * starTex.width)); // visible star ≈ 0.17 units
       this.starSprite = sp;
       this.starLayer.addChild(sp); // above orbits + belt chunks, under bodies
     }
@@ -599,6 +634,7 @@ export class SystemViewScene {
     if (!viewW || !viewH) return;
     const cx = viewW / 2;
     const cy = viewH / 2;
+    this.starLayout = { x: cx, y: cy };
     this.sceneScale = Math.min(viewW, viewH) * 0.42;
     this.worldRoot.position.set(cx, cy);
     this.worldRoot.scale.set(this.sceneScale);

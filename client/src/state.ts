@@ -8,6 +8,33 @@ import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
+// One threshold for every own-fleet "the picture has gone dark" treatment:
+// panel styling, map marker, and reacquisition semantics must agree.
+export const GHOST_STALE_AGE_S = 8;
+
+export type GhostFidelity = "full" | "wake" | "dark";
+
+/// The one position-channel ruling shared by map and panel. Full telemetry wins
+/// while fresh; otherwise a fresh wake supplies kinematics only; in darkness the
+/// freshest arrived position remains as the stale marker—never client truth.
+export function ghostPositionChannel(
+  ghost: GhostView,
+  simTime: number,
+): { fidelity: GhostFidelity; pos: Vec2; vel: Vec2; t: number; age: number } {
+  const fullT = simTime - ghost.age;
+  const wakeAge = ghost.wake ? Math.max(0, simTime - ghost.wake.t) : Infinity;
+  if (ghost.age < GHOST_STALE_AGE_S) {
+    return { fidelity: "full", pos: ghost.pos, vel: ghost.vel, t: fullT, age: ghost.age };
+  }
+  if (ghost.wake && wakeAge < GHOST_STALE_AGE_S) {
+    return { fidelity: "wake", pos: ghost.wake.pos, vel: ghost.wake.vel, t: ghost.wake.t, age: wakeAge };
+  }
+  if (ghost.wake && ghost.wake.t > fullT) {
+    return { fidelity: "dark", pos: ghost.wake.pos, vel: ghost.wake.vel, t: ghost.wake.t, age: wakeAge };
+  }
+  return { fidelity: "dark", pos: ghost.pos, vel: ghost.vel, t: fullT, age: ghost.age };
+}
+
 // The OUTBOUND command signal: the violet comet of an order crossing space from
 // the command center to the ship, over [depart, arrive]. Pure rendering — the
 // client only interpolates between the server-provided times. There is no inbound
@@ -23,6 +50,7 @@ export interface CommandSignal {
   /// traces these — sprinting along lanes, crawling the gaps — instead of a
   /// straight line. Empty = no relays helped; fly direct.
   hops: { pos: Vec2; frac: number }[];
+  beyondComms: boolean;
 }
 
 export type OrderVerb = "move" | "raid" | "attack" | "blockade" | "demolish" | "survey";

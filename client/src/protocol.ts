@@ -703,6 +703,13 @@ export type DriveStateView =
   | { cruising: "thrusters" | "warp" | "hyperspace" }
   | { dropping: { from: "thrusters" | "warp" | "hyperspace"; left: number } };
 
+export interface WakeFixView {
+  pos: Vec2;
+  vel: Vec2;
+  /** Sim time when this coded-drive kinematic fix was emitted. */
+  t: number;
+}
+
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
@@ -710,6 +717,8 @@ export interface GhostView {
   pos: Vec2;
   vel: Vec2;
   age: number;
+  /** Owner-only wake kinematics; never a telemetry update. */
+  wake?: WakeFixView | null;
   own: boolean;
   /// §dock: the BERTH this sighting was taken at — `"hub"` for the Charterhouse,
   /// otherwise the system's id — or absent if the fleet was under way (or
@@ -1209,18 +1218,24 @@ export interface CaptureReportView {
 }
 
 // One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
-// the phase from `sim_time`: IN TRANSIT until `delivered_at`, AWAITING ECHO until
-// `echo_at`, then confirmed (the entry drops). Both stamps are exact.
+// its estimated phase from `sim_time`: IN TRANSIT until `arrives_at`, then awaits
+// the estimated response until `response_at`. Both are solved once from the
+// served ghost at issue — never authoritative fleet truth.
 export interface PendingOrderView {
   id: number;
   fleet_id: EntityId;
   issued_at: number;
-  delivered_at: number;
-  echo_at: number;
+  arrives_at: number;
+  response_at: number;
   kind: OrderKind;
   dest?: Vec2;
   target_id?: EntityId;
   emplacement?: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
+  /// Owner-only intended route from the served sighting to a fixed destination.
+  /// Positions only: this line never claims the fleet advanced along it.
+  intent_path?: Vec2[];
+  /** Final signal leg has left covered wire and is travelling at warp light. */
+  beyond_comms?: boolean;
 }
 
 // Server → client.
@@ -1319,6 +1334,7 @@ export type ServerMsg =
       /// §buoys: the relay path the order flies — hop positions with arrival
       /// fractions of the whole window. Absent/empty = straight run.
       hops?: { pos: Vec2; frac: number }[];
+      beyond_comms?: boolean;
     }
   | { type: "RoutePreview"; ship_id: EntityId; dest: Vec2; path: PathPointView[] }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)
