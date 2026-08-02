@@ -458,6 +458,31 @@ pub struct Relay {
     pub on: Vec<(u32, f64)>,
 }
 
+/// One listening post with its sample-independent route home already solved.
+/// A wake sample still has to project onto the post's lane and pay its along-arc
+/// distance, but it must never rerun the covered-lane graph merely because a
+/// historical hull position is being considered.
+#[derive(Debug, Clone)]
+struct WakeEar {
+    relay: Relay,
+    home_delay: f64,
+}
+
+/// Viewer-local listening posts prepared once for a serving pass. Keeping the
+/// entries private makes the invariant mechanical: callers can ask whether the
+/// set is empty and can price a wake, but cannot accidentally discard the
+/// hoisted ear-to-command-center leg.
+#[derive(Debug, Clone, Default)]
+pub struct WakeEars {
+    ears: Vec<WakeEar>,
+}
+
+impl WakeEars {
+    pub fn is_empty(&self) -> bool {
+        self.ears.is_empty()
+    }
+}
+
 /// One owned communications structure supplied to the delay field.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CommSite {
@@ -1142,6 +1167,21 @@ impl LaneNetwork {
         c: f64,
         sites: &[CommSite],
     ) -> f64 {
+        let ears = ears
+            .iter()
+            .cloned()
+            .map(|relay| {
+                let home_delay = self.signal_coupled(relay.pos, b, c, sites);
+                WakeEar { relay, home_delay }
+            })
+            .collect::<Vec<_>>();
+        self.signal_heard_prepared(p, &ears, c)
+    }
+
+    /// Geometry-only half of [`Self::signal_heard`]. `home_delay` is fixed for
+    /// an ear, command center, and relay network, so a view prepares it once and
+    /// every newly-arrived historical sample pays only projection + arc length.
+    fn signal_heard_prepared(&self, p: Vec2, ears: &[WakeEar], c: f64) -> f64 {
         let lane_speed = c * self.signal_factor_on_lane();
         let mut best = f64::INFINITY;
         for l in &self.lanes {
@@ -1150,7 +1190,7 @@ impl LaneNetwork {
                 continue; // the hull is not coupled to THIS lane
             }
             for ear in ears {
-                for (lid, s_ear) in &ear.on {
+                for (lid, s_ear) in &ear.relay.on {
                     if *lid != l.id {
                         continue;
                     }
@@ -1158,8 +1198,7 @@ impl LaneNetwork {
                     if along > crate::emplace::LANE_LISTEN_RANGE {
                         continue; // a wake attenuates — out of earshot
                     }
-                    let t =
-                        along / lane_speed + self.signal_coupled(ear.pos, b, c, sites);
+                    let t = along / lane_speed + ear.home_delay;
                     best = best.min(t);
                 }
             }
@@ -1944,6 +1983,28 @@ impl DelayField<'_> {
     /// `between`. See `LaneNetwork::signal_heard`.
     pub fn heard(&self, p: Vec2, b: Vec2, ears: &[Relay]) -> f64 {
         self.lanes.signal_heard(p, ears, b, self.c, self.sites)
+    }
+
+    /// Hoist every listening post's routed leg home once per viewer/view. The
+    /// result feeds [`Self::heard_prepared`], whose per-sample work is pure lane
+    /// geometry and therefore independent of the covered-arc graph's size.
+    pub fn prepare_wake_ears(&self, b: Vec2, ears: &[Relay]) -> WakeEars {
+        WakeEars {
+            ears: ears
+                .iter()
+                .cloned()
+                .map(|relay| {
+                    let home_delay = self.from_coupled(relay.pos, b);
+                    WakeEar { relay, home_delay }
+                })
+                .collect(),
+        }
+    }
+
+    /// Delay to hear a coupled hull using posts prepared by
+    /// [`Self::prepare_wake_ears`]. No routing occurs here.
+    pub fn heard_prepared(&self, p: Vec2, ears: &WakeEars) -> f64 {
+        self.lanes.signal_heard_prepared(p, &ears.ears, self.c)
     }
 
 }

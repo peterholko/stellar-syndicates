@@ -19,15 +19,22 @@
 //! Define `arrival(t) = t + |p(t) − cc| / c`. Its derivative is
 //! `1 + d/dt|p−cc| / c ≥ 1 − |v|/c`, which is strictly positive whenever the
 //! object moves slower than light (all ships do, by construction). So
-//! `arrival` is **strictly increasing**: scanning samples newest→oldest, the
-//! first one with `arrival ≤ now` is the unique latest observable state. We show
-//! that one and nothing fresher — provably no leak. §comms-v3 makes one explicit
-//! own-fleet presentation exception inside an owned relay's 2D bubble: a delayed
+//! On a fixed channel whose signal outruns the hull, `arrival` is **strictly
+//! increasing**. Rival bow waves and a tripwire channel seam can deliberately
+//! reorder arrivals, so the per-viewer frontier schedules each new report once
+//! and advances from a tiny arrival heap. Either way it never re-evaluates the
+//! thousands of reports accumulated during darkness.
+//! §comms-v3 makes one explicit own-fleet presentation exception inside an
+//! owned relay's 2D bubble: a delayed
 //! emission-time replay advances at true hull speed. Outside those bubbles, and
 //! for every rival, the strict arrival gate remains unchanged.
 
+use std::cell::RefCell;
+use std::cmp::Ordering;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -159,6 +166,10 @@ struct Track {
     plans: VecDeque<(f64, Vec<(Vec2, bool)>)>,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
+    /// Exact nominal-bubble crossings as `(emission time, state after crossing)`.
+    /// The mode gate indexes this tiny event stream instead of searching the
+    /// 30 Hz sample history for an entry/exit every time it considers a flip.
+    bubble_transitions: VecDeque<(f64, bool)>,
     /// Last sim time this track was updated (for pruning dead ships).
     last_seen: f64,
     /// Current cargo (convoys). Static for the demo patrol convoys, so sending
@@ -222,6 +233,145 @@ pub struct PositionHistory {
     horizon: f64,
     /// Sensor detection radius each of a player's assets projects (config).
     sensor_range: f64,
+    /// Mutable serving state is viewer-local, never part of the shared track.
+    /// `RefCell` preserves the read-only view API while allowing a view to move
+    /// only its own light frontier forward.
+    frontiers: RefCell<FrontierCache>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FrontierPath {
+    /// The full per-view composite, including that viewer's wake ears.
+    Composite,
+    /// Owner-only helpers (`coverage_for`, order aim, presentation mode), whose
+    /// established channel has no tripwire inputs.
+    DirectOwn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FrontierKey {
+    viewer: PlayerId,
+    track: EntityId,
+    path: FrontierPath,
+}
+
+#[derive(Clone, Copy)]
+struct ArrivedSample {
+    sample: Sample,
+    arrival: f64,
+}
+
+#[derive(Clone, Copy)]
+struct PendingArrival(ArrivedSample);
+
+impl PartialEq for PendingArrival {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.arrival.to_bits() == other.0.arrival.to_bits()
+            && self.0.sample.time.to_bits() == other.0.sample.time.to_bits()
+    }
+}
+
+impl Eq for PendingArrival {}
+
+impl PartialOrd for PendingArrival {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PendingArrival {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .arrival
+            .total_cmp(&other.0.arrival)
+            .then_with(|| self.0.sample.time.total_cmp(&other.0.sample.time))
+    }
+}
+
+#[derive(Default)]
+struct FrontierCursor {
+    relay_version: u64,
+    ear_version: u64,
+    last_now: f64,
+    /// Latest-emission discrete sample known to have arrived. The interpolated
+    /// served picture is derived from this and the emission-time pending map; it
+    /// is never stored as a new fact or fed back into the frontier.
+    served: Option<ArrivedSample>,
+    /// New reports are priced once as they are emitted, then wait here until
+    /// their arrival. The heap advances by arrival time (covering bow-wave and
+    /// channel-seam reordering); the emission-time map supplies the exact next
+    /// bracket without scanning the pending darkness.
+    seen_through: Option<f64>,
+    pending_by_arrival: BinaryHeap<Reverse<PendingArrival>>,
+    pending_by_emission: BTreeMap<u64, ArrivedSample>,
+    endpoint: Option<(Vec2, f64)>,
+}
+
+struct VersionedSites {
+    value: Vec<sim::lane::CommSite>,
+    version: u64,
+}
+
+struct VersionedEars {
+    value: Vec<sim::lane::Relay>,
+    version: u64,
+}
+
+#[derive(Default)]
+struct FrontierCache {
+    cursors: HashMap<FrontierKey, FrontierCursor>,
+    relay_networks: HashMap<PlayerId, VersionedSites>,
+    ear_networks: HashMap<PlayerId, VersionedEars>,
+    next_version: u64,
+}
+
+impl FrontierCache {
+    fn bump_version(&mut self) -> u64 {
+        self.next_version = self.next_version.wrapping_add(1).max(1);
+        self.next_version
+    }
+
+    /// `PositionHistory` does not own emplacement mutation, so the exact relay
+    /// inputs are versioned at the boundary where `World::relay_network` enters
+    /// serving. A build, demolition, or replacement changes this slice and bumps
+    /// the counter once; every viewer/track cursor notices on its next use.
+    fn relay_version(&mut self, viewer: PlayerId, sites: &[sim::lane::CommSite]) -> u64 {
+        if self
+            .relay_networks
+            .get(&viewer)
+            .is_some_and(|state| state.value == sites)
+        {
+            return self.relay_networks[&viewer].version;
+        }
+        let version = self.bump_version();
+        self.relay_networks.insert(
+            viewer,
+            VersionedSites {
+                value: sites.to_vec(),
+                version,
+            },
+        );
+        version
+    }
+
+    fn ear_version(&mut self, viewer: PlayerId, ears: &[sim::lane::Relay]) -> u64 {
+        if self
+            .ear_networks
+            .get(&viewer)
+            .is_some_and(|state| state.value == ears)
+        {
+            return self.ear_networks[&viewer].version;
+        }
+        let version = self.bump_version();
+        self.ear_networks.insert(
+            viewer,
+            VersionedEars {
+                value: ears.to_vec(),
+                version,
+            },
+        );
+        version
+    }
 }
 
 impl PositionHistory {
@@ -237,6 +387,7 @@ impl PositionHistory {
             tracks: HashMap::new(),
             horizon: max_delay * 1.25 + 1.0,
             sensor_range: world.config.sensor_range,
+            frontiers: RefCell::new(FrontierCache::default()),
         }
     }
 
@@ -244,6 +395,7 @@ impl PositionHistory {
     /// retarded-time boundary is resolved at full temporal resolution.
     pub fn record(&mut self, world: &World) {
         let now = world.time;
+        let frontiers = self.frontiers.get_mut();
         for (id, ship) in &world.fleets {
             let sites = world.relay_network(ship.owner);
             let report_in_comms = sim::lane::in_comm_bubble(ship.pos, &sites, 0.0);
@@ -256,35 +408,45 @@ impl PositionHistory {
                 sites: &sites,
                 c: world.config.c,
             };
-            let initial_delay = if ship.drive_state.stirs_the_lane() {
-                delays.from_coupled(ship.pos, cc)
-            } else {
-                delays.between(ship.pos, cc)
-            }
-            .max(LIVE_DELAY_FLOOR_S);
-            let track = self.tracks.entry(*id).or_insert_with(|| Track {
-                owner: ship.owner,
-                composition: BTreeMap::new(),
-                flagship: ship.flagship_kind(),
-                broadcasts: ship.broadcasts(),
-                sensor_mult: ship.sensor_mult(),
-                max_speed: ship.max_speed(),
-                count_class: ship.count_class(),
-                samples: VecDeque::new(),
-                last_seen: now,
-                cargo: None,
-                passengers: Default::default(),
-                loadouts: Default::default(),
-                modules: Default::default(),
-                route: None,
-                gone: None,
-                damage_frac: 0.0,
-                in_comms: false,
-                live_delay: initial_delay,
-                docked: None,
-                job: None,
-                plans: VecDeque::new(),
-            });
+            let track = match self.tracks.entry(*id) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Only a NEW track needs an initial routed replay delay. The
+                    // old `or_insert_with` setup computed this graph route before
+                    // testing occupancy, accidentally paying it for every ship on
+                    // every sim tick even though the closure almost never ran.
+                    let initial_delay = if ship.drive_state.stirs_the_lane() {
+                        delays.from_coupled(ship.pos, cc)
+                    } else {
+                        delays.between(ship.pos, cc)
+                    }
+                    .max(LIVE_DELAY_FLOOR_S);
+                    entry.insert(Track {
+                        owner: ship.owner,
+                        composition: BTreeMap::new(),
+                        flagship: ship.flagship_kind(),
+                        broadcasts: ship.broadcasts(),
+                        sensor_mult: ship.sensor_mult(),
+                        max_speed: ship.max_speed(),
+                        count_class: ship.count_class(),
+                        samples: VecDeque::new(),
+                        last_seen: now,
+                        cargo: None,
+                        passengers: Default::default(),
+                        loadouts: Default::default(),
+                        modules: Default::default(),
+                        route: None,
+                        gone: None,
+                        damage_frac: 0.0,
+                        in_comms: false,
+                        live_delay: initial_delay,
+                        docked: None,
+                        job: None,
+                        plans: VecDeque::new(),
+                        bubble_transitions: VecDeque::new(),
+                    })
+                }
+            };
             track.owner = ship.owner;
             track.composition = ship.composition.clone();
             track.flagship = ship.flagship_kind();
@@ -352,6 +514,9 @@ impl PositionHistory {
             if let Some(previous) = track.samples.back().copied()
                 && let Some(boundary) = nominal_bubble_crossing(previous, current, &sites)
             {
+                track
+                    .bubble_transitions
+                    .push_back((boundary.time, current.in_comms));
                 track.samples.push_back(boundary);
             }
             track.samples.push_back(current);
@@ -360,7 +525,16 @@ impl PositionHistory {
             // runs its replay to the edge; DARK cannot re-enter until that report
             // has physically arrived. The true hull sample above supplies channel
             // history, never the presentation decision.
-            update_presentation_mode(track, cc, &delays, now);
+            let relay_version = frontiers.relay_version(ship.owner, &sites);
+            let cursor = frontiers
+                .cursors
+                .entry(FrontierKey {
+                    viewer: ship.owner,
+                    track: *id,
+                    path: FrontierPath::DirectOwn,
+                })
+                .or_default();
+            update_presentation_mode_cached(track, cc, &delays, now, cursor, relay_version);
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
                 if now - front.time > self.horizon {
@@ -368,6 +542,11 @@ impl PositionHistory {
                 } else {
                     break;
                 }
+            }
+            while track.bubble_transitions.len() > 1
+                && track.bubble_transitions[1].0 <= now - self.horizon
+            {
+                track.bubble_transitions.pop_front();
             }
         }
         // §fleets: a fleet can leave true space WITHOUT being destroyed — a colony
@@ -399,6 +578,9 @@ impl PositionHistory {
         let horizon = self.horizon;
         self.tracks
             .retain(|_, t| now - t.last_seen <= horizon);
+        frontiers
+            .cursors
+            .retain(|key, _| self.tracks.contains_key(&key.track));
     }
 
     /// Mark a ship destroyed at true `time` and true `pos`. The ship is gone from
@@ -457,11 +639,32 @@ impl PositionHistory {
     ) -> Vec<(Vec2, f64)> {
         let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
         coverage.extend_from_slice(arrays);
-        for track in self.tracks.values() {
+        let mut frontiers = self.frontiers.borrow_mut();
+        let relay_version = frontiers.relay_version(viewer, delays.sites);
+        let wake_ears = sim::lane::WakeEars::default();
+        for (id, track) in &self.tracks {
             if track.owner != viewer {
                 continue;
             }
-            if let Some(s) = serve_track(track, cc, delays, now, true, &[]) {
+            let cursor = frontiers
+                .cursors
+                .entry(FrontierKey {
+                    viewer,
+                    track: *id,
+                    path: FrontierPath::DirectOwn,
+                })
+                .or_default();
+            if let Some(s) = serve_track_cached(
+                track,
+                cc,
+                delays,
+                now,
+                true,
+                &wake_ears,
+                cursor,
+                relay_version,
+                0,
+            ) {
                 coverage.push((s.pos, self.sensor_range * track.sensor_mult));
             }
         }
@@ -537,6 +740,13 @@ impl PositionHistory {
         // its OWN radius — a developed array outsees a ship).
         let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
         coverage.extend_from_slice(arrays);
+        // §comms-v3.2: one routed ear→CC solve per listening post for this
+        // viewer/view. Every historical wake considered below then pays only
+        // nearest-lane projection and along-arc arithmetic.
+        let wake_ears = delays.prepare_wake_ears(cc, ears);
+        let mut frontiers = self.frontiers.borrow_mut();
+        let relay_version = frontiers.relay_version(viewer, delays.sites);
+        let ear_version = frontiers.ear_version(viewer, ears);
         for (id, track) in &self.tracks {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
@@ -547,7 +757,25 @@ impl PositionHistory {
                 continue; // the destruction has been observed — it's gone
             }
             let own = track.owner == viewer;
-            let Some(sample) = serve_track(track, cc, delays, now, own, ears) else {
+            let cursor = frontiers
+                .cursors
+                .entry(FrontierKey {
+                    viewer,
+                    track: *id,
+                    path: FrontierPath::Composite,
+                })
+                .or_default();
+            let Some(sample) = serve_track_cached(
+                track,
+                cc,
+                delays,
+                now,
+                own,
+                &wake_ears,
+                cursor,
+                relay_version,
+                ear_version,
+            ) else {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
@@ -804,7 +1032,27 @@ impl PositionHistory {
         now: f64,
     ) -> Option<(Vec2, Vec2, bool)> {
         let track = self.tracks.get(&ship_id)?;
-        let sample = serve_track(track, cc, delays, now, true, &[])?;
+        let mut frontiers = self.frontiers.borrow_mut();
+        let relay_version = frontiers.relay_version(track.owner, delays.sites);
+        let cursor = frontiers
+            .cursors
+            .entry(FrontierKey {
+                viewer: track.owner,
+                track: ship_id,
+                path: FrontierPath::DirectOwn,
+            })
+            .or_default();
+        let sample = serve_track_cached(
+            track,
+            cc,
+            delays,
+            now,
+            true,
+            &sim::lane::WakeEars::default(),
+            cursor,
+            relay_version,
+            0,
+        )?;
         Some((sample.pos, sample.vel, sample.drive.stirs_the_lane()))
     }
 
@@ -1827,6 +2075,7 @@ fn nominal_bubble_crossing(
     Some(boundary)
 }
 
+#[cfg(test)]
 fn serve_track(
     track: &Track,
     cc: Vec2,
@@ -1834,6 +2083,33 @@ fn serve_track(
     now: f64,
     own: bool,
     ears: &[sim::lane::Relay],
+) -> Option<Sample> {
+    let wake_ears = delays.prepare_wake_ears(cc, ears);
+    let mut cursor = FrontierCursor::default();
+    serve_track_cached(
+        track,
+        cc,
+        delays,
+        now,
+        own,
+        &wake_ears,
+        &mut cursor,
+        1,
+        1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve_track_cached(
+    track: &Track,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+    own: bool,
+    ears: &sim::lane::WakeEars,
+    cursor: &mut FrontierCursor,
+    relay_version: u64,
+    ear_version: u64,
 ) -> Option<Sample> {
     if own && track.in_comms {
         // LIVE is a delayed replay, not extrapolated truth: advance the emission
@@ -1843,7 +2119,17 @@ fn serve_track(
         // DARK remains the strict arrival gate. The last report emitted inside
         // the bubble retains its fast channel and therefore pins the arrow at
         // the exit until the first post-exit warp report actually arrives.
-        latest_observable(&track.samples, cc, delays, now, own, ears)
+        latest_observable_cached(
+            &track.samples,
+            cc,
+            delays,
+            now,
+            own,
+            ears,
+            cursor,
+            relay_version,
+            ear_version,
+        )
     }
 }
 
@@ -1851,13 +2137,37 @@ fn serve_track(
 /// sees. Each side asks its own serving path for a picture first: LIVE evaluates
 /// the delayed replay; DARK evaluates only reports whose light has arrived. This
 /// ordering is the anti-leak guarantee at both boundaries.
+#[cfg(test)]
 fn update_presentation_mode(
     track: &mut Track,
     cc: Vec2,
     delays: &sim::lane::DelayField<'_>,
     now: f64,
 ) {
-    let Some(picture) = serve_track(track, cc, delays, now, true, &[]) else {
+    let mut cursor = FrontierCursor::default();
+    update_presentation_mode_cached(track, cc, delays, now, &mut cursor, 1);
+}
+
+fn update_presentation_mode_cached(
+    track: &mut Track,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+    cursor: &mut FrontierCursor,
+    relay_version: u64,
+) {
+    let wake_ears = sim::lane::WakeEars::default();
+    let Some(picture) = serve_track_cached(
+        track,
+        cc,
+        delays,
+        now,
+        true,
+        &wake_ears,
+        cursor,
+        relay_version,
+        0,
+    ) else {
         return;
     };
     let was_in_comms = track.in_comms;
@@ -1869,13 +2179,23 @@ fn update_presentation_mode(
         // report preceding this served picture. This is a causal interlock, not
         // a second position gate: the +hysteresis decision remains the replay's.
         let boundary_time = track
-            .samples
+            .bubble_transitions
             .iter()
             .rev()
-            .find(|sample| sample.time <= picture.time + 1e-9 && sample.in_comms)
-            .map(|sample| sample.time);
-        let arrived_time = latest_observable(&track.samples, cc, delays, now, true, &[])
-            .map(|sample| sample.time);
+            .find(|(time, in_comms)| *time <= picture.time + 1e-9 && !*in_comms)
+            .map(|(time, _)| *time);
+        let arrived_time = latest_observable_cached(
+            &track.samples,
+            cc,
+            delays,
+            now,
+            true,
+            &wake_ears,
+            cursor,
+            relay_version,
+            0,
+        )
+        .map(|sample| sample.time);
         if boundary_time
             .is_some_and(|boundary| arrived_time.is_none_or(|t| t + 1e-9 < boundary))
         {
@@ -1894,14 +2214,12 @@ fn update_presentation_mode(
             // the first LIVE frame lands on the nominal entry circle the player
             // sees. That boundary report is already in the arrived stream (or the
             // transition could not have fired), so this reveals nothing newer.
-            let mut prior_in_comms = None;
-            let mut entry_time = None;
-            for sample in track.samples.iter().take_while(|s| s.time <= picture.time + 1e-9) {
-                if prior_in_comms == Some(false) && sample.in_comms {
-                    entry_time = Some(sample.time);
-                }
-                prior_in_comms = Some(sample.in_comms);
-            }
+            let entry_time = track
+                .bubble_transitions
+                .iter()
+                .rev()
+                .find(|(time, in_comms)| *time <= picture.time + 1e-9 && *in_comms)
+                .map(|(time, _)| *time);
             track.live_delay = (now - entry_time.unwrap_or(picture.time)).max(LIVE_DELAY_FLOOR_S);
         } else {
             let alpha = 1.0 - (-sim::config::DT / D_SMOOTH_S).exp();
@@ -1913,23 +2231,30 @@ fn update_presentation_mode(
 }
 
 fn latest_emitted(samples: &VecDeque<Sample>, horizon: f64) -> Option<Sample> {
-    let mut older: Option<&Sample> = None;
-    for sample in samples {
-        if sample.time > horizon {
-            return match older {
-                Some(previous) if sample.time > previous.time + 1e-9 => {
-                    let frac = (horizon - previous.time) / (sample.time - previous.time);
-                    Some(Sample::interpolate(previous, sample, frac))
-                }
-                Some(previous) => Some(*previous),
-                None => Some(*sample),
-            };
-        }
-        older = Some(sample);
+    if samples.is_empty() {
+        return None;
     }
-    older.copied()
+    // LIVE is indexed by emission time, not searched linearly from the oldest
+    // retained report. VecDeque's binary partition keeps this O(log history)
+    // with zero delay/routing work, regardless of the replay lag.
+    let newer = samples.partition_point(|sample| sample.time <= horizon);
+    match newer {
+        0 => samples.front().copied(),
+        n if n >= samples.len() => samples.back().copied(),
+        n => {
+            let older = &samples[n - 1];
+            let newer = &samples[n];
+            if newer.time > older.time + 1e-9 {
+                let frac = (horizon - older.time) / (newer.time - older.time);
+                Some(Sample::interpolate(older, newer, frac))
+            } else {
+                Some(*older)
+            }
+        }
+    }
 }
 
+#[cfg(test)]
 fn latest_observable(
     samples: &VecDeque<Sample>,
     cc: Vec2,
@@ -1938,69 +2263,164 @@ fn latest_observable(
     own: bool,
     ears: &[sim::lane::Relay],
 ) -> Option<Sample> {
-    // The most recently REJECTED sample (newer than the answer) and its arrival
-    // time — the interpolation bracket's far end.
-    let mut newer: Option<(&Sample, f64)> = None;
-    for s in samples.iter().rev() {
-        // Own reports remember the presentation mode at EMISSION. This makes
-        // the bubble boundary causal: the final inside report keeps its fast
-        // routed channel, while every outside report uses plain warp light.
-        // Rival tripwires remain the separate drive-coupled sensor mechanism.
-        let riding = s.drive.stirs_the_lane();
-        let mut delay = if own {
-            if s.in_comms && riding {
-                delays.from_coupled(s.pos, cc)
-            } else if s.in_comms {
-                delays.between(s.pos, cc)
-            } else {
-                delays.passive(s.pos, cc)
-            }
+    let wake_ears = delays.prepare_wake_ears(cc, ears);
+    latest_observable_cached(
+        samples,
+        cc,
+        delays,
+        now,
+        own,
+        &wake_ears,
+        &mut FrontierCursor::default(),
+        1,
+        1,
+    )
+}
+
+fn sample_arrival(
+    sample: &Sample,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    own: bool,
+    ears: &sim::lane::WakeEars,
+) -> f64 {
+    // Own reports remember the channel at EMISSION. Rival telemetry remains
+    // passive unless a coupled wake reaches one of the prepared listening posts.
+    let riding = sample.drive.stirs_the_lane();
+    let mut delay = if own {
+        if sample.in_comms && riding {
+            delays.from_coupled(sample.pos, cc)
+        } else if sample.in_comms {
+            delays.between(sample.pos, cc)
         } else {
-            // Relay wire is private infrastructure, not a collector of ambient
-            // rival telemetry. Without a dedicated sensor, rival light stays on
-            // the warp channel even when it crosses this viewer's lit lane.
-            delays.passive(s.pos, cc)
-        };
-        // A rival's wake, heard by the viewer's tripwires — the same drive gate.
-        if riding && !ears.is_empty() {
-            delay = delay.min(delays.heard(s.pos, cc, ears));
+            delays.passive(sample.pos, cc)
         }
-        let arrival = s.time + delay;
-        if arrival <= now {
-            // §smooth-light: light is emitted CONTINUOUSLY, not once per tick.
-            // Between this snapshot's arrival and the next one's, the light
-            // arriving at `cc` left the ship from BETWEEN the two recorded
-            // positions — so serve the arrival-fraction interpolant of TIME and
-            // POSITION, the continuous retarded observation. Serving the raw
-            // snapshot quantized the served retarded time to the tick grid: at
-            // lane speed the 10 Hz Views stepped 425→992 su (measured), a
-            // visible shimmer on the fastest hulls in the game.
-            //
-            // Only the KINEMATIC CONTINUITY interpolates. `vel`, `drive`, and
-            // `loud` are FACTS that hold until the next fact's light arrives —
-            // lerping velocity would smear a throttle-down across the gap and
-            // shift detection: signature reads the retarded sample's velocity
-            // (pinned by the sprint-then-coast flare test), so a stealth cut
-            // takes effect AT its sample, not as an invented ramp before it.
-            //
-            // Guard on strictly increasing arrivals: where a hull outruns its
-            // own light (the rival bow wave), whole spans arrive at once and
-            // the catch-up RUSH is the designed, discrete behaviour — leave it.
-            //
-            // At a channel seam the next arrival can be tens of seconds later.
-            // Past the bracket cap there is no continuum to invent: hold the
-            // final arrived report, which is the frozen dark arrow.
-            if let Some((n, na)) = newer {
-                if na > arrival + 1e-9 && na - arrival <= SMOOTH_BRACKET_MAX {
-                    let frac = (now - arrival) / (na - arrival);
-                    return Some(Sample::interpolate(s, n, frac));
-                }
-            }
-            return Some(*s);
-        }
-        newer = Some((s, arrival));
+    } else {
+        delays.passive(sample.pos, cc)
+    };
+    if riding && !ears.is_empty() {
+        // Pure geometry: every ear's routed leg home was hoisted once when the
+        // viewer pass prepared `ears`.
+        delay = delay.min(delays.heard_prepared(sample.pos, ears));
     }
-    None
+    sample.time + delay
+}
+
+#[allow(clippy::too_many_arguments)]
+fn latest_observable_cached(
+    samples: &VecDeque<Sample>,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+    own: bool,
+    ears: &sim::lane::WakeEars,
+    cursor: &mut FrontierCursor,
+    relay_version: u64,
+    ear_version: u64,
+) -> Option<Sample> {
+    if samples.is_empty() {
+        return cursor.served.map(|served| served.sample);
+    }
+
+    // A viewer's command center and c are stable in production, but keeping
+    // them in the channel identity preserves the read API for offline callers
+    // that compare two observer positions with the same player id.
+    let endpoint = (cc, delays.c);
+    let endpoint_changed = cursor.endpoint != Some(endpoint);
+    // Production view clocks are monotone. A retrospective offline query is a
+    // distinct calculation, not a served-picture regression.
+    let time_regressed = now + 1e-9 < cursor.last_now;
+    if endpoint_changed || time_regressed {
+        cursor.served = None;
+        cursor.seen_through = None;
+        cursor.pending_by_arrival.clear();
+        cursor.pending_by_emission.clear();
+        cursor.endpoint = Some(endpoint);
+    }
+    cursor.last_now = now;
+
+    let changed = cursor.relay_version != relay_version || cursor.ear_version != ear_version;
+    if changed {
+        cursor.relay_version = relay_version;
+        cursor.ear_version = ear_version;
+        cursor.pending_by_arrival.clear();
+        cursor.pending_by_emission.clear();
+        cursor.seen_through = cursor.served.map(|served| served.sample.time);
+        if let Some(served) = cursor.served.as_mut() {
+            let reevaluated = sample_arrival(&served.sample, cc, delays, own, ears);
+            // NETWORK INVALIDATION POLICY: the player's served picture never
+            // moves backward. If a demolished relay says a report already shown
+            // would not arrive under today's graph, retain that discrete report
+            // and restart the interpolation clock here; only newer samples are
+            // tested under the new field. Faster graphs still recover the exact
+            // arrival and immediately advance the frontier as far as permitted.
+            served.arrival = if reevaluated <= now { reevaluated } else { now };
+        }
+    }
+
+    // Price each newly emitted report exactly once and retain its scheduled
+    // arrival. In the ordinary sub-signal-speed case this is the requested
+    // forward frontier (~3 reports per 10 Hz view). The heap is the behavior-
+    // preserving extension for rival bow waves/channel seams, whose arrivals
+    // can reorder: they still cost O(new reports), never O(pending darkness).
+    // A cold late-join ingests retained history once; all steady-state calls
+    // begin after `seen_through`. Front pruning needs no rebasing because that
+    // stable emission time is relocated with a delay-free binary partition.
+    let first_new = cursor.seen_through.map_or(0, |time| {
+        samples.partition_point(|sample| sample.time <= time + 1e-9)
+    });
+    for index in first_new..samples.len() {
+        let sample = samples[index];
+        let pending = ArrivedSample {
+            sample,
+            arrival: sample_arrival(&sample, cc, delays, own, ears),
+        };
+        cursor
+            .pending_by_emission
+            .insert(sample.time.to_bits(), pending);
+        cursor
+            .pending_by_arrival
+            .push(Reverse(PendingArrival(pending)));
+    }
+    cursor.seen_through = samples.back().map(|sample| sample.time);
+
+    while cursor
+        .pending_by_arrival
+        .peek()
+        .is_some_and(|pending| pending.0.0.arrival <= now)
+    {
+        let pending = cursor.pending_by_arrival.pop().unwrap().0.0;
+        cursor
+            .pending_by_emission
+            .remove(&pending.sample.time.to_bits());
+        if cursor
+            .served
+            .is_none_or(|served| pending.sample.time > served.sample.time)
+        {
+            cursor.served = Some(pending);
+        }
+    }
+
+    let served = cursor.served?;
+    // Same bracket arithmetic as the former newest→oldest scan, merely cached:
+    // continuous kinematics bridge adjacent arrivals; facts remain pinned to
+    // `served`, and wide channel seams remain the frozen dark arrow.
+    let newer = cursor
+        .pending_by_emission
+        .range((
+            std::ops::Bound::Excluded(served.sample.time.to_bits()),
+            std::ops::Bound::Unbounded,
+        ))
+        .next()
+        .map(|(_, pending)| *pending);
+    if let Some(newer) = newer
+        && newer.arrival > served.arrival + 1e-9
+        && newer.arrival - served.arrival <= SMOOTH_BRACKET_MAX
+    {
+        let frac = (now - served.arrival) / (newer.arrival - served.arrival);
+        return Some(Sample::interpolate(&served.sample, &newer.sample, frac));
+    }
+    Some(served.sample)
 }
 
 /// The asset's recorded state contemporaneous with sim-time `t_r` — the newest
@@ -2008,15 +2428,12 @@ fn latest_observable(
 /// oldest retained sample if `t_r` predates history. Used to reconstruct sensor
 /// coverage in a destroyed raider's retarded frame (`detected_at_retarded_time`).
 fn sample_at(samples: &VecDeque<Sample>, t_r: f64) -> Option<Sample> {
-    let mut best = None;
-    for s in samples.iter() {
-        if s.time <= t_r {
-            best = Some(*s);
-        } else {
-            break;
-        }
+    let newer = samples.partition_point(|sample| sample.time <= t_r);
+    if newer == 0 {
+        samples.front().copied()
+    } else {
+        samples.get(newer - 1).copied()
     }
-    best.or_else(|| samples.front().copied())
 }
 
 #[cfg(test)]
@@ -2295,6 +2712,7 @@ mod tests {
             tracks: HashMap::from([(EntityId(1), track)]),
             horizon: 1_000.0,
             sensor_range: 1_000.0,
+            frontiers: RefCell::new(FrontierCache::default()),
         };
         let ghosts = history.view_for(PlayerId(1), Vec2::ZERO, &field, outside_arrival + 1e-6);
         let wire = serde_json::to_value(&ghosts[0]).unwrap();
@@ -2365,6 +2783,17 @@ mod tests {
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
         let last = samples.last().map(|s| s.time).unwrap_or(0.0);
+        let bubble_transitions = samples
+            .windows(2)
+            .filter(|pair| pair[0].in_comms != pair[1].in_comms)
+            .map(|pair| {
+                if pair[1].in_comms {
+                    (pair[1].time, true)
+                } else {
+                    (pair[0].time, false)
+                }
+            })
+            .collect();
         let cargo = (kind == ShipKind::Convoy).then_some(sim::Cargo {
             commodity: sim::Commodity::Fuel,
             units: 100,
@@ -2386,6 +2815,7 @@ mod tests {
             job: None,
             plans: VecDeque::new(),
             samples: samples.into(),
+            bubble_transitions,
             last_seen: last,
             cargo,
             passengers: Default::default(),
@@ -2416,11 +2846,21 @@ mod tests {
     fn history_with(track: Track) -> PositionHistory {
         let mut tracks = HashMap::new();
         tracks.insert(EntityId(1), track);
-        PositionHistory { tracks, horizon: 1e9, sensor_range: 1e12 }
+        PositionHistory {
+            tracks,
+            horizon: 1e9,
+            sensor_range: 1e12,
+            frontiers: RefCell::new(FrontierCache::default()),
+        }
     }
 
     fn history_of(tracks: Vec<(EntityId, Track)>, sensor_range: f64) -> PositionHistory {
-        PositionHistory { tracks: tracks.into_iter().collect(), horizon: 1e9, sensor_range }
+        PositionHistory {
+            tracks: tracks.into_iter().collect(),
+            horizon: 1e9,
+            sensor_range,
+            frontiers: RefCell::new(FrontierCache::default()),
+        }
     }
 
     /// A ship sitting at X, then jumping to Y at t=10. A far command center must
@@ -3422,7 +3862,12 @@ mod tests {
         let mut tracks = HashMap::new();
         tracks.insert(EntityId(1), track);
         // Bubble 950: full-speed sig 1.0 reaches 950 > 900; coast sig would not.
-        let hist = PositionHistory { tracks, horizon: 1e9, sensor_range: 950.0 };
+        let hist = PositionHistory {
+            tracks,
+            horizon: 1e9,
+            sensor_range: 950.0,
+            frontiers: RefCell::new(FrontierCache::default()),
+        };
         let seen = hist.view_for(VIEWER, cc, &df(300.0), 6.0);
         assert_eq!(seen.len(), 1, "the old full-speed flare is what arrives — detected on schedule");
     }
@@ -3575,6 +4020,7 @@ mod tests {
             job: None,
             plans: VecDeque::new(),
             samples: samples.into(),
+            bubble_transitions: VecDeque::new(),
             last_seen: 100.0,
             cargo: None,
             passengers: Default::default(),
