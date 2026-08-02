@@ -48,8 +48,8 @@ use crate::protocol::{
 };
 
 /// §comms-v3: presentation bubbles use ordinary 2D distance, independently of
-/// the lane graph that carries the reports home. The band prevents the SERVED
-/// picture dithering across the boundary at tick precision.
+/// the lane graph that carries the reports home. Outbound mode changes on the
+/// exact nominal crossing event; this band applies only to DARK→LIVE re-entry.
 const BUBBLE_HYST: f64 = 2_000.0;
 /// Seconds over which the live replay delay slews toward the current route.
 const D_SMOOTH_S: f64 = 5.0;
@@ -57,13 +57,8 @@ const D_SMOOTH_S: f64 = 5.0;
 /// when a relay and command center coincide.
 const LIVE_DELAY_FLOOR_S: f64 = 0.05;
 
-fn presentation_bubble_contains(
-    pos: Vec2,
-    sites: &[sim::lane::CommSite],
-    was_in_comms: bool,
-) -> bool {
-    let margin = if was_in_comms { BUBBLE_HYST } else { -BUBBLE_HYST };
-    sim::lane::in_comm_bubble(pos, sites, margin)
+fn presentation_reentry_contains(pos: Vec2, sites: &[sim::lane::CommSite]) -> bool {
+    sim::lane::in_comm_bubble(pos, sites, -BUBBLE_HYST)
 }
 
 /// One recorded true state of a ship at a sim time.
@@ -89,7 +84,7 @@ struct Sample {
     /// Whether this report was physically emitted inside the nominal 2D relay
     /// bubble. This is a channel fact, separate from the track's served-picture
     /// presentation mode: the final inside report keeps its fast route after the
-    /// picture has crossed the hysteresis band.
+    /// picture changes to its dark hold.
     in_comms: bool,
 }
 
@@ -133,9 +128,9 @@ struct Track {
     /// exact count the `count_class` bucket exists to hide. Gated on coverage
     /// exactly like `composition`.
     damage_frac: f64,
-    /// Current served-picture presentation mode, hysteretic at relay boundaries.
-    /// It is advanced only from the position this mode just served; true hull
-    /// position never flips a marker early.
+    /// Current served-picture presentation mode. Exit is the arrived nominal
+    /// crossing event; re-entry alone is hysteretic. Both advance only from
+    /// served light, so true hull position never flips a marker early.
     in_comms: bool,
     /// Smoothed report delay used as the emission horizon in live mode.
     live_delay: f64,
@@ -2381,7 +2376,18 @@ fn serve_track_cached(
     if own && track.in_comms {
         // LIVE is a delayed replay, not extrapolated truth: advance the emission
         // horizon at one sim-second per sim-second using the eased route delay.
-        latest_emitted(&track.samples, now - track.live_delay)
+        // Once that horizon reaches an exit event, hold the exact crossing report
+        // until its copy arrives home. It is therefore both the last LIVE picture
+        // and the first DARK hold; the mode change cannot move the marker.
+        let picture = latest_emitted(&track.samples, now - track.live_delay)?;
+        let exit = track
+            .bubble_transitions
+            .iter()
+            .rev()
+            .find(|(time, _)| *time <= picture.time + 1e-9)
+            .filter(|(_, in_comms)| !*in_comms);
+        exit.and_then(|(time, _)| latest_emitted(&track.samples, *time))
+            .or(Some(picture))
     } else {
         // DARK remains the strict arrival gate. The last report emitted inside
         // the bubble retains its fast channel and therefore pins the arrow at
@@ -2457,39 +2463,44 @@ fn update_presentation_mode_cached(
         return;
     };
     let was_in_comms = track.in_comms;
-    let mut in_comms = presentation_bubble_contains(picture.pos, delays.sites, was_in_comms);
-    if was_in_comms && !in_comms {
-        // The live replay is allowed to slew mildly ahead of a receding report,
-        // but its MODE may not disclose the exit. Before retiring LIVE, require
-        // the arrival-gated channel to have reached the final nominal-bubble
-        // report preceding this served picture. This is a causal interlock, not
-        // a second position gate: the +hysteresis decision remains the replay's.
-        let boundary_time = track
+    let mut in_comms = was_in_comms;
+    if was_in_comms {
+        // Exit is one event, not a spatial band: once LIVE has served the exact
+        // crossing report, flip on the same frame its copy reaches command. The
+        // replay clamp above and DARK's arrival frontier then return one identical
+        // point on both sides of the mode change. Requiring both clocks prevents
+        // route-delay smoothing from disclosing the crossing before its light.
+        let exit_time = track
             .bubble_transitions
             .iter()
             .rev()
-            .find(|(time, in_comms)| *time <= picture.time + 1e-9 && !*in_comms)
+            .find(|(time, _)| *time <= picture.time + 1e-9)
+            .filter(|(_, in_comms)| !*in_comms)
             .map(|(time, _)| *time);
-        let arrived_time = latest_observable_cached(
-            &track.samples,
-            cc,
-            delays,
-            now,
-            true,
-            &wake_ears,
-            epochs,
-            deaths,
-            viewer,
-            cursor,
-            relay_version,
-            0,
-        )
-        .map(|sample| sample.time);
-        if boundary_time
-            .is_some_and(|boundary| arrived_time.is_none_or(|t| t + 1e-9 < boundary))
-        {
-            in_comms = true;
+        if let Some(exit_time) = exit_time {
+            let arrived_time = latest_observable_cached(
+                &track.samples,
+                cc,
+                delays,
+                now,
+                true,
+                &wake_ears,
+                epochs,
+                deaths,
+                viewer,
+                cursor,
+                relay_version,
+                0,
+            )
+            .map(|sample| sample.time);
+            if arrived_time.is_some_and(|time| time + 1e-9 >= exit_time) {
+                in_comms = false;
+            }
         }
+    } else {
+        // The band is deliberately one-way: DARK must reach the safely-inside
+        // report before the live replay resumes, preventing edge-skimming flap.
+        in_comms = presentation_reentry_contains(picture.pos, delays.sites);
     }
     if in_comms {
         let target_delay = if picture.drive.stirs_the_lane() {
@@ -3822,22 +3833,33 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_flips_with_hysteresis() {
+    fn reentry_hysteresis_still_prevents_flapping() {
         let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 40_000.0 }];
-        assert!(!presentation_bubble_contains(Vec2::new(38_001.0, 0.0), &sites, false));
-        assert!(presentation_bubble_contains(Vec2::new(38_000.0, 0.0), &sites, false));
-        assert!(presentation_bubble_contains(Vec2::new(41_999.0, 0.0), &sites, true));
-        assert!(presentation_bubble_contains(Vec2::new(42_000.0, 0.0), &sites, true));
-        assert!(!presentation_bubble_contains(Vec2::new(42_001.0, 0.0), &sites, true));
+        assert!(!presentation_reentry_contains(Vec2::new(38_001.0, 0.0), &sites));
+        assert!(presentation_reentry_contains(Vec2::new(38_000.0, 0.0), &sites));
 
-        let mut mode = false;
-        let mut transitions = 0;
-        for radius in [43_000.0, 38_500.0, 38_000.0, 39_000.0, 41_900.0, 40_500.0, 42_001.0] {
-            let next = presentation_bubble_contains(Vec2::new(radius, 0.0), &sites, mode);
-            transitions += usize::from(next != mode);
-            mode = next;
+        let mut live = false;
+        let mut dark_to_live = 0;
+        for radius in [
+            43_000.0,
+            40_200.0,
+            39_800.0,
+            40_100.0,
+            38_500.0,
+            38_001.0,
+            38_000.0,
+            38_150.0,
+            37_900.0,
+        ] {
+            if !live && presentation_reentry_contains(Vec2::new(radius, 0.0), &sites) {
+                live = true;
+                dark_to_live += 1;
+            }
         }
-        assert_eq!(transitions, 2, "edge-skimming must yield one enter and one exit");
+        assert_eq!(
+            dark_to_live, 1,
+            "edge-skimming may produce only one upgrade after a genuine inner-band crossing",
+        );
     }
 
     #[test]
@@ -3848,11 +3870,11 @@ mod tests {
         let boundary_delay = field.from_coupled(boundary.pos, Vec2::ZERO);
         let boundary_arrival = boundary.time + boundary_delay;
         // Receding-delay smoothing can put the LIVE replay ahead of the report
-        // channel. Force that hard case: the replay has crossed +hysteresis a
+        // channel. Force that hard case: the replay has reached the crossing a
         // full half-second before the nominal boundary report reaches home.
         let optimistic_live_delay = boundary_delay - 1.5;
-        let outside_hysteresis = before.samples[2];
-        let premature_candidate = outside_hysteresis.time + optimistic_live_delay;
+        let outside_sample = before.samples[2];
+        let premature_candidate = outside_sample.time + optimistic_live_delay;
         assert!(premature_candidate < boundary_arrival);
 
         before.in_comms = true;
@@ -3868,7 +3890,7 @@ mod tests {
         at_flip.live_delay = optimistic_live_delay;
         let flip_time = boundary_arrival + 1e-6;
         update_presentation_mode(&mut at_flip, Vec2::ZERO, &field, flip_time);
-        assert!(!at_flip.in_comms, "the served replay has now crossed the exit band");
+        assert!(!at_flip.in_comms, "the crossing report has now reached command");
         assert!(
             flip_time >= boundary_arrival,
             "a presentation flip may not disclose the exit before its report arrives",
@@ -3878,6 +3900,51 @@ mod tests {
         assert!(
             (pinned.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
             "the morph lands on the drawn nominal circle",
+        );
+    }
+
+    #[test]
+    fn the_edge_handoff_is_a_single_frame() {
+        let (mut track, lanes, sites) = bubble_exit_fixture();
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
+        let crossing = track.samples[1];
+        let crossing_delay = field.from_coupled(crossing.pos, Vec2::ZERO);
+        let crossing_arrival = crossing.time + crossing_delay;
+        track.in_comms = true;
+        track.live_delay = crossing_delay;
+
+        let last_live = serve_track(
+            &track,
+            Vec2::ZERO,
+            &field,
+            crossing_arrival,
+            true,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(last_live.pos, crossing.pos);
+        assert_eq!(last_live.time, crossing.time);
+
+        update_presentation_mode(&mut track, Vec2::ZERO, &field, crossing_arrival);
+        assert!(
+            !track.in_comms,
+            "the crossing report itself must flip LIVE to DARK",
+        );
+        let first_dark = serve_track(
+            &track,
+            Vec2::ZERO,
+            &field,
+            crossing_arrival,
+            true,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(first_dark.pos, crossing.pos);
+        assert_eq!(first_dark.time, crossing.time);
+        assert_eq!(last_live.pos, first_dark.pos);
+        assert!(
+            (first_dark.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
+            "the stationary handoff must occur on the rendered bubble edge",
         );
     }
 
