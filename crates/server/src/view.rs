@@ -59,6 +59,52 @@ struct Sample {
     drive: sim::ship::DriveState,
 }
 
+/// One arrived view sample. `vel` remains the factual velocity emitted by the
+/// older bracket sample; `vel_obs` is the rate at which the arrived position
+/// stream advances at the command center. Kept separate from [`Sample`] so
+/// report-path geometry never contaminates stored simulation history.
+#[derive(Clone, Copy)]
+struct ServedSample {
+    time: f64,
+    pos: Vec2,
+    vel: Vec2,
+    vel_obs: Vec2,
+    loud: bool,
+    drive: sim::ship::DriveState,
+}
+
+impl ServedSample {
+    fn held(sample: &Sample) -> Self {
+        Self {
+            time: sample.time,
+            pos: sample.pos,
+            vel: sample.vel,
+            vel_obs: Vec2::ZERO,
+            loud: sample.loud,
+            drive: sample.drive,
+        }
+    }
+
+    fn interpolated(
+        older: &Sample,
+        newer: &Sample,
+        arrival: f64,
+        newer_arrival: f64,
+        now: f64,
+    ) -> Self {
+        let arrival_span = newer_arrival - arrival;
+        let frac = ((now - arrival) / arrival_span).clamp(0.0, 1.0);
+        Self {
+            time: older.time + (newer.time - older.time) * frac,
+            pos: older.pos + (newer.pos - older.pos) * frac,
+            vel: older.vel,
+            vel_obs: (newer.pos - older.pos) / arrival_span,
+            loud: older.loud,
+            drive: older.drive,
+        }
+    }
+}
+
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
 /// (flagship, broadcast, sensor bubble, cap speed, size bucket) are snapshotted
 /// at record time so the view filter never needs the live sim `Fleet`.
@@ -434,13 +480,13 @@ impl PositionHistory {
             path: Vec<(Vec2, bool)>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
-            sample: Sample,
+            sample: ServedSample,
             cargo: Option<Cargo>,
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
             /// Owner-only coded-drive kinematics, independently light-gated.
-            wake: Option<Sample>,
+            wake: Option<ServedSample>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
             /// detection to that pre-destruction frame so a *post*-destruction
@@ -672,10 +718,12 @@ impl PositionHistory {
                 kind: p.flagship,
                 pos: p.sample.pos,
                 vel: p.sample.vel,
+                vel_obs: p.sample.vel_obs,
                 age,
                 wake: p.wake.map(|wake| WakeFixView {
                     pos: wake.pos,
                     vel: wake.vel,
+                    vel_obs: wake.vel_obs,
                     t: wake.time,
                 }),
                 own,
@@ -1742,7 +1790,7 @@ fn latest_observable(
     now: f64,
     own: bool,
     ears: &[sim::lane::Relay],
-) -> Option<Sample> {
+) -> Option<ServedSample> {
     // The most recently REJECTED sample (newer than the answer) and its arrival
     // time — the interpolation bracket's far end.
     let mut newer: Option<(&Sample, f64)> = None;
@@ -1814,17 +1862,10 @@ fn latest_observable(
             // the separate wake-fix channel may still update kinematics.
             if let Some((n, na)) = newer {
                 if na > arrival + 1e-9 && na - arrival <= SMOOTH_BRACKET_MAX {
-                    let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
-                    return Some(Sample {
-                        time: s.time + (n.time - s.time) * frac,
-                        pos: s.pos + (n.pos - s.pos) * frac,
-                        vel: s.vel,
-                        loud: s.loud,
-                        drive: s.drive,
-                    });
+                    return Some(ServedSample::interpolated(s, n, arrival, na, now));
                 }
             }
-            return Some(*s);
+            return Some(ServedSample::held(s));
         }
         newer = Some((s, arrival));
     }
@@ -1870,7 +1911,7 @@ fn latest_wake(
     delays: &sim::lane::DelayField<'_>,
     now: f64,
     ears: &WakeEars,
-) -> Option<Sample> {
+) -> Option<ServedSample> {
     let mut newer: Option<(&Sample, f64)> = None;
     for s in samples.iter().rev() {
         if !s.drive.stirs_the_lane() {
@@ -1891,16 +1932,9 @@ fn latest_wake(
                 && na > arrival + 1e-9
                 && na - arrival <= SMOOTH_BRACKET_MAX
             {
-                let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
-                return Some(Sample {
-                    time: s.time + (n.time - s.time) * frac,
-                    pos: s.pos + (n.pos - s.pos) * frac,
-                    vel: s.vel,
-                    loud: s.loud,
-                    drive: s.drive,
-                });
+                return Some(ServedSample::interpolated(s, n, arrival, na, now));
             }
-            return Some(*s);
+            return Some(ServedSample::held(s));
         }
         newer = Some((s, arrival));
     }
@@ -1943,6 +1977,104 @@ mod tests {
     }
 
     use super::*;
+
+    fn constant_velocity_samples(origin: Vec2, vel: Vec2) -> VecDeque<Sample> {
+        (0..=100)
+            .map(|i| {
+                let time = i as f64 * 0.1;
+                Sample {
+                    time,
+                    pos: origin + vel * time,
+                    vel,
+                    loud: false,
+                    drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_receding_riders_stream_advances_at_the_stretched_rate() {
+        let c = 1_000.0;
+        let speed = 200.0;
+        let samples =
+            constant_velocity_samples(Vec2::new(1_000.0, 0.0), Vec2::new(speed, 0.0));
+        let field = df(c);
+        let first = latest_observable(&samples, Vec2::ZERO, &field, 1.45, false, &[]).unwrap();
+        let second = latest_observable(&samples, Vec2::ZERO, &field, 1.51, false, &[]).unwrap();
+        let expected = speed / (1.0 + speed / c);
+        let served_rate = (second.pos.x - first.pos.x) / 0.06;
+
+        assert!(
+            (served_rate - expected).abs() < 1e-6,
+            "served positions must advance at {expected:.6}, got {served_rate:.6}"
+        );
+        assert!(
+            (second.vel_obs.x - expected).abs() < 1e-6,
+            "apparent velocity must follow the stretched arrival stream"
+        );
+        assert_eq!(
+            second.vel,
+            Vec2::new(speed, 0.0),
+            "the factual velocity remains what the hull reported"
+        );
+    }
+
+    #[test]
+    fn an_approaching_riders_stream_compresses() {
+        let c = 1_000.0;
+        let speed = 200.0;
+        let samples =
+            constant_velocity_samples(Vec2::new(5_000.0, 0.0), Vec2::new(-speed, 0.0));
+        let field = df(c);
+        let served = latest_observable(&samples, Vec2::ZERO, &field, 5.43, false, &[]).unwrap();
+        let expected = speed / (1.0 - speed / c);
+
+        assert!(
+            (served.vel_obs.x + expected).abs() < 1e-6,
+            "approaching stream must compress to -{expected:.6}, got {:.6}",
+            served.vel_obs.x
+        );
+        assert!(
+            served.vel_obs.length() > served.vel.length(),
+            "compressed light must advance faster than the factual hull speed"
+        );
+        assert_eq!(served.vel, Vec2::new(-speed, 0.0));
+    }
+
+    #[test]
+    fn a_comms_seam_serves_zero_apparent_rate() {
+        let factual = Vec2::new(200.0, 0.0);
+        let samples = VecDeque::from([
+            Sample {
+                time: 0.0,
+                pos: Vec2::new(1_000.0, 0.0),
+                vel: factual,
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            },
+            Sample {
+                time: 0.1,
+                pos: Vec2::new(3_000.0, 0.0),
+                vel: factual,
+                loud: false,
+                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            },
+        ]);
+        let served =
+            latest_observable(&samples, Vec2::ZERO, &df(1_000.0), 2.0, false, &[])
+                .unwrap();
+
+        assert_eq!(
+            served.vel_obs,
+            Vec2::ZERO,
+            "a held picture must not invent motion across a channel seam"
+        );
+        assert_eq!(
+            served.vel, factual,
+            "the held picture still reports the older factual velocity"
+        );
+    }
 
     /// §coupled: A FLEET RIDING A LANE TRANSMITS THROUGH IT — its own report
     /// rides at lane signal speed, so the owner's picture of it stays fresh even
@@ -2093,6 +2225,76 @@ mod tests {
             loud: false,
             drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
         }
+    }
+
+    #[test]
+    fn a_receding_wake_stream_advances_at_the_stretched_rate() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 40_000.0,
+        };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = vec![net.relay_at(site.pos)];
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.clone());
+        let speed = 5_000.0;
+        let samples: VecDeque<_> = (0..=100)
+            .map(|i| {
+                let time = i as f64 * 0.1;
+                riding_sample(time, 110_000.0 + speed * time)
+            })
+            .collect();
+        let first_arrival = samples[0].time
+            + field.heard_within(samples[0].pos, cc, &ears, sim::emplace::COMM_WAKE_EARSHOT);
+        let first = latest_wake(&samples, &field, first_arrival + 0.45, &wake_ears).unwrap();
+        let second = latest_wake(&samples, &field, first_arrival + 0.51, &wake_ears).unwrap();
+        let signal_speed = field.c * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT;
+        let expected = speed / (1.0 + speed / signal_speed);
+        let served_rate = (second.pos.x - first.pos.x) / 0.06;
+
+        assert!(
+            (served_rate - expected).abs() < 1e-6,
+            "wake positions must advance at {expected:.6}, got {served_rate:.6}"
+        );
+        assert!(
+            (second.vel_obs.x - expected).abs() < 1e-6,
+            "wake apparent velocity must follow its arrival stream"
+        );
+        assert_eq!(second.vel, Vec2::new(speed, 0.0));
+    }
+
+    #[test]
+    fn a_wake_comms_seam_serves_zero_apparent_rate() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let site = sim::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 40_000.0,
+        };
+        let sites = [site];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears = vec![net.relay_at(site.pos)];
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.clone());
+        let factual = Vec2::new(5_000.0, 0.0);
+        let samples = VecDeque::from([
+            riding_sample(0.0, 110_000.0),
+            riding_sample(0.1, 130_000.0),
+        ]);
+        let first_arrival = samples[0].time
+            + field.heard_within(samples[0].pos, cc, &ears, sim::emplace::COMM_WAKE_EARSHOT);
+        let served = latest_wake(&samples, &field, first_arrival + 0.6, &wake_ears).unwrap();
+
+        assert_eq!(
+            served.vel_obs,
+            Vec2::ZERO,
+            "a wake hold must not extrapolate across a comms seam"
+        );
+        assert_eq!(
+            served.vel, factual,
+            "wake facts remain the older hull report"
+        );
     }
 
     fn latest_wake_brute_force(
@@ -2277,11 +2479,21 @@ mod tests {
         );
         let own = ghosts.iter().find(|ghost| ghost.id == EntityId(1)).unwrap();
         assert_eq!(own.pos, old_full.pos, "full position stays on the full channel");
+        assert_eq!(
+            own.vel_obs,
+            Vec2::ZERO,
+            "a single held telemetry sample has zero apparent rate"
+        );
         assert_eq!(own.drive, Some(old_full.drive), "wake cannot update drive telemetry");
         assert_eq!(own.damage, Some(0.42), "wake cannot synthesize a damage update");
         let fix = own.wake.expect("the independent wake fix should have arrived");
         assert_eq!(fix.pos, wake.pos);
         assert_eq!(fix.vel, wake.vel);
+        assert_eq!(
+            fix.vel_obs,
+            Vec2::ZERO,
+            "a single held wake fix has zero apparent rate"
+        );
         assert_eq!(fix.t, wake.time);
 
         let rival = ghosts.iter().find(|ghost| ghost.id == EntityId(2)).unwrap();
@@ -2290,6 +2502,18 @@ mod tests {
         let own_json = wire.as_array().unwrap().iter().find(|g| g["id"] == "1").unwrap();
         let rival_json = wire.as_array().unwrap().iter().find(|g| g["id"] == "2").unwrap();
         assert!(own_json.get("wake").is_some(), "own GhostView carries wake on the wire");
+        assert!(
+            own_json.get("vel_obs").is_some(),
+            "every GhostView carries its apparent stream rate"
+        );
+        assert!(
+            own_json["wake"].get("vel_obs").is_some(),
+            "the wake fix carries its own apparent stream rate"
+        );
+        assert!(
+            rival_json.get("vel_obs").is_some(),
+            "rivals use the same apparent-rate wire contract"
+        );
         assert!(rival_json.get("wake").is_none(), "rival GhostView omits wake from the wire");
     }
 

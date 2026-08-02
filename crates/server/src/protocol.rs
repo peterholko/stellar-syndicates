@@ -28,7 +28,9 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-pub const PROTOCOL_VERSION: u32 = 8;
+/// v9 adds `vel_obs`, the arrived report stream's apparent rate, beside each
+/// factual ghost/wake velocity.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -1533,7 +1535,10 @@ pub struct EmplacementView {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct WakeFixView {
     pub pos: Vec2,
+    /// Factual velocity reported by the hull at this emission time.
     pub vel: Vec2,
+    /// Rate at which this arrived wake-position stream advances at the viewer.
+    pub vel_obs: Vec2,
     /// Sim time when the hull emitted this fix.
     pub t: f64,
 }
@@ -1559,8 +1564,10 @@ pub struct GhostView {
     pub kind: ShipKind,
     /// Where the object was when the arriving light left it (retarded position).
     pub pos: Vec2,
-    /// Velocity at that retarded moment (for heading / dead-reckoning).
+    /// Factual velocity at that retarded moment (for heading and ship facts).
     pub vel: Vec2,
+    /// Rate at which the arrived position stream advances at this viewer.
+    pub vel_obs: Vec2,
     /// Light delay in seconds — how stale this sighting is ("seen Xs ago").
     ///
     /// This is the WHOLE certainty story, and it applies to every object alike
