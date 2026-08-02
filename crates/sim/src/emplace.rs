@@ -2,8 +2,8 @@
 //! build slots.
 //!
 //! Communications and sensing solve opposite halves of getting information
-//! home. Gateways board signals onto a covered lane corridor, repeaters extend
-//! that wire, and sensors make the observation start closer to the target.
+//! home. Every comm structure lights nearby lane wire for signals to enter,
+//! ride, and leave; sensors make the observation start closer to the target.
 //!
 //! All are sited by the player on the galaxy map, all are owned, and all can
 //! be taken away — which is the point. It is what turns the lane network from
@@ -18,12 +18,12 @@ use crate::PlayerId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmplacementKind {
-    /// A physical hyperspace communications gateway. The free starter buoy is
-    /// an ordinary instance of this same kind; home itself is not a relay.
+    /// The long-throw, expensive hyperspace communications relay. The free
+    /// starter buoy is an ordinary instance; home itself is not a relay.
     /// Buildable only on a lane; see [`EmplacementKind::needs_a_lane`].
     HyperspaceBuoy,
-    /// Deaf hyperspace WIRE. Its larger coverage bubble extends a continuous
-    /// lane ride, but no signal may enter or leave hyperspace here.
+    /// The short-throw, inexpensive hyperspace communications relay. It has the
+    /// same signal function as a buoy; only size, cost, and build time differ.
     HyperspaceRepeater,
     /// A stationary sensor picket. Watches like a ship's sensors would and sends
     /// what it sees home at warp — so it shortens the *observation* leg rather
@@ -83,15 +83,10 @@ impl EmplacementKind {
     /// lane graph. Sensors are not relays.
     pub const fn throw(self) -> f64 {
         match self {
-            EmplacementKind::HyperspaceBuoy => 40_000.0,
-            EmplacementKind::HyperspaceRepeater => 80_000.0,
+            EmplacementKind::HyperspaceBuoy => 80_000.0,
+            EmplacementKind::HyperspaceRepeater => 40_000.0,
             EmplacementKind::DeepSpaceSensor | EmplacementKind::HyperspaceSensor => 0.0,
         }
-    }
-
-    /// Whether a signal may transfer between warp and a covered lane here.
-    pub const fn gateway(self) -> bool {
-        matches!(self, EmplacementKind::HyperspaceBuoy)
     }
 }
 
@@ -126,6 +121,11 @@ pub enum SiteError {
 /// so one post covers a corridor, not the whole route, and siting the approach
 /// lanes stays a real decision.
 pub const LANE_LISTEN_RANGE: f64 = 120_000.0;
+
+/// How far a comm structure can hear the coded carrier in one of its owner's
+/// coupled drives. Kept separate from sensor earshot as the wake tier's primary
+/// playtest knob even though both begin at the same range.
+pub const COMM_WAKE_EARSHOT: f64 = 120_000.0;
 
 /// How close a builder must hold to its site for the work to run — a worksite,
 /// not a rendezvous, so it is tight.

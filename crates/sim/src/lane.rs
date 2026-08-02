@@ -295,6 +295,50 @@ impl Lane {
         best
     }
 
+    /// The closest point on the centerline while restricted to one arc span.
+    /// Relay coverage ends between baked samples, so clamping a normal nearest
+    /// result after the fact can choose the wrong segment on a curved lane.
+    fn nearest_in_span(&self, p: Vec2, lo: f64, hi: f64) -> Option<(LaneSample, f64)> {
+        let lo = lo.clamp(0.0, self.length());
+        let hi = hi.clamp(lo, self.length());
+        let mut best: Option<(LaneSample, f64)> = None;
+        for w in self.samples.windows(2) {
+            let (a, b) = (&w[0], &w[1]);
+            let seg_lo = a.s.max(lo);
+            let seg_hi = b.s.min(hi);
+            if seg_hi < seg_lo {
+                continue;
+            }
+            let span = b.s - a.s;
+            let ta = if span > 1e-12 { (seg_lo - a.s) / span } else { 0.0 };
+            let tb = if span > 1e-12 { (seg_hi - a.s) / span } else { 0.0 };
+            let pa = a.pos + (b.pos - a.pos) * ta;
+            let pb = a.pos + (b.pos - a.pos) * tb;
+            let ab = pb - pa;
+            let t = if ab.length_sq() > 1e-12 {
+                ((p - pa).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let pos = pa + ab * t;
+            let s = seg_lo + (seg_hi - seg_lo) * t;
+            let whole_t = if span > 1e-12 { (s - a.s) / span } else { 0.0 };
+            let lerped = a.tangent + (b.tangent - a.tangent) * whole_t;
+            let tangent =
+                if lerped.length_sq() > 1e-12 { lerped.normalized() } else { a.tangent };
+            let distance = p.distance(pos);
+            if best.is_none_or(|(_, d)| distance < d) {
+                best = Some((LaneSample { pos, tangent, s }, distance));
+            }
+        }
+        if best.is_none() && !self.samples.is_empty() && (hi - lo).abs() <= 1e-9 {
+            let pos = self.at(lo);
+            let nearest = self.nearest(pos)?.0;
+            return Some((LaneSample { pos, s: lo, ..nearest }, p.distance(pos)));
+        }
+        best
+    }
+
     /// The ribbon's half-width at arc position `s` — constant, except across a
     /// tapering tail.
     fn half_width_at(&self, s: f64) -> f64 {
@@ -420,11 +464,9 @@ pub struct CommSite {
     pub pos: Vec2,
     /// Coverage radius measured in lane-network arc distance.
     pub throw: f64,
-    /// Whether warp traffic may board or leave a covered corridor here.
-    pub gateway: bool,
 }
 
-/// A coupled hull is an endpoint gateway for itself, but contributes no relay
+/// A coupled hull is an endpoint relay for itself, but contributes no relay
 /// coverage. Built infrastructure must already reach the hull's position; the
 /// receiver cannot silently double a buoy's displayed throw.
 pub const HULL_THROW: f64 = 0.0;
@@ -433,6 +475,13 @@ pub const HULL_THROW: f64 = 0.0;
 struct LaneRide {
     distance: f64,
     hops: Vec<RideHop>,
+}
+
+#[derive(Debug, Clone)]
+struct CoveredAccess {
+    pos: Vec2,
+    to_site: LaneRide,
+    from_site: LaneRide,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -571,9 +620,9 @@ impl LaneNetwork {
     /// §comms-infra: the fastest way for a SIGNAL to get from `a` to `b`, and the path
     /// it takes.
     ///
-    /// Warp everywhere by default. Owned gateways may inject onto or leave a
-    /// fully covered lane corridor; repeaters extend that corridor through
-    /// junctions but never board traffic. The command center is only the journey
+    /// Warp everywhere by default. Every owned comm structure may inject onto
+    /// or leave its fully covered lane arc, and overlapping coverage carries the
+    /// corridor through junctions. The command center is only the journey
     /// endpoint: home never enters the relay carrier.
     ///
     /// Returns the hops as well as the time, because the order graphic has to
@@ -669,9 +718,74 @@ impl LaneNetwork {
         Some(LaneRide { distance: distance[1], hops })
     }
 
-    /// Find a completely covered corridor between two gateway sites. Repeaters
-    /// participate in the coverage search, then disappear from the drawable hop
-    /// chain wherever the ride stays on the same lane.
+    /// The point in one relay's lane-network coverage nearest an arbitrary
+    /// endpoint. Coverage is a graph-distance ball: on any lane it is the union
+    /// of intervals reached directly from the site or through a junction.
+    fn nearest_covered_access(
+        &self,
+        target: Vec2,
+        site: CommSite,
+        relay: &Relay,
+    ) -> Option<CoveredAccess> {
+        let mut best: Option<(f64, CoveredAccess)> = None;
+        for lane in &self.lanes {
+            let mut anchors: Vec<(f64, f64)> = relay
+                .on
+                .iter()
+                .filter(|(lane_id, _)| *lane_id == lane.id)
+                .map(|(_, s)| (*s, 0.0))
+                .collect();
+            for junction in &self.junctions {
+                let lane_s = if self.lanes[junction.a].id == lane.id {
+                    Some(junction.sa)
+                } else if self.lanes[junction.b].id == lane.id {
+                    Some(junction.sb)
+                } else {
+                    None
+                };
+                let Some(lane_s) = lane_s else { continue };
+                let junction_relay = Relay {
+                    pos: junction.pos,
+                    on: vec![
+                        (self.lanes[junction.a].id, junction.sa),
+                        (self.lanes[junction.b].id, junction.sb),
+                    ],
+                };
+                let Some(ride) = self.lane_ride(relay, &junction_relay) else { continue };
+                if ride.distance <= site.throw + 1e-6 {
+                    anchors.push((lane_s, ride.distance));
+                }
+            }
+            for (anchor, base) in anchors {
+                let reach = (site.throw - base).max(0.0);
+                let Some((point, endpoint_distance)) =
+                    lane.nearest_in_span(target, anchor - reach, anchor + reach)
+                else {
+                    continue;
+                };
+                let access = Relay { pos: point.pos, on: vec![(lane.id, point.s)] };
+                let (Some(to_site), Some(from_site)) =
+                    (self.lane_ride(&access, relay), self.lane_ride(relay, &access))
+                else {
+                    continue;
+                };
+                if to_site.distance > site.throw + 1e-6
+                    || from_site.distance > site.throw + 1e-6
+                {
+                    continue;
+                }
+                let candidate = CoveredAccess { pos: point.pos, to_site, from_site };
+                if best.as_ref().is_none_or(|(distance, _)| endpoint_distance < *distance) {
+                    best = Some((endpoint_distance, candidate));
+                }
+            }
+        }
+        best.map(|(_, access)| access)
+    }
+
+    /// Find a completely covered corridor between two relay sites. Intermediate
+    /// structures participate in the coverage search, then disappear from the
+    /// drawable hop chain wherever the ride stays on the same lane.
     fn covered_corridor(
         &self,
         start: usize,
@@ -744,9 +858,10 @@ impl LaneNetwork {
         Some(LaneRide { distance: offset, hops })
     }
 
-    /// Shared gateway-aware signal search. Warp may reach or leave only a
-    /// gateway. Lane edges exist only for fully covered corridors; a gap removes
-    /// the whole ride edge, so a signal never falls out midway along a lane.
+    /// Shared relay search. Every comm structure is a full relay: warp may board
+    /// or leave at the nearest point anywhere inside that structure's covered
+    /// arc. Lane edges still require a completely covered overlap chain; a gap
+    /// removes the whole ride edge, so a signal never falls out midway.
     fn signal_routed(&self, a: Vec2, b: Vec2, c: f64, sites: &[CommSite]) -> (f64, Vec<Hop>) {
         let warp = c * WARP_FACTOR;
         let lane_speed = c * self.signal_factor_on_lane();
@@ -756,21 +871,22 @@ impl LaneNetwork {
             return direct;
         }
         let relays: Vec<Relay> = sites.iter().map(|site| self.relay_at(site.pos)).collect();
-        let gateways: Vec<usize> = sites
+        let entry: Vec<Option<CoveredAccess>> = sites
             .iter()
-            .enumerate()
-            .filter(|(_, site)| site.gateway)
-            .map(|(i, _)| i)
+            .zip(&relays)
+            .map(|(site, relay)| self.nearest_covered_access(a, *site, relay))
             .collect();
-        if gateways.is_empty() {
-            return direct;
-        }
-        let n = gateways.len();
+        let exit: Vec<Option<CoveredAccess>> = sites
+            .iter()
+            .zip(&relays)
+            .map(|(site, relay)| self.nearest_covered_access(b, *site, relay))
+            .collect();
+        let n = sites.len();
         let mut rides: Vec<Vec<Option<LaneRide>>> = vec![vec![None; n]; n];
         for u in 0..n {
             for v in (u + 1)..n {
-                rides[u][v] = self.covered_corridor(gateways[u], gateways[v], sites, &relays);
-                rides[v][u] = self.covered_corridor(gateways[v], gateways[u], sites, &relays);
+                rides[u][v] = self.covered_corridor(u, v, sites, &relays);
+                rides[v][u] = self.covered_corridor(v, u, sites, &relays);
             }
         }
 
@@ -779,9 +895,13 @@ impl LaneNetwork {
             Warp,
             Ride(LaneRide),
         }
-        let mut best: Vec<f64> = gateways
+        let mut best: Vec<f64> = entry
             .iter()
-            .map(|site| a.distance(sites[*site].pos) / warp)
+            .map(|access| {
+                access.as_ref().map_or(f64::INFINITY, |access| {
+                    a.distance(access.pos) / warp + access.to_site.distance / lane_speed
+                })
+            })
             .collect();
         let mut prev: Vec<Option<(usize, Edge)>> = vec![None; n];
         let mut done = vec![false; n];
@@ -801,7 +921,7 @@ impl LaneNetwork {
                 if done[v] {
                     continue;
                 }
-                let warp_t = sites[gateways[u]].pos.distance(sites[gateways[v]].pos) / warp;
+                let warp_t = sites[u].pos.distance(sites[v].pos) / warp;
                 let (w, edge) = rides[u][v]
                     .as_ref()
                     .map(|ride| (ride.distance / lane_speed, Edge::Ride(ride.clone())))
@@ -816,7 +936,15 @@ impl LaneNetwork {
         let Some((end, t)) = best
             .iter()
             .enumerate()
-            .map(|(i, d)| (i, d + sites[gateways[i]].pos.distance(b) / warp))
+            .filter_map(|(i, d)| {
+                exit[i].as_ref().map(|access| {
+                    (
+                        i,
+                        d + access.from_site.distance / lane_speed
+                            + access.pos.distance(b) / warp,
+                    )
+                })
+            })
             .filter(|(_, t)| t.is_finite())
             .min_by(|x, y| x.1.total_cmp(&y.1))
         else {
@@ -832,15 +960,18 @@ impl LaneNetwork {
             first = p;
         }
         steps.reverse();
-        let mut hops = vec![Hop {
-            to: sites[gateways[first]].pos,
-            lane: None,
-            t: best[first],
-        }];
+        let first_access = entry[first].as_ref().unwrap();
+        let mut elapsed = a.distance(first_access.pos) / warp;
+        let mut hops = vec![Hop { to: first_access.pos, lane: None, t: elapsed }];
+        hops.extend(first_access.to_site.hops.iter().map(|hop| Hop {
+            to: hop.to,
+            lane: Some(hop.lane),
+            t: elapsed + hop.distance / lane_speed,
+        }));
         for (u, v, edge) in steps {
             match edge {
                 Edge::Warp => hops.push(Hop {
-                    to: sites[gateways[v]].pos,
+                    to: sites[v].pos,
                     lane: None,
                     t: best[v],
                 }),
@@ -854,8 +985,26 @@ impl LaneNetwork {
                 }
             }
         }
+        elapsed = best[end];
+        let last_access = exit[end].as_ref().unwrap();
+        hops.extend(last_access.from_site.hops.iter().map(|hop| Hop {
+            to: hop.to,
+            lane: Some(hop.lane),
+            t: elapsed + hop.distance / lane_speed,
+        }));
         hops.push(Hop { to: b, lane: None, t });
-        (t, hops)
+        let mut compact: Vec<Hop> = Vec::with_capacity(hops.len());
+        for hop in hops {
+            if let Some(last) = compact.last_mut()
+                && hop.lane.is_some()
+                && hop.lane == last.lane
+            {
+                *last = hop;
+            } else {
+                compact.push(hop);
+            }
+        }
+        (t, compact)
     }
 
     /// Expand the graph-level hops of a signal into the baked geometry of every
@@ -915,7 +1064,7 @@ impl LaneNetwork {
     }
 
     /// An outbound order whose RECEIVER is actively riding a lane. Its engaged
-    /// drive makes the hull an endpoint gateway for itself, with zero relay
+    /// drive makes the hull an endpoint relay for itself, with zero relay
     /// throw; it receives a lane-fast order only when built coverage reaches
     /// that moving endpoint.
     pub fn signal_to_coupled(
@@ -934,11 +1083,11 @@ impl LaneNetwork {
         }
         // §coupled: an engaged hyperdrive is a terminal wound into the medium —
         // the same coupling that carries its reports home receives an order at
-        // the hull. It joins the graph as a zero-throw gateway, so built wire
+        // the hull. It joins the graph as a zero-throw relay, so built wire
         // may terminate at the ship but the ship cannot extend that wire beyond
         // the selected relay's displayed coverage boundary.
         let mut with_hull = sites.to_vec();
-        with_hull.push(CommSite { pos: p, throw: HULL_THROW, gateway: true });
+        with_hull.push(CommSite { pos: p, throw: HULL_THROW });
         self.signal_routed(a, p, c, &with_hull)
     }
 
@@ -948,12 +1097,12 @@ impl LaneNetwork {
     /// medium, so its own report may ride covered lane wire before exiting
     /// toward the receiver. The outbound direction mirrors this
     /// (`signal_to_coupled`): the same coupling makes the hull its own zero-throw
-    /// gateway, so an order rides only when the owner's built coverage reaches
+    /// relay, so an order rides only when the owner's built coverage reaches
     /// the hull itself.
     ///
-    /// The hull joins the lane graph as its origin gateway for this query. Its
+    /// The hull joins the lane graph as its origin relay for this query. Its
     /// report can follow covered wire through junctions, then leave hyperspace
-    /// only at a physical gateway.
+    /// at any covered point.
     pub fn signal_coupled(&self, p: Vec2, b: Vec2, c: f64, sites: &[CommSite]) -> f64 {
         let inside = self
             .lanes
@@ -963,7 +1112,7 @@ impl LaneNetwork {
             return self.signal(p, b, c, sites).0;
         }
         let mut with_hull = sites.to_vec();
-        with_hull.push(CommSite { pos: p, throw: HULL_THROW, gateway: true });
+        with_hull.push(CommSite { pos: p, throw: HULL_THROW });
         self.signal_routed(p, b, c, &with_hull).0
     }
 
@@ -971,8 +1120,7 @@ impl LaneNetwork {
     /// their lane listening posts (`ears`), then get the report home to `b`.
     ///
     /// The wake rides the lane to the nearest post within listening range, and
-    /// the post relays home through the ordinary signal path (gateways, wire,
-    /// then warp).
+    /// the post relays home through the ordinary signal path (wire, then warp).
     /// `INFINITY` when no post hears it — the caller minimises this against
     /// passive light, so no ears simply means no advantage.
     pub fn signal_heard(
@@ -2337,16 +2485,16 @@ fn route_name(id: u32) -> String {
 mod tests {
     use super::*;
 
-    fn gateway(pos: Vec2) -> CommSite {
-        CommSite { pos, throw: 40_000.0, gateway: true }
+    fn relay(pos: Vec2) -> CommSite {
+        CommSite { pos, throw: 40_000.0 }
     }
 
-    fn repeater(pos: Vec2) -> CommSite {
-        CommSite { pos, throw: 80_000.0, gateway: false }
+    fn long_relay(pos: Vec2) -> CommSite {
+        CommSite { pos, throw: 80_000.0 }
     }
 
-    fn wide_gateway(pos: Vec2) -> CommSite {
-        CommSite { pos, throw: 1_000_000.0, gateway: true }
+    fn wide_relay(pos: Vec2) -> CommSite {
+        CommSite { pos, throw: 1_000_000.0 }
     }
 
     fn signal_line(length: f64) -> LaneNetwork {
@@ -3156,16 +3304,16 @@ mod tests {
     /// §comms-infra: two GATEWAYS with overlapping coverage can board, carry,
     /// and discharge a signal on the same lane.
     #[test]
-    fn two_covered_gateways_on_one_lane_carry_the_signal_at_lane_speed() {
+    fn two_covered_relays_on_one_lane_carry_the_signal_at_lane_speed() {
         let (n, ..) = net(1, 4);
         let l = &n.lanes[0];
         let (a, b) = (l.at(l.length() * 0.1), l.at(l.length() * 0.9));
         let c = 400.0;
         let warp_only = n.signal(a, b, c, &[]).0;
-        let (relayed, hops) = n.signal(a, b, c, &[wide_gateway(a), wide_gateway(b)]);
+        let (relayed, hops) = n.signal(a, b, c, &[wide_relay(a), wide_relay(b)]);
         assert!(
             relayed < warp_only * 0.5,
-            "two covered gateways on one lane should be far quicker ({relayed:.1}s vs {warp_only:.1}s)",
+            "two covered relays on one lane should be far quicker ({relayed:.1}s vs {warp_only:.1}s)",
         );
         assert!(hops.iter().any(|h| h.lane == Some(l.id)), "and the path says which road it rode");
         assert_eq!(hops.last().unwrap().to, b, "a signal always ends where it was sent");
@@ -3182,7 +3330,7 @@ mod tests {
         let l = &n.lanes[0];
         let (a, b) = (l.at(l.length() * 0.1), l.at(l.length() * 0.9));
         let c = 400.0;
-        let (total, hops) = n.signal(a, b, c, &[wide_gateway(a), wide_gateway(b)]);
+        let (total, hops) = n.signal(a, b, c, &[wide_relay(a), wide_relay(b)]);
         assert!(hops.len() >= 2, "a relayed journey has real hops");
         let mut prev = 0.0;
         for h in &hops {
@@ -3198,6 +3346,31 @@ mod tests {
         let (direct_t, direct_hops) = n.signal(a, b, c, &[]);
         assert_eq!(direct_hops.len(), 1);
         assert!((direct_hops[0].t - direct_t).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_signal_boards_and_leaves_anywhere_inside_coverage() {
+        let n = signal_line(220_000.0);
+        let site = Vec2::new(100_000.0, 0.0);
+        let receiver = Vec2::new(139_000.0, 20_000.0);
+        let c = 400.0;
+        let single_exit_time = site.distance(receiver) / (c * WARP_FACTOR);
+        let (covered_arc_time, hops) = n.signal(site, receiver, c, &[relay(site)]);
+
+        assert!(
+            covered_arc_time < single_exit_time,
+            "the signal should ride to the covered point nearest the receiver ({covered_arc_time:.3}s vs the old single-exit {single_exit_time:.3}s)",
+        );
+        let lane_exit = hops
+            .iter()
+            .rev()
+            .find(|hop| hop.lane == Some(77))
+            .expect("the signal should leave from inside the site's covered arc");
+        assert!(
+            lane_exit.to.distance(Vec2::new(139_000.0, 0.0)) < 1.0,
+            "the lane exit should be the covered point nearest the receiver, got {:?}",
+            lane_exit.to,
+        );
     }
 
     /// The order comet must trace the CURVE whose arc length supplied its fast
@@ -3224,7 +3397,7 @@ mod tests {
         let home = lane.at(lane.length() * 0.05);
         let buoy = lane.at(lane.length() * 0.35);
         let hull = lane.at(lane.length() * 0.95);
-        let buoys = [wide_gateway(home), wide_gateway(buoy)];
+        let buoys = [wide_relay(home), wide_relay(buoy)];
         let field = DelayField { lanes: &n, sites: &buoys, c: 400.0 };
 
         let coarse = n.signal_to_coupled(home, hull, field.c, &buoys).1;
@@ -3251,10 +3424,11 @@ mod tests {
         );
     }
 
-    /// Repeaters provide coverage but are never boarding or exit points. Their
-    /// positions disappear from a same-lane drawable ride between gateways.
+    /// Every relay boards and discharges signals. Intermediate structures still
+    /// disappear from a same-lane drawable ride: the road, not its poles, is the
+    /// geometry the comet follows.
     #[test]
-    fn wire_carries_the_ride_but_only_a_gateway_boards_it() {
+    fn wire_carries_the_ride_and_every_relay_can_board_it() {
         let n = signal_line(400_000.0);
         let (entry, r1, r2, exit) = (
             Vec2::ZERO,
@@ -3263,21 +3437,21 @@ mod tests {
             Vec2::new(300_000.0, 0.0),
         );
         let c = 400.0;
-        let bare = n.signal(entry, exit, c, &[gateway(entry), gateway(exit)]).0;
-        let sites = [gateway(entry), repeater(r1), repeater(r2), gateway(exit)];
+        let bare = n.signal(entry, exit, c, &[relay(entry), relay(exit)]).0;
+        let sites = [relay(entry), long_relay(r1), long_relay(r2), relay(exit)];
         let (wired, hops) = n.signal(entry, exit, c, &sites);
         assert!(wired < bare * 0.5, "wire should turn the span into a lane ride");
         assert!(hops.iter().any(|hop| hop.lane == Some(77)));
         assert!(
             hops.iter().filter(|hop| hop.lane.is_some()).all(|hop| hop.to != r1 && hop.to != r2),
-            "repeaters carry coverage without becoming drawable exits"
+            "intermediate relays should not kink a continuous drawable lane ride"
         );
 
         let (from_repeater, hops) =
-            n.signal(r1, exit, c, &[repeater(r1), gateway(exit)]);
+            n.signal(r1, exit, c, &[long_relay(r1), long_relay(r2), relay(exit)]);
         let warp = r1.distance(exit) / (c * WARP_FACTOR);
-        assert!((from_repeater - warp).abs() < 1e-9);
-        assert!(hops.iter().all(|hop| hop.lane.is_none()), "nothing boards at wire");
+        assert!(from_repeater < warp * 0.5, "a repeater is now a full relay");
+        assert!(hops.iter().any(|hop| hop.lane == Some(77)), "the signal boards there");
 
         // Coverage gaps are measured across junctions as one continuous arc.
         let lane = |id: u32, control: Vec<Vec2>| Lane {
@@ -3299,14 +3473,14 @@ mod tests {
             Vec2::new(150_000.0, 40_000.0),
             Vec2::new(150_000.0, 150_000.0),
         );
-        let sites = [gateway(entry), repeater(bend_a), repeater(bend_b), gateway(exit)];
+        let sites = [relay(entry), long_relay(bend_a), long_relay(bend_b), relay(exit)];
         let (_, hops) = crossing.signal(entry, exit, c, &sites);
         let used: std::collections::BTreeSet<u32> =
             hops.iter().filter_map(|hop| hop.lane).collect();
         assert_eq!(used, [90, 91].into_iter().collect(), "covered wire turns freely at a junction");
         assert!(
             hops.iter().filter(|hop| hop.lane.is_some()).all(|hop| hop.to != bend_a && hop.to != bend_b),
-            "junction-spanning repeaters still never become entry or exit hops",
+            "junction-spanning relays should not kink a continuous drawable ride",
         );
     }
 
@@ -3320,13 +3494,19 @@ mod tests {
             Vec2::new(300_000.0, 0.0),
         );
         let c = 400.0;
-        let broken = [gateway(entry), repeater(r1), gateway(exit)];
+        let broken = [relay(entry), long_relay(r1), relay(exit)];
         let (broken_t, broken_hops) = n.signal(entry, exit, c, &broken);
         let warp = entry.distance(exit) / (c * WARP_FACTOR);
-        assert!((broken_t - warp).abs() < 1e-9);
-        assert!(broken_hops.iter().all(|hop| hop.lane.is_none()));
+        assert!(broken_t < warp, "each covered side may still carry its useful arc");
+        assert!(broken_hops.iter().any(|hop| hop.lane.is_some()));
+        assert!(
+            broken_hops.windows(2).any(|hops| {
+                hops[1].lane.is_none() && hops[0].to.distance(hops[1].to) > 1.0
+            }),
+            "the uncovered gap must remain a real warp hop",
+        );
 
-        let repaired = [gateway(entry), repeater(r1), repeater(r2), gateway(exit)];
+        let repaired = [relay(entry), long_relay(r1), long_relay(r2), relay(exit)];
         let (repaired_t, repaired_hops) = n.signal(entry, exit, c, &repaired);
         assert!(repaired_t < broken_t);
         assert!(repaired_hops.iter().any(|hop| hop.lane.is_some()));
@@ -3341,7 +3521,7 @@ mod tests {
             Vec2::new(200_000.0, 0.0),
             Vec2::new(280_000.0, 0.0),
         );
-        let sites = [gateway(entry), repeater(left), repeater(right)];
+        let sites = [relay(entry), long_relay(left), long_relay(right)];
         let c = 400.0;
         let (delay, hops) = n.signal_to_coupled(entry, hull, c, &sites);
         let warp = entry.distance(hull) / (c * WARP_FACTOR);
@@ -3350,16 +3530,16 @@ mod tests {
     }
 
     /// A coupled hull is only a terminal on wire that already reaches it. It
-    /// must not contribute another buoy-sized coverage bubble of its own: once
-    /// the hull crosses the selected buoy's 40k-su boundary, both orders and
-    /// reports fall back to ordinary warp.
+    /// must not contribute another relay-sized coverage bubble of its own. Once
+    /// the hull crosses the selected relay's 40k-su boundary, both orders and
+    /// reports leave the road there and warp the uncovered remainder.
     #[test]
     fn a_riding_hull_does_not_extend_a_buoys_throw() {
         let n = signal_line(100_000.0);
         let home = Vec2::ZERO;
         let inside = Vec2::new(39_999.0, 0.0);
         let outside = Vec2::new(40_001.0, 0.0);
-        let sites = [gateway(home)];
+        let sites = [relay(home)];
         let c = 400.0;
 
         let (inside_order, inside_hops) = n.signal_to_coupled(home, inside, c, &sites);
@@ -3367,12 +3547,16 @@ mod tests {
         assert!(inside_order < inside_warp * 0.5, "a hull inside the buoy radius rides the wire");
         assert!(inside_hops.iter().any(|hop| hop.lane == Some(77)));
 
-        let outside_warp = home.distance(outside) / (c * WARP_FACTOR);
         let (outside_order, outside_hops) = n.signal_to_coupled(home, outside, c, &sites);
         let outside_report = n.signal_coupled(outside, home, c, &sites);
-        assert!((outside_order - outside_warp).abs() < 1e-9, "an order beyond the buoy radius uses warp");
-        assert!((outside_report - outside_warp).abs() < 1e-9, "a report beyond the buoy radius uses warp");
-        assert!(outside_hops.iter().all(|hop| hop.lane.is_none()));
+        assert!((outside_order - outside_report).abs() < 1e-9, "the two directions agree");
+        let lane_exit = outside_hops
+            .iter()
+            .rev()
+            .find(|hop| hop.lane == Some(77))
+            .expect("the covered portion still rides");
+        assert!((lane_exit.to.x - 40_000.0).abs() < 1.0, "the hull adds no coverage");
+        assert_eq!(outside_hops.last().unwrap().lane, None, "the last su is warp");
     }
 
     #[test]
@@ -3384,24 +3568,28 @@ mod tests {
             Vec2::new(280_000.0, 0.0),
             Vec2::new(401_000.0, 0.0),
         );
-        let sites = [gateway(home), repeater(r1), repeater(r2)];
+        let sites = [relay(home), long_relay(r1), long_relay(r2)];
         let c = 400.0;
-        let warp = home.distance(hull) / (c * WARP_FACTOR);
         let (outbound, hops) = n.signal_to_coupled(home, hull, c, &sites);
         let inbound = n.signal_coupled(hull, home, c, &sites);
-        assert!((outbound - warp).abs() < 1e-9);
-        assert!((inbound - warp).abs() < 1e-9);
-        assert!(hops.iter().all(|hop| hop.lane.is_none()));
+        assert!((outbound - inbound).abs() < 1e-9, "the two directions agree");
+        let lane_exit = hops
+            .iter()
+            .rev()
+            .find(|hop| hop.lane == Some(77))
+            .expect("the signal rides the lit portion");
+        assert!((lane_exit.to.x - 360_000.0).abs() < 1.0, "wire ends at the last throw");
+        assert_eq!(hops.last().unwrap().lane, None, "mail crawls beyond the wire");
     }
 
-    /// §comms-infra: two gateways sharing NO lane are just two points in space,
+    /// §comms-v2: two relays sharing NO lane are just two points in space,
     /// so the signal stays at warp. Building them anywhere is not building wire.
     #[test]
-    fn gateways_off_the_network_relay_nothing() {
+    fn relays_off_the_network_relay_nothing() {
         let (n, _, _, radius) = net(1, 4);
         let c = 400.0;
         let (a, b) = (Vec2::new(radius * 3.0, 0.0), Vec2::new(radius * 3.0, radius));
-        let (t, hops) = n.signal(a, b, c, &[wide_gateway(a), wide_gateway(b)]);
+        let (t, hops) = n.signal(a, b, c, &[wide_relay(a), wide_relay(b)]);
         assert!((t - a.distance(b) / (c * WARP_FACTOR)).abs() < 1e-6, "warp, not relay");
         assert!(hops.iter().all(|h| h.lane.is_none()), "no hop claims a lane");
     }

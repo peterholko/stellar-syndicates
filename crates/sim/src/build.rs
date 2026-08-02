@@ -424,15 +424,13 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
     }
 }
 
-/// §comms-infra: a BUOY is the gateway instrument: the expensive hardware that
-/// transfers a signal between warp and a covered hyperspace corridor.
+/// §comms-v2: a BUOY is the expensive, long-throw size of full lane relay.
 static HYPERSPACE_BUOY_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 50.0), (Commodity::Electronics, 100.0), (Commodity::Fuel, 30.0)],
     build_ticks: 60 * HZ,
 };
 
-/// §comms-infra: repeaters are cheap, deaf lengths of wire. They extend relay
-/// coverage but contain none of a gateway's boarding instrument.
+/// §comms-v2: a REPEATER is the cheap, short-throw size of the same full relay.
 static HYPERSPACE_REPEATER_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 15.0), (Commodity::Electronics, 15.0), (Commodity::Fuel, 10.0)],
     build_ticks: 25 * HZ,

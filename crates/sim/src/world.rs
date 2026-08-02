@@ -5726,10 +5726,10 @@ impl World {
     /// coverage rendering — so everything that keys off sensor range inherits
     /// arrays consistently. Systems are static, so including them in the View's
     /// delayed composite frame is exactly as leak-free as ship bubbles.
-    /// §comms-infra: this player's RELAY NETWORK — every owned buoy gateway and
-    /// repeater, carrying its throw and boarding capability as data.
+    /// §comms-v2: this player's RELAY NETWORK — every owned comm structure,
+    /// carrying its lane-arc throw. Both sizes may board and discharge signals.
     /// Home itself is only the command endpoint; the granted starter buoy is the
-    /// corporation's first physical lane gateway and can be destroyed or rebuilt
+    /// corporation's first physical lane relay and can be destroyed or rebuilt
     /// like any other emplacement.
     pub fn relay_network(&self, owner: PlayerId) -> Vec<crate::lane::CommSite> {
         self.emplacements
@@ -5738,7 +5738,6 @@ impl World {
             .map(|e| crate::lane::CommSite {
                 pos: e.pos,
                 throw: e.kind.throw(),
-                gateway: e.kind.gateway(),
             })
             .collect()
     }
@@ -10322,7 +10321,7 @@ impl World {
         let relay = self.relay_factor(player_id, ship_pos);
         // §one-clock: the order travels through the SAME MEDIUM as everything
         // the player watches — warp-speed signal, boosted across their covered
-        // gateway-and-wire corridors — not bare normal-space `c`. Split clocks here were directly
+        // covered relay corridors — not bare normal-space `c`. Split clocks here were directly
         // visible at the desk: the client's comet and ETA said 45 seconds (it
         // reads the signal field), then the authoritative pending-order arrival
         // said three minutes (this code, at c), and the ship finally moved at a
@@ -10684,7 +10683,7 @@ impl World {
         }
     }
 
-    /// Grant a joining corporation its one free lane gateway. The site is the
+    /// Grant a joining corporation its one free long-throw lane relay. The site is the
     /// exact continuous centerline point nearest home, not merely the nearest
     /// baked vertex, so the visual and mechanical placement agree.
     fn grant_starter_buoy(&mut self, owner: PlayerId, home: Vec2) {
@@ -23176,21 +23175,20 @@ mod starter_kit_emplacements {
                 vec![crate::lane::CommSite {
                     pos: mine[0].pos,
                     throw: mine[0].kind.throw(),
-                    gateway: true,
                 }]
             );
         }
     }
 
-    /// §comms-infra: after the free home gateway, the seeded HOME STOCKPILE can
-    /// fund one forward gateway plus three repeaters of opening wire. Fuel is
+    /// §comms-v2: after the free home buoy, the seeded HOME STOCKPILE can fund
+    /// one forward long relay plus three short relays of opening wire. Fuel is
     /// supplied by `FUEL_HOME_SEED` during AddPlayer; it is not part of the
     /// static home-system recipe.
     #[test]
-    fn the_starter_kit_funds_a_forward_gateway_and_its_wire() {
+    fn the_starter_kit_funds_a_forward_buoy_and_its_wire() {
         let mut w = World::new(SimConfig::default());
         w.step(&[Command::AddPlayer { id: PlayerId(1), name: "P".into() }]);
-        let gateway = crate::build::emplacement_recipe(
+        let buoy = crate::build::emplacement_recipe(
             crate::emplace::EmplacementKind::HyperspaceBuoy,
         );
         let repeater = crate::build::emplacement_recipe(
@@ -23209,11 +23207,11 @@ mod starter_kit_emplacements {
                     .find(|(c, _)| *c == commodity)
                     .map_or(0.0, |(_, n)| *n)
             };
-            let needed = in_recipe(gateway) + 3.0 * in_recipe(repeater);
+            let needed = in_recipe(buoy) + 3.0 * in_recipe(repeater);
             let have = sys.stockpile.get(&commodity).copied().unwrap_or(0.0);
             assert!(
                 have + 1e-9 >= needed,
-                "opening gateway + wire: {commodity:?} has {have:.1}, needs {needed:.1}"
+                "opening relay wire: {commodity:?} has {have:.1}, needs {needed:.1}"
             );
         }
         assert_eq!(crate::fuel::FUEL_HOME_SEED, 180.0, "Fuel closes through AddPlayer's reserve");

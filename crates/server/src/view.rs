@@ -1860,11 +1860,10 @@ mod tests {
         let c = 400.0;
         let cc = Vec2::new(0.0, 0.0);
         let sites = [
-            sim::lane::CommSite { pos: cc, throw: 40_000.0, gateway: true },
+            sim::lane::CommSite { pos: cc, throw: 40_000.0 },
             sim::lane::CommSite {
                 pos: Vec2::new(120_000.0, 0.0),
                 throw: 80_000.0,
-                gateway: false,
             },
         ];
         let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
@@ -3929,11 +3928,10 @@ mod channel_seam {
         let cc = sim::Vec2::new(0.0, 0.0);
         let pos = sim::Vec2::new(100_000.0, 0.0); // dead centre of the ribbon
         let sites = [
-            sim::lane::CommSite { pos: cc, throw: 40_000.0, gateway: true },
+            sim::lane::CommSite { pos: cc, throw: 40_000.0 },
             sim::lane::CommSite {
                 pos: sim::Vec2::new(60_000.0, 0.0),
                 throw: 80_000.0,
-                gateway: false,
             },
         ];
         let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };
@@ -4029,11 +4027,10 @@ mod channel_seam {
         let c = 2_000.0;
         let cc = sim::Vec2::new(0.0, 0.0);
         let sites = [
-            sim::lane::CommSite { pos: cc, throw: 40_000.0, gateway: true },
+            sim::lane::CommSite { pos: cc, throw: 40_000.0 },
             sim::lane::CommSite {
                 pos: sim::Vec2::new(60_000.0, 0.0),
                 throw: 80_000.0,
-                gateway: false,
             },
         ];
         let field = sim::lane::DelayField { lanes: &net, sites: &sites, c };

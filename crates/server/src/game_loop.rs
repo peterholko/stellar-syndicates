@@ -1054,7 +1054,7 @@ impl GameLoop {
         self.observed_order_plans.retain(|key, _| active_orders.contains(key));
 
         let c = self.world.config.c;
-        // §comms-infra: the delay field is PER PLAYER — gateway-and-wire
+        // §comms-v2: the delay field is PER PLAYER — covered relay
         // infrastructure is owned and cuttable, so a rival's sites carry
         // nothing of yours. Built inside the loop rather than shared across it.
         let now = self.world.time;
@@ -2106,8 +2106,8 @@ mod tests {
         Vec2,
     };
 
-    fn wide_gateway(pos: Vec2) -> CommSite {
-        CommSite { pos, throw: 1_000_000.0, gateway: true }
+    fn wide_relay(pos: Vec2) -> CommSite {
+        CommSite { pos, throw: 1_000_000.0 }
     }
 
     fn signal_bow() -> LaneNetwork {
@@ -2154,7 +2154,7 @@ mod tests {
         let home = lane.at(lane.length() * 0.05);
         let buoy = lane.at(lane.length() * 0.35);
         let hull = lane.at(lane.length() * 0.95);
-        let relays = [wide_gateway(home), wide_gateway(buoy)];
+        let relays = [wide_relay(home), wide_relay(buoy)];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
         let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
@@ -2181,7 +2181,7 @@ mod tests {
         let home = lane.at(lane.length() * 0.05);
         let ghost_pos = lane.at(lane.length() * 0.95);
         let ghost_vel = Vec2::new(-1_000.0, 0.0);
-        let relays = [wide_gateway(home)];
+        let relays = [wide_relay(home)];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let old_sighting_time = field.to_coupled(home, ghost_pos);
 
@@ -2217,14 +2217,14 @@ mod tests {
         let lane = &lanes.lanes[0];
         let home = lane.at(lane.length() * 0.05);
         let hull = lane.at(lane.length() * 0.95);
-        let relays = [wide_gateway(home)];
+        let relays = [wide_relay(home)];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let inbound = field.from_coupled(hull, home);
 
         let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
         let outbound = plan.travel_time;
         let warp = home.distance(hull) / (field.c * WARP_FACTOR);
-        assert!(!plan.hops.is_empty(), "the order rides — the coupled hull is its terminal gateway");
+        assert!(!plan.hops.is_empty(), "the order rides — the coupled hull is its terminal relay");
         assert!(
             outbound < warp * 0.5,
             "far quicker than the warp chord ({outbound:.1}s vs {warp:.1}s)"
@@ -2247,7 +2247,7 @@ mod tests {
         let ghost_pos = lane.at(lane.length() * 0.90);
         let true_pos = lane.at(lane.length() * 0.35);
         let ghost_vel = Vec2::new(-2_000.0, 0.0);
-        let relays = [wide_gateway(home)];
+        let relays = [wide_relay(home)];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let depart = 73.0;
 
