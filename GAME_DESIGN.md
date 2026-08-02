@@ -150,17 +150,23 @@ coverage at lane junctions. A **Hyperspace Buoy** is the expensive long-throw si
 su); a **Hyperspace Repeater** is the cheap short-throw size (40,000 su). Home is not a relay;
 each corporation begins with one ordinary, destructible buoy on the lane nearest home.
 
-Own fleets have three presentation states. **Live:** while the true hull is inside the 2D
-throw-radius bubble of an owned comm structure, its full sprite replays a signal-delayed
-picture at true hull speed. **Dark:** after it exits, a heading arrow pins at the boundary
-and advances only when strictly arrival-gated warp-light reports reach home. **Re-entry:**
-when the true hull crosses back into a bubble, the stale arrow streaks to the newly served
-edge position and becomes the full sprite. The live replay is deliberately mildly optimistic
-for a receding own fleet; that accepted presentation exception never applies outside a bubble
-or to rivals. Lane-arc coverage still governs signal routing: covered arcs glow green, a
-signal leaves at the nearest covered point, and any uncovered remainder crosses at warp-light
-speed. Dedicated Hyperspace Sensors still hear rival wakes through their separate tripwire
-path; a hull never extends relay coverage.
+Own fleets have three presentation states, all decided in the picture the command center can
+actually see. **Live:** while the served delayed replay remains inside a comm structure's 2D
+throw-radius bubble (with a small hysteresis band), the full sprite advances at true hull
+speed. **Dark:** once that replay exits, a heading arrow pins to the final report at the
+nominal circle and advances only when strictly arrival-gated warp-light reports reach home.
+**Re-entry:** only when that dark stream delivers a report back inside the bubble does the
+stale arrow streak to the newly served edge position and become the full sprite. True hull
+position never flips the marker early. The live replay is deliberately mildly optimistic for
+a receding own fleet; that accepted presentation exception never applies outside a bubble or
+to rivals.
+
+The same 2D bubble is the binary boundary for **outbound orders**. If the order's solved
+meeting point is inside any owned comm circle, it may ride the covered wire; if the meeting
+point is outside every circle, the command center sends one direct warp-light chord with no
+partial lane assist. Inbound own-fleet reports retain their per-emission channel, and lane-arc
+coverage still governs how an inside report rides home. Dedicated Hyperspace Sensors still
+hear rival wakes through their separate tripwire path; a hull never extends relay coverage.
 
 This principle is *generative* — players internalize it once and can then predict the
 behaviour of any new situation.

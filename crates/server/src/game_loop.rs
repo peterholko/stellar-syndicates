@@ -40,13 +40,11 @@ pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
 /// Build the exact drawable route and clock for an outbound command aimed at the
 /// moving meeting point projected from the player's current ghost of a ship.
 ///
-/// A ship riding a lane is coupled to the medium in BOTH directions: its report
-/// rides home, and an order to it counts the hull as the relay completing the
-/// access pair (`signal_to_coupled`), so the comet flies the route the ship
-/// itself took. The channels can still differ in detail, so the ghost's AGE is
-/// not necessarily the time this outbound route takes. The purple comet must use
-/// the total attached to THESE hops; otherwise a plain-warp chord can be squeezed
-/// into a hyperspace-fast inbound window and look like an FTL straight line.
+/// Inside an owned comm bubble, a ship riding a lane is coupled to the medium in
+/// both directions and the comet follows that covered route. Outside every 2D
+/// bubble, the binary command rule bypasses the network completely and sends one
+/// direct warp-light chord. The purple comet must use the same gated clock as
+/// delivery; otherwise its geometry and the order's authoritative arrival split.
 #[derive(Debug, Clone)]
 struct CommandSignalPlan {
     travel_time: f64,
@@ -65,16 +63,18 @@ fn command_signal_plan(
     // §6: solve only from the SERVED sighting. This is the same fixed-point
     // meeting equation as authoritative delivery, but fed the player's ghost
     // position/velocity so neither the route nor its clock leaks true space.
-    let (_, meeting_point) =
-        delays.meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, None, 1.0);
-    let route = if ghost_coupled {
+    let (travel_time, meeting_point) =
+        delays.command_meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, None, 1.0);
+    let relayed = sim::lane::in_comm_bubble(meeting_point, delays.sites, 0.0);
+    let route = if !relayed {
+        Vec::new()
+    } else if ghost_coupled {
         delays.path_to_coupled(cc, meeting_point)
     } else {
         delays.path(cc, meeting_point)
     };
-    let travel_time = route.last().map(|hop| hop.t).unwrap_or(0.0);
     let mut from = cc;
-    let mut beyond_comms = false;
+    let mut beyond_comms = !relayed;
     for hop in &route {
         if from.distance(hop.to) > 1e-6 {
             beyond_comms = hop.lane.is_none();
@@ -2222,11 +2222,10 @@ mod tests {
         assert!((final_hop.frac - 1.0).abs() < 1e-9);
     }
 
-    /// §comms-v2: A RIDING HULL IS ITS OWN ZERO-THROW ENDPOINT. Covered wire
-    /// reaches the hull directly in either direction, while home remains only
-    /// the warp endpoint. Geometry and clock must describe that same ride.
+    /// Inside the 2D command bubble, a riding hull is the zero-throw endpoint of
+    /// the covered wire. Geometry and clock must describe that same ride.
     #[test]
-    fn an_order_to_a_riding_hull_flies_the_covered_wire() {
+    fn an_order_inside_the_circle_rides_the_wire() {
         let lanes = signal_bow();
         let lane = &lanes.lanes[0];
         let home = lane.at(lane.length() * 0.05);
@@ -2255,7 +2254,7 @@ mod tests {
     }
 
     #[test]
-    fn an_order_that_leaves_wire_marks_its_light_speed_final_leg() {
+    fn an_order_beyond_the_circle_flies_straight_at_warp() {
         let lanes = signal_line();
         let lane = &lanes.lanes[0];
         let home = lane.at(10_000.0);
@@ -2264,8 +2263,30 @@ mod tests {
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
         let plan = command_signal_plan(&field, home, target, Vec2::ZERO, false);
-        assert!(plan.beyond_comms, "the nonzero final hop is outside covered wire");
-        assert!(plan.hops.len() >= 2, "the signal should ride first, then crawl");
+        let direct = home.distance(target) / (field.c * WARP_FACTOR);
+        assert!(plan.beyond_comms, "the direct chord is beyond the command bubble");
+        assert!(plan.hops.is_empty(), "outside means no partial lane assist");
+        assert!((plan.travel_time - direct).abs() < 1e-9);
+        assert_eq!(plan.meeting_point, target);
+    }
+
+    #[test]
+    fn the_plan_and_the_delivery_share_one_gate() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(10_000.0);
+        let ghost_pos = lane.at(145_000.0);
+        let ghost_vel = Vec2::new(500.0, 0.0);
+        let relays = [CommSite { pos: home, throw: 40_000.0 }];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
+
+        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+        let (delivery_delay, delivery_point) =
+            field.command_meeting_delay(home, ghost_pos, ghost_vel, true, None, 1.0);
+        assert!(!sim::lane::in_comm_bubble(delivery_point, &relays, 0.0));
+        assert!(plan.hops.is_empty(), "the shared outside gate selects direct warp");
+        assert!((plan.travel_time - delivery_delay).abs() < 1e-9);
+        assert!(plan.meeting_point.distance(delivery_point) < 1e-9);
     }
 
     #[test]

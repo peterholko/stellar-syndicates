@@ -10319,25 +10319,31 @@ impl World {
         // command's outbound leg) — the SINGLE plug for the tempo bonus, so it can
         // never desync from what the map shows. `relay_factor` is 1.0 with no node.
         let relay = self.relay_factor(player_id, ship_pos);
-        // §one-clock: the order travels through the SAME MEDIUM as everything
-        // the player watches — warp-speed signal, boosted across their covered
-        // covered relay corridors — not bare normal-space `c`. Split clocks here were directly
+        // §one-clock: the order uses the SAME binary command field as its comet:
+        // wire-routed when the solved meeting point is inside an owned 2D comm
+        // bubble, otherwise one direct warp-light chord. Split clocks here were directly
         // visible at the desk: the client's comet and ETA said 45 seconds (it
         // reads the signal field), then the authoritative pending-order arrival
         // said three minutes (this code, at c), and the ship finally moved at a
         // moment that matched neither. One medium, one countdown.
         let buoys = self.relay_network(player_id);
         let field = crate::lane::DelayField { lanes: &self.lanes, sites: &buoys, c };
-        // A fleet actively riding a lane is a receiver inside the medium; an
-        // off-lane fleet can be reached from hyperspace only by exiting at an
-        // owned buoy and warping the remainder. Solve the signal/ship
+        // A fleet actively riding a lane is a coupled receiver only when that
+        // binary bubble gate admits the command; no outside target gets partial
+        // lane assistance. Solve the signal/ship
         // MEETING rather than timing the signal only to the issue-time position:
         // inbound ships are met earlier, outbound ships later. Coupling is fixed
         // from the drive state at issue time throughout the refinement — we do
         // not invent future drive transitions while extrapolating this order.
         let known_route = (!ship_route.is_empty()).then_some(ship_route.as_slice());
-        let (delay, delivery_point) =
-            field.meeting_delay(cc, ship_pos, ship_vel, ship_coupled, known_route, relay);
+        let (delay, delivery_point) = field.command_meeting_delay(
+            cc,
+            ship_pos,
+            ship_vel,
+            ship_coupled,
+            known_route,
+            relay,
+        );
         let delivered_at = self.time + delay;
         // The echo — the first light of the new behavior — leaves from the solved
         // delivery point and reaches the command center one signal-delay later.
@@ -13683,7 +13689,7 @@ mod tests {
         plant(
             &mut w,
             id,
-            crate::emplace::EmplacementKind::HyperspaceRepeater,
+            crate::emplace::EmplacementKind::HyperspaceBuoy,
             cc + Vec2::new(60_000.0, 0.0),
         );
         let ship_pos = cc + Vec2::new(100_000.0, 0.0);

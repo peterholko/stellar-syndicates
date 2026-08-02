@@ -41,8 +41,8 @@ use crate::protocol::{
 };
 
 /// §comms-v3: presentation bubbles use ordinary 2D distance, independently of
-/// the lane graph that carries the reports home. The band prevents a ship
-/// dithering across the boundary at tick precision.
+/// the lane graph that carries the reports home. The band prevents the SERVED
+/// picture dithering across the boundary at tick precision.
 const BUBBLE_HYST: f64 = 2_000.0;
 /// Seconds over which the live replay delay slews toward the current route.
 const D_SMOOTH_S: f64 = 5.0;
@@ -55,14 +55,8 @@ fn presentation_bubble_contains(
     sites: &[sim::lane::CommSite],
     was_in_comms: bool,
 ) -> bool {
-    sites.iter().any(|site| {
-        let radius = if was_in_comms {
-            site.throw + BUBBLE_HYST
-        } else {
-            (site.throw - BUBBLE_HYST).max(0.0)
-        };
-        pos.distance(site.pos) <= radius
-    })
+    let margin = if was_in_comms { BUBBLE_HYST } else { -BUBBLE_HYST };
+    sim::lane::in_comm_bubble(pos, sites, margin)
 }
 
 /// One recorded true state of a ship at a sim time.
@@ -85,9 +79,10 @@ struct Sample {
     /// warp velocity, and a fleet that had already stopped still
     /// claimed to be in hyperspace.
     drive: sim::ship::DriveState,
-    /// Whether this report was emitted while the true hull was in one of its
-    /// owner's presentation bubbles. Per-sample so an exit cannot retroactively
-    /// reroute already-emitted live reports onto the slow dark channel.
+    /// Whether this report was physically emitted inside the nominal 2D relay
+    /// bubble. This is a channel fact, separate from the track's served-picture
+    /// presentation mode: the final inside report keeps its fast route after the
+    /// picture has crossed the hysteresis band.
     in_comms: bool,
 }
 
@@ -131,7 +126,9 @@ struct Track {
     /// exact count the `count_class` bucket exists to hide. Gated on coverage
     /// exactly like `composition`.
     damage_frac: f64,
-    /// Current true-position presentation mode, hysteretic at relay boundaries.
+    /// Current served-picture presentation mode, hysteretic at relay boundaries.
+    /// It is advanced only from the position this mode just served; true hull
+    /// position never flips a marker early.
     in_comms: bool,
     /// Smoothed report delay used as the emission horizon in live mode.
     live_delay: f64,
@@ -249,8 +246,7 @@ impl PositionHistory {
         let now = world.time;
         for (id, ship) in &world.fleets {
             let sites = world.relay_network(ship.owner);
-            let was_in_comms = self.tracks.get(id).is_some_and(|track| track.in_comms);
-            let in_comms = presentation_bubble_contains(ship.pos, &sites, was_in_comms);
+            let report_in_comms = sim::lane::in_comm_bubble(ship.pos, &sites, 0.0);
             let cc = world
                 .players
                 .get(&ship.owner)
@@ -260,7 +256,7 @@ impl PositionHistory {
                 sites: &sites,
                 c: world.config.c,
             };
-            let target_delay = if ship.drive_state.stirs_the_lane() {
+            let initial_delay = if ship.drive_state.stirs_the_lane() {
                 delays.from_coupled(ship.pos, cc)
             } else {
                 delays.between(ship.pos, cc)
@@ -284,7 +280,7 @@ impl PositionHistory {
                 gone: None,
                 damage_frac: 0.0,
                 in_comms: false,
-                live_delay: target_delay,
+                live_delay: initial_delay,
                 docked: None,
                 job: None,
                 plans: VecDeque::new(),
@@ -297,17 +293,6 @@ impl PositionHistory {
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
-            let entered_comms = in_comms && !track.in_comms;
-            if entered_comms {
-                // Re-entry deliberately catches the live horizon up at once;
-                // the client celebrates that discontinuity with the streak.
-                track.live_delay = target_delay;
-            } else if in_comms {
-                let alpha = 1.0 - (-sim::config::DT / D_SMOOTH_S).exp();
-                track.live_delay += (target_delay - track.live_delay) * alpha;
-                track.live_delay = track.live_delay.max(LIVE_DELAY_FLOOR_S);
-            }
-            track.in_comms = in_comms;
             track.docked = world.dock_of(*id);
             use crate::protocol::{JobKind, JobView};
             let frac = |t0: f64, secs: f64| {
@@ -356,14 +341,26 @@ impl PositionHistory {
             track.loadouts = ship.loadouts.clone();
             track.modules = ship.modules.clone();
             track.route = route_of(&ship.order);
-            track.samples.push_back(Sample {
+            let current = Sample {
                 time: now,
                 pos: ship.pos,
                 vel: ship.vel,
                 loud: ship.surveying(),
                 drive: ship.drive_state,
-                in_comms,
-            });
+                in_comms: report_in_comms,
+            };
+            if let Some(previous) = track.samples.back().copied()
+                && let Some(boundary) = nominal_bubble_crossing(previous, current, &sites)
+            {
+                track.samples.push_back(boundary);
+            }
+            track.samples.push_back(current);
+            // §comms-v3.1: advance the mode only after recording this frame, and
+            // only from what the CURRENT mode can serve at `now`. LIVE therefore
+            // runs its replay to the edge; DARK cannot re-enter until that report
+            // has physically arrived. The true hull sample above supplies channel
+            // history, never the presentation decision.
+            update_presentation_mode(track, cc, &delays, now);
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
                 if now - front.time > self.horizon {
@@ -1799,6 +1796,37 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 /// channel seam or a bow-wave rush, where discrete serving is the honest form.
 const SMOOTH_BRACKET_MAX: f64 = 0.5;
 
+/// Insert the exact nominal-circle report when a tick segment crosses the union
+/// of owned comm bubbles. A 30 Hz endpoint alone can miss the rendered edge by a
+/// fastest-hull tick (hundreds of su); bisection makes the report that later pins
+/// the arrow agree with the circle rather than merely land near it.
+fn nominal_bubble_crossing(
+    older: Sample,
+    newer: Sample,
+    sites: &[sim::lane::CommSite],
+) -> Option<Sample> {
+    if older.in_comms == newer.in_comms || older.pos.distance(newer.pos) <= 1e-9 {
+        return None;
+    }
+    let mut lo = 0.0;
+    let mut hi = 1.0;
+    for _ in 0..48 {
+        let mid = (lo + hi) * 0.5;
+        let pos = older.pos + (newer.pos - older.pos) * mid;
+        if sim::lane::in_comm_bubble(pos, sites, 0.0) == older.in_comms {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    // On exit `lo` is the last inside point; on entry `hi` is the first. Both
+    // lie on the inclusive nominal boundary to floating-point precision.
+    let frac = if newer.in_comms { hi } else { lo };
+    let mut boundary = Sample::interpolate(&older, &newer, frac);
+    boundary.in_comms = true;
+    Some(boundary)
+}
+
 fn serve_track(
     track: &Track,
     cc: Vec2,
@@ -1817,6 +1845,71 @@ fn serve_track(
         // the exit until the first post-exit warp report actually arrives.
         latest_observable(&track.samples, cc, delays, now, own, ears)
     }
+}
+
+/// Advance one own fleet's presentation mode in the frame the player actually
+/// sees. Each side asks its own serving path for a picture first: LIVE evaluates
+/// the delayed replay; DARK evaluates only reports whose light has arrived. This
+/// ordering is the anti-leak guarantee at both boundaries.
+fn update_presentation_mode(
+    track: &mut Track,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    now: f64,
+) {
+    let Some(picture) = serve_track(track, cc, delays, now, true, &[]) else {
+        return;
+    };
+    let was_in_comms = track.in_comms;
+    let mut in_comms = presentation_bubble_contains(picture.pos, delays.sites, was_in_comms);
+    if was_in_comms && !in_comms {
+        // The live replay is allowed to slew mildly ahead of a receding report,
+        // but its MODE may not disclose the exit. Before retiring LIVE, require
+        // the arrival-gated channel to have reached the final nominal-bubble
+        // report preceding this served picture. This is a causal interlock, not
+        // a second position gate: the +hysteresis decision remains the replay's.
+        let boundary_time = track
+            .samples
+            .iter()
+            .rev()
+            .find(|sample| sample.time <= picture.time + 1e-9 && sample.in_comms)
+            .map(|sample| sample.time);
+        let arrived_time = latest_observable(&track.samples, cc, delays, now, true, &[])
+            .map(|sample| sample.time);
+        if boundary_time
+            .is_some_and(|boundary| arrived_time.is_none_or(|t| t + 1e-9 < boundary))
+        {
+            in_comms = true;
+        }
+    }
+    if in_comms {
+        let target_delay = if picture.drive.stirs_the_lane() {
+            delays.from_coupled(picture.pos, cc)
+        } else {
+            delays.between(picture.pos, cc)
+        }
+        .max(LIVE_DELAY_FLOOR_S);
+        if !was_in_comms {
+            // Hysteresis is decided on the later, safely-inside DARK report, but
+            // the first LIVE frame lands on the nominal entry circle the player
+            // sees. That boundary report is already in the arrived stream (or the
+            // transition could not have fired), so this reveals nothing newer.
+            let mut prior_in_comms = None;
+            let mut entry_time = None;
+            for sample in track.samples.iter().take_while(|s| s.time <= picture.time + 1e-9) {
+                if prior_in_comms == Some(false) && sample.in_comms {
+                    entry_time = Some(sample.time);
+                }
+                prior_in_comms = Some(sample.in_comms);
+            }
+            track.live_delay = (now - entry_time.unwrap_or(picture.time)).max(LIVE_DELAY_FLOOR_S);
+        } else {
+            let alpha = 1.0 - (-sim::config::DT / D_SMOOTH_S).exp();
+            track.live_delay += (target_delay - track.live_delay) * alpha;
+            track.live_delay = track.live_delay.max(LIVE_DELAY_FLOOR_S);
+        }
+    }
+    track.in_comms = in_comms;
 }
 
 fn latest_emitted(samples: &VecDeque<Sample>, horizon: f64) -> Option<Sample> {
@@ -2116,6 +2209,71 @@ mod tests {
         .unwrap();
         assert_eq!(served.pos, boundary.pos);
         assert_eq!(served.time, boundary.time);
+        assert!(
+            (served.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
+            "the dark arrow pins to the same nominal circle the client draws",
+        );
+    }
+
+    #[test]
+    fn a_tick_crossing_records_the_exact_nominal_circle() {
+        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 80_000.0 }];
+        let inside = Sample {
+            time: 1.0,
+            pos: Vec2::new(79_500.0, 0.0),
+            vel: Vec2::new(5_000.0, 0.0),
+            loud: false,
+            drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
+            in_comms: true,
+        };
+        let outside = Sample { time: 1.1, pos: Vec2::new(80_500.0, 0.0), in_comms: false, ..inside };
+        let boundary = nominal_bubble_crossing(inside, outside, &sites).unwrap();
+
+        assert!(boundary.in_comms, "the edge report retains the fast inside channel");
+        assert!((boundary.time - 1.05).abs() < 1e-9);
+        assert!((boundary.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-7);
+    }
+
+    #[test]
+    fn reentry_lands_the_live_sprite_on_the_nominal_circle() {
+        let (_, lanes, sites) = bubble_exit_fixture();
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
+        let drive = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
+        let samples = vec![
+            Sample {
+                time: 0.0,
+                pos: Vec2::new(85_000.0, 0.0),
+                vel: Vec2::new(-5_000.0, 0.0),
+                loud: false,
+                drive,
+                in_comms: false,
+            },
+            Sample {
+                time: 1.0,
+                pos: Vec2::new(80_000.0, 0.0),
+                vel: Vec2::new(-5_000.0, 0.0),
+                loud: false,
+                drive,
+                in_comms: true,
+            },
+            Sample {
+                time: 2.0,
+                pos: Vec2::new(75_000.0, 0.0),
+                vel: Vec2::new(-5_000.0, 0.0),
+                loud: false,
+                drive,
+                in_comms: true,
+            },
+        ];
+        let inner = samples[2];
+        let mut track = track_from(samples, PlayerId(1), ShipKind::Raider);
+        let inner_arrival = inner.time + field.from_coupled(inner.pos, Vec2::ZERO);
+
+        update_presentation_mode(&mut track, Vec2::ZERO, &field, inner_arrival + 1e-6);
+        assert!(track.in_comms, "the safely-inside report has arrived");
+        let served = serve_track(&track, Vec2::ZERO, &field, inner_arrival + 1e-6, true, &[])
+            .unwrap();
+        assert!((served.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6);
     }
 
     #[test]
@@ -2162,6 +2320,47 @@ mod tests {
             mode = next;
         }
         assert_eq!(transitions, 2, "edge-skimming must yield one enter and one exit");
+    }
+
+    #[test]
+    fn the_flip_never_precedes_the_reports_arrival() {
+        let (mut before, lanes, sites) = bubble_exit_fixture();
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
+        let boundary = before.samples[1];
+        let boundary_delay = field.from_coupled(boundary.pos, Vec2::ZERO);
+        let boundary_arrival = boundary.time + boundary_delay;
+        // Receding-delay smoothing can put the LIVE replay ahead of the report
+        // channel. Force that hard case: the replay has crossed +hysteresis a
+        // full half-second before the nominal boundary report reaches home.
+        let optimistic_live_delay = boundary_delay - 1.5;
+        let outside_hysteresis = before.samples[2];
+        let premature_candidate = outside_hysteresis.time + optimistic_live_delay;
+        assert!(premature_candidate < boundary_arrival);
+
+        before.in_comms = true;
+        before.live_delay = optimistic_live_delay;
+        update_presentation_mode(&mut before, Vec2::ZERO, &field, premature_candidate);
+        assert!(
+            before.in_comms,
+            "the replay has exited, but its boundary report has not arrived yet",
+        );
+
+        let (mut at_flip, _, _) = bubble_exit_fixture();
+        at_flip.in_comms = true;
+        at_flip.live_delay = optimistic_live_delay;
+        let flip_time = boundary_arrival + 1e-6;
+        update_presentation_mode(&mut at_flip, Vec2::ZERO, &field, flip_time);
+        assert!(!at_flip.in_comms, "the served replay has now crossed the exit band");
+        assert!(
+            flip_time >= boundary_arrival,
+            "a presentation flip may not disclose the exit before its report arrives",
+        );
+        let pinned = serve_track(&at_flip, Vec2::ZERO, &field, flip_time, true, &[]).unwrap();
+        assert_eq!(pinned.pos, boundary.pos);
+        assert!(
+            (pinned.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
+            "the morph lands on the drawn nominal circle",
+        );
     }
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {

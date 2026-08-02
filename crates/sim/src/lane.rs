@@ -462,8 +462,19 @@ pub struct Relay {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CommSite {
     pub pos: Vec2,
-    /// Coverage radius measured in lane-network arc distance.
+    /// The structure's advertised throw. It is both the arc reach used to light
+    /// relay wire and the ordinary 2D radius of its presentation/command bubble.
     pub throw: f64,
+}
+
+/// The single 2D communications-bubble predicate. Presentation mode supplies a
+/// hysteresis margin; outbound command routing supplies zero. Keeping both on
+/// this function prevents the visible circle and the authoritative order gate
+/// from drifting into separate laws.
+pub fn in_comm_bubble(pos: Vec2, sites: &[CommSite], margin: f64) -> bool {
+    sites
+        .iter()
+        .any(|site| pos.distance(site.pos) <= (site.throw + margin).max(0.0))
 }
 
 /// A coupled hull is an endpoint relay for itself, but contributes no relay
@@ -1772,8 +1783,57 @@ impl DelayField<'_> {
         route: Option<&[Vec2]>,
         delay_factor: f64,
     ) -> (f64, Vec2) {
+        self.solve_meeting_delay(
+            source,
+            receiver_pos,
+            receiver_vel,
+            coupled,
+            route,
+            delay_factor,
+            false,
+        )
+    }
+
+    /// Solve an OUTBOUND COMMAND meeting under the binary relay rule. A target
+    /// inside a comm structure's 2D circle uses the ordinary routed signal
+    /// field; a target outside every circle is reached by one direct warp-light
+    /// chord. The gate lives inside the fixed-point travel function, so the
+    /// meeting converges under the same metric it is ultimately charged.
+    pub fn command_meeting_delay(
+        &self,
+        source: Vec2,
+        receiver_pos: Vec2,
+        receiver_vel: Vec2,
+        coupled: bool,
+        route: Option<&[Vec2]>,
+        delay_factor: f64,
+    ) -> (f64, Vec2) {
+        self.solve_meeting_delay(
+            source,
+            receiver_pos,
+            receiver_vel,
+            coupled,
+            route,
+            delay_factor,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn solve_meeting_delay(
+        &self,
+        source: Vec2,
+        receiver_pos: Vec2,
+        receiver_vel: Vec2,
+        coupled: bool,
+        route: Option<&[Vec2]>,
+        delay_factor: f64,
+        binary_command_gate: bool,
+    ) -> (f64, Vec2) {
         let travel_time = |target| {
-            let raw = if coupled {
+            let raw = if binary_command_gate && !in_comm_bubble(target, self.sites, 0.0) {
+                self.passive(source, target)
+            } else if coupled {
                 self.to_coupled(source, target)
             } else {
                 self.between(source, target)
@@ -2870,6 +2930,18 @@ mod tests {
             WARP_FACTOR,
             "clear of the well, the drive lights",
         );
+    }
+
+    #[test]
+    fn the_comm_bubble_predicate_pins_nominal_and_hysteretic_edges() {
+        let sites = [CommSite { pos: Vec2::new(10_000.0, -2_000.0), throw: 40_000.0 }];
+        let at = |radius| sites[0].pos + Vec2::new(radius, 0.0);
+
+        assert!(in_comm_bubble(at(40_000.0), &sites, 0.0));
+        assert!(!in_comm_bubble(at(40_000.1), &sites, 0.0));
+        assert!(in_comm_bubble(at(42_000.0), &sites, 2_000.0));
+        assert!(in_comm_bubble(at(38_000.0), &sites, -2_000.0));
+        assert!(!in_comm_bubble(at(38_000.1), &sites, -2_000.0));
     }
 
     #[test]
