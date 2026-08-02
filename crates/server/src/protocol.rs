@@ -28,9 +28,9 @@ use sim::{
 /// server sends it in [`ServerMsg::Welcome`].
 /// (v4 = §battle-records: the per-player view gained `battle_records` — the
 /// light-gated, fidelity-tiered replay timeline for each observable battle.)
-/// v9 adds `vel_obs`, the arrived report stream's apparent rate, beside each
-/// factual ghost/wake velocity.
-pub const PROTOCOL_VERSION: u32 = 9;
+/// v10 replaces the wake/apparent-rate tiers with the server-authoritative
+/// own-fleet presentation bubble flag.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -1529,20 +1529,6 @@ pub struct EmplacementView {
     pub relay_throw: f64,
 }
 
-/// §comms-v2: one arrived coded-drive wake fix. Deliberately kinematics only:
-/// it proves an own hull is riding hyperspace at this position and heading, but
-/// carries none of the hull's drive detail, health, activity, or flight plan.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct WakeFixView {
-    pub pos: Vec2,
-    /// Factual velocity reported by the hull at this emission time.
-    pub vel: Vec2,
-    /// Rate at which this arrived wake-position stream advances at the viewer.
-    pub vel_obs: Vec2,
-    /// Sim time when the hull emitted this fix.
-    pub t: f64,
-}
-
 /// A FLEET as a player perceives it: a delayed "ghost" — the position the light
 /// now arriving at their command center shows, plus how stale that is and how
 /// much the object could have moved since (§6). This is the ONLY fleet
@@ -1566,24 +1552,21 @@ pub struct GhostView {
     pub pos: Vec2,
     /// Factual velocity at that retarded moment (for heading and ship facts).
     pub vel: Vec2,
-    /// Rate at which the arrived position stream advances at this viewer.
-    pub vel_obs: Vec2,
     /// Light delay in seconds — how stale this sighting is ("seen Xs ago").
     ///
-    /// This is the WHOLE certainty story, and it applies to every object alike
-    /// including your own ships (§6): there is no FTL tether to your fleet, so
-    /// freshness tracks PROXIMITY to the command center, not ownership. Read
+    /// This is the certainty story for every rival and every own fleet outside
+    /// a presentation bubble. Inside one, own fleets use the accepted delayed
+    /// replay described by `in_comms`; `age` remains its real replay delay. Read
     /// beside `drive` (what the hull was doing) it also bounds how far it can
     /// have got — which is why the derived `uncertainty` radius that used to sit
     /// here is gone: it multiplied age by THRUSTER speed, understating a
     /// lane-rider's reach fifty-fold, and no circle can be honest where speed
     /// depends on standing on a road.
     pub age: f64,
-    /// Owner-only coded-drive wake, independently delayed from the full
-    /// telemetry sighting. Absent for every rival, even when a dedicated sensor
-    /// hears that rival's raw wake through its existing detection channel.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wake: Option<WakeFixView>,
+    /// Owner-only marker mode. True exactly while the TRUE hull is inside the
+    /// hysteretic 2D presentation bubble of one of its owner's comm structures.
+    /// Rivals always receive false; their fog presentation is separate.
+    pub in_comms: bool,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the

@@ -150,14 +150,17 @@ coverage at lane junctions. A **Hyperspace Buoy** is the expensive long-throw si
 su); a **Hyperspace Repeater** is the cheap short-throw size (40,000 su). Home is not a relay;
 each corporation begins with one ordinary, destructible buoy on the lane nearest home.
 
-That makes three visible stretches of road: **full wire**, where orders and full telemetry
-use the covered lane; **earshot**, where a corporation's comm structures hear the coded
-carrier of its own coupled drives and return a kinematic wake fix; and **dark lane**, where
-only warp-speed light arrives. Wake fixes carry position and velocity only—not drive detail,
-damage, activity, or plans. Comm structures recognize only their owner's coded drives;
-dedicated Hyperspace Sensors hear everyone's raw wakes. A coupled hull remains a zero-throw
-endpoint, so it extends no coverage. Past the end of wire a signal leaves at the nearest
-covered point and crosses the uncovered remainder at warp-light speed.
+Own fleets have three presentation states. **Live:** while the true hull is inside the 2D
+throw-radius bubble of an owned comm structure, its full sprite replays a signal-delayed
+picture at true hull speed. **Dark:** after it exits, a heading arrow pins at the boundary
+and advances only when strictly arrival-gated warp-light reports reach home. **Re-entry:**
+when the true hull crosses back into a bubble, the stale arrow streaks to the newly served
+edge position and becomes the full sprite. The live replay is deliberately mildly optimistic
+for a receding own fleet; that accepted presentation exception never applies outside a bubble
+or to rivals. Lane-arc coverage still governs signal routing: covered arcs glow green, a
+signal leaves at the nearest covered point, and any uncovered remainder crosses at warp-light
+speed. Dedicated Hyperspace Sensors still hear rival wakes through their separate tripwire
+path; a hull never extends relay coverage.
 
 This principle is *generative* — players internalize it once and can then predict the
 behaviour of any new situation.
