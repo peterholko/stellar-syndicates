@@ -122,6 +122,11 @@ pub enum SiteError {
 /// lanes stays a real decision.
 pub const LANE_LISTEN_RANGE: f64 = 120_000.0;
 
+/// How far a comm structure can hear the coded carrier in one of its owner's
+/// coupled drives. Kept separate from sensor earshot as the wake tier's primary
+/// playtest knob even though both begin at the same range.
+pub const COMM_WAKE_EARSHOT: f64 = 120_000.0;
+
 /// How close a builder must hold to its site for the work to run — a worksite,
 /// not a rendezvous, so it is tight.
 pub const CONSTRUCT_RADIUS: f64 = 600.0;
