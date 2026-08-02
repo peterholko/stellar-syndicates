@@ -454,11 +454,7 @@ impl PositionHistory {
         // carrier in this owner's drives. These are NOT the dedicated sensor
         // ears above: the latter hear rivals through the existing full contact
         // path, while this private channel can only populate `wake` on own ships.
-        let comm_ears: Vec<sim::lane::Relay> = delays
-            .sites
-            .iter()
-            .map(|site| delays.lanes.relay_at(site.pos))
-            .collect();
+        let comm_ears = WakeEars::new(cc, delays);
         // Coverage as (center, radius) sources: the command center + own ship
         // ghosts at the global range, plus any standing array bubbles (each with
         // its OWN radius — a developed array outsees a ship).
@@ -478,7 +474,7 @@ impl PositionHistory {
                 continue; // dark — no light from this object has arrived yet
             };
             let wake = own
-                .then(|| latest_wake(&track.samples, cc, delays, now, &comm_ears))
+                .then(|| latest_wake(&track.samples, delays, now, &comm_ears))
                 .flatten();
             if track.owner == viewer {
                 // Each own fleet projects its best bubble — a scout aboard gives
@@ -740,12 +736,8 @@ impl PositionHistory {
         let track = self.tracks.get(&ship_id)?;
         // Serves the ISSUING player's own ship — coupled applies.
         let sample = latest_observable(&track.samples, cc, delays, now, true, &[])?;
-        let comm_ears: Vec<sim::lane::Relay> = delays
-            .sites
-            .iter()
-            .map(|site| delays.lanes.relay_at(site.pos))
-            .collect();
-        if let Some(wake) = latest_wake(&track.samples, cc, delays, now, &comm_ears)
+        let comm_ears = WakeEars::new(cc, delays);
+        if let Some(wake) = latest_wake(&track.samples, delays, now, &comm_ears)
             && wake.time > sample.time
         {
             // A wake is player-known kinematics and proof of coupling, so it is
@@ -1839,25 +1831,55 @@ fn latest_observable(
     None
 }
 
+/// A viewer's owned wake ears plus their sample-independent routes home.
+struct WakeEars {
+    relays: Vec<sim::lane::Relay>,
+    home_delays: Vec<f64>,
+}
+
+impl WakeEars {
+    fn new(cc: Vec2, delays: &sim::lane::DelayField<'_>) -> Self {
+        let relays: Vec<_> = delays
+            .sites
+            .iter()
+            .map(|site| delays.lanes.relay_at(site.pos))
+            .collect();
+        Self::from_relays(cc, delays, relays)
+    }
+
+    fn from_relays(
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        relays: Vec<sim::lane::Relay>,
+    ) -> Self {
+        // This is the expensive, sample-independent route: solve it once per
+        // viewer and reuse it across every fleet history scanned in this View.
+        let home_delays: Vec<_> = relays
+            .iter()
+            .map(|ear| delays.from_coupled(ear.pos, cc))
+            .collect();
+        Self { relays, home_delays }
+    }
+}
+
 /// The freshest ARRIVED owner-coded wake heard by an owned comm structure.
 /// This is intentionally a parallel kinematic channel rather than a synthetic
 /// full sample: callers may use only its position, velocity, and emission time.
 fn latest_wake(
     samples: &VecDeque<Sample>,
-    cc: Vec2,
     delays: &sim::lane::DelayField<'_>,
     now: f64,
-    ears: &[sim::lane::Relay],
+    ears: &WakeEars,
 ) -> Option<Sample> {
     let mut newer: Option<(&Sample, f64)> = None;
     for s in samples.iter().rev() {
         if !s.drive.stirs_the_lane() {
             continue;
         }
-        let delay = delays.heard_within(
+        let delay = delays.heard_within_precomputed(
             s.pos,
-            cc,
-            ears,
+            &ears.relays,
+            &ears.home_delays,
             sim::emplace::COMM_WAKE_EARSHOT,
         );
         if !delay.is_finite() {
@@ -2073,6 +2095,92 @@ mod tests {
         }
     }
 
+    fn latest_wake_brute_force(
+        samples: &VecDeque<Sample>,
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        now: f64,
+        ears: &[sim::lane::Relay],
+    ) -> Option<Sample> {
+        let mut newer: Option<(&Sample, f64)> = None;
+        for s in samples.iter().rev() {
+            if !s.drive.stirs_the_lane() {
+                continue;
+            }
+            let delay = delays.heard_within(
+                s.pos,
+                cc,
+                ears,
+                sim::emplace::COMM_WAKE_EARSHOT,
+            );
+            if !delay.is_finite() {
+                continue;
+            }
+            let arrival = s.time + delay;
+            if arrival <= now {
+                if let Some((n, na)) = newer
+                    && na > arrival + 1e-9
+                    && na - arrival <= SMOOTH_BRACKET_MAX
+                {
+                    let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);
+                    return Some(Sample {
+                        time: s.time + (n.time - s.time) * frac,
+                        pos: s.pos + (n.pos - s.pos) * frac,
+                        vel: s.vel,
+                        loud: s.loud,
+                        drive: s.drive,
+                    });
+                }
+                return Some(*s);
+            }
+            newer = Some((s, arrival));
+        }
+        None
+    }
+
+    #[test]
+    fn wake_serving_cost_is_flat_in_history_depth() {
+        let net = wake_test_line();
+        let cc = Vec2::ZERO;
+        let sites = [
+            sim::lane::CommSite { pos: Vec2::new(100_000.0, 0.0), throw: 40_000.0 },
+            sim::lane::CommSite { pos: Vec2::new(120_000.0, 0.0), throw: 40_000.0 },
+            sim::lane::CommSite { pos: Vec2::new(140_000.0, 0.0), throw: 40_000.0 },
+        ];
+        let field = sim::lane::DelayField { lanes: &net, sites: &sites, c: 400.0 };
+        let ears: Vec<_> = sites.iter().map(|site| net.relay_at(site.pos)).collect();
+        let samples: VecDeque<_> = (0..2_000)
+            .map(|i| riding_sample(i as f64 * 0.1, 180_000.0))
+            .collect();
+        // The answer lies in this small prefix; the other 1,950 samples are
+        // deliberately too young to have arrived and exercise history depth.
+        let reference_samples: VecDeque<_> = samples.iter().take(50).copied().collect();
+        let base_delay = field.heard_within(
+            samples[0].pos,
+            cc,
+            &ears,
+            sim::emplace::COMM_WAKE_EARSHOT,
+        );
+        let now = base_delay + 4.25;
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.clone());
+
+        let deep_started = std::time::Instant::now();
+        let actual = latest_wake(&samples, &field, now, &wake_ears)
+            .expect("the deep history should yield an arrived wake fix");
+        let deep_elapsed = deep_started.elapsed();
+        let reference_started = std::time::Instant::now();
+        let expected = latest_wake_brute_force(&reference_samples, cc, &field, now, &ears)
+            .expect("the brute-force reference window should contain the same fix");
+        let reference_elapsed = reference_started.elapsed();
+
+        assert_eq!(actual.time, expected.time);
+        assert_eq!(actual.pos, expected.pos);
+        assert_eq!(actual.vel, expected.vel);
+        eprintln!(
+            "wake serving: history=2000 ears=3 deep={deep_elapsed:?} brute_force_50={reference_elapsed:?}",
+        );
+    }
+
     #[test]
     fn an_own_wake_is_heard_by_comm_structures_at_lane_speed() {
         let net = wake_test_line();
@@ -2090,9 +2198,10 @@ mod tests {
             sim::emplace::COMM_WAKE_EARSHOT,
         );
         assert!(expected.is_finite());
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.to_vec());
 
-        assert!(latest_wake(&samples, cc, &field, sample.time + expected - 1e-6, &ears).is_none());
-        let heard = latest_wake(&samples, cc, &field, sample.time + expected + 1e-6, &ears)
+        assert!(latest_wake(&samples, &field, sample.time + expected - 1e-6, &wake_ears).is_none());
+        let heard = latest_wake(&samples, &field, sample.time + expected + 1e-6, &wake_ears)
             .expect("the coded carrier should arrive on the heard() clock");
         assert_eq!(heard.pos, sample.pos);
         assert_eq!(heard.vel, sample.vel);
@@ -2109,9 +2218,10 @@ mod tests {
         let ears = [net.relay_at(site.pos)];
         let sample = riding_sample(10.0, 220_001.0);
         let samples = VecDeque::from([sample]);
+        let wake_ears = WakeEars::from_relays(cc, &field, ears.to_vec());
 
         assert!(
-            latest_wake(&samples, cc, &field, 10_000.0, &ears).is_none(),
+            latest_wake(&samples, &field, 10_000.0, &wake_ears).is_none(),
             "a comm structure must not hear one su beyond its wake earshot",
         );
     }

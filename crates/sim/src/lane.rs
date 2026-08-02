@@ -1178,6 +1178,43 @@ impl LaneNetwork {
         best
     }
 
+    /// The wake-hearing geometry when each ear's route home has already been
+    /// solved. The ear→home leg is invariant across a history scan, so view
+    /// serving can hoist that routing work and pay only projection + along-lane
+    /// distance per sample. Semantics are otherwise identical to
+    /// [`Self::signal_heard_within`].
+    pub fn signal_heard_within_precomputed(
+        &self,
+        p: Vec2,
+        ears: &[Relay],
+        ear_home_delays: &[f64],
+        earshot: f64,
+        c: f64,
+    ) -> f64 {
+        assert_eq!(ears.len(), ear_home_delays.len());
+        let lane_speed = c * self.signal_factor_on_lane();
+        let mut best = f64::INFINITY;
+        for l in &self.lanes {
+            let Some((on, d)) = l.nearest(p) else { continue };
+            if d > l.half_width_at(on.s) {
+                continue; // the hull is not coupled to THIS lane
+            }
+            for (ear, home_delay) in ears.iter().zip(ear_home_delays) {
+                for (lid, s_ear) in &ear.on {
+                    if *lid != l.id {
+                        continue;
+                    }
+                    let along = (on.s - s_ear).abs();
+                    if along > earshot {
+                        continue; // a wake attenuates — out of earshot
+                    }
+                    best = best.min(along / lane_speed + home_delay);
+                }
+            }
+        }
+        best
+    }
+
     /// §junction: find every crossing and lay out the graph.
     ///
     /// Two routes cross where their ribbons overlap — a fleet standing there is
@@ -1911,6 +1948,24 @@ impl DelayField<'_> {
     /// A wake-hearing path with a channel-specific earshot.
     pub fn heard_within(&self, p: Vec2, b: Vec2, ears: &[Relay], earshot: f64) -> f64 {
         self.lanes.signal_heard_within(p, ears, earshot, b, self.c, self.sites)
+    }
+
+    /// A wake-hearing path whose fixed ear→command-center legs were solved once
+    /// by the caller. Used by history serving; sensor tripwires keep `heard`.
+    pub fn heard_within_precomputed(
+        &self,
+        p: Vec2,
+        ears: &[Relay],
+        ear_home_delays: &[f64],
+        earshot: f64,
+    ) -> f64 {
+        self.lanes.signal_heard_within_precomputed(
+            p,
+            ears,
+            ear_home_delays,
+            earshot,
+            self.c,
+        )
     }
 }
 
