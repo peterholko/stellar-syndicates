@@ -19,18 +19,12 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 3 by the §SYNDICATES
-/// change: `GhostView` + `SystemStateView` gained an `ally` flag (light-delayed
-/// membership knowledge → friendly tint), the per-player view gained a
-/// `syndicate` roster + pending `syndicate_invites`, and new alliance-admin
-/// `ClientMsg`s were added. (v2 = §FLEETS: `count_class` + `composition`.)
+/// The client↔server wire protocol version. BUMPED to 11 by §comms-v3.3:
+/// terminal relay-loss orders, relay casualty summaries, explicit arrived-
+/// evidence confirmations, and dismissing a learned loss are now on the wire.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-/// (v4 = §battle-records: the per-player view gained `battle_records` — the
-/// light-gated, fidelity-tiered replay timeline for each observable battle.)
-/// v10 replaces the wake/apparent-rate tiers with the server-authoritative
-/// own-fleet presentation bubble flag.
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -139,6 +133,10 @@ pub enum ClientMsg {
 
     /// Remove a standing order by id.
     ClearStandingOrder { order_id: u32 },
+
+    /// Remove one terminal LOST fleet-order row after its relay-loss news has
+    /// arrived. The sim accepts only an owned order already marked lost.
+    DismissLostOrder { order_id: u64 },
 
     /// Set the corporation's fleet doctrine (§16) — the constrained combat &
     /// logistics policy. Instant local administration; the server attaches the
@@ -1179,10 +1177,13 @@ pub struct CargoView {
 }
 
 /// One of the player's in-flight order LIFECYCLES (§order-lifecycle), OWNER-ONLY.
-/// The client derives its estimated phase from `sim_time`: IN TRANSIT until
-/// `arrives_at`, then awaiting the estimated response until `response_at`. Both
+/// The client derives its estimated phase from `sim_time`: SIGNAL OUTBOUND until
+/// `arrives_at`, then PRESUMED DELIVERED while awaiting arrived evidence. Passing
+/// `response_at` never confirms anything; it only makes the estimate overdue. Both
 /// stamps are solved once from the served ghost at issue — never authoritative
 /// fleet truth — so the panel and outbound comet share one command-center clock.
+/// A dark fleet with a fixed return course responds at its estimated physical
+/// comm-bubble re-entry rather than at a fictional light echo from delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrderView {
     pub id: u64,
@@ -1190,6 +1191,10 @@ pub struct PendingOrderView {
     pub issued_at: f64,
     pub arrives_at: f64,
     pub response_at: f64,
+    /// The response clock is the fleet's estimated physical return to an owned
+    /// comm-bubble edge, rather than a passive light echo from the delivery point.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub response_on_reentry: bool,
     pub kind: OrderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dest: Option<Vec2>,
@@ -1205,6 +1210,27 @@ pub struct PendingOrderView {
     /// warp-light speed. Drives the same warning on the comet and Orders row.
     #[serde(default)]
     pub beyond_comms: bool,
+    /// Terminal only after the relay-destruction news reaches this owner. Before
+    /// that same wavefront the sim may already know the truth, but the field is
+    /// deliberately false and the row continues its ordinary estimate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lost: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loss_relay: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loss_break: Option<Vec2>,
+}
+
+/// One owner-visible relay casualty. Repeated in Views while retained; the
+/// client de-duplicates by id so reconnecting after the wavefront still gets the
+/// report without a lossy one-tick notification channel.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelayLossView {
+    pub id: EntityId,
+    pub kind: sim::EmplacementKind,
+    pub learned_at: f64,
+    pub fleets_beyond: u32,
+    pub orders_lost: u32,
 }
 
 /// An ongoing BATTLE as any observer perceives it (§battles-take-time), STRICTLY
@@ -1778,6 +1804,9 @@ pub enum ServerMsg {
         /// TRANSIT → AWAITING ECHO. OWNER-ONLY private command data (like the
         /// wallet); a rival's view carries none of it.
         pending_orders: Vec<PendingOrderView>,
+        /// Relay casualties whose single owner-news wavefront has arrived.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        relay_losses: Vec<RelayLossView>,
         /// Ongoing BATTLES visible to this player (§battles-take-time) — strictly
         /// light-gated; a third-party observer sees them only by their own light.
         battles: Vec<BattleView>,
@@ -1888,6 +1917,14 @@ pub enum ServerMsg {
         /// True when the final meaningful leg is outside relay coverage.
         #[serde(default)]
         beyond_comms: bool,
+    },
+
+    /// Arrived evidence that an order is in force. This is emitted only by the
+    /// sim's confirming response/re-entry event, never by an estimate expiring.
+    OrderConfirmed {
+        order_id: u64,
+        ship_id: EntityId,
+        kind: OrderKind,
     },
 
     /// Immediate UI assistance for a prospective move. `path` is the same
@@ -2005,7 +2042,7 @@ mod wire_contract {
     #[test]
     fn pending_order_queue_parses_off_the_wire() {
         let raw = r#"[
-            {"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"kind":"move","dest":{"x":287450.0,"y":35020.0},"intent_path":[{"x":100.0,"y":200.0},{"x":287450.0,"y":35020.0}]},
+            {"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"response_on_reentry":true,"kind":"move","dest":{"x":287450.0,"y":35020.0},"intent_path":[{"x":100.0,"y":200.0},{"x":287450.0,"y":35020.0}]},
             {"id":18,"fleet_id":"33","issued_at":15.0,"arrives_at":22.0,"response_at":30.0,"kind":"construct","dest":{"x":900.0,"y":1200.0},"emplacement":"hyperspace_buoy"},
             {"id":19,"fleet_id":"33","issued_at":16.0,"arrives_at":23.0,"response_at":31.0,"kind":"attack","target_id":"44"}
         ]"#;
@@ -2016,6 +2053,7 @@ mod wire_contract {
         assert_eq!(queue[0].fleet_id, sim::EntityId(33));
         assert_eq!(queue[0].arrives_at, 18.0);
         assert_eq!(queue[0].response_at, 26.0);
+        assert!(queue[0].response_on_reentry);
         assert_eq!(queue[0].dest, Some(sim::Vec2::new(287_450.0, 35_020.0)));
         assert_eq!(queue[0].intent_path, vec![
             sim::Vec2::new(100.0, 200.0),
@@ -2034,9 +2072,48 @@ mod wire_contract {
         let encoded = serde_json::to_value(&queue[0]).unwrap();
         assert!(encoded.get("arrives_at").is_some());
         assert!(encoded.get("response_at").is_some());
+        assert_eq!(encoded.get("response_on_reentry"), Some(&serde_json::Value::Bool(true)));
         assert!(encoded.get("intent_path").is_some());
         assert!(encoded.get("projected").is_none());
         assert!(encoded.get("delivered_at").is_none());
         assert!(encoded.get("echo_at").is_none());
+    }
+
+    #[test]
+    fn lost_orders_confirmation_and_dismissal_round_trip_off_the_wire() {
+        let raw = r#"{"type":"DismissLostOrder","order_id":17}"#;
+        assert!(matches!(
+            serde_json::from_str::<ClientMsg>(raw).unwrap(),
+            ClientMsg::DismissLostOrder { order_id: 17 }
+        ));
+
+        let lost: PendingOrderView = serde_json::from_str(
+            r#"{"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"kind":"move","lost":true,"loss_relay":"41","loss_break":{"x":12.0,"y":34.0}}"#,
+        )
+        .unwrap();
+        assert!(lost.lost);
+        assert_eq!(lost.loss_relay, Some(sim::EntityId(41)));
+        assert_eq!(lost.loss_break, Some(sim::Vec2::new(12.0, 34.0)));
+
+        let confirmed = ServerMsg::OrderConfirmed {
+            order_id: 17,
+            ship_id: sim::EntityId(33),
+            kind: sim::event::OrderKind::Move,
+        };
+        let encoded = serde_json::to_value(confirmed).unwrap();
+        assert_eq!(encoded["type"], "OrderConfirmed");
+        assert_eq!(encoded["order_id"], 17);
+
+        let loss = RelayLossView {
+            id: sim::EntityId(41),
+            kind: sim::EmplacementKind::HyperspaceBuoy,
+            learned_at: 30.0,
+            fleets_beyond: 2,
+            orders_lost: 1,
+        };
+        let encoded = serde_json::to_value(loss).unwrap();
+        assert_eq!(encoded["learned_at"], 30.0);
+        assert_eq!(encoded["fleets_beyond"], 2);
+        assert_eq!(encoded["orders_lost"], 1);
     }
 }

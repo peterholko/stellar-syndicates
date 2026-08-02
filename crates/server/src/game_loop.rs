@@ -59,12 +59,15 @@ fn command_signal_plan(
     ghost_pos: sim::Vec2,
     ghost_vel: sim::Vec2,
     ghost_coupled: bool,
+    ghost_route: Option<&[sim::Vec2]>,
 ) -> CommandSignalPlan {
     // §6: solve only from the SERVED sighting. This is the same fixed-point
     // meeting equation as authoritative delivery, but fed the player's ghost
-    // position/velocity so neither the route nor its clock leaks true space.
+    // position/velocity/remaining route so neither the route nor its clock leaks
+    // true space. The bounded served route matters: dropping it makes a dark
+    // rider appear to continue toward the lane endpoint after its known plan ends.
     let (travel_time, meeting_point) =
-        delays.command_meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, None, 1.0);
+        delays.command_meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, ghost_route, 1.0);
     let relayed = sim::lane::in_comm_bubble(meeting_point, delays.sites, 0.0);
     let route = if !relayed {
         Vec::new()
@@ -92,13 +95,19 @@ fn command_signal_plan(
     } else {
         Vec::new() // a straight run — the client's fallback draws it
     };
-    CommandSignalPlan { travel_time, meeting_point, hops, beyond_comms }
+    CommandSignalPlan {
+        travel_time,
+        meeting_point,
+        hops,
+        beyond_comms,
+    }
 }
 
 #[derive(Debug, Clone)]
 struct ObservedOrderPlan {
     arrives_at: f64,
     response_at: f64,
+    response_on_reentry: bool,
     meeting_point: sim::Vec2,
     intent_path: Vec<sim::Vec2>,
     beyond_comms: bool,
@@ -110,15 +119,38 @@ fn observed_order_plan(
     ghost_pos: sim::Vec2,
     ghost_vel: sim::Vec2,
     ghost_coupled: bool,
+    ghost_route: Option<&[sim::Vec2]>,
     depart_time: f64,
+    response_course: Option<(sim::Vec2, f64)>,
 ) -> (ObservedOrderPlan, CommandSignalPlan) {
-    let signal = command_signal_plan(delays, cc, ghost_pos, ghost_vel, ghost_coupled);
+    let signal = command_signal_plan(delays, cc, ghost_pos, ghost_vel, ghost_coupled, ghost_route);
     let arrives_at = depart_time + signal.travel_time;
-    let response_at = arrives_at + delays.between(signal.meeting_point, cc);
+    // Outside the picture's comm bubble, the useful response is reacquisition:
+    // how long the newly commanded flight is expected to take to the first
+    // circle edge. Falling back to a light-return leg preserves orders that do
+    // not have a fixed return course (attack, patrol, an away move, and so on).
+    let bubble_return = if sim::lane::in_comm_bubble(signal.meeting_point, delays.sites, 0.0) {
+        None
+    } else {
+        response_course.and_then(|(dest, transit_speed)| {
+            let warp_speed = transit_speed * sim::lane::WARP_FACTOR;
+            delays.lanes.time_to_comm_bubble(
+                signal.meeting_point,
+                dest,
+                warp_speed,
+                warp_speed * sim::lane::LANE_MULT,
+                delays.sites,
+            )
+        })
+    };
+    let response_on_reentry = bubble_return.is_some();
+    let response_at =
+        arrives_at + bubble_return.unwrap_or_else(|| delays.between(signal.meeting_point, cc));
     (
         ObservedOrderPlan {
             arrives_at,
             response_at,
+            response_on_reentry,
             meeting_point: signal.meeting_point,
             intent_path: Vec::new(),
             beyond_comms: signal.beyond_comms,
@@ -159,28 +191,81 @@ fn has_fixed_intent_path(kind: sim::event::OrderKind, target: Option<sim::Entity
         )
 }
 
+fn has_fixed_response_course(kind: sim::event::OrderKind) -> bool {
+    matches!(
+        kind,
+        sim::event::OrderKind::Move
+            | sim::event::OrderKind::Recall
+            | sim::event::OrderKind::Withdraw
+            | sim::event::OrderKind::Construct
+    )
+}
+
+fn disclosed_order_loss(
+    loss: Option<sim::world::PendingCommandLossView>,
+    now: f64,
+) -> Option<sim::world::PendingCommandLossView> {
+    loss.filter(|loss| now >= loss.news_at)
+}
+
+fn relay_loss_view(
+    death: &sim::world::CommDeath,
+    served_positions: &[sim::Vec2],
+    remaining_sites: &[sim::lane::CommSite],
+    pending: &[sim::world::PendingCommandView],
+    now: f64,
+) -> Option<crate::protocol::RelayLossView> {
+    if now < death.news_at {
+        return None;
+    }
+    let fleets_beyond = served_positions
+        .iter()
+        .filter(|fleet_pos| {
+            sim::lane::in_comm_bubble(**fleet_pos, &[death.site], 0.0)
+                && !sim::lane::in_comm_bubble(**fleet_pos, remaining_sites, 0.0)
+        })
+        .count() as u32;
+    let orders_lost = pending
+        .iter()
+        .filter(|order| order.loss.is_some_and(|loss| loss.relay == death.id))
+        .count() as u32;
+    Some(crate::protocol::RelayLossView {
+        id: death.id,
+        kind: death.kind,
+        learned_at: death.news_at,
+        fleets_beyond,
+        orders_lost,
+    })
+}
+
 fn pending_order_views(
     world: &World,
     viewer: PlayerId,
     observed_plans: &HashMap<(PlayerId, u64), ObservedOrderPlan>,
+    now: f64,
 ) -> Vec<crate::protocol::PendingOrderView> {
     world
         .pending_commands(viewer)
         .into_iter()
         .filter_map(|pending| {
             let observed = observed_plans.get(&(viewer, pending.id))?;
+            let disclosed_loss = disclosed_order_loss(pending.loss, now);
             Some(crate::protocol::PendingOrderView {
                 id: pending.id,
                 fleet_id: pending.fleet,
                 issued_at: pending.issued_at,
                 arrives_at: observed.arrives_at,
                 response_at: observed.response_at,
+                response_on_reentry: observed.response_on_reentry,
                 kind: pending.kind,
                 dest: pending.dest,
                 target_id: pending.target,
                 emplacement: pending.emplacement,
                 intent_path: observed.intent_path.clone(),
                 beyond_comms: observed.beyond_comms,
+                lost: disclosed_loss.is_some(),
+                loss_relay: disclosed_loss.map(|loss| loss.relay),
+                loss_break: disclosed_loss.map(|loss| loss.break_pos),
             })
         })
         .collect()
@@ -209,6 +294,10 @@ struct GoneEmplacement {
     pos: sim::Vec2,
     /// Sim time it came down.
     at: f64,
+    /// Frozen owner-news wavefront for relay structures. Non-relay structures
+    /// keep the older per-viewer disappearance rule and have no casualty card.
+    owner_news_at: Option<f64>,
+    summary: Option<crate::protocol::RelayLossView>,
 }
 
 struct ConcludedBattle {
@@ -341,37 +430,59 @@ impl GameLoop {
         let c = self.world.config.c;
         // §hyperspace: information delay is a shortest-TIME path through a medium
         // whose speed varies, so the lane network travels with `c` now.
-        let buoys = self.world.relay_network(player_id);
+        let buoys = self.world.relay_network_known(player_id, depart_time);
         let delays = sim::lane::DelayField { lanes: &self.world.lanes, sites: &buoys, c };
         // Aim from the player's observed ship position and velocity, never its
         // hidden true state. A just-spawned hull at home degenerates to a
         // zero-length signal.
-        let (ghost_pos, ghost_vel, ghost_coupled) = self
+        let sighting = self
             .history
             .observed_sighting(ship_id, cc, &delays, depart_time)
-            .unwrap_or((cc, sim::Vec2::ZERO, false));
-        // §comms-infra: one outbound route supplies BOTH geometry and its clock;
-        // the fixed-point solve makes that route end where it meets the moving
-        // ghost rather than where the ghost stood when the order was issued.
-        let (mut observed, signal) =
-            observed_order_plan(&delays, cc, ghost_pos, ghost_vel, ghost_coupled, depart_time);
-        if let Some(subject) = self
+            .unwrap_or(view::ObservedSighting {
+                pos: cc,
+                vel: sim::Vec2::ZERO,
+                coupled: false,
+                route: Vec::new(),
+            });
+        let subject = self
             .world
             .pending_commands(player_id)
             .into_iter()
-            .find(|pending| pending.id == order_id)
+            .find(|pending| pending.id == order_id);
+        let transit_speed = self
+            .world
+            .fleets
+            .get(&ship_id)
+            .map(|fleet| fleet.transit_speed());
+        let response_course = subject
+            .as_ref()
+            .filter(|pending| has_fixed_response_course(pending.kind))
+            .and_then(|pending| pending.dest)
+            .zip(transit_speed);
+        // §comms-infra: one outbound route supplies BOTH geometry and its clock;
+        // the fixed-point solve makes that route end where it meets the moving
+        // ghost rather than where the ghost stood when the order was issued.
+        let known_route = (!sighting.route.is_empty()).then_some(sighting.route.as_slice());
+        let (mut observed, signal) = observed_order_plan(
+            &delays,
+            cc,
+            sighting.pos,
+            sighting.vel,
+            sighting.coupled,
+            known_route,
+            depart_time,
+            response_course,
+        );
+        if let Some(subject) = subject
             && has_fixed_intent_path(subject.kind, subject.target)
             && let Some(dest) = subject.dest
-            && let Some(transit_speed) = self.world.fleets.get(&ship_id).map(|fleet| fleet.transit_speed())
+            && let Some(transit_speed) = transit_speed
         {
-            observed.intent_path = intended_route(
-                &self.world.lanes,
-                ghost_pos,
-                dest,
-                transit_speed,
-            );
+            observed.intent_path =
+                intended_route(&self.world.lanes, sighting.pos, dest, transit_speed);
         }
-        self.observed_order_plans.insert((player_id, order_id), observed.clone());
+        self.observed_order_plans
+            .insert((player_id, order_id), observed.clone());
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandSignal {
@@ -550,13 +661,13 @@ impl GameLoop {
                         return;
                     };
                     let cc = corp.command_center;
-                    let buoys = self.world.relay_network(player_id);
+                    let buoys = self.world.relay_network_known(player_id, self.world.time);
                     let delays = sim::lane::DelayField {
                         lanes: &self.world.lanes,
                         sites: &buoys,
                         c: self.world.config.c,
                     };
-                    let Some((sighting_pos, _, _)) =
+                    let Some(sighting) =
                         self.history
                             .observed_sighting(ship_id, cc, &delays, self.world.time)
                     else {
@@ -566,7 +677,7 @@ impl GameLoop {
                         .world
                         .lanes
                         .route(
-                            sighting_pos,
+                            sighting.pos,
                             dest,
                             base_speed * sim::lane::WARP_FACTOR,
                             base_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT,
@@ -780,6 +891,11 @@ impl GameLoop {
                         self.pending.push(Command::ClearStandingOrder { player_id, order_id });
                     }
                 }
+                ClientMsg::DismissLostOrder { order_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DismissLostOrder { player_id, order_id });
+                    }
+                }
                 ClientMsg::SetFleetDoctrine { doctrine } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
@@ -976,12 +1092,20 @@ impl GameLoop {
         // slowest possible signal must have landed, nothing references them.
         for e in &events {
             if let sim::EventPayload::EmplacementDestroyed { emplacement, owner, kind, pos, .. } = e.payload {
+                let owner_news_at = self
+                    .world
+                    .comm_deaths
+                    .iter()
+                    .find(|death| death.id == emplacement && death.at.to_bits() == e.time.to_bits())
+                    .map(|death| death.news_at);
                 self.gone_emplacements.push(GoneEmplacement {
                     id: emplacement,
                     owner,
                     kind,
                     pos,
                     at: e.time,
+                    owner_news_at,
+                    summary: None,
                 });
             }
         }
@@ -994,6 +1118,7 @@ impl GameLoop {
         // Record true positions into the view filter's history every tick so
         // the retarded-time boundary resolves at full temporal resolution.
         self.history.record(&self.world);
+        self.update_relay_loss_summaries();
         self.prices.record(&self.world);
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
@@ -1016,6 +1141,16 @@ impl GameLoop {
                 // vanishes it (delayed, per-viewer — never FTL).
                 sim::EventPayload::ShipDestroyed { ship, pos, .. } => {
                     self.history.mark_destroyed(*ship, ev.time, *pos);
+                }
+                sim::EventPayload::OrderConfirmed { id, owner, fleet, kind } => {
+                    self.sessions.send_to_player(
+                        *owner,
+                        ServerMsg::OrderConfirmed {
+                            order_id: *id,
+                            ship_id: *fleet,
+                            kind: *kind,
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -1042,6 +1177,63 @@ impl GameLoop {
                 time: self.world.time,
                 world: to_json(&self.world),
             });
+        }
+    }
+
+    /// Materialize each relay casualty exactly when its frozen owner-news
+    /// wavefront lands. Counts come from the owner's served picture at that
+    /// instant: true fleet positions must never leak into an obituary.
+    fn update_relay_loss_summaries(&mut self) {
+        let now = self.world.time;
+        let due: Vec<(usize, PlayerId, sim::Vec2, f64, sim::EntityId, sim::EmplacementKind)> =
+            self.gone_emplacements
+                .iter()
+                .enumerate()
+                .filter_map(|(index, gone)| {
+                    let learned_at = gone.owner_news_at?;
+                    (gone.summary.is_none() && now >= learned_at).then_some((
+                        index,
+                        gone.owner,
+                        gone.pos,
+                        learned_at,
+                        gone.id,
+                        gone.kind,
+                    ))
+                })
+                .collect();
+        for (index, owner, pos, learned_at, relay, kind) in due {
+            let Some(cc) = self.world.players.get(&owner).map(|corp| corp.command_center) else {
+                continue;
+            };
+            let sites = self.world.relay_network_known(owner, now);
+            let delays = sim::lane::DelayField {
+                lanes: &self.world.lanes,
+                sites: &sites,
+                c: self.world.config.c,
+            };
+            let death = self
+                .world
+                .comm_deaths
+                .iter()
+                .find(|death| death.id == relay && death.news_at.to_bits() == learned_at.to_bits())
+                .cloned()
+                .unwrap_or(sim::world::CommDeath {
+                    id: relay,
+                    owner,
+                    kind,
+                    site: sim::lane::CommSite {
+                        pos,
+                        throw: kind.throw(),
+                    },
+                    at: self.gone_emplacements[index].at,
+                    news_at: learned_at,
+                });
+            let served_positions = self
+                .history
+                .served_own_positions(owner, cc, &delays, now);
+            let pending = self.world.pending_commands(owner);
+            self.gone_emplacements[index].summary =
+                relay_loss_view(&death, &served_positions, &sites, &pending, now);
         }
     }
 
@@ -1093,7 +1285,10 @@ impl GameLoop {
         // The published rankings are identical for everyone: one signature.
         let rankings_sig = sig_of(&self.world.rankings);
         for player_id in self.sessions.online_players() {
-            let buoys = self.world.relay_network(player_id);
+            // Presentation is built from the network this player has heard
+            // about. A dead relay remains in this set until its frozen obituary
+            // wavefront lands; authoritative delivery never uses this set.
+            let buoys = self.world.relay_network_known(player_id, now);
             let delays = sim::lane::DelayField { lanes: &self.world.lanes, sites: &buoys, c };
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
@@ -1201,7 +1396,12 @@ impl GameLoop {
                 if !seen_standing {
                     continue;
                 }
-                if now < g.at + delays.between(g.pos, cc) {
+                let disappears_at = if g.owner == player_id {
+                    g.owner_news_at.unwrap_or_else(|| g.at + delays.between(g.pos, cc))
+                } else {
+                    g.at + delays.between(g.pos, cc)
+                };
+                if now < disappears_at {
                     emplacements_view.push(crate::protocol::EmplacementView {
                         id: g.id,
                         kind: g.kind,
@@ -1612,7 +1812,14 @@ impl GameLoop {
                         &self.world,
                         player_id,
                         &self.observed_order_plans,
+                        now,
                     ),
+                    relay_losses: self
+                        .gone_emplacements
+                        .iter()
+                        .filter(|gone| gone.owner == player_id)
+                        .filter_map(|gone| gone.summary.clone())
+                        .collect(),
                     battles,
                     syndicate,
                     syndicate_invites,
@@ -2170,7 +2377,7 @@ mod tests {
         let relays = [wide_relay(home), wide_relay(buoy)];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
-        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true, None);
         assert!(plan.hops.len() > 6, "the wire route should contain baked curve samples");
         assert!(!plan.beyond_comms, "a route that lands on covered wire has no dark final leg");
         assert!(
@@ -2199,7 +2406,7 @@ mod tests {
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let old_sighting_time = field.to_coupled(home, ghost_pos);
 
-        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
         let total = plan.travel_time;
         let final_hop = plan.hops.last().expect("a coupled route has drawable hops");
         assert!(
@@ -2234,7 +2441,7 @@ mod tests {
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
         let inbound = field.from_coupled(hull, home);
 
-        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
+        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true, None);
         let outbound = plan.travel_time;
         let warp = home.distance(hull) / (field.c * WARP_FACTOR);
         assert!(!plan.hops.is_empty(), "the order rides — the coupled hull is its terminal relay");
@@ -2262,7 +2469,7 @@ mod tests {
         let relays = [CommSite { pos: home, throw: 40_000.0 }];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
-        let plan = command_signal_plan(&field, home, target, Vec2::ZERO, false);
+        let plan = command_signal_plan(&field, home, target, Vec2::ZERO, false, None);
         let direct = home.distance(target) / (field.c * WARP_FACTOR);
         assert!(plan.beyond_comms, "the direct chord is beyond the command bubble");
         assert!(plan.hops.is_empty(), "outside means no partial lane assist");
@@ -2280,13 +2487,94 @@ mod tests {
         let relays = [CommSite { pos: home, throw: 40_000.0 }];
         let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
 
-        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
         let (delivery_delay, delivery_point) =
             field.command_meeting_delay(home, ghost_pos, ghost_vel, true, None, 1.0);
         assert!(!sim::lane::in_comm_bubble(delivery_point, &relays, 0.0));
         assert!(plan.hops.is_empty(), "the shared outside gate selects direct warp");
         assert!((plan.travel_time - delivery_delay).abs() < 1e-9);
         assert!(plan.meeting_point.distance(delivery_point) < 1e-9);
+    }
+
+    /// A dark rider's served plan is still player-known information. Ignoring
+    /// its finite terminus makes the visual solve chase the lane endpoint — the
+    /// live failure that quoted ~120 s while authoritative delivery, correctly
+    /// clamped to the route, landed around the expected shorter clock.
+    #[test]
+    fn the_comet_meeting_is_clamped_to_the_served_remaining_route() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(10_000.0);
+        let ghost_pos = lane.at(80_000.0);
+        let terminus = lane.at(100_000.0);
+        let ghost_vel = Vec2::new(5_000.0, 0.0);
+        let relays = [CommSite { pos: home, throw: 40_000.0 }];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
+        let served_route = [terminus];
+
+        let bounded = command_signal_plan(
+            &field,
+            home,
+            ghost_pos,
+            ghost_vel,
+            true,
+            Some(&served_route),
+        );
+        let old_unbounded =
+            command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
+
+        assert!(bounded.meeting_point.distance(terminus) < 1e-6);
+        assert!((bounded.travel_time - 45.0).abs() < DT);
+        assert!(
+            old_unbounded.travel_time > bounded.travel_time * 2.0,
+            "dropping the served route reproduces the inflated comet clock ({:.1}s vs {:.1}s)",
+            old_unbounded.travel_time,
+            bounded.travel_time,
+        );
+    }
+
+    #[test]
+    fn a_dark_return_response_is_hull_time_to_the_circle_edge() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(10_000.0);
+        let ghost_pos = lane.at(80_000.0);
+        let terminus = lane.at(100_000.0);
+        let ghost_vel = Vec2::new(5_000.0, 0.0);
+        let relays = [CommSite { pos: home, throw: 40_000.0 }];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
+        let served_route = [terminus];
+        let transit_speed = 100.0;
+        let depart = 20.0;
+
+        let (observed, _) = observed_order_plan(
+            &field,
+            home,
+            ghost_pos,
+            ghost_vel,
+            true,
+            Some(&served_route),
+            depart,
+            Some((home, transit_speed)),
+        );
+        let warp_speed = transit_speed * WARP_FACTOR;
+        let return_delay = lanes
+            .time_to_comm_bubble(
+                observed.meeting_point,
+                home,
+                warp_speed,
+                warp_speed * sim::lane::LANE_MULT,
+                &relays,
+            )
+            .expect("the home course enters the bubble");
+        let old_light_echo = field.between(observed.meeting_point, home);
+
+        assert!(observed.response_on_reentry);
+        assert!((observed.response_at - observed.arrives_at - return_delay).abs() < 1e-9);
+        assert!(
+            (return_delay - old_light_echo).abs() > 1.0,
+            "the edge-return clock must not silently remain the old light echo",
+        );
     }
 
     #[test]
@@ -2302,8 +2590,8 @@ mod tests {
         let depart = 73.0;
 
         let (observed, signal) =
-            observed_order_plan(&field, home, ghost_pos, ghost_vel, true, depart);
-        let ghost_signal = command_signal_plan(&field, home, ghost_pos, ghost_vel, true);
+            observed_order_plan(&field, home, ghost_pos, ghost_vel, true, None, depart, None);
+        let ghost_signal = command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
         assert!((observed.arrives_at - (depart + ghost_signal.travel_time)).abs() < 1e-9);
         assert!(observed.meeting_point.distance(ghost_signal.meeting_point) < 1e-9);
         assert!(
@@ -2316,7 +2604,7 @@ mod tests {
         assert!((signal.travel_time - ghost_signal.travel_time).abs() < 1e-9);
 
         let (truth_fed, _) =
-            observed_order_plan(&field, home, true_pos, ghost_vel, true, depart);
+            observed_order_plan(&field, home, true_pos, ghost_vel, true, None, depart, None);
         assert!(
             (observed.arrives_at - truth_fed.arrives_at).abs() > 1.0
                 && (observed.response_at - truth_fed.response_at).abs() > 1.0,
@@ -2325,7 +2613,16 @@ mod tests {
 
         let newer_sighting = lane.at(lane.length() * 0.70);
         let (refreshed, _) =
-            observed_order_plan(&field, home, newer_sighting, ghost_vel, true, depart);
+            observed_order_plan(
+                &field,
+                home,
+                newer_sighting,
+                ghost_vel,
+                true,
+                None,
+                depart,
+                None,
+            );
         assert!(
             (refreshed.arrives_at - observed.arrives_at).abs() > 1.0,
             "the estimate moves when, and only when, the served sighting moves",
@@ -2399,14 +2696,142 @@ mod tests {
             ObservedOrderPlan {
                 arrives_at: pending.issued_at + 2.0,
                 response_at: pending.issued_at + 20.0,
+                response_on_reentry: false,
                 meeting_point: intent_path[0],
                 intent_path,
                 beyond_comms: false,
             },
         )]);
 
-        assert!(!pending_order_views(&world, owner, &plans)[0].intent_path.is_empty());
-        assert!(pending_order_views(&world, rival, &plans).is_empty());
+        assert!(!pending_order_views(&world, owner, &plans, world.time)[0].intent_path.is_empty());
+        assert!(pending_order_views(&world, rival, &plans, world.time).is_empty());
+    }
+
+    fn known_loss_fixture() -> (World, PlayerId, sim::world::CommDeath, Vec<CommSite>) {
+        let mut world = World::new(sim::SimConfig::for_players(0xD3A7, 4));
+        let owner = PlayerId(880);
+        world.step(&[Command::AddPlayer { id: owner, name: "Light Law".into() }]);
+        let before = world.relay_network(owner);
+        assert_eq!(before.len(), 1, "fixture expects the granted starter relay");
+        let emplacement = world
+            .emplacements
+            .iter()
+            .find(|emplacement| emplacement.owner == owner && emplacement.kind.throw() > 0.0)
+            .cloned()
+            .unwrap();
+        world.emplacements.retain(|candidate| candidate.id != emplacement.id);
+        let at = world.time;
+        let death = sim::world::CommDeath {
+            id: emplacement.id,
+            owner,
+            kind: emplacement.kind,
+            site: before[0],
+            at,
+            news_at: at + 12.0,
+        };
+        world.comm_deaths.push(death.clone());
+        (world, owner, death, before)
+    }
+
+    #[test]
+    fn nothing_observable_changes_at_the_true_death_instant() {
+        let (world, owner, death, before) = known_loss_fixture();
+        let just_after = world.relay_network_known(owner, death.at + DT);
+        assert_eq!(just_after, before, "the picture retains the relay until its obituary arrives");
+        let probe = death.site.pos + Vec2::new(death.site.throw * 0.5, 0.0);
+        assert!(sim::lane::in_comm_bubble(probe, &before, 0.0));
+        assert!(sim::lane::in_comm_bubble(probe, &just_after, 0.0));
+        assert!(
+            !sim::lane::in_comm_bubble(probe, &world.relay_network(owner), 0.0),
+            "truth has changed, which gives the test teeth against a truth-gated view",
+        );
+    }
+
+    #[test]
+    fn the_owner_learns_everything_on_one_wavefront() {
+        let (world, owner, death, _) = known_loss_fixture();
+        let loss = sim::world::PendingCommandLossView {
+            relay: death.id,
+            at: death.at,
+            news_at: death.news_at,
+            break_pos: death.site.pos,
+        };
+        let pending = [sim::world::PendingCommandView {
+            id: 7,
+            fleet: sim::EntityId(77),
+            delivered_at: death.news_at + 20.0,
+            echo_at: death.news_at + 40.0,
+            issued_at: death.at - 1.0,
+            kind: sim::event::OrderKind::Move,
+            dest: None,
+            target: None,
+            emplacement: None,
+            response_on_reentry: false,
+            loss: Some(loss),
+        }];
+        let served = [death.site.pos];
+        let before = death.news_at - 1e-6;
+        assert!(world.relay_network_known(owner, before).contains(&death.site));
+        assert!(disclosed_order_loss(Some(loss), before).is_none());
+        assert!(relay_loss_view(&death, &served, &[], &pending, before).is_none());
+
+        let at = death.news_at;
+        assert!(!world.relay_network_known(owner, at).contains(&death.site));
+        assert!(disclosed_order_loss(Some(loss), at).is_some());
+        let toast = relay_loss_view(&death, &served, &[], &pending, at).unwrap();
+        assert_eq!(toast.learned_at, at);
+        assert_eq!((toast.fleets_beyond, toast.orders_lost), (1, 1));
+    }
+
+    #[test]
+    fn the_casualty_report_reads_the_served_picture_not_the_truth() {
+        let (_world, _owner, death, _) = known_loss_fixture();
+        let served_inside = death.site.pos;
+        let served_outside = death.site.pos + Vec2::new(death.site.throw + 1.0, 0.0);
+        // Deliberately opposite true positions would produce the opposite count;
+        // they are not an input to the casualty builder at all.
+        let _truth = [served_outside, served_inside];
+        let summary = relay_loss_view(
+            &death,
+            &[served_inside, served_outside],
+            &[],
+            &[],
+            death.news_at,
+        )
+        .unwrap();
+        assert_eq!(summary.fleets_beyond, 1);
+    }
+
+    #[test]
+    fn an_expired_estimate_reads_presumed_never_confirmed() {
+        let mut world = World::new(sim::SimConfig::for_players(0xE571, 4));
+        let owner = PlayerId(881);
+        world.step(&[Command::AddPlayer { id: owner, name: "Presumption".into() }]);
+        let fleet = *world.fleets.iter().find(|(_, fleet)| fleet.owner == owner).unwrap().0;
+        let pos = world.players[&owner].command_center + Vec2::new(50_000.0, 0.0);
+        {
+            let ship = world.fleets.get_mut(&fleet).unwrap();
+            ship.pos = pos;
+            ship.vel = Vec2::ZERO;
+            ship.supplied = true;
+        }
+        world.step(&[Command::MoveShip {
+            player_id: owner,
+            ship_id: fleet,
+            dest: world.players[&owner].command_center,
+        }]);
+        let pending = world.pending_commands(owner)[0];
+        let plans = HashMap::from([((owner, pending.id), ObservedOrderPlan {
+            arrives_at: world.time - 2.0,
+            response_at: world.time - 1.0,
+            response_on_reentry: false,
+            meeting_point: pos,
+            intent_path: Vec::new(),
+            beyond_comms: false,
+        })]);
+        let rows = pending_order_views(&world, owner, &plans, world.time + 100.0);
+        assert_eq!(rows.len(), 1, "an expired estimate remains an unconfirmed lifecycle");
+        assert!(!rows[0].lost, "only arrived evidence or disclosed destruction may make it terminal");
     }
 
     /// The server-facing lifecycle source must expose the real command queue,

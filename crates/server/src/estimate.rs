@@ -100,7 +100,10 @@ pub fn prepare_estimate(
     let deep = world.deep_scan_regions(viewer);
     // §hyperspace: the estimator reads the SAME delayed view the player does, so
     // it must resolve staleness through the same medium the map does.
-    let buoys = world.relay_network(viewer);
+    // Read-only battle planning is part of the player's picture: a relay whose
+    // death light has not arrived still belongs to that picture, exactly like
+    // the map, route preview, and command comet.
+    let buoys = world.relay_network_known(viewer, now);
     let delays = sim::lane::DelayField { lanes: &world.lanes, sites: &buoys, c };
     let ears: Vec<sim::lane::Relay> = world
         .emplacements

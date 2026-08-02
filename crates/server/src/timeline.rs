@@ -631,16 +631,16 @@ impl Timeline {
                 }
                 // §order-lifecycle (OWNER-ONLY). "Delivered" is the player's own
                 // command data (they computed delivery at issue), shown on their
-                // own clock at delivery, with the exact echo countdown. "Confirmed"
-                // is genuinely observed — it fires when the echo light arrives, so
-                // its time IS the owner's observation time.
+                // own clock at delivery, with the response countdown. A returning
+                // dark fleet responds at the comm-circle edge; other orders keep
+                // the confirming-light fallback.
                 EventPayload::OrderDelivered { owner, fleet, kind, echo_at } => {
                     let name = fleet_label(world, *fleet);
                     let wait = fmt_wait(echo_at - e.time);
                     self.push(*owner, e.time, TimelineSeverity::Info,
-                        format!("Order delivered to {name} — {} underway (echo ~{wait}).", kind.label()));
+                        format!("Order delivered to {name} — {} underway (response ~{wait}).", kind.label()));
                 }
-                EventPayload::OrderConfirmed { owner, fleet, kind } => {
+                EventPayload::OrderConfirmed { owner, fleet, kind, .. } => {
                     let name = fleet_label(world, *fleet);
                     self.push(*owner, e.time, TimelineSeverity::Good,
                         format!("{name} confirmed its {} — you can see it complying now.", kind.label()));

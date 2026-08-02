@@ -307,71 +307,88 @@ struct FrontierCursor {
     endpoint: Option<(Vec2, f64)>,
 }
 
-struct VersionedSites {
-    value: Vec<sim::lane::CommSite>,
-    version: u64,
-}
-
-struct VersionedEars {
-    value: Vec<sim::lane::Relay>,
-    version: u64,
+#[derive(Clone)]
+struct CommEpoch {
+    at: f64,
+    sites: Vec<sim::lane::CommSite>,
+    raw_ears: Vec<sim::lane::Relay>,
+    ears: sim::lane::WakeEars,
 }
 
 #[derive(Default)]
 struct FrontierCache {
     cursors: HashMap<FrontierKey, FrontierCursor>,
-    relay_networks: HashMap<PlayerId, VersionedSites>,
-    ear_networks: HashMap<PlayerId, VersionedEars>,
-    next_version: u64,
+    /// Truth network snapshots captured at emission boundaries. New structures
+    /// affect only later reports; old light always prices against its own epoch.
+    comm_epochs: HashMap<PlayerId, VecDeque<CommEpoch>>,
+    /// Relay deaths are the only post-emission mutation of a fast copy: a death
+    /// may kill an uncleared path, while the slow warp copy remains immutable.
+    comm_deaths: Vec<sim::world::CommDeath>,
+    death_version: u64,
 }
 
 impl FrontierCache {
-    fn bump_version(&mut self) -> u64 {
-        self.next_version = self.next_version.wrapping_add(1).max(1);
-        self.next_version
-    }
-
-    /// `PositionHistory` does not own emplacement mutation, so the exact relay
-    /// inputs are versioned at the boundary where `World::relay_network` enters
-    /// serving. A build, demolition, or replacement changes this slice and bumps
-    /// the counter once; every viewer/track cursor notices on its next use.
-    fn relay_version(&mut self, viewer: PlayerId, sites: &[sim::lane::CommSite]) -> u64 {
-        if self
-            .relay_networks
-            .get(&viewer)
-            .is_some_and(|state| state.value == sites)
-        {
-            return self.relay_networks[&viewer].version;
+    fn record_comm_state(&mut self, world: &World, horizon: f64) {
+        let now = world.time;
+        for (&viewer, corp) in &world.players {
+            let sites = world.relay_network(viewer);
+            let raw_ears: Vec<sim::lane::Relay> = world
+                .emplacements
+                .iter()
+                .filter(|emplacement| {
+                    emplacement.owner == viewer
+                        && emplacement.kind == sim::EmplacementKind::HyperspaceSensor
+                })
+                .map(|emplacement| world.lanes.relay_at(emplacement.pos))
+                .collect();
+            let changed = self
+                .comm_epochs
+                .get(&viewer)
+                .and_then(|epochs| epochs.back())
+                .is_none_or(|epoch| epoch.sites != sites || epoch.raw_ears != raw_ears);
+            if changed {
+                let field = sim::lane::DelayField {
+                    lanes: &world.lanes,
+                    sites: &sites,
+                    c: world.config.c,
+                };
+                self.comm_epochs.entry(viewer).or_default().push_back(CommEpoch {
+                    at: now,
+                    ears: field.prepare_wake_ears(corp.command_center, &raw_ears),
+                    sites,
+                    raw_ears,
+                });
+            }
         }
-        let version = self.bump_version();
-        self.relay_networks.insert(
-            viewer,
-            VersionedSites {
-                value: sites.to_vec(),
-                version,
-            },
-        );
-        version
-    }
-
-    fn ear_version(&mut self, viewer: PlayerId, ears: &[sim::lane::Relay]) -> u64 {
-        if self
-            .ear_networks
-            .get(&viewer)
-            .is_some_and(|state| state.value == ears)
-        {
-            return self.ear_networks[&viewer].version;
+        for epochs in self.comm_epochs.values_mut() {
+            while epochs.len() > 1 && epochs[1].at <= now - horizon {
+                epochs.pop_front();
+            }
         }
-        let version = self.bump_version();
-        self.ear_networks.insert(
-            viewer,
-            VersionedEars {
-                value: ears.to_vec(),
-                version,
-            },
-        );
-        version
+        for death in &world.comm_deaths {
+            if self
+                .comm_deaths
+                .iter()
+                .any(|known| known.id == death.id && known.at.to_bits() == death.at.to_bits())
+            {
+                continue;
+            }
+            self.comm_deaths.push(death.clone());
+            self.death_version = self.death_version.wrapping_add(1).max(1);
+        }
+        self.comm_deaths
+            .retain(|death| now - death.at <= horizon);
     }
+}
+
+/// The complete player-known kinematic picture used to aim an outbound order.
+/// `route` is the served plan in force at the sighting, consumed from that same
+/// sighting so the meeting solve never follows already-flown legs or true space.
+pub struct ObservedSighting {
+    pub pos: Vec2,
+    pub vel: Vec2,
+    pub coupled: bool,
+    pub route: Vec<Vec2>,
 }
 
 impl PositionHistory {
@@ -396,16 +413,18 @@ impl PositionHistory {
     pub fn record(&mut self, world: &World) {
         let now = world.time;
         let frontiers = self.frontiers.get_mut();
+        frontiers.record_comm_state(world, self.horizon);
         for (id, ship) in &world.fleets {
-            let sites = world.relay_network(ship.owner);
-            let report_in_comms = sim::lane::in_comm_bubble(ship.pos, &sites, 0.0);
+            let sites_truth = world.relay_network(ship.owner);
+            let sites_known = world.relay_network_known(ship.owner, now);
+            let report_in_comms = sim::lane::in_comm_bubble(ship.pos, &sites_truth, 0.0);
             let cc = world
                 .players
                 .get(&ship.owner)
                 .map_or(ship.pos, |corp| corp.command_center);
-            let delays = sim::lane::DelayField {
+            let known_delays = sim::lane::DelayField {
                 lanes: &world.lanes,
-                sites: &sites,
+                sites: &sites_known,
                 c: world.config.c,
             };
             let track = match self.tracks.entry(*id) {
@@ -416,9 +435,9 @@ impl PositionHistory {
                     // testing occupancy, accidentally paying it for every ship on
                     // every sim tick even though the closure almost never ran.
                     let initial_delay = if ship.drive_state.stirs_the_lane() {
-                        delays.from_coupled(ship.pos, cc)
+                        known_delays.from_coupled(ship.pos, cc)
                     } else {
-                        delays.between(ship.pos, cc)
+                        known_delays.between(ship.pos, cc)
                     }
                     .max(LIVE_DELAY_FLOOR_S);
                     entry.insert(Track {
@@ -512,7 +531,7 @@ impl PositionHistory {
                 in_comms: report_in_comms,
             };
             if let Some(previous) = track.samples.back().copied()
-                && let Some(boundary) = nominal_bubble_crossing(previous, current, &sites)
+                && let Some(boundary) = nominal_bubble_crossing(previous, current, &sites_truth)
             {
                 track
                     .bubble_transitions
@@ -525,16 +544,33 @@ impl PositionHistory {
             // runs its replay to the edge; DARK cannot re-enter until that report
             // has physically arrived. The true hull sample above supplies channel
             // history, never the presentation decision.
-            let relay_version = frontiers.relay_version(ship.owner, &sites);
-            let cursor = frontiers
-                .cursors
+            let FrontierCache {
+                cursors,
+                comm_epochs,
+                comm_deaths,
+                death_version,
+                ..
+            } = &mut *frontiers;
+            let epochs = comm_epochs.get(&ship.owner);
+            let ledger_version = *death_version;
+            let cursor = cursors
                 .entry(FrontierKey {
                     viewer: ship.owner,
                     track: *id,
                     path: FrontierPath::DirectOwn,
                 })
                 .or_default();
-            update_presentation_mode_cached(track, cc, &delays, now, cursor, relay_version);
+            update_presentation_mode_cached(
+                track,
+                cc,
+                &known_delays,
+                now,
+                epochs,
+                comm_deaths,
+                ship.owner,
+                cursor,
+                ledger_version,
+            );
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
                 if now - front.time > self.horizon {
@@ -640,14 +676,21 @@ impl PositionHistory {
         let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
         coverage.extend_from_slice(arrays);
         let mut frontiers = self.frontiers.borrow_mut();
-        let relay_version = frontiers.relay_version(viewer, delays.sites);
+        let FrontierCache {
+            cursors,
+            comm_epochs,
+            comm_deaths,
+            death_version,
+            ..
+        } = &mut *frontiers;
+        let epochs = comm_epochs.get(&viewer);
+        let ledger_version = *death_version;
         let wake_ears = sim::lane::WakeEars::default();
         for (id, track) in &self.tracks {
             if track.owner != viewer {
                 continue;
             }
-            let cursor = frontiers
-                .cursors
+            let cursor = cursors
                 .entry(FrontierKey {
                     viewer,
                     track: *id,
@@ -661,14 +704,70 @@ impl PositionHistory {
                 now,
                 true,
                 &wake_ears,
+                epochs,
+                comm_deaths,
+                viewer,
                 cursor,
-                relay_version,
+                ledger_version,
                 0,
             ) {
                 coverage.push((s.pos, self.sensor_range * track.sensor_mult));
             }
         }
         coverage
+    }
+
+    /// Owner-only served positions at one command-center clock. Relay casualty
+    /// summaries use this exact picture — never authoritative fleet positions —
+    /// to count which markers the vanished bubble uniquely supported.
+    pub fn served_own_positions(
+        &self,
+        viewer: PlayerId,
+        cc: Vec2,
+        delays: &sim::lane::DelayField<'_>,
+        now: f64,
+    ) -> Vec<Vec2> {
+        let mut out = Vec::new();
+        let mut frontiers = self.frontiers.borrow_mut();
+        let FrontierCache {
+            cursors,
+            comm_epochs,
+            comm_deaths,
+            death_version,
+            ..
+        } = &mut *frontiers;
+        let epochs = comm_epochs.get(&viewer);
+        let ledger_version = *death_version;
+        let wake_ears = sim::lane::WakeEars::default();
+        for (id, track) in &self.tracks {
+            if track.owner != viewer {
+                continue;
+            }
+            let cursor = cursors
+                .entry(FrontierKey {
+                    viewer,
+                    track: *id,
+                    path: FrontierPath::DirectOwn,
+                })
+                .or_default();
+            if let Some(sample) = serve_track_cached(
+                track,
+                cc,
+                delays,
+                now,
+                true,
+                &wake_ears,
+                epochs,
+                comm_deaths,
+                viewer,
+                cursor,
+                ledger_version,
+                0,
+            ) {
+                out.push(sample.pos);
+            }
+        }
+        out
     }
 
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
@@ -745,8 +844,15 @@ impl PositionHistory {
         // nearest-lane projection and along-arc arithmetic.
         let wake_ears = delays.prepare_wake_ears(cc, ears);
         let mut frontiers = self.frontiers.borrow_mut();
-        let relay_version = frontiers.relay_version(viewer, delays.sites);
-        let ear_version = frontiers.ear_version(viewer, ears);
+        let FrontierCache {
+            cursors,
+            comm_epochs,
+            comm_deaths,
+            death_version,
+            ..
+        } = &mut *frontiers;
+        let epochs = comm_epochs.get(&viewer);
+        let ledger_version = *death_version;
         for (id, track) in &self.tracks {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
@@ -757,8 +863,7 @@ impl PositionHistory {
                 continue; // the destruction has been observed — it's gone
             }
             let own = track.owner == viewer;
-            let cursor = frontiers
-                .cursors
+            let cursor = cursors
                 .entry(FrontierKey {
                     viewer,
                     track: *id,
@@ -772,9 +877,12 @@ impl PositionHistory {
                 now,
                 own,
                 &wake_ears,
+                epochs,
+                comm_deaths,
+                viewer,
                 cursor,
-                relay_version,
-                ear_version,
+                ledger_version,
+                0,
             ) else {
                 continue; // dark — no light from this object has arrived yet
             };
@@ -1019,23 +1127,29 @@ impl PositionHistory {
         ghosts
     }
 
-    /// The (position, velocity, coupled) of the viewer's CURRENT SIGHTING of
-    /// their own ship — where the ghost stands, how the served picture says it
-    /// is moving, and whether its drive was actively joined to a lane in that
-    /// same retarded frame. These are the only inputs the order comet may use to
-    /// solve its meeting point; the hidden true fleet never enters the graphic.
+    /// The viewer's CURRENT SIGHTING of their own ship: position, velocity,
+    /// coupling, and the remaining portion of the plan in force in that same
+    /// retarded frame. These are the only inputs the order comet may use to solve
+    /// its meeting point; the hidden true fleet never enters the graphic.
     pub fn observed_sighting(
         &self,
         ship_id: EntityId,
         cc: Vec2,
         delays: &sim::lane::DelayField<'_>,
         now: f64,
-    ) -> Option<(Vec2, Vec2, bool)> {
+    ) -> Option<ObservedSighting> {
         let track = self.tracks.get(&ship_id)?;
         let mut frontiers = self.frontiers.borrow_mut();
-        let relay_version = frontiers.relay_version(track.owner, delays.sites);
-        let cursor = frontiers
-            .cursors
+        let FrontierCache {
+            cursors,
+            comm_epochs,
+            comm_deaths,
+            death_version,
+            ..
+        } = &mut *frontiers;
+        let epochs = comm_epochs.get(&track.owner);
+        let ledger_version = *death_version;
+        let cursor = cursors
             .entry(FrontierKey {
                 viewer: track.owner,
                 track: ship_id,
@@ -1049,11 +1163,26 @@ impl PositionHistory {
             now,
             true,
             &sim::lane::WakeEars::default(),
+            epochs,
+            comm_deaths,
+            track.owner,
             cursor,
-            relay_version,
+            ledger_version,
             0,
         )?;
-        Some((sample.pos, sample.vel, sample.drive.stirs_the_lane()))
+        let route = track
+            .plans
+            .iter()
+            .rev()
+            .find(|(t, _)| *t <= sample.time)
+            .map(|(_, plan)| remaining_plan_from_sighting(sample.pos, plan))
+            .unwrap_or_default();
+        Some(ObservedSighting {
+            pos: sample.pos,
+            vel: sample.vel,
+            coupled: sample.drive.stirs_the_lane(),
+            route,
+        })
     }
 
     /// Was a (destroyed) raider's ghost — observed at retarded position `ghost_pos`,
@@ -2024,9 +2153,54 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
     }
 }
 
-/// The latest sample whose light has reached `cc` by `now`. Relies on
-/// `arrival(t)` being strictly increasing (object speed < c): the first sample
-/// found scanning newest→oldest with `arrival ≤ now` is the answer.
+/// Consume the untrimmed served plan from the served position. Track plans keep
+/// the route as it was when issued (later remaining legs are only a suffix), so
+/// replaying every waypoint would send a meeting solve backwards. This mirrors
+/// the map's projection rule: select the nearest plan segment and retain only
+/// the waypoint ahead of that projection plus its suffix. A newly-started route
+/// can still be approaching waypoint zero because `LaneNetwork::route` omits its
+/// origin; a projection clamped to the first segment's start therefore retains
+/// the whole plan.
+fn remaining_plan_from_sighting(pos: Vec2, plan: &[(Vec2, bool)]) -> Vec<Vec2> {
+    if plan.len() < 2 {
+        return plan.iter().map(|(point, _)| *point).collect();
+    }
+
+    let mut best_distance = f64::INFINITY;
+    let mut best_next = 0;
+    let mut best_t = 0.0;
+    for next in 1..plan.len() {
+        let a = plan[next - 1].0;
+        let b = plan[next].0;
+        let ab = b - a;
+        let len2 = ab.dot(ab);
+        let t = if len2 > 1e-9 {
+            ((pos - a).dot(ab) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let projected = a + ab * t;
+        let distance = pos.distance(projected);
+        if distance < best_distance {
+            best_distance = distance;
+            best_next = next;
+            best_t = t;
+        }
+    }
+
+    if best_next == 1 && best_t <= 1e-9 {
+        best_next = 0;
+    }
+    plan[best_next..]
+        .iter()
+        .map(|(point, _)| *point)
+        .collect()
+}
+
+/// The latest sample whose light has reached `cc` by `now`. Fixed sub-signal
+/// channels have strictly increasing `arrival(t)`; rival bow waves and channel
+/// seams may reorder it. The cursor handles both by evaluating each report once
+/// when it is emitted, then consuming its cached arrival instead of rescanning.
 /// `own`: whether the viewer OWNS this track. §coupled — an own fleet riding a
 /// lane transmits its report through the lane it is in, so those samples travel
 /// at lane signal speed and its picture stays fresh even when the hull outruns
@@ -2093,6 +2267,9 @@ fn serve_track(
         now,
         own,
         &wake_ears,
+        None,
+        &[],
+        track.owner,
         &mut cursor,
         1,
         1,
@@ -2107,6 +2284,9 @@ fn serve_track_cached(
     now: f64,
     own: bool,
     ears: &sim::lane::WakeEars,
+    epochs: Option<&VecDeque<CommEpoch>>,
+    deaths: &[sim::world::CommDeath],
+    viewer: PlayerId,
     cursor: &mut FrontierCursor,
     relay_version: u64,
     ear_version: u64,
@@ -2126,6 +2306,9 @@ fn serve_track_cached(
             now,
             own,
             ears,
+            epochs,
+            deaths,
+            viewer,
             cursor,
             relay_version,
             ear_version,
@@ -2145,7 +2328,17 @@ fn update_presentation_mode(
     now: f64,
 ) {
     let mut cursor = FrontierCursor::default();
-    update_presentation_mode_cached(track, cc, delays, now, &mut cursor, 1);
+    update_presentation_mode_cached(
+        track,
+        cc,
+        delays,
+        now,
+        None,
+        &[],
+        track.owner,
+        &mut cursor,
+        1,
+    );
 }
 
 fn update_presentation_mode_cached(
@@ -2153,6 +2346,9 @@ fn update_presentation_mode_cached(
     cc: Vec2,
     delays: &sim::lane::DelayField<'_>,
     now: f64,
+    epochs: Option<&VecDeque<CommEpoch>>,
+    deaths: &[sim::world::CommDeath],
+    viewer: PlayerId,
     cursor: &mut FrontierCursor,
     relay_version: u64,
 ) {
@@ -2164,6 +2360,9 @@ fn update_presentation_mode_cached(
         now,
         true,
         &wake_ears,
+        epochs,
+        deaths,
+        viewer,
         cursor,
         relay_version,
         0,
@@ -2191,6 +2390,9 @@ fn update_presentation_mode_cached(
             now,
             true,
             &wake_ears,
+            epochs,
+            deaths,
+            viewer,
             cursor,
             relay_version,
             0,
@@ -2271,10 +2473,68 @@ fn latest_observable(
         now,
         own,
         &wake_ears,
+        None,
+        &[],
+        PlayerId(0),
         &mut FrontierCursor::default(),
         1,
         1,
     )
+}
+
+fn comm_epoch_at(epochs: Option<&VecDeque<CommEpoch>>, emitted_at: f64) -> Option<&CommEpoch> {
+    let epochs = epochs?;
+    let newer = epochs.partition_point(|epoch| epoch.at <= emitted_at + 1e-9);
+    if newer == 0 {
+        epochs.front()
+    } else {
+        epochs.get(newer - 1)
+    }
+}
+
+fn fast_copy_survives(
+    source: Vec2,
+    target: Vec2,
+    emitted_at: f64,
+    delay: f64,
+    hops: &[sim::lane::Hop],
+    sites: &[sim::lane::CommSite],
+    deaths: &[sim::world::CommDeath],
+    viewer: PlayerId,
+    lanes: &sim::lane::LaneNetwork,
+    c: f64,
+) -> bool {
+    let mut surviving_sites = sites.to_vec();
+    for death in deaths {
+        if death.owner != viewer
+            || death.at <= emitted_at + 1e-9
+            || death.at >= emitted_at + delay - 1e-9
+        {
+            continue;
+        }
+        let Some(index) = surviving_sites
+            .iter()
+            .position(|site| *site == death.site)
+        else {
+            continue;
+        };
+        let elapsed = death.at - emitted_at;
+        let (position, lane) = sim::lane::signal_state_at(source, hops, elapsed);
+        surviving_sites.remove(index);
+        let remaining = sim::lane::DelayField {
+            lanes,
+            sites: &surviving_sites,
+            c,
+        }
+        .remaining_signal(position, target, lane.is_some(), false);
+        // The copy is downstream only if today's surviving graph can reproduce
+        // its already-scheduled suffix from the physical point reached at death.
+        // Otherwise it was still upstream of a stretch the dead relay powered.
+        if remaining > delay - elapsed + sim::DT + 1e-6 {
+            return false;
+        }
+    }
+    true
 }
 
 fn sample_arrival(
@@ -2283,27 +2543,46 @@ fn sample_arrival(
     delays: &sim::lane::DelayField<'_>,
     own: bool,
     ears: &sim::lane::WakeEars,
+    epochs: Option<&VecDeque<CommEpoch>>,
+    deaths: &[sim::world::CommDeath],
+    viewer: PlayerId,
 ) -> f64 {
-    // Own reports remember the channel at EMISSION. Rival telemetry remains
-    // passive unless a coupled wake reaches one of the prepared listening posts.
-    let riding = sample.drive.stirs_the_lane();
-    let mut delay = if own {
-        if sample.in_comms && riding {
-            delays.from_coupled(sample.pos, cc)
-        } else if sample.in_comms {
-            delays.between(sample.pos, cc)
-        } else {
-            delays.passive(sample.pos, cc)
-        }
-    } else {
-        delays.passive(sample.pos, cc)
+    let epoch = comm_epoch_at(epochs, sample.time);
+    let epoch_field = sim::lane::DelayField {
+        lanes: delays.lanes,
+        sites: epoch.map_or(delays.sites, |epoch| epoch.sites.as_slice()),
+        c: delays.c,
     };
-    if riding && !ears.is_empty() {
-        // Pure geometry: every ear's routed leg home was hoisted once when the
-        // viewer pass prepared `ears`.
-        delay = delay.min(delays.heard_prepared(sample.pos, ears));
-    }
-    sample.time + delay
+    let epoch_ears = epoch.map_or(ears, |epoch| &epoch.ears);
+    let slow = epoch_field.passive(sample.pos, cc);
+    let riding = sample.drive.stirs_the_lane();
+    let fast = if own && sample.in_comms {
+        Some(if riding {
+            epoch_field.scheduled_from_coupled(sample.pos, cc)
+        } else {
+            epoch_field.scheduled_between(sample.pos, cc)
+        })
+    } else if !own && riding && !epoch_ears.is_empty() {
+        epoch_field.scheduled_heard_prepared(sample.pos, epoch_ears)
+    } else {
+        None
+    };
+    let Some((fast_delay, fast_hops)) = fast.filter(|(fast, _)| *fast < slow) else {
+        return sample.time + slow;
+    };
+    let valid = fast_copy_survives(
+        sample.pos,
+        cc,
+        sample.time,
+        fast_delay,
+        &fast_hops,
+        epoch_field.sites,
+        deaths,
+        viewer,
+        delays.lanes,
+        delays.c,
+    );
+    sample.time + if valid { fast_delay } else { slow }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2314,6 +2593,9 @@ fn latest_observable_cached(
     now: f64,
     own: bool,
     ears: &sim::lane::WakeEars,
+    epochs: Option<&VecDeque<CommEpoch>>,
+    deaths: &[sim::world::CommDeath],
+    viewer: PlayerId,
     cursor: &mut FrontierCursor,
     relay_version: u64,
     ear_version: u64,
@@ -2343,12 +2625,51 @@ fn latest_observable_cached(
     if changed {
         cursor.relay_version = relay_version;
         cursor.ear_version = ear_version;
+        // A newly-recorded death can invalidate FAST copies already waiting in
+        // the frontier. Re-price that finite pending set once, in place; do not
+        // restart from the track's retained dark history. Ordinary views remain
+        // O(new emissions), while a rare physical break pays O(pending light)
+        // exactly once for this viewer/track.
+        let pending: Vec<Sample> = cursor
+            .pending_by_emission
+            .values()
+            .map(|pending| pending.sample)
+            .collect();
         cursor.pending_by_arrival.clear();
         cursor.pending_by_emission.clear();
-        cursor.seen_through = cursor.served.map(|served| served.sample.time);
+        for sample in pending {
+            let repriced = ArrivedSample {
+                sample,
+                arrival: sample_arrival(
+                    &sample,
+                    cc,
+                    delays,
+                    own,
+                    ears,
+                    epochs,
+                    deaths,
+                    viewer,
+                ),
+            };
+            cursor
+                .pending_by_emission
+                .insert(sample.time.to_bits(), repriced);
+            cursor
+                .pending_by_arrival
+                .push(Reverse(PendingArrival(repriced)));
+        }
         if let Some(served) = cursor.served.as_mut() {
-            let reevaluated = sample_arrival(&served.sample, cc, delays, own, ears);
-            // NETWORK INVALIDATION POLICY: the player's served picture never
+            let reevaluated = sample_arrival(
+                &served.sample,
+                cc,
+                delays,
+                own,
+                ears,
+                epochs,
+                deaths,
+                viewer,
+            );
+            // DEATH INVALIDATION POLICY: the player's served picture never
             // moves backward. If a demolished relay says a report already shown
             // would not arrive under today's graph, retain that discrete report
             // and restart the interpolation clock here; only newer samples are
@@ -2373,7 +2694,16 @@ fn latest_observable_cached(
         let sample = samples[index];
         let pending = ArrivedSample {
             sample,
-            arrival: sample_arrival(&sample, cc, delays, own, ears),
+            arrival: sample_arrival(
+                &sample,
+                cc,
+                delays,
+                own,
+                ears,
+                epochs,
+                deaths,
+                viewer,
+            ),
         };
         cursor
             .pending_by_emission
@@ -2457,6 +2787,28 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn the_observed_plan_is_consumed_from_the_same_served_sighting() {
+        let plan = vec![
+            (Vec2::new(10_000.0, 0.0), true),
+            (Vec2::new(20_000.0, 0.0), true),
+            (Vec2::new(30_000.0, 0.0), false),
+        ];
+        let remaining = remaining_plan_from_sighting(Vec2::new(16_000.0, 250.0), &plan);
+        assert_eq!(
+            remaining,
+            vec![Vec2::new(20_000.0, 0.0), Vec2::new(30_000.0, 0.0)]
+        );
+
+        let approaching_first =
+            remaining_plan_from_sighting(Vec2::new(5_000.0, 0.0), &plan);
+        assert_eq!(
+            approaching_first,
+            plan.iter().map(|(point, _)| *point).collect::<Vec<_>>(),
+            "the route planner omits its origin, so the first approach remains",
+        );
+    }
+
     /// §coupled: A HYPERSPACE SENSOR HEARS THE LANE. A rival hull riding a
     /// listened lane makes a wake the post reports home at lane speed — so it
     /// can no longer arrive ahead of the news of it past a tripwire. Without
@@ -2514,6 +2866,152 @@ mod tests {
             "without the ear the same rider must be dark or far staler \
              ({deaf_age:?} vs heard {heard_age:.1}s)",
         );
+    }
+
+    fn relay_death_copy_fixture() -> (
+        sim::lane::LaneNetwork,
+        sim::lane::CommSite,
+        Vec2,
+        Vec2,
+        Sample,
+        f64,
+        Vec<sim::lane::Hop>,
+    ) {
+        let control = vec![Vec2::ZERO, Vec2::new(100_000.0, 0.0), Vec2::new(200_000.0, 0.0)];
+        let lanes = sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
+            id: 91,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Death ledger".into(),
+            samples: sim::lane::bake_for_tests(&control),
+            control,
+            half_width: 1_350.0,
+            tapers: false,
+        }]);
+        let site = sim::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 80_000.0,
+        };
+        let source = Vec2::new(170_000.0, 20_000.0);
+        let cc = Vec2::new(30_000.0, 20_000.0);
+        let field = sim::lane::DelayField {
+            lanes: &lanes,
+            sites: &[site],
+            c: 400.0,
+        };
+        let (fast, hops) = field.scheduled_between(source, cc);
+        assert!(fast < field.passive(source, cc));
+        assert!(hops.first().is_some_and(|hop| hop.lane.is_none() && hop.t > 0.0));
+        assert!(hops.iter().any(|hop| hop.lane.is_some()));
+        let sample = Sample {
+            time: 0.0,
+            pos: source,
+            vel: Vec2::ZERO,
+            loud: false,
+            drive: sim::ship::DriveState::Thrusters,
+            in_comms: true,
+        };
+        (lanes, site, source, cc, sample, fast, hops)
+    }
+
+    fn epoch(site: sim::lane::CommSite) -> VecDeque<CommEpoch> {
+        VecDeque::from([CommEpoch {
+            at: 0.0,
+            sites: vec![site],
+            raw_ears: Vec::new(),
+            ears: sim::lane::WakeEars::default(),
+        }])
+    }
+
+    #[test]
+    fn a_cleared_fast_copy_arrives_on_its_original_schedule() {
+        let (lanes, site, _source, cc, sample, fast, hops) = relay_death_copy_fixture();
+        let final_hop = hops.last().unwrap();
+        let prior = hops[hops.len() - 2].t;
+        assert!(final_hop.lane.is_none() && final_hop.t > prior);
+        let death = sim::world::CommDeath {
+            id: EntityId(901),
+            owner: PlayerId(1),
+            kind: sim::EmplacementKind::HyperspaceBuoy,
+            site,
+            at: (prior + final_hop.t) * 0.5,
+            news_at: 999.0,
+        };
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
+        let arrival = sample_arrival(
+            &sample,
+            cc,
+            &field,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epoch(site)),
+            &[death],
+            PlayerId(1),
+        );
+        assert!((arrival - fast).abs() < 1e-9, "cleared light keeps its frozen fast clock");
+    }
+
+    #[test]
+    fn an_uncleared_fast_copy_dies_and_its_slow_copy_delivers() {
+        let (lanes, site, source, cc, sample, fast, hops) = relay_death_copy_fixture();
+        let death = sim::world::CommDeath {
+            id: EntityId(902),
+            owner: PlayerId(1),
+            kind: sim::EmplacementKind::HyperspaceBuoy,
+            site,
+            at: hops[0].t * 0.5,
+            news_at: 999.0,
+        };
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
+        let slow = sample.time + field.passive(source, cc);
+        let epochs = epoch(site);
+        let arrival = sample_arrival(
+            &sample,
+            cc,
+            &field,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epochs),
+            std::slice::from_ref(&death),
+            PlayerId(1),
+        );
+        assert!((arrival - slow).abs() < 1e-9);
+        assert!(arrival > fast + 1.0);
+
+        // A report already served just before the ledger update remains a fact;
+        // invalidation may delay only the pending frontier, never rewind it.
+        let samples = VecDeque::from([sample]);
+        let mut cursor = FrontierCursor::default();
+        let before = latest_observable_cached(
+            &samples,
+            cc,
+            &field,
+            fast + 1e-6,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epochs),
+            &[],
+            PlayerId(1),
+            &mut cursor,
+            0,
+            0,
+        )
+        .unwrap();
+        let after = latest_observable_cached(
+            &samples,
+            cc,
+            &field,
+            fast + 2e-6,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epochs),
+            &[death],
+            PlayerId(1),
+            &mut cursor,
+            1,
+            0,
+        )
+        .unwrap();
+        assert_eq!(after.time, before.time, "death-ledger invalidation never rewinds served light");
     }
 
     fn moving_samples(in_comms: bool) -> Vec<Sample> {
