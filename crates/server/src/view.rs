@@ -3833,6 +3833,74 @@ mod tests {
     }
 
     #[test]
+    fn a_dark_rider_advances_as_slow_light_arrives() {
+        let control = vec![Vec2::ZERO, Vec2::new(200_000.0, 0.0)];
+        let lanes = sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
+            id: 73,
+            kind: sim::lane::LaneKind::Trunk,
+            name: "Dark replay".into(),
+            samples: sim::lane::bake_for_tests(&control),
+            control,
+            half_width: 1_350.0,
+            tapers: false,
+        }]);
+        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 20_000.0 }];
+        let drive = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
+        let samples = vec![
+            Sample {
+                time: 0.0,
+                pos: Vec2::new(100_000.0, 0.0),
+                vel: Vec2::new(5_000.0, 0.0),
+                loud: false,
+                drive,
+                in_comms: false,
+            },
+            Sample {
+                time: 1.0,
+                pos: Vec2::new(105_000.0, 0.0),
+                vel: Vec2::new(5_000.0, 0.0),
+                loud: false,
+                drive,
+                in_comms: false,
+            },
+            Sample {
+                time: 2.0,
+                pos: Vec2::new(110_000.0, 0.0),
+                vel: Vec2::new(5_000.0, 0.0),
+                loud: false,
+                drive,
+                in_comms: false,
+            },
+        ];
+        let first_arrival = samples[0].time
+            + Vec2::ZERO.distance(samples[0].pos) / (400.0 * sim::lane::WARP_FACTOR);
+        let last_arrival = samples[2].time
+            + Vec2::ZERO.distance(samples[2].pos) / (400.0 * sim::lane::WARP_FACTOR);
+        let history = history_with(track_from(samples, PlayerId(1), ShipKind::Raider));
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
+
+        let first = history.view_for(
+            PlayerId(1),
+            Vec2::ZERO,
+            &field,
+            first_arrival + 1e-6,
+        )[0]
+            .clone();
+        let later = history.view_for(
+            PlayerId(1),
+            Vec2::ZERO,
+            &field,
+            last_arrival + 1e-6,
+        )[0]
+            .clone();
+
+        assert_eq!(first.pos, Vec2::new(100_000.0, 0.0));
+        assert_eq!(later.pos, Vec2::new(110_000.0, 0.0));
+        assert!(later.pos.x > first.pos.x, "the dark arrival frontier must advance, not pin forever");
+        assert!((later.age - (last_arrival + 1e-6 - 2.0)).abs() < 1e-8);
+    }
+
+    #[test]
     fn reentry_hysteresis_still_prevents_flapping() {
         let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 40_000.0 }];
         assert!(!presentation_reentry_contains(Vec2::new(38_001.0, 0.0), &sites));

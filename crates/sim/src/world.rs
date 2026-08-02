@@ -305,9 +305,10 @@ struct PendingOrder {
     /// Owner (for the owner-only lifecycle indicator). serde default for old snaps.
     #[serde(default = "default_player")]
     owner: PlayerId,
-    /// Sim time the response is expected. For a dark fleet ordered back across a
-    /// comm circle this is its physical edge crossing; otherwise it remains the
-    /// confirming-light arrival. The legacy field name preserves snapshots.
+    /// Sim time the response is estimated. For a dark fleet ordered back across a
+    /// comm circle this is its physical edge crossing; otherwise it is the old
+    /// analytic light-return estimate. Neither value is confirmation evidence;
+    /// the legacy field name preserves snapshots and panel countdowns.
     #[serde(default)]
     echo_at: f64,
     /// When the order was issued (to pick the LATEST order per fleet for display).
@@ -407,8 +408,9 @@ fn remaining_flight_path(fleet: &Fleet) -> Vec<Vec2> {
     }
 }
 
-/// A DELIVERED order whose confirming light hasn't yet reached the command center
-/// (the AWAITING-ECHO phase). Owner-only; transient lifecycle bookkeeping.
+/// A DELIVERED order awaiting player-visible compliance evidence. Ordinary
+/// entries retire only when the served map reaches `delivered_at`; re-entry
+/// entries retire on their exact boundary report. Owner-only lifecycle state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingEcho {
     #[serde(default)]
@@ -1537,6 +1539,50 @@ impl World {
         pending
     }
 
+    /// Retire ordinary delivered orders from the SAME evidence the owner was
+    /// just served on the map. `served_samples` contains `(fleet, emission)` for
+    /// that player's own ghosts in one View. There is deliberately no `echo_at`
+    /// check here: pixels and confirmation cannot have parallel clocks for one
+    /// medium. The estimate may become overdue, but only a served emission at or
+    /// after delivery proves that the displayed picture is compliance-era.
+    ///
+    /// Re-entry responses stay on their exact boundary-report wavefront in
+    /// [`Self::resolve_order_echoes`]; they never enter this ordinary branch.
+    pub fn confirm_orders_from_served(
+        &mut self,
+        owner: PlayerId,
+        served_samples: &[(EntityId, f64)],
+    ) -> Vec<Event> {
+        let now = self.time;
+        let mut events = Vec::new();
+        let mut i = 0;
+        while i < self.pending_echoes.len() {
+            let echo = &self.pending_echoes[i];
+            let served_emission = served_samples
+                .iter()
+                .find_map(|(fleet, emission)| (*fleet == echo.fleet).then_some(*emission));
+            let confirms = echo.owner == owner
+                && !echo.response_on_reentry
+                && self.fleets.contains_key(&echo.fleet)
+                && served_emission.is_some_and(|emission| emission + 1e-9 >= echo.delivered_at);
+            if !confirms {
+                i += 1;
+                continue;
+            }
+            let echo = self.pending_echoes.remove(i);
+            events.push(Event::new(
+                now,
+                EventPayload::OrderConfirmed {
+                    id: echo.id,
+                    owner: echo.owner,
+                    fleet: echo.fleet,
+                    kind: echo.kind,
+                },
+            ));
+        }
+        events
+    }
+
     /// Ongoing BATTLES for the server's light-gated View (§battles-take-time):
     /// each engagement's location, start time, the two owners, and its participant
     /// fleets (so weapons-fire visibility can reveal even dark participants AT the
@@ -1908,8 +1954,9 @@ impl World {
         self.deliver_survey_reports();
 
         // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
-        //     settled, confirm delivered orders whose expected response arrived
-        //     (owner-only `OrderConfirmed`), and drop entries for fleets just lost.
+        //     settled, advance exact re-entry responses and drop entries for fleets
+        //     just lost. Ordinary confirmation belongs to the server's served-map
+        //     frontier (`confirm_orders_from_served`), never an analytic timer.
         self.resolve_order_echoes(&mut events);
 
         // 5. Resolve trade convoys that survived to their destination (§9).
@@ -4716,12 +4763,13 @@ impl World {
         }
     }
 
-    /// §order-lifecycle: resolve DELIVERED orders whose response light has now
-    /// reached the command center. Re-entering a comm bubble EMITS that response;
-    /// it does not disclose the hidden crossing instantly. The routed home leg is
-    /// frozen at emission like every other information path. A fleet destroyed
-    /// first drops silently (the delayed destruction report is what the owner
-    /// sees — no false "confirmed").
+    /// §order-lifecycle: resolve exact RE-ENTRY response light. Re-entering a comm
+    /// bubble EMITS that response; it does not disclose the hidden crossing
+    /// instantly. The routed home leg is frozen at emission like every other
+    /// information path. Ordinary orders are intentionally untouched here: the
+    /// map's served compliance sample is their sole confirmation evidence. A
+    /// fleet destroyed first drops silently (the delayed destruction report is
+    /// what the owner sees — no false "confirmed").
     fn resolve_order_echoes(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
         let mut i = 0;
@@ -4820,17 +4868,6 @@ impl World {
                     self.pending_echoes[i].reentry_probe_in_comms = current_in_comms;
                 }
                 i += 1;
-            } else if e.echo_at <= now {
-                let e = self.pending_echoes.remove(i);
-                events.push(Event::new(
-                    now,
-                    EventPayload::OrderConfirmed {
-                        id: e.id,
-                        owner: e.owner,
-                        fleet: e.fleet,
-                        kind: e.kind,
-                    },
-                ));
             } else {
                 i += 1;
             }
@@ -20559,31 +20596,101 @@ mod tests {
     }
 
     #[test]
-    fn order_lifecycle_delivers_then_confirms_at_echo() {
+    fn order_lifecycle_waits_for_served_compliance_after_estimate() {
         let mut w = test_world();
         let id = PlayerId(1);
         let (fid, _cc, pos) = lifecycle_setup(&mut w, id, 900.0);
         let dest = pos + Vec2::new(0.0, 400.0);
         w.step(&[Command::MoveShip { player_id: id, ship_id: fid, dest }]);
-        let echo_at = w.pending_commands(id)[0].echo_at;
+        let pending = w.pending_commands(id)[0];
         let mut delivered = false;
-        let mut confirmed_at = None;
         for _ in 0..(30 * crate::config::TICK_HZ) {
             for e in w.step(&[]) {
                 match e.payload {
                     EventPayload::OrderDelivered { fleet, .. } if fleet == fid => delivered = true,
-                    EventPayload::OrderConfirmed { fleet, .. } if fleet == fid => confirmed_at = Some(e.time),
+                    EventPayload::OrderConfirmed { fleet, .. } if fleet == fid => {
+                        panic!("ordinary confirmation must not come from echo_at")
+                    }
                     _ => {}
                 }
             }
-            if confirmed_at.is_some() {
+            if w.time > pending.echo_at + DT {
                 break;
             }
         }
         assert!(delivered, "an OrderDelivered fired when the outbound light arrived");
-        let ct = confirmed_at.expect("an OrderConfirmed fired");
-        assert!((ct - echo_at).abs() <= DT + 1e-9, "confirmation fires at echo_at");
-        assert!(w.pending_commands(id).is_empty(), "the lifecycle clears once confirmed");
+        let delivered_pending = w
+            .pending_commands(id)
+            .into_iter()
+            .find(|order| order.id == pending.id)
+            .expect("the expired estimate remains pending");
+        assert!(
+            w.confirm_orders_from_served(id, &[(fid, delivered_pending.delivered_at - 1e-6)]).is_empty(),
+            "a pre-delivery served picture is not compliance evidence",
+        );
+        let confirmed =
+            w.confirm_orders_from_served(id, &[(fid, delivered_pending.delivered_at)]);
+        assert!(matches!(
+            confirmed.as_slice(),
+            [Event { payload: EventPayload::OrderConfirmed { id: confirmed_id, .. }, .. }]
+                if *confirmed_id == pending.id
+        ));
+        assert!(w.pending_commands(id).is_empty(), "the lifecycle clears on served evidence");
+    }
+
+    #[test]
+    fn confirmation_never_precedes_served_compliance() {
+        let mut baseline = test_world();
+        let owner = PlayerId(1);
+        let (fleet, _cc, pos) = lifecycle_setup(&mut baseline, owner, 900.0);
+        baseline.step(&[Command::MoveShip {
+            player_id: owner,
+            ship_id: fleet,
+            dest: pos + Vec2::new(0.0, 400.0),
+        }]);
+        let scheduled = baseline.pending_commands(owner)[0];
+        while baseline.time <= scheduled.delivered_at + DT {
+            baseline.step(&[]);
+        }
+        let delivered = baseline
+            .pending_commands(owner)
+            .into_iter()
+            .find(|pending| pending.id == scheduled.id)
+            .expect("the delivered lifecycle awaits served evidence");
+        assert!(!delivered.response_on_reentry);
+
+        // The upstream View reaches these evidence clocks by different paths;
+        // confirmation itself is intentionally topology-blind. In every case a
+        // pre-delivery map picture cannot confirm, and the event is stamped no
+        // earlier than the first compliance-era picture that invoked it.
+        for (topology, serve_lag, compliance_emission) in [
+            ("in-bubble", 0.1, delivered.delivered_at),
+            ("dark", 20.0, delivered.delivered_at + 2.0),
+            ("mixed", 5.0, delivered.delivered_at + 0.25),
+        ] {
+            let mut world = baseline.clone();
+            let first_served_at = delivered.delivered_at + serve_lag;
+            world.time = first_served_at - 0.01;
+            assert!(
+                world
+                    .confirm_orders_from_served(
+                        owner,
+                        &[(fleet, delivered.delivered_at - 1e-6)],
+                    )
+                    .is_empty(),
+                "{topology}: pre-delivery light is not compliance evidence",
+            );
+            world.time = first_served_at;
+            let events = world.confirm_orders_from_served(
+                owner,
+                &[(fleet, compliance_emission)],
+            );
+            assert_eq!(events.len(), 1, "{topology}: first compliance picture confirms once");
+            assert!(
+                events[0].time + 1e-9 >= first_served_at,
+                "{topology}: confirmation cannot precede its served picture",
+            );
+        }
     }
 
     #[test]

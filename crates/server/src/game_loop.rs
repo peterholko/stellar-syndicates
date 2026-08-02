@@ -1274,6 +1274,12 @@ impl GameLoop {
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
         let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
+        // Ordinary order confirmation is derived from these exact own-ghost
+        // pictures after every player's View has been materialized. Keeping the
+        // emission clocks beside the View prevents a second response timer from
+        // claiming evidence the map has not served.
+        let mut served_order_evidence: HashMap<PlayerId, Vec<(sim::EntityId, f64)>> =
+            HashMap::new();
         // §perf Part A: per-player battle-record specs (what each player MAY see
         // right now) — diffed per CONNECTION against its delivery cursor below.
         let mut record_specs: HashMap<PlayerId, Vec<view::RecordSpec>> = HashMap::new();
@@ -1357,6 +1363,14 @@ impl GameLoop {
             let mut ghosts = self.history.view_for_with_arrays(
                 player_id, cc, &delays, now, &arrays, &ears, &battle_reveal,
                 view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
+            );
+            served_order_evidence.insert(
+                player_id,
+                ghosts
+                    .iter()
+                    .filter(|ghost| ghost.own)
+                    .map(|ghost| (ghost.id, now - ghost.age))
+                    .collect(),
             );
             // §emplacements: WHICH STRUCTURES THIS VIEWER CAN SEE.
             //
@@ -1844,6 +1858,54 @@ impl GameLoop {
                 let (entries, away_since) = self.timeline.digest(player_id);
                 timelines.insert(player_id, ServerMsg::Timeline { entries, away_since });
             }
+        }
+
+        // §comms-v3.7 ONE CONFIRMATION CLOCK: the served own-fleet picture above
+        // is the evidence. The sim's `echo_at` remains a panel estimate only;
+        // expiry can say "overdue" but can never manufacture OrderConfirmed.
+        // Remove each row from the already-built View on this same broadcast,
+        // then emit the reliable lifecycle event for its toast/timeline.
+        let mut confirmation_events = Vec::new();
+        for (owner, evidence) in &served_order_evidence {
+            confirmation_events.extend(self.world.confirm_orders_from_served(*owner, evidence));
+        }
+        if !confirmation_events.is_empty() {
+            let mut confirmed_by_owner: HashMap<PlayerId, HashSet<u64>> = HashMap::new();
+            for event in &confirmation_events {
+                if let sim::EventPayload::OrderConfirmed { id, owner, fleet, kind } = &event.payload {
+                    confirmed_by_owner.entry(*owner).or_default().insert(*id);
+                    self.observed_order_plans.remove(&(*owner, *id));
+                    self.sessions.send_to_player(
+                        *owner,
+                        ServerMsg::OrderConfirmed {
+                            order_id: *id,
+                            ship_id: *fleet,
+                            kind: *kind,
+                        },
+                    );
+                }
+            }
+            for (owner, confirmed) in &confirmed_by_owner {
+                if let Some(ServerMsg::View { pending_orders, .. }) = views.get_mut(owner) {
+                    pending_orders.retain(|pending| !confirmed.contains(&pending.id));
+                }
+            }
+            self.reports.ingest(&confirmation_events);
+            self.timeline.ingest(&confirmation_events, &self.world);
+            self.timeline.promote(now);
+            for owner in confirmed_by_owner.keys().copied() {
+                let jlen = self.timeline.journal_len(owner);
+                if self.timeline_sent.get(&owner).copied().unwrap_or(0) != jlen {
+                    self.timeline_sent.insert(owner, jlen);
+                    let (entries, away_since) = self.timeline.digest(owner);
+                    timelines.insert(owner, ServerMsg::Timeline { entries, away_since });
+                }
+            }
+            self.persistence.submit(PersistJob::Events {
+                tick,
+                time: now,
+                events: confirmation_events.iter().map(to_json).collect(),
+            });
         }
 
         for (_conn_id, info) in self.sessions.iter_conns_mut() {
@@ -2821,6 +2883,17 @@ mod tests {
             dest: world.players[&owner].command_center,
         }]);
         let pending = world.pending_commands(owner)[0];
+        let mut timer_confirmation = false;
+        while world.time <= pending.echo_at + sim::DT {
+            timer_confirmation |= world.step(&[]).iter().any(|event| {
+                matches!(event.payload, sim::EventPayload::OrderConfirmed { id, .. } if id == pending.id)
+            });
+        }
+        assert!(!timer_confirmation, "an expired ordinary estimate is not evidence");
+        assert!(
+            world.pending_commands(owner).iter().any(|order| order.id == pending.id),
+            "the ordinary lifecycle remains presumed until a compliance-era map sample is served",
+        );
         let plans = HashMap::from([((owner, pending.id), ObservedOrderPlan {
             arrives_at: world.time - 2.0,
             response_at: world.time - 1.0,
@@ -2832,6 +2905,117 @@ mod tests {
         let rows = pending_order_views(&world, owner, &plans, world.time + 100.0);
         assert_eq!(rows.len(), 1, "an expired estimate remains an unconfirmed lifecycle");
         assert!(!rows[0].lost, "only arrived evidence or disclosed destruction may make it terminal");
+    }
+
+    #[test]
+    fn a_dark_to_dark_move_replays_before_it_confirms() {
+        let mut world = World::new(sim::SimConfig::for_players(0xD4A7, 4));
+        world.lanes = signal_line();
+        let owner = PlayerId(882);
+        world.step(&[Command::AddPlayer { id: owner, name: "Dark rider".into() }]);
+        world.players.get_mut(&owner).unwrap().command_center = Vec2::ZERO;
+        for emplacement in world.emplacements.iter_mut().filter(|e| e.owner == owner) {
+            emplacement.pos = Vec2::ZERO;
+        }
+        let fleet = world
+            .fleets
+            .iter()
+            .find(|(_, fleet)| fleet.owner == owner && fleet.flagship_kind() == sim::ShipKind::Raider)
+            .map(|(id, _)| *id)
+            .expect("the opening raider");
+        let start = Vec2::new(150_000.0, 0.0);
+        let old_dest = Vec2::new(200_000.0, 0.0);
+        let new_dest = Vec2::new(120_000.0, 0.0);
+        let transit_speed = world.fleets[&fleet].transit_speed();
+        let route = world.lanes.route(
+            start,
+            old_dest,
+            transit_speed * sim::lane::WARP_FACTOR,
+            transit_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT,
+        );
+        {
+            let ship = world.fleets.get_mut(&fleet).unwrap();
+            ship.pos = start;
+            ship.vel = Vec2::new(transit_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT, 0.0);
+            ship.order = sim::ship::FleetOrder::MoveTo { dest: old_dest };
+            ship.route = route;
+            ship.warp = true;
+            ship.drive_state = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
+            ship.regime = sim::lane::Regime::Hyperspace;
+            ship.fuel = 1.0e9;
+            ship.supplied = true;
+        }
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+
+        let scheduled = world.step(&[Command::MoveShip {
+            player_id: owner,
+            ship_id: fleet,
+            dest: new_dest,
+        }]);
+        history.record(&world);
+        let order_id = scheduled
+            .iter()
+            .find_map(|event| match event.payload {
+                sim::EventPayload::OrderScheduled { id, fleet: target, .. } if target == fleet => Some(id),
+                _ => None,
+            })
+            .expect("the dark-to-dark order is scheduled");
+        let pending = world
+            .pending_commands(owner)
+            .into_iter()
+            .find(|pending| pending.id == order_id)
+            .expect("the order has an owner lifecycle");
+        assert!(!pending.response_on_reentry, "both endpoints remain outside the relay circle");
+
+        let mut early_confirmation = None;
+        let mut first_compliance = None;
+        for _ in 0..(400 * sim::TICK_HZ) {
+            let events = world.step(&[]);
+            history.record(&world);
+            if let Some(event) = events.iter().find(|event| {
+                matches!(event.payload, sim::EventPayload::OrderConfirmed { id, .. } if id == order_id)
+            }) {
+                early_confirmation = Some(event.time);
+            }
+            if world.tick.is_multiple_of(BROADCAST_EVERY) {
+                let sites = world.relay_network_known(owner, world.time);
+                let field = sim::lane::DelayField {
+                    lanes: &world.lanes,
+                    sites: &sites,
+                    c: world.config.c,
+                };
+                let ghosts = history.view_for(owner, Vec2::ZERO, &field, world.time);
+                let Some(ghost) = ghosts.iter().find(|ghost| ghost.id == fleet) else {
+                    continue;
+                };
+                let emission = world.time - ghost.age;
+                if emission + 1e-9 >= pending.delivered_at {
+                    first_compliance = Some((world.time, emission, ghost.pos));
+                    break;
+                }
+            }
+        }
+
+        let (served_at, emission, served_pos) = first_compliance.expect("slow compliance light eventually advances the map");
+        assert_ne!(served_pos, start, "the served dark marker must show the new flight advancing");
+        assert!(emission + 1e-9 >= pending.delivered_at);
+        assert!(
+            early_confirmation.is_none(),
+            "confirmation at {:?} outran the first served compliance picture at {served_at}",
+            early_confirmation,
+        );
+        let confirmation = world.confirm_orders_from_served(owner, &[(fleet, emission)]);
+        assert_eq!(confirmation.len(), 1, "the first served compliance picture confirms exactly once");
+        assert!(matches!(
+            confirmation[0].payload,
+            sim::EventPayload::OrderConfirmed { id, .. } if id == order_id
+        ));
+        assert!(confirmation[0].time + 1e-9 >= served_at);
+        assert!(
+            world.pending_commands(owner).iter().all(|pending| pending.id != order_id),
+            "the lifecycle retires on the same served-map frontier",
+        );
     }
 
     /// The server-facing lifecycle source must expose the real command queue,
@@ -2927,7 +3111,17 @@ mod tests {
         while world.time < echo + sim::DT {
             world.step(&[]);
         }
-        assert!(world.pending_commands(owner).is_empty(), "the final row expires when its echo is observed");
+        assert_eq!(
+            world.pending_commands(owner).len(),
+            1,
+            "the final row survives an expired estimate until the map serves compliance",
+        );
+        let confirmed = world.confirm_orders_from_served(
+            owner,
+            &[(fleet, after_supersession[0].delivered_at)],
+        );
+        assert_eq!(confirmed.len(), 1);
+        assert!(world.pending_commands(owner).is_empty(), "served compliance retires the final row");
     }
 
     /// The build CATALOGUE must offer every hull a corporation can actually
