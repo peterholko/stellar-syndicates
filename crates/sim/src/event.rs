@@ -91,9 +91,9 @@ pub enum EventPayload {
 
     /// OWNER-ONLY (§order-lifecycle): the player's order has been DELIVERED to the
     /// fleet (its outbound light arrived and the fleet is now executing) — but the
-    /// light showing the new behavior hasn't returned. `echo_at` is exactly when
-    /// that confirming light reaches the command center. Owner-only, fog-safe
-    /// (it's the player's own command data); never delivered to rivals.
+    /// expected response has not arrived. `echo_at` is the legacy wire name for
+    /// that response: a returning dark fleet's comm-circle crossing, or otherwise
+    /// its confirming-light arrival. Owner-only; never delivered to rivals.
     OrderDelivered {
         owner: PlayerId,
         fleet: EntityId,
@@ -103,6 +103,7 @@ pub enum EventPayload {
     /// OWNER-ONLY (§order-lifecycle): the confirming light has arrived — the
     /// player can now SEE the fleet complying with the order. Owner-only.
     OrderConfirmed {
+        id: u64,
         owner: PlayerId,
         fleet: EntityId,
         kind: OrderKind,

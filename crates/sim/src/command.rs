@@ -172,6 +172,14 @@ pub enum Command {
         order_id: u32,
     },
 
+    /// Dismiss a terminal order-loss row after its destruction news arrived.
+    /// Only an order already marked lost and owned by this player can be removed;
+    /// active signals cannot be cancelled through this bookkeeping command.
+    DismissLostOrder {
+        player_id: PlayerId,
+        order_id: u64,
+    },
+
     /// Set the corporation's fleet doctrine (§16) — the constrained, server-run
     /// combat & logistics policy ([`FleetDoctrine`]) that governs how autonomous
     /// pickets engage/retreat/escort and how automated supply re-routes when a

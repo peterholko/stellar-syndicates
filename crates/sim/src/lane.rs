@@ -466,6 +466,7 @@ pub struct Relay {
 struct WakeEar {
     relay: Relay,
     home_delay: f64,
+    home_hops: Vec<Hop>,
 }
 
 /// Viewer-local listening posts prepared once for a serving pass. Keeping the
@@ -484,7 +485,7 @@ impl WakeEars {
 }
 
 /// One owned communications structure supplied to the delay field.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CommSite {
     pub pos: Vec2,
     /// The structure's advertised throw. It is both the arc reach used to light
@@ -528,7 +529,7 @@ struct RideHop {
 }
 
 /// One hop of a signal's journey — what the order graphic traces.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Hop {
     pub to: Vec2,
     /// The lane ridden, or `None` for a warp hop across open space.
@@ -538,6 +539,38 @@ pub struct Hop {
     /// hops at these timestamps replays the journey the solver actually found
     /// (fast along lanes, slow across the gaps) with nothing re-derived.
     pub t: f64,
+}
+
+/// Position of already-launched light on a frozen hop schedule. Hops carry
+/// cumulative times, so this is pure interpolation over the route chosen at
+/// emission — never a request to today's network for a replacement past.
+pub fn signal_position_at(start: Vec2, hops: &[Hop], elapsed: f64) -> Vec2 {
+    signal_state_at(start, hops, elapsed).0
+}
+
+/// Physical point and medium occupied by light on a frozen schedule. The lane
+/// tag matters after a relay death: light that already boarded a lane keeps
+/// riding it; rebuilding a route from the point as if it were in open space
+/// would incorrectly kill a cleared copy.
+pub fn signal_state_at(start: Vec2, hops: &[Hop], elapsed: f64) -> (Vec2, Option<u32>) {
+    if elapsed <= 0.0 || hops.is_empty() {
+        return (start, None);
+    }
+    let mut from = start;
+    let mut from_t = 0.0;
+    for hop in hops {
+        if elapsed <= hop.t {
+            let span = hop.t - from_t;
+            if span <= 1e-9 {
+                return (hop.to, hop.lane);
+            }
+            let frac = ((elapsed - from_t) / span).clamp(0.0, 1.0);
+            return (from + (hop.to - from) * frac, hop.lane);
+        }
+        from = hop.to;
+        from_t = hop.t;
+    }
+    (hops.last().map_or(start, |hop| hop.to), None)
 }
 
 /// One step of a planned journey: fly to `to`, and if `lane` is set, do it by
@@ -1140,16 +1173,26 @@ impl LaneNetwork {
     /// report can follow covered wire through junctions, then leave hyperspace
     /// at any covered point.
     pub fn signal_coupled(&self, p: Vec2, b: Vec2, c: f64, sites: &[CommSite]) -> f64 {
+        self.signal_coupled_route(p, b, c, sites).0
+    }
+
+    fn signal_coupled_route(
+        &self,
+        p: Vec2,
+        b: Vec2,
+        c: f64,
+        sites: &[CommSite],
+    ) -> (f64, Vec<Hop>) {
         let inside = self
             .lanes
             .iter()
             .any(|lane| lane.nearest(p).is_some_and(|(on, d)| d <= lane.half_width_at(on.s)));
         if !inside {
-            return self.signal(p, b, c, sites).0;
+            return self.signal(p, b, c, sites);
         }
         let mut with_hull = sites.to_vec();
         with_hull.push(CommSite { pos: p, throw: HULL_THROW });
-        self.signal_routed(p, b, c, &with_hull).0
+        self.signal_routed(p, b, c, &with_hull)
     }
 
     /// §coupled: the delay for a viewer to HEAR a coupled hull at `p` through
@@ -1171,8 +1214,9 @@ impl LaneNetwork {
             .iter()
             .cloned()
             .map(|relay| {
-                let home_delay = self.signal_coupled(relay.pos, b, c, sites);
-                WakeEar { relay, home_delay }
+                let (home_delay, hops) = self.signal_coupled_route(relay.pos, b, c, sites);
+                let home_hops = self.trace_signal_hops(relay.pos, &hops);
+                WakeEar { relay, home_delay, home_hops }
             })
             .collect::<Vec<_>>();
         self.signal_heard_prepared(p, &ears, c)
@@ -1945,6 +1989,14 @@ impl DelayField<'_> {
         self.lanes.signal(a, b, self.c, self.sites).0
     }
 
+    /// Freeze an ordinary signal's route and cumulative clock in one graph
+    /// solve. Death-ledger consumers retain these hops so a later relay loss can
+    /// ask where the already-launched light was without re-routing its past.
+    pub fn scheduled_between(&self, a: Vec2, b: Vec2) -> (f64, Vec<Hop>) {
+        let (delay, hops) = self.lanes.signal(a, b, self.c, self.sites);
+        (delay, self.lanes.trace_signal_hops(a, &hops))
+    }
+
     /// Passive light that belongs to no relay owner. A player's infrastructure
     /// carries their signals, not ambient rival telemetry; outside a dedicated
     /// wake sensor a rival remains visible only by ordinary warp-speed light.
@@ -1955,8 +2007,7 @@ impl DelayField<'_> {
     /// The same journey, with the HOPS it takes — what the order graphic traces
     /// so the line on the map is the path the signal actually flew.
     pub fn path(&self, a: Vec2, b: Vec2) -> Vec<Hop> {
-        let hops = self.lanes.signal(a, b, self.c, self.sites).1;
-        self.lanes.trace_signal_hops(a, &hops)
+        self.scheduled_between(a, b).1
     }
 
     /// Seconds for an outbound order whose receiver is actively coupled to a
@@ -1966,16 +2017,54 @@ impl DelayField<'_> {
         self.lanes.signal_to_coupled(a, p, self.c, self.sites).0
     }
 
+    /// Frozen drawable/physical route for a signal terminating on a coupled
+    /// receiver. See [`Self::scheduled_between`].
+    pub fn scheduled_to_coupled(&self, a: Vec2, p: Vec2) -> (f64, Vec<Hop>) {
+        let (delay, hops) = self.lanes.signal_to_coupled(a, p, self.c, self.sites);
+        (delay, self.lanes.trace_signal_hops(a, &hops))
+    }
+
     /// The drawable form of [`Self::to_coupled`].
     pub fn path_to_coupled(&self, a: Vec2, p: Vec2) -> Vec<Hop> {
-        let hops = self.lanes.signal_to_coupled(a, p, self.c, self.sites).1;
-        self.lanes.trace_signal_hops(a, &hops)
+        self.scheduled_to_coupled(a, p).1
     }
 
     /// §coupled: `between`, for a sender RIDING A LANE — its report goes out
     /// through the medium it is coupled to. See `LaneNetwork::signal_coupled`.
     pub fn from_coupled(&self, p: Vec2, b: Vec2) -> f64 {
         self.lanes.signal_coupled(p, b, self.c, self.sites)
+    }
+
+    /// Frozen route for a report injected by a coupled sender. Once launched,
+    /// later relay deaths are judged against this path rather than a freshly
+    /// optimized replacement.
+    pub fn scheduled_from_coupled(&self, p: Vec2, b: Vec2) -> (f64, Vec<Hop>) {
+        let (delay, hops) = self.lanes.signal_coupled_route(p, b, self.c, self.sites);
+        (delay, self.lanes.trace_signal_hops(p, &hops))
+    }
+
+    /// Re-price only the untouched suffix of light already in flight. A lane-
+    /// coupled origin represents the signal itself, not a surviving structure;
+    /// a coupled receiver is likewise a zero-throw terminal. This decides only
+    /// whether a dead relay lay behind or ahead of the physical signal.
+    pub fn remaining_signal(
+        &self,
+        p: Vec2,
+        b: Vec2,
+        sender_coupled: bool,
+        receiver_coupled: bool,
+    ) -> f64 {
+        let mut sites = self.sites.to_vec();
+        if receiver_coupled {
+            sites.push(CommSite { pos: b, throw: HULL_THROW });
+        }
+        if sender_coupled {
+            self.lanes.signal_coupled(p, b, self.c, &sites)
+        } else if receiver_coupled {
+            self.lanes.signal_to_coupled(p, b, self.c, &sites).0
+        } else {
+            self.between(p, b)
+        }
     }
 
     /// §coupled: the delay to HEAR a coupled hull at `p` through the viewer's
@@ -1994,8 +2083,8 @@ impl DelayField<'_> {
                 .iter()
                 .cloned()
                 .map(|relay| {
-                    let home_delay = self.from_coupled(relay.pos, b);
-                    WakeEar { relay, home_delay }
+                    let (home_delay, home_hops) = self.scheduled_from_coupled(relay.pos, b);
+                    WakeEar { relay, home_delay, home_hops }
                 })
                 .collect(),
         }
@@ -2005,6 +2094,44 @@ impl DelayField<'_> {
     /// [`Self::prepare_wake_ears`]. No routing occurs here.
     pub fn heard_prepared(&self, p: Vec2, ears: &WakeEars) -> f64 {
         self.lanes.signal_heard_prepared(p, &ears.ears, self.c)
+    }
+
+    /// Frozen geometry for the fastest tripwire wake. The first hop represents
+    /// the lane run to the listening post; its routed home leg was captured when
+    /// the ear set was prepared. Used only by death-ledger pricing, so every
+    /// sample still pays pure geometry after the O(ears) preparation.
+    pub fn scheduled_heard_prepared(&self, p: Vec2, ears: &WakeEars) -> Option<(f64, Vec<Hop>)> {
+        let lane_speed = self.c * self.lanes.signal_factor_on_lane();
+        let mut best: Option<(f64, u32, &WakeEar)> = None;
+        for lane in &self.lanes.lanes {
+            let Some((on, offset)) = lane.nearest(p) else { continue };
+            if offset > lane.half_width_at(on.s) {
+                continue;
+            }
+            for ear in &ears.ears {
+                for (lane_id, ear_s) in &ear.relay.on {
+                    if *lane_id != lane.id {
+                        continue;
+                    }
+                    let along = (on.s - ear_s).abs();
+                    if along > crate::emplace::LANE_LISTEN_RANGE {
+                        continue;
+                    }
+                    let total = along / lane_speed + ear.home_delay;
+                    if best.is_none_or(|(current, _, _)| total < current) {
+                        best = Some((total, lane.id, ear));
+                    }
+                }
+            }
+        }
+        let (total, lane, ear) = best?;
+        let along_t = total - ear.home_delay;
+        let mut hops = vec![Hop { to: ear.relay.pos, lane: Some(lane), t: along_t }];
+        hops.extend(ear.home_hops.iter().map(|hop| Hop {
+            t: hop.t + along_t,
+            ..*hop
+        }));
+        Some((total, hops))
     }
 
 }
@@ -2101,6 +2228,68 @@ impl LaneNetwork {
         });
         legs.dedup_by(|x, y| x.to.distance(y.to) < 1.0 && x.lane == y.lane);
         legs
+    }
+
+    /// Predicted hull travel time from `from` to the first owned comm-bubble
+    /// boundary encountered on the ordinary route to `to`. This is PHYSICAL
+    /// flight time, not a light-return leg: once a dark fleet reaches the circle
+    /// again, the command lifecycle has its expected response. A direct warp leg
+    /// is supplied when the route planner correctly prefers no lane detour.
+    pub fn time_to_comm_bubble(
+        &self,
+        from: Vec2,
+        to: Vec2,
+        v_deep: f64,
+        v_lane: f64,
+        sites: &[CommSite],
+    ) -> Option<f64> {
+        if in_comm_bubble(from, sites, 0.0) {
+            return Some(0.0);
+        }
+        if v_deep <= 1e-9 || v_lane <= 1e-9 || sites.is_empty() {
+            return None;
+        }
+
+        let mut route = self.route(from, to, v_deep, v_lane);
+        if route.is_empty() && from.distance(to) > 1e-9 {
+            route.push(Leg::warp(to));
+        }
+
+        let mut elapsed = 0.0;
+        let mut start = from;
+        for leg in route {
+            let delta = leg.to - start;
+            let length = delta.length();
+            if length <= 1e-9 {
+                start = leg.to;
+                continue;
+            }
+
+            let mut first_entry: Option<f64> = None;
+            for site in sites {
+                let rel = start - site.pos;
+                let a = delta.dot(delta);
+                let b = 2.0 * rel.dot(delta);
+                let c = rel.dot(rel) - site.throw * site.throw;
+                let discriminant = b * b - 4.0 * a * c;
+                if discriminant < 0.0 {
+                    continue;
+                }
+                let entry = (-b - discriminant.sqrt()) / (2.0 * a);
+                if (-1e-9..=1.0 + 1e-9).contains(&entry) {
+                    let entry = entry.clamp(0.0, 1.0);
+                    first_entry = Some(first_entry.map_or(entry, |best| best.min(entry)));
+                }
+            }
+
+            let speed = if leg.lane.is_some() { v_lane } else { v_deep };
+            if let Some(frac) = first_entry {
+                return Some(elapsed + length * frac / speed);
+            }
+            elapsed += length / speed;
+            start = leg.to;
+        }
+        None
     }
 }
 
@@ -3003,6 +3192,33 @@ mod tests {
         assert!(in_comm_bubble(at(42_000.0), &sites, 2_000.0));
         assert!(in_comm_bubble(at(38_000.0), &sites, -2_000.0));
         assert!(!in_comm_bubble(at(38_000.1), &sites, -2_000.0));
+    }
+
+    #[test]
+    fn a_dark_return_clock_stops_at_the_comm_bubble_edge() {
+        let net = signal_line(100_000.0);
+        let sites = [CommSite {
+            pos: Vec2::ZERO,
+            throw: 40_000.0,
+        }];
+        let from = Vec2::new(100_000.0, 0.0);
+        let v_deep = 500.0;
+        let v_lane = 5_000.0;
+
+        let delay = net
+            .time_to_comm_bubble(from, Vec2::ZERO, v_deep, v_lane, &sites)
+            .expect("the return route crosses the circle");
+        assert!(
+            (delay - 12.0).abs() < 1e-6,
+            "60,000 su to the edge at lane speed is 12 s, got {delay}",
+        );
+
+        let away = Vec2::new(140_000.0, 0.0);
+        assert_eq!(
+            net.time_to_comm_bubble(from, away, v_deep, v_lane, &sites),
+            None,
+            "a route that never returns must not invent a bubble response",
+        );
     }
 
     #[test]

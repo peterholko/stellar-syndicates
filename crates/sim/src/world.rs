@@ -161,6 +161,104 @@ pub struct IntelSnapshot {
 /// the order to install once the light arrives (a move, a raid commit, or a
 /// recall-as-return-home).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct ScheduledCommandSignal {
+    departed_at: f64,
+    source: Vec2,
+    target: Vec2,
+    receiver_coupled: bool,
+    delay_factor: f64,
+    sites: Vec<crate::lane::CommSite>,
+    hops: Vec<crate::lane::Hop>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingOrderLoss {
+    relay: EntityId,
+    at: f64,
+    news_at: f64,
+    break_pos: Vec2,
+}
+
+/// Test a relay death against one frozen directed signal. The signal keeps its
+/// original schedule iff, from its physical position at the death instant, the
+/// surviving network can reproduce the untouched suffix no slower than that
+/// suffix was already scheduled. This makes the two sides exact: upstream of a
+/// now-missing stretch is lost; downstream light is immutable.
+fn scheduled_signal_survives_loss(
+    lanes: &crate::lane::LaneNetwork,
+    c: f64,
+    signal: &ScheduledCommandSignal,
+    dead_site: crate::lane::CommSite,
+    death_at: f64,
+) -> (bool, Vec2) {
+    let elapsed = (death_at - signal.departed_at).max(0.0);
+    let total = signal.hops.last().map_or(0.0, |hop| hop.t);
+    let (position, lane) = crate::lane::signal_state_at(signal.source, &signal.hops, elapsed);
+    if elapsed + 1e-9 >= total {
+        return (true, position);
+    }
+    let Some(dead_index) = signal.sites.iter().position(|site| *site == dead_site) else {
+        return (true, position);
+    };
+    let mut survivors = signal.sites.clone();
+    survivors.remove(dead_index);
+    let field = crate::lane::DelayField { lanes, sites: &survivors, c };
+    let replacement = field.remaining_signal(
+        position,
+        signal.target,
+        lane.is_some(),
+        signal.receiver_coupled,
+    ) * signal.delay_factor;
+    let scheduled_remaining = (total - elapsed).max(0.0);
+    (
+        replacement <= scheduled_remaining + crate::config::DT + 1e-6,
+        position,
+    )
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct OrderLossSweep {
+    lost: usize,
+    downstream: usize,
+}
+
+/// Apply one physical relay break to the finite set of directed orders still in
+/// flight. This is deliberately a one-shot O(pending orders) sweep: each order
+/// either retains its original delivery clock or becomes terminal, and no
+/// replacement signal is created.
+fn apply_comm_death_to_orders(
+    lanes: &crate::lane::LaneNetwork,
+    c: f64,
+    orders: &mut [PendingOrder],
+    death: &CommDeath,
+) -> OrderLossSweep {
+    let mut result = OrderLossSweep::default();
+    for order in orders.iter_mut().filter(|order| {
+        order.owner == death.owner && order.loss.is_none() && order.apply_time > death.at
+    }) {
+        let Some(signal) = order.signal.as_mut() else { continue };
+        if !signal.sites.contains(&death.site) {
+            continue;
+        }
+        let (survives, break_pos) =
+            scheduled_signal_survives_loss(lanes, c, signal, death.site, death.at);
+        if survives {
+            signal.sites.retain(|candidate| *candidate != death.site);
+            result.downstream += 1;
+        } else {
+            order.loss = Some(PendingOrderLoss {
+                relay: death.id,
+                at: death.at,
+                news_at: death.news_at,
+                break_pos,
+            });
+            result.lost += 1;
+        }
+    }
+    result
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrder {
     /// Stable identity shared by the queue row and its outbound comet.
     #[serde(default)]
@@ -172,9 +270,9 @@ struct PendingOrder {
     /// Owner (for the owner-only lifecycle indicator). serde default for old snaps.
     #[serde(default = "default_player")]
     owner: PlayerId,
-    /// Sim time the CONFIRMING light (of the new behavior) reaches the command
-    /// center — `apply_time + distance(delivery point → cc)/c`. Exactly computable
-    /// at issue under constant-velocity kinematics (§order-lifecycle).
+    /// Sim time the response is expected. For a dark fleet ordered back across a
+    /// comm circle this is its physical edge crossing; otherwise it remains the
+    /// confirming-light arrival. The legacy field name preserves snapshots.
     #[serde(default)]
     echo_at: f64,
     /// When the order was issued (to pick the LATEST order per fleet for display).
@@ -190,6 +288,18 @@ struct PendingOrder {
     target: Option<EntityId>,
     #[serde(default)]
     emplacement: Option<crate::emplace::EmplacementKind>,
+    /// The physical route chosen at issue. A relay death tests the signal's
+    /// position on THIS route; an order is never silently re-routed or resent.
+    #[serde(default)]
+    signal: Option<ScheduledCommandSignal>,
+    /// Set at the true break instant, but withheld from the owner's wire view
+    /// until `news_at` — the loss and the relay casualty share one wavefront.
+    #[serde(default)]
+    loss: Option<PendingOrderLoss>,
+    /// This response is confirmed by the hull physically re-entering a live
+    /// comm bubble, rather than by a precomputed fallback light timestamp.
+    #[serde(default)]
+    response_on_reentry: bool,
 }
 
 /// serde default for [`Corporation::tca_standing`] (§TCA Phase 2) — a pre-law
@@ -279,6 +389,21 @@ struct PendingEcho {
     target: Option<EntityId>,
     #[serde(default)]
     emplacement: Option<crate::emplace::EmplacementKind>,
+    #[serde(default)]
+    response_on_reentry: bool,
+}
+
+/// A relay that existed, contributed this exact coverage site, and then died.
+/// `news_at` is frozen at the death instant using the surviving truth network;
+/// neither the presentation boundary nor an in-flight order re-prices it later.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommDeath {
+    pub id: EntityId,
+    pub owner: PlayerId,
+    pub kind: crate::emplace::EmplacementKind,
+    pub site: crate::lane::CommSite,
+    pub at: f64,
+    pub news_at: f64,
 }
 
 /// A light-gate summary of an ongoing BATTLE for the server's View
@@ -295,10 +420,11 @@ pub struct BattleInfo {
     pub participants: Vec<EntityId>,
 }
 
-/// Owner-only lifecycle snapshot of one in-flight order (§order-lifecycle): the
-/// two exact timestamps that let the client tick down IN TRANSIT (until
-/// `delivered_at`) and AWAITING ECHO (until `echo_at`). It's the player's own
-/// command data — trivially fog-safe.
+/// Owner-only lifecycle snapshot of one in-flight order (§order-lifecycle): two
+/// estimate timestamps that let the client read SIGNAL OUTBOUND (until
+/// `delivered_at`) then PRESUMED DELIVERED. The legacy-named `echo_at` remains
+/// an estimate, never confirmation. It's
+/// the player's own command data — trivially fog-safe.
 #[derive(Debug, Clone, Copy)]
 pub struct PendingCommandView {
     pub id: u64,
@@ -310,6 +436,16 @@ pub struct PendingCommandView {
     pub dest: Option<Vec2>,
     pub target: Option<EntityId>,
     pub emplacement: Option<crate::emplace::EmplacementKind>,
+    pub response_on_reentry: bool,
+    pub loss: Option<PendingCommandLossView>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PendingCommandLossView {
+    pub relay: EntityId,
+    pub at: f64,
+    pub news_at: f64,
+    pub break_pos: Vec2,
 }
 
 /// §research R6: one Academy's live contribution to its syndicate's ACTIVE
@@ -570,6 +706,11 @@ pub struct World {
     /// pre-feature snapshots load with none.
     #[serde(default)]
     pub emplacements: Vec<crate::emplace::Emplacement>,
+    /// Relay deaths still relevant to in-flight light or to an owner's delayed
+    /// knowledge. Normally near-empty; retained only across the maximum passive
+    /// light horizon and serialized so a restart cannot resurrect a dead wire.
+    #[serde(default)]
+    pub comm_deaths: Vec<CommDeath>,
     /// Monotonic allocator for entity ids.
     next_entity_id: u64,
     /// Pending construction jobs (fleets + system upgrades), resolved in step()
@@ -887,6 +1028,7 @@ impl World {
 
         let mut world = World {
             emplacements: Vec::new(),
+            comm_deaths: Vec::new(),
             config,
             tick: 0,
             time: 0.0,
@@ -1265,9 +1407,9 @@ impl World {
     /// The player's in-flight ORDER LIFECYCLES (§order-lifecycle) — every order
     /// still outbound or delivered-but-awaiting-echo. OWNER-ONLY (a rival gets
     /// nothing). The
-    /// client ticks the IN-TRANSIT / AWAITING-ECHO countdowns from the two
-    /// timestamps against `sim_time`, and flips its dashed heading to solid at
-    /// `echo_at`.
+    /// client ticks SIGNAL-OUTBOUND / PRESUMED-DELIVERED copy from the two
+    /// timestamps. Neither estimate is evidence; only `OrderConfirmed` retires
+    /// the row, while a disclosed relay break makes it terminal LOST.
     /// §contestable-territory Part 2: how long an unbroken, defense-suppressed
     /// siege must run before a colony ship can capture — derived from the config
     /// battle timescale so one knob scales both. Surfaced to the client so it can
@@ -1305,6 +1447,13 @@ impl World {
                 dest: po.dest,
                 target: po.target,
                 emplacement: po.emplacement,
+                response_on_reentry: po.response_on_reentry,
+                loss: po.loss.as_ref().map(|loss| PendingCommandLossView {
+                    relay: loss.relay,
+                    at: loss.at,
+                    news_at: loss.news_at,
+                    break_pos: loss.break_pos,
+                }),
             });
         }
         for e in self.pending_echoes.iter().filter(|e| e.owner == owner) {
@@ -1318,6 +1467,8 @@ impl World {
                 dest: e.dest,
                 target: e.target,
                 emplacement: e.emplacement,
+                response_on_reentry: e.response_on_reentry,
+                loss: None,
             });
         }
         pending.sort_by(|a, b| {
@@ -1699,8 +1850,8 @@ impl World {
         self.deliver_survey_reports();
 
         // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
-        //     settled, confirm delivered orders whose echo light has returned
-        //     (owner-only `OrderConfirmed`), and drop echoes for fleets just lost.
+        //     settled, confirm delivered orders whose expected response arrived
+        //     (owner-only `OrderConfirmed`), and drop entries for fleets just lost.
         self.resolve_order_echoes(&mut events);
 
         // 5. Resolve trade convoys that survived to their destination (§9).
@@ -1815,6 +1966,15 @@ impl World {
         //    batch cadence (the uniform-price call auction, §9).
         self.tick += 1;
         self.time += DT;
+        // A death can affect pending fast copies only until even passive warp
+        // light from the far edge must have landed. The server's history copies
+        // the ledger every tick, so trimming here bounds snapshot growth without
+        // erasing any in-flight comparison.
+        let comm_horizon = (2.0 * self.config.galaxy_radius)
+            / (self.config.c * crate::lane::WARP_FACTOR)
+            + 1.0;
+        self.comm_deaths
+            .retain(|death| self.time - death.at <= comm_horizon);
 
         // §TCA Phase 2: CHARTER STANDING regenerates, unconditionally and at the
         // same rate in EVERY band. Time served is time served — the Authority's
@@ -4386,6 +4546,10 @@ impl World {
         let now = self.time;
         let mut i = 0;
         while i < self.pending_orders.len() {
+            if self.pending_orders[i].loss.is_some() {
+                i += 1; // terminal until the owner learns and dismisses it
+                continue;
+            }
             if self.pending_orders[i].apply_time <= now {
                 let po = self.pending_orders.remove(i);
                 // A vanished fleet (destroyed before delivery) simply drops the
@@ -4467,6 +4631,7 @@ impl World {
                         dest: po.dest,
                         target: po.target,
                         emplacement: po.emplacement,
+                        response_on_reentry: po.response_on_reentry,
                     });
                     events.push(Event::new(
                         now,
@@ -4479,10 +4644,10 @@ impl World {
         }
     }
 
-    /// §order-lifecycle: resolve DELIVERED orders whose confirming light has now
-    /// returned to the command center — emit an owner-only `OrderConfirmed` and
-    /// drop the echo. A fleet destroyed before its echo lands drops silently (the
-    /// delayed destruction report is what the owner sees — no false "confirmed").
+    /// §order-lifecycle: resolve DELIVERED orders whose expected response has now
+    /// arrived — either comm-bubble reacquisition or the fallback confirming
+    /// light. A fleet destroyed first drops silently (the delayed destruction
+    /// report is what the owner sees — no false "confirmed").
     fn resolve_order_echoes(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
         let mut i = 0;
@@ -4490,9 +4655,37 @@ impl World {
             let e = &self.pending_echoes[i];
             if !self.fleets.contains_key(&e.fleet) {
                 self.pending_echoes.remove(i); // destroyed — no confirmation
+            } else if e.response_on_reentry {
+                let sites = self.relay_network(e.owner);
+                let reentered = self
+                    .fleets
+                    .get(&e.fleet)
+                    .is_some_and(|fleet| crate::lane::in_comm_bubble(fleet.pos, &sites, 0.0));
+                if !reentered {
+                    i += 1;
+                    continue;
+                }
+                let e = self.pending_echoes.remove(i);
+                events.push(Event::new(
+                    now,
+                    EventPayload::OrderConfirmed {
+                        id: e.id,
+                        owner: e.owner,
+                        fleet: e.fleet,
+                        kind: e.kind,
+                    },
+                ));
             } else if e.echo_at <= now {
                 let e = self.pending_echoes.remove(i);
-                events.push(Event::new(now, EventPayload::OrderConfirmed { owner: e.owner, fleet: e.fleet, kind: e.kind }));
+                events.push(Event::new(
+                    now,
+                    EventPayload::OrderConfirmed {
+                        id: e.id,
+                        owner: e.owner,
+                        fleet: e.fleet,
+                        kind: e.kind,
+                    },
+                ));
             } else {
                 i += 1;
             }
@@ -5151,6 +5344,14 @@ impl World {
                     corp.standing_orders.retain(|o| o.id != *order_id);
                 }
             }
+            Command::DismissLostOrder { player_id, order_id } => {
+                let now = self.time;
+                self.pending_orders.retain(|order| {
+                    order.owner != *player_id
+                        || order.id != *order_id
+                        || order.loss.as_ref().is_none_or(|loss| now < loss.news_at)
+                });
+            }
             Command::SetFleetDoctrine { player_id, doctrine } => {
                 // Instant local administration: a closed menu of enums is always
                 // valid, so just install it. Takes effect from the next tick's
@@ -5740,6 +5941,21 @@ impl World {
                 throw: e.kind.throw(),
             })
             .collect()
+    }
+
+    /// The relay network the owner is presently entitled to believe exists.
+    /// Truth sites are joined by dead sites until the destruction report's
+    /// frozen arrival time. This is presentation/plan input only; physical
+    /// delivery and death sweeps continue to use [`Self::relay_network`].
+    pub fn relay_network_known(&self, owner: PlayerId, now: f64) -> Vec<crate::lane::CommSite> {
+        let mut sites = self.relay_network(owner);
+        sites.extend(
+            self.comm_deaths
+                .iter()
+                .filter(|death| death.owner == owner && now < death.news_at)
+                .map(|death| death.site),
+        );
+        sites
     }
 
     pub fn array_sensor_sources(&self, owner: PlayerId) -> Vec<(Vec2, f64)> {
@@ -10312,6 +10528,7 @@ impl World {
         let ship_pos = ship.pos;
         let ship_vel = ship.vel;
         let ship_coupled = ship.drive_state.stirs_the_lane();
+        let ship_transit_speed = ship.transit_speed();
         let ship_route = remaining_flight_path(ship);
         // §node Relay Anchor: if the issuer holds an active black-hole node whose
         // region covers the fleet, its command loop through that neighbourhood runs
@@ -10345,16 +10562,72 @@ impl World {
             relay,
         );
         let delivered_at = self.time + delay;
-        // The echo — the first light of the new behavior — leaves from the solved
-        // delivery point and reaches the command center one signal-delay later.
-        // The return leg is relayed too when the point stays in region.
-        let echo_relay = self.relay_factor(player_id, delivery_point);
-        let echo_delay = if ship_coupled {
-            field.from_coupled(delivery_point, cc)
+        // Freeze the actual directed signal now. A later relay loss evaluates
+        // where this light was on these cumulative hops; it never asks the new
+        // network to rewrite the already-travelled prefix or auto-resend it.
+        let relayed = crate::lane::in_comm_bubble(delivery_point, &buoys, 0.0);
+        let mut signal_hops = if relayed {
+            if ship_coupled {
+                field.scheduled_to_coupled(cc, delivery_point).1
+            } else {
+                field.scheduled_between(cc, delivery_point).1
+            }
         } else {
-            field.between(delivery_point, cc)
+            vec![crate::lane::Hop {
+                to: delivery_point,
+                lane: None,
+                t: field.passive(cc, delivery_point),
+            }]
         };
-        let echo_at = delivered_at + echo_delay * echo_relay;
+        for hop in &mut signal_hops {
+            hop.t *= relay;
+        }
+        let scheduled_signal = ScheduledCommandSignal {
+            departed_at: self.time,
+            source: cc,
+            target: delivery_point,
+            receiver_coupled: relayed && ship_coupled,
+            delay_factor: relay,
+            sites: if relayed { buoys.clone() } else { Vec::new() },
+            hops: signal_hops,
+        };
+        // Outside the comm picture, the expected response is physical
+        // reacquisition: when this newly commanded flight first reaches an owned
+        // bubble edge. The pre-v3 light echo from the delivery point could remain
+        // in flight long after a returning hull was already live again. Orders
+        // without a fixed return course retain that ordinary light-return clock.
+        let response_destination = match &new_order {
+            FleetOrder::MoveTo { dest } | FleetOrder::Construct { site: dest, .. } => {
+                Some(*dest)
+            }
+            _ => None,
+        };
+        let bubble_return_delay = if crate::lane::in_comm_bubble(delivery_point, &buoys, 0.0) {
+            None
+        } else {
+            response_destination.and_then(|dest| {
+                let warp_speed = ship_transit_speed * crate::lane::WARP_FACTOR;
+                self.lanes.time_to_comm_bubble(
+                    delivery_point,
+                    dest,
+                    warp_speed,
+                    warp_speed * crate::lane::LANE_MULT,
+                    &buoys,
+                )
+            })
+        };
+        let response_on_reentry = bubble_return_delay.is_some();
+        let echo_at = if let Some(return_delay) = bubble_return_delay {
+            delivered_at + return_delay
+        } else {
+            let echo_relay = self.relay_factor(player_id, delivery_point);
+            let echo_delay = if ship_coupled {
+                field.from_coupled(delivery_point, cc)
+            } else {
+                field.between(delivery_point, cc)
+            };
+            delivered_at + echo_delay * echo_relay
+        };
         self.next_command_id += 1;
         let id = self.next_command_id;
         let (dest, target, emplacement) = pending_order_subject(&new_order);
@@ -10370,6 +10643,9 @@ impl World {
             dest,
             target,
             emplacement,
+            signal: Some(scheduled_signal),
+            loss: None,
+            response_on_reentry,
         });
         events.push(Event::new(
             self.time,
@@ -10484,6 +10760,47 @@ impl World {
                         continue;
                     };
                     let gone = self.emplacements.remove(pos);
+                    if gone.kind.throw() > 0.0 {
+                        let site = crate::lane::CommSite {
+                            pos: gone.pos,
+                            throw: gone.kind.throw(),
+                        };
+                        // Freeze the casualty-news wavefront using only the
+                        // surviving physical network. The dead relay cannot
+                        // carry its own obituary, and later builds/deaths cannot
+                        // re-price information already in flight.
+                        let cc = self
+                            .players
+                            .get(&gone.owner)
+                            .map_or(gone.pos, |corp| corp.command_center);
+                        let survivors = self.relay_network(gone.owner);
+                        let news_delay = crate::lane::DelayField {
+                            lanes: &self.lanes,
+                            sites: &survivors,
+                            c: self.config.c,
+                        }
+                        .between(gone.pos, cc);
+                        let death = CommDeath {
+                            id: gone.id,
+                            owner: gone.owner,
+                            kind: gone.kind,
+                            site,
+                            at: now,
+                            news_at: now + news_delay,
+                        };
+
+                        // One bounded sweep at the physical break. Orders whose
+                        // signal has already cleared the dead stretch retain the
+                        // original `apply_time`; upstream signals become terminal
+                        // losses. No replacement route and no automatic resend.
+                        apply_comm_death_to_orders(
+                            &self.lanes,
+                            self.config.c,
+                            &mut self.pending_orders,
+                            &death,
+                        );
+                        self.comm_deaths.push(death);
+                    }
                     events.push(Event::new(
                         now,
                         EventPayload::EmplacementDestroyed {
@@ -19715,6 +20032,94 @@ mod tests {
 
     // --- §order-lifecycle: IN TRANSIT → AWAITING ECHO → CONFIRMED --------------
 
+    #[test]
+    fn an_upstream_order_is_lost_and_a_downstream_order_delivers() {
+        let control = vec![Vec2::ZERO, Vec2::new(100_000.0, 0.0), Vec2::new(200_000.0, 0.0)];
+        let lanes = crate::lane::LaneNetwork::of(vec![crate::lane::Lane {
+            id: 912,
+            kind: crate::lane::LaneKind::Trunk,
+            name: "Mortal orders".into(),
+            samples: crate::lane::bake_for_tests(&control),
+            control,
+            half_width: 1_350.0,
+            tapers: false,
+        }]);
+        let site = crate::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 80_000.0,
+        };
+        let source = Vec2::new(170_000.0, 20_000.0);
+        let target = Vec2::new(30_000.0, 20_000.0);
+        let c = 400.0;
+        let field = crate::lane::DelayField { lanes: &lanes, sites: &[site], c };
+        let (total, hops) = field.scheduled_between(source, target);
+        assert!(hops[0].lane.is_none() && hops[0].t > 0.0);
+        let prior = hops[hops.len() - 2].t;
+        assert!(hops.last().is_some_and(|hop| hop.lane.is_none() && hop.t > prior));
+        let death_at = 100.0;
+        let make = |id: u64, elapsed: f64| PendingOrder {
+            id,
+            apply_time: death_at - elapsed + total,
+            ship_id: EntityId(id),
+            new_order: FleetOrder::Idle,
+            owner: PlayerId(44),
+            echo_at: 0.0,
+            issued_at: death_at - elapsed,
+            kind: crate::event::OrderKind::Move,
+            dest: Some(target),
+            target: None,
+            emplacement: None,
+            signal: Some(ScheduledCommandSignal {
+                departed_at: death_at - elapsed,
+                source,
+                target,
+                receiver_coupled: false,
+                delay_factor: 1.0,
+                sites: vec![site],
+                hops: hops.clone(),
+            }),
+            loss: None,
+            response_on_reentry: false,
+        };
+        let upstream_elapsed = hops[0].t * 0.5;
+        let downstream_elapsed = (prior + total) * 0.5;
+        let mut orders = vec![make(1, upstream_elapsed), make(2, downstream_elapsed)];
+        let downstream_clock = orders[1].apply_time;
+        let death = CommDeath {
+            id: EntityId(700),
+            owner: PlayerId(44),
+            kind: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            site,
+            at: death_at,
+            news_at: 140.0,
+        };
+
+        let swept = apply_comm_death_to_orders(&lanes, c, &mut orders, &death);
+
+        assert_eq!(swept, OrderLossSweep { lost: 1, downstream: 1 });
+        assert_eq!(orders[0].loss.as_ref().map(|loss| loss.relay), Some(death.id));
+        assert!(orders[1].loss.is_none(), "the cleared order remains deliverable");
+        assert_eq!(orders[1].apply_time, downstream_clock, "downstream delivery is never re-priced");
+        assert!(orders[1].signal.as_ref().is_some_and(|signal| signal.sites.is_empty()));
+
+        // Dismissal itself is news-gated too: accepting a guessed order id early
+        // would be an oracle even though the lost flag is absent from the View.
+        let mut world = test_world();
+        world.time = death.at;
+        world.pending_orders = orders;
+        world.step(&[Command::DismissLostOrder {
+            player_id: death.owner,
+            order_id: 1,
+        }]);
+        assert!(world.pending_orders.iter().any(|order| order.id == 1));
+        world.time = death.news_at;
+        world.step(&[Command::DismissLostOrder {
+            player_id: death.owner,
+            order_id: 1,
+        }]);
+        assert!(world.pending_orders.iter().all(|order| order.id != 1));
+    }
+
     /// Park an owned fleet `d` su from the command center (Idle), fuelled to move.
     fn lifecycle_setup(w: &mut World, id: PlayerId, d: f64) -> (EntityId, Vec2, Vec2) {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
@@ -19751,6 +20156,115 @@ mod tests {
         assert!((pc.delivered_at - (t0 + leg)).abs() < 1e-6, "delivered_at = issue + signal leg");
         assert!((pc.echo_at - (t0 + 2.0 * leg)).abs() < 1e-6, "echo_at = delivered_at + signal leg");
         assert_eq!(pc.kind, crate::event::OrderKind::Move);
+    }
+
+    #[test]
+    fn a_returning_dark_fleets_response_is_its_bubble_crossing() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let (fid, cc, _) = lifecycle_setup(&mut w, id, 0.0);
+        let sites = w.relay_network(id);
+        let site = sites[0];
+        let pos = site.pos + Vec2::new(site.throw + 20_000.0, 0.0);
+        assert!(!crate::lane::in_comm_bubble(pos, &sites, 0.0));
+        {
+            let fleet = w.fleets.get_mut(&fid).unwrap();
+            fleet.pos = pos;
+            fleet.vel = Vec2::ZERO;
+            fleet.drive_state = crate::ship::DriveState::Thrusters;
+            fleet.order = FleetOrder::Idle;
+            fleet.route.clear();
+        }
+        let transit_speed = w.fleets[&fid].transit_speed();
+        let warp_speed = transit_speed * crate::lane::WARP_FACTOR;
+        let return_delay = w
+            .lanes
+            .time_to_comm_bubble(
+                pos,
+                site.pos,
+                warp_speed,
+                warp_speed * crate::lane::LANE_MULT,
+                &sites,
+            )
+            .expect("the route back to the relay crosses its circle");
+        let old_echo_delay = crate::lane::DelayField {
+            lanes: &w.lanes,
+            sites: &sites,
+            c: w.config.c,
+        }
+        .between(pos, cc);
+
+        w.step(&[Command::MoveShip {
+            player_id: id,
+            ship_id: fid,
+            dest: site.pos,
+        }]);
+        let pending = w
+            .pending_commands(id)
+            .into_iter()
+            .find(|order| order.fleet == fid)
+            .expect("return order has a lifecycle");
+        assert!(
+            (pending.echo_at - pending.delivered_at - return_delay).abs() < 1e-6,
+            "response is the physical trip to the bubble edge",
+        );
+        assert!(
+            (return_delay - old_echo_delay).abs() > 1.0,
+            "the regression must distinguish re-entry from the old delivery-point echo",
+        );
+    }
+
+    #[test]
+    fn confirmation_requires_arrived_evidence() {
+        let mut w = test_world();
+        let id = PlayerId(1);
+        let (fid, _cc, _) = lifecycle_setup(&mut w, id, 0.0);
+        let site = w.relay_network(id)[0];
+        let outside = site.pos + Vec2::new(site.throw + 20_000.0, 0.0);
+        {
+            let fleet = w.fleets.get_mut(&fid).unwrap();
+            fleet.pos = outside;
+            fleet.vel = Vec2::ZERO;
+            fleet.drive_state = crate::ship::DriveState::Thrusters;
+            fleet.order = FleetOrder::Idle;
+            fleet.route.clear();
+        }
+        w.step(&[Command::MoveShip {
+            player_id: id,
+            ship_id: fid,
+            dest: site.pos,
+        }]);
+        let pending = w
+            .pending_commands(id)
+            .into_iter()
+            .find(|order| order.fleet == fid)
+            .expect("the returning order is scheduled");
+        assert!(pending.response_on_reentry);
+        // Immobilize only after scheduling: the estimate still expires, but no
+        // physical re-entry evidence can exist.
+        w.fleets.get_mut(&fid).unwrap().supplied = false;
+        let mut false_confirmation = false;
+        while w.time <= pending.echo_at + DT {
+            for event in w.step(&[]) {
+                false_confirmation |= matches!(
+                    event.payload,
+                    EventPayload::OrderConfirmed { id: confirmed, .. } if confirmed == pending.id
+                );
+            }
+        }
+        assert!(!false_confirmation, "an expired estimate is not evidence");
+        assert!(
+            w.pending_commands(id).iter().any(|order| order.id == pending.id),
+            "the lifecycle remains presumed after its estimate expires",
+        );
+
+        w.fleets.get_mut(&fid).unwrap().pos = site.pos;
+        let events = w.step(&[]);
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::OrderConfirmed { id: confirmed, .. } if confirmed == pending.id
+        )));
+        assert!(w.pending_commands(id).iter().all(|order| order.id != pending.id));
     }
 
     #[test]
