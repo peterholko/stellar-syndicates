@@ -52,6 +52,7 @@ struct CommandSignalPlan {
     travel_time: f64,
     meeting_point: sim::Vec2,
     hops: Vec<crate::protocol::SignalHopView>,
+    beyond_comms: bool,
 }
 
 fn command_signal_plan(
@@ -72,6 +73,14 @@ fn command_signal_plan(
         delays.path(cc, meeting_point)
     };
     let travel_time = route.last().map(|hop| hop.t).unwrap_or(0.0);
+    let mut from = cc;
+    let mut beyond_comms = false;
+    for hop in &route {
+        if from.distance(hop.to) > 1e-6 {
+            beyond_comms = hop.lane.is_none();
+        }
+        from = hop.to;
+    }
     let hops = if route.len() >= 2 && travel_time > 1e-9 {
         route
             .iter()
@@ -83,7 +92,7 @@ fn command_signal_plan(
     } else {
         Vec::new() // a straight run — the client's fallback draws it
     };
-    CommandSignalPlan { travel_time, meeting_point, hops }
+    CommandSignalPlan { travel_time, meeting_point, hops, beyond_comms }
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +101,7 @@ struct ObservedOrderPlan {
     response_at: f64,
     meeting_point: sim::Vec2,
     intent_path: Vec<sim::Vec2>,
+    beyond_comms: bool,
 }
 
 fn observed_order_plan(
@@ -111,6 +121,7 @@ fn observed_order_plan(
             response_at,
             meeting_point: signal.meeting_point,
             intent_path: Vec::new(),
+            beyond_comms: signal.beyond_comms,
         },
         signal,
     )
@@ -169,6 +180,7 @@ fn pending_order_views(
                 target_id: pending.target,
                 emplacement: pending.emplacement,
                 intent_path: observed.intent_path.clone(),
+                beyond_comms: observed.beyond_comms,
             })
         })
         .collect()
@@ -368,6 +380,7 @@ impl GameLoop {
                 depart_time,
                 arrive_time: observed.arrives_at,
                 hops: signal.hops,
+                beyond_comms: signal.beyond_comms,
             },
         );
     }
@@ -2159,6 +2172,7 @@ mod tests {
 
         let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true);
         assert!(plan.hops.len() > 6, "the wire route should contain baked curve samples");
+        assert!(!plan.beyond_comms, "a route that lands on covered wire has no dark final leg");
         assert!(
             plan.hops.iter().map(|hop| hop.pos.y).fold(f64::NEG_INFINITY, f64::max) > 40_000.0,
             "the wire route should follow the lane's bow rather than its endpoint chord",
@@ -2208,7 +2222,7 @@ mod tests {
         assert!((final_hop.frac - 1.0).abs() < 1e-9);
     }
 
-    /// §comms-infra: A RIDING HULL IS ITS OWN TERMINAL GATEWAY. Covered wire
+    /// §comms-v2: A RIDING HULL IS ITS OWN ZERO-THROW ENDPOINT. Covered wire
     /// reaches the hull directly in either direction, while home remains only
     /// the warp endpoint. Geometry and clock must describe that same ride.
     #[test]
@@ -2237,6 +2251,21 @@ mod tests {
             (plan.hops.last().unwrap().frac - 1.0).abs() < 1e-9,
             "clock and route come from the same plan — no FTL chords"
         );
+        assert!(!plan.beyond_comms);
+    }
+
+    #[test]
+    fn an_order_that_leaves_wire_marks_its_light_speed_final_leg() {
+        let lanes = signal_line();
+        let lane = &lanes.lanes[0];
+        let home = lane.at(10_000.0);
+        let target = Vec2::new(150_000.0, 30_000.0);
+        let relays = [CommSite { pos: home, throw: 40_000.0 }];
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
+
+        let plan = command_signal_plan(&field, home, target, Vec2::ZERO, false);
+        assert!(plan.beyond_comms, "the nonzero final hop is outside covered wire");
+        assert!(plan.hops.len() >= 2, "the signal should ride first, then crawl");
     }
 
     #[test]
@@ -2351,6 +2380,7 @@ mod tests {
                 response_at: pending.issued_at + 20.0,
                 meeting_point: intent_path[0],
                 intent_path,
+                beyond_comms: false,
             },
         )]);
 

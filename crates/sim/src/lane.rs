@@ -3335,8 +3335,8 @@ mod tests {
         assert_eq!(hops[0].lane, None, "the no-site order claims no lane");
     }
 
-    /// §comms-infra: two GATEWAYS with overlapping coverage can board, carry,
-    /// and discharge a signal on the same lane.
+    /// §comms-v2: two full relays with overlapping coverage can board, carry,
+    /// and discharge a signal anywhere inside their lit arc.
     #[test]
     fn two_covered_relays_on_one_lane_carry_the_signal_at_lane_speed() {
         let (n, ..) = net(1, 4);

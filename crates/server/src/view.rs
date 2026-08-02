@@ -1813,12 +1813,13 @@ fn latest_observable(
             // And guard the OTHER direction: interpolation models continuous
             // emission between consecutive snapshots, which only holds while
             // their arrivals are a sample-step apart. At a CHANNEL SEAM — a
-            // hull leaving a lane, where the coupled report ends and plain
-            // warp light takes over — the next arrival can be tens of seconds
-            // later. Nothing arrives in that window (the ship is in its own
+            // hull leaving covered wire, where the coupled full report ends
+            // and plain warp light takes over — the next arrival can be tens
+            // of seconds later. Nothing arrives in that window (the ship is in its own
             // comms shadow), and lerping one tick of motion across it painted
             // a near-frozen crawl from data that does not exist. Past the
-            // bracket cap, hold the last-arrived sample and let it age.
+            // bracket cap, hold the last-arrived full sample and let it age;
+            // the separate wake-fix channel may still update kinematics.
             if let Some((n, na)) = newer {
                 if na > arrival + 1e-9 && na - arrival <= SMOOTH_BRACKET_MAX {
                     let frac = ((now - arrival) / (na - arrival)).clamp(0.0, 1.0);

@@ -1199,6 +1199,10 @@ pub struct PendingOrderView {
     /// Positions only: this line never claims the fleet has advanced along it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intent_path: Vec<Vec2>,
+    /// The signal's final meaningful leg leaves covered lane wire and crawls at
+    /// warp-light speed. Drives the same warning on the comet and Orders row.
+    #[serde(default)]
+    pub beyond_comms: bool,
 }
 
 /// An ongoing BATTLE as any observer perceives it (§battles-take-time), STRICTLY
@@ -1891,6 +1895,9 @@ pub enum ServerMsg {
         /// run (no relays helped), which is also what old clients drew.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hops: Vec<SignalHopView>,
+        /// True when the final meaningful leg is outside relay coverage.
+        #[serde(default)]
+        beyond_comms: bool,
     },
 
     /// Immediate UI assistance for a prospective move. `path` is the same
