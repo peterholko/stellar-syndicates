@@ -261,12 +261,71 @@ struct ArrivedSample {
     arrival: f64,
 }
 
+const PASSIVE_ROUTE_EPOCH: u32 = 0;
+const ROUTE_RESEARCH_EVERY: u8 = 10;
+
+/// A report that has been emitted but has not yet reached this viewer. Fast and
+/// slow clocks are frozen exactly once. `route_epoch == 0` means the passive
+/// copy is the one currently filed in the heap; non-zero means validate the
+/// interned fast route when it reaches the frontier.
 #[derive(Clone, Copy)]
-struct PendingArrival(ArrivedSample);
+struct ScheduledCopy {
+    sample: Sample,
+    route_epoch: u32,
+    frozen_fast: f64,
+    frozen_slow: f64,
+}
+
+impl ScheduledCopy {
+    fn arrival(self) -> f64 {
+        if self.route_epoch == PASSIVE_ROUTE_EPOCH {
+            self.frozen_slow
+        } else {
+            self.frozen_fast
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RoutePassage {
+    relay: EntityId,
+    /// Seconds after emission by which this copy has cleared the relay's
+    /// indispensable stretch on the base route.
+    offset: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteChannel {
+    OwnFree,
+    OwnCoupled,
+    RivalWake,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RouteStart {
+    Warp,
+    Lane { lane: u32, target_s: f64, anchor_s: f64 },
+}
+
+/// One interned physical route shared by adjacent scheduled copies. Pending
+/// entries carry only its small epoch id plus their two frozen clocks. The base
+/// passage offsets shift by the same first-leg delta as `frozen_fast`.
+#[derive(Debug, Clone)]
+struct FrozenRoute {
+    network_version: u64,
+    channel: RouteChannel,
+    base_fast_delay: f64,
+    start: RouteStart,
+    shape: Vec<(Option<u32>, Vec2)>,
+    passages: Vec<RoutePassage>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingArrival(ScheduledCopy);
 
 impl PartialEq for PendingArrival {
     fn eq(&self, other: &Self) -> bool {
-        self.0.arrival.to_bits() == other.0.arrival.to_bits()
+        self.0.arrival().to_bits() == other.0.arrival().to_bits()
             && self.0.sample.time.to_bits() == other.0.sample.time.to_bits()
     }
 }
@@ -282,16 +341,14 @@ impl PartialOrd for PendingArrival {
 impl Ord for PendingArrival {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0
-            .arrival
-            .total_cmp(&other.0.arrival)
+            .arrival()
+            .total_cmp(&other.0.arrival())
             .then_with(|| self.0.sample.time.total_cmp(&other.0.sample.time))
     }
 }
 
 #[derive(Default)]
 struct FrontierCursor {
-    relay_version: u64,
-    ear_version: u64,
     last_now: f64,
     /// Latest-emission discrete sample known to have arrived. The interpolated
     /// served picture is derived from this and the emission-time pending map; it
@@ -303,14 +360,25 @@ struct FrontierCursor {
     /// bracket without scanning the pending darkness.
     seen_through: Option<f64>,
     pending_by_arrival: BinaryHeap<Reverse<PendingArrival>>,
-    pending_by_emission: BTreeMap<u64, ArrivedSample>,
+    pending_by_emission: BTreeMap<u64, ScheduledCopy>,
+    /// Interned routes are deliberately PER cursor: DirectOwn and Composite
+    /// have distinct cache identities. Do not merge them without designing a
+    /// shared key that includes every channel input.
+    routes: HashMap<u32, FrozenRoute>,
+    active_route: Option<u32>,
+    next_route_epoch: u32,
+    route_age: u8,
+    #[cfg(test)]
+    scheduled_evaluations: usize,
     endpoint: Option<(Vec2, f64)>,
 }
 
 #[derive(Clone)]
 struct CommEpoch {
     at: f64,
+    version: u64,
     sites: Vec<sim::lane::CommSite>,
+    site_ids: Vec<EntityId>,
     raw_ears: Vec<sim::lane::Relay>,
     ears: sim::lane::WakeEars,
 }
@@ -324,14 +392,35 @@ struct FrontierCache {
     /// Relay deaths are the only post-emission mutation of a fast copy: a death
     /// may kill an uncleared path, while the slow warp copy remains immutable.
     comm_deaths: Vec<sim::world::CommDeath>,
-    death_version: u64,
+    /// Scoped per viewer: one corporation's physical loss is not an
+    /// invalidation event for nine unrelated command networks.
+    death_versions: HashMap<PlayerId, u64>,
+    next_network_version: u64,
 }
 
 impl FrontierCache {
     fn record_comm_state(&mut self, world: &World, horizon: f64) {
         let now = world.time;
         for (&viewer, corp) in &world.players {
-            let sites = world.relay_network(viewer);
+            let relay_sites: Vec<(EntityId, sim::lane::CommSite)> = world
+                .emplacements
+                .iter()
+                .filter(|emplacement| {
+                    emplacement.owner == viewer && emplacement.kind.throw() > 0.0
+                })
+                .map(|emplacement| {
+                    (
+                        emplacement.id,
+                        sim::lane::CommSite {
+                            pos: emplacement.pos,
+                            throw: emplacement.kind.throw(),
+                        },
+                    )
+                })
+                .collect();
+            let sites: Vec<sim::lane::CommSite> =
+                relay_sites.iter().map(|(_, site)| *site).collect();
+            let site_ids: Vec<EntityId> = relay_sites.iter().map(|(id, _)| *id).collect();
             let raw_ears: Vec<sim::lane::Relay> = world
                 .emplacements
                 .iter()
@@ -345,8 +434,13 @@ impl FrontierCache {
                 .comm_epochs
                 .get(&viewer)
                 .and_then(|epochs| epochs.back())
-                .is_none_or(|epoch| epoch.sites != sites || epoch.raw_ears != raw_ears);
+                .is_none_or(|epoch| {
+                    epoch.sites != sites
+                        || epoch.site_ids != site_ids
+                        || epoch.raw_ears != raw_ears
+                });
             if changed {
+                self.next_network_version = self.next_network_version.wrapping_add(1).max(1);
                 let field = sim::lane::DelayField {
                     lanes: &world.lanes,
                     sites: &sites,
@@ -354,8 +448,10 @@ impl FrontierCache {
                 };
                 self.comm_epochs.entry(viewer).or_default().push_back(CommEpoch {
                     at: now,
+                    version: self.next_network_version,
                     ears: field.prepare_wake_ears(corp.command_center, &raw_ears),
                     sites,
+                    site_ids,
                     raw_ears,
                 });
             }
@@ -374,7 +470,8 @@ impl FrontierCache {
                 continue;
             }
             self.comm_deaths.push(death.clone());
-            self.death_version = self.death_version.wrapping_add(1).max(1);
+            let version = self.death_versions.entry(death.owner).or_default();
+            *version = version.wrapping_add(1).max(1);
         }
         self.comm_deaths
             .retain(|death| now - death.at <= horizon);
@@ -548,11 +645,11 @@ impl PositionHistory {
                 cursors,
                 comm_epochs,
                 comm_deaths,
-                death_version,
+                death_versions,
                 ..
             } = &mut *frontiers;
             let epochs = comm_epochs.get(&ship.owner);
-            let ledger_version = *death_version;
+            let ledger_version = death_versions.get(&ship.owner).copied().unwrap_or(0);
             let cursor = cursors
                 .entry(FrontierKey {
                     viewer: ship.owner,
@@ -680,11 +777,11 @@ impl PositionHistory {
             cursors,
             comm_epochs,
             comm_deaths,
-            death_version,
+            death_versions,
             ..
         } = &mut *frontiers;
         let epochs = comm_epochs.get(&viewer);
-        let ledger_version = *death_version;
+        let ledger_version = death_versions.get(&viewer).copied().unwrap_or(0);
         let wake_ears = sim::lane::WakeEars::default();
         for (id, track) in &self.tracks {
             if track.owner != viewer {
@@ -733,11 +830,11 @@ impl PositionHistory {
             cursors,
             comm_epochs,
             comm_deaths,
-            death_version,
+            death_versions,
             ..
         } = &mut *frontiers;
         let epochs = comm_epochs.get(&viewer);
-        let ledger_version = *death_version;
+        let ledger_version = death_versions.get(&viewer).copied().unwrap_or(0);
         let wake_ears = sim::lane::WakeEars::default();
         for (id, track) in &self.tracks {
             if track.owner != viewer {
@@ -848,11 +945,11 @@ impl PositionHistory {
             cursors,
             comm_epochs,
             comm_deaths,
-            death_version,
+            death_versions,
             ..
         } = &mut *frontiers;
         let epochs = comm_epochs.get(&viewer);
-        let ledger_version = *death_version;
+        let ledger_version = death_versions.get(&viewer).copied().unwrap_or(0);
         for (id, track) in &self.tracks {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
@@ -1144,11 +1241,11 @@ impl PositionHistory {
             cursors,
             comm_epochs,
             comm_deaths,
-            death_version,
+            death_versions,
             ..
         } = &mut *frontiers;
         let epochs = comm_epochs.get(&track.owner);
-        let ledger_version = *death_version;
+        let ledger_version = death_versions.get(&track.owner).copied().unwrap_or(0);
         let cursor = cursors
             .entry(FrontierKey {
                 viewer: track.owner,
@@ -2492,51 +2589,329 @@ fn comm_epoch_at(epochs: Option<&VecDeque<CommEpoch>>, emitted_at: f64) -> Optio
     }
 }
 
-fn fast_copy_survives(
+fn route_suffix_survives_without_site(
     source: Vec2,
     target: Vec2,
-    emitted_at: f64,
     delay: f64,
     hops: &[sim::lane::Hop],
     sites: &[sim::lane::CommSite],
-    deaths: &[sim::world::CommDeath],
-    viewer: PlayerId,
+    removed: usize,
+    elapsed: f64,
     lanes: &sim::lane::LaneNetwork,
     c: f64,
 ) -> bool {
     let mut surviving_sites = sites.to_vec();
-    for death in deaths {
-        if death.owner != viewer
-            || death.at <= emitted_at + 1e-9
-            || death.at >= emitted_at + delay - 1e-9
-        {
-            continue;
-        }
-        let Some(index) = surviving_sites
-            .iter()
-            .position(|site| *site == death.site)
-        else {
-            continue;
-        };
-        let elapsed = death.at - emitted_at;
-        let (position, lane) = sim::lane::signal_state_at(source, hops, elapsed);
-        surviving_sites.remove(index);
-        let remaining = sim::lane::DelayField {
-            lanes,
-            sites: &surviving_sites,
-            c,
-        }
-        .remaining_signal(position, target, lane.is_some(), false);
-        // The copy is downstream only if today's surviving graph can reproduce
-        // its already-scheduled suffix from the physical point reached at death.
-        // Otherwise it was still upstream of a stretch the dead relay powered.
-        if remaining > delay - elapsed + sim::DT + 1e-6 {
-            return false;
-        }
+    surviving_sites.remove(removed);
+    let (position, lane) = sim::lane::signal_state_at(source, hops, elapsed);
+    let remaining = sim::lane::DelayField {
+        lanes,
+        sites: &surviving_sites,
+        c,
     }
-    true
+    .remaining_signal(position, target, lane.is_some(), false);
+    remaining <= delay - elapsed + sim::DT + 1e-6
 }
 
+/// Convert the transient hop solve into the compact death dependency carried by
+/// an interned route. The binary search asks the old exact suffix predicate for
+/// the first instant at which losing each used relay no longer changes this
+/// copy. This work happens only on a route research, never per adjacent sample.
+#[allow(clippy::too_many_arguments)]
+fn freeze_route_passages(
+    source: Vec2,
+    target: Vec2,
+    delay: f64,
+    hops: &[sim::lane::Hop],
+    sites: &[sim::lane::CommSite],
+    site_ids: &[EntityId],
+    lanes: &sim::lane::LaneNetwork,
+    c: f64,
+) -> Vec<RoutePassage> {
+    let mut passages = Vec::new();
+    for (index, relay) in site_ids.iter().copied().enumerate().take(sites.len()) {
+        let probe = (sim::DT * 0.01).min(delay * 0.5);
+        if route_suffix_survives_without_site(
+            source, target, delay, hops, sites, index, probe, lanes, c,
+        ) {
+            continue;
+        }
+        let (mut lo, mut hi) = (probe, delay);
+        for _ in 0..32 {
+            let mid = (lo + hi) * 0.5;
+            if route_suffix_survives_without_site(
+                source, target, delay, hops, sites, index, mid, lanes, c,
+            ) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        passages.push(RoutePassage { relay, offset: hi });
+    }
+    passages
+}
+
+fn route_channel(sample: &Sample, own: bool, ears: &sim::lane::WakeEars) -> Option<RouteChannel> {
+    let riding = sample.drive.stirs_the_lane();
+    if own && sample.in_comms {
+        Some(if riding { RouteChannel::OwnCoupled } else { RouteChannel::OwnFree })
+    } else if !own && riding && !ears.is_empty() {
+        Some(RouteChannel::RivalWake)
+    } else {
+        None
+    }
+}
+
+fn route_start(
+    source: Vec2,
+    hops: &[sim::lane::Hop],
+    lanes: &sim::lane::LaneNetwork,
+) -> Option<RouteStart> {
+    let first = hops.iter().find(|hop| hop.t > 1e-9)?;
+    if let Some(lane_id) = first.lane {
+        let lane = lanes.lanes.iter().find(|lane| lane.id == lane_id)?;
+        let (anchor, offset) = lane.nearest(source)?;
+        if offset > lane.half_width_at(anchor.s) {
+            return None;
+        }
+        let (target, _) = lane.nearest(first.to)?;
+        Some(RouteStart::Lane {
+            lane: lane_id,
+            target_s: target.s,
+            anchor_s: anchor.s,
+        })
+    } else {
+        Some(RouteStart::Warp)
+    }
+}
+
+fn adjusted_fast_delay(
+    route: &FrozenRoute,
+    sample: &Sample,
+    channel: RouteChannel,
+    lanes: &sim::lane::LaneNetwork,
+    c: f64,
+) -> Option<f64> {
+    if route.channel != channel {
+        return None;
+    }
+    let delta = match route.start {
+        // Off-lane covered access slides along a relay's circle as the source
+        // moves; a fixed first waypoint is therefore not exact arithmetic.
+        // Conservatively research those samples until that geometry receives a
+        // proper cache key. Lane rides—the high-volume path—are exact below.
+        RouteStart::Warp => return None,
+        RouteStart::Lane { lane, target_s, anchor_s } => {
+            let lane = lanes.lanes.iter().find(|candidate| candidate.id == lane)?;
+            let (on, offset) = lane.nearest(sample.pos)?;
+            if offset > lane.half_width_at(on.s)
+                || (anchor_s - target_s).signum() != (on.s - target_s).signum()
+            {
+                return None;
+            }
+            let lane_speed = c * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT;
+            ((on.s - target_s).abs() - (anchor_s - target_s).abs()) / lane_speed
+        }
+    };
+    Some((route.base_fast_delay + delta).max(0.0))
+}
+
+fn route_shape(hops: &[sim::lane::Hop]) -> Vec<(Option<u32>, Vec2)> {
+    let mut shape: Vec<(Option<u32>, Vec2)> = Vec::new();
+    for hop in hops {
+        if let Some(last) = shape.last_mut()
+            && last.0 == hop.lane
+        {
+            last.1 = hop.to;
+        } else {
+            shape.push((hop.lane, hop.to));
+        }
+    }
+    shape
+}
+
+fn same_route_shape(a: &[(Option<u32>, Vec2)], b: &[(Option<u32>, Vec2)]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((al, ap), (bl, bp))| al == bl && ap.distance(*bp) <= 1e-6)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_sample(
+    sample: &Sample,
+    cc: Vec2,
+    delays: &sim::lane::DelayField<'_>,
+    own: bool,
+    ears: &sim::lane::WakeEars,
+    epochs: Option<&VecDeque<CommEpoch>>,
+    cursor: &mut FrontierCursor,
+) -> ScheduledCopy {
+    #[cfg(test)]
+    {
+        cursor.scheduled_evaluations += 1;
+    }
+    let epoch = comm_epoch_at(epochs, sample.time);
+    let epoch_field = sim::lane::DelayField {
+        lanes: delays.lanes,
+        sites: epoch.map_or(delays.sites, |epoch| epoch.sites.as_slice()),
+        c: delays.c,
+    };
+    let epoch_ears = epoch.map_or(ears, |epoch| &epoch.ears);
+    let network_version = epoch.map_or(0, |epoch| epoch.version);
+    let slow = sample.time + epoch_field.passive(sample.pos, cc);
+    let Some(channel) = route_channel(sample, own, epoch_ears) else {
+        cursor.active_route = None;
+        cursor.route_age = 0;
+        return ScheduledCopy {
+            sample: *sample,
+            route_epoch: PASSIVE_ROUTE_EPOCH,
+            frozen_fast: slow,
+            frozen_slow: slow,
+        };
+    };
+
+    if cursor.route_age < ROUTE_RESEARCH_EVERY
+        && let Some(route_epoch) = cursor.active_route
+        && let Some(route) = cursor.routes.get(&route_epoch)
+        && route.network_version == network_version
+        && let Some(fast_delay) = adjusted_fast_delay(
+            route,
+            sample,
+            channel,
+            delays.lanes,
+            delays.c,
+        )
+        && sample.time + fast_delay < slow
+    {
+        cursor.route_age += 1;
+        return ScheduledCopy {
+            sample: *sample,
+            route_epoch,
+            frozen_fast: sample.time + fast_delay,
+            frozen_slow: slow,
+        };
+    }
+
+    let fast = match channel {
+        RouteChannel::OwnCoupled => {
+            epoch_field.scheduled_from_coupled(sample.pos, cc)
+        }
+        RouteChannel::OwnFree => {
+            epoch_field.scheduled_between(sample.pos, cc)
+        }
+        RouteChannel::RivalWake => {
+            let Some(route) = epoch_field.scheduled_heard_prepared(sample.pos, epoch_ears) else {
+                cursor.active_route = None;
+                cursor.route_age = 0;
+                return ScheduledCopy {
+                    sample: *sample,
+                    route_epoch: PASSIVE_ROUTE_EPOCH,
+                    frozen_fast: slow,
+                    frozen_slow: slow,
+                };
+            };
+            route
+        }
+    };
+    let (fast_delay, fast_hops) = fast;
+    if sample.time + fast_delay >= slow {
+        cursor.active_route = None;
+        cursor.route_age = 0;
+        return ScheduledCopy {
+            sample: *sample,
+            route_epoch: PASSIVE_ROUTE_EPOCH,
+            frozen_fast: slow,
+            frozen_slow: slow,
+        };
+    }
+    let Some(start) = route_start(sample.pos, &fast_hops, delays.lanes) else {
+        cursor.active_route = None;
+        cursor.route_age = 0;
+        return ScheduledCopy {
+            sample: *sample,
+            route_epoch: PASSIVE_ROUTE_EPOCH,
+            frozen_fast: slow,
+            frozen_slow: slow,
+        };
+    };
+    let shape = route_shape(&fast_hops);
+    if let Some(route_epoch) = cursor.active_route
+        && let Some(route) = cursor.routes.get(&route_epoch)
+        && route.network_version == network_version
+        && route.channel == channel
+        && same_route_shape(&route.shape, &shape)
+    {
+        // The mandatory tenth-sample research confirmed the exact same route.
+        // Keep the interned dependency epoch and use the newly solved fast clock;
+        // old pending copies retain their own frozen clocks and base delta.
+        cursor.route_age = 1;
+        return ScheduledCopy {
+            sample: *sample,
+            route_epoch,
+            frozen_fast: sample.time + fast_delay,
+            frozen_slow: slow,
+        };
+    }
+    let passages = freeze_route_passages(
+        sample.pos,
+        cc,
+        fast_delay,
+        &fast_hops,
+        epoch_field.sites,
+        epoch.map_or(&[][..], |epoch| epoch.site_ids.as_slice()),
+        delays.lanes,
+        delays.c,
+    );
+    cursor.next_route_epoch = cursor.next_route_epoch.wrapping_add(1).max(1);
+    let route_epoch = cursor.next_route_epoch;
+    cursor.routes.insert(
+        route_epoch,
+        FrozenRoute {
+            network_version,
+            channel,
+            base_fast_delay: fast_delay,
+            start,
+            shape,
+            passages,
+        },
+    );
+    cursor.active_route = Some(route_epoch);
+    cursor.route_age = 1;
+    let frozen_fast = sample.time + fast_delay;
+    debug_assert!(
+        slow > frozen_fast,
+        "a filed fast copy must beat its frozen passive copy",
+    );
+    ScheduledCopy {
+        sample: *sample,
+        route_epoch,
+        frozen_fast,
+        frozen_slow: slow,
+    }
+}
+
+fn route_broken(
+    copy: ScheduledCopy,
+    route: &FrozenRoute,
+    deaths: &[sim::world::CommDeath],
+    viewer: PlayerId,
+) -> bool {
+    let fast_delay = copy.frozen_fast - copy.sample.time;
+    let first_leg_shift = fast_delay - route.base_fast_delay;
+    route.passages.iter().any(|passage| {
+        let passage_at = copy.sample.time + passage.offset + first_leg_shift;
+        deaths.iter().any(|death| {
+            death.owner == viewer
+                && death.id == passage.relay
+                && death.at > copy.sample.time + 1e-9
+                && death.at < passage_at - 1e-9
+        })
+    })
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 fn sample_arrival(
     sample: &Sample,
     cc: Vec2,
@@ -2547,42 +2922,18 @@ fn sample_arrival(
     deaths: &[sim::world::CommDeath],
     viewer: PlayerId,
 ) -> f64 {
-    let epoch = comm_epoch_at(epochs, sample.time);
-    let epoch_field = sim::lane::DelayField {
-        lanes: delays.lanes,
-        sites: epoch.map_or(delays.sites, |epoch| epoch.sites.as_slice()),
-        c: delays.c,
-    };
-    let epoch_ears = epoch.map_or(ears, |epoch| &epoch.ears);
-    let slow = epoch_field.passive(sample.pos, cc);
-    let riding = sample.drive.stirs_the_lane();
-    let fast = if own && sample.in_comms {
-        Some(if riding {
-            epoch_field.scheduled_from_coupled(sample.pos, cc)
-        } else {
-            epoch_field.scheduled_between(sample.pos, cc)
-        })
-    } else if !own && riding && !epoch_ears.is_empty() {
-        epoch_field.scheduled_heard_prepared(sample.pos, epoch_ears)
+    let mut cursor = FrontierCursor::default();
+    let copy = schedule_sample(sample, cc, delays, own, ears, epochs, &mut cursor);
+    if copy.route_epoch != PASSIVE_ROUTE_EPOCH
+        && cursor
+            .routes
+            .get(&copy.route_epoch)
+            .is_some_and(|route| route_broken(copy, route, deaths, viewer))
+    {
+        copy.frozen_slow
     } else {
-        None
-    };
-    let Some((fast_delay, fast_hops)) = fast.filter(|(fast, _)| *fast < slow) else {
-        return sample.time + slow;
-    };
-    let valid = fast_copy_survives(
-        sample.pos,
-        cc,
-        sample.time,
-        fast_delay,
-        &fast_hops,
-        epoch_field.sites,
-        deaths,
-        viewer,
-        delays.lanes,
-        delays.c,
-    );
-    sample.time + if valid { fast_delay } else { slow }
+        copy.arrival()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2597,8 +2948,8 @@ fn latest_observable_cached(
     deaths: &[sim::world::CommDeath],
     viewer: PlayerId,
     cursor: &mut FrontierCursor,
-    relay_version: u64,
-    ear_version: u64,
+    _relay_version: u64,
+    _ear_version: u64,
 ) -> Option<Sample> {
     if samples.is_empty() {
         return cursor.served.map(|served| served.sample);
@@ -2617,67 +2968,12 @@ fn latest_observable_cached(
         cursor.seen_through = None;
         cursor.pending_by_arrival.clear();
         cursor.pending_by_emission.clear();
+        cursor.routes.clear();
+        cursor.active_route = None;
+        cursor.route_age = 0;
         cursor.endpoint = Some(endpoint);
     }
     cursor.last_now = now;
-
-    let changed = cursor.relay_version != relay_version || cursor.ear_version != ear_version;
-    if changed {
-        cursor.relay_version = relay_version;
-        cursor.ear_version = ear_version;
-        // A newly-recorded death can invalidate FAST copies already waiting in
-        // the frontier. Re-price that finite pending set once, in place; do not
-        // restart from the track's retained dark history. Ordinary views remain
-        // O(new emissions), while a rare physical break pays O(pending light)
-        // exactly once for this viewer/track.
-        let pending: Vec<Sample> = cursor
-            .pending_by_emission
-            .values()
-            .map(|pending| pending.sample)
-            .collect();
-        cursor.pending_by_arrival.clear();
-        cursor.pending_by_emission.clear();
-        for sample in pending {
-            let repriced = ArrivedSample {
-                sample,
-                arrival: sample_arrival(
-                    &sample,
-                    cc,
-                    delays,
-                    own,
-                    ears,
-                    epochs,
-                    deaths,
-                    viewer,
-                ),
-            };
-            cursor
-                .pending_by_emission
-                .insert(sample.time.to_bits(), repriced);
-            cursor
-                .pending_by_arrival
-                .push(Reverse(PendingArrival(repriced)));
-        }
-        if let Some(served) = cursor.served.as_mut() {
-            let reevaluated = sample_arrival(
-                &served.sample,
-                cc,
-                delays,
-                own,
-                ears,
-                epochs,
-                deaths,
-                viewer,
-            );
-            // DEATH INVALIDATION POLICY: the player's served picture never
-            // moves backward. If a demolished relay says a report already shown
-            // would not arrive under today's graph, retain that discrete report
-            // and restart the interpolation clock here; only newer samples are
-            // tested under the new field. Faster graphs still recover the exact
-            // arrival and immediately advance the frontier as far as permitted.
-            served.arrival = if reevaluated <= now { reevaluated } else { now };
-        }
-    }
 
     // Price each newly emitted report exactly once and retain its scheduled
     // arrival. In the ordinary sub-signal-speed case this is the requested
@@ -2692,19 +2988,7 @@ fn latest_observable_cached(
     });
     for index in first_new..samples.len() {
         let sample = samples[index];
-        let pending = ArrivedSample {
-            sample,
-            arrival: sample_arrival(
-                &sample,
-                cc,
-                delays,
-                own,
-                ears,
-                epochs,
-                deaths,
-                viewer,
-            ),
-        };
+        let pending = schedule_sample(&sample, cc, delays, own, ears, epochs, cursor);
         cursor
             .pending_by_emission
             .insert(sample.time.to_bits(), pending);
@@ -2714,22 +2998,56 @@ fn latest_observable_cached(
     }
     cursor.seen_through = samples.back().map(|sample| sample.time);
 
-    while cursor
-        .pending_by_arrival
-        .peek()
-        .is_some_and(|pending| pending.0.0.arrival <= now)
-    {
-        let pending = cursor.pending_by_arrival.pop().unwrap().0.0;
+    while cursor.pending_by_arrival.peek().is_some_and(|pending| {
+        pending.0.0.arrival() <= now
+    }) {
+        let mut pending = cursor.pending_by_arrival.pop().unwrap().0.0;
+        // §comms-v3.4: a physical death must not cause a truth-timed mass walk
+        // over hidden pending light — the hitch itself would be an observable
+        // event. Validate only when the fast copy naturally reaches the output
+        // frontier. Because every filed fast copy satisfies slow > fast, a
+        // broken copy can be re-filed at its frozen slow clock without missing
+        // an earlier ordering opportunity.
+        if pending.route_epoch != PASSIVE_ROUTE_EPOCH
+            && let Some(route) = cursor.routes.get(&pending.route_epoch)
+            && route_broken(pending, route, deaths, viewer)
+        {
+            debug_assert!(pending.frozen_slow > pending.frozen_fast);
+            pending.route_epoch = PASSIVE_ROUTE_EPOCH;
+            cursor
+                .pending_by_emission
+                .insert(pending.sample.time.to_bits(), pending);
+            cursor
+                .pending_by_arrival
+                .push(Reverse(PendingArrival(pending)));
+            continue;
+        }
         cursor
             .pending_by_emission
             .remove(&pending.sample.time.to_bits());
+        let arrived = ArrivedSample {
+            sample: pending.sample,
+            arrival: pending.arrival(),
+        };
         if cursor
             .served
-            .is_none_or(|served| pending.sample.time > served.sample.time)
+            .is_none_or(|served| arrived.sample.time > served.sample.time)
         {
-            cursor.served = Some(pending);
+            cursor.served = Some(arrived);
         }
     }
+
+    // Route interning is bounded by pending light, not session length. The heap
+    // must remain: own warp returns and rival bow waves can reorder arrivals, so
+    // a monotone deque is explicitly invalid for this model.
+    let active = cursor.active_route;
+    cursor.routes.retain(|epoch, _| {
+        Some(*epoch) == active
+            || cursor
+                .pending_by_emission
+                .values()
+                .any(|copy| copy.route_epoch == *epoch)
+    });
 
     let served = cursor.served?;
     // Same bracket arithmetic as the former newest→oldest scan, merely cached:
@@ -2742,7 +3060,10 @@ fn latest_observable_cached(
             std::ops::Bound::Unbounded,
         ))
         .next()
-        .map(|(_, pending)| *pending);
+        .map(|(_, pending)| ArrivedSample {
+            sample: pending.sample,
+            arrival: pending.arrival(),
+        });
     if let Some(newer) = newer
         && newer.arrival > served.arrival + 1e-9
         && newer.arrival - served.arrival <= SMOOTH_BRACKET_MAX
@@ -2913,10 +3234,12 @@ mod tests {
         (lanes, site, source, cc, sample, fast, hops)
     }
 
-    fn epoch(site: sim::lane::CommSite) -> VecDeque<CommEpoch> {
+    fn epoch(id: EntityId, site: sim::lane::CommSite) -> VecDeque<CommEpoch> {
         VecDeque::from([CommEpoch {
             at: 0.0,
+            version: 1,
             sites: vec![site],
+            site_ids: vec![id],
             raw_ears: Vec::new(),
             ears: sim::lane::WakeEars::default(),
         }])
@@ -2943,7 +3266,7 @@ mod tests {
             &field,
             true,
             &sim::lane::WakeEars::default(),
-            Some(&epoch(site)),
+            Some(&epoch(death.id, site)),
             &[death],
             PlayerId(1),
         );
@@ -2963,7 +3286,7 @@ mod tests {
         };
         let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
         let slow = sample.time + field.passive(source, cc);
-        let epochs = epoch(site);
+        let epochs = epoch(death.id, site);
         let arrival = sample_arrival(
             &sample,
             cc,
@@ -3013,6 +3336,295 @@ mod tests {
         .unwrap();
         assert_eq!(after.time, before.time, "death-ledger invalidation never rewinds served light");
     }
+
+    fn pending_fingerprint(cursor: &FrontierCursor) -> Vec<(u64, u32, u64, u64)> {
+        cursor
+            .pending_by_emission
+            .iter()
+            .map(|(time, copy)| {
+                (
+                    *time,
+                    copy.route_epoch,
+                    copy.frozen_fast.to_bits(),
+                    copy.frozen_slow.to_bits(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_relay_death_touches_no_pending_copies() {
+        let (lanes, site, _source, cc, sample, _fast, hops) = relay_death_copy_fixture();
+        let relay = EntityId(903);
+        let epochs = epoch(relay, site);
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
+        let samples = VecDeque::from([sample]);
+        let mut cursor = FrontierCursor::default();
+        assert!(
+            latest_observable_cached(
+                &samples,
+                cc,
+                &field,
+                hops[0].t * 0.25,
+                true,
+                &sim::lane::WakeEars::default(),
+                Some(&epochs),
+                &[],
+                PlayerId(1),
+                &mut cursor,
+                0,
+                0,
+            )
+            .is_none()
+        );
+        let before = pending_fingerprint(&cursor);
+        let evaluations_before = cursor.scheduled_evaluations;
+        let death = sim::world::CommDeath {
+            id: relay,
+            owner: PlayerId(1),
+            kind: sim::EmplacementKind::HyperspaceBuoy,
+            site,
+            at: hops[0].t * 0.5,
+            news_at: 999.0,
+        };
+        assert!(
+            latest_observable_cached(
+                &samples,
+                cc,
+                &field,
+                death.at + 1e-6,
+                true,
+                &sim::lane::WakeEars::default(),
+                Some(&epochs),
+                std::slice::from_ref(&death),
+                PlayerId(1),
+                &mut cursor,
+                1,
+                0,
+            )
+            .is_none()
+        );
+        assert_eq!(
+            pending_fingerprint(&cursor),
+            before,
+            "a hidden physical death appends to the ledger but does no pending-copy work",
+        );
+        assert_eq!(
+            cursor.scheduled_evaluations,
+            evaluations_before,
+            "the death instant must not re-price a pending sample",
+        );
+    }
+
+    #[test]
+    fn a_broken_route_copy_reinserts_at_its_frozen_slow_arrival() {
+        let (lanes, site, source, cc, sample, fast, hops) = relay_death_copy_fixture();
+        let relay = EntityId(904);
+        let epochs = epoch(relay, site);
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
+        let slow = sample.time + field.passive(source, cc);
+        let death = sim::world::CommDeath {
+            id: relay,
+            owner: PlayerId(1),
+            kind: sim::EmplacementKind::HyperspaceBuoy,
+            site,
+            at: hops[0].t * 0.5,
+            news_at: 999.0,
+        };
+        let samples = VecDeque::from([sample]);
+        let mut cursor = FrontierCursor::default();
+        let at_fast = latest_observable_cached(
+            &samples,
+            cc,
+            &field,
+            fast + 1e-6,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epochs),
+            std::slice::from_ref(&death),
+            PlayerId(1),
+            &mut cursor,
+            1,
+            0,
+        );
+        assert!(at_fast.is_none(), "the dead fast copy cannot reach the served frontier");
+        let refiled = cursor.pending_by_emission.values().next().unwrap();
+        assert_eq!(refiled.route_epoch, PASSIVE_ROUTE_EPOCH);
+        assert_eq!(refiled.arrival().to_bits(), slow.to_bits());
+        let brute = sample_arrival(
+            &sample,
+            cc,
+            &field,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epochs),
+            std::slice::from_ref(&death),
+            PlayerId(1),
+        );
+        assert_eq!(refiled.arrival().to_bits(), brute.to_bits());
+        let served = latest_observable_cached(
+            &samples,
+            cc,
+            &field,
+            slow + 1e-6,
+            true,
+            &sim::lane::WakeEars::default(),
+            Some(&epochs),
+            std::slice::from_ref(&death),
+            PlayerId(1),
+            &mut cursor,
+            1,
+            0,
+        )
+        .expect("the immutable slow copy eventually arrives");
+        assert_eq!(served.time.to_bits(), sample.time.to_bits());
+    }
+
+    #[test]
+    fn route_epoch_pricing_matches_full_search() {
+        let (lanes, site, _source, cc, mut base, _fast, _hops) = relay_death_copy_fixture();
+        let epochs = epoch(EntityId(905), site);
+        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
+        let ears = sim::lane::WakeEars::default();
+        let mut cursor = FrontierCursor::default();
+        let mut first_epoch = None;
+        base.pos = Vec2::new(170_000.0, 0.0);
+        base.drive = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
+        for i in 0..25 {
+            let mut sample = base;
+            sample.time = i as f64 / 30.0;
+            sample.pos = base.pos + Vec2::new(i as f64 * 8.0, 0.0);
+            let scheduled = schedule_sample(
+                &sample,
+                cc,
+                &field,
+                true,
+                &ears,
+                Some(&epochs),
+                &mut cursor,
+            );
+            let exact = sample_arrival(
+                &sample,
+                cc,
+                &field,
+                true,
+                &ears,
+                Some(&epochs),
+                &[],
+                PlayerId(1),
+            );
+            assert!(
+                (scheduled.arrival() - exact).abs() < 1e-8,
+                "route-epoch arithmetic diverged at adjacent sample {i}",
+            );
+            if i == 0 {
+                first_epoch = Some(scheduled.route_epoch);
+            } else if i < ROUTE_RESEARCH_EVERY as usize {
+                assert_eq!(scheduled.route_epoch, first_epoch.unwrap());
+            }
+        }
+
+        // A nominal bubble transition is a hard epoch boundary: the outside
+        // report is passive, and the next inside report must research afresh.
+        let mut outside = base;
+        outside.time = 1.0;
+        outside.in_comms = false;
+        let passive = schedule_sample(
+            &outside,
+            cc,
+            &field,
+            true,
+            &ears,
+            Some(&epochs),
+            &mut cursor,
+        );
+        assert_eq!(passive.route_epoch, PASSIVE_ROUTE_EPOCH);
+        let mut inside = outside;
+        inside.time += sim::DT;
+        inside.in_comms = true;
+        let researched = schedule_sample(
+            &inside,
+            cc,
+            &field,
+            true,
+            &ears,
+            Some(&epochs),
+            &mut cursor,
+        );
+        assert_ne!(researched.route_epoch, PASSIVE_ROUTE_EPOCH);
+
+        // A physical network epoch change is equally hard: reports emitted
+        // after the death cannot inherit a route researched while the relay
+        // still stood.
+        let changed_epochs = VecDeque::from([
+            CommEpoch {
+                at: 0.0,
+                version: 10,
+                sites: vec![site],
+                site_ids: vec![EntityId(905)],
+                raw_ears: Vec::new(),
+                ears: sim::lane::WakeEars::default(),
+            },
+            CommEpoch {
+                at: 2.0,
+                version: 11,
+                sites: Vec::new(),
+                site_ids: Vec::new(),
+                raw_ears: Vec::new(),
+                ears: sim::lane::WakeEars::default(),
+            },
+        ]);
+        let mut before_death = base;
+        before_death.time = 1.9;
+        let wired = schedule_sample(
+            &before_death,
+            cc,
+            &field,
+            true,
+            &ears,
+            Some(&changed_epochs),
+            &mut cursor,
+        );
+        assert_ne!(wired.route_epoch, PASSIVE_ROUTE_EPOCH);
+        let mut after_death = before_death;
+        after_death.time = 2.1;
+        let unwired = schedule_sample(
+            &after_death,
+            cc,
+            &field,
+            true,
+            &ears,
+            Some(&changed_epochs),
+            &mut cursor,
+        );
+        let exact_after = sample_arrival(
+            &after_death,
+            cc,
+            &field,
+            true,
+            &ears,
+            Some(&changed_epochs),
+            &[],
+            PlayerId(1),
+        );
+        assert_eq!(unwired.arrival().to_bits(), exact_after.to_bits());
+
+        // A hull leaving the researched lane cannot reuse its arc coordinate.
+        let mut changed_lane = base;
+        changed_lane.time = 3.0;
+        changed_lane.pos.y += 20_000.0;
+        let lane_break = schedule_sample(
+            &changed_lane,
+            cc,
+            &field,
+            true,
+            &ears,
+            Some(&epochs),
+            &mut cursor,
+        );
+        assert_ne!(lane_break.route_epoch, wired.route_epoch);
+    }
+
 
     fn moving_samples(in_comms: bool) -> Vec<Sample> {
         (0..=100)

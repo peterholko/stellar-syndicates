@@ -341,7 +341,7 @@ impl Lane {
 
     /// The ribbon's half-width at arc position `s` — constant, except across a
     /// tapering tail.
-    fn half_width_at(&self, s: f64) -> f64 {
+    pub fn half_width_at(&self, s: f64) -> f64 {
         if !self.tapers {
             return self.half_width;
         }
