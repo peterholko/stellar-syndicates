@@ -503,6 +503,37 @@ pub fn in_comm_bubble(pos: Vec2, sites: &[CommSite], margin: f64) -> bool {
         .any(|site| pos.distance(site.pos) <= (site.throw + margin).max(0.0))
 }
 
+/// Exact crossing of the nominal communication-bubble union along one tick's
+/// straight kinematic segment. Returns `(fraction, position, state_after)`.
+/// Both the sim's re-entry response and the server's picture-frame boundary use
+/// this one bisection so confirmation and the visual bloom share a wavefront.
+pub fn comm_bubble_crossing(
+    older: Vec2,
+    newer: Vec2,
+    was_inside: bool,
+    is_inside: bool,
+    sites: &[CommSite],
+) -> Option<(f64, Vec2, bool)> {
+    if was_inside == is_inside || older.distance(newer) <= 1e-9 {
+        return None;
+    }
+    let mut lo = 0.0;
+    let mut hi = 1.0;
+    for _ in 0..48 {
+        let mid = (lo + hi) * 0.5;
+        let pos = older + (newer - older) * mid;
+        if in_comm_bubble(pos, sites, 0.0) == was_inside {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    // Exit uses the final inclusive inside point; entry uses the first. Both
+    // are the rendered nominal circle to floating-point precision.
+    let fraction = if is_inside { hi } else { lo };
+    Some((fraction, older + (newer - older) * fraction, is_inside))
+}
+
 /// A coupled hull is an endpoint relay for itself, but contributes no relay
 /// coverage. Built infrastructure must already reach the hull's position; the
 /// receiver cannot silently double a buoy's displayed throw.

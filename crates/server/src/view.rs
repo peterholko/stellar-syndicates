@@ -2324,23 +2324,13 @@ fn nominal_bubble_crossing(
     newer: Sample,
     sites: &[sim::lane::CommSite],
 ) -> Option<Sample> {
-    if older.in_comms == newer.in_comms || older.pos.distance(newer.pos) <= 1e-9 {
-        return None;
-    }
-    let mut lo = 0.0;
-    let mut hi = 1.0;
-    for _ in 0..48 {
-        let mid = (lo + hi) * 0.5;
-        let pos = older.pos + (newer.pos - older.pos) * mid;
-        if sim::lane::in_comm_bubble(pos, sites, 0.0) == older.in_comms {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    // On exit `lo` is the last inside point; on entry `hi` is the first. Both
-    // lie on the inclusive nominal boundary to floating-point precision.
-    let frac = if newer.in_comms { hi } else { lo };
+    let (frac, _pos, _inside) = sim::lane::comm_bubble_crossing(
+        older.pos,
+        newer.pos,
+        older.in_comms,
+        newer.in_comms,
+        sites,
+    )?;
     let mut boundary = Sample::interpolate(&older, &newer, frac);
     boundary.in_comms = true;
     Some(boundary)

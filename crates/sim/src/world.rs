@@ -258,6 +258,41 @@ fn apply_comm_death_to_orders(
     result
 }
 
+/// Apply a relay break to re-entry confirmations already travelling home. The
+/// server's boundary picture carries a frozen fast copy plus a passive copy;
+/// this hidden response mirrors that exact rule so phase 3 can neither outrun
+/// nor lag the visual bloom. Unlike an outbound order, a broken report is not
+/// lost: its passive copy was emitted at the same boundary instant.
+fn apply_comm_death_to_echoes(
+    lanes: &crate::lane::LaneNetwork,
+    c: f64,
+    echoes: &mut [PendingEcho],
+    death: &CommDeath,
+) {
+    for echo in echoes.iter_mut().filter(|echo| {
+        echo.owner == death.owner
+            && echo.response_on_reentry
+            && echo.reentry_response_at.is_some_and(|arrival| arrival > death.at)
+    }) {
+        let Some(signal) = echo.reentry_signal.as_mut() else { continue };
+        if !signal.sites.contains(&death.site) {
+            continue;
+        }
+        let (survives, _) =
+            scheduled_signal_survives_loss(lanes, c, signal, death.site, death.at);
+        if survives {
+            signal.sites.retain(|candidate| *candidate != death.site);
+        } else {
+            let slow = echo
+                .reentry_slow_response_at
+                .expect("a routed boundary report always freezes its passive copy");
+            debug_assert!(slow >= echo.reentry_response_at.unwrap());
+            echo.reentry_response_at = Some(slow);
+            echo.reentry_signal = None;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrder {
     /// Stable identity shared by the queue row and its outbound comet.
@@ -397,6 +432,23 @@ struct PendingEcho {
     /// value exists would itself reveal the true re-entry before its light lands.
     #[serde(default)]
     reentry_response_at: Option<f64>,
+    /// Frozen fast route and passive fallback for the boundary report. A relay
+    /// death applies the same suffix test as outbound orders; if it breaks this
+    /// copy, confirmation falls back to the report's already-emitted slow copy.
+    #[serde(default)]
+    reentry_signal: Option<ScheduledCommandSignal>,
+    #[serde(default)]
+    reentry_slow_response_at: Option<f64>,
+    /// Previous kinematic endpoint used to bisect the exact nominal-circle
+    /// crossing. Private truth only; none of this probe rides the player wire.
+    #[serde(default)]
+    reentry_probe_pos: Option<Vec2>,
+    #[serde(default)]
+    reentry_probe_time: Option<f64>,
+    #[serde(default)]
+    reentry_probe_coupled: bool,
+    #[serde(default)]
+    reentry_probe_in_comms: bool,
 }
 
 /// A relay that existed, contributed this exact coverage site, and then died.
@@ -4596,6 +4648,13 @@ impl World {
                 };
                 ship.order = po.new_order;
                 ship.route = route;
+                let response_probe_pos = ship.pos;
+                let response_probe_coupled = ship.drive_state.stirs_the_lane();
+                let response_probe_in_comms = crate::lane::in_comm_bubble(
+                    ship.pos,
+                    &self.relay_network(po.owner),
+                    0.0,
+                );
                 events.push(Event::new(now, EventPayload::OrderApplied { ship_id: po.ship_id }));
                 // A WITHDRAW that has arrived pulls the fleet OUT of any battle it
                 // was in — it now physically flees (its MoveTo-home order runs at
@@ -4639,6 +4698,12 @@ impl World {
                         emplacement: po.emplacement,
                         response_on_reentry: po.response_on_reentry,
                         reentry_response_at: None,
+                        reentry_signal: None,
+                        reentry_slow_response_at: None,
+                        reentry_probe_pos: Some(response_probe_pos),
+                        reentry_probe_time: Some(now),
+                        reentry_probe_coupled: response_probe_coupled,
+                        reentry_probe_in_comms: response_probe_in_comms,
                     });
                     events.push(Event::new(
                         now,
@@ -4665,13 +4730,14 @@ impl World {
             if !self.fleets.contains_key(&e.fleet) {
                 self.pending_echoes.remove(i); // destroyed — no confirmation
             } else if e.response_on_reentry && e.reentry_response_at.is_some() {
-                if e.reentry_response_at.unwrap() > now {
+                let arrival = e.reentry_response_at.unwrap();
+                if arrival > now {
                     i += 1;
                     continue;
                 }
                 let e = self.pending_echoes.remove(i);
                 events.push(Event::new(
-                    now,
+                    arrival,
                     EventPayload::OrderConfirmed {
                         id: e.id,
                         owner: e.owner,
@@ -4680,29 +4746,79 @@ impl World {
                     },
                 ));
             } else if e.response_on_reentry {
-                let sites = self.relay_network(e.owner);
-                let Some(fleet) = self.fleets.get(&e.fleet) else {
+                let (
+                    owner,
+                    fleet_id,
+                    previous_pos,
+                    previous_time,
+                    previous_coupled,
+                    previous_in_comms,
+                ) = (
+                    e.owner,
+                    e.fleet,
+                    e.reentry_probe_pos,
+                    e.reentry_probe_time,
+                    e.reentry_probe_coupled,
+                    e.reentry_probe_in_comms,
+                );
+                let sites = self.relay_network(owner);
+                let Some(fleet) = self.fleets.get(&fleet_id) else {
                     unreachable!("fleet existence was checked above");
                 };
-                if !crate::lane::in_comm_bubble(fleet.pos, &sites, 0.0) {
-                    i += 1;
-                    continue;
-                }
-                let cc = self
-                    .players
-                    .get(&e.owner)
-                    .map_or(fleet.pos, |corp| corp.command_center);
-                let field = crate::lane::DelayField {
-                    lanes: &self.lanes,
-                    sites: &sites,
-                    c: self.config.c,
-                };
-                let delay = if fleet.drive_state.stirs_the_lane() {
-                    field.from_coupled(fleet.pos, cc)
+                let current_pos = fleet.pos;
+                let current_coupled = fleet.drive_state.stirs_the_lane();
+                let current_in_comms =
+                    crate::lane::in_comm_bubble(current_pos, &sites, 0.0);
+                let segment_end = now + DT;
+                let crossing = previous_pos.and_then(|older| {
+                    crate::lane::comm_bubble_crossing(
+                        older,
+                        current_pos,
+                        previous_in_comms,
+                        current_in_comms,
+                        &sites,
+                    )
+                });
+                if let Some((fraction, crossing_pos, true)) = crossing {
+                    let emitted_at = previous_time.unwrap_or(now)
+                        + (segment_end - previous_time.unwrap_or(now)) * fraction;
+                    let cc = self
+                        .players
+                        .get(&owner)
+                        .map_or(crossing_pos, |corp| corp.command_center);
+                    let field = crate::lane::DelayField {
+                        lanes: &self.lanes,
+                        sites: &sites,
+                        c: self.config.c,
+                    };
+                    // The boundary report inherits the older endpoint's drive
+                    // fact, exactly as `Sample::interpolate` does in the view
+                    // history. Therefore this is the same priced wavefront.
+                    let (delay, hops) = if previous_coupled {
+                        field.scheduled_from_coupled(crossing_pos, cc)
+                    } else {
+                        field.scheduled_between(crossing_pos, cc)
+                    };
+                    self.pending_echoes[i].reentry_response_at = Some(emitted_at + delay);
+                    self.pending_echoes[i].reentry_slow_response_at =
+                        Some(emitted_at + field.passive(crossing_pos, cc));
+                    self.pending_echoes[i].reentry_signal = Some(ScheduledCommandSignal {
+                        departed_at: emitted_at,
+                        source: crossing_pos,
+                        target: cc,
+                        receiver_coupled: false,
+                        delay_factor: 1.0,
+                        sites: sites.clone(),
+                        hops,
+                    });
                 } else {
-                    field.between(fleet.pos, cc)
-                } * self.relay_factor(e.owner, fleet.pos);
-                self.pending_echoes[i].reentry_response_at = Some(now + delay);
+                    // A pre-v3.5 snapshot has no probe. Seeding it here can only
+                    // make confirmation late; it never invents an earlier edge.
+                    self.pending_echoes[i].reentry_probe_pos = Some(current_pos);
+                    self.pending_echoes[i].reentry_probe_time = Some(segment_end);
+                    self.pending_echoes[i].reentry_probe_coupled = current_coupled;
+                    self.pending_echoes[i].reentry_probe_in_comms = current_in_comms;
+                }
                 i += 1;
             } else if e.echo_at <= now {
                 let e = self.pending_echoes.remove(i);
@@ -10826,6 +10942,12 @@ impl World {
                             &self.lanes,
                             self.config.c,
                             &mut self.pending_orders,
+                            &death,
+                        );
+                        apply_comm_death_to_echoes(
+                            &self.lanes,
+                            self.config.c,
+                            &mut self.pending_echoes,
                             &death,
                         );
                         self.comm_deaths.push(death);
@@ -20149,6 +20271,73 @@ mod tests {
         assert!(world.pending_orders.iter().all(|order| order.id != 1));
     }
 
+    #[test]
+    fn confirmation_falls_back_with_boundary_light_after_midflight_relay_death() {
+        let control = vec![Vec2::ZERO, Vec2::new(100_000.0, 0.0), Vec2::new(200_000.0, 0.0)];
+        let lanes = crate::lane::LaneNetwork::of(vec![crate::lane::Lane {
+            id: 913,
+            kind: crate::lane::LaneKind::Trunk,
+            name: "Mortal boundary report".into(),
+            samples: crate::lane::bake_for_tests(&control),
+            control,
+            half_width: 1_350.0,
+            tapers: false,
+        }]);
+        let site = crate::lane::CommSite {
+            pos: Vec2::new(100_000.0, 0.0),
+            throw: 80_000.0,
+        };
+        let source = Vec2::new(170_000.0, 20_000.0);
+        let target = Vec2::new(30_000.0, 20_000.0);
+        let c = 400.0;
+        let field = crate::lane::DelayField { lanes: &lanes, sites: &[site], c };
+        let (fast_delay, hops) = field.scheduled_between(source, target);
+        let slow_delay = field.passive(source, target);
+        assert!(slow_delay > fast_delay, "the boundary report has distinct fast and slow copies");
+        let death_at = hops[0].t * 0.5;
+        let mut echoes = vec![PendingEcho {
+            id: 1,
+            owner: PlayerId(44),
+            fleet: EntityId(1),
+            delivered_at: 0.0,
+            echo_at: fast_delay,
+            issued_at: 0.0,
+            kind: crate::event::OrderKind::Move,
+            dest: Some(target),
+            target: None,
+            emplacement: None,
+            response_on_reentry: true,
+            reentry_response_at: Some(fast_delay),
+            reentry_signal: Some(ScheduledCommandSignal {
+                departed_at: 0.0,
+                source,
+                target,
+                receiver_coupled: false,
+                delay_factor: 1.0,
+                sites: vec![site],
+                hops,
+            }),
+            reentry_slow_response_at: Some(slow_delay),
+            reentry_probe_pos: None,
+            reentry_probe_time: None,
+            reentry_probe_coupled: false,
+            reentry_probe_in_comms: false,
+        }];
+        let death = CommDeath {
+            id: EntityId(701),
+            owner: PlayerId(44),
+            kind: crate::emplace::EmplacementKind::HyperspaceBuoy,
+            site,
+            at: death_at,
+            news_at: slow_delay,
+        };
+
+        apply_comm_death_to_echoes(&lanes, c, &mut echoes, &death);
+
+        assert_eq!(echoes[0].reentry_response_at, Some(slow_delay));
+        assert!(echoes[0].reentry_signal.is_none(), "the broken fast copy is consumed");
+    }
+
     /// Park an owned fleet `d` su from the command center (Idle), fuelled to move.
     fn lifecycle_setup(w: &mut World, id: PlayerId, d: f64) -> (EntityId, Vec2, Vec2) {
         w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
@@ -20244,7 +20433,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_requires_arrived_evidence() {
+    fn confirmation_never_precedes_the_crossings_light() {
         let mut w = test_world();
         let id = PlayerId(1);
         let (fid, cc, _) = lifecycle_setup(&mut w, id, 0.0);
@@ -20287,6 +20476,15 @@ mod tests {
             "the lifecycle remains presumed after its estimate expires",
         );
 
+        let echo = w
+            .pending_echoes
+            .iter()
+            .find(|echo| echo.id == pending.id)
+            .expect("the delivered response keeps its crossing probe");
+        let probe_pos = echo.reentry_probe_pos.unwrap();
+        let probe_time = echo.reentry_probe_time.unwrap();
+        let probe_coupled = echo.reentry_probe_coupled;
+        let probe_in_comms = echo.reentry_probe_in_comms;
         let reentry_pos = site.pos + Vec2::new(site.throw, 0.0);
         {
             let fleet = w.fleets.get_mut(&fid).unwrap();
@@ -20294,15 +20492,8 @@ mod tests {
             fleet.vel = Vec2::ZERO;
             fleet.drive_state = crate::ship::DriveState::Thrusters;
         }
-        let reentry_at = w.time;
         let sites = w.relay_network(id);
-        let response_field = crate::lane::DelayField {
-            lanes: &w.lanes,
-            sites: &sites,
-            c: w.config.c,
-        };
-        let response_delay = response_field.between(reentry_pos, cc)
-            * w.relay_factor(id, reentry_pos);
+        let segment_end = w.time + DT;
         let events = w.step(&[]);
         assert!(
             !events.iter().any(|event| matches!(
@@ -20312,9 +20503,41 @@ mod tests {
             "physical re-entry emits a response but is not yet command-center knowledge",
         );
         assert!(w.pending_commands(id).iter().any(|order| order.id == pending.id));
+        let current_pos = w.fleets[&fid].pos;
+        let current_in_comms = crate::lane::in_comm_bubble(current_pos, &sites, 0.0);
+        let (fraction, boundary_pos, entered) = crate::lane::comm_bubble_crossing(
+            probe_pos,
+            current_pos,
+            probe_in_comms,
+            current_in_comms,
+            &sites,
+        )
+        .unwrap();
+        assert!(entered);
+        let crossing_at = probe_time + (segment_end - probe_time) * fraction;
+        let response_field = crate::lane::DelayField {
+            lanes: &w.lanes,
+            sites: &sites,
+            c: w.config.c,
+        };
+        let response_delay = if probe_coupled {
+            response_field.from_coupled(boundary_pos, cc)
+        } else {
+            response_field.between(boundary_pos, cc)
+        };
+        let hidden_arrival = w
+            .pending_echoes
+            .iter()
+            .find(|echo| echo.id == pending.id)
+            .and_then(|echo| echo.reentry_response_at)
+            .expect("the exact crossing emitted its hidden response");
+        assert!(
+            (hidden_arrival - (crossing_at + response_delay)).abs() <= 1e-8,
+            "the response is keyed to the same bisected boundary report",
+        );
 
         let mut confirmed_at = None;
-        while w.time <= reentry_at + response_delay + DT {
+        while w.time <= crossing_at + response_delay + 2.0 * DT {
             for event in w.step(&[]) {
                 if matches!(
                     event.payload,
@@ -20329,8 +20552,8 @@ mod tests {
         }
         let confirmed_at = confirmed_at.expect("the re-entry response light arrived");
         assert!(
-            (confirmed_at - (reentry_at + response_delay)).abs() <= DT + 1e-9,
-            "confirmation waits for the full bubble-edge to command-center delay",
+            (confirmed_at - (crossing_at + response_delay)).abs() <= 1e-8,
+            "confirmation equals the exact boundary report's arrival wavefront",
         );
         assert!(w.pending_commands(id).iter().all(|order| order.id != pending.id));
     }
