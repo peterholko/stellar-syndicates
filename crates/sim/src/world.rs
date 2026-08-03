@@ -1368,29 +1368,32 @@ impl World {
         pending
     }
 
-    /// Retire ordinary delivered orders from the SAME evidence the owner was
-    /// just served on the map. `served_samples` contains `(fleet, emission)` for
-    /// that player's own ghosts in one View. There is deliberately no `echo_at`
-    /// check here: pixels and confirmation cannot have parallel clocks for one
-    /// medium. The estimate may become overdue, but only a served emission at or
-    /// after delivery proves that the displayed picture is compliance-era.
+    /// Retire delivered orders from the SAME evidence the owner was just served
+    /// on the map. `served_samples` contains `(fleet, emission, jumped)` for that
+    /// player's own ghosts in one View. There is deliberately no `echo_at` check
+    /// here: pixels and confirmation cannot have parallel clocks for one medium.
+    /// Ordinary orders need a compliance-era emission; a jump additionally needs
+    /// the served discontinuity itself, so a dry or failed spool cannot confirm.
     ///
     pub fn confirm_orders_from_served(
         &mut self,
         owner: PlayerId,
-        served_samples: &[(EntityId, f64)],
+        served_samples: &[(EntityId, f64, bool)],
     ) -> Vec<Event> {
         let now = self.time;
         let mut events = Vec::new();
         let mut i = 0;
         while i < self.pending_echoes.len() {
             let echo = &self.pending_echoes[i];
-            let served_emission = served_samples
-                .iter()
-                .find_map(|(fleet, emission)| (*fleet == echo.fleet).then_some(*emission));
+            let served_emission = served_samples.iter().find_map(|(fleet, emission, jumped)| {
+                (*fleet == echo.fleet).then_some((*emission, *jumped))
+            });
             let confirms = echo.owner == owner
                 && self.fleets.contains_key(&echo.fleet)
-                && served_emission.is_some_and(|emission| emission + 1e-9 >= echo.delivered_at);
+                && served_emission.is_some_and(|(emission, jumped)| {
+                    emission + 1e-9 >= echo.delivered_at
+                        && (echo.kind != crate::event::OrderKind::Jump || jumped)
+                });
             if !confirms {
                 i += 1;
                 continue;
@@ -28352,11 +28355,15 @@ mod tests {
             .find(|order| order.id == pending.id)
             .expect("the expired estimate remains pending");
         assert!(
-            w.confirm_orders_from_served(id, &[(fid, delivered_pending.delivered_at - 1e-6)])
-                .is_empty(),
+            w.confirm_orders_from_served(
+                id,
+                &[(fid, delivered_pending.delivered_at - 1e-6, false)],
+            )
+            .is_empty(),
             "a pre-delivery served picture is not compliance evidence",
         );
-        let confirmed = w.confirm_orders_from_served(id, &[(fid, delivered_pending.delivered_at)]);
+        let confirmed =
+            w.confirm_orders_from_served(id, &[(fid, delivered_pending.delivered_at, false)]);
         assert!(matches!(
             confirmed.as_slice(),
             [Event { payload: EventPayload::OrderConfirmed { id: confirmed_id, .. }, .. }]
@@ -28401,12 +28408,16 @@ mod tests {
             world.time = first_served_at - 0.01;
             assert!(
                 world
-                    .confirm_orders_from_served(owner, &[(fleet, delivered.delivered_at - 1e-6)],)
+                    .confirm_orders_from_served(
+                        owner,
+                        &[(fleet, delivered.delivered_at - 1e-6, false)],
+                    )
                     .is_empty(),
                 "{topology}: pre-delivery light is not compliance evidence",
             );
             world.time = first_served_at;
-            let events = world.confirm_orders_from_served(owner, &[(fleet, compliance_emission)]);
+            let events =
+                world.confirm_orders_from_served(owner, &[(fleet, compliance_emission, false)]);
             assert_eq!(
                 events.len(),
                 1,

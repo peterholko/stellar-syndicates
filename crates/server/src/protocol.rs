@@ -1676,6 +1676,11 @@ pub struct GhostView {
     pub age: f64,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
+    /// Server-only evidence that this served frame crossed a discontinuous jump.
+    /// It drives order confirmation but is never serialized to the client; the
+    /// visible snap already conveys the same event.
+    #[serde(skip)]
+    pub jumped: bool,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the
     /// Market Hub, otherwise the system's id — or null if the fleet was under
     /// way (or loitering somewhere it does not control).

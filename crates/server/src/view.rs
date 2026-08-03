@@ -49,6 +49,10 @@ struct Sample {
     time: f64,
     pos: Vec2,
     vel: Vec2,
+    /// A discontinuity happened immediately before this report. Serving may
+    /// hold the previous sample or show this one, but must never synthesize the
+    /// physically nonexistent space between them.
+    jump: bool,
     /// §explore Part 2: was the fleet ACTIVELY SURVEYING (loud) at this sample?
     /// Rides the per-sample history so the loudness is judged in the RETARDED
     /// frame — exactly like velocity — and can never leak or lag FTL.
@@ -74,6 +78,7 @@ impl Sample {
             // Facts change only when the newer report is reached; only the
             // kinematic continuum is interpolated between recorded ticks.
             vel: older.vel,
+            jump: false,
             loud: older.loud,
             drive: older.drive,
         }
@@ -400,10 +405,18 @@ impl PositionHistory {
             track.loadouts = ship.loadouts.clone();
             track.modules = ship.modules.clone();
             track.route = route_of(&ship.order);
+            // `record` runs after the world step: on the jump tick the previous
+            // sample's time is exactly `last_jump`, while this report is the
+            // first one at the landing. The equality is therefore intentional.
+            let jumped = track
+                .samples
+                .back()
+                .is_some_and(|previous| ship.last_jump.is_some_and(|at| at >= previous.time));
             let current = Sample {
                 time: now,
                 pos: ship.pos,
                 vel: ship.vel,
+                jump: jumped,
                 loud: ship.surveying(),
                 drive: ship.drive_state,
             };
@@ -839,6 +852,7 @@ impl PositionHistory {
                 vel: p.sample.vel,
                 age,
                 own,
+                jumped: p.sample.jump,
                 route,
                 cargo,
                 passengers,
@@ -2139,6 +2153,7 @@ fn latest_observable_cached(
     }
     cursor.seen_through = samples.back().map(|sample| sample.time);
 
+    let mut crossed_jump = false;
     while cursor
         .pending_by_arrival
         .peek()
@@ -2156,8 +2171,16 @@ fn latest_observable_cached(
             .served
             .is_none_or(|served| arrived.sample.time > served.sample.time)
         {
+            crossed_jump |= arrived.sample.jump;
             cursor.served = Some(arrived);
         }
+    }
+    // A 10 Hz view can consume several 30 Hz reports in one broadcast. If any
+    // newly served report crossed a jump, carry that one-frame fact onto the
+    // newest served sample so confirmation cannot miss the discontinuity merely
+    // because two post-landing samples arrived in the same batch.
+    if crossed_jump && let Some(served) = cursor.served.as_mut() {
+        served.sample.jump = true;
     }
 
     let served = cursor.served?;
@@ -2175,6 +2198,8 @@ fn latest_observable_cached(
     if let Some(newer) = newer
         && newer.arrival > served.arrival + 1e-9
         && newer.arrival - served.arrival <= SMOOTH_BRACKET_MAX
+        && !served.sample.jump
+        && !newer.sample.jump
     {
         let frac = (now - served.arrival) / (newer.arrival - served.arrival);
         return Some(Sample::interpolate(&served.sample, &newer.sample, frac));
@@ -2211,6 +2236,7 @@ mod tests {
             time: 0.0,
             pos: Vec2::new(2_000.0, 0.0),
             vel: Vec2::ZERO,
+            jump: false,
             loud: false,
             drive: sim::ship::DriveState::default(),
         };
@@ -2268,6 +2294,7 @@ mod tests {
                 time: t,
                 pos: Vec2::new(x, y),
                 vel,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2310,14 +2337,47 @@ mod tests {
         // At X for t in [0,10), then at Y from t=10 onward, sampled at 10 Hz.
         let mut t = 0.0;
         while t < 30.0 {
+            let at_y = t >= 10.0;
+            let jump = at_y
+                && samples
+                    .last()
+                    .is_some_and(|sample: &Sample| sample.pos == x);
             samples.push(Sample {
                 time: t,
-                pos: if t < 10.0 { x } else { y },
+                pos: if at_y { y } else { x },
                 vel: Vec2::ZERO,
+                jump,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
+        }
+        assert_eq!(samples.iter().filter(|sample| sample.jump).count(), 1);
+
+        // The seam is binary for every instant, including the almost-tangential
+        // geometry whose arrival gap is short enough to trigger smoothing.
+        let deque: VecDeque<Sample> = samples.iter().copied().collect();
+        let tangent_cc = Vec2::new(6000.0, 0.0);
+        let before = samples.iter().rfind(|sample| sample.pos == x).unwrap();
+        let landing = samples.iter().find(|sample| sample.jump).unwrap();
+        let arrival_gap = (landing.time + sim::transit::delay(landing.pos, tangent_cc, df(c)))
+            - (before.time + sim::transit::delay(before.pos, tangent_cc, df(c)));
+        assert!(arrival_gap > 0.0 && arrival_gap < SMOOTH_BRACKET_MAX);
+        for cc in [
+            Vec2::new(0.0, -6000.0),
+            tangent_cc,
+            Vec2::new(0.0, 6000.0), // landing light overtakes the last departure copy
+        ] {
+            for n in 0..=1800 {
+                let now = n as f64 * 0.025;
+                if let Some(served) = latest_observable(&deque, cc, df(c), now) {
+                    assert!(
+                        served.pos == x || served.pos == y,
+                        "jump light invented an in-between position {:?} at {now}",
+                        served.pos
+                    );
+                }
+            }
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
 
@@ -2338,6 +2398,128 @@ mod tests {
         assert_eq!(g_late.pos, y, "viewer never saw the jump even long after");
     }
 
+    #[test]
+    fn a_real_jump_holds_then_snaps_and_confirms_on_the_same_served_evidence() {
+        let owner = PlayerId(7);
+        let mut world = World::new(sim::SimConfig::for_players(8_181, 4));
+        world.step(&[sim::Command::AddPlayer {
+            id: owner,
+            name: "Jumper".into(),
+        }]);
+        let fleet = world
+            .fleets
+            .iter()
+            .find(|(_, fleet)| fleet.owner == owner && fleet.can_jump())
+            .map(|(id, _)| *id)
+            .expect("opening jump hull");
+        let cc = world.players[&owner].command_center;
+        let clear = |pos: Vec2| {
+            pos.distance(world.hub) >= sim::transit::HYPERLIMIT
+                && world
+                    .systems
+                    .iter()
+                    .all(|system| pos.distance(system.pos) >= sim::transit::HYPERLIMIT)
+        };
+        let (source, dest) = [
+            Vec2::new(5_000.0, 5_000.0),
+            Vec2::new(-5_000.0, 5_000.0),
+            Vec2::new(5_000.0, -5_000.0),
+            Vec2::new(-5_000.0, -5_000.0),
+        ]
+        .into_iter()
+        .filter_map(|offset| {
+            let source = cc + offset;
+            let dest = source + Vec2::new(30_000.0, 10_000.0);
+            (clear(source) && clear(dest)).then_some((source, dest))
+        })
+        .next()
+        .expect("a clear jump pair beside home");
+        {
+            let ship = world.fleets.get_mut(&fleet).unwrap();
+            ship.reset_to(ShipKind::Raider, 1);
+            ship.pos = source;
+            ship.vel = Vec2::ZERO;
+            ship.order = FleetOrder::Idle;
+            ship.fuel = 10_000.0;
+        }
+
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        world.step(&[sim::Command::JumpShip {
+            player_id: owner,
+            ship_id: fleet,
+            dest,
+        }]);
+        history.record(&world);
+        let delivered_at = world
+            .pending_commands(owner)
+            .into_iter()
+            .find(|pending| pending.fleet == fleet)
+            .expect("jump copy scheduled")
+            .delivered_at;
+
+        let mut true_jump = None;
+        let mut first_landing_view = None;
+        let mut confirmed_at = None;
+        for _ in 0..(90 * sim::config::TICK_HZ) {
+            let events = world.step(&[]);
+            history.record(&world);
+            if events.iter().any(|event| {
+                matches!(
+                    event.payload,
+                    sim::EventPayload::FleetJumped { fleet: jumped, .. } if jumped == fleet
+                )
+            }) {
+                true_jump = Some(
+                    events
+                        .iter()
+                        .find_map(|event| match event.payload {
+                            sim::EventPayload::FleetJumped { fleet: jumped, .. }
+                                if jumped == fleet =>
+                            {
+                                Some(event.time)
+                            }
+                            _ => None,
+                        })
+                        .unwrap(),
+                );
+            }
+
+            let ghosts = history.view_for(owner, cc, world.config.c, world.time);
+            let Some(ghost) = ghosts.iter().find(|ghost| ghost.id == fleet) else {
+                continue;
+            };
+            assert!(
+                ghost.pos == source || ghost.pos == dest,
+                "the served map smeared the jump through {:?}",
+                ghost.pos
+            );
+            if ghost.pos == dest && first_landing_view.is_none() {
+                first_landing_view = Some(world.time);
+            }
+            let emission = world.time - ghost.age;
+            let confirmations =
+                world.confirm_orders_from_served(owner, &[(fleet, emission, ghost.jumped)]);
+            if confirmations.iter().any(|event| {
+                matches!(
+                    event.payload,
+                    sim::EventPayload::OrderConfirmed { fleet: confirmed, .. } if confirmed == fleet
+                )
+            }) {
+                confirmed_at = Some(world.time);
+                break;
+            }
+        }
+
+        let true_jump = true_jump.expect("the hull jumped");
+        let first_landing_view = first_landing_view.expect("landing light arrived");
+        let expected_light = true_jump + sim::transit::delay(dest, cc, world.config.c);
+        assert!(first_landing_view + 1e-9 >= expected_light);
+        assert!(first_landing_view <= expected_light + 3.0 * sim::config::DT);
+        assert_eq!(confirmed_at, Some(first_landing_view));
+        assert!(delivered_at + sim::transit::JUMP_SPOOL_S <= true_jump + sim::config::DT);
+    }
+
     /// The shown sample is exactly the boundary: it has arrived, and the next
     /// (newer) sample has not. This is the precise "only what light permits".
     #[test]
@@ -2352,6 +2534,7 @@ mod tests {
                 time: t,
                 pos: Vec2::new(0.0, t * 5.0),
                 vel: Vec2::new(0.0, 5.0),
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2390,6 +2573,7 @@ mod tests {
                 time: t,
                 pos: Vec2::new(t * 2.0, 0.0),
                 vel: Vec2::new(2.0, 0.0),
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -3828,6 +4012,7 @@ mod tests {
                 time: t,
                 pos,
                 vel: Vec2::ZERO,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4015,6 +4200,7 @@ mod tests {
                 time: t,
                 pos,
                 vel,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4083,6 +4269,7 @@ mod tests {
                 time: t,
                 pos,
                 vel,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4338,6 +4525,7 @@ mod tests {
                 time: t,
                 pos,
                 vel: Vec2::ZERO,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4729,6 +4917,7 @@ mod tests {
                 time: t,
                 pos: dpos,
                 vel: Vec2::ZERO,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4788,6 +4977,7 @@ mod tests {
                 time: t,
                 pos: Vec2::new(t * 10.0, 0.0),
                 vel: Vec2::new(10.0, 0.0),
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4959,6 +5149,7 @@ mod tests {
                 time: t,
                 pos,
                 vel: Vec2::ZERO,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4983,6 +5174,7 @@ mod tests {
                 time: t,
                 pos,
                 vel,
+                jump: false,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });

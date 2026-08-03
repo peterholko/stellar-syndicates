@@ -1476,7 +1476,7 @@ impl GameLoop {
         // pictures after every player's View has been materialized. Keeping the
         // emission clocks beside the View prevents a second response timer from
         // claiming evidence the map has not served.
-        let mut served_order_evidence: HashMap<PlayerId, Vec<(sim::EntityId, f64)>> =
+        let mut served_order_evidence: HashMap<PlayerId, Vec<(sim::EntityId, f64, bool)>> =
             HashMap::new();
         // §perf Part A: per-player battle-record specs (what each player MAY see
         // right now) — diffed per CONNECTION against its delivery cursor below.
@@ -1561,7 +1561,7 @@ impl GameLoop {
                 ghosts
                     .iter()
                     .filter(|ghost| ghost.own)
-                    .map(|ghost| (ghost.id, now - ghost.age))
+                    .map(|ghost| (ghost.id, now - ghost.age, ghost.jumped))
                     .collect(),
             );
             // §emplacements: WHICH STRUCTURES THIS VIEWER CAN SEE.
@@ -2994,8 +2994,10 @@ mod tests {
             1,
             "the final row survives an expired estimate until the map serves compliance",
         );
-        let confirmed =
-            world.confirm_orders_from_served(owner, &[(fleet, after_supersession[0].delivered_at)]);
+        let confirmed = world.confirm_orders_from_served(
+            owner,
+            &[(fleet, after_supersession[0].delivered_at, false)],
+        );
         assert_eq!(confirmed.len(), 1);
         assert!(
             world.pending_commands(owner).is_empty(),
