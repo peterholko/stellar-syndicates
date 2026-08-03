@@ -28,38 +28,36 @@ pub mod fuel;
 pub mod galaxy;
 pub mod ground;
 pub mod ids;
-pub mod lane;
 pub mod market;
 pub mod math;
 pub mod module;
 pub mod movement;
 pub mod node;
+pub mod pirate;
+pub mod production;
 pub mod rankings;
 pub mod research;
 pub mod rng;
-pub mod pirate;
-pub mod production;
 pub mod ship;
 pub mod specialist;
 pub mod standing;
 pub mod syndicate;
 pub mod tactical;
 pub mod tca;
+pub mod transit;
 pub mod world;
 
 pub use body::{Body, BodyKind};
 pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
 pub use colony::FoodState;
-pub use production::{Assignment, SuspendReason};
-pub use specialist::SpecialistKind;
 pub use combat::{
-    typical_forces, BattleOutcomeSummary, BattleRecord, Forces, Losses, RoundNote, RoundRecord,
-    SideRecord, TypedDamage,
+    BattleOutcomeSummary, BattleRecord, Forces, Losses, RoundNote, RoundRecord, SideRecord,
+    TypedDamage, typical_forces,
 };
-pub use module::{weapon_family, DamageType, Family, Loadout, ModuleKind};
 pub use command::Command;
-pub use config::{SimConfig, DT, TICK_HZ};
+pub use config::{DT, SimConfig, TICK_HZ};
+pub use detection::{detected as detected_by, signature as fleet_signature};
 pub use doctrine::{
     DestinationInvalidPolicy, EngagementPolicy, EngagementPosture, EscortPolicy, FleetDoctrine,
     RetreatThreshold,
@@ -68,29 +66,32 @@ pub use event::{
     BuildRejectReason, DivertAction, Event, EventPayload, FreightStage, OrderKind,
     OrderRejectReason, RaidOutcome, TradeEvent, TradeRejectReason,
 };
-pub use galaxy::{claim_cost_for, Blockade, Deposit, HomeSlot, StarSystem};
-pub use ids::{EntityId, PlayerId, SyndicateId};
-pub use pirate::{Enclave, PIRATE_ENCLAVE_COUNT};
-pub use node::{node_bonus_for, Node, NodeBonus, NODES_PER_CORP, NODE_REGION_RADIUS};
-pub use rankings::{RankingCategory, RankingRow, RankingStats};
 pub use explore::{RichnessBand, SURVEY_INITIAL_RADIUS};
+pub use galaxy::{Blockade, Deposit, HomeSlot, StarSystem, claim_cost_for};
+pub use ids::{EntityId, PlayerId, SyndicateId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
-pub use movement::{advance_toward, intercept_point, pursue_step, MoveStep};
+pub use module::{DamageType, Family, Loadout, ModuleKind, weapon_family};
+pub use movement::{MoveStep, advance_toward, intercept_point, pursue_step};
+pub use node::{NODE_REGION_RADIUS, NODES_PER_CORP, Node, NodeBonus, node_bonus_for};
+pub use pirate::{Enclave, PIRATE_ENCLAVE_COUNT};
+pub use production::{Assignment, SuspendReason};
+pub use rankings::{RankingCategory, RankingRow, RankingStats};
 pub use rng::Rng;
-pub use detection::{detected as detected_by, signature as fleet_signature};
 pub use ship::{
-    fitting_points, hull_affinity, CountClass, DefenseEngagement, DockSite, Fleet, FleetOrder, ShipKind,
-    TradeMission, TransitMode, ALL_SHIP_KINDS, FLAGSHIP_PRECEDENCE,
+    ALL_SHIP_KINDS, CountClass, DefenseEngagement, DockSite, FLAGSHIP_PRECEDENCE, Fleet,
+    FleetOrder, ShipKind, TradeMission, TransitMode, fitting_points, hull_affinity,
 };
+pub use specialist::SpecialistKind;
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
-pub use tca::{charter_status, CharterStatus, FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
 pub use syndicate::{
-    syndicate_cap, DoctrineFit, Syndicate, SYNDICATE_MAX_FITS, SYNDICATE_MAX_FRAC,
-    SYNDICATE_MIN_CAP,
+    DoctrineFit, SYNDICATE_MAX_FITS, SYNDICATE_MAX_FRAC, SYNDICATE_MIN_CAP, Syndicate,
+    syndicate_cap,
+};
+pub use tca::{
+    CharterStatus, FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId, charter_status,
 };
 pub use world::{
     AcademyContribution, BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView,
     World,
 };
-

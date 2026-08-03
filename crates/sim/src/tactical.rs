@@ -27,11 +27,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::combat::{LoadoutMap, Losses};
+use crate::ids::EntityId;
 use crate::math::Vec2;
 use crate::module::{DamageType, Loadout};
 use crate::rng::Rng;
-use crate::ids::EntityId;
-use crate::ship::{hull_affinity, Ship, ShipKind};
+use crate::ship::{Ship, ShipKind, hull_affinity};
 
 // --- CADENCE & ARENA (Tunable) ---------------------------------------------------
 
@@ -42,7 +42,11 @@ use crate::ship::{hull_affinity, Ship, ShipKind};
 pub const TAC_STEP_TICKS: u64 = 30;
 pub const TAC_STEP_TICKS_FAST: u64 = 15;
 pub fn tac_step_ticks(battle_target_secs: f64) -> u64 {
-    if battle_target_secs < 120.0 { TAC_STEP_TICKS_FAST } else { TAC_STEP_TICKS }
+    if battle_target_secs < 120.0 {
+        TAC_STEP_TICKS_FAST
+    } else {
+        TAC_STEP_TICKS
+    }
 }
 
 /// Battle-local arena coordinates ("km-ish"). The defender anchors at the
@@ -252,7 +256,11 @@ impl Combatant {
         if !self.loadout().has_pd() {
             return 0.0;
         }
-        if self.kind == ShipKind::Dreadnought { PD_RADIUS_HEAVY } else { PD_RADIUS }
+        if self.kind == ShipKind::Dreadnought {
+            PD_RADIUS_HEAVY
+        } else {
+            PD_RADIUS
+        }
     }
 }
 
@@ -298,7 +306,11 @@ pub struct SideMods {
 
 impl SideMods {
     pub fn flak(&self) -> f64 {
-        if self.flak_mult <= 0.0 { 1.0 } else { self.flak_mult }
+        if self.flak_mult <= 0.0 {
+            1.0
+        } else {
+            self.flak_mult
+        }
     }
 }
 
@@ -348,13 +360,19 @@ pub fn stacked(comp: &BTreeMap<ShipKind, u32>, loadouts: &LoadoutMap) -> Loadout
                 }
                 let take = (*n).min(total.saturating_sub(fitted));
                 if take > 0 {
-                    *out.entry(*kind).or_default().entry(key.clone()).or_insert(0) += take;
+                    *out.entry(*kind)
+                        .or_default()
+                        .entry(key.clone())
+                        .or_insert(0) += take;
                     fitted += take;
                 }
             }
         }
         if *total > fitted {
-            *out.entry(*kind).or_default().entry(String::new()).or_insert(0) += total - fitted;
+            *out.entry(*kind)
+                .or_default()
+                .entry(String::new())
+                .or_insert(0) += total - fitted;
         }
     }
     out
@@ -380,7 +398,11 @@ impl TacticalState {
         platform_pool: f64,
         bearing: Vec2,
     ) -> Self {
-        let b = if bearing.length() > 1e-9 { bearing.normalized() } else { Vec2::new(1.0, 0.0) };
+        let b = if bearing.length() > 1e-9 {
+            bearing.normalized()
+        } else {
+            Vec2::new(1.0, 0.0)
+        };
         let mut st = TacticalState {
             rng: battle_rng(world_seed, battle_id),
             step: 0,
@@ -451,10 +473,17 @@ impl TacticalState {
     /// Spawn one combatant (or hold it in a wave past the cap).
     fn spawn(&mut self, side: u8, fleet: EntityId, ship: &Ship) {
         let (kind, stack) = (ship.kind, ship.stack_key());
-        let alive = self.combatants.iter().filter(|c| c.side == side && !c.platform).count();
+        let alive = self
+            .combatants
+            .iter()
+            .filter(|c| c.side == side && !c.platform)
+            .count();
         if alive >= MAX_COMBATANTS_PER_SIDE {
             // Hold THIS HULL for a later echelon — untouched until it commits.
-            self.waves[side as usize].push(WaveEntry { fleet, ship: ship.clone() });
+            self.waves[side as usize].push(WaveEntry {
+                fleet,
+                ship: ship.clone(),
+            });
             return;
         }
         // §roster: the ship enters at its OWN remaining hull.
@@ -506,12 +535,17 @@ impl TacticalState {
             }
             // Departures: anything no longer on the roster (withdrawn, or lost
             // with its fleet) leaves the arena — waves included.
-            self.combatants
-                .retain(|c| c.side != side || c.platform || c.origin.is_some_and(|o| want.contains(&o)));
+            self.combatants.retain(|c| {
+                c.side != side || c.platform || c.origin.is_some_and(|o| want.contains(&o))
+            });
             self.waves[side as usize].retain(|w| want.contains(&(w.fleet, w.ship.id)));
             // Arrivals: relief joining the line.
             let mut have: std::collections::BTreeSet<(EntityId, u32)> = Default::default();
-            for c in self.combatants.iter().filter(|c| c.side == side && !c.platform) {
+            for c in self
+                .combatants
+                .iter()
+                .filter(|c| c.side == side && !c.platform)
+            {
                 if let Some(o) = c.origin {
                     have.insert(o);
                 }
@@ -557,7 +591,11 @@ impl TacticalState {
     fn commit_waves(&mut self) {
         for side in 0..2u8 {
             loop {
-                let alive = self.combatants.iter().filter(|c| c.side == side && !c.platform).count();
+                let alive = self
+                    .combatants
+                    .iter()
+                    .filter(|c| c.side == side && !c.platform)
+                    .count();
                 if alive >= MAX_COMBATANTS_PER_SIDE {
                     break;
                 }
@@ -595,7 +633,10 @@ impl TacticalState {
     }
 
     pub fn alive(&self, side: u8) -> usize {
-        self.combatants.iter().filter(|c| c.side == side && !c.platform).count()
+        self.combatants
+            .iter()
+            .filter(|c| c.side == side && !c.platform)
+            .count()
             + self.waves[side as usize].len()
     }
 
@@ -617,7 +658,11 @@ impl TacticalState {
     /// Sticky; every ship of the side flips to the Withdraw script.
     pub fn order_withdraw(&mut self, side: u8) {
         self.withdrawing[side as usize] = true;
-        for c in self.combatants.iter_mut().filter(|c| c.side == side && !c.platform) {
+        for c in self
+            .combatants
+            .iter_mut()
+            .filter(|c| c.side == side && !c.platform)
+        {
             c.role = Role::Withdraw;
         }
         // Held waves never commit into a withdrawal.
@@ -629,7 +674,11 @@ impl TacticalState {
     /// withdraw-mid-battle, repack) sees the exact old shapes (§law 1).
     /// Platform damage pool (deficit of the LIVE tiers).
     pub fn platform_pool(&self) -> f64 {
-        self.combatants.iter().filter(|c| c.platform).map(|c| (c.max_hp - c.hp).max(0.0)).sum()
+        self.combatants
+            .iter()
+            .filter(|c| c.platform)
+            .map(|c| (c.max_hp - c.hp).max(0.0))
+            .sum()
     }
 
     // --- THE STEP -----------------------------------------------------------------
@@ -642,7 +691,9 @@ impl TacticalState {
         let mut out = StepOutcome::default();
 
         // 1. MOVEMENT: seek/arrive toward each role's desired point.
-        let desired: Vec<Vec2> = (0..self.combatants.len()).map(|i| self.desired_point(i)).collect();
+        let desired: Vec<Vec2> = (0..self.combatants.len())
+            .map(|i| self.desired_point(i))
+            .collect();
         for (i, want) in desired.iter().enumerate() {
             let c = &mut self.combatants[i];
             if c.platform {
@@ -660,7 +711,11 @@ impl TacticalState {
             };
             let dv = target_vel - c.vel;
             let dvl = dv.length();
-            c.vel = if dvl <= accel { target_vel } else { c.vel + dv.normalized() * accel };
+            c.vel = if dvl <= accel {
+                target_vel
+            } else {
+                c.vel + dv.normalized() * accel
+            };
             c.pos = c.pos + c.vel;
         }
 
@@ -675,7 +730,12 @@ impl TacticalState {
             let to = target.pos - t.pos;
             let dist = to.length();
             let travel = TORP_SPEED.min(dist);
-            t.pos = t.pos + if dist > 1e-9 { to.normalized() * travel } else { Vec2::new(0.0, 0.0) };
+            t.pos = t.pos
+                + if dist > 1e-9 {
+                    to.normalized() * travel
+                } else {
+                    Vec2::new(0.0, 0.0)
+                };
             // PD: every enemy screen the torpedo is INSIDE this step rolls once.
             let mut intercepted = false;
             for pd in self.combatants.iter().filter(|c| c.side != t.side) {
@@ -686,7 +746,8 @@ impl TacticalState {
                     } else {
                         hull_affinity(pd.kind, crate::module::Family::Interception)
                     };
-                    let chance = (PD_ROLL_BASE * aff * mods[(1 - t.side) as usize].flak()).min(0.95);
+                    let chance =
+                        (PD_ROLL_BASE * aff * mods[(1 - t.side) as usize].flak()).min(0.95);
                     if self.rng.next_f64() < chance {
                         intercepted = true;
                         break;
@@ -717,13 +778,25 @@ impl TacticalState {
         for i in 0..self.combatants.len() {
             let (side, pos, kind, stack, plat, cds, alive) = {
                 let c = &self.combatants[i];
-                (c.side, c.pos, c.kind, c.stack.clone(), c.platform, c.cooldowns, c.hp > 0.0)
+                (
+                    c.side,
+                    c.pos,
+                    c.kind,
+                    c.stack.clone(),
+                    c.platform,
+                    c.cooldowns,
+                    c.hp > 0.0,
+                )
             };
             if !alive {
                 continue;
             }
             let lo = Loadout::from_key(&stack);
-            let (family, mult) = if plat { (DamageType::Beam, 1.0) } else { lo.offense() };
+            let (family, mult) = if plat {
+                (DamageType::Beam, 1.0)
+            } else {
+                lo.offense()
+            };
             let cd = match family {
                 DamageType::Beam => cds.beam,
                 DamageType::Driver => cds.driver,
@@ -736,7 +809,11 @@ impl TacticalState {
                 c.cooldowns.torpedo = c.cooldowns.torpedo.saturating_sub(1);
                 continue;
             }
-            let aw = if plat { PLATFORM_TIER_AW } else { kind.attack_weight() };
+            let aw = if plat {
+                PLATFORM_TIER_AW
+            } else {
+                kind.attack_weight()
+            };
             if aw <= 0.0 {
                 continue; // civilians carry no guns
             }
@@ -748,7 +825,11 @@ impl TacticalState {
             // TARGETING: seeded weighted roll over in-range enemies, weight ∝
             // threat mass (doctrine bias is a future hook, documented).
             let mut cands: Vec<(u32, f64, f64, f64, bool)> = Vec::new(); // cid, weight, dist, speed, plat
-            for e in self.combatants.iter().filter(|e| e.side != side && e.hp > 0.0) {
+            for e in self
+                .combatants
+                .iter()
+                .filter(|e| e.side != side && e.hp > 0.0)
+            {
                 let d = (e.pos - pos).length();
                 if d <= band {
                     cands.push((e.cid, e.max_hp.max(1.0), d, e.speed(), e.platform));
@@ -776,14 +857,27 @@ impl TacticalState {
                 .unwrap_or((1.0, ShipKind::Corvette, String::new()));
             // Damage: offense mult × attack weight × calibration × affinity ×
             // variance; opening-window techs boost the first steps.
-            let aff = if plat { 1.0 } else { hull_affinity(kind, crate::module::weapon_family(family)) };
-            let opening = if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 };
+            let aff = if plat {
+                1.0
+            } else {
+                hull_affinity(kind, crate::module::weapon_family(family))
+            };
+            let opening = if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus {
+                OPENING_BONUS
+            } else {
+                1.0
+            };
             let raid_mult = if raid { RAID_DMG_MULT } else { 1.0 };
             let base = mult * aw * HIT_DMG_CAL * aff * opening * raid_mult;
             match family {
                 DamageType::Torpedo => {
                     let dmg = base * self.rng.range(DMG_VAR.0, DMG_VAR.1);
-                    self.torpedoes.push(Torpedo { side, pos, target: tcid, dmg });
+                    self.torpedoes.push(Torpedo {
+                        side,
+                        pos,
+                        target: tcid,
+                        dmg,
+                    });
                     self.combatants[i].cooldowns.torpedo = TORP_COOLDOWN;
                 }
                 DamageType::Beam | DamageType::Driver => {
@@ -849,12 +943,19 @@ impl TacticalState {
     /// along; the rest fill to [`crate::combat::KEYFRAME_SHIP_CAP`] in stable
     /// cid order. Live torpedoes summarize as per-side salvos (centroid + n).
     pub fn keyframe(&self, deaths: Vec<crate::combat::KfDeath>) -> crate::combat::Keyframe {
-        use crate::combat::{KfSalvo, KfShip, KEYFRAME_SHIP_CAP};
+        use crate::combat::{KEYFRAME_SHIP_CAP, KfSalvo, KfShip};
         let mut ships: Vec<KfShip> = Vec::new();
         // Capitals (and platforms) first — the theater must never lose them.
         for c in &self.combatants {
             if c.platform || crate::ship::requires_hull_unlock(c.kind) {
-                ships.push(KfShip { side: c.side, kind: c.kind, x: c.pos.x as f32, y: c.pos.y as f32, hp: (c.hp / c.max_hp) as f32, plat: c.platform });
+                ships.push(KfShip {
+                    side: c.side,
+                    kind: c.kind,
+                    x: c.pos.x as f32,
+                    y: c.pos.y as f32,
+                    hp: (c.hp / c.max_hp) as f32,
+                    plat: c.platform,
+                });
             }
         }
         for c in &self.combatants {
@@ -862,7 +963,14 @@ impl TacticalState {
                 break;
             }
             if !c.platform && !crate::ship::requires_hull_unlock(c.kind) {
-                ships.push(KfShip { side: c.side, kind: c.kind, x: c.pos.x as f32, y: c.pos.y as f32, hp: (c.hp / c.max_hp) as f32, plat: false });
+                ships.push(KfShip {
+                    side: c.side,
+                    kind: c.kind,
+                    x: c.pos.x as f32,
+                    y: c.pos.y as f32,
+                    hp: (c.hp / c.max_hp) as f32,
+                    plat: false,
+                });
             }
         }
         let mut torpedoes: Vec<KfSalvo> = Vec::new();
@@ -874,9 +982,18 @@ impl TacticalState {
             let n = fish.len() as u32;
             let cx = fish.iter().map(|t| t.pos.x).sum::<f64>() / n as f64;
             let cy = fish.iter().map(|t| t.pos.y).sum::<f64>() / n as f64;
-            torpedoes.push(KfSalvo { side, x: cx as f32, y: cy as f32, n });
+            torpedoes.push(KfSalvo {
+                side,
+                x: cx as f32,
+                y: cy as f32,
+                n,
+            });
         }
-        crate::combat::Keyframe { ships, torpedoes, deaths }
+        crate::combat::Keyframe {
+            ships,
+            torpedoes,
+            deaths,
+        }
     }
 
     /// Damage into a combatant, with PER-HIT armor mitigation (Reflective vs
@@ -885,7 +1002,11 @@ impl TacticalState {
     /// Credits `dealt` to the firing side.
     fn apply_damage(&mut self, cid: u32, dmg: f64, out: &mut StepOutcome, by_side: u8) {
         if let Some(c) = self.combatants.iter_mut().find(|c| c.cid == cid) {
-            let soft = if !c.platform && c.kind.attack_weight() <= 0.0 { CIVILIAN_SOFT } else { 1.0 };
+            let soft = if !c.platform && c.kind.attack_weight() <= 0.0 {
+                CIVILIAN_SOFT
+            } else {
+                1.0
+            };
             let dealt = dmg * soft;
             c.hp -= dealt;
             out.dealt[by_side as usize] += dealt;
@@ -909,17 +1030,29 @@ impl TacticalState {
             Role::Withdraw => {
                 // Burn for the disengage edge, directly away from the enemy.
                 let away = c.pos - enemy_centroid;
-                let dir = if away.length() > 1e-9 { away.normalized() } else { self.bearing * if c.side == 0 { 1.0 } else { -1.0 } };
+                let dir = if away.length() > 1e-9 {
+                    away.normalized()
+                } else {
+                    self.bearing * if c.side == 0 { 1.0 } else { -1.0 }
+                };
                 c.pos + dir * 400.0
             }
             Role::Anchor => {
                 // Hold the line's center: defenders at the anchor, attackers at
                 // their rally (bearing standoff shrunk to the beam band).
-                let rally = if c.side == 0 { self.bearing * (BEAM_RANGE * 0.85) } else { Vec2::new(0.0, 0.0) };
+                let rally = if c.side == 0 {
+                    self.bearing * (BEAM_RANGE * 0.85)
+                } else {
+                    Vec2::new(0.0, 0.0)
+                };
                 // Civilians tuck BEHIND the rally, away from the enemy.
                 if c.kind.attack_weight() <= 0.0 {
                     let away = rally - enemy_centroid;
-                    let dir = if away.length() > 1e-9 { away.normalized() } else { self.bearing };
+                    let dir = if away.length() > 1e-9 {
+                        away.normalized()
+                    } else {
+                        self.bearing
+                    };
                     return rally + dir * 250.0;
                 }
                 rally
@@ -935,7 +1068,11 @@ impl TacticalState {
                 if from.length() <= band * 1.15 {
                     return c.pos; // in band — hold and fire
                 }
-                let dir = if from.length() > 1e-9 { from.normalized() } else { self.bearing };
+                let dir = if from.length() > 1e-9 {
+                    from.normalized()
+                } else {
+                    self.bearing
+                };
                 inside_ring_point(near, dir, band, 1.0)
             }
             Role::Screen => {
@@ -945,12 +1082,22 @@ impl TacticalState {
                     .combatants
                     .iter()
                     .filter(|h| h.side == c.side && !h.platform)
-                    .max_by(|a, b| a.max_hp.partial_cmp(&b.max_hp).unwrap_or(std::cmp::Ordering::Equal))
+                    .max_by(|a, b| {
+                        a.max_hp
+                            .partial_cmp(&b.max_hp)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
                     .map(|h| h.pos)
                     .unwrap_or(c.pos);
-                let threat = self.torpedo_threat_centroid(1 - c.side).unwrap_or(enemy_centroid);
+                let threat = self
+                    .torpedo_threat_centroid(1 - c.side)
+                    .unwrap_or(enemy_centroid);
                 let axis = threat - heavy;
-                let dir = if axis.length() > 1e-9 { axis.normalized() } else { self.bearing };
+                let dir = if axis.length() > 1e-9 {
+                    axis.normalized()
+                } else {
+                    self.bearing
+                };
                 heavy + dir * (PD_RADIUS * 0.9)
             }
             Role::Skirmish => {
@@ -962,10 +1109,18 @@ impl TacticalState {
                 let band = self.preferred_band(c);
                 let near = self.nearest_enemy(i).unwrap_or(enemy_centroid);
                 let from = c.pos - near;
-                let dir = if from.length() > 1e-9 { from.normalized() } else { self.bearing };
+                let dir = if from.length() > 1e-9 {
+                    from.normalized()
+                } else {
+                    self.bearing
+                };
                 // Rotate ~0.5 rad ahead around the target (cid parity picks the
                 // orbit direction, so a squadron doesn't conga in one file).
-                let (s, co) = if c.cid.is_multiple_of(2) { (0.48f64.sin(), 0.48f64.cos()) } else { (-(0.48f64.sin()), 0.48f64.cos()) };
+                let (s, co) = if c.cid.is_multiple_of(2) {
+                    (0.48f64.sin(), 0.48f64.cos())
+                } else {
+                    (-(0.48f64.sin()), 0.48f64.cos())
+                };
                 let ahead = Vec2::new(dir.x * co - dir.y * s, dir.x * s + dir.y * co);
                 let sign = if c.cid.is_multiple_of(2) { 1.0 } else { -1.0 };
                 inside_ring_point(near, ahead, band * 0.95, sign)
@@ -996,7 +1151,12 @@ impl TacticalState {
     }
 
     fn centroid(&self, side: u8) -> Option<Vec2> {
-        let pts: Vec<Vec2> = self.combatants.iter().filter(|c| c.side == side && c.hp > 0.0).map(|c| c.pos).collect();
+        let pts: Vec<Vec2> = self
+            .combatants
+            .iter()
+            .filter(|c| c.side == side && c.hp > 0.0)
+            .map(|c| c.pos)
+            .collect();
         if pts.is_empty() {
             return None;
         }
@@ -1008,7 +1168,11 @@ impl TacticalState {
         let pts: Vec<Vec2> = self
             .combatants
             .iter()
-            .filter(|c| c.side == enemy_side && c.hp > 0.0 && Loadout::from_key(&c.stack).offense().0 == DamageType::Torpedo)
+            .filter(|c| {
+                c.side == enemy_side
+                    && c.hp > 0.0
+                    && Loadout::from_key(&c.stack).offense().0 == DamageType::Torpedo
+            })
             .map(|c| c.pos)
             .collect();
         if pts.is_empty() {
@@ -1080,12 +1244,19 @@ pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
     if scouts[1] > 0 {
         *out.d_losses.entry(ShipKind::Scout).or_insert(0) += scouts[1];
     }
-    let start = [st.side_hp(0, false).max(1e-9), st.side_hp(1, false).max(1e-9)];
+    let start = [
+        st.side_hp(0, false).max(1e-9),
+        st.side_hp(1, false).max(1e-9),
+    ];
     while out.steps < MAX_PROJ_STEPS {
         let step_out = st.step(setup.raid, [SideMods::default(), SideMods::default()]);
         out.steps += 1;
         for (side, losses) in step_out.losses.iter().enumerate() {
-            let tgt = if side == 0 { &mut out.a_losses } else { &mut out.d_losses };
+            let tgt = if side == 0 {
+                &mut out.a_losses
+            } else {
+                &mut out.d_losses
+            };
             for (k, n) in &losses.per_kind {
                 *tgt.entry(*k).or_insert(0) += n;
             }
@@ -1110,7 +1281,11 @@ pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
         }
     }
     for c in st.combatants.iter().filter(|c| !c.platform) {
-        let tgt = if c.side == 0 { &mut out.a_survivors } else { &mut out.d_survivors };
+        let tgt = if c.side == 0 {
+            &mut out.a_survivors
+        } else {
+            &mut out.d_survivors
+        };
         *tgt.entry(c.kind).or_insert(0) += 1;
     }
     let a_alive = st.alive(0) > 0;
@@ -1146,9 +1321,20 @@ pub struct Distribution {
 /// 300v300 echelon fight samples 8).
 pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distribution {
     let ships: u32 = (setup.a.len() + setup.d.len()) as u32;
-    let k = if ships > 150 { k.min(8) } else if ships > 60 { k.min(16) } else { k.max(1) };
+    let k = if ships > 150 {
+        k.min(8)
+    } else if ships > 60 {
+        k.min(16)
+    } else {
+        k.max(1)
+    };
     let mut outs: Vec<SimOutcome> = (0..k)
-        .map(|i| simulate_engagement(setup, base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+        .map(|i| {
+            simulate_engagement(
+                setup,
+                base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            )
+        })
         .collect();
     let wins = outs.iter().filter(|o| o.a_won).count();
     let band = |outs: &[SimOutcome], side_a: bool| -> Vec<LossBand> {
@@ -1166,11 +1352,20 @@ pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distri
             .map(|kind| {
                 let mut v: Vec<u32> = outs
                     .iter()
-                    .map(|o| (if side_a { &o.a_losses } else { &o.d_losses }).get(&kind).copied().unwrap_or(0))
+                    .map(|o| {
+                        (if side_a { &o.a_losses } else { &o.d_losses })
+                            .get(&kind)
+                            .copied()
+                            .unwrap_or(0)
+                    })
                     .collect();
                 v.sort_unstable();
                 let q = |p: f64| v[((v.len() - 1) as f64 * p).round() as usize];
-                LossBand { kind, lo: q(0.25), hi: q(0.75) }
+                LossBand {
+                    kind,
+                    lo: q(0.25),
+                    hi: q(0.75),
+                }
             })
             .collect()
     };
@@ -1179,7 +1374,13 @@ pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distri
     // Median rollout by total attacker losses (stable order → deterministic).
     outs.sort_by_key(|o| o.a_losses.values().sum::<u32>());
     let median = outs[outs.len() / 2].clone();
-    Distribution { runs: k, a_win_pct: wins as f64 / k as f64, a_bands, d_bands, median }
+    Distribution {
+        runs: k,
+        a_win_pct: wins as f64 / k as f64,
+        a_bands,
+        d_bands,
+        median,
+    }
 }
 
 /// The role a hull takes at unpack — kind + loadout (+ side anchoring). A
@@ -1238,17 +1439,45 @@ mod tests {
         }
         out
     }
-    fn setup(a: &[(ShipKind, &str, u32)], d: &[(ShipKind, &str, u32)], ar: Option<f64>, dr: Option<f64>) -> ProjSetup {
-        ProjSetup { a: fleet_of(1, a), d: fleet_of(2, d), a_retreat: ar, d_retreat: dr, ..Default::default() }
+    fn setup(
+        a: &[(ShipKind, &str, u32)],
+        d: &[(ShipKind, &str, u32)],
+        ar: Option<f64>,
+        dr: Option<f64>,
+    ) -> ProjSetup {
+        ProjSetup {
+            a: fleet_of(1, a),
+            d: fleet_of(2, d),
+            a_retreat: ar,
+            d_retreat: dr,
+            ..Default::default()
+        }
     }
 
-    fn open_plain(a: &[(ShipKind, &str, u32)], d: &[(ShipKind, &str, u32)], seed: u64) -> TacticalState {
-        TacticalState::open(seed, 99, &fleet_of(1, a), &fleet_of(2, d), 0, 0.0, Vec2::new(1.0, 0.0))
+    fn open_plain(
+        a: &[(ShipKind, &str, u32)],
+        d: &[(ShipKind, &str, u32)],
+        seed: u64,
+    ) -> TacticalState {
+        TacticalState::open(
+            seed,
+            99,
+            &fleet_of(1, a),
+            &fleet_of(2, d),
+            0,
+            0.0,
+            Vec2::new(1.0, 0.0),
+        )
     }
 
     /// EV instrument: HP a fixed defender loses over `steps` steps under a
     /// fixed attacker — no retreat, no completion; open, step N, measure.
-    fn hp_lost(a: &[(ShipKind, &str, u32)], d: &[(ShipKind, &str, u32)], steps: u64, seed: u64) -> f64 {
+    fn hp_lost(
+        a: &[(ShipKind, &str, u32)],
+        d: &[(ShipKind, &str, u32)],
+        steps: u64,
+        seed: u64,
+    ) -> f64 {
         let mut st = open_plain(a, d, seed);
         let start = st.side_hp(1, false);
         for _ in 0..steps {
@@ -1267,12 +1496,26 @@ mod tests {
 
     #[test]
     fn same_seed_same_outcome_and_dice_are_live() {
-        let s = setup(&[(ShipKind::Raider, "", 8)], &[(ShipKind::Corvette, "", 6)], Some(0.4), Some(0.4));
+        let s = setup(
+            &[(ShipKind::Raider, "", 8)],
+            &[(ShipKind::Corvette, "", 6)],
+            Some(0.4),
+            Some(0.4),
+        );
         // Byte-identical replay: the projection is pure over (setup, seed).
-        assert_eq!(simulate_engagement(&s, 777), simulate_engagement(&s, 777), "same seed → identical outcome");
+        assert_eq!(
+            simulate_engagement(&s, 777),
+            simulate_engagement(&s, 777),
+            "same seed → identical outcome"
+        );
         // …and the dice are LIVE: across seeds a mirror fight's losses and
         // durations genuinely vary.
-        let m = setup(&[(ShipKind::Raider, "", 8)], &[(ShipKind::Raider, "", 8)], None, None);
+        let m = setup(
+            &[(ShipKind::Raider, "", 8)],
+            &[(ShipKind::Raider, "", 8)],
+            None,
+            None,
+        );
         let mut totals: Vec<(u32, u64)> = (0..20)
             .map(|i| {
                 let o = simulate_engagement(&m, 900 + i);
@@ -1281,7 +1524,10 @@ mod tests {
             .collect();
         totals.sort_unstable();
         totals.dedup();
-        assert!(totals.len() > 1, "different seeds produce different outcomes (bounded spice, not a constant)");
+        assert!(
+            totals.len() > 1,
+            "different seeds produce different outcomes (bounded spice, not a constant)"
+        );
     }
 
     // --- 2. calibration as a distribution --------------------------------------
@@ -1290,8 +1536,15 @@ mod tests {
     fn reference_duration_is_a_tight_band_inside_the_strategic_window() {
         // The reference fight: equal 10v10 raider squadrons, both retreating at
         // half strength — 100 seeded runs.
-        let s = setup(&[(ShipKind::Raider, "", 10)], &[(ShipKind::Raider, "", 10)], Some(0.5), Some(0.5));
-        let mut steps: Vec<u64> = (0..100).map(|i| simulate_engagement(&s, 1_000 + i).steps).collect();
+        let s = setup(
+            &[(ShipKind::Raider, "", 10)],
+            &[(ShipKind::Raider, "", 10)],
+            Some(0.5),
+            Some(0.5),
+        );
+        let mut steps: Vec<u64> = (0..100)
+            .map(|i| simulate_engagement(&s, 1_000 + i).steps)
+            .collect();
         steps.sort_unstable();
         let median = steps[steps.len() / 2] as f64;
         // AMENDED with §arena discipline (2026-07): the compact in-arena
@@ -1299,17 +1552,34 @@ mod tests {
         // spread than the old wide-swing dance — the law is re-pinned at
         // ±35% (the hard 45s-window assert below still caps the worst seed);
         // still a consistent battle clock for the strategic layer.
-        let within = steps.iter().filter(|&&t| (t as f64 - median).abs() <= median * 0.35).count();
-        assert!(within >= 90, "≥90% of seeds within ±35% of the median (got {within}/100 around {median})");
+        let within = steps
+            .iter()
+            .filter(|&&t| (t as f64 - median).abs() <= median * 0.35)
+            .count();
+        assert!(
+            within >= 90,
+            "≥90% of seeds within ±35% of the median (got {within}/100 around {median})"
+        );
         // The reference fight fits WELL inside the playtest strategic window
         // (45 s target at the 2 Hz playtest cadence) — asserted on the WORST
         // seed, so no ordinary equal fight ever trips the hard-stop valve.
-        let worst = *steps.last().unwrap() as f64 * TAC_STEP_TICKS_FAST as f64 / crate::config::TICK_HZ as f64;
-        assert!(worst < 45.0, "even the slowest reference fight ({worst:.1}s) resolves inside the 45s playtest window");
+        let worst = *steps.last().unwrap() as f64 * TAC_STEP_TICKS_FAST as f64
+            / crate::config::TICK_HZ as f64;
+        assert!(
+            worst < 45.0,
+            "even the slowest reference fight ({worst:.1}s) resolves inside the 45s playtest window"
+        );
         // Duration scales with what's fielded: a corvette-line mirror (more HP
         // per gun) grinds much longer than the raider skirmish.
-        let c = setup(&[(ShipKind::Corvette, "", 10)], &[(ShipKind::Corvette, "", 10)], Some(0.5), Some(0.5));
-        let mut csteps: Vec<u64> = (0..40).map(|i| simulate_engagement(&c, 2_000 + i).steps).collect();
+        let c = setup(
+            &[(ShipKind::Corvette, "", 10)],
+            &[(ShipKind::Corvette, "", 10)],
+            Some(0.5),
+            Some(0.5),
+        );
+        let mut csteps: Vec<u64> = (0..40)
+            .map(|i| simulate_engagement(&c, 2_000 + i).steps)
+            .collect();
         csteps.sort_unstable();
         assert!(
             csteps[csteps.len() / 2] as f64 > median * 1.5,
@@ -1326,15 +1596,28 @@ mod tests {
         // RELATIVE stddev of own losses strictly shrinks 3v3 → 20v20 → 60v60
         // (measured ≈ 0.67 → 0.41 → 0.29; margins below are generous).
         let rel = |n: u32| -> f64 {
-            let s = setup(&[(ShipKind::Corvette, "", n)], &[(ShipKind::Corvette, "", n)], None, None);
+            let s = setup(
+                &[(ShipKind::Corvette, "", n)],
+                &[(ShipKind::Corvette, "", n)],
+                None,
+                None,
+            );
             let losses: Vec<f64> = (0..60)
-                .map(|i| simulate_engagement(&s, 5_000 + i).a_losses.values().sum::<u32>() as f64)
+                .map(|i| {
+                    simulate_engagement(&s, 5_000 + i)
+                        .a_losses
+                        .values()
+                        .sum::<u32>() as f64
+                })
                 .collect();
             let (m, sd) = mean_sd(&losses);
             sd / m.max(1e-9)
         };
         let (r3, r20, r60) = (rel(3), rel(20), rel(60));
-        assert!(r3 > r20 * 1.1 && r20 > r60 * 1.1, "relative spread strictly shrinks with scale ({r3:.3} > {r20:.3} > {r60:.3})");
+        assert!(
+            r3 > r20 * 1.1 && r20 > r60 * 1.1,
+            "relative spread strictly shrinks with scale ({r3:.3} > {r20:.3} > {r60:.3})"
+        );
     }
 
     // --- 4. the counter matrix in expectation -----------------------------------
@@ -1345,7 +1628,14 @@ mod tests {
         // the window, isolating the mitigation math), 120 seeds per cell.
         let ev = |amod: &str, dmod: &str, steps: u64| -> f64 {
             let v: Vec<f64> = (0..120)
-                .map(|i| hp_lost(&[(ShipKind::Raider, amod, 6)], &[(ShipKind::Battleship, dmod, 2)], steps, 30_000 + i))
+                .map(|i| {
+                    hp_lost(
+                        &[(ShipKind::Raider, amod, 6)],
+                        &[(ShipKind::Battleship, dmod, 2)],
+                        steps,
+                        30_000 + i,
+                    )
+                })
                 .collect();
             mean_sd(&v).0
         };
@@ -1353,15 +1643,34 @@ mod tests {
         let (beam_bare, driver_bare) = (ev("", "", 8), ev("mass_driver", "", 8));
         // Reflective cuts beam EV by ~REFLECT_BLUNT and leaves driver alone.
         let beam_cut = ev("", refl, 8) / beam_bare;
-        assert!((beam_cut - (1.0 - crate::module::REFLECT_BLUNT)).abs() < 0.05, "reflective cuts beam EV by ~REFLECT_BLUNT (ratio {beam_cut:.3})");
-        assert!((ev("mass_driver", refl, 8) / driver_bare - 1.0).abs() < 0.02, "reflective leaves driver EV alone");
+        assert!(
+            (beam_cut - (1.0 - crate::module::REFLECT_BLUNT)).abs() < 0.05,
+            "reflective cuts beam EV by ~REFLECT_BLUNT (ratio {beam_cut:.3})"
+        );
+        assert!(
+            (ev("mass_driver", refl, 8) / driver_bare - 1.0).abs() < 0.02,
+            "reflective leaves driver EV alone"
+        );
         // Whipple mirrors for driver; beams pass it untouched.
         let driver_cut = ev("mass_driver", whip, 8) / driver_bare;
-        assert!((driver_cut - (1.0 - crate::module::WHIPPLE_BLUNT)).abs() < 0.05, "whipple cuts driver EV by ~WHIPPLE_BLUNT (ratio {driver_cut:.3})");
-        assert!((ev("", whip, 8) / beam_bare - 1.0).abs() < 0.02, "whipple leaves beam EV alone");
+        assert!(
+            (driver_cut - (1.0 - crate::module::WHIPPLE_BLUNT)).abs() < 0.05,
+            "whipple cuts driver EV by ~WHIPPLE_BLUNT (ratio {driver_cut:.3})"
+        );
+        assert!(
+            (ev("", whip, 8) / beam_bare - 1.0).abs() < 0.02,
+            "whipple leaves beam EV alone"
+        );
         // Torpedo EV is unmoved by EITHER armor (longer window — flight time).
-        let (tb, tr, tw) = (ev("torpedo_rack", "", 20), ev("torpedo_rack", refl, 20), ev("torpedo_rack", whip, 20));
-        assert!((tr / tb - 1.0).abs() < 0.02 && (tw / tb - 1.0).abs() < 0.02, "armor is no defense against torpedoes ({tb:.0}/{tr:.0}/{tw:.0})");
+        let (tb, tr, tw) = (
+            ev("torpedo_rack", "", 20),
+            ev("torpedo_rack", refl, 20),
+            ev("torpedo_rack", whip, 20),
+        );
+        assert!(
+            (tr / tb - 1.0).abs() < 0.02 && (tw / tb - 1.0).abs() < 0.02,
+            "armor is no defense against torpedoes ({tb:.0}/{tr:.0}/{tw:.0})"
+        );
     }
 
     #[test]
@@ -1374,20 +1683,31 @@ mod tests {
                 .map(|i| {
                     let mut st = open_plain(
                         &[(ShipKind::Raider, "torpedo_rack", 8)],
-                        &[(ShipKind::Battleship, "", 1), (ShipKind::Corvette, screen_mod, 4)],
+                        &[
+                            (ShipKind::Battleship, "", 1),
+                            (ShipKind::Corvette, screen_mod, 4),
+                        ],
                         60_000 + i,
                     );
                     for _ in 0..20 {
                         st.step(false, [SideMods::default(), SideMods::default()]);
                     }
-                    let bb: f64 = st.combatants.iter().filter(|c| c.side == 1 && c.kind == ShipKind::Battleship).map(|c| c.hp).sum();
+                    let bb: f64 = st
+                        .combatants
+                        .iter()
+                        .filter(|c| c.side == 1 && c.kind == ShipKind::Battleship)
+                        .map(|c| c.hp)
+                        .sum();
                     ShipKind::Battleship.hull_mass() - bb
                 })
                 .collect();
             mean_sd(&v).0
         };
         let (bare, screened) = (heavy_loss(""), heavy_loss("point_defense_screen"));
-        assert!(screened < bare * 0.5, "an interposed PD screen halves the heavy's torpedo losses ({screened:.0} vs {bare:.0})");
+        assert!(
+            screened < bare * 0.5,
+            "an interposed PD screen halves the heavy's torpedo losses ({screened:.0} vs {bare:.0})"
+        );
     }
 
     // --- 5. emergence ------------------------------------------------------------
@@ -1395,25 +1715,65 @@ mod tests {
     #[test]
     fn to_hit_tracks_mass_and_speed() {
         // The curve IS the design: torpedoes near-guarantee against capitals…
-        let t_titan = to_hit(DamageType::Torpedo, ShipKind::Titan.hull_mass(), ShipKind::Titan.max_speed());
-        let t_corv = to_hit(DamageType::Torpedo, ShipKind::Corvette.hull_mass(), ShipKind::Corvette.max_speed());
-        assert!(t_titan >= 0.90, "a seeker near-guarantees against a Titan ({t_titan:.2})");
-        assert!(t_titan > 3.0 * t_corv, "…and struggles against small fast hulls ({t_titan:.2} vs {t_corv:.2})");
+        let t_titan = to_hit(
+            DamageType::Torpedo,
+            ShipKind::Titan.hull_mass(),
+            ShipKind::Titan.max_speed(),
+        );
+        let t_corv = to_hit(
+            DamageType::Torpedo,
+            ShipKind::Corvette.hull_mass(),
+            ShipKind::Corvette.max_speed(),
+        );
+        assert!(
+            t_titan >= 0.90,
+            "a seeker near-guarantees against a Titan ({t_titan:.2})"
+        );
+        assert!(
+            t_titan > 3.0 * t_corv,
+            "…and struggles against small fast hulls ({t_titan:.2} vs {t_corv:.2})"
+        );
         // Drivers are brutal against big slow hulls, poor against darters.
-        let d_titan = to_hit(DamageType::Driver, ShipKind::Titan.hull_mass(), ShipKind::Titan.max_speed());
-        let d_corv = to_hit(DamageType::Driver, ShipKind::Corvette.hull_mass(), ShipKind::Corvette.max_speed());
-        assert!(d_titan > 3.0 * d_corv, "drivers punish barns, whiff on darters ({d_titan:.2} vs {d_corv:.2})");
+        let d_titan = to_hit(
+            DamageType::Driver,
+            ShipKind::Titan.hull_mass(),
+            ShipKind::Titan.max_speed(),
+        );
+        let d_corv = to_hit(
+            DamageType::Driver,
+            ShipKind::Corvette.hull_mass(),
+            ShipKind::Corvette.max_speed(),
+        );
+        assert!(
+            d_titan > 3.0 * d_corv,
+            "drivers punish barns, whiff on darters ({d_titan:.2} vs {d_corv:.2})"
+        );
         // Beams track well — the flattest family across the same spread.
-        let b_titan = to_hit(DamageType::Beam, ShipKind::Titan.hull_mass(), ShipKind::Titan.max_speed());
-        let b_corv = to_hit(DamageType::Beam, ShipKind::Corvette.hull_mass(), ShipKind::Corvette.max_speed());
-        assert!(b_titan / b_corv < t_titan / t_corv, "beams are the least mass/speed-sensitive family");
+        let b_titan = to_hit(
+            DamageType::Beam,
+            ShipKind::Titan.hull_mass(),
+            ShipKind::Titan.max_speed(),
+        );
+        let b_corv = to_hit(
+            DamageType::Beam,
+            ShipKind::Corvette.hull_mass(),
+            ShipKind::Corvette.max_speed(),
+        );
+        assert!(
+            b_titan / b_corv < t_titan / t_corv,
+            "beams are the least mass/speed-sensitive family"
+        );
         // And speed protects WITHIN a hull: a corvette at a dead stop is
         // strictly easier to hit than one darting at flank speed. (Measured on
         // the corvette — a Titan's driver solution is already at the 0.95
         // clamp whether it moves or not, which is itself the point.)
         assert!(
             to_hit(DamageType::Driver, ShipKind::Corvette.hull_mass(), 0.0)
-                > to_hit(DamageType::Driver, ShipKind::Corvette.hull_mass(), ShipKind::Corvette.max_speed()),
+                > to_hit(
+                    DamageType::Driver,
+                    ShipKind::Corvette.hull_mass(),
+                    ShipKind::Corvette.max_speed()
+                ),
             "a stalled ship is easier to hit than a darting one"
         );
         assert_eq!(
@@ -1428,14 +1788,34 @@ mod tests {
         // The canonical answer exists: a Titan costs 480 Armaments; a torpedo
         // raider (hull 15 + rack 10) costs 25 → 19 raiders ≈ the same war
         // budget. The pack wins >60% of 100 seeded runs (measured 94%)…
-        let pack = setup(&[(ShipKind::Raider, "torpedo_rack", 19)], &[(ShipKind::Titan, "", 1)], None, None);
-        let wins = (0..100).filter(|i| simulate_engagement(&pack, 80_000 + i).a_won).count();
-        assert!(wins > 60, "the equal-cost wolfpack beats the lone unescorted Titan ({wins}/100)");
+        let pack = setup(
+            &[(ShipKind::Raider, "torpedo_rack", 19)],
+            &[(ShipKind::Titan, "", 1)],
+            None,
+            None,
+        );
+        let wins = (0..100)
+            .filter(|i| simulate_engagement(&pack, 80_000 + i).a_won)
+            .count();
+        assert!(
+            wins > 60,
+            "the equal-cost wolfpack beats the lone unescorted Titan ({wins}/100)"
+        );
         // …while a two-thirds pack mostly dies (measured 1%): the answer is a
         // real fleet commitment, not a cheap counter.
-        let small = setup(&[(ShipKind::Raider, "torpedo_rack", 12)], &[(ShipKind::Titan, "", 1)], None, None);
-        let small_wins = (0..100).filter(|i| simulate_engagement(&small, 81_000 + i).a_won).count();
-        assert!(small_wins < 30, "an under-sized pack loses ({small_wins}/100)");
+        let small = setup(
+            &[(ShipKind::Raider, "torpedo_rack", 12)],
+            &[(ShipKind::Titan, "", 1)],
+            None,
+            None,
+        );
+        let small_wins = (0..100)
+            .filter(|i| simulate_engagement(&small, 81_000 + i).a_won)
+            .count();
+        assert!(
+            small_wins < 30,
+            "an under-sized pack loses ({small_wins}/100)"
+        );
     }
 
     // --- 6. the boundary -----------------------------------------------------------
@@ -1446,13 +1826,30 @@ mod tests {
         // the in-arena population never exceeds the cap while waves drain in.
         let big = &[(ShipKind::Corvette, "", 350u32)][..];
         let mut st = open_plain(big, big, 4242);
-        let in_arena = |st: &TacticalState, side: u8| st.combatants.iter().filter(|c| c.side == side && !c.platform).count();
-        assert_eq!(in_arena(&st, 0), MAX_COMBATANTS_PER_SIDE, "the arena opens at the cap");
-        assert_eq!(st.alive(0), 350, "held waves still count as alive (containment: no ship vanishes)");
+        let in_arena = |st: &TacticalState, side: u8| {
+            st.combatants
+                .iter()
+                .filter(|c| c.side == side && !c.platform)
+                .count()
+        };
+        assert_eq!(
+            in_arena(&st, 0),
+            MAX_COMBATANTS_PER_SIDE,
+            "the arena opens at the cap"
+        );
+        assert_eq!(
+            st.alive(0),
+            350,
+            "held waves still count as alive (containment: no ship vanishes)"
+        );
         let mut committed = false;
         for _ in 0..120 {
             st.step(false, [SideMods::default(), SideMods::default()]);
-            assert!(in_arena(&st, 0) <= MAX_COMBATANTS_PER_SIDE && in_arena(&st, 1) <= MAX_COMBATANTS_PER_SIDE, "the cap holds every step");
+            assert!(
+                in_arena(&st, 0) <= MAX_COMBATANTS_PER_SIDE
+                    && in_arena(&st, 1) <= MAX_COMBATANTS_PER_SIDE,
+                "the cap holds every step"
+            );
             if st.waves[0].len() < 50 {
                 committed = true;
                 break;
@@ -1464,7 +1861,11 @@ mod tests {
         for _ in 0..st.step {
             st2.step(false, [SideMods::default(), SideMods::default()]);
         }
-        assert_eq!(st.side_hp(0, false), st2.side_hp(0, false), "wave commitment is deterministic");
+        assert_eq!(
+            st.side_hp(0, false),
+            st2.side_hp(0, false),
+            "wave commitment is deterministic"
+        );
         assert_eq!(st.alive(1), st2.alive(1));
     }
 
@@ -1475,7 +1876,10 @@ mod tests {
     fn writeback_is_per_hull_and_keyed_by_identity() {
         let mut st = open_plain(
             &[(ShipKind::Raider, "", 6)],
-            &[(ShipKind::Corvette, "whipple_armor", 2), (ShipKind::Corvette, "", 3)],
+            &[
+                (ShipKind::Corvette, "whipple_armor", 2),
+                (ShipKind::Corvette, "", 3),
+            ],
             991,
         );
         for _ in 0..6 {
@@ -1494,7 +1898,11 @@ mod tests {
             assert_eq!(*hp, c.hp, "hp is the hull's own, never a share");
         }
         // Somebody actually bled — the test would be vacuous otherwise.
-        assert!(wb.iter().any(|(_, _, hp)| *hp < ShipKind::Corvette.hull_mass()), "the defenders took damage");
+        assert!(
+            wb.iter()
+                .any(|(_, _, hp)| *hp < ShipKind::Corvette.hull_mass()),
+            "the defenders took damage"
+        );
         // Rows are sorted (fleet, ship): deterministic application order.
         let mut sorted = wb.clone();
         sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -1516,9 +1924,19 @@ mod tests {
         let wb = st.hp_writeback();
         for (f, id) in held.iter().take(10) {
             // Only assert on hulls STILL held (some may have committed as slots freed).
-            if st.waves[0].iter().any(|w| w.fleet == *f && w.ship.id == *id) {
-                let (_, _, hp) = wb.iter().find(|(wf, wi, _)| wf == f && wi == id).expect("held hulls report too");
-                assert_eq!(*hp, ShipKind::Raider.hull_mass(), "a hull that never fought is undamaged");
+            if st.waves[0]
+                .iter()
+                .any(|w| w.fleet == *f && w.ship.id == *id)
+            {
+                let (_, _, hp) = wb
+                    .iter()
+                    .find(|(wf, wi, _)| wf == f && wi == id)
+                    .expect("held hulls report too");
+                assert_eq!(
+                    *hp,
+                    ShipKind::Raider.hull_mass(),
+                    "a hull that never fought is undamaged"
+                );
             }
         }
     }
@@ -1539,7 +1957,11 @@ mod tests {
             live.step(false, [SideMods::default(), SideMods::default()]);
             restored.step(false, [SideMods::default(), SideMods::default()]);
         }
-        assert_eq!(live.side_hp(0, false), restored.side_hp(0, false), "the restored fight continues identically");
+        assert_eq!(
+            live.side_hp(0, false),
+            restored.side_hp(0, false),
+            "the restored fight continues identically"
+        );
         assert_eq!(live.side_hp(1, false), restored.side_hp(1, false));
         assert_eq!(live.torpedoes.len(), restored.torpedoes.len());
         assert_eq!(live.alive(0), restored.alive(0));
@@ -1549,7 +1971,11 @@ mod tests {
     fn raid_smash_and_grab_resolves_fast() {
         // The folded probe: a lone raider overpowers a lone convoy inside the
         // raid window — approach run included — and survives untouched.
-        let mut st = open_plain(&[(ShipKind::Raider, "", 1)], &[(ShipKind::Convoy, "", 1)], 42);
+        let mut st = open_plain(
+            &[(ShipKind::Raider, "", 1)],
+            &[(ShipKind::Convoy, "", 1)],
+            42,
+        );
         let mut convoy_died = false;
         for _ in 0..30u64 {
             st.step(true, [SideMods::default(), SideMods::default()]);
@@ -1559,7 +1985,11 @@ mod tests {
             }
         }
         assert!(convoy_died, "the convoy dies inside 30 raid steps");
-        assert_eq!(st.alive(0), 1, "the smash-and-grab costs the raider nothing");
+        assert_eq!(
+            st.alive(0),
+            1,
+            "the smash-and-grab costs the raider nothing"
+        );
     }
 
     // --- 7. perf ---------------------------------------------------------------------
@@ -1578,13 +2008,26 @@ mod tests {
             st.step(false, [SideMods::default(), SideMods::default()]);
         }
         let per_step = t0.elapsed().as_secs_f64() / 10.0;
-        assert!(per_step < 0.5, "a 300v300 step stays under 500 ms ({:.1} ms)", per_step * 1_000.0);
-        let s = setup(&[(ShipKind::Raider, "", 10)], &[(ShipKind::Corvette, "", 8)], Some(0.5), Some(0.5));
+        assert!(
+            per_step < 0.5,
+            "a 300v300 step stays under 500 ms ({:.1} ms)",
+            per_step * 1_000.0
+        );
+        let s = setup(
+            &[(ShipKind::Raider, "", 10)],
+            &[(ShipKind::Corvette, "", 8)],
+            Some(0.5),
+            Some(0.5),
+        );
         let t0 = std::time::Instant::now();
         let dist = project_distribution(&s, 42, 32);
         let took = t0.elapsed().as_secs_f64();
         assert_eq!(dist.runs, 32);
-        assert!(took < 5.0, "a k=32 reference projection stays under 5 s ({:.0} ms)", took * 1_000.0);
+        assert!(
+            took < 5.0,
+            "a k=32 reference projection stays under 5 s ({:.0} ms)",
+            took * 1_000.0
+        );
     }
 }
 #[cfg(test)]
@@ -1598,7 +2041,14 @@ mod arena_discipline {
     fn fighting_ships_stay_inside_the_ring() {
         // §roster: ten real hulls a side, all at full health.
         let side = |base: u32| -> Vec<(EntityId, Ship)> {
-            (0..10).map(|i| (EntityId(1), Ship::new(base + i, ShipKind::Raider, Loadout::default()))).collect()
+            (0..10)
+                .map(|i| {
+                    (
+                        EntityId(1),
+                        Ship::new(base + i, ShipKind::Raider, Loadout::default()),
+                    )
+                })
+                .collect()
         };
         let (a, d) = (side(0), side(100));
         for seed in 0..8u64 {
@@ -1632,7 +2082,10 @@ mod arena_discipline {
                 .filter(|c| matches!(c.role, Role::Withdraw))
                 .map(|c| c.pos.length())
                 .fold(0.0f64, f64::max);
-            assert!(out > ARENA_RADIUS, "seed {seed}: withdrawers cross the ring (got {out:.0})");
+            assert!(
+                out > ARENA_RADIUS,
+                "seed {seed}: withdrawers cross the ring (got {out:.0})"
+            );
         }
     }
 }

@@ -5,7 +5,7 @@
 //! player's name/token) and handed to the sim via commands, so a reconnecting
 //! player resolves to the same corporation (needed for M6 reconnect).
 
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 /// Identifies a player's corporation. Assigned outside the sim and passed in
 /// via [`crate::command::Command`].
@@ -190,4 +190,3 @@ mod tests {
         assert_eq!(restored, PlayerId(42));
     }
 }
-

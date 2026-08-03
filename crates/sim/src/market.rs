@@ -93,7 +93,10 @@ pub struct Market {
 }
 
 fn default_external_liquidity() -> BTreeMap<Commodity, f64> {
-    Commodity::ALL.into_iter().map(|c| (c, EXTERNAL_LIQUIDITY_CAP)).collect()
+    Commodity::ALL
+        .into_iter()
+        .map(|c| (c, EXTERNAL_LIQUIDITY_CAP))
+        .collect()
 }
 
 /// A quantity-aware executable quote. `unit_price` is the AVERAGE across the
@@ -113,8 +116,10 @@ impl Default for Market {
 
 impl Market {
     pub fn new() -> Self {
-        let base: BTreeMap<Commodity, f64> =
-            Commodity::ALL.into_iter().map(|c| (c, base_price(c))).collect();
+        let base: BTreeMap<Commodity, f64> = Commodity::ALL
+            .into_iter()
+            .map(|c| (c, base_price(c)))
+            .collect();
         Market {
             prices: base.clone(),
             base,
@@ -137,12 +142,22 @@ impl Market {
     /// state, not a guarantee at a delayed command center: the server serves it
     /// through the same lagged ticker as price.
     pub fn available_to_buy(&self, c: Commodity) -> u32 {
-        self.external_supply.get(&c).copied().unwrap_or(EXTERNAL_LIQUIDITY_CAP).floor().max(0.0) as u32
+        self.external_supply
+            .get(&c)
+            .copied()
+            .unwrap_or(EXTERNAL_LIQUIDITY_CAP)
+            .floor()
+            .max(0.0) as u32
     }
 
     /// Units of immediate external demand still available for corporate sales.
     pub fn available_to_sell(&self, c: Commodity) -> u32 {
-        self.external_demand.get(&c).copied().unwrap_or(EXTERNAL_LIQUIDITY_CAP).floor().max(0.0) as u32
+        self.external_demand
+            .get(&c)
+            .copied()
+            .unwrap_or(EXTERNAL_LIQUIDITY_CAP)
+            .floor()
+            .max(0.0) as u32
     }
 
     /// Quote a buy without mutating the market. Exponential integration makes
@@ -150,14 +165,22 @@ impl Market {
     /// any sequence whose quantities sum to `q` (up to floating-point residue).
     pub fn quote_buy(&self, c: Commodity, units: u32) -> MarketQuote {
         if units == 0 {
-            return MarketQuote { unit_price: self.price(c), total: 0.0, next_price: self.price(c) };
+            return MarketQuote {
+                unit_price: self.price(c),
+                total: 0.0,
+                next_price: self.price(c),
+            };
         }
         let p = self.price(c);
         let x = units as f64 / DEPTH;
         let next_price = p * x.exp();
         let unspread_total = p * DEPTH * x.exp_m1();
         let total = unspread_total * (1.0 + HALF_SPREAD);
-        MarketQuote { unit_price: total / units as f64, total, next_price }
+        MarketQuote {
+            unit_price: total / units as f64,
+            total,
+            next_price,
+        }
     }
 
     /// Quote a sell without mutation. Above the standing-price floor this is the
@@ -166,7 +189,11 @@ impl Market {
     /// than integrating through impossible negative/near-zero prices.
     pub fn quote_sell(&self, c: Commodity, units: u32) -> MarketQuote {
         if units == 0 {
-            return MarketQuote { unit_price: self.price(c), total: 0.0, next_price: self.price(c) };
+            return MarketQuote {
+                unit_price: self.price(c),
+                total: 0.0,
+                next_price: self.price(c),
+            };
         }
         let p = self.price(c).max(PRICE_FLOOR);
         let units_f = units as f64;
@@ -180,29 +207,51 @@ impl Market {
             (curved + flat, PRICE_FLOOR)
         };
         let total = unspread_total * (1.0 - HALF_SPREAD);
-        MarketQuote { unit_price: total / units_f, total, next_price: next_price.max(PRICE_FLOOR) }
+        MarketQuote {
+            unit_price: total / units_f,
+            total,
+            next_price: next_price.max(PRICE_FLOOR),
+        }
     }
 
     /// Execute a quantity-aware buy and return its average-price quote.
     pub fn execute_buy(&mut self, c: Commodity, units: u32) -> f64 {
-        debug_assert!(units <= self.available_to_buy(c), "external supply must be checked before execution");
+        debug_assert!(
+            units <= self.available_to_buy(c),
+            "external supply must be checked before execution"
+        );
         let quote = self.quote_buy(c, units);
         self.prices.insert(c, quote.next_price);
-        let supply = self.external_supply.entry(c).or_insert(EXTERNAL_LIQUIDITY_CAP);
+        let supply = self
+            .external_supply
+            .entry(c)
+            .or_insert(EXTERNAL_LIQUIDITY_CAP);
         *supply = (*supply - units as f64).max(0.0);
-        let demand = self.external_demand.entry(c).or_insert(EXTERNAL_LIQUIDITY_CAP);
+        let demand = self
+            .external_demand
+            .entry(c)
+            .or_insert(EXTERNAL_LIQUIDITY_CAP);
         *demand = (*demand + units as f64).min(EXTERNAL_LIQUIDITY_CAP);
         quote.unit_price
     }
 
     /// Execute a quantity-aware sell and return its average-price quote.
     pub fn execute_sell(&mut self, c: Commodity, units: u32) -> f64 {
-        debug_assert!(units <= self.available_to_sell(c), "external demand must be checked before execution");
+        debug_assert!(
+            units <= self.available_to_sell(c),
+            "external demand must be checked before execution"
+        );
         let quote = self.quote_sell(c, units);
         self.prices.insert(c, quote.next_price);
-        let demand = self.external_demand.entry(c).or_insert(EXTERNAL_LIQUIDITY_CAP);
+        let demand = self
+            .external_demand
+            .entry(c)
+            .or_insert(EXTERNAL_LIQUIDITY_CAP);
         *demand = (*demand - units as f64).max(0.0);
-        let supply = self.external_supply.entry(c).or_insert(EXTERNAL_LIQUIDITY_CAP);
+        let supply = self
+            .external_supply
+            .entry(c)
+            .or_insert(EXTERNAL_LIQUIDITY_CAP);
         *supply = (*supply + units as f64).min(EXTERNAL_LIQUIDITY_CAP);
         quote.unit_price
     }
@@ -215,9 +264,15 @@ impl Market {
             let noise = p * rng.range(-0.015, 0.015);
             let np = (p + (base - p) * REVERSION + noise).max(PRICE_FLOOR);
             self.prices.insert(*c, np);
-            let supply = self.external_supply.entry(*c).or_insert(EXTERNAL_LIQUIDITY_CAP);
+            let supply = self
+                .external_supply
+                .entry(*c)
+                .or_insert(EXTERNAL_LIQUIDITY_CAP);
             *supply = (*supply + EXTERNAL_LIQUIDITY_REPLENISH).min(EXTERNAL_LIQUIDITY_CAP);
-            let demand = self.external_demand.entry(*c).or_insert(EXTERNAL_LIQUIDITY_CAP);
+            let demand = self
+                .external_demand
+                .entry(*c)
+                .or_insert(EXTERNAL_LIQUIDITY_CAP);
             *demand = (*demand + EXTERNAL_LIQUIDITY_REPLENISH).min(EXTERNAL_LIQUIDITY_CAP);
         }
     }
@@ -277,7 +332,11 @@ fn match_at_price(
     let mut by_order: BTreeMap<u64, u32> = BTreeMap::new();
     let mut volume = 0u32;
 
-    for buy in buys.iter().copied().filter(|o| o.limit_price >= price - 1e-9) {
+    for buy in buys
+        .iter()
+        .copied()
+        .filter(|o| o.limit_price >= price - 1e-9)
+    {
         let mut buy_left = buy.units;
         for (si, sell) in sells.iter().copied().enumerate() {
             if buy_left == 0 {
@@ -311,8 +370,18 @@ pub fn clear_call_auction(orders: &[LimitOrder], reference: f64) -> Option<Clear
         return None;
     }
     // Best price first; deterministic tie-break by id.
-    buys.sort_by(|a, b| b.limit_price.partial_cmp(&a.limit_price).unwrap().then(a.id.cmp(&b.id)));
-    sells.sort_by(|a, b| a.limit_price.partial_cmp(&b.limit_price).unwrap().then(a.id.cmp(&b.id)));
+    buys.sort_by(|a, b| {
+        b.limit_price
+            .partial_cmp(&a.limit_price)
+            .unwrap()
+            .then(a.id.cmp(&b.id))
+    });
+    sells.sort_by(|a, b| {
+        a.limit_price
+            .partial_cmp(&b.limit_price)
+            .unwrap()
+            .then(a.id.cmp(&b.id))
+    });
 
     // Candidate clearing prices: every limit price. Pick the one maximising the
     // matched volume (ties → lowest imbalance, then lowest price).
@@ -326,8 +395,19 @@ pub fn clear_call_auction(orders: &[LimitOrder], reference: f64) -> Option<Clear
     candidates.sort_by(|a, b| a.partial_cmp(b).unwrap());
     candidates.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
 
-    let demand = |p: f64| buys.iter().filter(|o| o.limit_price >= p - 1e-9).map(|o| o.units).sum::<u32>();
-    let supply = |p: f64| sells.iter().filter(|o| o.limit_price <= p + 1e-9).map(|o| o.units).sum::<u32>();
+    let demand = |p: f64| {
+        buys.iter()
+            .filter(|o| o.limit_price >= p - 1e-9)
+            .map(|o| o.units)
+            .sum::<u32>()
+    };
+    let supply = |p: f64| {
+        sells
+            .iter()
+            .filter(|o| o.limit_price <= p + 1e-9)
+            .map(|o| o.units)
+            .sum::<u32>()
+    };
 
     let mut best: Option<(f64, u32)> = None;
     for &p in &candidates {
@@ -366,7 +446,11 @@ mod economy_price_tests {
     fn processed_prices_clear_their_input_baskets() {
         let mut covered = std::collections::BTreeSet::new();
         for conv in &crate::production::CONVERTERS {
-            let input_cost: f64 = conv.inputs.iter().map(|(c, per_unit)| base_price(*c) * per_unit).sum();
+            let input_cost: f64 = conv
+                .inputs
+                .iter()
+                .map(|(c, per_unit)| base_price(*c) * per_unit)
+                .sum();
             assert!(
                 base_price(conv.output) > input_cost,
                 "{:?} base {} must clear its input basket {input_cost:.2}",
@@ -392,8 +476,14 @@ mod economy_price_tests {
         let sold_at = market.execute_sell(Commodity::Alloys, 400);
         let proceeds = sold_at * 400.0;
 
-        assert!(proceeds < buy_cost, "an immediate round trip must lose money");
-        assert!((market.price(Commodity::Alloys) - before).abs() < 1e-9, "reversing flow retraces the mid");
+        assert!(
+            proceeds < buy_cost,
+            "an immediate round trip must lose money"
+        );
+        assert!(
+            (market.price(Commodity::Alloys) - before).abs() < 1e-9,
+            "reversing flow retraces the mid"
+        );
         let expected_ratio = (1.0 - HALF_SPREAD) / (1.0 + HALF_SPREAD);
         assert!((proceeds / buy_cost - expected_ratio).abs() < 1e-12);
     }
@@ -409,7 +499,9 @@ mod economy_price_tests {
             .sum();
 
         assert!((whole_cost - sliced_cost).abs() < 1e-8);
-        assert!((whole.price(Commodity::Machinery) - sliced.price(Commodity::Machinery)).abs() < 1e-10);
+        assert!(
+            (whole.price(Commodity::Machinery) - sliced.price(Commodity::Machinery)).abs() < 1e-10
+        );
     }
 
     #[test]
@@ -451,7 +543,8 @@ mod economy_price_tests {
             limit(2, 7, Side::Sell, 10, 25.0),
             limit(3, 8, Side::Sell, 6, 25.0),
         ];
-        let clearing = clear_call_auction(&with_counterparty, 26.0).expect("the rival sale crosses");
+        let clearing =
+            clear_call_auction(&with_counterparty, 26.0).expect("the rival sale crosses");
         assert_eq!(clearing.fills, vec![(1, 6), (3, 6)]);
     }
 

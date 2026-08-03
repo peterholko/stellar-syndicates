@@ -152,7 +152,9 @@ pub fn band_value(deposits: &[Deposit]) -> f64 {
 /// §bodies: the iterator form — deposits live on bodies now, so callers sum
 /// over `StarSystem::all_deposits()`.
 pub fn band_value_iter<'a>(deposits: impl Iterator<Item = &'a Deposit>) -> f64 {
-    deposits.map(|d| d.richness * crate::market::base_price(d.resource)).sum()
+    deposits
+        .map(|d| d.richness * crate::market::base_price(d.resource))
+        .sum()
 }
 
 /// Bucket a system value against the stored tercile thresholds `(lo, hi)`.
@@ -188,13 +190,21 @@ mod tests {
     use crate::cargo::Commodity;
 
     fn dep(resource: Commodity, richness: f64) -> Deposit {
-        Deposit { resource, richness, reserves: None, accessibility: 0.5 }
+        Deposit {
+            resource,
+            richness,
+            reserves: None,
+            accessibility: 0.5,
+        }
     }
 
     /// band_value mirrors the bootstrap anchors (Σ richness × base_price).
     #[test]
     fn band_value_uses_the_bootstrap_anchors() {
-        let deps = vec![dep(Commodity::MetallicOre, 2.0), dep(Commodity::Alloys, 1.0)];
+        let deps = vec![
+            dep(Commodity::MetallicOre, 2.0),
+            dep(Commodity::Alloys, 1.0),
+        ];
         assert_eq!(band_value(&deps), 2.0 * 8.0 + 26.0);
         assert_eq!(band_value(&[]), 0.0);
     }

@@ -106,10 +106,7 @@ pub enum Command {
 
     /// Cancel one of this corporation's resting limit orders. The still-reserved
     /// credits or escrowed Market Warehouse goods are returned in full.
-    CancelLimitOrder {
-        player_id: PlayerId,
-        order_id: u64,
-    },
+    CancelLimitOrder { player_id: PlayerId, order_id: u64 },
 
     /// BOOK OUTBOUND FREIGHT (§TCA): hand `units` of a commodity to the Terran
     /// Charter Authority's scheduled common carrier for delivery from the
@@ -180,18 +177,12 @@ pub enum Command {
 
     /// Remove a standing order by id (no-op if absent). Does not recall any convoy
     /// it already dispatched. Instant local administration.
-    ClearStandingOrder {
-        player_id: PlayerId,
-        order_id: u32,
-    },
+    ClearStandingOrder { player_id: PlayerId, order_id: u32 },
 
     /// Dismiss a terminal order-loss row after its destruction news arrived.
     /// Only an order already marked lost and owned by this player can be removed;
     /// active signals cannot be cancelled through this bookkeeping command.
-    DismissLostOrder {
-        player_id: PlayerId,
-        order_id: u64,
-    },
+    DismissLostOrder { player_id: PlayerId, order_id: u64 },
 
     /// Set the corporation's fleet doctrine (§16) — the constrained, server-run
     /// combat & logistics policy ([`FleetDoctrine`]) that governs how autonomous
@@ -466,7 +457,10 @@ pub enum Command {
     },
 
     /// Empty a fleet's hold into the corp's Market Warehouse.
-    HubUnload { player_id: PlayerId, fleet_id: EntityId },
+    HubUnload {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+    },
 
     /// Move goods from one of the corp's OWNED systems' stockpiles into a
     /// fleet's hold (whole units).
@@ -479,7 +473,11 @@ pub enum Command {
     },
 
     /// Empty a fleet's hold into one of the corp's OWNED systems' stockpiles.
-    SystemUnload { player_id: PlayerId, fleet_id: EntityId, system: EntityId },
+    SystemUnload {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: EntityId,
+    },
 
     /// HAUL TO THE MARKET HUB: send a loaded fleet of the player's to the hub on
     /// a [`crate::ship::TradeMission::DeliverToWarehouse`] run — deposit into the
@@ -499,10 +497,7 @@ pub enum Command {
     /// restored. INSTANT, like its siblings `MarketBuy`/`BookFreightOut`: paying
     /// the Market Hub is a settlement, and settlement is correlation (§3), not a
     /// courier. Soft-rejects (free, owner-only) if the treasury can't cover it.
-    PayReinstatement {
-        player_id: PlayerId,
-        points: f64,
-    },
+    PayReinstatement { player_id: PlayerId, points: f64 },
 
     /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
     /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
@@ -567,12 +562,18 @@ pub enum Command {
     /// INVITE a corp into the caller's syndicate (founder-only). Records a pending
     /// invite the invitee accepts separately. Ignored unless the caller is the
     /// founder and the invitee is unaffiliated.
-    InviteToSyndicate { player_id: PlayerId, invitee: PlayerId },
+    InviteToSyndicate {
+        player_id: PlayerId,
+        invitee: PlayerId,
+    },
 
     /// ACCEPT a pending invitation to the named syndicate. Ignored unless the
     /// caller is unaffiliated, actually holds the invite, and the roster has room
     /// under the SIZE CAP.
-    AcceptSyndicateInvite { player_id: PlayerId, syndicate_id: SyndicateId },
+    AcceptSyndicateInvite {
+        player_id: PlayerId,
+        syndicate_id: SyndicateId,
+    },
 
     /// LEAVE the caller's syndicate. If the founder leaves, the seat passes to the
     /// next member; an emptied syndicate dissolves. Ignored if unaffiliated.

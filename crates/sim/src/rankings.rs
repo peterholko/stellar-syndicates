@@ -380,6 +380,9 @@ mod tests {
         m.insert(ShipKind::Raider, 2);
         m.insert(ShipKind::Convoy, 1);
         // 2 raiders (20 each) + 1 convoy (10) = 50.
-        assert_eq!(hull_sum(&m), 2.0 * ShipKind::Raider.hull() + ShipKind::Convoy.hull());
+        assert_eq!(
+            hull_sum(&m),
+            2.0 * ShipKind::Raider.hull() + ShipKind::Convoy.hull()
+        );
     }
 }

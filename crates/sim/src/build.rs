@@ -10,8 +10,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cargo::Commodity;
-use crate::module::ModuleKind;
 use crate::ids::{EntityId, PlayerId};
+use crate::module::ModuleKind;
 use crate::ship::ShipKind;
 
 /// What a build job produces on completion.
@@ -28,7 +28,9 @@ pub enum BuildKind {
     /// §economy Part 4: an Academy TRAINING COURSE — completes into one
     /// resident specialist of `kind` (if the system is still held). Rides the
     /// same build queue; holds no slot, needs no shipyard.
-    Train { specialist: crate::specialist::SpecialistKind },
+    Train {
+        specialist: crate::specialist::SpecialistKind,
+    },
     /// §modules Part B3: manufacture one MODULE — completes into the system's
     /// module ledger (if still held). Needs an Armaments Complex ≥ 1; holds no
     /// slot; rides the same build queue.
@@ -334,62 +336,264 @@ const HZ: u64 = TICK_HZ as u64;
 // **Alloys + Fuel** (gather them across systems, the §step1 "spread of systems matters").
 
 /// Convoy (bulk hauler): plain **Ore** — cheap, the workhorse you build at home.
-pub const CONVOY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Machinery, 10.0), (Commodity::Polymers, 10.0)], build_ticks: 12 * HZ };
+pub const CONVOY_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 25.0),
+        (Commodity::Machinery, 10.0),
+        (Commodity::Polymers, 10.0),
+    ],
+    build_ticks: 12 * HZ,
+};
 /// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
-pub const RAIDER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 20.0), (Commodity::Electronics, 12.0), (Commodity::Armaments, 15.0), (Commodity::Fuel, 10.0)], build_ticks: 10 * HZ };
+pub const RAIDER_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 20.0),
+        (Commodity::Electronics, 12.0),
+        (Commodity::Armaments, 15.0),
+        (Commodity::Fuel, 10.0),
+    ],
+    build_ticks: 10 * HZ,
+};
 /// Scout: cheap **Ore + Fuel** — the entry unit, buildable at the home turn one
 /// (cheap enough that a caught scout is an acceptable loss).
-pub const SCOUT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 15.0), (Commodity::Electronics, 8.0), (Commodity::Fuel, 8.0)], build_ticks: 8 * HZ };
+pub const SCOUT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 15.0),
+        (Commodity::Electronics, 8.0),
+        (Commodity::Fuel, 8.0),
+    ],
+    build_ticks: 8 * HZ,
+};
 /// Corvette: **Ore + Alloys** — the dedicated defender; military industry.
-pub const CORVETTE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 12.0), (Commodity::Armaments, 12.0)], build_ticks: 14 * HZ };
+pub const CORVETTE_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 25.0),
+        (Commodity::Electronics, 12.0),
+        (Commodity::Armaments, 12.0),
+    ],
+    build_ticks: 14 * HZ,
+};
 /// Colony Ship: **Ore + Alloys + Provisions** (colonists eat) — absorbs the old
 /// instant-claim economics into a physical, raidable investment (§ships part 3).
-pub const COLONY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 15.0), (Commodity::Polymers, 20.0), (Commodity::Provisions, 30.0), (Commodity::Fuel, 15.0)], build_ticks: 30 * HZ };
+pub const COLONY_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 45.0),
+        (Commodity::Machinery, 15.0),
+        (Commodity::Polymers, 20.0),
+        (Commodity::Provisions, 30.0),
+        (Commodity::Fuel, 15.0),
+    ],
+    build_ticks: 30 * HZ,
+};
 // §ladder: CAPITAL recipes — Rare-Elements-and-Machinery-heavy by design (the
 // deep-crust economy is the capital economy), and build TIMES measured in
 // hours-to-days: a capital under construction is a season event and a siege
 // target. Combat weight per Armaments spent peaks at Destroyer/Cruiser and
 // declines up the ladder (the efficiency invariant, pinned by test). Tunable.
 const HOUR_TICKS: u64 = 3600 * HZ;
-pub const DESTROYER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 60.0), (Commodity::Electronics, 25.0), (Commodity::Armaments, 30.0), (Commodity::Machinery, 20.0), (Commodity::Fuel, 15.0)], build_ticks: 8 * HOUR_TICKS };
-pub const CRUISER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 120.0), (Commodity::Electronics, 50.0), (Commodity::Armaments, 55.0), (Commodity::Machinery, 45.0), (Commodity::RareElements, 12.0), (Commodity::Fuel, 30.0)], build_ticks: 18 * HOUR_TICKS };
-pub const BATTLESHIP_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 260.0), (Commodity::Electronics, 100.0), (Commodity::Armaments, 120.0), (Commodity::Machinery, 100.0), (Commodity::RareElements, 35.0), (Commodity::Fuel, 60.0)], build_ticks: 48 * HOUR_TICKS };
-pub const DREADNOUGHT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 520.0), (Commodity::Electronics, 210.0), (Commodity::Armaments, 230.0), (Commodity::Machinery, 220.0), (Commodity::RareElements, 90.0), (Commodity::Fuel, 120.0)], build_ticks: 96 * HOUR_TICKS };
-pub const TITAN_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 1100.0), (Commodity::Electronics, 450.0), (Commodity::Armaments, 480.0), (Commodity::Machinery, 500.0), (Commodity::RareElements, 220.0), (Commodity::Fuel, 260.0)], build_ticks: 192 * HOUR_TICKS };
+pub const DESTROYER_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 60.0),
+        (Commodity::Electronics, 25.0),
+        (Commodity::Armaments, 30.0),
+        (Commodity::Machinery, 20.0),
+        (Commodity::Fuel, 15.0),
+    ],
+    build_ticks: 8 * HOUR_TICKS,
+};
+pub const CRUISER_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 120.0),
+        (Commodity::Electronics, 50.0),
+        (Commodity::Armaments, 55.0),
+        (Commodity::Machinery, 45.0),
+        (Commodity::RareElements, 12.0),
+        (Commodity::Fuel, 30.0),
+    ],
+    build_ticks: 18 * HOUR_TICKS,
+};
+pub const BATTLESHIP_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 260.0),
+        (Commodity::Electronics, 100.0),
+        (Commodity::Armaments, 120.0),
+        (Commodity::Machinery, 100.0),
+        (Commodity::RareElements, 35.0),
+        (Commodity::Fuel, 60.0),
+    ],
+    build_ticks: 48 * HOUR_TICKS,
+};
+pub const DREADNOUGHT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 520.0),
+        (Commodity::Electronics, 210.0),
+        (Commodity::Armaments, 230.0),
+        (Commodity::Machinery, 220.0),
+        (Commodity::RareElements, 90.0),
+        (Commodity::Fuel, 120.0),
+    ],
+    build_ticks: 96 * HOUR_TICKS,
+};
+pub const TITAN_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 1100.0),
+        (Commodity::Electronics, 450.0),
+        (Commodity::Armaments, 480.0),
+        (Commodity::Machinery, 500.0),
+        (Commodity::RareElements, 220.0),
+        (Commodity::Fuel, 260.0),
+    ],
+    build_ticks: 192 * HOUR_TICKS,
+};
 // §economy Part 5: the FULL industrial-web cost table (design doc). Everything
 // advanced needs MACHINERY, and early Machinery comes from Sol — the intended
 // loop is extract → sell raws → buy Machinery → build industry → make your own.
 // they need Machinery/Electronics, purchasable at the hub (Sol's off-map
 // industry lists all 12 from day one).
-pub const MINING_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
-pub const VOLATILE_HARVESTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
-pub const BIOHARVESTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)], build_ticks: 18 * HZ };
-pub const SMELTER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
-pub const ELECTRONICS_FABRICATOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 20.0), (Commodity::Silicates, 10.0)], build_ticks: 20 * HZ };
-pub const CHEMICAL_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
-pub const FUEL_REFINERY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
-pub const AGROPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)], build_ticks: 20 * HZ };
-pub const MACHINE_WORKS_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
-pub const ARMAMENTS_COMPLEX_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 22 * HZ };
-pub const SHIPYARD_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 20.0), (Commodity::Alloys, 40.0), (Commodity::Electronics, 15.0)], build_ticks: 20 * HZ };
+pub const MINING_COMPLEX_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)],
+    build_ticks: 18 * HZ,
+};
+pub const VOLATILE_HARVESTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)],
+    build_ticks: 18 * HZ,
+};
+pub const BIOHARVESTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)],
+    build_ticks: 18 * HZ,
+};
+pub const SMELTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)],
+    build_ticks: 20 * HZ,
+};
+pub const ELECTRONICS_FABRICATOR_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 15.0),
+        (Commodity::Alloys, 20.0),
+        (Commodity::Silicates, 10.0),
+    ],
+    build_ticks: 20 * HZ,
+};
+pub const CHEMICAL_WORKS_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)],
+    build_ticks: 20 * HZ,
+};
+pub const FUEL_REFINERY_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)],
+    build_ticks: 20 * HZ,
+};
+pub const AGROPLEX_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 15.0), (Commodity::Alloys, 30.0)],
+    build_ticks: 20 * HZ,
+};
+pub const MACHINE_WORKS_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 20.0),
+        (Commodity::Alloys, 40.0),
+        (Commodity::Electronics, 15.0),
+    ],
+    build_ticks: 22 * HZ,
+};
+pub const ARMAMENTS_COMPLEX_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 20.0),
+        (Commodity::Alloys, 40.0),
+        (Commodity::Electronics, 15.0),
+    ],
+    build_ticks: 22 * HZ,
+};
+pub const SHIPYARD_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 20.0),
+        (Commodity::Alloys, 40.0),
+        (Commodity::Electronics, 15.0),
+    ],
+    build_ticks: 20 * HZ,
+};
 // §yards: the yard family climbs steeply — a Drydock is roughly twice a Shipyard
 // and a Slipway roughly twice again, with Armaments entering at the Drydock and
 // Rare Elements at the Slipway (the capital economy, mirroring the hull recipes).
 // The Foundry is the cheap one: outfitting is not construction. All Tunable.
-pub const NAVAL_DRYDOCK_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 35.0), (Commodity::Alloys, 70.0), (Commodity::Electronics, 25.0), (Commodity::Armaments, 15.0)], build_ticks: 30 * HZ };
-pub const CAPITAL_SLIPWAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 70.0), (Commodity::Alloys, 150.0), (Commodity::Electronics, 55.0), (Commodity::Armaments, 40.0), (Commodity::RareElements, 15.0)], build_ticks: 45 * HZ };
-pub const ORDNANCE_FOUNDRY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Machinery, 18.0), (Commodity::Alloys, 35.0), (Commodity::Electronics, 20.0)], build_ticks: 18 * HZ };
-pub const HABITAT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Polymers, 20.0), (Commodity::Machinery, 8.0)], build_ticks: 20 * HZ };
-pub const ORBITAL_WAREHOUSE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)], build_ticks: 15 * HZ };
-pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Electronics, 18.0), (Commodity::Machinery, 10.0)], build_ticks: 18 * HZ };
-pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 35.0), (Commodity::Electronics, 15.0), (Commodity::Armaments, 15.0)], build_ticks: 22 * HZ };
-pub const ACADEMY_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 25.0), (Commodity::Electronics, 15.0), (Commodity::Provisions, 20.0)], build_ticks: 20 * HZ };
+pub const NAVAL_DRYDOCK_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 35.0),
+        (Commodity::Alloys, 70.0),
+        (Commodity::Electronics, 25.0),
+        (Commodity::Armaments, 15.0),
+    ],
+    build_ticks: 30 * HZ,
+};
+pub const CAPITAL_SLIPWAY_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 70.0),
+        (Commodity::Alloys, 150.0),
+        (Commodity::Electronics, 55.0),
+        (Commodity::Armaments, 40.0),
+        (Commodity::RareElements, 15.0),
+    ],
+    build_ticks: 45 * HZ,
+};
+pub const ORDNANCE_FOUNDRY_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Machinery, 18.0),
+        (Commodity::Alloys, 35.0),
+        (Commodity::Electronics, 20.0),
+    ],
+    build_ticks: 18 * HZ,
+};
+pub const HABITAT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 30.0),
+        (Commodity::Polymers, 20.0),
+        (Commodity::Machinery, 8.0),
+    ],
+    build_ticks: 20 * HZ,
+};
+pub const ORBITAL_WAREHOUSE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)],
+    build_ticks: 15 * HZ,
+};
+pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Electronics, 18.0), (Commodity::Machinery, 10.0)],
+    build_ticks: 18 * HZ,
+};
+pub const DEFENSE_PLATFORM_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 35.0),
+        (Commodity::Electronics, 15.0),
+        (Commodity::Armaments, 15.0),
+    ],
+    build_ticks: 22 * HZ,
+};
+pub const ACADEMY_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 25.0),
+        (Commodity::Electronics, 15.0),
+        (Commodity::Provisions, 20.0),
+    ],
+    build_ticks: 20 * HZ,
+};
 /// §ground: a Garrison is armaments and people, not heavy industry — cheap
 /// enough that any colony can dig in, dear enough that doing it everywhere costs.
 /// §ground M7: a trooper is people and their kit, not heavy industry — built at
 /// a Garrison, and priced so an invasion is an investment rather than a whim.
-pub const TRANSPORT_RECIPE: Recipe = Recipe { costs: &[(Commodity::Alloys, 40.0), (Commodity::Armaments, 30.0), (Commodity::Provisions, 40.0), (Commodity::Fuel, 15.0)], build_ticks: 24 * HZ };
-pub const GARRISON_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 20.0), (Commodity::Alloys, 25.0), (Commodity::Provisions, 25.0)], build_ticks: 20 * HZ };
+pub const TRANSPORT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 40.0),
+        (Commodity::Armaments, 30.0),
+        (Commodity::Provisions, 40.0),
+        (Commodity::Fuel, 15.0),
+    ],
+    build_ticks: 24 * HZ,
+};
+pub const GARRISON_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Armaments, 20.0),
+        (Commodity::Alloys, 25.0),
+        (Commodity::Provisions, 25.0),
+    ],
+    build_ticks: 20 * HZ,
+};
 
 /// §economy Part 4: one Academy training course (Provisions feed the cohort,
 /// Electronics equip the lab). Costs live in `specialist::ACADEMY_TRAIN_COSTS`.
@@ -407,11 +611,30 @@ const MODULE_BUILD_TICKS: u64 = 10 * HZ;
 /// quicker than manufacturing the crate, and scales with how many hulls go in the
 /// yard at once (n ships ⇒ n × this). Tunable.
 pub const REFIT_TICKS_PER_SHIP: u64 = 3 * HZ;
-pub const MASS_DRIVER_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 8.0), (Commodity::Electronics, 4.0)], build_ticks: MODULE_BUILD_TICKS };
-pub const TORPEDO_RACK_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 10.0), (Commodity::Electronics, 6.0)], build_ticks: MODULE_BUILD_TICKS };
-pub const POINT_DEFENSE_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 6.0), (Commodity::Electronics, 8.0)], build_ticks: MODULE_BUILD_TICKS };
-pub const REFLECTIVE_PLATING_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 6.0), (Commodity::Silicates, 6.0), (Commodity::Electronics, 2.0)], build_ticks: MODULE_BUILD_TICKS };
-pub const WHIPPLE_ARMOR_RECIPE: Recipe = Recipe { costs: &[(Commodity::Armaments, 12.0), (Commodity::Machinery, 2.0)], build_ticks: MODULE_BUILD_TICKS };
+pub const MASS_DRIVER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Armaments, 8.0), (Commodity::Electronics, 4.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const TORPEDO_RACK_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Armaments, 10.0), (Commodity::Electronics, 6.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const POINT_DEFENSE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Armaments, 6.0), (Commodity::Electronics, 8.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const REFLECTIVE_PLATING_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Armaments, 6.0),
+        (Commodity::Silicates, 6.0),
+        (Commodity::Electronics, 2.0),
+    ],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const WHIPPLE_ARMOR_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Armaments, 12.0), (Commodity::Machinery, 2.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
 
 /// The recipe for one module of `kind`.
 pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
@@ -424,22 +647,14 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
     }
 }
 
-/// §comms-v2: a BUOY is the expensive, long-throw size of full lane relay.
-static HYPERSPACE_BUOY_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 50.0), (Commodity::Electronics, 100.0), (Commodity::Fuel, 30.0)],
-    build_ticks: 60 * HZ,
-};
-
-/// §comms-v2: a REPEATER is the cheap, short-throw size of the same full relay.
-static HYPERSPACE_REPEATER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 15.0), (Commodity::Electronics, 15.0), (Commodity::Fuel, 10.0)],
-    build_ticks: 25 * HZ,
-};
-
 /// A SENSOR is the expensive one: it is an instrument, and it is what lets you
 /// see a rival coming before they arrive.
 static DEEP_SPACE_SENSOR_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 60.0), (Commodity::Electronics, 120.0), (Commodity::Fuel, 40.0)],
+    costs: &[
+        (Commodity::Alloys, 60.0),
+        (Commodity::Electronics, 120.0),
+        (Commodity::Fuel, 40.0),
+    ],
     build_ticks: 70 * HZ,
 };
 
@@ -447,7 +662,11 @@ static DEEP_SPACE_SENSOR_RECIPE: Recipe = Recipe {
 /// heavy because that is what it is; priced so the hull is a real one-time
 /// purchase while each emplacement's kit stays the recurring cost.
 static BUILDER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 60.0), (Commodity::Machinery, 25.0), (Commodity::Fuel, 20.0)],
+    costs: &[
+        (Commodity::Alloys, 60.0),
+        (Commodity::Machinery, 25.0),
+        (Commodity::Fuel, 20.0),
+    ],
     build_ticks: 50 * HZ,
 };
 
@@ -456,39 +675,55 @@ static BUILDER_RECIPE: Recipe = Recipe {
 /// longer ride the yard queue, a Construction Ship carries them out.
 pub fn emplacement_recipe(kind: crate::emplace::EmplacementKind) -> &'static Recipe {
     match kind {
-        crate::emplace::EmplacementKind::HyperspaceBuoy => &HYPERSPACE_BUOY_RECIPE,
-        crate::emplace::EmplacementKind::HyperspaceRepeater => &HYPERSPACE_REPEATER_RECIPE,
         crate::emplace::EmplacementKind::DeepSpaceSensor => &DEEP_SPACE_SENSOR_RECIPE,
-        crate::emplace::EmplacementKind::HyperspaceSensor => &HYPERSPACE_SENSOR_RECIPE,
     }
 }
 
-/// Priced between the buoy and the deep space instrument: it is a tripwire, and
-/// a tripwire you cannot afford to string is not a mechanic.
-static HYPERSPACE_SENSOR_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 50.0), (Commodity::Electronics, 90.0), (Commodity::Fuel, 30.0)],
-    build_ticks: 60 * HZ,
-};
-
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
-        BuildKind::Ship { ship: ShipKind::Builder } => &BUILDER_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Convoy } => &CONVOY_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Raider } => &RAIDER_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Scout } => &SCOUT_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Corvette } => &CORVETTE_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Colony } => &COLONY_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Destroyer } => &DESTROYER_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Cruiser } => &CRUISER_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Battleship } => &BATTLESHIP_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Dreadnought } => &DREADNOUGHT_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Titan } => &TITAN_RECIPE,
-        BuildKind::Ship { ship: ShipKind::Transport } => &TRANSPORT_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Builder,
+        } => &BUILDER_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Convoy,
+        } => &CONVOY_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Raider,
+        } => &RAIDER_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Scout,
+        } => &SCOUT_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Corvette,
+        } => &CORVETTE_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Colony,
+        } => &COLONY_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Destroyer,
+        } => &DESTROYER_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Cruiser,
+        } => &CRUISER_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Battleship,
+        } => &BATTLESHIP_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Dreadnought,
+        } => &DREADNOUGHT_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Titan,
+        } => &TITAN_RECIPE,
+        BuildKind::Ship {
+            ship: ShipKind::Transport,
+        } => &TRANSPORT_RECIPE,
         // The Authority Freighter (§TCA) is TCA-only and never buildable: the
         // `BuildShip` handler soft-rejects it (via `ShipKind::is_buildable`) BEFORE
         // any recipe lookup, and no `BuildJob` for one can ever be enqueued, so this
         // arm is genuinely unreachable — it exists only for match exhaustiveness.
-        BuildKind::Ship { ship: ShipKind::Freighter } => {
+        BuildKind::Ship {
+            ship: ShipKind::Freighter,
+        } => {
             unreachable!("Freighter is TCA-only and never buildable — apply_build guards it")
         }
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
@@ -560,10 +795,10 @@ pub const PLATFORM_TIER_DEFENSE: f64 = 3.0;
 /// Left absolute it would have projected 2,200 against a 110,000 fleet bubble —
 /// the building would have been worthless, and the panel that now reports its
 /// reach as a number would have been reporting a lie.
-pub const SENSOR_ARRAY_BASE: f64 = 2200.0 * crate::lane::GALAXY_SCALE;
+pub const SENSOR_ARRAY_BASE: f64 = 2200.0 * crate::config::GALAXY_SCALE;
 /// Extra radius per tier past the first (+40% of base) — a tier-2 array outsees
 /// any ship. Tunable.
-pub const SENSOR_ARRAY_PER_TIER: f64 = 880.0 * crate::lane::GALAXY_SCALE;
+pub const SENSOR_ARRAY_PER_TIER: f64 = 880.0 * crate::config::GALAXY_SCALE;
 
 /// The sensor bubble radius an array of `tier` projects (0 = no array).
 pub fn sensor_array_radius(tier: u32) -> f64 {
@@ -755,10 +990,19 @@ mod tests {
         assert_eq!(old, StructureKind::OrbitalWarehouse);
         let new = serde_json::to_string(&StructureKind::OrbitalWarehouse).unwrap();
         assert_eq!(new, "\"orbital_warehouse\"");
-        assert_eq!(serde_json::from_str::<StructureKind>(&new).unwrap(), StructureKind::OrbitalWarehouse);
+        assert_eq!(
+            serde_json::from_str::<StructureKind>(&new).unwrap(),
+            StructureKind::OrbitalWarehouse
+        );
         // A build job queued under the old slug completes as the renamed structure.
-        let job: BuildKind = serde_json::from_str(r#"{"kind":"upgrade","upgrade":"depot"}"#).unwrap();
-        assert_eq!(job, BuildKind::Upgrade { upgrade: StructureKind::OrbitalWarehouse });
+        let job: BuildKind =
+            serde_json::from_str(r#"{"kind":"upgrade","upgrade":"depot"}"#).unwrap();
+        assert_eq!(
+            job,
+            BuildKind::Upgrade {
+                upgrade: StructureKind::OrbitalWarehouse
+            }
+        );
         // …and the slug() helper agrees with what serde writes.
         assert_eq!(StructureKind::OrbitalWarehouse.slug(), "orbital_warehouse");
     }
@@ -784,9 +1028,18 @@ mod tests {
         let n = eff(ShipKind::Dreadnought);
         let t = eff(ShipKind::Titan);
         let peak = d.max(c);
-        assert!(peak >= b && peak >= n && peak >= t, "the ladder peaks at Destroyer/Cruiser");
-        assert!(b > n && n > t, "efficiency strictly declines Battleship → Dreadnought → Titan ({b:.4} > {n:.4} > {t:.4})");
-        assert!(peak > t, "a Titan is the LEAST efficient Armaments spend on the ladder");
+        assert!(
+            peak >= b && peak >= n && peak >= t,
+            "the ladder peaks at Destroyer/Cruiser"
+        );
+        assert!(
+            b > n && n > t,
+            "efficiency strictly declines Battleship → Dreadnought → Titan ({b:.4} > {n:.4} > {t:.4})"
+        );
+        assert!(
+            peak > t,
+            "a Titan is the LEAST efficient Armaments spend on the ladder"
+        );
     }
 
     #[test]
@@ -795,21 +1048,52 @@ mod tests {
         // battle at the Drydock (1/2/3), the super-capitals at the Slipway (1/2)
         // — instead of one Shipyard running to tier 6. Build times 8h → 8d,
         // strictly rising, are unchanged.
-        assert_eq!(yard_for(ShipKind::Destroyer), (StructureKind::NavalDrydock, 1));
-        assert_eq!(yard_for(ShipKind::Cruiser), (StructureKind::NavalDrydock, 2));
-        assert_eq!(yard_for(ShipKind::Battleship), (StructureKind::NavalDrydock, 3));
-        assert_eq!(yard_for(ShipKind::Dreadnought), (StructureKind::CapitalSlipway, 1));
-        assert_eq!(yard_for(ShipKind::Titan), (StructureKind::CapitalSlipway, 2));
+        assert_eq!(
+            yard_for(ShipKind::Destroyer),
+            (StructureKind::NavalDrydock, 1)
+        );
+        assert_eq!(
+            yard_for(ShipKind::Cruiser),
+            (StructureKind::NavalDrydock, 2)
+        );
+        assert_eq!(
+            yard_for(ShipKind::Battleship),
+            (StructureKind::NavalDrydock, 3)
+        );
+        assert_eq!(
+            yard_for(ShipKind::Dreadnought),
+            (StructureKind::CapitalSlipway, 1)
+        );
+        assert_eq!(
+            yard_for(ShipKind::Titan),
+            (StructureKind::CapitalSlipway, 2)
+        );
         let ticks = |k: ShipKind| recipe_for(BuildKind::Ship { ship: k }).build_ticks;
-        assert_eq!(ticks(ShipKind::Destroyer), 8 * 3600 * HZ, "a Destroyer takes 8 hours");
-        assert_eq!(ticks(ShipKind::Titan), 192 * 3600 * HZ, "a Titan takes 8 days — a season event");
-        assert!(ticks(ShipKind::Destroyer) < ticks(ShipKind::Cruiser)
-            && ticks(ShipKind::Cruiser) < ticks(ShipKind::Battleship)
-            && ticks(ShipKind::Battleship) < ticks(ShipKind::Dreadnought)
-            && ticks(ShipKind::Dreadnought) < ticks(ShipKind::Titan));
+        assert_eq!(
+            ticks(ShipKind::Destroyer),
+            8 * 3600 * HZ,
+            "a Destroyer takes 8 hours"
+        );
+        assert_eq!(
+            ticks(ShipKind::Titan),
+            192 * 3600 * HZ,
+            "a Titan takes 8 days — a season event"
+        );
+        assert!(
+            ticks(ShipKind::Destroyer) < ticks(ShipKind::Cruiser)
+                && ticks(ShipKind::Cruiser) < ticks(ShipKind::Battleship)
+                && ticks(ShipKind::Battleship) < ticks(ShipKind::Dreadnought)
+                && ticks(ShipKind::Dreadnought) < ticks(ShipKind::Titan)
+        );
         // Rare-Elements enters at Cruiser and climbs steeply (the capital economy).
-        let re = |k: ShipKind| recipe_for(BuildKind::Ship { ship: k }).costs.iter()
-            .find(|(c, _)| *c == Commodity::RareElements).map(|(_, n)| *n).unwrap_or(0.0);
+        let re = |k: ShipKind| {
+            recipe_for(BuildKind::Ship { ship: k })
+                .costs
+                .iter()
+                .find(|(c, _)| *c == Commodity::RareElements)
+                .map(|(_, n)| *n)
+                .unwrap_or(0.0)
+        };
         assert_eq!(re(ShipKind::Destroyer), 0.0);
         assert!(re(ShipKind::Cruiser) > 0.0 && re(ShipKind::Titan) > re(ShipKind::Dreadnought));
     }
@@ -817,11 +1101,17 @@ mod tests {
     #[test]
     fn tier_ceiling_gates_the_prize_tiers_behind_research() {
         // No unlock (0) → the base cap of 4, exactly where colonies sit today.
-        assert_eq!(max_buildable_tier(StructureKind::MiningComplex, 0), BASE_MAX_STRUCTURE_TIER);
+        assert_eq!(
+            max_buildable_tier(StructureKind::MiningComplex, 0),
+            BASE_MAX_STRUCTURE_TIER
+        );
         assert_eq!(max_buildable_tier(StructureKind::Smelter, 0), 4);
         // A Tier-IV or Tier-V unlock lifts the ceiling to 6 (the two superlinear
         // prize tiers) — for every kind, uniformly.
-        assert_eq!(max_buildable_tier(StructureKind::MiningComplex, 4), RESEARCHED_MAX_STRUCTURE_TIER);
+        assert_eq!(
+            max_buildable_tier(StructureKind::MiningComplex, 4),
+            RESEARCHED_MAX_STRUCTURE_TIER
+        );
         assert_eq!(max_buildable_tier(StructureKind::Habitat, 5), 6);
         assert_eq!(max_buildable_tier(StructureKind::Shipyard, 4), 6);
         // The prize only ever RAISES the ceiling — never below the free base.

@@ -25,6 +25,10 @@ pub const DT: f64 = 1.0 / TICK_HZ as f64;
 /// is the guardrail, not the target.
 pub const C_SPEED_RATIO: f64 = 2.0;
 
+/// Galaxy-size multiplier. Kept independent of drive constants so tuning warp
+/// speed does not silently resize a generated chart.
+pub const GALAXY_SCALE: f64 = 50.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimConfig {
     /// Seed for all deterministic generation in this galaxy.
@@ -102,19 +106,9 @@ impl SimConfig {
         let player_count = player_count.max(1);
         // Radius grows ~sqrt(players): area scales with player count so density
         // of homes stays roughly constant.
-        // §hyperspace: the galaxy scales with the HYPERSPACE FACTOR so that
-        // information delay stays where it has always been.
-        //
-        // Calibrated on the FASTEST route: hub → rim along a trunk is ~20 s, the
-        // quickest news can possibly cross the map. Off-lane is then `LANE_MULT`
-        // times slower (~200 s) and normal space slower again — which is the
-        // intended shape, since the lane network is the information network and
-        // being off it should be genuinely remote.
-        //
-        // It also lands lane TRAVEL on today's pacing: a Convoy riding a trunk
-        // crosses the galaxy in ~200 s, exactly as it does sublight today.
-        let galaxy_radius =
-            4000.0 * (player_count as f64).sqrt() * crate::lane::GALAXY_SCALE;
+        // Preserve the established chart scale independently of the movement
+        // and information-speed tunables.
+        let galaxy_radius = 4000.0 * (player_count as f64).sqrt() * crate::config::GALAXY_SCALE;
         let cfg = SimConfig {
             seed,
             max_players: player_count,
@@ -127,10 +121,9 @@ impl SimConfig {
             // depend on c); only information delays shrink ~25%, freshening intel.
             c: 400.0,
             galaxy_radius,
-            // One starter-buoy throw from the Market Hub. Divide the nominal
-            // ring by the generator's outward jitter so even its outermost home
-            // remains within the buoy's physical 80,000-su reach.
-            home_ring_frac: crate::emplace::EmplacementKind::HyperspaceBuoy.throw()
+            // Preserve the lane-era chart geometry exactly. The 80,000-su
+            // nominal ring is now a generation constant, not a relay throw.
+            home_ring_frac: 80_000.0
                 / (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC)
                 / galaxy_radius,
             system_count: 12 + player_count * 4,
@@ -142,7 +135,7 @@ impl SimConfig {
             // bigger balance change than the rescale is meant to be. (System-scale
             // constants — blockade, docking, the hyperlimit, colony claim — do NOT
             // scale: a system stays the size it is, and only the gaps grow.)
-            sensor_range: 2200.0 * crate::lane::GALAXY_SCALE,
+            sensor_range: 2200.0 * crate::config::GALAXY_SCALE,
             // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
             // ~2700 s / 45 min — battles at the scale of light-delays + relief).
             battle_target_secs: default_battle_target_secs(),
@@ -232,16 +225,16 @@ mod light_invariant_tests {
     }
 
     #[test]
-    fn every_jittered_home_ring_stays_within_one_buoy_throw() {
-        let buoy_throw = crate::emplace::EmplacementKind::HyperspaceBuoy.throw();
+    fn every_jittered_home_ring_preserves_the_80k_chart_extent() {
+        let chart_extent = 80_000.0;
         for players in [1, 4, 12] {
             let cfg = SimConfig::for_players(1, players);
             let outermost_home = cfg.galaxy_radius
                 * cfg.home_ring_frac
                 * (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC);
             assert!(
-                (outermost_home - buoy_throw).abs() < 1e-9,
-                "{players} players: outer home {outermost_home} != buoy throw {buoy_throw}",
+                (outermost_home - chart_extent).abs() < 1e-9,
+                "{players} players: outer home {outermost_home} != {chart_extent}",
             );
         }
     }

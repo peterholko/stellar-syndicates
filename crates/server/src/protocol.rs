@@ -24,7 +24,7 @@ use sim::{
 /// evidence confirmations, and dismissing a learned loss are now on the wire.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -33,16 +33,16 @@ pub enum ClientMsg {
     /// First message a connection must send: identify as a player. The name is
     /// hashed server-side into a stable [`PlayerId`] so reconnecting with the
     /// same name resumes the same corporation.
-    Join { name: String },
+    Join {
+        name: String,
+    },
 
     /// Order one of the player's own ships to a destination. Travels at light
     /// speed to the ship (§6); the server attaches the issuing player.
-    MoveShip { ship_id: EntityId, dest: Vec2 },
-
-    /// UI-only, fog-safe route assistance for a prospective move. The reply is
-    /// computed from this player's served sighting, never the fleet's true
-    /// position, and does not enqueue an in-fiction order.
-    PreviewRoute { ship_id: EntityId, dest: Vec2 },
+    MoveShip {
+        ship_id: EntityId,
+        dest: Vec2,
+    },
 
     /// §emplacements: the named Construction Ship builds a structure WHERE IT
     /// IS PARKED — the player flies it to the spot first, then orders the
@@ -56,13 +56,21 @@ pub enum ClientMsg {
 
     /// §emplacements: send the named COMBATANT fleet to tear down a rival's
     /// structure. The sim validates ownership, teeth, and the ally rule.
-    DemolishEmplacement { fleet: EntityId, target: EntityId },
+    DemolishEmplacement {
+        fleet: EntityId,
+        target: EntityId,
+    },
 
     /// Commit one of the player's raiders to intercept a target ship (§8).
-    CommitRaid { raider_id: EntityId, target_id: EntityId },
+    CommitRaid {
+        raider_id: EntityId,
+        target_id: EntityId,
+    },
 
     /// Recall a raider (break off, return home). May arrive too late (§8).
-    RecallRaid { raider_id: EntityId },
+    RecallRaid {
+        raider_id: EntityId,
+    },
 
     /// Buy at the Global Market (§9, §TCA): instant settlement into the
     /// corp's warehouse. `ship_to` optionally hands the lot straight to Authority
@@ -89,10 +97,24 @@ pub enum ClientMsg {
     /// §TCA Part 5: player-convoy logistics — load/unload across the Market Hub
     /// warehouse or an owned system's stockpile, and the haul order that sends a
     /// loaded hull to the Market Hub (optionally selling on arrival).
-    HubLoad { fleet_id: EntityId, commodity: Commodity, units: u32 },
-    HubUnload { fleet_id: EntityId },
-    SystemLoad { fleet_id: EntityId, system: EntityId, commodity: Commodity, units: u32 },
-    SystemUnload { fleet_id: EntityId, system: EntityId },
+    HubLoad {
+        fleet_id: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
+    HubUnload {
+        fleet_id: EntityId,
+    },
+    SystemLoad {
+        fleet_id: EntityId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
+    SystemUnload {
+        fleet_id: EntityId,
+        system: EntityId,
+    },
     HaulToMarketHub {
         fleet_id: EntityId,
         #[serde(default)]
@@ -101,14 +123,23 @@ pub enum ClientMsg {
 
     /// §TCA Phase 2: buy charter standing back from the Authority (credits burned,
     /// clamped to the ceiling — you pay only for points actually restored).
-    PayReinstatement { points: f64 },
+    PayReinstatement {
+        points: f64,
+    },
 
     /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
     /// Authority freight arriving at the strangled system. Instant local policy.
-    SetEngageFreight { fleet_id: EntityId, on: bool },
+    SetEngageFreight {
+        fleet_id: EntityId,
+        on: bool,
+    },
 
     /// §TCA: book OUTBOUND Authority freight — warehouse → an owned system.
-    BookFreightOut { system: EntityId, commodity: Commodity, units: u32 },
+    BookFreightOut {
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
 
     /// §TCA: book INBOUND Authority freight — an owned system → the warehouse,
     /// optionally sold at the Exchange the moment it lands.
@@ -121,36 +152,57 @@ pub enum ClientMsg {
     },
 
     /// Place a resting limit order; it clears in the periodic batch (§9).
-    PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+    PlaceLimitOrder {
+        side: Side,
+        commodity: Commodity,
+        units: u32,
+        limit_price: f64,
+    },
     /// Cancel one of the issuing corporation's resting limit orders.
-    CancelLimitOrder { order_id: u64 },
+    CancelLimitOrder {
+        order_id: u64,
+    },
 
     /// Ship a claimed system's accumulated production to the hub to sell (§9) —
     /// spawns raidable convoys from the system.
-    ShipProduction { system_id: EntityId },
+    ShipProduction {
+        system_id: EntityId,
+    },
 
     /// Supply a system: move goods from the corp's HUB WAREHOUSE into an owned
     /// system's stockpile via a raidable convoy sailing from the hub — the bridge
     /// that lets market-bought inputs feed a system's converters, and the free
     /// (but interceptable) alternative to booking Authority freight.
-    StockSystem { system_id: EntityId, commodity: Commodity, units: u32 },
+    StockSystem {
+        system_id: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
 
     /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
     /// a matching id edits. Instant local administration; the server attaches the
     /// issuing player.
-    SetStandingOrder { order: StandingOrder },
+    SetStandingOrder {
+        order: StandingOrder,
+    },
 
     /// Remove a standing order by id.
-    ClearStandingOrder { order_id: u32 },
+    ClearStandingOrder {
+        order_id: u32,
+    },
 
     /// Remove one terminal LOST fleet-order row after its relay-loss news has
     /// arrived. The sim accepts only an owned order already marked lost.
-    DismissLostOrder { order_id: u64 },
+    DismissLostOrder {
+        order_id: u64,
+    },
 
     /// Set the corporation's fleet doctrine (§16) — the constrained combat &
     /// logistics policy. Instant local administration; the server attaches the
     /// issuing player.
-    SetFleetDoctrine { doctrine: FleetDoctrine },
+    SetFleetDoctrine {
+        doctrine: FleetDoctrine,
+    },
 
     /// Build a ship at one of the player's owned systems (§step1 growth sink) — costs
     /// a commodity recipe from that system's stockpile and completes over time.
@@ -194,86 +246,149 @@ pub enum ClientMsg {
 
     /// §economy Part 4: sign a Sol specialist contract — credits now, a
     /// personnel convoy hub → dest (sub-light, raidable, manifest fogged).
-    HireSpecialist { specialist: sim::SpecialistKind, dest_system: EntityId },
+    HireSpecialist {
+        specialist: sim::SpecialistKind,
+        dest_system: EntityId,
+    },
 
     /// §economy Part 4: enqueue an Academy training course (needs Academy ≥ 1).
-    TrainSpecialist { system_id: EntityId, specialist: sim::SpecialistKind },
+    TrainSpecialist {
+        system_id: EntityId,
+        specialist: sim::SpecialistKind,
+    },
 
     /// §economy Part 4: carry resident specialists between owned/allied systems
     /// on a dedicated personnel convoy.
-    TransferSpecialists { from: EntityId, to: EntityId, manifest: BTreeMap<sim::SpecialistKind, u32> },
+    TransferSpecialists {
+        from: EntityId,
+        to: EntityId,
+        manifest: BTreeMap<sim::SpecialistKind, u32>,
+    },
 
     /// §modules Part B3: manufacture one module into the system's ledger (needs an
     /// Armaments Complex ≥ 1). Costs goods; rides the build queue.
-    BuildModule { system_id: EntityId, module: sim::ModuleKind },
+    BuildModule {
+        system_id: EntityId,
+        module: sim::ModuleKind,
+    },
 
     /// §modules Part B4: refit `n` ships of `ship`/`from` in a docked fleet to a
     /// new `to` loadout at a Shipyard the player owns or is allied with.
-    RefitShips { fleet_id: EntityId, ship: ShipKind, from: sim::Loadout, to: sim::Loadout, n: u32 },
+    RefitShips {
+        fleet_id: EntityId,
+        ship: ShipKind,
+        from: sim::Loadout,
+        to: sim::Loadout,
+        n: u32,
+    },
 
     /// §modules Part B3: ship modules between owned/allied systems on a crate convoy.
-    TransferModules { from: EntityId, to: EntityId, manifest: BTreeMap<sim::ModuleKind, u32> },
+    TransferModules {
+        from: EntityId,
+        to: EntityId,
+        manifest: BTreeMap<sim::ModuleKind, u32>,
+    },
 
     /// §modules Part B3: buy `n` modules from Sol (price-certain, delivery-risky) —
     /// a crate convoy carries them to the player's `dest_system`.
-    BuyModule { module: sim::ModuleKind, n: u32, dest_system: EntityId },
+    BuyModule {
+        module: sim::ModuleKind,
+        n: u32,
+        dest_system: EntityId,
+    },
 
     /// §modules Part B3: sell `n` modules from `from_system` to Sol — a convoy
     /// carries them to the hub and the buy-back clears on arrival.
-    SellModule { module: sim::ModuleKind, n: u32, from_system: EntityId },
+    SellModule {
+        module: sim::ModuleKind,
+        n: u32,
+        from_system: EntityId,
+    },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
     /// light-delayed break-off order.
-    Withdraw { fleet_id: EntityId },
+    Withdraw {
+        fleet_id: EntityId,
+    },
 
     /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
     /// administration on the player's own fleet.
-    SetFleetTransit { fleet_id: EntityId, mode: TransitMode },
+    SetFleetTransit {
+        fleet_id: EntityId,
+        mode: TransitMode,
+    },
 
     /// Ask for a PROJECTED engagement estimate (§FLEETS Part 3): if `attacker`
     /// (one of the player's fleets) raided `target`, what would the losses be?
     /// Computed from the player's OWN view data only — exact where they have
     /// sensor coverage, an honest typical-hull estimate where they don't.
-    EstimateEngagement { attacker: EntityId, target: EntityId },
+    EstimateEngagement {
+        attacker: EntityId,
+        target: EntityId,
+    },
 
     /// Merge one of the player's fleets INTO another (§FLEETS management v1). Both
     /// must be the player's, idle, and docked together at an owned system.
-    MergeFleets { into: EntityId, from: EntityId },
+    MergeFleets {
+        into: EntityId,
+        from: EntityId,
+    },
 
     /// Split ships off one of the player's fleets into a new fleet at an owned
     /// system (§FLEETS management v1). `counts` = how many of each kind to detach.
-    SplitFleet { fleet_id: EntityId, counts: BTreeMap<ShipKind, u32> },
+    SplitFleet {
+        fleet_id: EntityId,
+        counts: BTreeMap<ShipKind, u32>,
+    },
 
     /// BLOCKADE a rival system (§contestable-territory Part 1): order one of the
     /// player's fleets (must contain a raider) to take station on a rival's
     /// system and strangle its logistics. Light-delayed like a move order.
-    BlockadeSystem { fleet_id: EntityId, system_id: EntityId },
+    BlockadeSystem {
+        fleet_id: EntityId,
+        system_id: EntityId,
+    },
 
     /// SURVEY a system's exact geology (§explore Part 2): order one of the
     /// player's fleets (must contain a Scout) to fly on-site and dwell. Valid on
     /// ANY system (pre-siege prospecting intended). Light-delayed like a move.
-    SurveySystem { fleet_id: EntityId, system_id: EntityId },
+    SurveySystem {
+        fleet_id: EntityId,
+        system_id: EntityId,
+    },
 
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
     /// Orderable on any rival fleet; the attacker must contain a raider. Light-
     /// delayed like a raid; on contact it's a FULL battle (destroy, cargo lost),
     /// unlike CommitRaid (steal).
-    AttackFleet { fleet_id: EntityId, target_id: EntityId },
+    AttackFleet {
+        fleet_id: EntityId,
+        target_id: EntityId,
+    },
 
     /// Set a fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2): Passive /
     /// Defensive / WeaponsFree. Instant local administration on the player's own
     /// fleet (a standing per-fleet policy, like SetFleetTransit).
-    SetFleetPosture { fleet_id: EntityId, posture: EngagementPosture },
+    SetFleetPosture {
+        fleet_id: EntityId,
+        posture: EngagementPosture,
+    },
 
     // ---- SYNDICATES (§syndicates Part 1) -------------------------------------
     /// FOUND a syndicate with the caller as founder. The server attaches the
     /// issuing player.
-    CreateSyndicate { name: String },
+    CreateSyndicate {
+        name: String,
+    },
     /// INVITE a corp (BY NAME — resolved server-side to its stable id) into the
     /// caller's syndicate. Founder-only; ignored if the name isn't a joined corp.
-    InviteToSyndicate { name: String },
+    InviteToSyndicate {
+        name: String,
+    },
     /// ACCEPT a pending invitation to the named syndicate.
-    AcceptSyndicateInvite { syndicate_id: SyndicateId },
+    AcceptSyndicateInvite {
+        syndicate_id: SyndicateId,
+    },
     /// LEAVE the caller's syndicate.
     LeaveSyndicate,
     /// DISSOLVE the caller's syndicate (founder-only).
@@ -283,16 +398,27 @@ pub enum ClientMsg {
     /// SET the caller's syndicate research QUEUE (ordered programme ids). The
     /// front promotes to the active programme; the sim validates + soft-rejects
     /// unknown/hidden/completed ids. CC-local, no positional delay.
-    SetResearchQueue { queue: Vec<String> },
+    SetResearchQueue {
+        queue: Vec<String>,
+    },
 
     // ---- FITTING (§fitting Stage A) ------------------------------------------
     /// SAVE a doctrine fit (named hull + loadout) on the caller's syndicate.
     /// The sim validates slots + fitting budget; same-name replaces. CC-local.
-    SaveFit { name: String, ship: ShipKind, #[serde(default)] loadout: sim::Loadout },
+    SaveFit {
+        name: String,
+        ship: ShipKind,
+        #[serde(default)]
+        loadout: sim::Loadout,
+    },
     /// DELETE a doctrine fit by name from the caller's syndicate. CC-local.
-    DeleteFit { name: String },
+    DeleteFit {
+        name: String,
+    },
     /// §ladder B4: NAME the syndicate's flagship Titan (empty un-christens).
-    NameFlagship { name: String },
+    NameFlagship {
+        name: String,
+    },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -627,28 +753,11 @@ pub struct SystemInfo {
     pub claim_cost: f64,
 }
 
-/// §hyperspace: one lane's drawable centerline. PUBLIC and identical for every
-/// player — a lane is a visible feature of space, not intel — and static, so it
-/// ships once in the Welcome galaxy rather than riding per-tick updates.
-#[derive(Debug, Clone, Serialize)]
-pub struct LaneView {
-    pub id: u32,
-    pub name: String,
-    /// Baked centerline points. The ribbon is this swept by `half_width`.
-    pub points: Vec<Vec2>,
-    pub half_width: f64,
-    /// True where the route fades into the frontier rather than ending at a
-    /// world — the client tapers the ribbon over its tail.
-    pub tapers: bool,
-}
-
 /// Static galaxy geography, sent once at join. Never changes during a session
 /// (systems don't move), so it doesn't need to be in the per-tick stream.
 #[derive(Debug, Clone, Serialize)]
 pub struct GalaxyInfo {
     pub hub: Vec2,
-    /// §hyperspace: the lane network, as drawable geometry.
-    pub lanes: Vec<LaneView>,
     pub radius: f64,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,
@@ -1195,8 +1304,6 @@ pub struct CargoView {
 /// `response_at` never confirms anything; it only makes the estimate overdue. Both
 /// stamps are solved once from the served ghost at issue — never authoritative
 /// fleet truth — so the panel and outbound comet share one command-center clock.
-/// A dark fleet with a fixed return course responds at its estimated physical
-/// comm-bubble re-entry rather than at a fictional light echo from delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrderView {
     pub id: u64,
@@ -1204,10 +1311,6 @@ pub struct PendingOrderView {
     pub issued_at: f64,
     pub arrives_at: f64,
     pub response_at: f64,
-    /// The response clock is the fleet's estimated physical return to an owned
-    /// comm-bubble edge, rather than a passive light echo from the delivery point.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub response_on_reentry: bool,
     pub kind: OrderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dest: Option<Vec2>,
@@ -1219,10 +1322,6 @@ pub struct PendingOrderView {
     /// Positions only: this line never claims the fleet has advanced along it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intent_path: Vec<Vec2>,
-    /// The signal's final meaningful leg leaves covered lane wire and crawls at
-    /// warp-light speed. Drives the same warning on the comet and Orders row.
-    #[serde(default)]
-    pub beyond_comms: bool,
     /// Terminal only after the relay-destruction news reaches this owner. Before
     /// that same wavefront the sim may already know the truth, but the field is
     /// deliberately false and the row continues its ordinary estimate.
@@ -1232,18 +1331,6 @@ pub struct PendingOrderView {
     pub loss_relay: Option<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loss_break: Option<Vec2>,
-}
-
-/// One owner-visible relay casualty. Repeated in Views while retained; the
-/// client de-duplicates by id so reconnecting after the wavefront still gets the
-/// report without a lossy one-tick notification channel.
-#[derive(Debug, Clone, Serialize)]
-pub struct RelayLossView {
-    pub id: EntityId,
-    pub kind: sim::EmplacementKind,
-    pub learned_at: f64,
-    pub fleets_beyond: u32,
-    pub orders_lost: u32,
 }
 
 /// An ongoing BATTLE as any observer perceives it (§battles-take-time), STRICTLY
@@ -1511,13 +1598,10 @@ pub struct LoadoutStack {
     pub n: u32,
 }
 
-/// §course-plan: one step of an OWN fleet's planned flight — where it is going
-/// next and whether it gets there by riding a lane. What the map draws when the
-/// ship is selected, so the line shown is the path the sim will actually fly.
+/// One point of an own fleet's direct planned flight.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathPointView {
     pub pos: Vec2,
-    pub lane: bool,
 }
 
 /// §emplacements: the timed job a hull is holding station to finish. One shape
@@ -1538,7 +1622,7 @@ pub struct JobView {
     pub progress: f64,
 }
 
-/// §buoys: one hop of an order signal's relay path. `frac` is the hop's
+/// One hop of an order signal's path. `frac` is the hop's
 /// arrival as a fraction of the signal's whole travel window, so the client
 /// animates the comet with no speed constants of its own and the last hop is
 /// always exactly 1.0 (landing with `arrive_time`).
@@ -1559,13 +1643,8 @@ pub struct EmplacementView {
     /// learn about where they are) — and are the only ones you may tear down.
     #[serde(default)]
     pub own: bool,
-    /// The bubble it watches, or 0 for a buoy — so the map can draw coverage
-    /// without needing the sim's constants.
+    /// The sensor radius the map may draw without mirroring sim constants.
     pub sensor_range: f64,
-    /// Lane-network arc reach of this communications site, or 0 for sensors.
-    /// Served from `EmplacementKind::throw()` so the map never mirrors balance
-    /// constants when it draws a selected site's nominal coverage radius.
-    pub relay_throw: f64,
 }
 
 /// A FLEET as a player perceives it: a delayed "ghost" — the position the light
@@ -1593,19 +1672,8 @@ pub struct GhostView {
     pub vel: Vec2,
     /// Light delay in seconds — how stale this sighting is ("seen Xs ago").
     ///
-    /// This is the certainty story for every rival and every own fleet outside
-    /// a presentation bubble. Inside one, own fleets use the accepted delayed
-    /// replay described by `in_comms`; `age` remains its real replay delay. Read
-    /// beside `drive` (what the hull was doing) it also bounds how far it can
-    /// have got — which is why the derived `uncertainty` radius that used to sit
-    /// here is gone: it multiplied age by THRUSTER speed, understating a
-    /// lane-rider's reach fifty-fold, and no circle can be honest where speed
-    /// depends on standing on a road.
+    /// This is the certainty story for every rival and every own fleet.
     pub age: f64,
-    /// Owner-only marker mode. True exactly while the TRUE hull is inside the
-    /// hysteretic 2D presentation bubble of one of its owner's comm structures.
-    /// Rivals always receive false; their fog presentation is separate.
-    pub in_comms: bool,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the
@@ -1791,8 +1859,8 @@ pub enum ServerMsg {
         systems: Vec<SystemStateView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
-        /// §emplacements: structures standing in open space — hyperspace buoys
-        /// and deep space sensors. Sent UNDELAYED, and only the viewer's own:
+        /// §emplacements: deep-space sensors standing in open space. Sent
+        /// UNDELAYED, and only the viewer's own:
         /// they are your own infrastructure, so you know where you put them.
         /// A rival's are found the way anything else is, by seeing them.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1817,9 +1885,6 @@ pub enum ServerMsg {
         /// TRANSIT → AWAITING ECHO. OWNER-ONLY private command data (like the
         /// wallet); a rival's view carries none of it.
         pending_orders: Vec<PendingOrderView>,
-        /// Relay casualties whose single owner-news wavefront has arrived.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        relay_losses: Vec<RelayLossView>,
         /// Ongoing BATTLES visible to this player (§battles-take-time) — strictly
         /// light-gated; a third-party observer sees them only by their own light.
         battles: Vec<BattleView>,
@@ -1896,7 +1961,10 @@ pub enum ServerMsg {
     /// sim-time they were last online, so the client can split "while you were
     /// away" from earlier entries. Awareness only — never new information, never
     /// faster than light.
-    Timeline { entries: Vec<TimelineEntry>, away_since: f64 },
+    Timeline {
+        entries: Vec<TimelineEntry>,
+        away_since: f64,
+    },
 
     /// Economy news for this player (§9): a buy settled, a delivery arrived, a
     /// sell was dispatched or cleared.
@@ -1920,16 +1988,12 @@ pub enum ServerMsg {
         ship_id: EntityId,
         depart_time: f64,
         arrive_time: f64,
-        /// §buoys: the RELAY PATH the order actually flies — each hop's
+        /// The path the order actually flies — each hop's
         /// position with its arrival as a 0..1 FRACTION of the whole window,
-        /// so the comet traces the network (sprint along lanes, crawl across
-        /// gaps) and still lands exactly at `arrive_time`. Empty = straight
-        /// run (no relays helped), which is also what old clients drew.
+        /// so the comet lands exactly at `arrive_time`. Empty means the normal
+        /// single straight run and lets the client use its direct fallback.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hops: Vec<SignalHopView>,
-        /// True when the final meaningful leg is outside relay coverage.
-        #[serde(default)]
-        beyond_comms: bool,
     },
 
     /// Arrived evidence that an order is in force. This is emitted only by the
@@ -1938,15 +2002,6 @@ pub enum ServerMsg {
         order_id: u64,
         ship_id: EntityId,
         kind: OrderKind,
-    },
-
-    /// Immediate UI assistance for a prospective move. `path` is the same
-    /// lane/warp plan the sim uses, rooted at the issuing player's own served
-    /// sighting of the fleet rather than its hidden true position.
-    RoutePreview {
-        ship_id: EntityId,
-        dest: Vec2,
-        path: Vec<PathPointView>,
     },
 
     /// A projected engagement estimate the player asked for (§FLEETS Part 3).
@@ -1993,7 +2048,8 @@ mod wire_contract {
     #[test]
     fn demolish_emplacement_parses_off_the_wire() {
         let raw = r#"{"type":"DemolishEmplacement","fleet":"34","target":"41"}"#;
-        let msg: ClientMsg = serde_json::from_str(raw).expect("the client's literal message must parse");
+        let msg: ClientMsg =
+            serde_json::from_str(raw).expect("the client's literal message must parse");
         match msg {
             ClientMsg::DemolishEmplacement { fleet, target } => {
                 assert_eq!(fleet, sim::EntityId(34));
@@ -2005,44 +2061,16 @@ mod wire_contract {
 
     #[test]
     fn build_emplacement_parses_off_the_wire() {
-        let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"hyperspace_buoy"}"#;
-        let msg: ClientMsg = serde_json::from_str(raw).expect("the client's literal message must parse");
-        match msg {
-            ClientMsg::BuildEmplacement { builder, emplacement } => {
-                assert_eq!(builder, sim::EntityId(33));
-                assert_eq!(emplacement, sim::emplace::EmplacementKind::HyperspaceBuoy);
-            }
-            other => panic!("parsed into the wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn hyperspace_repeater_round_trips_off_the_wire() {
-        let kind = sim::emplace::EmplacementKind::HyperspaceRepeater;
-        let json = serde_json::to_string(&kind).unwrap();
-        assert_eq!(json, r#""hyperspace_repeater""#);
-        assert_eq!(serde_json::from_str::<sim::emplace::EmplacementKind>(&json).unwrap(), kind);
-
-        let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"hyperspace_repeater"}"#;
-        let msg: ClientMsg = serde_json::from_str(raw).expect("the repeater build message must parse");
-        assert!(matches!(
-            msg,
-            ClientMsg::BuildEmplacement {
-                builder: sim::EntityId(33),
-                emplacement: sim::emplace::EmplacementKind::HyperspaceRepeater,
-            }
-        ));
-    }
-
-    #[test]
-    fn preview_route_parses_off_the_wire() {
-        let raw = r#"{"type":"PreviewRoute","ship_id":"33","dest":{"x":123.0,"y":-45.0}}"#;
+        let raw = r#"{"type":"BuildEmplacement","builder":"33","emplacement":"deep_space_sensor"}"#;
         let msg: ClientMsg =
             serde_json::from_str(raw).expect("the client's literal message must parse");
         match msg {
-            ClientMsg::PreviewRoute { ship_id, dest } => {
-                assert_eq!(ship_id, sim::EntityId(33));
-                assert_eq!(dest, sim::Vec2::new(123.0, -45.0));
+            ClientMsg::BuildEmplacement {
+                builder,
+                emplacement,
+            } => {
+                assert_eq!(builder, sim::EntityId(33));
+                assert_eq!(emplacement, sim::emplace::EmplacementKind::DeepSpaceSensor);
             }
             other => panic!("parsed into the wrong variant: {other:?}"),
         }
@@ -2055,8 +2083,8 @@ mod wire_contract {
     #[test]
     fn pending_order_queue_parses_off_the_wire() {
         let raw = r#"[
-            {"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"response_on_reentry":true,"kind":"move","dest":{"x":287450.0,"y":35020.0},"intent_path":[{"x":100.0,"y":200.0},{"x":287450.0,"y":35020.0}]},
-            {"id":18,"fleet_id":"33","issued_at":15.0,"arrives_at":22.0,"response_at":30.0,"kind":"construct","dest":{"x":900.0,"y":1200.0},"emplacement":"hyperspace_buoy"},
+            {"id":17,"fleet_id":"33","issued_at":10.0,"arrives_at":18.0,"response_at":26.0,"kind":"move","dest":{"x":287450.0,"y":35020.0},"intent_path":[{"x":100.0,"y":200.0},{"x":287450.0,"y":35020.0}]},
+            {"id":18,"fleet_id":"33","issued_at":15.0,"arrives_at":22.0,"response_at":30.0,"kind":"construct","dest":{"x":900.0,"y":1200.0},"emplacement":"deep_space_sensor"},
             {"id":19,"fleet_id":"33","issued_at":16.0,"arrives_at":23.0,"response_at":31.0,"kind":"attack","target_id":"44"}
         ]"#;
         let queue: Vec<PendingOrderView> =
@@ -2066,18 +2094,20 @@ mod wire_contract {
         assert_eq!(queue[0].fleet_id, sim::EntityId(33));
         assert_eq!(queue[0].arrives_at, 18.0);
         assert_eq!(queue[0].response_at, 26.0);
-        assert!(queue[0].response_on_reentry);
         assert_eq!(queue[0].dest, Some(sim::Vec2::new(287_450.0, 35_020.0)));
-        assert_eq!(queue[0].intent_path, vec![
-            sim::Vec2::new(100.0, 200.0),
-            sim::Vec2::new(287_450.0, 35_020.0),
-        ]);
+        assert_eq!(
+            queue[0].intent_path,
+            vec![
+                sim::Vec2::new(100.0, 200.0),
+                sim::Vec2::new(287_450.0, 35_020.0),
+            ]
+        );
         assert_eq!(queue[1].id, 18);
         assert_eq!(queue[1].kind, sim::event::OrderKind::Construct);
         assert!(queue[1].intent_path.is_empty());
         assert_eq!(
             queue[1].emplacement,
-            Some(sim::emplace::EmplacementKind::HyperspaceBuoy)
+            Some(sim::emplace::EmplacementKind::DeepSpaceSensor)
         );
         assert_eq!(queue[2].kind, sim::event::OrderKind::Attack);
         assert_eq!(queue[2].target_id, Some(sim::EntityId(44)));
@@ -2085,7 +2115,7 @@ mod wire_contract {
         let encoded = serde_json::to_value(&queue[0]).unwrap();
         assert!(encoded.get("arrives_at").is_some());
         assert!(encoded.get("response_at").is_some());
-        assert_eq!(encoded.get("response_on_reentry"), Some(&serde_json::Value::Bool(true)));
+        assert!(encoded.get("response_on_reentry").is_none());
         assert!(encoded.get("intent_path").is_some());
         assert!(encoded.get("projected").is_none());
         assert!(encoded.get("delivered_at").is_none());
@@ -2116,17 +2146,5 @@ mod wire_contract {
         let encoded = serde_json::to_value(confirmed).unwrap();
         assert_eq!(encoded["type"], "OrderConfirmed");
         assert_eq!(encoded["order_id"], 17);
-
-        let loss = RelayLossView {
-            id: sim::EntityId(41),
-            kind: sim::EmplacementKind::HyperspaceBuoy,
-            learned_at: 30.0,
-            fleets_beyond: 2,
-            orders_lost: 1,
-        };
-        let encoded = serde_json::to_value(loss).unwrap();
-        assert_eq!(encoded["learned_at"], 30.0);
-        assert_eq!(encoded["fleets_beyond"], 2);
-        assert_eq!(encoded["orders_lost"], 1);
     }
 }

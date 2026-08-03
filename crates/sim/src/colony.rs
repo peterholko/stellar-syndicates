@@ -162,7 +162,11 @@ pub fn food_state_for(coverage_secs: f64, demand_per_s: f64, current: FoodState)
         // improvement climbs (and it may climb several rungs at once when a
         // big shipment lands).
         let margined = raw_food_bucket(coverage_secs / FOOD_IMPROVE_MARGIN);
-        if margined > current { margined } else { current }
+        if margined > current {
+            margined
+        } else {
+            current
+        }
     } else {
         raw
     }
@@ -184,21 +188,39 @@ mod tests {
     fn degradation_is_immediate_but_improvement_needs_margin() {
         use FoodState::*;
         // Falling below a rung drops instantly.
-        assert_eq!(food_state_for(FOOD_WELL_S - 0.1, 1.0, WellSupplied), Rationing);
+        assert_eq!(
+            food_state_for(FOOD_WELL_S - 0.1, 1.0, WellSupplied),
+            Rationing
+        );
         assert_eq!(food_state_for(0.0, 1.0, Rationing), NoProvisions);
         // Hovering JUST above a rung does NOT climb back (no flicker)...
         assert_eq!(food_state_for(FOOD_WELL_S + 0.1, 1.0, Rationing), Rationing);
-        assert_eq!(food_state_for(FOOD_RATIONING_S + 0.1, 1.0, Critical), Critical);
+        assert_eq!(
+            food_state_for(FOOD_RATIONING_S + 0.1, 1.0, Critical),
+            Critical
+        );
         // ...but clearing it with the margin does — even multiple rungs at once.
-        assert_eq!(food_state_for(FOOD_WELL_S * FOOD_IMPROVE_MARGIN, 1.0, Rationing), WellSupplied);
-        assert_eq!(food_state_for(FOOD_WELL_S * FOOD_IMPROVE_MARGIN, 1.0, NoProvisions), WellSupplied);
+        assert_eq!(
+            food_state_for(FOOD_WELL_S * FOOD_IMPROVE_MARGIN, 1.0, Rationing),
+            WellSupplied
+        );
+        assert_eq!(
+            food_state_for(FOOD_WELL_S * FOOD_IMPROVE_MARGIN, 1.0, NoProvisions),
+            WellSupplied
+        );
         // Same-rung coverage is a no-op.
-        assert_eq!(food_state_for(FOOD_RATIONING_S + 1.0, 1.0, Rationing), Rationing);
+        assert_eq!(
+            food_state_for(FOOD_RATIONING_S + 1.0, 1.0, Rationing),
+            Rationing
+        );
     }
 
     #[test]
     fn zero_demand_is_vacuously_well_supplied() {
-        assert_eq!(food_state_for(0.0, 0.0, FoodState::NoProvisions), FoodState::WellSupplied);
+        assert_eq!(
+            food_state_for(0.0, 0.0, FoodState::NoProvisions),
+            FoodState::WellSupplied
+        );
     }
 
     #[test]

@@ -1,16 +1,14 @@
 // Pixi.js renderer. Draws the player's DELAYED, FOGGED view (§6) — the heart of
 // the game made visible (Pillar 2: never hide the lag). Each ship is a ghost at
 // the position its arriving light shows; EVERY ghost — own or enemy — carries an
-// age label and fades with staleness. Own fleets have three light-honest map
-// states: a delayed full sprite in the bubble, an arrived-light arrow in dark
-// realspace, and a stationary entry-bookmark arrow while coupled hyperspace lies
-// beyond the wire. Rivals retain the ordinary fogged view.
+// age label and fades with staleness. Warp-light is the one transport for every
+// report, so own and rival positions use the same delayed-picture grammar.
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
-import type { BodyView, EmplacementView, GalaxyInfo, GhostView, LaneView, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
+import type { BodyView, GalaxyInfo, GhostView, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetExactCount } from "./protocol";
-import { ghostInTunnel, liveSimTime, type ViewState } from "./state";
+import { liveSimTime, type ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
 
@@ -78,7 +76,6 @@ const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
 const COL_ROUTE = 0x8fe3a0; // own flight plan (green, legible over blue lane bands)
 const COL_INTENT_ROUTE = 0x70ad7d; // pending intent, dimmer than an observed flight plan
 const COL_ROUTE_PREVIEW = 0xc3f7cc; // prospective route, lighter than the committed plan
-const COL_COMMS_DARK = 0xe2ad62; // stale own-contact warning, distinct from route/lane hues
 const COL_IMPULSE_BOUNDARY = 0xf0a64a; // gravity-well edge, warm against lane blue
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
@@ -90,9 +87,6 @@ const COL_SHIP_NEUTRAL = 0xc9d6e8;
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
-const REENTRY_FX_MS = 500; // Tunable: dark arrow catches the newly arrived live picture.
-const DARK_ARROW_SCALE = 2; // Tunable: frozen fleet chevron, relative to its original glyph.
-const DARK_DELAY_ICON_PX = 36; // Fixed screen px; the 128px source stays crisp on high-DPI displays.
 
 // --- Zoom limits, as multiples of the fit-to-galaxy scale (so they scale with
 // galaxy size). MIN ≈ fit (whole galaxy visible, a touch looser); MAX resolves
@@ -109,33 +103,14 @@ interface GhostSprite {
   cone: Graphics;
   body: Graphics; // primitive triangle — fallback until the ship sprite loads
   sprite: Sprite; // the ship art (rotated to heading, tinted by ownership)
-  delayIcon: Sprite; // fixed-screen communication-delay cue beside a dark arrow
-  delayTooltip: Container; // hover explanation for the canvas-only delay cue
   label: Text;
   ring: Graphics; // selection ring
   pip: Graphics; // ownership tag (cyan = yours, red = rival) — the friend/foe cue
   badge: Graphics; // fleet count pill (exact Σ, or the fog size bucket)
   badgeText: Text; // the number / bucket label drawn on the badge
   seen: boolean;
-  /// §hyperspace: the WORLD position actually drawn, which chases the
-  /// authoritative one rather than jumping to it. See `drawGhost`.
+  /// The WORLD position actually drawn, eased toward the newest served report.
   shown?: { x: number; y: number };
-  /// Previous server-authoritative presentation mode, for edge transitions.
-  inComms?: boolean;
-  /// Previous client-derived tunnel predicate. Unlike `inComms`, this also
-  /// includes the served drive fact and therefore owns bookmark/reappear edges.
-  inTunnel?: boolean;
-  darkMorphMs?: number;
-  /// The dark→live catch-up. Both endpoints are served player knowledge.
-  reentry?: { from: Vec2; to: Vec2; startedMs: number };
-}
-
-interface ReacquireFx {
-  root: Container;
-  pulse: Graphics;
-  oldPos: Vec2;
-  newPos: Vec2;
-  startedMs: number;
 }
 
 // §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
@@ -165,33 +140,19 @@ const SHIP_PX_CORVETTE = 48; // between raider and convoy — the size hierarchy
 const SHIP_PX_COLONY = 64; // the biggest thing flying
 const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
-// §hyperspace: how hard a drawn fleet chases its authoritative position. Higher
-// converges faster and shows more of each correction; lower is smoother but lags.
-// §roads: how much of the sim's swept lane width the drawn band occupies.
-// Purely visual — the gameplay tolerance is unchanged.
-const LANE_DRAW_FRAC = 0.45;
-// Mirrors sim lane::HYPERLIMIT — every star system is a drive-forbidden well.
-const HYPERLIMIT_SU = 900;
 // §emplacements: kept in step with `emplace::MIN_SPACING`. (Standing sensors
 // draw their coverage from the wire's `sensor_range` — no mirrored radius.)
 const EMPLACEMENT_MIN_SPACING = 12_000;
+// Mirrors sim transit::HYPERLIMIT: the warm ring marks the impulse-only well.
+const HYPERLIMIT_SU = 900;
 // Completed open-space structures use dedicated 256px art. At normal zoom they
 // sit between the scout and freighter markers; deep zoom grows them enough to
 // inspect without letting stationary infrastructure rival a star or the hub.
 const EMPLACEMENT_PX = 34;
 const EMPLACEMENT_MAX_PX = 96;
 const SMOOTH_RATE = 9.0; // e-folds per second
-// RIVALS ONLY: corrections bigger than this snap rather than ease. A rival
-// re-appearing from fog really is new information at a new place — easing it
-// would paint positions you never observed. YOUR OWN fleets never snap: a
-// fleet riding a lane toward you outruns its own report (hyperspace ×50 vs a
-// buoy-less warp signal ×5), so its bow-wave of light arrives essentially
-// WITH the ship and the correction is the WHOLE leg — no fixed threshold can
-// contain it, which is how the first version of this reintroduced the very
-// teleport it claimed to fix. Easing closes any distance in ~half a second,
-// reading as the ship streaking home. (The in-fiction cure is a relay pair on
-// the lane: relayed reports at ×50 outrun any hull, and the blackout never
-// happens at all.)
+// Rivals may snap across genuinely discontinuous newly arrived information;
+// ordinary own-fleet corrections remain eased.
 const SMOOTH_SNAP_SU = 4_000;
 const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
@@ -323,226 +284,7 @@ function nearestOnPath(
   return nearest;
 }
 
-type ArcInterval = { lo: number; hi: number };
-type LaneArc = { lane: LaneView; s: number[]; length: number };
-
-function laneArcs(lanes: LaneView[]): Map<number, LaneArc> {
-  const out = new Map<number, LaneArc>();
-  for (const lane of lanes) {
-    const s = [0];
-    for (let i = 1; i < lane.points.length; i++) {
-      s.push(s[i - 1] + Math.hypot(
-        lane.points[i].x - lane.points[i - 1].x,
-        lane.points[i].y - lane.points[i - 1].y,
-      ));
-    }
-    out.set(lane.id, { lane, s, length: s[s.length - 1] ?? 0 });
-  }
-  return out;
-}
-
-function projectLane(p: Vec2, arc: LaneArc): { s: number; d: number } | null {
-  let best: { s: number; d: number } | null = null;
-  for (let i = 1; i < arc.lane.points.length; i++) {
-    const a = arc.lane.points[i - 1];
-    const b = arc.lane.points[i];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len2 = dx * dx + dy * dy;
-    const t = len2 > 1e-9 ? clamp01(((p.x - a.x) * dx + (p.y - a.y) * dy) / len2) : 0;
-    const q = { x: a.x + dx * t, y: a.y + dy * t };
-    const d = Math.hypot(p.x - q.x, p.y - q.y);
-    if (!best || d < best.d) best = { s: arc.s[i - 1] + (arc.s[i] - arc.s[i - 1]) * t, d };
-  }
-  return best;
-}
-
-function segmentClosest(
-  a0: Vec2,
-  a1: Vec2,
-  b0: Vec2,
-  b1: Vec2,
-): { ta: number; tb: number; distance: number } {
-  const ad = { x: a1.x - a0.x, y: a1.y - a0.y };
-  const bd = { x: b1.x - b0.x, y: b1.y - b0.y };
-  const den = ad.x * bd.y - ad.y * bd.x;
-  if (Math.abs(den) >= 1e-9) {
-    const delta = { x: b0.x - a0.x, y: b0.y - a0.y };
-    const ta = (delta.x * bd.y - delta.y * bd.x) / den;
-    const tb = (delta.x * ad.y - delta.y * ad.x) / den;
-    if (ta >= 0 && ta <= 1 && tb >= 0 && tb <= 1) return { ta, tb, distance: 0 };
-  }
-  const project = (p: Vec2, s0: Vec2, s1: Vec2): { t: number; distance: number } => {
-    const dx = s1.x - s0.x;
-    const dy = s1.y - s0.y;
-    const len2 = dx * dx + dy * dy;
-    const t = len2 > 1e-9 ? clamp01(((p.x - s0.x) * dx + (p.y - s0.y) * dy) / len2) : 0;
-    return { t, distance: Math.hypot(p.x - (s0.x + dx * t), p.y - (s0.y + dy * t)) };
-  };
-  const a0b = project(a0, b0, b1);
-  const a1b = project(a1, b0, b1);
-  const b0a = project(b0, a0, a1);
-  const b1a = project(b1, a0, a1);
-  return [
-    { ta: 0, tb: a0b.t, distance: a0b.distance },
-    { ta: 1, tb: a1b.t, distance: a1b.distance },
-    { ta: b0a.t, tb: 0, distance: b0a.distance },
-    { ta: b1a.t, tb: 1, distance: b1a.distance },
-  ].reduce((best, candidate) => candidate.distance < best.distance ? candidate : best);
-}
-
-function laneHalfWidthAt(arc: LaneArc, s: number): number {
-  if (!arc.lane.tapers || arc.length <= 1e-9) return arc.lane.half_width;
-  const taperLength = arc.length * 0.15;
-  const remaining = arc.length - s;
-  if (remaining >= taperLength) return arc.lane.half_width;
-  const t = clamp01(remaining / taperLength);
-  return arc.lane.half_width * (0.35 * (1 - t) + t);
-}
-
-function mergeIntervals(intervals: ArcInterval[]): ArcInterval[] {
-  const sorted = intervals.slice().sort((a, b) => a.lo - b.lo);
-  const out: ArcInterval[] = [];
-  for (const interval of sorted) {
-    const last = out[out.length - 1];
-    if (last && interval.lo <= last.hi + 1e-6) last.hi = Math.max(last.hi, interval.hi);
-    else out.push({ ...interval });
-  }
-  return out;
-}
-
-/// Mirror the public relay geometry for the map legend: green graph-distance
-/// wire over the otherwise untouched road. The relay's 2D circle is the binary
-/// live/dark boundary; there is no intermediate lane-earshot marker tier.
-function commLaneZones(
-  lanes: LaneView[],
-  emplacements: EmplacementView[],
-): Map<number, ArcInterval[]> {
-  const arcs = laneArcs(lanes);
-  const junctions: { on: { lane: number; s: number }[] }[] = [];
-  for (let ai = 0; ai < lanes.length; ai++) {
-    const a = arcs.get(lanes[ai].id)!;
-    for (let bi = ai + 1; bi < lanes.length; bi++) {
-      const b = arcs.get(lanes[bi].id)!;
-      const candidates: { ia: number; ib: number; sa: number; sb: number; distance: number }[] = [];
-      for (let i = 1; i < a.lane.points.length; i++) {
-        for (let j = 1; j < b.lane.points.length; j++) {
-          const hit = segmentClosest(
-            a.lane.points[i - 1], a.lane.points[i],
-            b.lane.points[j - 1], b.lane.points[j],
-          );
-          const sa = a.s[i - 1] + (a.s[i] - a.s[i - 1]) * hit.ta;
-          const sb = b.s[j - 1] + (b.s[j] - b.s[j - 1]) * hit.tb;
-          if (hit.distance <= laneHalfWidthAt(a, sa) + laneHalfWidthAt(b, sb)) {
-            candidates.push({ ia: i - 1, ib: j - 1, sa, sb, distance: hit.distance });
-          }
-        }
-      }
-      // Match the sim's physical junction rule: overlapping ribbons join even
-      // when their centerlines narrowly miss. Adjacent overlapping segment
-      // pairs are one junction, represented by their closest handoff.
-      while (candidates.length > 0) {
-        const cluster = [candidates.pop()!];
-        for (;;) {
-          const before = candidates.length;
-          for (let i = candidates.length - 1; i >= 0; i--) {
-            const candidate = candidates[i];
-            if (cluster.some((other) =>
-              Math.abs(other.ia - candidate.ia) <= 1 && Math.abs(other.ib - candidate.ib) <= 1)) {
-              cluster.push(candidate);
-              candidates.splice(i, 1);
-            }
-          }
-          if (candidates.length === before) break;
-        }
-        const best = cluster.reduce((x, y) => y.distance < x.distance ? y : x);
-        junctions.push({
-          on: [{ lane: a.lane.id, s: best.sa }, { lane: b.lane.id, s: best.sb }],
-        });
-      }
-    }
-  }
-
-  const zones = new Map<number, ArcInterval[]>();
-  for (const lane of lanes) zones.set(lane.id, []);
-  const sites = emplacements.filter((e) =>
-    e.own !== false && e.relay_throw > 0
-    && (e.kind === "hyperspace_buoy" || e.kind === "hyperspace_repeater"));
-  for (const site of sites) {
-    const starts: { lane: number; s: number }[] = [];
-    for (const arc of arcs.values()) {
-      const at = projectLane(site.pos, arc);
-      if (!at || at.d > arc.lane.half_width) continue;
-      starts.push({ lane: arc.lane.id, s: at.s });
-    }
-    const distance = junctions.map((junction) => Math.min(...junction.on.flatMap((on) =>
-      starts.filter((start) => start.lane === on.lane).map((start) => Math.abs(start.s - on.s)))));
-    const done = new Array(junctions.length).fill(false);
-    for (;;) {
-      let u = -1;
-      for (let i = 0; i < distance.length; i++) {
-        if (!done[i] && Number.isFinite(distance[i]) && (u < 0 || distance[i] < distance[u])) u = i;
-      }
-      if (u < 0) break;
-      done[u] = true;
-      for (let v = 0; v < junctions.length; v++) {
-        if (done[v]) continue;
-        let edge = Infinity;
-        for (const a of junctions[u].on) for (const b of junctions[v].on) {
-          if (a.lane === b.lane) edge = Math.min(edge, Math.abs(a.s - b.s));
-        }
-        if (distance[u] + edge < distance[v]) distance[v] = distance[u] + edge;
-      }
-    }
-    const anchors = new Map<number, { s: number; base: number }[]>();
-    for (const start of starts) {
-      const list = anchors.get(start.lane) ?? [];
-      list.push({ s: start.s, base: 0 });
-      anchors.set(start.lane, list);
-    }
-    junctions.forEach((junction, i) => {
-      if (!Number.isFinite(distance[i])) return;
-      for (const on of junction.on) {
-        const list = anchors.get(on.lane) ?? [];
-        list.push({ s: on.s, base: distance[i] });
-        anchors.set(on.lane, list);
-      }
-    });
-    for (const [laneId, laneAnchors] of anchors) {
-      const arc = arcs.get(laneId)!;
-      for (const anchor of laneAnchors) {
-        const reach = site.relay_throw - anchor.base;
-        if (reach < 0) continue;
-        zones.get(laneId)!.push({
-          lo: Math.max(0, anchor.s - reach),
-          hi: Math.min(arc.length, anchor.s + reach),
-        });
-      }
-    }
-  }
-  for (const [laneId, zone] of zones) zones.set(laneId, mergeIntervals(zone));
-  return zones;
-}
-
-function laneSpan(arc: LaneArc, interval: ArcInterval): Vec2[] {
-  const pointAt = (s: number): Vec2 => {
-    let i = arc.s.findIndex((x) => x >= s);
-    if (i <= 0) return arc.lane.points[0];
-    if (i < 0) return arc.lane.points[arc.lane.points.length - 1];
-    const span = arc.s[i] - arc.s[i - 1];
-    const t = span > 1e-9 ? (s - arc.s[i - 1]) / span : 0;
-    return {
-      x: arc.lane.points[i - 1].x + (arc.lane.points[i].x - arc.lane.points[i - 1].x) * t,
-      y: arc.lane.points[i - 1].y + (arc.lane.points[i].y - arc.lane.points[i - 1].y) * t,
-    };
-  };
-  const out = [pointAt(interval.lo)];
-  for (let i = 1; i < arc.s.length - 1; i++) {
-    if (arc.s[i] > interval.lo && arc.s[i] < interval.hi) out.push(arc.lane.points[i]);
-  }
-  out.push(pointAt(interval.hi));
-  return out;
-}
+// Lane terrain and relay overlays were removed by §jump-v1; routes are now straight realspace geometry.
 
 // The WORMHOLE HUB map sprite (§hub-art): the game's most important location
 // reads as a LANDMARK — clearly the largest body on the map at normal zoom
@@ -562,16 +304,6 @@ export class Renderer {
   // camera (scale/cx/cy) still drives everything inside it exactly as before.
   private galaxyRoot = new Container();
   private bg = new Container(); // galaxy rings + hub (was: also the starfield)
-  /// §hyperspace: the lane ribbons. Static geometry, so this is rebuilt only
-  /// when the camera moves — not per frame.
-  private lanesGfx = new Graphics();
-  private laneBoundaryWorld = new Map<number, {
-    source: Vec2[];
-    halfWidth: number;
-    tapers: boolean;
-    left: Vec2[];
-    right: Vec2[];
-  }>();
   /// §emplacements: coverage/fallback glyphs, dedicated structure art, then
   /// selection chrome. Keeping these as separate children puts the selection
   /// ring above the opaque sprite while coverage remains beneath it.
@@ -615,12 +347,9 @@ export class Renderer {
   selectedBattleMarkerId: number | null = null;
   private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
-  private reacquireLayer = new Container();
-  private reacquireFx: ReacquireFx[] = [];
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
   private interceptLabels = new Map<string, Text>();
-  private commandSignalLabels = new Map<number, Text>();
   private ghosts = new Map<string, GhostSprite>();
   private servedGhostFrames = new Map<string, { pos: Vec2; simTime: number; pinned: boolean }>();
 
@@ -634,8 +363,6 @@ export class Renderer {
   private starTex = new Map<string, Texture>();
   private texStation: Texture | null = null;
   private texHub: Texture | null = null; // the wormhole aperture + station landmark
-  private texHyperspaceBuoy: Texture | null = null;
-  private texHyperspaceRepeater: Texture | null = null;
   private texDeepSpaceSensor: Texture | null = null;
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
@@ -654,7 +381,6 @@ export class Renderer {
   private texIconFreighter: Texture | null = null;
   private texIconRaider: Texture | null = null;
   private texIconCorvette: Texture | null = null;
-  private texCommsDelay: Texture | null = null;
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
@@ -689,7 +415,6 @@ export class Renderer {
   /// The world-anchored background (galaxy rings + hub) is drawn only when the
   /// transform changes, not every frame; this flags it for redraw.
   private viewDirty = false;
-  private laneCommsSignature = "";
 
   // §perf: dirty-gating. `stateVersion` is bumped by main.ts each time a new View
   // is applied; the static galaxy geometry (systems/anchors) is rebuilt only when
@@ -725,7 +450,6 @@ export class Renderer {
     // the per-layer camera math are unchanged — only the parent is now galaxyRoot.
     this.galaxyRoot.addChild(
       this.bg,
-      this.lanesGfx, // §hyperspace: lanes are TERRAIN — beneath everything
       this.emplacementLayer, // ...and what you built on them sits just above
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
@@ -734,7 +458,6 @@ export class Renderer {
       this.orderLayer,
       this.interceptGfx, // soft intercept estimate, under the ghosts it guides
       this.aftermathLayer, // §battle-aftermath markers, under the ghosts
-      this.reacquireLayer, // old contact + arrival pulse, beneath the fresh marker
       this.ghostsLayer,
       this.signalsLayer,
     );
@@ -778,11 +501,9 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [hub, station, hyperspaceBuoy, hyperspaceRepeater, deepSpaceSensor, convoy, raider, corvette, colony, scout] = await Promise.all([
+    const [hub, station, deepSpaceSensor, convoy, raider, corvette, colony, scout] = await Promise.all([
       load("/art/wormhole_hub.png"),
       load("/art/celestial_sprites/mining_station.png"),
-      load("/art/celestial_sprites/hyperspace_buoy.png"),
-      load("/art/celestial_sprites/hyperspace_communication_buoy.png"),
       load("/art/celestial_sprites/deep_space_sensor.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
@@ -812,11 +533,9 @@ export class Renderer {
     this.texStation = station;
     // These 256px structure cutouts spend most of their life at ~34px. Mipmaps
     // keep engraved edges and antenna spars stable while the camera moves.
-    for (const t of [hyperspaceBuoy, hyperspaceRepeater, deepSpaceSensor]) {
+    for (const t of [deepSpaceSensor]) {
       if (t) t.source.autoGenerateMipmaps = true;
     }
-    this.texHyperspaceBuoy = hyperspaceBuoy;
-    this.texHyperspaceRepeater = hyperspaceRepeater;
     this.texDeepSpaceSensor = deepSpaceSensor;
     this.texConvoy = convoy;
     this.texRaider = raider;
@@ -846,11 +565,6 @@ export class Renderer {
     this.texIconFreighter = iconFreighter;
     this.texIconRaider = iconRaider;
     this.texIconCorvette = iconCorvette;
-    // This UI cue is positioned in ghost-container screen pixels, so its source
-    // resolution serves high-DPI displays without making it grow with map zoom.
-    const commsDelay = await load("/art/ui_icons/png/128/concept-communication-delay.png");
-    if (commsDelay) commsDelay.source.autoGenerateMipmaps = true;
-    this.texCommsDelay = commsDelay;
     // Fleet formation sprites (family × tier); each independent, missing ones
     // fall back to the single-ship sprite so a bad file never breaks fleets.
     const families: FleetFamily[] = ["freighter", "raider", "corvette", "scout"];
@@ -1151,7 +865,6 @@ export class Renderer {
     }
     this.systemGfx.clear();
     this.systemsAnimating = false;
-    this.laneCommsSignature = "";
     this.viewDirty = true; // force a full systems rebuild against the new galaxy
     this.recompute();
   }
@@ -1185,149 +898,6 @@ export class Renderer {
     this.starfield.addChild(stars);
   }
 
-  /// §hyperspace: draw the LANE RIBBONS.
-  ///
-  /// Terrain, not objects — they sit beneath every gameplay layer and never
-  /// move, so this rebuilds only when the camera does. Each route is drawn as a
-  /// road band plus a brighter centerline; inspection zoom also reveals the
-  /// wider mechanical tolerance where lane physics applies. The corridor never
-  /// fades with zoom: at deep zoom its faint band legitimately fills the view.
-  private drawLanes(state: ViewState): void {
-    const BOUNDARY_ALPHA = 0.07;
-    const BOUNDARY_FADE_START = 8;
-    const BOUNDARY_FADE_END = 14;
-    const TAPER_FLOOR_FRAC = 0.35;
-    const g = this.lanesGfx;
-    g.clear();
-    const lanes = state.galaxy?.lanes ?? [];
-    if (lanes.length === 0) return;
-    const arcs = laneArcs(lanes);
-    const commZones = commLaneZones(lanes, state.emplacements);
-    const zoomR = this.scale / this.fitScale();
-    const boundaryT = clamp01((zoomR - BOUNDARY_FADE_START) / (BOUNDARY_FADE_END - BOUNDARY_FADE_START));
-    const boundaryAlpha = BOUNDARY_ALPHA * boundaryT * boundaryT * (3 - 2 * boundaryT);
-    for (const lane of lanes) {
-      if (lane.points.length < 2) continue;
-      const pts = lane.points.map((p) => this.worldToScreen(p));
-      const trace = () => {
-        g.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-      };
-      // THE SWEPT WIDTH IS NOT A FREE DIAL. It is capped in the sim against the
-      // tightest turning circle any hull has, because a corridor wider than that
-      // circle is one a fleet could come about inside — and reversal is supposed
-      // to cost an exit and an arc. So the corridor cannot simply be drawn
-      // broader to give the map more presence.
-      //
-      // The decorative bleed was removed because it is not lane geometry; it
-      // can return later as deliberate visual polish.
-      // §roads: the DRAWN band is the road, not the tolerance. Ships ride the
-      // centerline now, so a band at the full swept width read as a highway
-      // nobody uses the shoulders of — and with the width cap gone it grew
-      // heavier still. The sim's half_width keeps its full size for what it
-      // still governs (boarding, buoy siting, junction detection); the siting
-      // preview shows THAT band's legality itself, so nothing is hidden by
-      // drawing the road slimmer than the rule.
-      const widthPx = Math.max(1.5, lane.half_width * 2 * this.scale * LANE_DRAW_FRAC);
-      if (boundaryAlpha >= 0.005) {
-        let boundary = this.laneBoundaryWorld.get(lane.id);
-        if (
-          !boundary
-          || boundary.source !== lane.points
-          || boundary.halfWidth !== lane.half_width
-          || boundary.tapers !== lane.tapers
-        ) {
-          const cumulative = [0];
-          const segmentNormals: Vec2[] = [];
-          for (let i = 1; i < lane.points.length; i++) {
-            const dx = lane.points[i].x - lane.points[i - 1].x;
-            const dy = lane.points[i].y - lane.points[i - 1].y;
-            const len = Math.hypot(dx, dy);
-            cumulative.push(cumulative[i - 1] + len);
-            segmentNormals.push(len > 1e-9 ? { x: -dy / len, y: dx / len } : { x: 0, y: 0 });
-          }
-          const total = cumulative[cumulative.length - 1];
-          const taperLength = total * 0.15;
-          const left: Vec2[] = [];
-          const right: Vec2[] = [];
-          for (let i = 0; i < lane.points.length; i++) {
-            const before = i > 0 ? segmentNormals[i - 1] : { x: 0, y: 0 };
-            const after = i < segmentNormals.length ? segmentNormals[i] : { x: 0, y: 0 };
-            let nx = before.x + after.x;
-            let ny = before.y + after.y;
-            let nLen = Math.hypot(nx, ny);
-            if (nLen <= 1e-9) {
-              const fallback = i < segmentNormals.length ? after : before;
-              nx = fallback.x;
-              ny = fallback.y;
-              nLen = Math.hypot(nx, ny);
-            }
-            if (nLen > 1e-9) {
-              nx /= nLen;
-              ny /= nLen;
-            }
-            let halfWidth = lane.half_width;
-            if (lane.tapers && taperLength > 0 && total - cumulative[i] < taperLength) {
-              const frac = clamp01((total - cumulative[i]) / taperLength);
-              halfWidth *= TAPER_FLOOR_FRAC * (1 - frac) + frac;
-            }
-            const p = lane.points[i];
-            left.push({ x: p.x + nx * halfWidth, y: p.y + ny * halfWidth });
-            right.push({ x: p.x - nx * halfWidth, y: p.y - ny * halfWidth });
-          }
-          boundary = { source: lane.points, halfWidth: lane.half_width, tapers: lane.tapers, left, right };
-          this.laneBoundaryWorld.set(lane.id, boundary);
-        }
-
-        // These two edges mark the FULL swept tolerance where hull coupling,
-        // emplacement siting, and junction physics apply. The band inside is
-        // still the road; the boundary is never a fill or a wider road.
-        for (const edge of [boundary.left, boundary.right]) {
-          const edgePts = edge.map((p) => this.worldToScreen(p));
-          g.moveTo(edgePts[0].x, edgePts[0].y);
-          for (let i = 1; i < edgePts.length; i++) g.lineTo(edgePts[i].x, edgePts[i].y);
-          g.stroke({ width: 1, color: 0x2a6fb0, alpha: boundaryAlpha, cap: "round", join: "round" });
-        }
-      }
-      trace();
-      g.stroke({ width: widthPx, color: 0x2a6fb0, alpha: 0.075, cap: "round", join: "round" });
-      // The centerline: the axis a fleet aligns to for the speed benefit. Kept
-      // thin in absolute terms even as the physical corridor fills the view.
-      trace();
-      const centerlinePx = Math.min(3, Math.max(0.7, widthPx * 0.02));
-      g.stroke({ width: centerlinePx, color: 0x6fd0ff, alpha: 0.3, cap: "round" });
-
-      // §comms-v3: green is covered wire; the base blue road stays untouched.
-      // Presentation mode uses the relay's separately drawn 2D circle.
-      const arc = arcs.get(lane.id)!;
-      const zones = commZones.get(lane.id)!;
-      const drawZone = (
-        intervals: ArcInterval[],
-        color: number,
-        bandAlpha: number,
-        centerAlpha: number,
-        widthFrac: number,
-      ) => {
-        for (const interval of intervals) {
-          if (interval.hi - interval.lo < 1e-6) continue;
-          const zonePts = laneSpan(arc, interval).map((p) => this.worldToScreen(p));
-          g.moveTo(zonePts[0].x, zonePts[0].y);
-          for (let i = 1; i < zonePts.length; i++) g.lineTo(zonePts[i].x, zonePts[i].y);
-          g.stroke({
-            width: Math.max(1.5, widthPx * widthFrac),
-            color,
-            alpha: bandAlpha,
-            cap: "round",
-            join: "round",
-          });
-          g.moveTo(zonePts[0].x, zonePts[0].y);
-          for (let i = 1; i < zonePts.length; i++) g.lineTo(zonePts[i].x, zonePts[i].y);
-          g.stroke({ width: Math.max(0.8, centerlinePx), color, alpha: centerAlpha, cap: "round" });
-        }
-      };
-      drawZone(zones, COL_ROUTE, 0.11, 0.38, 0.5);
-    }
-  }
 
   private drawBackground(): void {
     if (!this.galaxy) return;
@@ -1696,7 +1266,6 @@ export class Renderer {
         const r = ghostById.get(raiderId);
         const t = ghostById.get(targetId);
         if (!r || !t) continue; // a ship left the view — no guess to draw
-        if (ghostInTunnel(r) || ghostInTunnel(t)) continue; // intent may remain; position-derived estimates may not
 
         // Constant-velocity intercept: ETA ≈ range / cruise speed (§14.1, no
         // acceleration ramp), then project the target forward along its heading.
@@ -1981,20 +1550,6 @@ export class Renderer {
     return t;
   }
 
-  private commandSignalLabel(id: number): Text {
-    let t = this.commandSignalLabels.get(id);
-    if (!t) {
-      t = new Text({
-        text: "beyond comms · warp speed",
-        style: new TextStyle({ fill: COL_COMMAND, fontFamily: "ui-monospace, monospace", fontSize: 9, letterSpacing: 0.3 }),
-      });
-      t.anchor.set(0, 0.5);
-      this.signalsLayer.addChild(t);
-      this.commandSignalLabels.set(id, t);
-    }
-    return t;
-  }
-
   /// The command center: the player's vantage, with a pulsing ring.
   private drawCommandCenter(state: ViewState): void {
     // §perf: pooled ccGfx (clear+redraw). Runs every frame — the pulse animates.
@@ -2047,53 +1602,32 @@ export class Renderer {
     // fleet's served plan after a reload (when the client-local `orders` map is
     // empty). The plan itself is the information source in that case.
     const currentIds = new Set(Object.keys(state.orders));
-    for (const [shipId, bookmark] of Object.entries(state.tunnelBookmarks)) {
-      if (bookmark.path?.length) currentIds.add(shipId);
-    }
     const selected = state.selectedShipId
       ? state.ghosts.find((ghost) => ghost.id === state.selectedShipId && ghost.own)
       : undefined;
     if (selected?.path?.length) currentIds.add(selected.id);
     for (const shipId of currentIds) {
-      // Engaged and docked fleets move to other map surfaces, but a tunnel
-      // fleet deliberately keeps its plan beside the stationary bookmark.
-      // Never use an eased glyph as route information; this line belongs
-      // to the served sighting and freezes whenever that sighting does.
+      // Never use an eased glyph as route information; this line belongs to the
+      // served sighting and moves only when new light advances that sighting.
       if (!drawableFleetIds.has(shipId)) continue;
       const ghost = state.ghosts.find((x) => x.id === shipId);
       if (!ghost) continue;
-      // A tunnel's served replay keeps receiving old light, but v4 deliberately
-      // presents only the stationary entry bookmark. Route geometry is part of
-      // that same picture: consuming it from a newer hidden-transit sample would
-      // leak motion by making the line shrink behind an unmoving arrow.
-      const tunnelBookmark = ghostInTunnel(ghost) ? state.tunnelBookmarks[ghost.id] : undefined;
-      const routeAnchor = tunnelBookmark?.pos ?? ghost.pos;
+      const routeAnchor = ghost.pos;
       const from = this.worldToScreen(routeAnchor);
       const dest = state.orders[shipId] ?? ghost.path?.[ghost.path.length - 1]?.pos;
-      // §course-plan: draw the flight the sim is ACTUALLY flying when we know
-      // it — the ship's remaining legs, lane rides bright and solid, warp hops
-      // dashed. The straight line was a lie whenever the plan rode a lane: the
-      // ship visibly left it, and the map looked broken rather than clever.
-      // Fallback to the straight dashed line while the order is still in
-      // flight to the ship (no plan exists yet — honestly so).
-      const plan = ghost?.own ? tunnelBookmark?.path ?? ghost.path : null;
+      // The served plan is straight realspace geometry after lane removal.
+      const plan = ghost?.own ? ghost.path : null;
       if (plan && plan.length > 0) {
         // The server intentionally serves the plan that was in force at this
         // sighting without trimming flown waypoints. Consume it from the map's
-        // served anchor—not server truth and not an eased glyph. In a tunnel
-        // that anchor is the frozen bookmark, so no newer replay leaks motion.
+        // served anchor—not server truth and not an eased glyph.
         const projection = nearestOnPath(routeAnchor, plan);
         let prev = this.worldToScreen(projection);
         for (let i = projection.next; i < plan.length; i++) {
           const leg = plan[i];
           const p = this.worldToScreen(leg.pos);
-          if (leg.lane) {
-            g.moveTo(prev.x, prev.y).lineTo(p.x, p.y);
-            g.stroke({ width: 1.5, color: COL_ROUTE, alpha: 0.6 });
-          } else {
-            dashedLine(g, prev.x, prev.y, p.x, p.y, 6, 5);
-            g.stroke({ width: 1, color: COL_ROUTE, alpha: 0.45 });
-          }
+          dashedLine(g, prev.x, prev.y, p.x, p.y, 6, 5);
+          g.stroke({ width: 1, color: COL_ROUTE, alpha: 0.45 });
           prev = p;
         }
         g.circle(prev.x, prev.y, 3).stroke({ width: 1, color: COL_ROUTE, alpha: 0.7 });
@@ -2132,20 +1666,20 @@ export class Renderer {
 
     // Prospective order — deliberately independent of the current route above,
     // so both remain on screen for comparison. Move previews wait for the
-    // server's fog-safe lane plan; targeted verbs use their observed target
-    // point directly. Every prospective leg uses a short 3/3 dash, visibly
+    // the straight destination; targeted verbs use their observed target point
+    // directly. Every prospective leg uses a short 3/3 dash, visibly
     // distinct from the current route's longer 6/5 warp dashes.
     const intent = state.pendingIntent;
     if (!intent?.dest) return;
     const ghost = state.ghosts.find((x) => x.id === intent.shipId && x.own);
     if (!ghost) return;
     let prev = this.worldToScreen(ghost.pos);
-    if (intent.verb === "move" && intent.path !== undefined) {
-      if (intent.path.length > 0) {
+    if (intent.verb === "move") {
+      if (intent.path && intent.path.length > 0) {
         for (const leg of intent.path) {
           const p = this.worldToScreen(leg.pos);
           dashedLine(g, prev.x, prev.y, p.x, p.y, 3, 3);
-          g.stroke({ width: leg.lane ? 1.7 : 1.25, color: COL_ROUTE_PREVIEW, alpha: leg.lane ? 0.9 : 0.72 });
+          g.stroke({ width: 1.25, color: COL_ROUTE_PREVIEW, alpha: 0.72 });
           prev = p;
         }
       } else {
@@ -2153,7 +1687,7 @@ export class Renderer {
         dashedLine(g, prev.x, prev.y, to.x, to.y, 3, 3);
         g.stroke({ width: 1.25, color: COL_ROUTE_PREVIEW, alpha: 0.72 });
       }
-    } else if (intent.verb !== "move") {
+    } else {
       const to = this.worldToScreen(intent.dest);
       dashedLine(g, prev.x, prev.y, to.x, to.y, 3, 3);
       g.stroke({ width: 1.35, color: COL_ROUTE_PREVIEW, alpha: 0.82 });
@@ -2339,39 +1873,6 @@ export class Renderer {
       const sprite = new Sprite(Texture.EMPTY);
       sprite.anchor.set(0.5);
       sprite.visible = false;
-      const delayIcon = new Sprite(Texture.EMPTY);
-      delayIcon.anchor.set(0.5);
-      delayIcon.visible = false;
-      delayIcon.eventMode = "static";
-      delayIcon.cursor = "help";
-      const delayTooltip = new Container();
-      delayTooltip.eventMode = "none";
-      delayTooltip.visible = false;
-      const delayTipText = new Text({
-        text: "Extremely Delayed Information",
-        style: new TextStyle({
-          fill: 0xffd56a,
-          fontFamily: "ui-monospace, monospace",
-          fontSize: 10,
-          lineHeight: 13,
-        }),
-      });
-      const delayTipPadX = 7;
-      const delayTipPadY = 5;
-      const delayTipW = delayTipText.width + delayTipPadX * 2;
-      const delayTipH = delayTipText.height + delayTipPadY * 2;
-      const delayTipBg = new Graphics()
-        .roundRect(0, 0, delayTipW, delayTipH, 4)
-        .fill({ color: 0x080b12, alpha: 0.96 })
-        .stroke({ width: 1, color: COL_COMMS_DARK, alpha: 0.65 });
-      delayTipText.position.set(delayTipPadX, delayTipPadY);
-      delayTooltip.addChild(delayTipBg, delayTipText);
-      delayIcon.on("pointerover", () => {
-        if (delayIcon.visible) delayTooltip.visible = true;
-      });
-      delayIcon.on("pointerout", () => {
-        delayTooltip.visible = false;
-      });
       const label = new Text({ text: "", style: new TextStyle({ fill: COL_OTHER, fontFamily: "ui-monospace, monospace", fontSize: 9 }) });
       label.anchor.set(0, 0.5);
       const pip = new Graphics();
@@ -2381,9 +1882,9 @@ export class Renderer {
       const badgeText = new Text({ text: "", style: new TextStyle({ fill: 0xffffff, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "bold" }) });
       badgeText.anchor.set(0.5, 0.5);
       // Pip is topmost so the friend/foe tag is never hidden by the sprite/label.
-      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip, delayIcon, delayTooltip);
+      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, sprite, delayIcon, delayTooltip, label, ring, pip, badge, badgeText, seen: true };
+      sp = { container, cone, body, sprite, label, ring, pip, badge, badgeText, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
@@ -2400,52 +1901,6 @@ export class Renderer {
       && previous.pos.y === ghost.pos.y;
     this.servedGhostFrames.set(ghost.id, { pos: { ...ghost.pos }, simTime, pinned });
     return pinned;
-  }
-
-  private spawnReacquisition(oldPos: Vec2, newPos: Vec2): void {
-    const root = new Container();
-    const pulse = new Graphics();
-    root.addChild(pulse);
-    this.reacquireLayer.addChild(root);
-    this.reacquireFx.push({
-      root,
-      pulse,
-      oldPos: { ...oldPos },
-      newPos: { ...newPos },
-      startedMs: performance.now(),
-    });
-  }
-
-  private updateReacquisitions(): void {
-    const now = performance.now();
-    for (let i = this.reacquireFx.length - 1; i >= 0; i--) {
-      const fx = this.reacquireFx[i];
-      const t = clamp01((now - fx.startedMs) / REENTRY_FX_MS);
-      if (t >= 1) {
-        this.reacquireLayer.removeChild(fx.root);
-        fx.root.destroy({ children: true });
-        this.reacquireFx.splice(i, 1);
-        continue;
-      }
-      const oldScreen = this.worldToScreen(fx.oldPos);
-      const newScreen = this.worldToScreen(fx.newPos);
-      const eased = t * t * (3 - 2 * t);
-      const head = {
-        x: oldScreen.x + (newScreen.x - oldScreen.x) * eased,
-        y: oldScreen.y + (newScreen.y - oldScreen.y) * eased,
-      };
-      fx.pulse.clear();
-      fx.pulse.moveTo(oldScreen.x, oldScreen.y).lineTo(head.x, head.y).stroke({
-        width: 2.2,
-        color: COL_OWN,
-        alpha: 0.45 * (1 - t),
-      });
-      fx.pulse.circle(head.x, head.y, 4 + 10 * t).stroke({
-        width: 1.2,
-        color: COL_OWN,
-        alpha: 0.55 * (1 - t),
-      });
-    }
   }
 
   /// §zoom-continuum: the smoothstep shared by two distinct size bands.
@@ -2522,33 +1977,7 @@ export class Renderer {
   /// can look legal and then be silently refused — the one failure mode a
   /// placement UI must not have. Kept next to the drawing so the two cannot
   /// drift without someone noticing.
-  siteError(kind: string, p: { x: number; y: number }, state: ViewState): string | null {
-    if (kind === "hyperspace_buoy" || kind === "hyperspace_repeater" || kind === "hyperspace_sensor") {
-      const lanes = state.galaxy?.lanes ?? [];
-      const onALane = lanes.some((l) => {
-        // Distance to the CENTERLINE, not to the nearest point — same fix the
-        // sim needed, for the same reason: samples are far further apart than a
-        // ribbon is wide, so a point-wise test rejects points lying on the line.
-        for (let i = 1; i < l.points.length; i++) {
-          const a = l.points[i - 1];
-          const b = l.points[i];
-          const abx = b.x - a.x;
-          const aby = b.y - a.y;
-          const len2 = abx * abx + aby * aby;
-          const t = len2 > 1e-9 ? Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2)) : 0;
-          const dx = p.x - (a.x + abx * t);
-          const dy = p.y - (a.y + aby * t);
-          if (Math.hypot(dx, dy) <= l.half_width) return true;
-        }
-        return false;
-      });
-      if (!onALane)
-        return kind === "hyperspace_buoy"
-          ? "A hyperspace buoy has to sit in a lane — it is a long-throw comm relay."
-          : kind === "hyperspace_repeater"
-            ? "A hyperspace repeater has to sit in a lane — it is a short-throw comm relay."
-            : "A hyperspace sensor has to sit in a lane — it listens to one.";
-    }
+  siteError(_kind: string, p: { x: number; y: number }, state: ViewState): string | null {
     const tooClose = (state.emplacements ?? []).some(
       (e) => Math.hypot(e.pos.x - p.x, e.pos.y - p.y) < EMPLACEMENT_MIN_SPACING,
     );
@@ -2566,23 +1995,15 @@ export class Renderer {
     const seenSprites = new Set<string>();
     for (const e of state.emplacements ?? []) {
       const p = this.worldToScreen(e.pos);
-      const buoy = e.kind === "hyperspace_buoy";
-      const repeater = e.kind === "hyperspace_repeater";
-      const listener = e.kind === "hyperspace_sensor";
       // §emplacements: a RIVAL's structure wears the threat colour, like their
       // ghosts — the shape still says which kind it is, the colour says whose.
       // (A rival's is only ever listed inside your sensor coverage.)
-      const col = e.own === false
-        ? COL_THREAT
-        : buoy ? 0x6fd0ff : repeater ? 0x8fe3a0 : listener ? 0xd9a8ff : 0x8fe3a0;
+      const col = e.own === false ? COL_THREAT : 0x8fe3a0;
       // A sensor's coverage is the reason it exists, so it is drawn.
       if (e.sensor_range > 0) {
         g.circle(p.x, p.y, e.sensor_range * this.scale).stroke({ width: 1, color: col, alpha: 0.18 });
       }
-      const tex = buoy
-        ? this.texHyperspaceBuoy
-        : repeater ? this.texHyperspaceRepeater
-        : e.kind === "deep_space_sensor" ? this.texDeepSpaceSensor : null;
+      const tex = e.kind === "deep_space_sensor" ? this.texDeepSpaceSensor : null;
       if (tex) {
         let sp = this.emplacementSprites.get(e.id);
         if (!sp) {
@@ -2594,7 +2015,7 @@ export class Renderer {
           sp.texture = tex;
         }
         sp.position.set(p.x, p.y);
-        const size = this.emplacementSizePx() * (repeater ? 0.78 : 1);
+        const size = this.emplacementSizePx();
         sp.scale.set(size / tex.width);
         // Preserve the established map grammar: own structures use their
         // natural cyan/green art; a revealed rival structure is threat-red.
@@ -2602,37 +2023,15 @@ export class Renderer {
         sp.alpha = e.own === false ? 0.94 : 1;
         sp.visible = true;
         seenSprites.add(e.id);
-      } else if (buoy || repeater) {
-        // Both are full relays; the smaller center pip distinguishes the cheap,
-        // short-throw repeater size when art has not loaded.
-        g.circle(p.x, p.y, 5).stroke({ width: 1.5, color: col, alpha: 0.9 });
-        g.circle(p.x, p.y, repeater ? 1 : 1.5).fill({ color: col, alpha: 0.9 });
-      } else if (listener) {
-        // A tripwire reads as a bracket ACROSS the lane — a thing you pass
-        // through, not a node you talk to.
-        g.moveTo(p.x - 5, p.y - 5).lineTo(p.x - 5, p.y + 5);
-        g.moveTo(p.x + 5, p.y - 5).lineTo(p.x + 5, p.y + 5);
-        g.stroke({ width: 1.5, color: col, alpha: 0.9 });
-        g.circle(p.x, p.y, 1.2).fill({ color: col, alpha: 0.9 });
       } else {
-        // A sensor reads as a dish: a wedge, so the two never look alike.
+        // Primitive fallback: a small sensor dish.
         g.moveTo(p.x - 5, p.y + 4).lineTo(p.x, p.y - 5).lineTo(p.x + 5, p.y + 4).closePath();
         g.stroke({ width: 1.5, color: col, alpha: 0.9 });
       }
       // Selection ring — the same affordance a selected fleet gets, so a
       // structure reads as a clickable object rather than scenery.
       if (state.selectedEmplacementId === e.id) {
-        // §comms-infra: selected communications sites disclose their nominal
-        // throw in WORLD su. The actual usable wire still follows lane arcs and
-        // needs overlapping sites; this ring makes the balance radius legible
-        // without pretending every standing relay is a sensor.
-        if ((buoy || repeater) && e.relay_throw > 0) {
-          const commRadius = e.relay_throw * this.scale;
-          const dashPairs = Math.max(12, Math.min(360, Math.ceil(Math.PI * 2 * commRadius / 12)));
-          dashedCircle(selection, p.x, p.y, commRadius, dashPairs * 2);
-          selection.stroke({ width: 1.4, color: col, alpha: 0.72 });
-        }
-        const radius = tex ? this.emplacementSizePx() * (repeater ? 0.78 : 1) / 2 + 4 : 12;
+        const radius = tex ? this.emplacementSizePx() / 2 + 4 : 12;
         selection.circle(p.x, p.y, radius).stroke({ width: 1.5, color: col, alpha: 0.95 });
       }
     }
@@ -2650,55 +2049,13 @@ export class Renderer {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
     const own = ghost.own;
-    const isDark = own && !ghost.in_comms;
-    const inTunnel = ghostInTunnel(ghost);
-    const showDarkArrow = isDark;
     const liveSim = liveSimTime();
     const servedPinned = own && this.servedStreamPinned(ghost, state.simTime);
-    const tunnelBookmark = state.tunnelBookmarks[ghost.id];
-    // LIVE advances the delayed replay through the fraction of the current View
-    // gap unless the served stream itself is pinned. Realspace DARK uses each
-    // arrived report; TUNNEL is fixed to the first served point beyond the edge.
-    const target = inTunnel
-      ? tunnelBookmark?.pos ?? ghost.pos
-      : isDark || servedPinned
+    const target = servedPinned
       ? { x: ghost.pos.x, y: ghost.pos.y }
       : { x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt };
     const prev = sp.shown;
-    const nowMs = performance.now();
-    const enteredTunnel = own && sp.inTunnel === false && inTunnel;
-    const exitedTunnel = own && sp.inTunnel === true && !inTunnel && !!prev;
-    const enteredDark = own && sp.inComms === true && !ghost.in_comms;
-    const reentered = own && sp.inComms === false && ghost.in_comms && !!prev && !exitedTunnel;
-    if (enteredTunnel) {
-      // The exact served bubble-crossing frame becomes a stationary bookmark.
-      // Use the established sprite→arrow morph without ever advancing it again.
-      sp.darkMorphMs = nowMs;
-      sp.reentry = undefined;
-    }
-    if (enteredDark) sp.darkMorphMs = nowMs;
-    if (reentered && prev) {
-      sp.reentry = { from: { ...prev }, to: { ...target }, startedMs: nowMs };
-      this.spawnReacquisition(prev, target);
-    }
-    if (exitedTunnel) {
-      // This point exists only because its served drive/bubble fact arrived.
-      // Reuse the reacquisition pulse at one stationary, fog-safe position.
-      this.spawnReacquisition(target, target);
-    }
-
-    let reentryT = 1;
-    if (exitedTunnel) {
-      sp.shown = { ...target };
-    } else if (sp.reentry) {
-      reentryT = clamp01((nowMs - sp.reentry.startedMs) / REENTRY_FX_MS);
-      const eased = reentryT * reentryT * (3 - 2 * reentryT);
-      sp.shown = {
-        x: sp.reentry.from.x + (sp.reentry.to.x - sp.reentry.from.x) * eased,
-        y: sp.reentry.from.y + (sp.reentry.to.y - sp.reentry.from.y) * eased,
-      };
-      if (reentryT >= 1) sp.reentry = undefined;
-    } else if (!prev || isDark) {
+    if (!prev) {
       sp.shown = { ...target };
     } else {
       const jump = Math.hypot(target.x - prev.x, target.y - prev.y);
@@ -2712,23 +2069,14 @@ export class Renderer {
     }
     const s = this.worldToScreen(sp.shown);
     sp.container.position.set(s.x, s.y);
-    sp.inComms = own ? ghost.in_comms : undefined;
-    sp.inTunnel = own ? inTunnel : undefined;
 
-    const headingVel = inTunnel ? tunnelBookmark?.vel ?? ghost.vel : ghost.vel;
-    const angle = Math.atan2(headingVel.y, headingVel.x);
-    let arrowMix = showDarkArrow ? 1 : sp.reentry ? 1 - reentryT : 0;
-    if (showDarkArrow && sp.darkMorphMs !== undefined) {
-      arrowMix = clamp01((nowMs - sp.darkMorphMs) / 220);
-      if (arrowMix >= 1) sp.darkMorphMs = undefined;
-    }
+    const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
 
     // §fog: NO UNCERTAINTY CIRCLE. There used to be one here — radius
     // `age x hull speed` — drawn when you selected a contact. It was deleted
-    // rather than fixed: the hull speed is the THRUSTER speed, so a lane rider's
-    // reach was understated fifty-fold, and no circle can be honest where speed
-    // depends on standing on a road. The panel's SEEN age and the sighting's
-    // drive state carry the same information without the false precision, and
+    // rather than fixed: drive state changes make a single extrapolated radius
+    // misleading. The panel's SEEN age and the sighting's drive state carry the
+    // same information without the false precision, and
     // the amber intercept estimate answers the question the circle was reached
     // for. `sp.cone` still carries the survey ring, pending badge, threat ring
     // and signature flare below.
@@ -2736,32 +2084,13 @@ export class Renderer {
     // §explore Part 2: SURVEY PROGRESS RING — owner-only (the field is only ever
     // sent for own fleets): an arc filling clockwise as the dwell runs, in the
     // scout's own cyan. A rival sees none of this — only the louder signature.
-    if (own && !showDarkArrow && ghost.survey_progress != null) {
+    if (own && ghost.survey_progress != null) {
       const p = Math.max(0, Math.min(1, ghost.survey_progress));
       const r = 9;
       sp.cone.circle(0, 0, r).stroke({ width: 1, color: COL_OWN, alpha: 0.25 });
       if (p > 0.01) {
         sp.cone.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2).stroke({ width: 2, color: COL_OWN, alpha: 0.9 });
       }
-    }
-    // The delay cue is UI-sized, not world-sized: map zoom moves the sighting
-    // but never changes the icon's 36px screen footprint. On a tunnel bookmark
-    // it is deliberately dimmed with the arrow: this is lost live tracking,
-    // not the later arrived-light crawl of a realspace-dark fleet.
-    sp.delayIcon.visible = showDarkArrow && this.texCommsDelay !== null;
-    if (!sp.delayIcon.visible) sp.delayTooltip.visible = false;
-    if (sp.delayIcon.visible && this.texCommsDelay) {
-      if (sp.delayIcon.texture !== this.texCommsDelay) sp.delayIcon.texture = this.texCommsDelay;
-      sp.delayIcon.scale.set(DARK_DELAY_ICON_PX / this.texCommsDelay.width);
-      sp.delayIcon.position.set(-22, 18);
-      sp.delayIcon.alpha = (inTunnel ? 0.58 : 0.95) * arrowMix;
-      const tipW = sp.delayTooltip.width;
-      const tipH = sp.delayTooltip.height;
-      const desiredLeft = s.x - 22 - tipW / 2;
-      const clampedLeft = Math.max(6, Math.min(this.viewW - tipW - 6, desiredLeft));
-      const above = -tipH - 8;
-      const tipY = s.y + above >= 6 ? above : 42;
-      sp.delayTooltip.position.set(clampedLeft - s.x, tipY);
     }
     // §order-lifecycle: is this own fleet's relevant order still unconfirmed (its
     // compliance light hasn't returned)? An estimate expiring cannot resolve this
@@ -2790,7 +2119,7 @@ export class Renderer {
 
     // (No "probably advanced to about here" pip: its length was the uncertainty
     // radius, and `drawOrders` already draws the fleet's WHOLE commanded route —
-    // the real flight plan, lane legs and all. The pending badge below still
+    // the real flight plan. The pending badge below still
     // carries the order phase.)
 
     // Pending badge, own-cyan, just off the pip while the order is unconfirmed —
@@ -2849,12 +2178,10 @@ export class Renderer {
     // indicator still TBD). Faded by staleness: fade applies to own ships too, so a
     // distant (stale) own ship visibly dims while one near the command center stays
     // crisp — with a higher floor so you never "lose" your fleet.
-    const displayAge = inTunnel && tunnelBookmark
-      ? Math.max(0, liveSim - tunnelBookmark.reportedAt)
-      : ghost.age;
+    const displayAge = ghost.age;
     const fade = Math.min(displayAge / FADE_AGE_S, 1);
     const observedAlpha = own ? Math.max(0.62, 0.97 - 0.4 * fade) : Math.max(0.4, 0.95 - 0.55 * fade);
-    const alpha = observedAlpha * (inTunnel ? 0.38 : showDarkArrow ? 0.6 : 1);
+    const alpha = observedAlpha;
     // Marker art: the single-ship sprite, or a FORMATION sprite when the viewer
     // knows this fleet is 2+ (family × tier — see fleetMarker). The target px is
     // computed against the SINGLE sprite's canvas and then multiplied by the
@@ -2864,31 +2191,7 @@ export class Renderer {
     const marker = this.fleetMarker(ghost);
     sp.body.clear();
     sp.body.scale.set(1);
-    if (arrowMix > 0) {
-      // DARK is one heading arrow, never speculative hull art. Realspace dark
-      // advances only on arrived reports; the amber tunnel variant is a fixed,
-      // dim bookmark at entry. Both dissolve against the live sprite in place.
-      sp.body.scale.set(DARK_ARROW_SCALE);
-      sp.sprite.visible = !!marker && arrowMix < 1;
-      if (marker && sp.sprite.visible) {
-        if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
-        const targetPx = this.shipSizePx(ghost.kind) * marker.mult;
-        sp.sprite.scale.set(targetPx / marker.tex.width);
-        sp.sprite.rotation = angle + SHIP_ART_FACING;
-        sp.sprite.tint = 0xffffff;
-        sp.sprite.alpha = alpha * (1 - arrowMix);
-      }
-      const pulse = inTunnel ? 0.42 : 0.75 + 0.25 * Math.sin(performance.now() / 220);
-      const arrowColor = inTunnel ? COL_COMMS_DARK : COL_OWN;
-      sp.body
-        .moveTo(6, 0)
-        .lineTo(-4, -4.5)
-        .moveTo(6, 0)
-        .lineTo(-4, 4.5)
-        .stroke({ width: 1.8, color: arrowColor, alpha: pulse * arrowMix });
-      sp.body.circle(-1.5, 0, 1.2).fill({ color: arrowColor, alpha: pulse * arrowMix });
-      sp.body.rotation = angle;
-    } else if (marker) {
+    if (marker) {
       sp.sprite.visible = true;
       if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
       // Size vs zoom: a small indicator through normal zoom, ramping to
@@ -2932,10 +2235,8 @@ export class Renderer {
     const pipY = -(half + pipR + 5); // just above the sprite's top edge, at every zoom
     const pipA = Math.max(0.85, 0.97 - 0.25 * fade); // high floor — survives staleness
     const diamond = (cy: number, rr: number): number[] => [0, cy - rr, rr, cy, 0, cy + rr, -rr, cy];
-    if (arrowMix < 0.5) {
-      pip.poly(diamond(pipY, pipR + 1.3)).fill({ color: 0x05070d, alpha: 0.7 * pipA }); // dark rim for contrast
-      pip.poly(diamond(pipY, pipR)).fill({ color: pipCol, alpha: pipA });
-    }
+    pip.poly(diamond(pipY, pipR + 1.3)).fill({ color: 0x05070d, alpha: 0.7 * pipA }); // dark rim for contrast
+    pip.poly(diamond(pipY, pipR)).fill({ color: pipCol, alpha: pipA });
 
     // Label: threat warning for raiders, cargo manifest for convoys (shown only
     // when known — i.e. within sensor range), staleness everywhere it matters.
@@ -2945,15 +2246,7 @@ export class Renderer {
     let txt = "";
     let col = COL_OTHER;
     let lalpha = 0.85;
-    if (inTunnel) {
-      txt = `HYPERSPACE ENTRY  ${stale}`;
-      col = COL_COMMS_DARK;
-      lalpha = 0.62;
-    } else if (showDarkArrow) {
-      txt = `${ghost.kind.replaceAll("_", " ").toUpperCase()} SIGNAL  ${stale}`;
-      col = COL_COMMS_DARK;
-      lalpha = 0.82;
-    } else if (ghost.kind === "raider" && !own) {
+    if (ghost.kind === "raider" && !own) {
       txt = `⚠ RAIDER  ${stale}`;
       col = COL_THREAT;
       lalpha = 0.95;
@@ -2981,14 +2274,7 @@ export class Renderer {
       const cargo = ghost.kind === "convoy"
         ? (ghost.cargo ? `${label(ghost.cargo.commodity)} ×${ghost.cargo.units}  ` : "")
         : "";
-      const response = showDarkArrow && pend && !pend.lost
-        ? pend.response_on_reentry
-          ? "  response unknown"
-          : pend.response_at > liveSim
-            ? `  response ~${Math.ceil(pend.response_at - liveSim)}s`
-            : `  response overdue ~${Math.ceil(liveSim - pend.response_at)}s`
-        : "";
-      txt = `${cargo}${stale}${response}`;
+      txt = `${cargo}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
     } else if (ghost.kind === "convoy") {
@@ -3006,7 +2292,7 @@ export class Renderer {
     }
     sp.label.text = txt;
     sp.label.style.fill = col;
-    sp.label.alpha = lalpha * (inTunnel ? 0.65 : showDarkArrow ? 0.6 : 1);
+    sp.label.alpha = lalpha;
     sp.label.position.set(11, -10);
 
     // FLEET COUNT BADGE (§13.1 intel ladder). Exact Σ when the composition is
@@ -3023,14 +2309,14 @@ export class Renderer {
       estimate = true;
     }
     sp.badge.clear();
-    if (badgeStr && arrowMix < 0.5) {
+    if (badgeStr) {
       const halfB = this.fleetHitRadius(ghost);
       const w = Math.max(13, badgeStr.length * 6 + 7);
       const h = 12;
       const bx = halfB * 0.66;
       const by = halfB * 0.55;
       const edge = own ? COL_OWN : ghost.tca ? COL_TCA : ghost.pirate ? COL_PIRATE : ghost.ally ? COL_ALLY : COL_OTHER;
-      const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade) * (showDarkArrow ? 0.6 : 1);
+      const bAlpha = Math.max(0.85, 0.97 - 0.25 * fade);
       sp.badge
         .roundRect(bx - w / 2, by - h / 2, w, h, 5)
         .fill({ color: 0x05070d, alpha: 0.82 * bAlpha })
@@ -3045,9 +2331,6 @@ export class Renderer {
       sp.badgeText.visible = false;
     }
 
-    // §comms-v4.1: the tunnel keeps this selectable bookmark visible. Its
-    // world position was captured once on entry and is never refreshed by the
-    // arrived dark stream; only a served exit event replaces it.
     sp.container.alpha = 1;
     sp.container.visible = true;
 
@@ -3078,17 +2361,8 @@ export class Renderer {
         || state.selectedShipId !== this.lastSelShip
         || state.selectedSystemId !== this.lastSelSystem
         || this.selectedBattleMarkerId !== this.lastSelMarker;
-      const laneCommsSignature = state.emplacements
-        .filter((e) => e.own !== false && e.relay_throw > 0)
-        .map((e) => `${e.id}:${e.kind}:${e.pos.x}:${e.pos.y}:${e.relay_throw}`)
-        .sort()
-        .join("|");
-      // Redraw the world-anchored background when the camera moves, and the
-      // lane zones when owned relay infrastructure changes.
-      if (this.viewDirty || laneCommsSignature !== this.laneCommsSignature) {
+      if (this.viewDirty) {
         this.drawBackground();
-        this.drawLanes(state);
-        this.laneCommsSignature = laneCommsSignature;
         this.viewDirty = false;
       }
       // Emplacements change when a construction/demolition completes, and their
@@ -3105,9 +2379,7 @@ export class Renderer {
       this.frameDt = this.lastFrameMs > 0 ? Math.min((nowMs - this.lastFrameMs) / 1000, 0.25) : 1 / 60;
       this.lastFrameMs = nowMs;
 
-      // §hyperspace: the sensor bubble is NO LONGER DRAWN.
-      //
-      // A single ring was always a simplification — detection is
+      // Sensor coverage is not rendered as a single certainty ring: detection is
       // `bubble × signature`, so a quiet raider is only caught at 0.4× that
       // radius while a big fleet at speed is caught well outside it. The circle
       // therefore claimed a certainty it never had, in both directions, and the
@@ -3170,9 +2442,7 @@ export class Renderer {
         if (sp0) sp0.container.visible = true; // un-suppress a fleet that broke away
         orderFleetIds.add(ghost.id);
         const screen = this.drawGhost(ghost, state, dt);
-        // A tunnel bookmark is not the moving receiver, so never bend the comet
-        // onto it; the fog-safe solved/served fallback below remains in force.
-        if (!ghostInTunnel(ghost)) screenById.set(ghost.id, screen);
+        screenById.set(ghost.id, screen);
       }
       // A ship is drawn only while the server is sending its ghost. A destroyed
       // ship's ghost flies on old light until its destruction light reaches this
@@ -3185,7 +2455,6 @@ export class Renderer {
           this.ghosts.delete(id);
         }
       }
-      this.updateReacquisitions();
 
       this.drawOrders(state, orderFleetIds);
       this.drawIntercepts(state, ghostById);
@@ -3251,7 +2520,7 @@ export class Renderer {
 
     if (tr.target === "system" && tr.focus) {
       // Keep magnifying after the nominal r=96 seam. Zoom about the star so its
-      // base camera trajectory is unchanged while ships, buoys, and lanes spread.
+      // base camera trajectory is unchanged while nearby world geometry spreads.
       const focusScreen = this.worldToScreen(tr.focus);
       const overshoot = 1 + (GALAXY_OVERSHOOT - 1) * semanticP;
       this.scale *= overshoot;
@@ -3332,8 +2601,6 @@ export class Renderer {
     g.clear();
     if (!state.commandCenter) return;
     const cc = this.worldToScreen(state.commandCenter);
-    for (const text of this.commandSignalLabels.values()) text.visible = false;
-    const liveSignalIds = new Set(state.commandSignals.map((signal) => signal.orderId));
 
     // OUTBOUND only: a violet comet, command center → ship. No return leg (the
     // ship's reaction is seen on the map), and no inbound result rings (a raid
@@ -3345,29 +2612,22 @@ export class Renderer {
       // frames; the comet therefore jittered beside an otherwise smooth ship.
       let gp = screenById.get(sig.shipId);
       if (!gp) {
-        // Docked and battle-suppressed fleets have no rendered glyph. A tunnel
-        // does have a bookmark, but it is not a receiver position: its comet
-        // ends at the fog-safe solved meeting point when the route carries one;
-        // a direct beyond-wire signal has no drawable hops, so it ends at the
-        // last-served position. Neither case bends toward invented motion.
+        // Docked and battle-suppressed fleets have no rendered glyph. Aim from
+        // the served picture only; never substitute authoritative position.
         const ghost = state.ghosts.find((x) => x.id === sig.shipId);
         if (!ghost) continue;
-        const solved = ghostInTunnel(ghost) ? sig.hops[sig.hops.length - 1]?.pos : undefined;
         const servedPinned = ghost.own && this.servedStreamPinned(ghost, state.simTime);
-        gp = this.worldToScreen(solved ?? (ghost.own && (!ghost.in_comms || servedPinned)
+        gp = this.worldToScreen(ghost.own && servedPinned
           ? ghost.pos
-          : { x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt }));
+          : { x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
       }
 
       const p = Math.max(0, Math.min(1, sig.pOut));
       const focusing = state.selectedOrderId !== null;
       const selected = state.selectedOrderId === sig.orderId;
       const emphasis = focusing ? (selected ? 1 : 0.35) : 1;
-      // §buoys: the comet traces the RELAY PATH the order actually flies —
-      // screen-space waypoints from cc through each hop, the LAST leg bent
-      // onto the live, rendered ghost so arrival lands on the visible ship as
-      // its delayed light is smoothly reconciled. `fracs` are the server's own hop times, so the comet
-      // sprints along lanes and crawls the warp gaps. No hops = straight run.
+      // The comet uses the server's straight warp-light clock and bends its
+      // endpoint onto the same served/eased ghost drawn this frame.
       const pts: { x: number; y: number }[] = [cc];
       const fracs: number[] = [0];
       if (sig.hops.length >= 2) {
@@ -3403,18 +2663,6 @@ export class Renderer {
       g.circle(hx, hy, selected ? 15 : 12).fill({ color: COL_COMMAND, alpha: (selected ? 0.2 : 0.12) * emphasis });
       g.circle(hx, hy, selected ? 6 : 5).fill({ color: COL_COMMAND, alpha: 0.98 * emphasis });
       arrowhead(g, hx + d.x * 6, hy + d.y * 6, d.x, d.y, selected ? 10 : 9, COL_COMMAND, 0.98 * emphasis);
-      if (sig.beyondComms && seg === fracs.length - 1) {
-        const text = this.commandSignalLabel(sig.orderId);
-        text.visible = true;
-        text.position.set(hx + 12, hy - 11);
-        text.alpha = 0.78 * emphasis;
-      }
-    }
-    for (const [id, text] of this.commandSignalLabels) {
-      if (liveSignalIds.has(id)) continue;
-      this.signalsLayer.removeChild(text);
-      text.destroy();
-      this.commandSignalLabels.delete(id);
     }
   }
 }

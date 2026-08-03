@@ -52,15 +52,7 @@ impl Timeline {
     /// Record a tick's events as future timeline entries, each at its
     /// player-specific observable time. Runs for ALL players (online or off).
     pub fn ingest(&mut self, events: &[Event], world: &World) {
-        // §hyperspace: notices reach a command center through the same medium
-        // everything else does — a shortest-time path over the lane network, not
-        // `distance / c`. Left on bare `c` these would arrive up to 50× late
-        // across the rescaled galaxy.
-        // §buoys: ingest runs across every player's notices, so it has no single
-        // relay network to read. Warp-only here is the conservative reading — a
-        // notice never arrives EARLIER than the medium allows.
-        let delays =
-            sim::lane::DelayField { lanes: &world.lanes, sites: &[], c: world.config.c };
+        // Every notice rides its own straight warp-light wavefront.
         for e in events {
             match &e.payload {
                 // Own economy / automation uses the SAME physical origin and
@@ -69,11 +61,12 @@ impl Timeline {
                 EventPayload::Trade(te) => {
                     if let Some((sev, text)) = trade_entry(te, world) {
                         let player = te.player();
-                        let Some(cc) = world.players.get(&player).map(|corp| corp.command_center) else {
+                        let Some(cc) = world.players.get(&player).map(|corp| corp.command_center)
+                        else {
                             continue;
                         };
                         let origin = crate::game_loop::trade_report_origin(world, te);
-                        let observe = e.time + origin.distance(cc) / world.config.c;
+                        let observe = e.time + sim::transit::delay(origin, cc, world.config.c);
                         self.push(player, observe, sev, text);
                     }
                 }
@@ -92,8 +85,15 @@ impl Timeline {
                         let Some(cc) = world.players.get(&p).map(|corp| corp.command_center) else {
                             continue;
                         };
-                        let observe = e.time + delays.between(*pos, cc);
-                        let (sev, text) = raid_entry(p, *attacker, *defender, *attacker_kind, *target_kind, *outcome);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let (sev, text) = raid_entry(
+                            p,
+                            *attacker,
+                            *defender,
+                            *attacker_kind,
+                            *target_kind,
+                            *outcome,
+                        );
                         self.push(p, observe, sev, text);
                     }
                 }
@@ -102,7 +102,12 @@ impl Timeline {
                 // reputational hit rides the same wavefront as the legal one. The
                 // culprit reads it as an indictment; everyone else reads it as
                 // intelligence about who is worth avoiding (or hiring).
-                EventPayload::Citation { culprit, offense, pos, occurred_at } => {
+                EventPayload::Citation {
+                    culprit,
+                    offense,
+                    pos,
+                    occurred_at,
+                } => {
                     let who = world
                         .players
                         .get(culprit)
@@ -115,7 +120,8 @@ impl Timeline {
                         String::new()
                     };
                     for (&p, corp) in &world.players {
-                        let observe = e.time + delays.between(*pos, corp.command_center);
+                        let observe =
+                            e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
                         let (sev, text) = if p == *culprit {
                             (
                                 TimelineSeverity::Bad,
@@ -127,7 +133,10 @@ impl Timeline {
                         } else {
                             (
                                 TimelineSeverity::Info,
-                                format!("Authority bulletin: {who} cited for {}{when}.", offense.title()),
+                                format!(
+                                    "Authority bulletin: {who} cited for {}{when}.",
+                                    offense.title()
+                                ),
                             )
                         };
                         self.push(p, observe, sev, text);
@@ -136,11 +145,20 @@ impl Timeline {
                 // §TCA Phase 2: ENFORCEMENT bulletins, public from the Market Hub
                 // on the same light-gating as a citation. The announcement's light
                 // outruns the squadron — that IS the target's lead time.
-                EventPayload::EnforcementDispatched { target, system, pos } => {
-                    let who = world.players.get(target).map(|c| c.name.clone()).unwrap_or_else(|| format!("{target}"));
+                EventPayload::EnforcementDispatched {
+                    target,
+                    system,
+                    pos,
+                } => {
+                    let who = world
+                        .players
+                        .get(target)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| format!("{target}"));
                     let name = system_name(world, *system);
                     for (&p, corp) in &world.players {
-                        let observe = e.time + delays.between(*pos, corp.command_center);
+                        let observe =
+                            e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
                         let (sev, text) = if p == *target {
                             (
                                 TimelineSeverity::Bad,
@@ -150,15 +168,29 @@ impl Timeline {
                                 ),
                             )
                         } else {
-                            (TimelineSeverity::Info, format!("Authority bulletin: an enforcement squadron sails against {who} at {name}."))
+                            (
+                                TimelineSeverity::Info,
+                                format!(
+                                    "Authority bulletin: an enforcement squadron sails against {who} at {name}."
+                                ),
+                            )
                         };
                         self.push(p, observe, sev, text);
                     }
                 }
-                EventPayload::EnforcementWithdrawn { target, recalled, pos } => {
-                    let who = world.players.get(target).map(|c| c.name.clone()).unwrap_or_else(|| format!("{target}"));
+                EventPayload::EnforcementWithdrawn {
+                    target,
+                    recalled,
+                    pos,
+                } => {
+                    let who = world
+                        .players
+                        .get(target)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| format!("{target}"));
                     for (&p, corp) in &world.players {
-                        let observe = e.time + delays.between(*pos, corp.command_center);
+                        let observe =
+                            e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
                         let (sev, text) = if p == *target {
                             if *recalled {
                                 (TimelineSeverity::Good, "Authority enforcement RECALLED — your charter is back above the proscription line.".to_string())
@@ -166,7 +198,12 @@ impl Timeline {
                                 (TimelineSeverity::Info, "The Authority's enforcement squadron has served its time and is standing down.".to_string())
                             }
                         } else {
-                            (TimelineSeverity::Info, format!("Authority bulletin: the enforcement squadron against {who} has stood down."))
+                            (
+                                TimelineSeverity::Info,
+                                format!(
+                                    "Authority bulletin: the enforcement squadron against {who} has stood down."
+                                ),
+                            )
                         };
                         self.push(p, observe, sev, text);
                     }
@@ -177,16 +214,29 @@ impl Timeline {
                     let name = system_name(world, *system);
                     for (&p, corp) in &world.players {
                         if p == *owner {
-                            self.push(p, e.time, TimelineSeverity::Good, format!("You claimed {name}."));
+                            self.push(
+                                p,
+                                e.time,
+                                TimelineSeverity::Good,
+                                format!("You claimed {name}."),
+                            );
                         } else {
-                            let observe = e.time + delays.between(*pos, corp.command_center);
-                            self.push(p, observe, TimelineSeverity::Warn, format!("A rival claimed {name}."));
+                            let observe = e.time
+                                + sim::transit::delay(*pos, corp.command_center, world.config.c);
+                            self.push(
+                                p,
+                                observe,
+                                TimelineSeverity::Warn,
+                                format!("A rival claimed {name}."),
+                            );
                         }
                     }
                 }
                 // §ladder B4: a Titan dying is HEADLINE news — every corp hears
                 // it (light-delayed from the wreck; the owner instantly).
-                EventPayload::FlagshipDestroyed { owner, name, pos, .. } => {
+                EventPayload::FlagshipDestroyed {
+                    owner, name, pos, ..
+                } => {
                     let title = match name {
                         Some(n) => format!("The *{n}* is destroyed."),
                         None => "A Titan is destroyed.".to_string(),
@@ -196,28 +246,46 @@ impl Timeline {
                         if p == *owner {
                             self.push(p, e.time, TimelineSeverity::Bad, format!("{title} Your syndicate's flagship is gone — the yards may lay a new keel."));
                         } else {
-                            let observe = e.time + delays.between(wreck, corp.command_center);
+                            let observe = e.time
+                                + sim::transit::delay(wreck, corp.command_center, world.config.c);
                             self.push(p, observe, TimelineSeverity::Warn, title.clone());
                         }
                     }
                 }
                 // Construction is your own private administration (§step1) — owner-only,
                 // observable instantly; the finished ship reveals as a light-gated ghost.
-                EventPayload::BuildStarted { owner, system, what, .. } => {
+                EventPayload::BuildStarted {
+                    owner,
+                    system,
+                    what,
+                    ..
+                } => {
                     let name = system_name(world, *system);
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!("Construction started at {name}: {}.", build_label(*what)));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("Construction started at {name}: {}.", build_label(*what)),
+                    );
                 }
                 // §plunder: a held blockade stripped goods off a colony. BOTH
                 // sides hear it on their own clock — the victim watching their
                 // stores walk away is half the point of the mechanic.
-                EventPayload::SystemPlundered { by, owner, system, commodity, units, pos } => {
+                EventPayload::SystemPlundered {
+                    by,
+                    owner,
+                    system,
+                    commodity,
+                    units,
+                    pos,
+                } => {
                     let name = system_name(world, *system);
                     let good = commodity_name(*commodity);
                     // The VICTIM learns by light from the system, exactly as they
                     // learn the blockade itself — owning ground grants no FTL
                     // knowledge of what is happening on it (§6).
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Bad, format!(
                             "{name} is being STRIPPED — {units} {good} carried off by the blockade holding it. \
                              Break the blockade or keep losing stores."
@@ -235,18 +303,38 @@ impl Timeline {
                 // it is whole. Fires once, on completion.
                 EventPayload::FleetRepaired { owner, system, .. } => {
                     let name = system_name(world, *system);
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!("Repairs complete at {name} — the fleet is back to full hull."));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("Repairs complete at {name} — the fleet is back to full hull."),
+                    );
                 }
-                EventPayload::SystemUpgraded { owner, system, upgrade, tier } => {
+                EventPayload::SystemUpgraded {
+                    owner,
+                    system,
+                    upgrade,
+                    tier,
+                } => {
                     let name = system_name(world, *system);
                     // §economy: one title-driven line for all 16 structure kinds.
                     let what = format!("{} tier {tier}", upgrade.title());
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!("{name} developed — {what}."));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("{name} developed — {what}."),
+                    );
                 }
                 // A soft-rejected build (§buildings step 1) — owner-only, instant
                 // (your own administration): nothing was spent, the request just
                 // couldn't be hosted. Tells the player WHY so the fix is obvious.
-                EventPayload::BuildRejected { owner, system, what, reason } => {
+                EventPayload::BuildRejected {
+                    owner,
+                    system,
+                    what,
+                    reason,
+                } => {
                     let name = system_name(world, *system);
                     let text = match reason {
                         sim::BuildRejectReason::NoSlot => format!(
@@ -307,7 +395,7 @@ impl Timeline {
                 EventPayload::ColonyHeld { owner, system, pos } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Warn, format!(
                             "Your colony ship arrived at {name} — already claimed. It is holding position, intact; redirect it to another system."
                         ));
@@ -317,10 +405,15 @@ impl Timeline {
                 // (§contestable-territory). The OWNER learns it light-delayed
                 // (a rival arrived at the system — news travels home at c); the
                 // BESIEGER learns instantly (their fleet is there).
-                EventPayload::BlockadeEstablished { by, owner, system, pos } => {
+                EventPayload::BlockadeEstablished {
+                    by,
+                    owner,
+                    system,
+                    pos,
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Bad, format!(
                             "{name} is under BLOCKADE — a rival fleet holds station; convoys in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
                         ));
@@ -333,16 +426,22 @@ impl Timeline {
                 // Both participants learn it light-delayed from the flip site: the
                 // OLD owner ("you lost X"), the CAPTOR ("you captured X"). Third
                 // parties see the ownership change via the light-gated map.
-                EventPayload::SystemCaptured { old_owner, new_owner, system, pos, .. } => {
+                EventPayload::SystemCaptured {
+                    old_owner,
+                    new_owner,
+                    system,
+                    pos,
+                    ..
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(old_owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*old_owner, observe, TimelineSeverity::Bad, format!(
                             "You LOST {name} — a besieger's marines took the ground. Its stockpile was plundered and its developments damaged; your fleets survive."
                         ));
                     }
                     if let Some(cc) = world.players.get(new_owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*new_owner, observe, TimelineSeverity::Good, format!(
                             "You CAPTURED {name} — your marines hold the ground. You inherit its (damaged) developments and plundered stockpile."
                         ));
@@ -353,17 +452,27 @@ impl Timeline {
                 // The old copy here said the transports were destroyed, which
                 // was never true of a hold and is now the whole distinction
                 // between this notice and `AssaultRepulsed`.
-                EventPayload::AssaultHeld { owner, system, marines, needed, pos } => {
+                EventPayload::AssaultHeld {
+                    owner,
+                    system,
+                    marines,
+                    needed,
+                    pos,
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Good, format!(
                             "A landing force is standing off {name} — {marines} marines against ground that would take about {needed}. Your garrison is why they haven't come down."
                         ));
                     }
                     // The would-be attacker is on station, so they see it at once.
-                    if let Some(by) = world.systems.iter().find(|s| s.id == *system)
-                        .and_then(|s| s.blockade.as_ref()).map(|b| b.by)
+                    if let Some(by) = world
+                        .systems
+                        .iter()
+                        .find(|s| s.id == *system)
+                        .and_then(|s| s.blockade.as_ref())
+                        .map(|b| b.by)
                     {
                         self.push(by, e.time, TimelineSeverity::Warn, format!(
                             "Your commanders WILL NOT land at {name} — {marines} marines against a break-even of {needed}. Nothing was committed. Bring more transports, or keep bombarding to pin more of the garrison."
@@ -373,11 +482,20 @@ impl Timeline {
                 // §ground G1: the drop went in. Both sides watch the same clock
                 // from here, and the fight is live — the defender can still
                 // change it by breaking the blockade.
-                EventPayload::AssaultBegan { attacker, defender, system, marines, defenders, suppression, pos, .. } => {
+                EventPayload::AssaultBegan {
+                    attacker,
+                    defender,
+                    system,
+                    marines,
+                    defenders,
+                    suppression,
+                    pos,
+                    ..
+                } => {
                     let name = system_name(world, *system);
                     let pinned = (suppression * 100.0).round() as u32;
                     if let Some(cc) = world.players.get(defender).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*defender, observe, TimelineSeverity::Bad, format!(
                             "LANDING AT {name} — {marines} marines are on the ground against your {defenders} ({pinned}% of the garrison pinned by bombardment). BREAK THE BLOCKADE and the pinned troops rejoin the fight."
                         ));
@@ -388,16 +506,26 @@ impl Timeline {
                 }
                 // §ground G1: the landing was DESTROYED on the ground. This one
                 // really does cost the transports.
-                EventPayload::AssaultRepulsed { owner, system, landed, held, pos } => {
+                EventPayload::AssaultRepulsed {
+                    owner,
+                    system,
+                    landed,
+                    held,
+                    pos,
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Good, format!(
                             "Your garrison at {name} DESTROYED a landing of {landed} marines — {held} of your troops still hold the ground. The transports went with them."
                         ));
                     }
-                    if let Some(by) = world.systems.iter().find(|s| s.id == *system)
-                        .and_then(|s| s.blockade.as_ref()).map(|b| b.by)
+                    if let Some(by) = world
+                        .systems
+                        .iter()
+                        .find(|s| s.id == *system)
+                        .and_then(|s| s.blockade.as_ref())
+                        .map(|b| b.by)
                     {
                         self.push(by, e.time, TimelineSeverity::Bad, format!(
                             "Your landing at {name} was DESTROYED — all {landed} marines and the transports that carried them are lost, against {held} surviving defenders."
@@ -408,19 +536,28 @@ impl Timeline {
                 EventPayload::BlockadeLifted { owner, system, pos } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
-                        self.push(*owner, observe, TimelineSeverity::Good, format!(
-                            "The blockade of {name} has LIFTED — logistics resume."
-                        ));
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        self.push(
+                            *owner,
+                            observe,
+                            TimelineSeverity::Good,
+                            format!("The blockade of {name} has LIFTED — logistics resume."),
+                        );
                     }
                 }
                 // A scout captured intel (§scout part 2) — OWNER-ONLY, delivered
                 // when the capture's light (from the scout's position) reaches
                 // the owner's command center: knowledge travels home at c.
-                EventPayload::IntelGathered { owner, system, defense_tier, shipyard_tier, pos } => {
+                EventPayload::IntelGathered {
+                    owner,
+                    system,
+                    defense_tier,
+                    shipyard_tier,
+                    pos,
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Info, format!(
                             "Scout report: {name} — Defense ×{defense_tier} · Shipyard ×{shipyard_tier}."
                         ));
@@ -436,65 +573,133 @@ impl Timeline {
                         kind.title()
                     ));
                 }
-                EventPayload::SpecialistTrained { owner, system, kind } => {
+                EventPayload::SpecialistTrained {
+                    owner,
+                    system,
+                    kind,
+                } => {
                     let name = system_name(world, *system);
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
-                        "The Academy at {name} graduated a {}.",
-                        kind.title()
-                    ));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("The Academy at {name} graduated a {}.", kind.title()),
+                    );
                 }
-                EventPayload::SpecialistsDelivered { owner, system, manifest } => {
+                EventPayload::SpecialistsDelivered {
+                    owner,
+                    system,
+                    manifest,
+                } => {
                     let name = system_name(world, *system);
-                    let who: Vec<String> = manifest.iter().map(|(k, n)| format!("{}× {}", n, k.title())).collect();
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
-                        "Personnel landed at {name}: {}.",
-                        who.join(", ")
-                    ));
+                    let who: Vec<String> = manifest
+                        .iter()
+                        .map(|(k, n)| format!("{}× {}", n, k.title()))
+                        .collect();
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("Personnel landed at {name}: {}.", who.join(", ")),
+                    );
                 }
-                EventPayload::SpecialistsLost { owner, manifest, pos } => {
+                EventPayload::SpecialistsLost {
+                    owner,
+                    manifest,
+                    pos,
+                } => {
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
-                        let who: Vec<String> = manifest.iter().map(|(k, n)| format!("{}× {}", n, k.title())).collect();
-                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
-                            "Lost with the ship: {}.",
-                            who.join(", ")
-                        ));
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let who: Vec<String> = manifest
+                            .iter()
+                            .map(|(k, n)| format!("{}× {}", n, k.title()))
+                            .collect();
+                        self.push(
+                            *owner,
+                            observe,
+                            TimelineSeverity::Bad,
+                            format!("Lost with the ship: {}.", who.join(", ")),
+                        );
                     }
                 }
                 // §economy Part 3: a production line STOPPED or RECOVERED —
                 // OWNER-ONLY, own clock, transitions only (latched in the sim, so
                 // it can never spam). The named cause is the fix-first pointer.
-                EventPayload::ProductionSuspended { owner, system, structure, reason } => {
+                EventPayload::ProductionSuspended {
+                    owner,
+                    system,
+                    structure,
+                    reason,
+                } => {
                     let name = system_name(world, *system);
                     use sim::SuspendReason as R;
                     let cause = match reason {
                         R::NoFood => "the colony is out of Provisions — ship food",
-                        R::NoInputs => "its input basket ran dry — ship raws in or staff extraction",
-                        R::StorageFull => "storage is FULL — ship goods out or build an Orbital Warehouse",
+                        R::NoInputs => {
+                            "its input basket ran dry — ship raws in or staff extraction"
+                        }
+                        R::StorageFull => {
+                            "storage is FULL — ship goods out or build an Orbital Warehouse"
+                        }
                     };
-                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
-                        "{} at {name} SUSPENDED — {cause} (nothing is lost).",
-                        structure.title()
-                    ));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Warn,
+                        format!(
+                            "{} at {name} SUSPENDED — {cause} (nothing is lost).",
+                            structure.title()
+                        ),
+                    );
                 }
-                EventPayload::ProductionResumed { owner, system, structure } => {
+                EventPayload::ProductionResumed {
+                    owner,
+                    system,
+                    structure,
+                } => {
                     let name = system_name(world, *system);
-                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
-                        "{} at {name} is producing again.",
-                        structure.title()
-                    ));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("{} at {name} is producing again.", structure.title()),
+                    );
                 }
                 // §economy Part 2: a colony moved on the FOOD LADDER — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
                 // and FuelShortfall). Transitions only, so it never spams.
-                EventPayload::FoodStateChanged { owner, system, state } => {
+                EventPayload::FoodStateChanged {
+                    owner,
+                    system,
+                    state,
+                } => {
                     let name = system_name(world, *system);
                     use sim::FoodState as F;
                     let (sev, text) = match state {
-                        F::WellSupplied => (TimelineSeverity::Good, format!("{name} is WELL SUPPLIED again — full workforce, growth resumed.")),
-                        F::Rationing => (TimelineSeverity::Warn, format!("{name} is RATIONING — workforce slowed, growth paused. Ship Provisions there (nothing is lost).")),
-                        F::Critical => (TimelineSeverity::Warn, format!("Food CRITICAL at {name} — workforce at half strength. Ship Provisions there (nothing is lost).")),
-                        F::NoProvisions => (TimelineSeverity::Bad, format!("{name} is OUT OF PROVISIONS — industry stalled; the colony endures (nobody dies). Ship Provisions there.")),
+                        F::WellSupplied => (
+                            TimelineSeverity::Good,
+                            format!(
+                                "{name} is WELL SUPPLIED again — full workforce, growth resumed."
+                            ),
+                        ),
+                        F::Rationing => (
+                            TimelineSeverity::Warn,
+                            format!(
+                                "{name} is RATIONING — workforce slowed, growth paused. Ship Provisions there (nothing is lost)."
+                            ),
+                        ),
+                        F::Critical => (
+                            TimelineSeverity::Warn,
+                            format!(
+                                "Food CRITICAL at {name} — workforce at half strength. Ship Provisions there (nothing is lost)."
+                            ),
+                        ),
+                        F::NoProvisions => (
+                            TimelineSeverity::Bad,
+                            format!(
+                                "{name} is OUT OF PROVISIONS — industry stalled; the colony endures (nobody dies). Ship Provisions there."
+                            ),
+                        ),
                     };
                     self.push(*owner, e.time, sev, text);
                 }
@@ -508,23 +713,42 @@ impl Timeline {
                         world.systems.iter().find(|s| s.id == *host).map(|s| s.pos),
                     ) {
                         let name = system_name(world, *host);
-                        let observe = e.time + delays.between(hpos, cc);
+                        let observe = e.time + sim::transit::delay(hpos, cc, world.config.c);
                         let (sev, text) = if *fed {
-                            (TimelineSeverity::Good, format!("Your garrison at ally {name} is fed again — back on defense."))
+                            (
+                                TimelineSeverity::Good,
+                                format!(
+                                    "Your garrison at ally {name} is fed again — back on defense."
+                                ),
+                            )
                         } else {
-                            (TimelineSeverity::Warn, format!("Your garrison at ally {name} is UNFED — its defense is suspended until the host has Provisions (nothing is lost)."))
+                            (
+                                TimelineSeverity::Warn,
+                                format!(
+                                    "Your garrison at ally {name} is UNFED — its defense is suspended until the host has Provisions (nothing is lost)."
+                                ),
+                            )
                         };
                         self.push(*owner, observe, sev, text);
                     }
                 }
                 // §pirates: a player DESTROYED a pirate enclave — OWNER-ONLY (the
                 // victor), light-delayed from the base to their command center.
-                EventPayload::PirateEnclaveCleared { owner, system, pos, plunder } => {
+                EventPayload::PirateEnclaveCleared {
+                    owner,
+                    system,
+                    pos,
+                    plunder,
+                } => {
                     if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
                         let name = system_name(world, *system);
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         let loot: u32 = plunder.values().sum();
-                        let tail = if loot > 0 { format!(" — {loot} units of plunder seized") } else { String::new() };
+                        let tail = if loot > 0 {
+                            format!(" — {loot} units of plunder seized")
+                        } else {
+                            String::new()
+                        };
                         self.push(*owner, observe, TimelineSeverity::Good, format!("Pirate enclave at {name} CLEARED{tail}. It will lie dormant, then respawn weaker."));
                     }
                 }
@@ -535,27 +759,50 @@ impl Timeline {
                 EventPayload::NodeAwakened { system, pos, bonus } => {
                     let name = system_name(world, *system);
                     for (&p, corp) in &world.players {
-                        let observe = e.time + delays.between(*pos, corp.command_center);
+                        let observe =
+                            e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
                         self.push(
                             p,
                             observe,
                             TimelineSeverity::Info,
-                            format!("EXOTIC NODE AWAKENED at {name} — a {} node is now capturable.", bonus.title()),
+                            format!(
+                                "EXOTIC NODE AWAKENED at {name} — a {} node is now capturable.",
+                                bonus.title()
+                            ),
                         );
                     }
                 }
                 // §node EXPOSURE: a node's HOLDER changed — announced GALAXY-WIDE,
                 // light-delayed, so every corp learns who now commands it. The holder
                 // hears "you now command…"; everyone else hears who took it.
-                EventPayload::NodeCaptured { owner, system, pos, bonus } => {
+                EventPayload::NodeCaptured {
+                    owner,
+                    system,
+                    pos,
+                    bonus,
+                } => {
                     let name = system_name(world, *system);
-                    let holder = world.players.get(owner).map(|c| c.name.clone()).unwrap_or_else(|| "A rival".into());
+                    let holder = world
+                        .players
+                        .get(owner)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| "A rival".into());
                     for (&p, corp) in &world.players {
-                        let observe = e.time + delays.between(*pos, corp.command_center);
+                        let observe =
+                            e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
                         let (sev, text) = if p == *owner {
-                            (TimelineSeverity::Good, format!("You now command the {} node at {name}.", bonus.title()))
+                            (
+                                TimelineSeverity::Good,
+                                format!("You now command the {} node at {name}.", bonus.title()),
+                            )
                         } else {
-                            (TimelineSeverity::Warn, format!("{holder} now commands the {} node at {name}.", bonus.title()))
+                            (
+                                TimelineSeverity::Warn,
+                                format!(
+                                    "{holder} now commands the {} node at {name}.",
+                                    bonus.title()
+                                ),
+                            )
                         };
                         self.push(p, observe, sev, text);
                     }
@@ -567,7 +814,7 @@ impl Timeline {
                 EventPayload::SurveyCompleted { owner, system, pos } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Good, format!(
                             "Survey of {name} complete — exact geology charted (permanent; allies receive a relayed copy)."
                         ));
@@ -576,25 +823,51 @@ impl Timeline {
                 // §explore Part 3: the system's HIDDEN TRAIT revealed to its (new)
                 // owner — the blind claimer's gamble resolving (or capture spoils).
                 // OWNER-ONLY, light-delayed from the system.
-                EventPayload::TraitRevealed { owner, system, pos, trait_ } => {
+                EventPayload::TraitRevealed {
+                    owner,
+                    system,
+                    pos,
+                    trait_,
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         let what = match trait_ {
                             sim::explore::SystemTrait::BonusVein { commodity } => {
-                                format!("Bonus Vein — its {} deposit runs ×{} richer", commodity.slug(), sim::explore::BONUS_VEIN_MULT)
+                                format!(
+                                    "Bonus Vein — its {} deposit runs ×{} richer",
+                                    commodity.slug(),
+                                    sim::explore::BONUS_VEIN_MULT
+                                )
                             }
-                            sim::explore::SystemTrait::DeepDeposits => format!("Deep Deposits — base ×{} richer, but the FIRST Extractor tier is wasted breaking through", sim::explore::DEEP_DEPOSITS_BASE_MULT),
-                            sim::explore::SystemTrait::UnstableGeology => format!("Unstable Geology — development costs ×{} here", sim::explore::UNSTABLE_COST_MULT),
-                            sim::explore::SystemTrait::VolatilePockets => format!("Volatile Pockets — Refinery output ×{} here", sim::explore::VOLATILE_REFINERY_MULT),
-                            sim::explore::SystemTrait::PrecursorCache => format!("Precursor Cache — a one-time {} Alloys deposited to the stockpile", sim::explore::PRECURSOR_ALLOYS),
+                            sim::explore::SystemTrait::DeepDeposits => format!(
+                                "Deep Deposits — base ×{} richer, but the FIRST Extractor tier is wasted breaking through",
+                                sim::explore::DEEP_DEPOSITS_BASE_MULT
+                            ),
+                            sim::explore::SystemTrait::UnstableGeology => format!(
+                                "Unstable Geology — development costs ×{} here",
+                                sim::explore::UNSTABLE_COST_MULT
+                            ),
+                            sim::explore::SystemTrait::VolatilePockets => format!(
+                                "Volatile Pockets — Refinery output ×{} here",
+                                sim::explore::VOLATILE_REFINERY_MULT
+                            ),
+                            sim::explore::SystemTrait::PrecursorCache => format!(
+                                "Precursor Cache — a one-time {} Alloys deposited to the stockpile",
+                                sim::explore::PRECURSOR_ALLOYS
+                            ),
                         };
                         let sev = if matches!(trait_, sim::explore::SystemTrait::UnstableGeology) {
                             TimelineSeverity::Warn
                         } else {
                             TimelineSeverity::Good
                         };
-                        self.push(*owner, observe, sev, format!("TRAIT REVEALED at {name}: {what}."));
+                        self.push(
+                            *owner,
+                            observe,
+                            sev,
+                            format!("TRAIT REVEALED at {name}: {what}."),
+                        );
                     }
                 }
                 // §node: a held node's upkeep flipped — OWNER-ONLY, on the owner's own
@@ -603,9 +876,17 @@ impl Timeline {
                 EventPayload::NodeSupplyChanged { owner, system, fed } => {
                     let name = system_name(world, *system);
                     let (sev, text) = if *fed {
-                        (TimelineSeverity::Good, format!("Node at {name} is fed again — its bonus is live."))
+                        (
+                            TimelineSeverity::Good,
+                            format!("Node at {name} is fed again — its bonus is live."),
+                        )
                     } else {
-                        (TimelineSeverity::Warn, format!("Node at {name} is UNFED — its bonus is SUSPENDED. Ship its upkeep there (nothing is lost)."))
+                        (
+                            TimelineSeverity::Warn,
+                            format!(
+                                "Node at {name} is UNFED — its bonus is SUSPENDED. Ship its upkeep there (nothing is lost)."
+                            ),
+                        )
                     };
                     self.push(*owner, e.time, sev, text);
                 }
@@ -613,10 +894,17 @@ impl Timeline {
                 // detail (tiers lost / result), light-delayed from the battle
                 // like any combat news. The attacker's side of the story arrives
                 // separately via the ordinary RaidResolved report.
-                EventPayload::PlatformEngaged { owner, system, pos, raider_destroyed, driven_off, tiers_lost } => {
+                EventPayload::PlatformEngaged {
+                    owner,
+                    system,
+                    pos,
+                    raider_destroyed,
+                    driven_off,
+                    tiers_lost,
+                } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
-                        let observe = e.time + delays.between(*pos, cc);
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         let result = if *raider_destroyed {
                             "destroyed the raider"
                         } else if *driven_off {
@@ -629,11 +917,19 @@ impl Timeline {
                         } else {
                             String::new()
                         };
-                        let sev = if *raider_destroyed || *driven_off { TimelineSeverity::Good } else { TimelineSeverity::Bad };
+                        let sev = if *raider_destroyed || *driven_off {
+                            TimelineSeverity::Good
+                        } else {
+                            TimelineSeverity::Bad
+                        };
                         self.push(*owner, observe, sev, format!("Defense Platform at {name} engaged a hostile raider and {result}{damage}."));
                     }
                 }
-                EventPayload::FuelShortfall { owner, needed, kind } => {
+                EventPayload::FuelShortfall {
+                    owner,
+                    needed,
+                    kind,
+                } => {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
                         format!("A {} was held — out of fuel (needed ~{:.0}). Stockpile fuel near your fleet.", kind.label(), needed));
                 }
@@ -642,33 +938,74 @@ impl Timeline {
                 // own clock at delivery, with the response countdown. A returning
                 // dark fleet responds at the comm-circle edge; other orders keep
                 // the confirming-light fallback.
-                EventPayload::OrderDelivered { owner, fleet, kind, echo_at } => {
+                EventPayload::OrderDelivered {
+                    owner,
+                    fleet,
+                    kind,
+                    echo_at,
+                } => {
                     let name = fleet_label(world, *fleet);
                     let wait = fmt_wait(echo_at - e.time);
-                    self.push(*owner, e.time, TimelineSeverity::Info,
-                        format!("Order delivered to {name} — {} underway (response ~{wait}).", kind.label()));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Info,
+                        format!(
+                            "Order delivered to {name} — {} underway (response ~{wait}).",
+                            kind.label()
+                        ),
+                    );
                 }
-                EventPayload::OrderConfirmed { owner, fleet, kind, .. } => {
+                EventPayload::OrderConfirmed {
+                    owner, fleet, kind, ..
+                } => {
                     let name = fleet_label(world, *fleet);
-                    self.push(*owner, e.time, TimelineSeverity::Good,
-                        format!("{name} confirmed its {} — you can see it complying now.", kind.label()));
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!(
+                            "{name} confirmed its {} — you can see it complying now.",
+                            kind.label()
+                        ),
+                    );
                 }
                 // §research: syndicate-wide institution news — pushed to every
                 // member at once (their own private research, like the roster; no
                 // light delay). A completed programme's effect is already live.
-                EventPayload::ResearchCompleted { syndicate, programme } => {
-                    let name = sim::research::programme(programme).map(|p| p.name).unwrap_or("a programme");
+                EventPayload::ResearchCompleted {
+                    syndicate,
+                    programme,
+                } => {
+                    let name = sim::research::programme(programme)
+                        .map(|p| p.name)
+                        .unwrap_or("a programme");
                     for &p in members_of(world, *syndicate).iter() {
-                        self.push(p, e.time, TimelineSeverity::Good, format!("Research complete: {name} — its effect is live galaxy-wide."));
+                        self.push(
+                            p,
+                            e.time,
+                            TimelineSeverity::Good,
+                            format!("Research complete: {name} — its effect is live galaxy-wide."),
+                        );
                     }
                 }
-                EventPayload::TierUnlocked { syndicate, field, school, tier } => {
+                EventPayload::TierUnlocked {
+                    syndicate,
+                    field,
+                    school,
+                    tier,
+                } => {
                     let where_ = match school {
                         Some(s) => format!("{} · {}", field.title(), s.title()),
                         None => field.title().to_string(),
                     };
                     for &p in members_of(world, *syndicate).iter() {
-                        self.push(p, e.time, TimelineSeverity::Info, format!("Tier {tier} unlocked on {where_}."));
+                        self.push(
+                            p,
+                            e.time,
+                            TimelineSeverity::Info,
+                            format!("Tier {tier} unlocked on {where_}."),
+                        );
                     }
                 }
                 EventPayload::ResearchStalled { syndicate } => {
@@ -678,7 +1015,13 @@ impl Timeline {
                 }
                 EventPayload::ResearchResumed { syndicate } => {
                     for &p in members_of(world, *syndicate).iter() {
-                        self.push(p, e.time, TimelineSeverity::Good, "Research resumed — a staffed Academy is contributing again.".to_string());
+                        self.push(
+                            p,
+                            e.time,
+                            TimelineSeverity::Good,
+                            "Research resumed — a staffed Academy is contributing again."
+                                .to_string(),
+                        );
                     }
                 }
                 _ => {}
@@ -686,8 +1029,20 @@ impl Timeline {
         }
     }
 
-    fn push(&mut self, player: PlayerId, observe_time: f64, severity: TimelineSeverity, text: String) {
-        self.pending.push(Pending { player, observe_time, severity, text, promoted: false });
+    fn push(
+        &mut self,
+        player: PlayerId,
+        observe_time: f64,
+        severity: TimelineSeverity,
+        text: String,
+    ) {
+        self.pending.push(Pending {
+            player,
+            observe_time,
+            severity,
+            text,
+            promoted: false,
+        });
     }
 
     /// Promote every entry whose light has now arrived into its player's journal.
@@ -812,21 +1167,47 @@ fn fmt_wait(secs: f64) -> String {
 /// Human label for a build job, for the check-in timeline (§step1).
 fn build_label(what: sim::BuildKind) -> &'static str {
     match what {
-        sim::BuildKind::Ship { ship: sim::ShipKind::Builder } => "a Construction Ship",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "a Convoy",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "a Raider",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "a Corvette",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "a Colony Ship",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Transport } => "a Troop Transport",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Builder,
+        } => "a Construction Ship",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Convoy,
+        } => "a Convoy",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Raider,
+        } => "a Raider",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Corvette,
+        } => "a Corvette",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Colony,
+        } => "a Colony Ship",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Transport,
+        } => "a Troop Transport",
         // §TCA: never appears in a real build event (the Freighter is TCA-only),
         // but the match must be total — a defensive label.
-        sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "an Authority Freighter",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "a Scout",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "a Destroyer",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "a Cruiser",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Battleship } => "a Battleship",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Dreadnought } => "a Dreadnought",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Titan } => "a Titan",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Freighter,
+        } => "an Authority Freighter",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Scout,
+        } => "a Scout",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Destroyer,
+        } => "a Destroyer",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Cruiser,
+        } => "a Cruiser",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Battleship,
+        } => "a Battleship",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Dreadnought,
+        } => "a Dreadnought",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Titan,
+        } => "a Titan",
         sim::BuildKind::Upgrade { upgrade } => upgrade.title(),
         // §economy Part 4: an Academy course — label by profession.
         sim::BuildKind::Train { specialist } => match specialist {
@@ -881,7 +1262,13 @@ fn penalty_suffix(penalty: f64) -> String {
 fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, String)> {
     use TimelineSeverity::*;
     Some(match *te {
-        TradeEvent::AutoDispatched { commodity, units, source, rule_id, .. } => (
+        TradeEvent::AutoDispatched {
+            commodity,
+            units,
+            source,
+            rule_id,
+            ..
+        } => (
             Good,
             format!(
                 "Standing order #{rule_id} auto-shipped {units} {} from {} (raidable).",
@@ -889,7 +1276,13 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 system_name(world, source)
             ),
         ),
-        TradeEvent::Sold { commodity, units, unit_price, penalty, .. } => (
+        TradeEvent::Sold {
+            commodity,
+            units,
+            unit_price,
+            penalty,
+            ..
+        } => (
             Good,
             format!(
                 "Sold {units} {} at the hub for {unit_price:.2} ea.{}",
@@ -897,7 +1290,12 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 penalty_suffix(penalty)
             ),
         ),
-        TradeEvent::Delivered { commodity, units, system, .. } => (
+        TradeEvent::Delivered {
+            commodity,
+            units,
+            system,
+            ..
+        } => (
             Good,
             match system {
                 Some(sid) => format!(
@@ -911,21 +1309,39 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
             },
         ),
-        TradeEvent::LimitFilled { commodity, units, unit_price, side, penalty, .. } => {
+        TradeEvent::LimitFilled {
+            commodity,
+            units,
+            unit_price,
+            side,
+            penalty,
+            ..
+        } => {
             let s = format!("{side:?}").to_lowercase();
-            (Good, format!(
-                "Limit {s} filled: {units} {} @ {unit_price:.2}.{}",
-                commodity_name(commodity),
-                penalty_suffix(penalty)
-            ))
+            (
+                Good,
+                format!(
+                    "Limit {s} filled: {units} {} @ {unit_price:.2}.{}",
+                    commodity_name(commodity),
+                    penalty_suffix(penalty)
+                ),
+            )
         }
-        TradeEvent::SupplyDiverted { commodity, units, system, action, .. } => {
+        TradeEvent::SupplyDiverted {
+            commodity,
+            units,
+            system,
+            action,
+            ..
+        } => {
             let name = system_name(world, system);
             let com = commodity_name(commodity);
             match action {
                 sim::DivertAction::Lost => (
                     Bad,
-                    format!("Supply to {name} lost — you no longer hold it: {units} {com} dropped."),
+                    format!(
+                        "Supply to {name} lost — you no longer hold it: {units} {com} dropped."
+                    ),
                 ),
                 sim::DivertAction::ReturnedHome => (
                     Warn,
@@ -933,13 +1349,20 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
                 sim::DivertAction::SoldAtHub => (
                     Warn,
-                    format!("Supply to {name} re-routed to sell at the hub ({units} {com}) — system lost."),
+                    format!(
+                        "Supply to {name} re-routed to sell at the hub ({units} {com}) — system lost."
+                    ),
                 ),
             }
         }
         // A full warehouse bounced part of a delivery onward to the hub (§buildings
         // step 2) — an attention item: the player should ship out or build an Orbital Warehouse.
-        TradeEvent::StorageOverflow { commodity, units, system, .. } => {
+        TradeEvent::StorageOverflow {
+            commodity,
+            units,
+            system,
+            ..
+        } => {
             let name = system_name(world, system);
             (
                 Warn,
@@ -951,7 +1374,13 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
         }
         // A SOFT-REJECTED Exchange order or freight booking (§9, §TCA) — owner-only,
         // instant, and free: nothing was spent. Names the reason so the fix is obvious.
-        TradeEvent::Rejected { commodity, units, system, reason, .. } => {
+        TradeEvent::Rejected {
+            commodity,
+            units,
+            system,
+            reason,
+            ..
+        } => {
             let com = commodity_name(commodity);
             let where_ = system.map(|s| system_name(world, s));
             match reason {
@@ -1058,7 +1487,13 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
         }
         // §TCA Phase 2: the reinstatement receipt — what it cost, and the band it
         // bought you back into.
-        TradeEvent::CharterReinstated { points, cost, before, after, .. } => {
+        TradeEvent::CharterReinstated {
+            points,
+            cost,
+            before,
+            after,
+            ..
+        } => {
             let from = sim::charter_status(before);
             let to = sim::charter_status(after);
             let crossed = if from != to {
@@ -1068,11 +1503,22 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
             };
             (
                 Good,
-                format!("Paid the Authority {cost:.0} credits for {points:.0} standing ({before:.0} → {after:.0}){crossed}."),
+                format!(
+                    "Paid the Authority {cost:.0} credits for {points:.0} standing ({before:.0} → {after:.0}){crossed}."
+                ),
             )
         }
         // §TCA: the booking receipt — what it cost and when the Authority sails.
-        TradeEvent::FreightBooked { commodity, units, system, direction, fee, depart_at, eta, .. } => {
+        TradeEvent::FreightBooked {
+            commodity,
+            units,
+            system,
+            direction,
+            fee,
+            depart_at,
+            eta,
+            ..
+        } => {
             let name = system_name(world, system);
             let (verb, dest) = match direction {
                 sim::ShipmentDir::Outbound => ("Booked", format!("to {name}")),
@@ -1090,18 +1536,27 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
         }
         // §TCA: freight progress. Only the outcomes a player would want in an
         // away-digest; the routine "departed" tick stays out of it.
-        TradeEvent::FreightMoved { commodity, units, system, stage, .. } => {
+        TradeEvent::FreightMoved {
+            commodity,
+            units,
+            system,
+            stage,
+            ..
+        } => {
             let name = system_name(world, system);
             let com = commodity_name(commodity);
             match stage {
                 sim::FreightStage::Departed => return None,
                 sim::FreightStage::CollectedForPickup => return None,
-                sim::FreightStage::DeliveredToSystem => {
-                    (Good, format!("Authority freight delivered {units} {com} to {name}."))
-                }
+                sim::FreightStage::DeliveredToSystem => (
+                    Good,
+                    format!("Authority freight delivered {units} {com} to {name}."),
+                ),
                 sim::FreightStage::ArrivedAtWarehouse => (
                     Good,
-                    format!("Authority freight landed {units} {com} from {name} in your hub warehouse."),
+                    format!(
+                        "Authority freight landed {units} {com} from {name} in your hub warehouse."
+                    ),
                 ),
                 sim::FreightStage::ReturnedUndeliverable => (
                     Warn,
@@ -1112,11 +1567,15 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
                 sim::FreightStage::ForfeitedOnCapture => (
                     Bad,
-                    format!("Lost {units} {com} awaiting pickup at {name} — the system fell before the Authority collected it."),
+                    format!(
+                        "Lost {units} {com} awaiting pickup at {name} — the system fell before the Authority collected it."
+                    ),
                 ),
                 sim::FreightStage::LostWithFreighter => (
                     Bad,
-                    format!("{units} {com} destroyed with the Authority freighter carrying it (to/from {name})."),
+                    format!(
+                        "{units} {com} destroyed with the Authority freighter carrying it (to/from {name})."
+                    ),
                 ),
             }
         }
@@ -1141,14 +1600,26 @@ fn raid_entry(
     match outcome {
         RaidOutcome::TargetDestroyed => {
             if i_attack {
-                (Good, format!("Your raider destroyed an enemy {}.", kind_word(target_kind)))
+                (
+                    Good,
+                    format!("Your raider destroyed an enemy {}.", kind_word(target_kind)),
+                )
             } else {
-                (Bad, format!("You lost a {} to a hostile raider.", kind_word(target_kind)))
+                (
+                    Bad,
+                    format!("You lost a {} to a hostile raider.", kind_word(target_kind)),
+                )
             }
         }
         RaidOutcome::AttackerDestroyed => {
             if i_attack {
-                (Bad, format!("Your {} was destroyed in the attack.", kind_word(attacker_kind)))
+                (
+                    Bad,
+                    format!(
+                        "Your {} was destroyed in the attack.",
+                        kind_word(attacker_kind)
+                    ),
+                )
             } else {
                 (Good, "You destroyed an attacking raider.".to_string())
             }
@@ -1158,7 +1629,10 @@ fn raid_entry(
             if i_attack {
                 (Info, "Your attack was driven off — no losses.".to_string())
             } else {
-                (Good, "You drove off an attacking raider — no losses.".to_string())
+                (
+                    Good,
+                    "You drove off an attacking raider — no losses.".to_string(),
+                )
             }
         }
         RaidOutcome::Escaped => {
@@ -1180,8 +1654,14 @@ mod tests {
         let mut w = World::new(SimConfig::for_players(7, 4));
         let (a, b) = (PlayerId(1), PlayerId(2));
         w.step(&[
-            Command::AddPlayer { id: a, name: "A".into() },
-            Command::AddPlayer { id: b, name: "B".into() },
+            Command::AddPlayer {
+                id: a,
+                name: "A".into(),
+            },
+            Command::AddPlayer {
+                id: b,
+                name: "B".into(),
+            },
         ]);
         (w, a, b)
     }
@@ -1191,14 +1671,23 @@ mod tests {
     /// the hub. A distant third party hears about it later than a near one, and
     /// the culprit's own copy reads as an indictment rather than gossip.
     #[test]
-    #[ignore = "§hyperspace: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
+    #[ignore = "§galaxy-scale: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
     fn citations_are_public_and_reach_each_player_at_lightspeed() {
         let mut w = World::new(SimConfig::for_players(11, 4));
         let (culprit, near, far) = (PlayerId(1), PlayerId(2), PlayerId(3));
         w.step(&[
-            Command::AddPlayer { id: culprit, name: "Outlaw".into() },
-            Command::AddPlayer { id: near, name: "Near".into() },
-            Command::AddPlayer { id: far, name: "Far".into() },
+            Command::AddPlayer {
+                id: culprit,
+                name: "Outlaw".into(),
+            },
+            Command::AddPlayer {
+                id: near,
+                name: "Near".into(),
+            },
+            Command::AddPlayer {
+                id: far,
+                name: "Far".into(),
+            },
         ]);
         // Put the two bystanders at KNOWN, different distances from the hub.
         let c = w.config.c;
@@ -1233,10 +1722,17 @@ mod tests {
 
         // The NEAR bystander is informed first, and the bulletin NAMES the culprit.
         tl.promote(near_at + 1e-6);
-        assert_eq!(seen(&tl, near), 1, "the near bystander is informed on schedule");
+        assert_eq!(
+            seen(&tl, near),
+            1,
+            "the near bystander is informed on schedule"
+        );
         assert_eq!(seen(&tl, far), 0, "the far bystander is still in the dark");
         let near_text = tl.digest(near).0[0].text.clone();
-        assert!(near_text.contains("Outlaw"), "a bystander's bulletin names the culprit: {near_text}");
+        assert!(
+            near_text.contains("Outlaw"),
+            "a bystander's bulletin names the culprit: {near_text}"
+        );
 
         // …and the FAR one only once its own light lands.
         tl.promote(far_at + 1e-6);
@@ -1245,7 +1741,11 @@ mod tests {
         // The culprit reads it as an indictment of THEIR corporation.
         let mine = tl.digest(culprit).0;
         assert_eq!(mine.len(), 1);
-        assert!(mine[0].text.contains("your corporation"), "the culprit is told plainly: {}", mine[0].text);
+        assert!(
+            mine[0].text.contains("your corporation"),
+            "the culprit is told plainly: {}",
+            mine[0].text
+        );
     }
 
     #[test]
@@ -1264,11 +1764,19 @@ mod tests {
         );
         tl.ingest(&[ev], &w);
         tl.promote(w.time);
-        assert_eq!(tl.journal_len(a), 0, "the sale cannot outrun its Market Hub receipt");
+        assert_eq!(
+            tl.journal_len(a),
+            0,
+            "the sale cannot outrun its Market Hub receipt"
+        );
         let arrives = w.time + w.hub.distance(w.players[&a].command_center) / w.config.c;
         tl.promote(arrives + 1e-6);
         let (entries, _away) = tl.digest(a);
-        assert_eq!(entries.len(), 1, "own sale journals when its hub light arrives");
+        assert_eq!(
+            entries.len(),
+            1,
+            "own sale journals when its hub light arrives"
+        );
         assert!(entries[0].text.contains("Sold 12 metallic ore"));
     }
 
@@ -1279,7 +1787,14 @@ mod tests {
         // A claim far from b's command center: its light takes time to arrive.
         let cc = w.players[&b].command_center;
         let pos = cc + Vec2::new(3000.0, 0.0); // 10 s of light away at c=300
-        let ev = Event::new(w.time, EventPayload::SystemClaimed { system: EntityId(999), owner: a, pos });
+        let ev = Event::new(
+            w.time,
+            EventPayload::SystemClaimed {
+                system: EntityId(999),
+                owner: a,
+                pos,
+            },
+        );
         tl.ingest(&[ev], &w);
 
         // Immediately: the owner knows; the rival does not yet.
@@ -1311,7 +1826,8 @@ mod tests {
                 rule_id: 1,
             };
             let origin = crate::game_loop::trade_report_origin(&w, &trade);
-            last_arrival = last_arrival.max(t + origin.distance(w.players[&a].command_center) / w.config.c);
+            last_arrival =
+                last_arrival.max(t + origin.distance(w.players[&a].command_center) / w.config.c);
             let ev = Event::new(t, EventPayload::Trade(trade));
             tl.ingest(&[ev], &w);
         }
@@ -1319,7 +1835,10 @@ mod tests {
         let (entries, away_since) = tl.digest(a);
         assert_eq!(entries.len(), 2, "events buffered while offline");
         assert_eq!(away_since, 5.0, "away boundary is the last-online time");
-        assert!(entries.iter().all(|e| e.at_time > away_since), "all are 'while you were away'");
+        assert!(
+            entries.iter().all(|e| e.at_time > away_since),
+            "all are 'while you were away'"
+        );
     }
 
     #[test]
@@ -1339,6 +1858,10 @@ mod tests {
             tl.ingest(&[ev], &w);
         }
         tl.promote(1000.0);
-        assert_eq!(tl.journal_len(a), JOURNAL_CAP, "journal keeps only the most recent cap");
+        assert_eq!(
+            tl.journal_len(a),
+            JOURNAL_CAP,
+            "journal keeps only the most recent cap"
+        );
     }
 }

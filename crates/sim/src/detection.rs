@@ -80,7 +80,10 @@ pub fn cloak_mult(_composition: &BTreeMap<ShipKind, u32>) -> f64 {
 
 /// Total SIZE SIGNAL of a fleet = Σ `sig_size(kind) × count`.
 pub fn size_signal(composition: &BTreeMap<ShipKind, u32>) -> f64 {
-    composition.iter().map(|(k, n)| sig_size(*k) * *n as f64).sum()
+    composition
+        .iter()
+        .map(|(k, n)| sig_size(*k) * *n as f64)
+        .sum()
 }
 
 /// The SIZE multiplier: √(signal / reference), so range scales as the root of the
@@ -95,7 +98,11 @@ pub fn size_mult(composition: &BTreeMap<ShipKind, u32>) -> f64 {
 /// the stealth fraction, ramping continuously to 1.0 at full speed. Normalised so
 /// FULL speed is the 1.0 anchor and the full:stealth ratio is `SPEED_SIG_MAX`.
 pub fn speed_mult(speed: f64, max_speed: f64) -> f64 {
-    let f = if max_speed > 1e-9 { (speed / max_speed).clamp(0.0, 1.0) } else { 0.0 };
+    let f = if max_speed > 1e-9 {
+        (speed / max_speed).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let quiet = 1.0 / SPEED_SIG_MAX;
     if f <= STEALTH_FRACTION {
         quiet
@@ -121,7 +128,9 @@ pub fn sensor_capability(range: f64) -> f64 {
 /// is detected if any coverage source `(center, range)` reaches it —
 /// `distance ≤ sensor_capability(range) × signature`.
 pub fn detected(signature: f64, sources: &[(Vec2, f64)], pos: Vec2) -> bool {
-    sources.iter().any(|(center, range)| pos.distance(*center) <= sensor_capability(*range) * signature)
+    sources
+        .iter()
+        .any(|(center, range)| pos.distance(*center) <= sensor_capability(*range) * signature)
 }
 
 #[cfg(test)]
@@ -137,7 +146,10 @@ mod tests {
         let c = comp(&[(ShipKind::Raider, 1)]);
         let max = ShipKind::Raider.max_speed();
         let sig = signature(&c, max, max); // moving at full formation speed
-        assert!((sig - 1.0).abs() < 1e-12, "the anchor case must be exactly 1.0 (got {sig})");
+        assert!(
+            (sig - 1.0).abs() < 1e-12,
+            "the anchor case must be exactly 1.0 (got {sig})"
+        );
     }
 
     #[test]
@@ -153,7 +165,10 @@ mod tests {
         let max = ShipKind::Raider.max_speed();
         let full = signature(&c, max, max);
         let stealth = signature(&c, max * STEALTH_FRACTION, max);
-        assert!((full / stealth - SPEED_SIG_MAX).abs() < 1e-9, "full is SPEED_SIG_MAX× the stealth signature");
+        assert!(
+            (full / stealth - SPEED_SIG_MAX).abs() < 1e-9,
+            "full is SPEED_SIG_MAX× the stealth signature"
+        );
     }
 
     #[test]
@@ -161,7 +176,10 @@ mod tests {
         let max = ShipKind::Raider.max_speed();
         let raider = signature(&comp(&[(ShipKind::Raider, 1)]), max, max);
         let scout = signature(&comp(&[(ShipKind::Scout, 1)]), max, max);
-        assert!(scout < raider, "a scout is smaller → quieter ({scout} < {raider})");
+        assert!(
+            scout < raider,
+            "a scout is smaller → quieter ({scout} < {raider})"
+        );
     }
 
     #[test]
@@ -182,10 +200,19 @@ mod tests {
         let max = ShipKind::Raider.max_speed();
         let loud = comp(&[(ShipKind::Raider, 6)]);
         let sig_loud = signature(&loud, max, max); // ≈ 2.45
-        assert!(detected(sig_loud, &sources, Vec2::new(2000.0, 0.0)), "a loud pack is seen well past the bubble");
+        assert!(
+            detected(sig_loud, &sources, Vec2::new(2000.0, 0.0)),
+            "a loud pack is seen well past the bubble"
+        );
         let one = comp(&[(ShipKind::Raider, 1)]);
         let sig_stealth = signature(&one, max * STEALTH_FRACTION, max); // 0.4
-        assert!(!detected(sig_stealth, &sources, Vec2::new(500.0, 0.0)), "a creeping raider stays hidden inside 500 su (0.4×1000=400)");
-        assert!(detected(sig_stealth, &sources, Vec2::new(399.0, 0.0)), "…but is caught once inside 0.4× the bubble");
+        assert!(
+            !detected(sig_stealth, &sources, Vec2::new(500.0, 0.0)),
+            "a creeping raider stays hidden inside 500 su (0.4×1000=400)"
+        );
+        assert!(
+            detected(sig_stealth, &sources, Vec2::new(399.0, 0.0)),
+            "…but is caught once inside 0.4× the bubble"
+        );
     }
 }

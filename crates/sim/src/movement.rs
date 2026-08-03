@@ -39,10 +39,18 @@ pub fn advance_toward(pos: Vec2, dest: Vec2, speed: f64, dt: f64) -> MoveStep {
 
     // Arrived (or the final partial step lands us there): snap to the dest.
     if dist <= ARRIVE_DIST || dist <= step {
-        return MoveStep { pos: dest, vel: Vec2::ZERO, arrived: true };
+        return MoveStep {
+            pos: dest,
+            vel: Vec2::ZERO,
+            arrived: true,
+        };
     }
     let dir = to_dest / dist;
-    MoveStep { pos: pos + dir * step, vel: dir * speed, arrived: false }
+    MoveStep {
+        pos: pos + dir * step,
+        vel: dir * speed,
+        arrived: false,
+    }
 }
 
 /// §hyperspace: advance toward `dest` under a BOUNDED TURN RATE.
@@ -67,12 +75,24 @@ pub fn advance_turning(
     let dist = to_dest.length();
     let step = speed * dt;
     if dist <= ARRIVE_DIST || dist <= step {
-        return MoveStep { pos: dest, vel: Vec2::ZERO, arrived: true };
+        return MoveStep {
+            pos: dest,
+            vel: Vec2::ZERO,
+            arrived: true,
+        };
     }
     let want = to_dest / dist;
     // A fleet at rest has no heading to preserve: it may set off any way it likes.
-    let cur = if vel.length_sq() > 1e-9 { vel.normalized() } else { want };
-    let max_turn = if min_radius > 0.0 { step / min_radius } else { std::f64::consts::PI };
+    let cur = if vel.length_sq() > 1e-9 {
+        vel.normalized()
+    } else {
+        want
+    };
+    let max_turn = if min_radius > 0.0 {
+        step / min_radius
+    } else {
+        std::f64::consts::PI
+    };
     let cos = cur.dot(want).clamp(-1.0, 1.0);
     let needed = cos.acos();
     let dir = if needed <= max_turn {
@@ -84,7 +104,11 @@ pub fn advance_turning(
         let (s, c) = (max_turn * sign).sin_cos();
         Vec2::new(cur.x * c - cur.y * s, cur.x * s + cur.y * c).normalized()
     };
-    MoveStep { pos: pos + dir * step, vel: dir * speed, arrived: false }
+    MoveStep {
+        pos: pos + dir * step,
+        vel: dir * speed,
+        arrived: false,
+    }
 }
 
 /// The ANALYTIC interception point (§14.1): where a pursuer at `p` moving at
@@ -112,7 +136,10 @@ pub fn intercept_point(p: Vec2, speed: f64, t: Vec2, vt: Vec2) -> Option<Vec2> {
         let sq = disc.sqrt();
         let (t1, t2) = ((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a));
         // Smallest non-negative root.
-        [t1, t2].into_iter().filter(|x| *x >= -1e-9).fold(f64::INFINITY, f64::min)
+        [t1, t2]
+            .into_iter()
+            .filter(|x| *x >= -1e-9)
+            .fold(f64::INFINITY, f64::min)
     };
     if tau.is_finite() && tau >= -1e-9 {
         Some(t + vt * (tau.max(0.0)))
@@ -134,7 +161,11 @@ pub fn intercept_point(p: Vec2, speed: f64, t: Vec2, vt: Vec2) -> Option<Vec2> {
 /// machinery as every other order. Pass `c = INFINITY` for true-present aim.
 pub fn chase_aim(pos: Vec2, speed: f64, target_pos: Vec2, target_vel: Vec2, c: f64) -> Vec2 {
     let range = (target_pos - pos).length();
-    let obs_delay = if c.is_finite() && c > 1e-9 { range / c } else { 0.0 };
+    let obs_delay = if c.is_finite() && c > 1e-9 {
+        range / c
+    } else {
+        0.0
+    };
     let observed = target_pos - target_vel * obs_delay;
     intercept_point(pos, speed, observed, target_vel).unwrap_or(observed)
 }
@@ -142,7 +173,14 @@ pub fn chase_aim(pos: Vec2, speed: f64, target_pos: Vec2, target_vel: Vec2, c: f
 /// One tick of **lead pursuit** at constant speed — [`chase_aim`] flown as a
 /// straight kinematic step. Kept as the self-contained form the aim tests
 /// exercise; the live sim flies chases through the drive state machine instead.
-pub fn pursue_step(pos: Vec2, target_pos: Vec2, target_vel: Vec2, speed: f64, c: f64, dt: f64) -> MoveStep {
+pub fn pursue_step(
+    pos: Vec2,
+    target_pos: Vec2,
+    target_vel: Vec2,
+    speed: f64,
+    c: f64,
+    dt: f64,
+) -> MoveStep {
     let aim = chase_aim(pos, speed, target_pos, target_vel, c);
     let to_aim = aim - pos;
     let d = to_aim.length();
@@ -198,7 +236,10 @@ mod tests {
         let mut pos = Vec2::ZERO;
         for _ in 0..100 {
             let step = advance_toward(pos, dest, speed, DT);
-            assert!(step.vel.length() <= speed + 1e-9, "speed is constant, never exceeded");
+            assert!(
+                step.vel.length() <= speed + 1e-9,
+                "speed is constant, never exceeded"
+            );
             pos = step.pos;
         }
     }
@@ -219,14 +260,25 @@ mod tests {
         // The lead point must be reachable in equal time by both.
         let tau_target = (aim.y - t.y) / vt.y;
         let tau_pursuer = (aim - p).length() / 75.0;
-        assert!((tau_target - tau_pursuer).abs() < 1e-6, "both reach the aim point at the same time");
+        assert!(
+            (tau_target - tau_pursuer).abs() < 1e-6,
+            "both reach the aim point at the same time"
+        );
     }
 
     #[test]
     fn no_interception_when_target_outruns_the_pursuer() {
         // Target directly ahead, moving away faster than the pursuer can chase.
-        let aim = intercept_point(Vec2::ZERO, 30.0, Vec2::new(100.0, 0.0), Vec2::new(60.0, 0.0));
-        assert!(aim.is_none(), "a faster, opening target cannot be intercepted");
+        let aim = intercept_point(
+            Vec2::ZERO,
+            30.0,
+            Vec2::new(100.0, 0.0),
+            Vec2::new(60.0, 0.0),
+        );
+        assert!(
+            aim.is_none(),
+            "a faster, opening target cannot be intercepted"
+        );
     }
 
     /// Lead pursuit runs a fleeing target down and makes contact, over a
@@ -252,7 +304,11 @@ mod tests {
                 contact_t = Some(t);
             }
         }
-        let ct = contact_t.unwrap_or_else(|| panic!("never made contact; closest {min_dist:.0} su"));
-        assert!((5.0..120.0).contains(&ct), "chase resolves in tens of seconds, took {ct:.1}s");
+        let ct =
+            contact_t.unwrap_or_else(|| panic!("never made contact; closest {min_dist:.0} su"));
+        assert!(
+            (5.0..120.0).contains(&ct),
+            "chase resolves in tens of seconds, took {ct:.1}s"
+        );
     }
 }

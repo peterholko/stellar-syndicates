@@ -129,7 +129,11 @@ impl Body {
     /// body starts with 2 and grows with ITS population tier — so even a fresh
     /// colony has industrial breathing room (2) and a major world runs 4.
     pub fn industrial_slots(&self) -> u32 {
-        let base = if self.kind == BodyKind::GasGiant { 0 } else { 2 };
+        let base = if self.kind == BodyKind::GasGiant {
+            0
+        } else {
+            2
+        };
         base + body_pop_tier(self.population)
     }
 
@@ -245,7 +249,10 @@ const FILLER_KINDS: [VisualKind; 7] = [
 /// Roman I, II, III…, falling back to Arabic past X for a rare deep system.
 pub fn planet_numeral(i: usize) -> String {
     const ROMAN: [&str; 10] = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
-    ROMAN.get(i).map(|s| s.to_string()).unwrap_or_else(|| (i + 1).to_string())
+    ROMAN
+        .get(i)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| (i + 1).to_string())
 }
 
 /// Generate the authoritative body roster for a system — the ported client
@@ -278,7 +285,13 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         }
         let kind = *rng.pick(dep_kinds(d.resource));
         let habitable = d.resource == Commodity::Biomass || d.resource == Commodity::Provisions;
-        planets.push(Planet { kind, habitable, deposits: vec![d.clone()], moons: Vec::new(), orbit: 0.0 });
+        planets.push(Planet {
+            kind,
+            habitable,
+            deposits: vec![d.clone()],
+            moons: Vec::new(),
+            orbit: 0.0,
+        });
         if kind == VisualKind::GasGiant {
             gas_giant = Some(planets.len() - 1);
         }
@@ -292,7 +305,13 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             let _ = rng.next();
             planets[gi].moons.push(Moon { deposits: vec![d] });
         } else {
-            planets.push(Planet { kind: VisualKind::Ice, habitable: false, deposits: vec![d], moons: Vec::new(), orbit: 0.0 });
+            planets.push(Planet {
+                kind: VisualKind::Ice,
+                habitable: false,
+                deposits: vec![d],
+                moons: Vec::new(),
+                orbit: 0.0,
+            });
         }
     }
 
@@ -300,7 +319,13 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
     let target = (deposits.len() + 1 + (rng.next() * 3.0).floor() as usize).clamp(3, 8);
     while planets.len() < target {
         let kind = *rng.pick(&FILLER_KINDS);
-        planets.push(Planet { kind, habitable: false, deposits: Vec::new(), moons: Vec::new(), orbit: 0.0 });
+        planets.push(Planet {
+            kind,
+            habitable: false,
+            deposits: Vec::new(),
+            moons: Vec::new(),
+            orbit: 0.0,
+        });
     }
 
     // 3. Deterministic Fisher–Yates shuffle, then the orbit draws (orbit is
@@ -313,7 +338,13 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
     }
     let n = planets.len();
     for (i, p) in planets.iter_mut().enumerate() {
-        let base = 0.2 + 0.75 * if n == 1 { 0.5 } else { i as f64 / (n - 1) as f64 };
+        let base = 0.2
+            + 0.75
+                * if n == 1 {
+                    0.5
+                } else {
+                    i as f64 / (n - 1) as f64
+                };
         p.orbit = (base + (rng.next() - 0.5) * 0.03).min(0.96);
         let _ = rng.next(); // angle
         let _ = rng.next(); // radiusForKind (one draw for every kind)
@@ -328,7 +359,9 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             let _ = rng.next(); // moon orbitRadius
             let _ = rng.next(); // moon radius
             let _ = rng.next(); // moon angle
-            p.moons.push(Moon { deposits: Vec::new() });
+            p.moons.push(Moon {
+                deposits: Vec::new(),
+            });
         }
     }
     planets.sort_by(|a, b| a.orbit.partial_cmp(&b.orbit).expect("orbits are finite"));
@@ -382,15 +415,27 @@ mod tests {
     use super::*;
 
     fn dep(c: Commodity, r: f64) -> Deposit {
-        Deposit { resource: c, richness: r, reserves: None, accessibility: 0.1 }
+        Deposit {
+            resource: c,
+            richness: r,
+            reserves: None,
+            accessibility: 0.1,
+        }
     }
 
     #[test]
     fn roster_generation_is_deterministic() {
-        let deps = vec![dep(Commodity::Biomass, 0.4), dep(Commodity::MetallicOre, 0.35), dep(Commodity::Volatiles, 0.3)];
+        let deps = vec![
+            dep(Commodity::Biomass, 0.4),
+            dep(Commodity::MetallicOre, 0.35),
+            dep(Commodity::Volatiles, 0.3),
+        ];
         let a = generate_bodies("42", "Veles", &deps);
         let b = generate_bodies("42", "Veles", &deps);
-        assert_eq!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+        assert_eq!(
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap()
+        );
         assert!(a.len() >= 3, "filled to at least 3 planets");
     }
 
@@ -405,14 +450,25 @@ mod tests {
         ];
         let bodies = generate_bodies("7", "Krsnik", &deps);
         let placed: usize = bodies.iter().map(|b| b.deposits.len()).sum();
-        assert_eq!(placed, deps.len(), "every deposit lands on exactly one body");
+        assert_eq!(
+            placed,
+            deps.len(),
+            "every deposit lands on exactly one body"
+        );
         for b in &bodies {
             for d in &b.deposits {
                 match d.resource {
-                    Commodity::Volatiles => assert!(matches!(b.kind, BodyKind::Ice | BodyKind::GasGiant) || b.parent.is_some(), "volatiles on ice/gas/moon"),
+                    Commodity::Volatiles => assert!(
+                        matches!(b.kind, BodyKind::Ice | BodyKind::GasGiant) || b.parent.is_some(),
+                        "volatiles on ice/gas/moon"
+                    ),
                     Commodity::Biomass => assert!(b.habitable, "biomass bodies are habitable"),
-                    Commodity::MetallicOre | Commodity::RareElements | Commodity::Silicates =>
-                        assert!(matches!(b.kind, BodyKind::Rocky | BodyKind::Terrestrial), "minerals on rocky worlds"),
+                    Commodity::MetallicOre | Commodity::RareElements | Commodity::Silicates => {
+                        assert!(
+                            matches!(b.kind, BodyKind::Rocky | BodyKind::Terrestrial),
+                            "minerals on rocky worlds"
+                        )
+                    }
                     _ => {}
                 }
             }
@@ -420,28 +476,50 @@ mod tests {
         // Names: planets carry ROMAN numerals by orbital position (inner = I);
         // moons take a hyphenated letter off their parent ("… II-a").
         let planets: Vec<&Body> = bodies.iter().filter(|b| b.parent.is_none()).collect();
-        assert!(planets[0].name.ends_with(" I"), "inner planet is I, got {}", planets[0].name);
+        assert!(
+            planets[0].name.ends_with(" I"),
+            "inner planet is I, got {}",
+            planets[0].name
+        );
         for m in bodies.iter().filter(|b| b.parent.is_some()) {
             let p = &bodies[m.parent.unwrap() as usize];
-            assert!(m.name.starts_with(&format!("{}-", p.name)), "moon named off its parent with a hyphen: {}", m.name);
+            assert!(
+                m.name.starts_with(&format!("{}-", p.name)),
+                "moon named off its parent with a hyphen: {}",
+                m.name
+            );
         }
     }
 
     #[test]
     fn slot_pools_derive_per_body() {
         let mut b = Body {
-            id: 0, name: "X I".into(), kind: BodyKind::Rocky, parent: None, habitable: false,
+            id: 0,
+            name: "X I".into(),
+            kind: BodyKind::Rocky,
+            parent: None,
+            habitable: false,
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
-            structures: BTreeMap::new(), population: 0.0, assignments: BTreeMap::new(),
+            structures: BTreeMap::new(),
+            population: 0.0,
+            assignments: BTreeMap::new(),
         };
         assert_eq!(b.resource_slots(), 1);
-        assert_eq!(b.industrial_slots(), 2, "non-gas base is 2 (industrial headroom)");
+        assert_eq!(
+            b.industrial_slots(),
+            2,
+            "non-gas base is 2 (industrial headroom)"
+        );
         assert_eq!(b.infrastructure_slots(), 1, "not habitable, undeveloped");
         b.population = BODY_POP_DEVELOPED;
         assert_eq!(b.industrial_slots(), 3, "base 2 + one pop tier");
         assert_eq!(b.infrastructure_slots(), 2);
         b.kind = BodyKind::GasGiant;
-        assert_eq!(b.industrial_slots(), 1, "gas giants have no base industrial slot (0 + one pop tier)");
+        assert_eq!(
+            b.industrial_slots(),
+            1,
+            "gas giants have no base industrial slot (0 + one pop tier)"
+        );
         b.deposits.clear();
         assert_eq!(b.resource_slots(), 0, "a bare rock hosts no extraction");
     }
@@ -452,19 +530,38 @@ mod tests {
         // only ever GROWS — a fresh colony already runs two industries, a major
         // world runs four, and gas giants are unchanged (still 0 + pop tier).
         let mut b = Body {
-            id: 0, name: "Head I".into(), kind: BodyKind::Terrestrial, parent: None, habitable: true,
-            deposits: vec![], structures: BTreeMap::new(), population: 0.0, assignments: BTreeMap::new(),
+            id: 0,
+            name: "Head I".into(),
+            kind: BodyKind::Terrestrial,
+            parent: None,
+            habitable: true,
+            deposits: vec![],
+            structures: BTreeMap::new(),
+            population: 0.0,
+            assignments: BTreeMap::new(),
         };
-        assert_eq!(b.industrial_slots(), 2, "a fresh non-gas colony starts with 2 industrial slots");
+        assert_eq!(
+            b.industrial_slots(),
+            2,
+            "a fresh non-gas colony starts with 2 industrial slots"
+        );
         assert!(b.industrial_slots() >= 2);
         b.population = BODY_POP_DEVELOPED; // pop tier 1
         assert_eq!(b.industrial_slots(), 3);
         b.population = BODY_POP_MAJOR; // pop tier 2 — max
-        assert_eq!(b.industrial_slots(), 4, "a max-pop world runs four industries");
+        assert_eq!(
+            b.industrial_slots(),
+            4,
+            "a max-pop world runs four industries"
+        );
         // Gas giants keep a 0 base: nowhere to stand, only pop lifts them.
         b.kind = BodyKind::GasGiant;
         assert_eq!(b.industrial_slots(), 2, "gas giant = 0 base + 2 pop tiers");
         b.population = 0.0;
-        assert_eq!(b.industrial_slots(), 0, "a fresh gas giant hosts no industry");
+        assert_eq!(
+            b.industrial_slots(),
+            0,
+            "a fresh gas giant hosts no industry"
+        );
     }
 }

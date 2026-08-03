@@ -141,11 +141,24 @@ impl ReportScheduler {
                     attacker_losses: attacker_losses.clone(),
                     target_losses: target_losses.clone(),
                     recipients: vec![
-                        Recipient { player: *attacker, delivered: false },
-                        Recipient { player: *defender, delivered: false },
+                        Recipient {
+                            player: *attacker,
+                            delivered: false,
+                        },
+                        Recipient {
+                            player: *defender,
+                            delivered: false,
+                        },
                     ],
                 });
-            } else if let EventPayload::SystemCaptured { old_owner, new_owner, pos, plunder, .. } = &e.payload {
+            } else if let EventPayload::SystemCaptured {
+                old_owner,
+                new_owner,
+                pos,
+                plunder,
+                ..
+            } = &e.payload
+            {
                 // §Part 2: queue the flip for both participants, light-delayed.
                 self.next_id += 1;
                 self.pending_captures.push(PendingCapture {
@@ -155,11 +168,20 @@ impl ReportScheduler {
                     new_owner: *new_owner,
                     plunder: plunder
                         .iter()
-                        .map(|(commodity, units)| crate::protocol::StockSlot { commodity: *commodity, units: *units })
+                        .map(|(commodity, units)| crate::protocol::StockSlot {
+                            commodity: *commodity,
+                            units: *units,
+                        })
                         .collect(),
                     recipients: vec![
-                        Recipient { player: *old_owner, delivered: false },
-                        Recipient { player: *new_owner, delivered: false },
+                        Recipient {
+                            player: *old_owner,
+                            delivered: false,
+                        },
+                        Recipient {
+                            player: *new_owner,
+                            delivered: false,
+                        },
                     ],
                 });
             }
@@ -178,7 +200,11 @@ impl ReportScheduler {
             for rec in &mut r.recipients {
                 if rec.player == player && !rec.delivered {
                     rec.delivered = true;
-                    let you = if player == r.attacker { Role::Attacker } else { Role::Defender };
+                    let you = if player == r.attacker {
+                        Role::Attacker
+                    } else {
+                        Role::Defender
+                    };
                     out.push(RaidReport {
                         report_id: r.id,
                         outcome: r.outcome,
@@ -249,7 +275,8 @@ impl ReportScheduler {
             }
         }
         self.pending_captures.retain(|cap| {
-            cap.recipients.iter().any(|rec| !rec.delivered) && (now - cap.event_time) < MAX_REPORT_AGE
+            cap.recipients.iter().any(|rec| !rec.delivered)
+                && (now - cap.event_time) < MAX_REPORT_AGE
         });
         out
     }
@@ -265,7 +292,10 @@ impl ReportScheduler {
     /// §Part 2: the CAPTURE reports `player` has learned of, newest last —
     /// per-participant (a non-participant has none). Stable across calls.
     pub fn retained_captures_for(&self, player: PlayerId) -> &[RetainedCapture] {
-        self.retained_captures.get(&player).map(Vec::as_slice).unwrap_or(&[])
+        self.retained_captures
+            .get(&player)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 }
 
@@ -274,7 +304,10 @@ fn losses_view(losses: &BTreeMap<ShipKind, u32>) -> Vec<crate::protocol::CompCou
     losses
         .iter()
         .filter(|(_, n)| **n > 0)
-        .map(|(k, n)| crate::protocol::CompCount { kind: *k, count: *n })
+        .map(|(k, n)| crate::protocol::CompCount {
+            kind: *k,
+            count: *n,
+        })
         .collect()
 }
 
@@ -304,9 +337,16 @@ mod tests {
     fn capture_event(time: f64, old_owner: PlayerId, new_owner: PlayerId, pos: Vec2) -> Event {
         let mut plunder = BTreeMap::new();
         plunder.insert(sim::Commodity::MetallicOre, 42);
-        Event::new(time, EventPayload::SystemCaptured {
-            old_owner, new_owner, system: EntityId(9), pos, plunder,
-        })
+        Event::new(
+            time,
+            EventPayload::SystemCaptured {
+                old_owner,
+                new_owner,
+                system: EntityId(9),
+                pos,
+                plunder,
+            },
+        )
     }
 
     /// §Part 2: a CAPTURE is retained per-participant, each stamped with THEIR
@@ -335,10 +375,17 @@ mod tests {
             assert_eq!(lost.len(), 1);
             assert!(!lost[0].captor, "the old owner's report reads as a LOSS");
             assert!((lost[0].arrival_time - 101.0).abs() < 1e-9);
-            assert_eq!(lost[0].plunder.first().map(|s| s.units), Some(42), "the loss is itemized");
+            assert_eq!(
+                lost[0].plunder.first().map(|s| s.units),
+                Some(42),
+                "the loss is itemized"
+            );
             lost[0].id
         };
-        assert!(sched.retained_captures_for(captor).is_empty(), "captor hasn't learned yet");
+        assert!(
+            sched.retained_captures_for(captor).is_empty(),
+            "captor hasn't learned yet"
+        );
 
         // The captor's light arrives → their own report, same battle id.
         sched.due_for(captor, cap_cc, c, 121.0);
@@ -351,7 +398,10 @@ mod tests {
 
         // A non-participant never retains it, however close.
         sched.due_for(third, third_cc, c, 300.0);
-        assert!(sched.retained_captures_for(third).is_empty(), "leak: a non-participant sees no capture");
+        assert!(
+            sched.retained_captures_for(third).is_empty(),
+            "leak: a non-participant sees no capture"
+        );
     }
 
     #[test]
@@ -367,8 +417,16 @@ mod tests {
         sched.ingest(&[raid_event(100.0, atk, def, pos)]);
 
         // At t=101.5: attacker's light (1 s) has arrived; defender's (20 s) not.
-        assert_eq!(sched.due_for(atk, atk_cc, c, 101.5).len(), 1, "attacker should have learned");
-        assert_eq!(sched.due_for(def, def_cc, c, 101.5).len(), 0, "defender should NOT know yet");
+        assert_eq!(
+            sched.due_for(atk, atk_cc, c, 101.5).len(),
+            1,
+            "attacker should have learned"
+        );
+        assert_eq!(
+            sched.due_for(def, def_cc, c, 101.5).len(),
+            0,
+            "defender should NOT know yet"
+        );
 
         // Attacker doesn't get it twice.
         assert_eq!(sched.due_for(atk, atk_cc, c, 130.0).len(), 0);
@@ -376,7 +434,10 @@ mod tests {
         // At t=121: defender's light has arrived.
         let d = sched.due_for(def, def_cc, c, 121.0);
         assert_eq!(d.len(), 1, "defender should now have learned");
-        assert!((d[0].age - 21.0).abs() < 1e-6, "report age should be the light delay");
+        assert!(
+            (d[0].age - 21.0).abs() < 1e-6,
+            "report age should be the light delay"
+        );
     }
 
     /// §battle-aftermath: retention is strictly per-participant and stamped
@@ -397,7 +458,10 @@ mod tests {
 
         // Before anyone's light arrives: nothing retained anywhere.
         sched.due_for(atk, atk_cc, c, 100.5);
-        assert!(sched.retained_for(atk).is_empty(), "not retained before the light arrives");
+        assert!(
+            sched.retained_for(atk).is_empty(),
+            "not retained before the light arrives"
+        );
 
         // Attacker's light arrives → retained for the attacker, with arrival = event + 1 s.
         sched.due_for(atk, atk_cc, c, 101.5);
@@ -407,10 +471,16 @@ mod tests {
             assert!(matches!(a[0].you, Role::Attacker));
             (a[0].id, a[0].arrival_time)
         };
-        assert!((a_arrival - 101.0).abs() < 1e-9, "arrival stamp = event + THEIR light delay");
+        assert!(
+            (a_arrival - 101.0).abs() < 1e-9,
+            "arrival stamp = event + THEIR light delay"
+        );
         // The defender (20 s away) has NOT learned yet — nothing retained.
         sched.due_for(def, def_cc, c, 101.5);
-        assert!(sched.retained_for(def).is_empty(), "defender retains nothing before their light");
+        assert!(
+            sched.retained_for(def).is_empty(),
+            "defender retains nothing before their light"
+        );
 
         // Defender's light arrives → their copy, stamped with THEIR arrival.
         sched.due_for(def, def_cc, c, 121.0);
@@ -424,7 +494,10 @@ mod tests {
 
         // A non-participant NEVER retains it, no matter how close they were.
         sched.due_for(third, third_cc, c, 200.0);
-        assert!(sched.retained_for(third).is_empty(), "leak: a non-participant must retain nothing");
+        assert!(
+            sched.retained_for(third).is_empty(),
+            "leak: a non-participant must retain nothing"
+        );
 
         // Reconnect-stability: reading again returns the same list (the View
         // rebuilds markers from this on every broadcast).
@@ -442,13 +515,24 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let mut sched = ReportScheduler::new();
         for i in 0..(BATTLE_REPORTS_KEPT + 5) {
-            sched.ingest(&[raid_event(100.0 + i as f64, atk, def, Vec2::new(i as f64, 0.0))]);
+            sched.ingest(&[raid_event(
+                100.0 + i as f64,
+                atk,
+                def,
+                Vec2::new(i as f64, 0.0),
+            )]);
         }
         sched.due_for(atk, cc, c, 10_000.0);
         let kept = sched.retained_for(atk);
         assert_eq!(kept.len(), BATTLE_REPORTS_KEPT, "capped at the tunable");
         // Newest survive: the FIRST 5 (oldest) were dropped.
-        assert!((kept[0].event_time - 105.0).abs() < 1e-9, "oldest kept = #6");
-        assert!((kept.last().unwrap().event_time - (100.0 + (BATTLE_REPORTS_KEPT + 4) as f64)).abs() < 1e-9);
+        assert!(
+            (kept[0].event_time - 105.0).abs() < 1e-9,
+            "oldest kept = #6"
+        );
+        assert!(
+            (kept.last().unwrap().event_time - (100.0 + (BATTLE_REPORTS_KEPT + 4) as f64)).abs()
+                < 1e-9
+        );
     }
 }

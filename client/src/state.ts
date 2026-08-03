@@ -47,18 +47,6 @@ export function liveSimTime(wallMs = performance.now()): number {
   return renderClockSim + elapsed * renderClockRate;
 }
 
-/// §comms-v4: an own fleet gets the stationary tunnel presentation only when
-/// the PLAYER'S served picture says both that it is beyond every comm bubble
-/// and that its hyperdrive is still stirring the lane. Age never enters this
-/// predicate: the arrived drive fact alone decides the presentation.
-export function ghostInTunnel(ghost: GhostView): boolean {
-  if (!ghost.own || ghost.in_comms) return false;
-  const drive = ghost.drive;
-  if (!drive || typeof drive === "string") return false;
-  return ("cruising" in drive && drive.cruising === "hyperspace")
-    || ("dropping" in drive && drive.dropping.from === "hyperspace");
-}
-
 // The OUTBOUND command signal: the violet comet of an order crossing space from
 // the command center to the ship, over [depart, arrive]. Pure rendering — the
 // client only interpolates between the server-provided times. There is no inbound
@@ -70,11 +58,8 @@ export interface CommandSignal {
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
   pOut: number; // 0..1 outbound progress, recomputed each frame
-  /// §buoys: the relay path (hop positions + arrival fractions). The comet
-  /// traces these — sprinting along lanes, crawling the gaps — instead of a
-  /// straight line. Empty = no relays helped; fly direct.
+  /// Optional path hops. Empty means the ordinary straight flight.
   hops: { pos: Vec2; frac: number }[];
-  beyondComms: boolean;
 }
 
 export type OrderVerb = "move" | "raid" | "attack" | "blockade" | "demolish" | "survey";
@@ -116,15 +101,6 @@ export interface ViewState {
   /// keyed by system id, paired with the static `galaxy.systems` geology.
   systems: SystemStateView[];
   ghosts: GhostView[];
-  /// §comms-v4.1: the first served point at which each own coupled fleet was
-  /// seen beyond comms. Position, heading, emission clock, and known plan are
-  /// frozen together: this is a stationary map bookmark, not a position feed.
-  tunnelBookmarks: Record<string, {
-    pos: Vec2;
-    vel: Vec2;
-    reportedAt: number;
-    path: PathPointView[] | null;
-  }>;
   /// §emplacements: your own structures standing in open space.
   emplacements: EmplacementView[];
   market: MarketView | null;
@@ -191,8 +167,7 @@ export interface ViewState {
   selectedShipId: string | null;
   /// Currently selected star system (for the claim / ship-production panel).
   selectedSystemId: string | null;
-  /// §emplacements: the selected structure standing in open space (buoy or
-  /// sensor). Shares the right-dock panel with ships — never both at once.
+  /// The selected deep-space sensor. Shares the right-dock panel with ships.
   selectedEmplacementId: string | null;
   /// Committed raids the player issued (raiderId → targetId), so the renderer can
   /// draw a CRUDE, drifting intercept estimate for each. Cleared on recall, on the
@@ -227,7 +202,6 @@ export function initialState(): ViewState {
     anchors: [],
     systems: [],
     ghosts: [],
-    tunnelBookmarks: {},
     emplacements: [],
     market: null,
     priceHistory: {},

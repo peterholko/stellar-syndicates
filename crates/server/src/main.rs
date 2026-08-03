@@ -34,7 +34,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use sim::{SimConfig, World};
 
@@ -103,7 +103,11 @@ async fn main() -> anyhow::Result<()> {
     let (persistence, restored) = persistence::init_persistence().await;
     let world = match restored {
         Some(mut w) => {
-            info!(tick = w.tick, players = w.players.len(), "resuming galaxy from snapshot");
+            info!(
+                tick = w.tick,
+                players = w.players.len(),
+                "resuming galaxy from snapshot"
+            );
             // §explore: heal a pre-feature snapshot — recompute band terciles if
             // defaulted, and seed each corp's survey knowledge (owned systems +
             // home radius) so live corps don't wake up amnesiac. Pure fixup;

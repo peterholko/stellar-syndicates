@@ -285,7 +285,8 @@ impl StarSystem {
         if self.bodies.is_empty() {
             return None;
         }
-        let planets: Vec<&crate::body::Body> = self.bodies.iter().filter(|b| b.parent.is_none()).collect();
+        let planets: Vec<&crate::body::Body> =
+            self.bodies.iter().filter(|b| b.parent.is_none()).collect();
         let primary = planets.first().map(|b| b.id).or(Some(self.bodies[0].id));
         let richest_matching = |k: K| {
             self.bodies
@@ -298,9 +299,18 @@ impl StarSystem {
         let volatiles_body = self
             .bodies
             .iter()
-            .find(|b| b.deposits.iter().any(|d| d.resource == crate::cargo::Commodity::Volatiles))
+            .find(|b| {
+                b.deposits
+                    .iter()
+                    .any(|d| d.resource == crate::cargo::Commodity::Volatiles)
+            })
             .map(|b| b.id)
-            .or_else(|| planets.iter().find(|b| b.kind == crate::body::BodyKind::GasGiant).map(|b| b.id))
+            .or_else(|| {
+                planets
+                    .iter()
+                    .find(|b| b.kind == crate::body::BodyKind::GasGiant)
+                    .map(|b| b.id)
+            })
             .or(primary);
         let habitable_body = self
             .bodies
@@ -310,13 +320,24 @@ impl StarSystem {
             .or_else(|| {
                 planets
                     .iter()
-                    .find(|b| matches!(b.kind, crate::body::BodyKind::Terrestrial | crate::body::BodyKind::Ocean))
+                    .find(|b| {
+                        matches!(
+                            b.kind,
+                            crate::body::BodyKind::Terrestrial | crate::body::BodyKind::Ocean
+                        )
+                    })
                     .map(|b| b.id)
             })
             .or(primary);
         let industrial_body = planets
             .iter()
-            .find(|b| !b.habitable && !matches!(b.kind, crate::body::BodyKind::GasGiant | crate::body::BodyKind::Ice))
+            .find(|b| {
+                !b.habitable
+                    && !matches!(
+                        b.kind,
+                        crate::body::BodyKind::GasGiant | crate::body::BodyKind::Ice
+                    )
+            })
             .map(|b| b.id)
             .or(primary);
         let outermost = planets.last().map(|b| b.id).or(primary);
@@ -332,7 +353,9 @@ impl StarSystem {
             // §ground: the garrison sits where the people are — you defend a
             // populated world, not a bare rock.
             K::Habitat | K::Agroplex | K::Academy | K::Garrison => habitable_body,
-            K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex => industrial_body,
+            K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex => {
+                industrial_body
+            }
             // §yards: the whole yard family auto-sites with the Shipyard, on the
             // system's primary body — a shipbuilding world builds its ladder in
             // one place, and the drydock's crews are the shipyard's neighbours.
@@ -364,7 +387,8 @@ impl StarSystem {
     /// (structures placed before a geology change keep working).
     pub fn set_test_deposits(&mut self, deposits: Vec<Deposit>) {
         let mut structures: BTreeMap<crate::build::StructureKind, u32> = BTreeMap::new();
-        let mut assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment> = BTreeMap::new();
+        let mut assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment> =
+            BTreeMap::new();
         let mut pop = 0.0;
         for b in &self.bodies {
             for (k, t) in &b.structures {
@@ -405,8 +429,14 @@ impl StarSystem {
             .iter()
             .position(|b| match kind {
                 Some(crate::build::StructureKind::Bioharvester) => b.habitable,
-                Some(crate::build::StructureKind::VolatileHarvester) => matches!(b.kind, crate::body::BodyKind::Ice | crate::body::BodyKind::GasGiant),
-                _ => matches!(b.kind, crate::body::BodyKind::Rocky | crate::body::BodyKind::Terrestrial),
+                Some(crate::build::StructureKind::VolatileHarvester) => matches!(
+                    b.kind,
+                    crate::body::BodyKind::Ice | crate::body::BodyKind::GasGiant
+                ),
+                _ => matches!(
+                    b.kind,
+                    crate::body::BodyKind::Rocky | crate::body::BodyKind::Terrestrial
+                ),
             })
             .unwrap_or(0);
         self.bodies[idx].deposits.push(d);
@@ -423,7 +453,11 @@ impl StarSystem {
 
     /// §bodies: post an assignment on the body HOLDING `kind` (highest tier
     /// first) — the pre-bodies call shape, for tests and simple tools.
-    pub fn assign(&mut self, kind: crate::build::StructureKind, asg: crate::production::Assignment) {
+    pub fn assign(
+        &mut self,
+        kind: crate::build::StructureKind,
+        asg: crate::production::Assignment,
+    ) {
         if let Some(b) = self
             .bodies
             .iter_mut()
@@ -435,7 +469,10 @@ impl StarSystem {
     }
 
     /// §bodies: the assignment on the body holding `kind`, if any.
-    pub fn assignment(&self, kind: crate::build::StructureKind) -> Option<&crate::production::Assignment> {
+    pub fn assignment(
+        &self,
+        kind: crate::build::StructureKind,
+    ) -> Option<&crate::production::Assignment> {
         self.bodies
             .iter()
             .filter(|b| b.tier(kind) > 0)
@@ -451,13 +488,25 @@ impl StarSystem {
     pub fn fold_legacy_structures(&mut self) {
         use crate::build::StructureKind as K;
         let folds = [
-            (std::mem::take(&mut self.legacy_extractor_tier), K::MiningComplex),
-            (std::mem::take(&mut self.legacy_depot_tier), K::OrbitalWarehouse),
+            (
+                std::mem::take(&mut self.legacy_extractor_tier),
+                K::MiningComplex,
+            ),
+            (
+                std::mem::take(&mut self.legacy_depot_tier),
+                K::OrbitalWarehouse,
+            ),
             (std::mem::take(&mut self.legacy_shipyard_tier), K::Shipyard),
             (std::mem::take(&mut self.legacy_sensor_tier), K::SensorArray),
-            (std::mem::take(&mut self.legacy_defense_tier), K::DefensePlatform),
+            (
+                std::mem::take(&mut self.legacy_defense_tier),
+                K::DefensePlatform,
+            ),
             (std::mem::take(&mut self.legacy_habitat_tier), K::Habitat),
-            (std::mem::take(&mut self.legacy_refinery_tier), K::FuelRefinery),
+            (
+                std::mem::take(&mut self.legacy_refinery_tier),
+                K::FuelRefinery,
+            ),
         ];
         for (legacy, kind) in folds {
             if legacy > 0 {
@@ -475,7 +524,8 @@ impl StarSystem {
     pub fn migrate_to_bodies(&mut self) {
         if self.bodies.is_empty() {
             let deposits = std::mem::take(&mut self.legacy_deposits);
-            self.bodies = crate::body::generate_bodies(&self.id.0.to_string(), &self.name, &deposits);
+            self.bodies =
+                crate::body::generate_bodies(&self.id.0.to_string(), &self.name, &deposits);
         } else if !self.legacy_deposits.is_empty() {
             // A mixed-era state: bodies exist but a legacy deposit list is
             // still riding along — distribute it by affinity (nothing lost).
@@ -503,11 +553,7 @@ impl StarSystem {
         // Assignments re-home with their structures.
         let assignments = std::mem::take(&mut self.legacy_assignments);
         for (kind, asg) in assignments {
-            if let Some(b) = self
-                .bodies
-                .iter_mut()
-                .find(|b| b.tier(kind) > 0)
-            {
+            if let Some(b) = self.bodies.iter_mut().find(|b| b.tier(kind) > 0) {
                 b.assignments.insert(kind, asg);
             }
         }
@@ -587,20 +633,35 @@ impl StarSystem {
     /// §economy Part 3: the STAFFING factor of one BODY's line —
     /// `(crew/tier) · share` (crew = workers + posted specialists).
     pub fn staffing_factor(&self, body_id: u32, kind: crate::build::StructureKind) -> f64 {
-        let Some(b) = self.bodies.iter().find(|b| b.id == body_id) else { return 0.0 };
+        let Some(b) = self.bodies.iter().find(|b| b.id == body_id) else {
+            return 0.0;
+        };
         let tier = b.tier(kind);
         if tier == 0 {
             return 0.0;
         }
         let workers = b.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
-        let spec_crew = self.effective_specialists().get(&(body_id, kind)).map(|(c, _)| *c).unwrap_or(0);
+        let spec_crew = self
+            .effective_specialists()
+            .get(&(body_id, kind))
+            .map(|(c, _)| *c)
+            .unwrap_or(0);
         ((workers + spec_crew).min(tier) as f64 / tier as f64) * self.staffing_share()
     }
 
     /// §economy Part 4: the SKILL factor of one BODY's line.
     pub fn skill_factor(&self, body_id: u32, kind: crate::build::StructureKind) -> f64 {
-        let tier = self.bodies.iter().find(|b| b.id == body_id).map(|b| b.tier(kind)).unwrap_or(0);
-        let (_, matched) = self.effective_specialists().get(&(body_id, kind)).copied().unwrap_or((0, 0));
+        let tier = self
+            .bodies
+            .iter()
+            .find(|b| b.id == body_id)
+            .map(|b| b.tier(kind))
+            .unwrap_or(0);
+        let (_, matched) = self
+            .effective_specialists()
+            .get(&(body_id, kind))
+            .copied()
+            .unwrap_or((0, 0));
         crate::production::skill_factor(matched, tier)
     }
 
@@ -614,7 +675,10 @@ impl StarSystem {
     /// Development slots already CONSUMED here (all pools) — one per distinct
     /// built structure (see `pool_slots_built`).
     pub fn dev_slots_built(&self) -> u32 {
-        self.bodies.iter().map(|b| b.structures.values().filter(|t| **t >= 1).count() as u32).sum()
+        self.bodies
+            .iter()
+            .map(|b| b.structures.values().filter(|t| **t >= 1).count() as u32)
+            .sum()
     }
 
     /// §ground: the garrison strength actually standing right now — its tier,
@@ -641,7 +705,8 @@ impl StarSystem {
         // §bodies: warehouses STACK — every warehouse tier on every body raises
         // the one pooled cap (tier_sum, not the best single warehouse).
         crate::build::STORAGE_BASE_CAP
-            + crate::build::STORAGE_PER_WAREHOUSE_TIER * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64
+            + crate::build::STORAGE_PER_WAREHOUSE_TIER
+                * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64
     }
 
     /// Total units currently stored (summed across commodities) — what the cap
@@ -703,7 +768,13 @@ const CLAIM_VALUE_K: f64 = 45.0;
 /// gets resource deposits whose richness and value rise toward the rim — the
 /// GDD's distance/value gradient: the best production is out in the dangerous,
 /// fog-blind frontier (§4).
-pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, names: &[String], alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
+pub fn generate_systems(
+    rng: &mut Rng,
+    radius: f64,
+    count: u32,
+    names: &[String],
+    alloc: &mut dyn FnMut() -> EntityId,
+) -> Vec<StarSystem> {
     let mut systems = Vec::with_capacity(count as usize);
     for i in 0..count as usize {
         // Area-uniform radius in [0.12R, 0.96R].
@@ -762,13 +833,17 @@ pub fn generate_systems(rng: &mut Rng, radius: f64, count: u32, names: &[String]
 /// it sits. Renewable (no depletion) for the alpha.
 fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
     // 1 deposit near the hub, up to 3 at the rim.
-    let n = (1.0 + frontier * 2.0 + rng.range(0.0, 0.9)).floor().clamp(1.0, 3.0) as usize;
+    let n = (1.0 + frontier * 2.0 + rng.range(0.0, 0.9))
+        .floor()
+        .clamp(1.0, 3.0) as usize;
     let mut deposits = Vec::with_capacity(n);
     for _ in 0..n {
         // Pick a commodity tier centred on the frontier (cheap near hub, valuable
         // at the rim) with seeded spread.
         let center = frontier * (RAW_VALUE_TIER.len() - 1) as f64;
-        let idx = (center + rng.range(-1.1, 1.1)).round().clamp(0.0, (RAW_VALUE_TIER.len() - 1) as f64) as usize;
+        let idx = (center + rng.range(-1.1, 1.1))
+            .round()
+            .clamp(0.0, (RAW_VALUE_TIER.len() - 1) as f64) as usize;
         let resource = RAW_VALUE_TIER[idx];
         // Richness rises toward the frontier, jittered.
         let richness = DEPOSIT_BASE_RICHNESS * (0.5 + 1.7 * frontier) * rng.range(0.6, 1.4);
@@ -785,7 +860,10 @@ fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
 /// The credit cost to claim a system, from the total value-rate of its deposits
 /// (Σ richness·base_price). Richer/more-valuable frontier systems cost more.
 pub fn claim_cost_for(deposits: &[Deposit]) -> f64 {
-    let value_rate: f64 = deposits.iter().map(|d| d.richness * base_price(d.resource)).sum();
+    let value_rate: f64 = deposits
+        .iter()
+        .map(|d| d.richness * base_price(d.resource))
+        .sum();
     CLAIM_BASE + CLAIM_VALUE_K * value_rate
 }
 
@@ -794,7 +872,12 @@ pub fn claim_cost_for(deposits: &[Deposit]) -> f64 {
 /// regular.
 pub const HOME_SLOT_RADIAL_JITTER_FRAC: f64 = 0.08;
 
-pub fn generate_home_slots(rng: &mut Rng, radius: f64, ring_frac: f64, count: u32) -> Vec<HomeSlot> {
+pub fn generate_home_slots(
+    rng: &mut Rng,
+    radius: f64,
+    ring_frac: f64,
+    count: u32,
+) -> Vec<HomeSlot> {
     let count = count.max(1);
     let base = radius * ring_frac;
     let mut slots = Vec::with_capacity(count as usize);
@@ -802,7 +885,8 @@ pub fn generate_home_slots(rng: &mut Rng, radius: f64, ring_frac: f64, count: u3
         let base_angle = std::f64::consts::TAU * (i as f64) / (count as f64);
         // Jitter angle by up to ±¼ of the slot spacing, radius by ±8%.
         let ang_jitter = rng.range(-1.0, 1.0) * (std::f64::consts::TAU / count as f64) * 0.25;
-        let r_jitter = base * rng.range(-HOME_SLOT_RADIAL_JITTER_FRAC, HOME_SLOT_RADIAL_JITTER_FRAC);
+        let r_jitter =
+            base * rng.range(-HOME_SLOT_RADIAL_JITTER_FRAC, HOME_SLOT_RADIAL_JITTER_FRAC);
         let pos = Vec2::from_polar(base_angle + ang_jitter, base + r_jitter);
         slots.push(HomeSlot {
             pos,
@@ -848,8 +932,15 @@ fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
 /// geology keyed by home `index` (so it's reproducible and independent of the
 /// frontier stream). `owner`/`claimed_at` are left `None` — ownership is granted
 /// to the player on join (free; the command center sits here).
-pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, name: String) -> StarSystem {
-    let mut rng = Rng::new(seed ^ HOME_SYSTEM_MAGIC ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+pub fn generate_home_system(
+    seed: u64,
+    index: usize,
+    id: EntityId,
+    pos: Vec2,
+    name: String,
+) -> StarSystem {
+    let mut rng =
+        Rng::new(seed ^ HOME_SYSTEM_MAGIC ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let deposits = generate_home_deposits(&mut rng);
     let claim_cost = claim_cost_for(&deposits);
     // §naming: the caller supplies a galaxy-unique name; geology stays keyed to
@@ -917,7 +1008,10 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
     // ore body, the farm chain + Habitat on the habitable world, the yard
     // over the primary), pre-staffed on those bodies.
     let bootstrap = [
-        (crate::build::StructureKind::Shipyard, crate::build::HOME_SHIPYARD_TIER),
+        (
+            crate::build::StructureKind::Shipyard,
+            crate::build::HOME_SHIPYARD_TIER,
+        ),
         (crate::build::StructureKind::Bioharvester, 1),
         (crate::build::StructureKind::MiningComplex, 1),
         (crate::build::StructureKind::Agroplex, 1),
@@ -938,7 +1032,8 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
         crate::build::StructureKind::Agroplex,
     ] {
         if let Some(b) = sys.bodies.iter_mut().find(|b| b.tier(kind) > 0) {
-            b.assignments.insert(kind, crate::production::Assignment::crew(1));
+            b.assignments
+                .insert(kind, crate::production::Assignment::crew(1));
         }
     }
     sys
@@ -947,7 +1042,12 @@ pub fn generate_home_system(seed: u64, index: usize, id: EntityId, pos: Vec2, na
 /// One home star system per home slot, co-located with each slot — the developed
 /// home bases players begin owning. Ids drawn from the shared allocator so they
 /// stay unique; geology is deterministic per home index.
-pub fn generate_home_systems(seed: u64, slots: &[HomeSlot], names: &[String], alloc: &mut dyn FnMut() -> EntityId) -> Vec<StarSystem> {
+pub fn generate_home_systems(
+    seed: u64,
+    slots: &[HomeSlot],
+    names: &[String],
+    alloc: &mut dyn FnMut() -> EntityId,
+) -> Vec<StarSystem> {
     slots
         .iter()
         .enumerate()
@@ -963,56 +1063,290 @@ pub fn generate_home_systems(seed: u64, slots: &[HomeSlot], names: &[String], al
 /// collide (see [`shuffled_system_names`]). No trademarked or invented names.
 pub const SYSTEM_NAMES: &[&str] = &[
     // ── Stars & catalogue names ──
-    "Vega", "Altair", "Rigel", "Mizar", "Antares", "Deneb", "Fomalhaut", "Alcyone",
-    "Canopus", "Sirius", "Procyon", "Capella", "Arcturus", "Aldebaran", "Bellatrix",
-    "Betelgeuse", "Spica", "Regulus", "Pollux", "Castor", "Alnilam", "Alnitak",
-    "Saiph", "Mintaka", "Naos", "Adhara", "Wezen", "Alhena", "Elnath", "Menkar",
-    "Hamal", "Sheratan", "Mirach", "Almach", "Algol", "Merak", "Dubhe", "Phecda",
-    "Megrez", "Alioth", "Alkaid", "Kochab", "Polaris", "Thuban", "Etamin", "Rastaban",
-    "Zosma", "Denebola", "Alphard", "Gomeisa", "Markab", "Scheat", "Algenib", "Enif",
-    "Skat", "Diphda", "Achernar", "Acamar", "Alnair", "Peacock", "Atria", "Gacrux",
-    "Acrux", "Mimosa", "Hadar", "Shaula", "Sargas", "Nunki", "Ascella", "Albireo",
-    "Tarazed", "Alshain", "Rukbat", "Nashira", "Dabih", "Wasat", "Tejat", "Propus",
-    "Mebsuta", "Zaurak", "Cursa", "Keid", "Rana", "Sadr", "Gienah", "Ruchbah",
-    "Segin", "Caph", "Achird", "Sabik", "Izar", "Seginus", "Nekkar", "Alphecca",
+    "Vega",
+    "Altair",
+    "Rigel",
+    "Mizar",
+    "Antares",
+    "Deneb",
+    "Fomalhaut",
+    "Alcyone",
+    "Canopus",
+    "Sirius",
+    "Procyon",
+    "Capella",
+    "Arcturus",
+    "Aldebaran",
+    "Bellatrix",
+    "Betelgeuse",
+    "Spica",
+    "Regulus",
+    "Pollux",
+    "Castor",
+    "Alnilam",
+    "Alnitak",
+    "Saiph",
+    "Mintaka",
+    "Naos",
+    "Adhara",
+    "Wezen",
+    "Alhena",
+    "Elnath",
+    "Menkar",
+    "Hamal",
+    "Sheratan",
+    "Mirach",
+    "Almach",
+    "Algol",
+    "Merak",
+    "Dubhe",
+    "Phecda",
+    "Megrez",
+    "Alioth",
+    "Alkaid",
+    "Kochab",
+    "Polaris",
+    "Thuban",
+    "Etamin",
+    "Rastaban",
+    "Zosma",
+    "Denebola",
+    "Alphard",
+    "Gomeisa",
+    "Markab",
+    "Scheat",
+    "Algenib",
+    "Enif",
+    "Skat",
+    "Diphda",
+    "Achernar",
+    "Acamar",
+    "Alnair",
+    "Peacock",
+    "Atria",
+    "Gacrux",
+    "Acrux",
+    "Mimosa",
+    "Hadar",
+    "Shaula",
+    "Sargas",
+    "Nunki",
+    "Ascella",
+    "Albireo",
+    "Tarazed",
+    "Alshain",
+    "Rukbat",
+    "Nashira",
+    "Dabih",
+    "Wasat",
+    "Tejat",
+    "Propus",
+    "Mebsuta",
+    "Zaurak",
+    "Cursa",
+    "Keid",
+    "Rana",
+    "Sadr",
+    "Gienah",
+    "Ruchbah",
+    "Segin",
+    "Caph",
+    "Achird",
+    "Sabik",
+    "Izar",
+    "Seginus",
+    "Nekkar",
+    "Alphecca",
     // ── Slavic ──
-    "Veles", "Perun", "Morana", "Svarog", "Dazhbog", "Mokosh", "Stribog", "Chernobog",
-    "Belobog", "Lada", "Jarilo", "Zorya", "Simargl", "Radegast", "Triglav", "Vesna",
+    "Veles",
+    "Perun",
+    "Morana",
+    "Svarog",
+    "Dazhbog",
+    "Mokosh",
+    "Stribog",
+    "Chernobog",
+    "Belobog",
+    "Lada",
+    "Jarilo",
+    "Zorya",
+    "Simargl",
+    "Radegast",
+    "Triglav",
+    "Vesna",
     // ── Norse ──
-    "Njord", "Freya", "Freyr", "Odin", "Tyr", "Baldr", "Heimdall", "Loki", "Frigg",
-    "Idun", "Bragi", "Vidar", "Vali", "Forseti", "Ullr", "Skadi", "Nanna", "Sif",
-    "Hel", "Fenrir", "Aegir", "Nidhogg", "Ymir", "Mimir", "Kvasir", "Surtr",
-    "Sleipnir", "Bifrost", "Asgard", "Vanaheim",
+    "Njord",
+    "Freya",
+    "Freyr",
+    "Odin",
+    "Tyr",
+    "Baldr",
+    "Heimdall",
+    "Loki",
+    "Frigg",
+    "Idun",
+    "Bragi",
+    "Vidar",
+    "Vali",
+    "Forseti",
+    "Ullr",
+    "Skadi",
+    "Nanna",
+    "Sif",
+    "Hel",
+    "Fenrir",
+    "Aegir",
+    "Nidhogg",
+    "Ymir",
+    "Mimir",
+    "Kvasir",
+    "Surtr",
+    "Sleipnir",
+    "Bifrost",
+    "Asgard",
+    "Vanaheim",
     // ── Greek ──
-    "Hyperion", "Nemesis", "Helios", "Selene", "Nyx", "Erebus", "Gaia", "Cronus",
-    "Rhea", "Themis", "Tethys", "Oceanus", "Iapetus", "Atlas", "Prometheus", "Pallas",
-    "Astraeus", "Leto", "Asteria", "Metis", "Dione", "Phoebe", "Theia", "Hecate",
-    "Kratos", "Styx", "Eris", "Thanatos", "Hypnos", "Cerberus",
+    "Hyperion",
+    "Nemesis",
+    "Helios",
+    "Selene",
+    "Nyx",
+    "Erebus",
+    "Gaia",
+    "Cronus",
+    "Rhea",
+    "Themis",
+    "Tethys",
+    "Oceanus",
+    "Iapetus",
+    "Atlas",
+    "Prometheus",
+    "Pallas",
+    "Astraeus",
+    "Leto",
+    "Asteria",
+    "Metis",
+    "Dione",
+    "Phoebe",
+    "Theia",
+    "Hecate",
+    "Kratos",
+    "Styx",
+    "Eris",
+    "Thanatos",
+    "Hypnos",
+    "Cerberus",
     // ── Roman ──
-    "Janus", "Vesta", "Ceres", "Juno", "Minerva", "Vulcan", "Bellona", "Fortuna",
-    "Quirinus", "Faunus", "Silvanus", "Pomona", "Concordia", "Aurora",
+    "Janus",
+    "Vesta",
+    "Ceres",
+    "Juno",
+    "Minerva",
+    "Vulcan",
+    "Bellona",
+    "Fortuna",
+    "Quirinus",
+    "Faunus",
+    "Silvanus",
+    "Pomona",
+    "Concordia",
+    "Aurora",
     // ── Egyptian ──
-    "Anubis", "Horus", "Osiris", "Isis", "Thoth", "Sobek", "Sekhmet", "Bastet",
-    "Ptah", "Hathor", "Khonsu", "Amun", "Aten", "Maat", "Neith", "Wadjet", "Apophis",
+    "Anubis",
+    "Horus",
+    "Osiris",
+    "Isis",
+    "Thoth",
+    "Sobek",
+    "Sekhmet",
+    "Bastet",
+    "Ptah",
+    "Hathor",
+    "Khonsu",
+    "Amun",
+    "Aten",
+    "Maat",
+    "Neith",
+    "Wadjet",
+    "Apophis",
     "Wepwawet",
     // ── Mesopotamian ──
-    "Ereshkigal", "Nergal", "Marduk", "Enlil", "Enki", "Inanna", "Ishtar", "Tiamat",
-    "Anshar", "Ninhursag", "Shamash", "Ninurta", "Nabu", "Dumuzi", "Pazuzu",
+    "Ereshkigal",
+    "Nergal",
+    "Marduk",
+    "Enlil",
+    "Enki",
+    "Inanna",
+    "Ishtar",
+    "Tiamat",
+    "Anshar",
+    "Ninhursag",
+    "Shamash",
+    "Ninurta",
+    "Nabu",
+    "Dumuzi",
+    "Pazuzu",
     "Gilgamesh",
     // ── Frontier & industrial ──
-    "Anvil", "Kiln", "Tally", "Bulwark", "Ember", "Lattice", "Quarry", "Reckoning",
-    "Forge", "Crucible", "Foundry", "Bellows", "Girder", "Rivet", "Gantry", "Derrick",
-    "Sluice", "Ballast", "Slag", "Cinder", "Ingot", "Tithe", "Ledger", "Sable",
-    "Cairn", "Beacon", "Palisade", "Rampart", "Bastion", "Redoubt", "Keystone",
-    "Millstone", "Whetstone", "Lodestone", "Flint", "Tinder", "Ashfall", "Cistern",
-    "Conduit", "Spindle", "Loom", "Hearth", "Furnace", "Temper", "Quench", "Pinion",
-    "Ratchet", "Flywheel", "Piston", "Prospect", "Placer", "Tailings",
+    "Anvil",
+    "Kiln",
+    "Tally",
+    "Bulwark",
+    "Ember",
+    "Lattice",
+    "Quarry",
+    "Reckoning",
+    "Forge",
+    "Crucible",
+    "Foundry",
+    "Bellows",
+    "Girder",
+    "Rivet",
+    "Gantry",
+    "Derrick",
+    "Sluice",
+    "Ballast",
+    "Slag",
+    "Cinder",
+    "Ingot",
+    "Tithe",
+    "Ledger",
+    "Sable",
+    "Cairn",
+    "Beacon",
+    "Palisade",
+    "Rampart",
+    "Bastion",
+    "Redoubt",
+    "Keystone",
+    "Millstone",
+    "Whetstone",
+    "Lodestone",
+    "Flint",
+    "Tinder",
+    "Ashfall",
+    "Cistern",
+    "Conduit",
+    "Spindle",
+    "Loom",
+    "Hearth",
+    "Furnace",
+    "Temper",
+    "Quench",
+    "Pinion",
+    "Ratchet",
+    "Flywheel",
+    "Piston",
+    "Prospect",
+    "Placer",
+    "Tailings",
 ];
 
 /// Deterministic overflow suffixes for a galaxy larger than [`SYSTEM_NAMES`] — a
 /// second (third…) pass appends these so a bare name is never repeated.
-const NAME_OVERFLOW_SUFFIXES: &[&str] =
-    &["Reach", "Deep", "Verge", "Expanse", "Reef", "Drift", "Marches", "Hollow"];
+const NAME_OVERFLOW_SUFFIXES: &[&str] = &[
+    "Reach", "Deep", "Verge", "Expanse", "Reef", "Drift", "Marches", "Hollow",
+];
 
 /// `needed` galaxy-unique system names: the curated [`SYSTEM_NAMES`] pool shuffled
 /// IN PLACE by the SEEDED `rng` (Fisher–Yates — no new RNG stream, no non-seeded
@@ -1068,8 +1402,16 @@ mod name_tests {
     #[test]
     fn system_name_pool_has_no_duplicates() {
         let set: BTreeSet<&&str> = SYSTEM_NAMES.iter().collect();
-        assert_eq!(set.len(), SYSTEM_NAMES.len(), "the curated pool must be collision-free");
-        assert!(SYSTEM_NAMES.len() >= 200, "pool is ~250 names, got {}", SYSTEM_NAMES.len());
+        assert_eq!(
+            set.len(),
+            SYSTEM_NAMES.len(),
+            "the curated pool must be collision-free"
+        );
+        assert!(
+            SYSTEM_NAMES.len() >= 200,
+            "pool is ~250 names, got {}",
+            SYSTEM_NAMES.len()
+        );
         // Names are one word (no whitespace) so the overflow-suffix pass reads clean.
         for n in SYSTEM_NAMES {
             assert!(!n.contains(' '), "{n} should be one word");
@@ -1100,12 +1442,17 @@ mod name_tests {
         let set: BTreeSet<&String> = names.iter().collect();
         assert_eq!(set.len(), n, "overflow suffixes never repeat a name");
         // The first pool-worth are bare names; the next are suffixed.
-        assert!(names[SYSTEM_NAMES.len()].contains(' '), "overflow names carry a suffix");
+        assert!(
+            names[SYSTEM_NAMES.len()].contains(' '),
+            "overflow names carry a suffix"
+        );
     }
 
     #[test]
     fn pick_unused_name_avoids_taken_and_is_deterministic() {
-        let mut taken: BTreeSet<String> = shuffled_system_names(&mut Rng::new(9), 50).into_iter().collect();
+        let mut taken: BTreeSet<String> = shuffled_system_names(&mut Rng::new(9), 50)
+            .into_iter()
+            .collect();
         let a = pick_unused_name(9, &taken);
         let b = pick_unused_name(9, &taken);
         assert_eq!(a, b, "deterministic for a fixed (seed, taken)");

@@ -10,8 +10,8 @@
 
 use serde::Serialize;
 use sim::World;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -115,7 +115,11 @@ impl Persistence for PgPersistence {
         let value = migrate_world_json(row.map(|(v,)| v)?);
         match serde_json::from_value::<World>(value) {
             Ok(w) => {
-                info!(tick = w.tick, players = w.players.len(), "restored world from snapshot");
+                info!(
+                    tick = w.tick,
+                    players = w.players.len(),
+                    "restored world from snapshot"
+                );
                 Some(w)
             }
             Err(e) => {
@@ -150,7 +154,9 @@ pub fn migrate_world_json(mut value: serde_json::Value) -> serde_json::Value {
     // (2) Give every entity a composition if it only has a scalar `kind`.
     if let Some(fleets) = obj.get_mut("fleets").and_then(|f| f.as_object_mut()) {
         for entity in fleets.values_mut() {
-            let Some(fo) = entity.as_object_mut() else { continue };
+            let Some(fo) = entity.as_object_mut() else {
+                continue;
+            };
             if fo.contains_key("composition") {
                 continue; // already a fleet — leave it be (idempotent)
             }
@@ -171,7 +177,9 @@ pub struct NoopPersistence;
 
 impl Persistence for NoopPersistence {
     async fn init(&self) -> anyhow::Result<()> {
-        warn!("persistence: running WITHOUT a database (in-memory stub). Set DATABASE_URL to enable Postgres.");
+        warn!(
+            "persistence: running WITHOUT a database (in-memory stub). Set DATABASE_URL to enable Postgres."
+        );
         Ok(())
     }
 
@@ -304,10 +312,7 @@ pub async fn init_persistence() -> (PersistenceHandle, Option<World>) {
 }
 
 async fn connect_pg(url: &str) -> anyhow::Result<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(url)
-        .await?;
+    let pool = PgPoolOptions::new().max_connections(4).connect(url).await?;
     Ok(pool)
 }
 
@@ -359,22 +364,38 @@ mod tests {
         let obj = migrated.as_object().unwrap();
         assert!(!obj.contains_key("ships"), "ships key renamed away");
         let fleet = &migrated["fleets"]["42"];
-        assert_eq!(fleet["composition"]["raider"], json!(1), "one raider → fleet of one");
+        assert_eq!(
+            fleet["composition"]["raider"],
+            json!(1),
+            "one raider → fleet of one"
+        );
     }
 
     #[test]
     fn migration_is_idempotent_and_new_snapshots_still_load() {
         // A real, current-shape world round-trips through migrate untouched.
         let mut w = World::new(SimConfig::for_players(999, 4));
-        w.step(&[Command::AddPlayer { id: PlayerId(7), name: "Ada".into() }]);
+        w.step(&[Command::AddPlayer {
+            id: PlayerId(7),
+            name: "Ada".into(),
+        }]);
         let before = w.fleets.len();
         assert!(before > 0, "join spawns a starting fleet");
         let value = serde_json::to_value(&w).unwrap();
         let restored: World = serde_json::from_value(migrate_world_json(value)).unwrap();
-        assert_eq!(restored.fleets.len(), before, "new snapshot survives migrate + reload");
+        assert_eq!(
+            restored.fleets.len(),
+            before,
+            "new snapshot survives migrate + reload"
+        );
         // Every restored fleet has a non-empty composition (no lost ships).
         assert!(restored.fleets.values().all(|f| f.total_count() >= 1));
         // §emplacements: the starting roster is Builder + Raider now.
-        assert!(restored.fleets.values().any(|f| f.contains(ShipKind::Builder)));
+        assert!(
+            restored
+                .fleets
+                .values()
+                .any(|f| f.contains(ShipKind::Builder))
+        );
     }
 }

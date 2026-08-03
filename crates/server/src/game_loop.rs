@@ -14,15 +14,15 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, info};
 
-use sim::{Command, PlayerId, World, DT, TICK_HZ};
+use sim::{Command, DT, PlayerId, TICK_HZ, World};
 
-use crate::persistence::{to_json, PersistJob, PersistenceHandle};
+use crate::persistence::{PersistJob, PersistenceHandle, to_json};
 use crate::protocol::{
-    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PathPointView,
-    PriceView, ServerMsg, StockSlot, SystemInfo, WalletView,
+    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg,
+    StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
 use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
@@ -37,69 +37,30 @@ const BROADCAST_EVERY: u64 = 3;
 /// much progress a restart can lose (the snapshot is the restart basis, §14).
 pub const DEFAULT_SNAPSHOT_EVERY: u64 = 10 * TICK_HZ as u64;
 
-/// Build the exact drawable route and clock for an outbound command aimed at the
+/// Build the straight warp-light clock for an outbound command aimed at the
 /// moving meeting point projected from the player's current ghost of a ship.
-///
-/// Inside an owned comm bubble, a ship riding a lane is coupled to the medium in
-/// both directions and the comet follows that covered route. Outside every 2D
-/// bubble, the binary command rule bypasses the network completely and sends one
-/// direct warp-light chord. The purple comet must use the same gated clock as
-/// delivery; otherwise its geometry and the order's authoritative arrival split.
+/// The purple comet and the quoted arrival share this one solve.
 #[derive(Debug, Clone)]
 struct CommandSignalPlan {
     travel_time: f64,
     meeting_point: sim::Vec2,
     hops: Vec<crate::protocol::SignalHopView>,
-    beyond_comms: bool,
 }
 
 fn command_signal_plan(
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     cc: sim::Vec2,
     ghost_pos: sim::Vec2,
     ghost_vel: sim::Vec2,
-    ghost_coupled: bool,
-    ghost_route: Option<&[sim::Vec2]>,
 ) -> CommandSignalPlan {
-    // §6: solve only from the SERVED sighting. This is the same fixed-point
-    // meeting equation as authoritative delivery, but fed the player's ghost
-    // position/velocity/remaining route so neither the route nor its clock leaks
-    // true space. The bounded served route matters: dropping it makes a dark
-    // rider appear to continue toward the lane endpoint after its known plan ends.
+    // §6: solve only from the served sighting. Authoritative delivery uses the
+    // same equation against truth; the animation never reads the hidden hull.
     let (travel_time, meeting_point) =
-        delays.command_meeting_delay(cc, ghost_pos, ghost_vel, ghost_coupled, ghost_route, 1.0);
-    let relayed = sim::lane::in_comm_bubble(meeting_point, delays.sites, 0.0);
-    let route = if !relayed {
-        Vec::new()
-    } else if ghost_coupled {
-        delays.path_to_coupled(cc, meeting_point)
-    } else {
-        delays.path(cc, meeting_point)
-    };
-    let mut from = cc;
-    let mut beyond_comms = !relayed;
-    for hop in &route {
-        if from.distance(hop.to) > 1e-6 {
-            beyond_comms = hop.lane.is_none();
-        }
-        from = hop.to;
-    }
-    let hops = if route.len() >= 2 && travel_time > 1e-9 {
-        route
-            .iter()
-            .map(|hop| crate::protocol::SignalHopView {
-                pos: hop.to,
-                frac: hop.t / travel_time,
-            })
-            .collect()
-    } else {
-        Vec::new() // a straight run — the client's fallback draws it
-    };
+        sim::transit::command_meeting_delay(cc, ghost_pos, ghost_vel, c, 1.0);
     CommandSignalPlan {
         travel_time,
         meeting_point,
-        hops,
-        beyond_comms,
+        hops: Vec::new(), // the client fallback draws the single straight leg
     }
 }
 
@@ -107,53 +68,25 @@ fn command_signal_plan(
 struct ObservedOrderPlan {
     arrives_at: f64,
     response_at: f64,
-    response_on_reentry: bool,
-    meeting_point: sim::Vec2,
     intent_path: Vec<sim::Vec2>,
-    beyond_comms: bool,
 }
 
 fn observed_order_plan(
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     cc: sim::Vec2,
     ghost_pos: sim::Vec2,
     ghost_vel: sim::Vec2,
-    ghost_coupled: bool,
-    ghost_route: Option<&[sim::Vec2]>,
     depart_time: f64,
-    response_course: Option<(sim::Vec2, f64)>,
+    _response_course: Option<(sim::Vec2, f64)>,
 ) -> (ObservedOrderPlan, CommandSignalPlan) {
-    let signal = command_signal_plan(delays, cc, ghost_pos, ghost_vel, ghost_coupled, ghost_route);
+    let signal = command_signal_plan(c, cc, ghost_pos, ghost_vel);
     let arrives_at = depart_time + signal.travel_time;
-    // Outside the picture's comm bubble, the useful response is reacquisition:
-    // how long the newly commanded flight is expected to take to the first
-    // circle edge. Falling back to a light-return leg preserves orders that do
-    // not have a fixed return course (attack, patrol, an away move, and so on).
-    let bubble_return = if sim::lane::in_comm_bubble(signal.meeting_point, delays.sites, 0.0) {
-        None
-    } else {
-        response_course.and_then(|(dest, transit_speed)| {
-            let warp_speed = transit_speed * sim::lane::WARP_FACTOR;
-            delays.lanes.time_to_comm_bubble(
-                signal.meeting_point,
-                dest,
-                warp_speed,
-                warp_speed * sim::lane::LANE_MULT,
-                delays.sites,
-            )
-        })
-    };
-    let response_on_reentry = bubble_return.is_some();
-    let response_at =
-        arrives_at + bubble_return.unwrap_or_else(|| delays.between(signal.meeting_point, cc));
+    let response_at = arrives_at + sim::transit::delay(signal.meeting_point, cc, c);
     (
         ObservedOrderPlan {
             arrives_at,
             response_at,
-            response_on_reentry,
-            meeting_point: signal.meeting_point,
             intent_path: Vec::new(),
-            beyond_comms: signal.beyond_comms,
         },
         signal,
     )
@@ -161,24 +94,9 @@ fn observed_order_plan(
 
 /// Plot the intended route from the last SERVED sighting to a fixed destination.
 /// This is plan geometry only: it carries no timestamps and never claims the
-/// observed marker has advanced along it. Public lanes plus the owner's known
-/// fleet speed choose the route; authoritative position never enters.
-fn intended_route(
-    lanes: &sim::lane::LaneNetwork,
-    ghost_pos: sim::Vec2,
-    dest: sim::Vec2,
-    transit_speed: f64,
-) -> Vec<sim::Vec2> {
-    if transit_speed <= 1e-9 {
-        return Vec::new();
-    }
-    let warp_speed = transit_speed * sim::lane::WARP_FACTOR;
-    let lane_speed = warp_speed * sim::lane::LANE_MULT;
-    let mut legs = lanes.route(ghost_pos, dest, warp_speed, lane_speed);
-    if legs.is_empty() {
-        legs.push(sim::lane::Leg::warp(dest));
-    }
-    std::iter::once(ghost_pos).chain(legs.into_iter().map(|leg| leg.to)).collect()
+/// observed marker has advanced along it. Authoritative position never enters.
+fn intended_route(ghost_pos: sim::Vec2, dest: sim::Vec2, _transit_speed: f64) -> Vec<sim::Vec2> {
+    vec![ghost_pos, dest]
 }
 
 fn has_fixed_intent_path(kind: sim::event::OrderKind, target: Option<sim::EntityId>) -> bool {
@@ -208,36 +126,6 @@ fn disclosed_order_loss(
     loss.filter(|loss| now >= loss.news_at)
 }
 
-fn relay_loss_view(
-    death: &sim::world::CommDeath,
-    served_positions: &[sim::Vec2],
-    remaining_sites: &[sim::lane::CommSite],
-    pending: &[sim::world::PendingCommandView],
-    now: f64,
-) -> Option<crate::protocol::RelayLossView> {
-    if now < death.news_at {
-        return None;
-    }
-    let fleets_beyond = served_positions
-        .iter()
-        .filter(|fleet_pos| {
-            sim::lane::in_comm_bubble(**fleet_pos, &[death.site], 0.0)
-                && !sim::lane::in_comm_bubble(**fleet_pos, remaining_sites, 0.0)
-        })
-        .count() as u32;
-    let orders_lost = pending
-        .iter()
-        .filter(|order| order.loss.is_some_and(|loss| loss.relay == death.id))
-        .count() as u32;
-    Some(crate::protocol::RelayLossView {
-        id: death.id,
-        kind: death.kind,
-        learned_at: death.news_at,
-        fleets_beyond,
-        orders_lost,
-    })
-}
-
 fn pending_order_views(
     world: &World,
     viewer: PlayerId,
@@ -256,13 +144,11 @@ fn pending_order_views(
                 issued_at: pending.issued_at,
                 arrives_at: observed.arrives_at,
                 response_at: observed.response_at,
-                response_on_reentry: observed.response_on_reentry,
                 kind: pending.kind,
                 dest: pending.dest,
                 target_id: pending.target,
                 emplacement: pending.emplacement,
                 intent_path: observed.intent_path.clone(),
-                beyond_comms: observed.beyond_comms,
                 lost: disclosed_loss.is_some(),
                 loss_relay: disclosed_loss.map(|loss| loss.relay),
                 loss_break: disclosed_loss.map(|loss| loss.break_pos),
@@ -294,10 +180,6 @@ struct GoneEmplacement {
     pos: sim::Vec2,
     /// Sim time it came down.
     at: f64,
-    /// Frozen owner-news wavefront for relay structures. Non-relay structures
-    /// keep the older per-viewer disappearance rule and have no casualty card.
-    owner_news_at: Option<f64>,
-    summary: Option<crate::protocol::RelayLossView>,
 }
 
 struct ConcludedBattle {
@@ -334,8 +216,15 @@ struct MarketAccountHistory {
 
 impl MarketAccountHistory {
     fn for_world(world: &World) -> Self {
-        let max_delay = (2.0 * world.config.galaxy_radius) / world.config.c;
-        Self { samples: HashMap::new(), horizon: max_delay * 1.25 + 1.0 }
+        let max_delay = sim::transit::delay(
+            sim::Vec2::ZERO,
+            sim::Vec2::new(2.0 * world.config.galaxy_radius, 0.0),
+            world.config.c,
+        );
+        Self {
+            samples: HashMap::new(),
+            horizon: max_delay * 1.25 + 1.0,
+        }
     }
 
     fn record(&mut self, world: &World) {
@@ -345,10 +234,18 @@ impl MarketAccountHistory {
                 credits: corp.credits,
                 valuation: corp.valuation,
                 warehouse: corp.warehouse.clone(),
-                orders: world.book.iter().filter(|o| o.player == player).cloned().collect(),
+                orders: world
+                    .book
+                    .iter()
+                    .filter(|o| o.player == player)
+                    .cloned()
+                    .collect(),
             };
             let history = self.samples.entry(player).or_default();
-            if history.back().is_none_or(|(_, previous)| previous != &sample) {
+            if history
+                .back()
+                .is_none_or(|(_, previous)| previous != &sample)
+            {
                 history.push_back((now, sample));
             }
             let cutoff = now - self.horizon;
@@ -375,7 +272,11 @@ struct ScheduledTradeReport {
 }
 
 fn system_pos(world: &World, id: sim::EntityId) -> Option<sim::Vec2> {
-    world.systems.iter().find(|system| system.id == id).map(|system| system.pos)
+    world
+        .systems
+        .iter()
+        .find(|system| system.id == id)
+        .map(|system| system.pos)
 }
 
 /// Where the fact represented by an economy receipt physically occurred. Most
@@ -384,14 +285,18 @@ fn system_pos(world: &World, id: sim::EntityId) -> Option<sim::Vec2> {
 /// one source for both live receipt delay and the retained check-in timeline.
 pub(crate) fn trade_report_origin(world: &World, trade: &sim::TradeEvent) -> sim::Vec2 {
     match *trade {
-        sim::TradeEvent::Delivered { system: Some(id), .. }
+        sim::TradeEvent::Delivered {
+            system: Some(id), ..
+        }
         | sim::TradeEvent::SupplyDiverted { system: id, .. }
         | sim::TradeEvent::StorageOverflow { system: id, .. }
         | sim::TradeEvent::AutoDispatched { source: id, .. }
-        | sim::TradeEvent::Loaded { system: Some(id), .. }
-        | sim::TradeEvent::Unloaded { system: Some(id), .. } => {
-            system_pos(world, id).unwrap_or(world.hub)
+        | sim::TradeEvent::Loaded {
+            system: Some(id), ..
         }
+        | sim::TradeEvent::Unloaded {
+            system: Some(id), ..
+        } => system_pos(world, id).unwrap_or(world.hub),
         sim::TradeEvent::FreightMoved {
             system,
             stage: sim::FreightStage::CollectedForPickup | sim::FreightStage::DeliveredToSystem,
@@ -404,7 +309,7 @@ pub(crate) fn trade_report_origin(world: &World, trade: &sim::TradeEvent) -> sim
 impl ConcludedBattle {
     /// Should a command center at `cc` still see this battle's IN-PROGRESS icon at
     /// wall-time `now`? True on the half-open window `[started_at + delay,
-    /// ended_at + delay)` where `delay = |pos − cc| / c`:
+    /// ended_at + delay)` where `delay = |pos − cc| / warp_light`:
     ///
     /// * the lower bound is the same light-gate the live icon used (never show a
     ///   battle whose start-light hasn't arrived), and
@@ -412,7 +317,7 @@ impl ConcludedBattle {
     ///   aftermath report lands (`event_time + delay`), so the in-progress icon
     ///   flips to aftermath on one wavefront with neither gap nor overlap.
     fn shows_in_progress(&self, cc: sim::Vec2, c: f64, now: f64) -> bool {
-        let delay = self.pos.distance(cc) / c;
+        let delay = sim::transit::delay(self.pos, cc, c);
         now >= self.started_at + delay && now < self.ended_at + delay
     }
 }
@@ -527,21 +432,15 @@ impl GameLoop {
         }
         let cc = corp.command_center;
         let c = self.world.config.c;
-        // §hyperspace: information delay is a shortest-TIME path through a medium
-        // whose speed varies, so the lane network travels with `c` now.
-        let buoys = self.world.relay_network_known(player_id, depart_time);
-        let delays = sim::lane::DelayField { lanes: &self.world.lanes, sites: &buoys, c };
         // Aim from the player's observed ship position and velocity, never its
         // hidden true state. A just-spawned hull at home degenerates to a
         // zero-length signal.
         let sighting = self
             .history
-            .observed_sighting(ship_id, cc, &delays, depart_time)
+            .observed_sighting(ship_id, cc, c, depart_time)
             .unwrap_or(view::ObservedSighting {
                 pos: cc,
                 vel: sim::Vec2::ZERO,
-                coupled: false,
-                route: Vec::new(),
             });
         let subject = self
             .world
@@ -558,17 +457,11 @@ impl GameLoop {
             .filter(|pending| has_fixed_response_course(pending.kind))
             .and_then(|pending| pending.dest)
             .zip(transit_speed);
-        // §comms-infra: one outbound route supplies BOTH geometry and its clock;
-        // the fixed-point solve makes that route end where it meets the moving
-        // ghost rather than where the ghost stood when the order was issued.
-        let known_route = (!sighting.route.is_empty()).then_some(sighting.route.as_slice());
         let (mut observed, signal) = observed_order_plan(
-            &delays,
+            c,
             cc,
             sighting.pos,
             sighting.vel,
-            sighting.coupled,
-            known_route,
             depart_time,
             response_course,
         );
@@ -577,8 +470,7 @@ impl GameLoop {
             && let Some(dest) = subject.dest
             && let Some(transit_speed) = transit_speed
         {
-            observed.intent_path =
-                intended_route(&self.world.lanes, sighting.pos, dest, transit_speed);
+            observed.intent_path = intended_route(sighting.pos, dest, transit_speed);
         }
         self.observed_order_plans
             .insert((player_id, order_id), observed.clone());
@@ -590,7 +482,6 @@ impl GameLoop {
                 depart_time,
                 arrive_time: observed.arrives_at,
                 hops: signal.hops,
-                beyond_comms: signal.beyond_comms,
             },
         );
     }
@@ -614,7 +505,7 @@ impl GameLoop {
                 continue;
             };
             let origin = trade_report_origin(&self.world, trade);
-            let delay = origin.distance(corp.command_center) / self.world.config.c;
+            let delay = sim::transit::delay(origin, corp.command_center, self.world.config.c);
             self.trade_reports.push(ScheduledTradeReport {
                 arrives_at: event.time + delay,
                 trade: *trade,
@@ -629,7 +520,9 @@ impl GameLoop {
             if report.arrives_at <= now + 1e-9 {
                 self.sessions.send_to_player(
                     report.trade.player(),
-                    ServerMsg::Trade { trade: report.trade },
+                    ServerMsg::Trade {
+                        trade: report.trade,
+                    },
                 );
             } else {
                 waiting.push(report);
@@ -671,20 +564,6 @@ impl GameLoop {
                         tick: self.world.tick,
                         sim_time: self.world.time,
                         galaxy: GalaxyInfo {
-                            // §hyperspace: static, public, shipped once.
-                            lanes: self
-                                .world
-                                .lanes
-                                .lanes
-                                .iter()
-                                .map(|l| crate::protocol::LaneView {
-                                    id: l.id,
-                                    name: l.name.clone(),
-                                    points: l.samples.iter().map(|s| s.pos).collect(),
-                                    half_width: l.half_width,
-                                    tapers: l.tapers,
-                                })
-                                .collect(),
                             hub: self.world.hub,
                             radius: self.world.config.galaxy_radius,
                             c: self.world.config.c,
@@ -706,7 +585,11 @@ impl GameLoop {
                             pop_growth_per_s: sim::colony::POP_GROWTH_PER_S,
                             specialist_hire_cost: sim::specialist::SPECIALIST_HIRE_COST,
                             // §economy Part 3: the refinery hint rate (full converter table on the wire in Part 6).
-                            fuel_refinery_rate: sim::production::converter_for(sim::StructureKind::FuelRefinery).expect("refinery converts").rate,
+                            fuel_refinery_rate: sim::production::converter_for(
+                                sim::StructureKind::FuelRefinery,
+                            )
+                            .expect("refinery converts")
+                            .rate,
                             // §contestable-territory Part 2: the siege duration.
                             siege_secs: self.world.siege_duration_secs(),
                             pirate_id: sim::PlayerId::PIRATE,
@@ -734,8 +617,13 @@ impl GameLoop {
                 // client can mark entries newer than it as "while you were away".
                 let (entries, away_since) = self.timeline.digest(player_id);
                 self.timeline_sent.insert(player_id, entries.len());
-                self.sessions
-                    .send_to_conn(conn_id, ServerMsg::Timeline { entries, away_since });
+                self.sessions.send_to_conn(
+                    conn_id,
+                    ServerMsg::Timeline {
+                        entries,
+                        away_since,
+                    },
+                );
 
                 // Ensure the corporation exists in the sim (idempotent).
                 self.pending.push(Command::AddPlayer {
@@ -772,71 +660,21 @@ impl GameLoop {
                         });
                     }
                 }
-                ClientMsg::PreviewRoute { ship_id, dest } => {
-                    let Some(player_id) = self.sessions.player_of(conn_id) else {
-                        return;
-                    };
-                    // Ownership and formation throttle determine the speed, but
-                    // the route origin is exclusively the player's served
-                    // sighting. In particular, never substitute `fleet.pos`:
-                    // this reply is UI assistance, not a leak of true space.
-                    let Some(base_speed) = self
-                        .world
-                        .fleets
-                        .get(&ship_id)
-                        .filter(|fleet| fleet.owner == player_id)
-                        .map(|fleet| fleet.transit_speed())
-                    else {
-                        return;
-                    };
-                    let Some(corp) = self.world.players.get(&player_id) else {
-                        return;
-                    };
-                    let cc = corp.command_center;
-                    let buoys = self.world.relay_network_known(player_id, self.world.time);
-                    let delays = sim::lane::DelayField {
-                        lanes: &self.world.lanes,
-                        sites: &buoys,
-                        c: self.world.config.c,
-                    };
-                    let Some(sighting) =
-                        self.history
-                            .observed_sighting(ship_id, cc, &delays, self.world.time)
-                    else {
-                        return;
-                    };
-                    let path = self
-                        .world
-                        .lanes
-                        .route(
-                            sighting.pos,
-                            dest,
-                            base_speed * sim::lane::WARP_FACTOR,
-                            base_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT,
-                        )
-                        .into_iter()
-                        .map(|leg| PathPointView {
-                            pos: leg.to,
-                            lane: leg.lane.is_some(),
-                        })
-                        .collect();
-                    self.sessions.send_to_conn(
-                        conn_id,
-                        ServerMsg::RoutePreview {
-                            ship_id,
-                            dest,
-                            path,
-                        },
-                    );
-                }
                 ClientMsg::DemolishEmplacement { fleet, target } => {
                     // §emplacements: same shape as the build order — the signal
                     // travels to the FLEET; the sim validates and runs the clock.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::DemolishEmplacement { player_id, fleet, target });
+                        self.pending.push(Command::DemolishEmplacement {
+                            player_id,
+                            fleet,
+                            target,
+                        });
                     }
                 }
-                ClientMsg::BuildEmplacement { builder, emplacement } => {
+                ClientMsg::BuildEmplacement {
+                    builder,
+                    emplacement,
+                } => {
                     // §emplacements: same shape as MoveShip — the order signal
                     // travels to the BUILDER, which builds where it is parked;
                     // the sim sites, charges, refuses.
@@ -848,7 +686,10 @@ impl GameLoop {
                         });
                     }
                 }
-                ClientMsg::CommitRaid { raider_id, target_id } => {
+                ClientMsg::CommitRaid {
+                    raider_id,
+                    target_id,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::CommitRaid {
                             player_id,
@@ -857,34 +698,60 @@ impl GameLoop {
                         });
                     }
                 }
-                ClientMsg::BlockadeSystem { fleet_id, system_id } => {
+                ClientMsg::BlockadeSystem {
+                    fleet_id,
+                    system_id,
+                } => {
                     // §contestable-territory Part 1: light-delayed like a move.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BlockadeSystem { player_id, fleet_id, system_id });
+                        self.pending.push(Command::BlockadeSystem {
+                            player_id,
+                            fleet_id,
+                            system_id,
+                        });
                     }
                 }
-                ClientMsg::SurveySystem { fleet_id, system_id } => {
+                ClientMsg::SurveySystem {
+                    fleet_id,
+                    system_id,
+                } => {
                     // §explore Part 2: light-delayed like a move.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SurveySystem { player_id, fleet_id, system_id });
+                        self.pending.push(Command::SurveySystem {
+                            player_id,
+                            fleet_id,
+                            system_id,
+                        });
                     }
                 }
-                ClientMsg::AttackFleet { fleet_id, target_id } => {
+                ClientMsg::AttackFleet {
+                    fleet_id,
+                    target_id,
+                } => {
                     // §offensive-orders Part 1: light-delayed like a raid.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::AttackFleet { player_id, fleet_id, target_id });
+                        self.pending.push(Command::AttackFleet {
+                            player_id,
+                            fleet_id,
+                            target_id,
+                        });
                     }
                 }
                 ClientMsg::SetFleetPosture { fleet_id, posture } => {
                     // §offensive-orders Part 2: instant per-fleet standing policy.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetFleetPosture { player_id, fleet_id, posture });
+                        self.pending.push(Command::SetFleetPosture {
+                            player_id,
+                            fleet_id,
+                            posture,
+                        });
                     }
                 }
                 // §syndicates Part 1: instant owner-only alliance admin.
                 ClientMsg::CreateSyndicate { name } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::CreateSyndicate { player_id, name });
+                        self.pending
+                            .push(Command::CreateSyndicate { player_id, name });
                     }
                 }
                 ClientMsg::InviteToSyndicate { name } => {
@@ -894,12 +761,16 @@ impl GameLoop {
                     // name resolves to an id the sim soft-rejects.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         let invitee = crate::protocol::player_id_from_name(&name);
-                        self.pending.push(Command::InviteToSyndicate { player_id, invitee });
+                        self.pending
+                            .push(Command::InviteToSyndicate { player_id, invitee });
                     }
                 }
                 ClientMsg::AcceptSyndicateInvite { syndicate_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::AcceptSyndicateInvite { player_id, syndicate_id });
+                        self.pending.push(Command::AcceptSyndicateInvite {
+                            player_id,
+                            syndicate_id,
+                        });
                     }
                 }
                 ClientMsg::LeaveSyndicate => {
@@ -914,12 +785,22 @@ impl GameLoop {
                 }
                 ClientMsg::SetResearchQueue { queue } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetResearchQueue { player_id, queue });
+                        self.pending
+                            .push(Command::SetResearchQueue { player_id, queue });
                     }
                 }
-                ClientMsg::SaveFit { name, ship, loadout } => {
+                ClientMsg::SaveFit {
+                    name,
+                    ship,
+                    loadout,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SaveFit { player_id, name, ship, loadout });
+                        self.pending.push(Command::SaveFit {
+                            player_id,
+                            name,
+                            ship,
+                            loadout,
+                        });
                     }
                 }
                 ClientMsg::DeleteFit { name } => {
@@ -934,65 +815,152 @@ impl GameLoop {
                 }
                 ClientMsg::RecallRaid { raider_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::RecallRaid { player_id, raider_id });
+                        self.pending.push(Command::RecallRaid {
+                            player_id,
+                            raider_id,
+                        });
                     }
                 }
-                ClientMsg::MarketBuy { commodity, units, max_unit_price, ship_to } => {
+                ClientMsg::MarketBuy {
+                    commodity,
+                    units,
+                    max_unit_price,
+                    ship_to,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MarketBuy { player_id, commodity, units, max_unit_price, ship_to });
+                        self.pending.push(Command::MarketBuy {
+                            player_id,
+                            commodity,
+                            units,
+                            max_unit_price,
+                            ship_to,
+                        });
                     }
                 }
-                ClientMsg::HubLoad { fleet_id, commodity, units } => {
+                ClientMsg::HubLoad {
+                    fleet_id,
+                    commodity,
+                    units,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::HubLoad { player_id, fleet_id, commodity, units });
+                        self.pending.push(Command::HubLoad {
+                            player_id,
+                            fleet_id,
+                            commodity,
+                            units,
+                        });
                     }
                 }
                 ClientMsg::HubUnload { fleet_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::HubUnload { player_id, fleet_id });
+                        self.pending.push(Command::HubUnload {
+                            player_id,
+                            fleet_id,
+                        });
                     }
                 }
-                ClientMsg::SystemLoad { fleet_id, system, commodity, units } => {
+                ClientMsg::SystemLoad {
+                    fleet_id,
+                    system,
+                    commodity,
+                    units,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SystemLoad { player_id, fleet_id, system, commodity, units });
+                        self.pending.push(Command::SystemLoad {
+                            player_id,
+                            fleet_id,
+                            system,
+                            commodity,
+                            units,
+                        });
                     }
                 }
                 ClientMsg::SystemUnload { fleet_id, system } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SystemUnload { player_id, fleet_id, system });
+                        self.pending.push(Command::SystemUnload {
+                            player_id,
+                            fleet_id,
+                            system,
+                        });
                     }
                 }
-                ClientMsg::HaulToMarketHub { fleet_id, sell_on_arrival } => {
+                ClientMsg::HaulToMarketHub {
+                    fleet_id,
+                    sell_on_arrival,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::HaulToMarketHub { player_id, fleet_id, sell_on_arrival });
+                        self.pending.push(Command::HaulToMarketHub {
+                            player_id,
+                            fleet_id,
+                            sell_on_arrival,
+                        });
                     }
                 }
                 ClientMsg::PayReinstatement { points } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::PayReinstatement { player_id, points });
+                        self.pending
+                            .push(Command::PayReinstatement { player_id, points });
                     }
                 }
                 ClientMsg::SetEngageFreight { fleet_id, on } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetEngageFreight { player_id, fleet_id, on });
+                        self.pending.push(Command::SetEngageFreight {
+                            player_id,
+                            fleet_id,
+                            on,
+                        });
                     }
                 }
-                ClientMsg::BookFreightOut { system, commodity, units } => {
+                ClientMsg::BookFreightOut {
+                    system,
+                    commodity,
+                    units,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BookFreightOut { player_id, system, commodity, units });
+                        self.pending.push(Command::BookFreightOut {
+                            player_id,
+                            system,
+                            commodity,
+                            units,
+                        });
                     }
                 }
-                ClientMsg::BookFreightIn { system, commodity, units, sell_on_arrival } => {
+                ClientMsg::BookFreightIn {
+                    system,
+                    commodity,
+                    units,
+                    sell_on_arrival,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BookFreightIn { player_id, system, commodity, units, sell_on_arrival });
+                        self.pending.push(Command::BookFreightIn {
+                            player_id,
+                            system,
+                            commodity,
+                            units,
+                            sell_on_arrival,
+                        });
                     }
                 }
-                ClientMsg::MarketSell { commodity, units, min_unit_price } => {
+                ClientMsg::MarketSell {
+                    commodity,
+                    units,
+                    min_unit_price,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MarketSell { player_id, commodity, units, min_unit_price });
+                        self.pending.push(Command::MarketSell {
+                            player_id,
+                            commodity,
+                            units,
+                            min_unit_price,
+                        });
                     }
                 }
-                ClientMsg::PlaceLimitOrder { side, commodity, units, limit_price } => {
+                ClientMsg::PlaceLimitOrder {
+                    side,
+                    commodity,
+                    units,
+                    limit_price,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::PlaceLimitOrder {
                             player_id,
@@ -1005,112 +973,244 @@ impl GameLoop {
                 }
                 ClientMsg::CancelLimitOrder { order_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::CancelLimitOrder { player_id, order_id });
+                        self.pending.push(Command::CancelLimitOrder {
+                            player_id,
+                            order_id,
+                        });
                     }
                 }
                 ClientMsg::ShipProduction { system_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::ShipProduction { player_id, system_id });
+                        self.pending.push(Command::ShipProduction {
+                            player_id,
+                            system_id,
+                        });
                     }
                 }
-                ClientMsg::StockSystem { system_id, commodity, units } => {
+                ClientMsg::StockSystem {
+                    system_id,
+                    commodity,
+                    units,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::StockSystem { player_id, system_id, commodity, units });
+                        self.pending.push(Command::StockSystem {
+                            player_id,
+                            system_id,
+                            commodity,
+                            units,
+                        });
                     }
                 }
                 ClientMsg::SetStandingOrder { order } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetStandingOrder { player_id, order });
+                        self.pending
+                            .push(Command::SetStandingOrder { player_id, order });
                     }
                 }
                 ClientMsg::ClearStandingOrder { order_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::ClearStandingOrder { player_id, order_id });
+                        self.pending.push(Command::ClearStandingOrder {
+                            player_id,
+                            order_id,
+                        });
                     }
                 }
                 ClientMsg::DismissLostOrder { order_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::DismissLostOrder { player_id, order_id });
+                        self.pending.push(Command::DismissLostOrder {
+                            player_id,
+                            order_id,
+                        });
                     }
                 }
                 ClientMsg::SetFleetDoctrine { doctrine } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetFleetDoctrine { player_id, doctrine });
+                        self.pending.push(Command::SetFleetDoctrine {
+                            player_id,
+                            doctrine,
+                        });
                     }
                 }
-                ClientMsg::BuildShip { system_id, ship_kind, join, loadout } => {
+                ClientMsg::BuildShip {
+                    system_id,
+                    ship_kind,
+                    join,
+                    loadout,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuildShip { player_id, system_id, ship_kind, join, loadout });
+                        self.pending.push(Command::BuildShip {
+                            player_id,
+                            system_id,
+                            ship_kind,
+                            join,
+                            loadout,
+                        });
                     }
                 }
                 ClientMsg::BuildModule { system_id, module } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuildModule { player_id, system_id, module });
+                        self.pending.push(Command::BuildModule {
+                            player_id,
+                            system_id,
+                            module,
+                        });
                     }
                 }
-                ClientMsg::RefitShips { fleet_id, ship, from, to, n } => {
+                ClientMsg::RefitShips {
+                    fleet_id,
+                    ship,
+                    from,
+                    to,
+                    n,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::RefitShips { player_id, fleet_id, ship, from, to, n });
+                        self.pending.push(Command::RefitShips {
+                            player_id,
+                            fleet_id,
+                            ship,
+                            from,
+                            to,
+                            n,
+                        });
                     }
                 }
                 ClientMsg::TransferModules { from, to, manifest } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::TransferModules { player_id, from, to, manifest });
+                        self.pending.push(Command::TransferModules {
+                            player_id,
+                            from,
+                            to,
+                            manifest,
+                        });
                     }
                 }
-                ClientMsg::BuyModule { module, n, dest_system } => {
+                ClientMsg::BuyModule {
+                    module,
+                    n,
+                    dest_system,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuyModule { player_id, module, n, dest_system });
+                        self.pending.push(Command::BuyModule {
+                            player_id,
+                            module,
+                            n,
+                            dest_system,
+                        });
                     }
                 }
-                ClientMsg::SellModule { module, n, from_system } => {
+                ClientMsg::SellModule {
+                    module,
+                    n,
+                    from_system,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SellModule { player_id, module, n, from_system });
+                        self.pending.push(Command::SellModule {
+                            player_id,
+                            module,
+                            n,
+                            from_system,
+                        });
                     }
                 }
-                ClientMsg::DevelopSystem { system_id, upgrade, body_id } => {
+                ClientMsg::DevelopSystem {
+                    system_id,
+                    upgrade,
+                    body_id,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::DevelopSystem { player_id, system_id, upgrade, body_id });
+                        self.pending.push(Command::DevelopSystem {
+                            player_id,
+                            system_id,
+                            upgrade,
+                            body_id,
+                        });
                     }
                 }
-                ClientMsg::SetAssignment { system_id, structure, workers, specialists, body_id } => {
+                ClientMsg::SetAssignment {
+                    system_id,
+                    structure,
+                    workers,
+                    specialists,
+                    body_id,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetAssignment { player_id, system_id, structure, workers, specialists, body_id });
+                        self.pending.push(Command::SetAssignment {
+                            player_id,
+                            system_id,
+                            structure,
+                            workers,
+                            specialists,
+                            body_id,
+                        });
                     }
                 }
-                ClientMsg::HireSpecialist { specialist, dest_system } => {
+                ClientMsg::HireSpecialist {
+                    specialist,
+                    dest_system,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::HireSpecialist { player_id, specialist, dest_system });
+                        self.pending.push(Command::HireSpecialist {
+                            player_id,
+                            specialist,
+                            dest_system,
+                        });
                     }
                 }
-                ClientMsg::TrainSpecialist { system_id, specialist } => {
+                ClientMsg::TrainSpecialist {
+                    system_id,
+                    specialist,
+                } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::TrainSpecialist { player_id, system_id, specialist });
+                        self.pending.push(Command::TrainSpecialist {
+                            player_id,
+                            system_id,
+                            specialist,
+                        });
                     }
                 }
                 ClientMsg::TransferSpecialists { from, to, manifest } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::TransferSpecialists { player_id, from, to, manifest });
+                        self.pending.push(Command::TransferSpecialists {
+                            player_id,
+                            from,
+                            to,
+                            manifest,
+                        });
                     }
                 }
                 ClientMsg::Withdraw { fleet_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::Withdraw { player_id, fleet_id });
+                        self.pending.push(Command::Withdraw {
+                            player_id,
+                            fleet_id,
+                        });
                     }
                 }
                 ClientMsg::SetFleetTransit { fleet_id, mode } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SetFleetTransit { player_id, fleet_id, mode });
+                        self.pending.push(Command::SetFleetTransit {
+                            player_id,
+                            fleet_id,
+                            mode,
+                        });
                     }
                 }
                 ClientMsg::MergeFleets { into, from } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MergeFleets { player_id, into, from });
+                        self.pending.push(Command::MergeFleets {
+                            player_id,
+                            into,
+                            from,
+                        });
                     }
                 }
                 ClientMsg::SplitFleet { fleet_id, counts } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SplitFleet { player_id, fleet_id, counts });
+                        self.pending.push(Command::SplitFleet {
+                            player_id,
+                            fleet_id,
+                            counts,
+                        });
                     }
                 }
                 ClientMsg::EstimateEngagement { attacker, target } => {
@@ -1129,7 +1229,15 @@ impl GameLoop {
                         let now = self.world.time;
                         let arrays = self.world.array_sensor_sources(player_id);
                         if let Some(inputs) = crate::estimate::prepare_estimate(
-                            &self.world, &self.history, player_id, cc, c, now, &arrays, attacker, target,
+                            &self.world,
+                            &self.history,
+                            player_id,
+                            cc,
+                            c,
+                            now,
+                            &arrays,
+                            attacker,
+                            target,
                         ) && let Some(outbound) = self.sessions.outbound_of(conn_id)
                         {
                             self.estimate_inflight.insert(conn_id);
@@ -1186,7 +1294,9 @@ impl GameLoop {
         // own new owner, whose first click otherwise falls through to the
         // command-center anchor).
         if self.world.systems.len() != systems_before {
-            let update = ServerMsg::GalaxyUpdate { systems: system_infos(&self.world) };
+            let update = ServerMsg::GalaxyUpdate {
+                systems: system_infos(&self.world),
+            };
             for (_conn_id, info) in self.sessions.iter_conns() {
                 let _ = info.outbound.try_send(update.clone());
             }
@@ -1218,7 +1328,8 @@ impl GameLoop {
         // farthest possible viewer (galaxy diameter / c) — their icon has flipped
         // to aftermath everywhere, so nothing more references them.
         if !self.concluded_battles.is_empty() {
-            let max_delay = (2.0 * self.world.config.galaxy_radius) / self.world.config.c;
+            let max_delay = 2.0 * self.world.config.galaxy_radius
+                / sim::transit::signal_speed(self.world.config.c);
             let now = self.world.time;
             self.concluded_battles
                 .retain(|cb| now - cb.ended_at <= max_delay + 1.0);
@@ -1228,34 +1339,34 @@ impl GameLoop {
         // news arrives. Same retention bound as concluded battles: once even the
         // slowest possible signal must have landed, nothing references them.
         for e in &events {
-            if let sim::EventPayload::EmplacementDestroyed { emplacement, owner, kind, pos, .. } = e.payload {
-                let owner_news_at = self
-                    .world
-                    .comm_deaths
-                    .iter()
-                    .find(|death| death.id == emplacement && death.at.to_bits() == e.time.to_bits())
-                    .map(|death| death.news_at);
+            if let sim::EventPayload::EmplacementDestroyed {
+                emplacement,
+                owner,
+                kind,
+                pos,
+                ..
+            } = e.payload
+            {
                 self.gone_emplacements.push(GoneEmplacement {
                     id: emplacement,
                     owner,
                     kind,
                     pos,
                     at: e.time,
-                    owner_news_at,
-                    summary: None,
                 });
             }
         }
         if !self.gone_emplacements.is_empty() {
-            let max_delay = (2.0 * self.world.config.galaxy_radius) / self.world.config.c;
+            let max_delay = 2.0 * self.world.config.galaxy_radius
+                / sim::transit::signal_speed(self.world.config.c);
             let now = self.world.time;
-            self.gone_emplacements.retain(|g| now - g.at <= max_delay + 1.0);
+            self.gone_emplacements
+                .retain(|g| now - g.at <= max_delay + 1.0);
         }
 
         // Record true positions into the view filter's history every tick so
         // the retarded-time boundary resolves at full temporal resolution.
         self.history.record(&self.world);
-        self.update_relay_loss_summaries();
         self.prices.record(&self.world);
         self.market_accounts.record(&self.world);
         // Queue any discrete events (raid outcomes) for delayed per-player
@@ -1280,7 +1391,12 @@ impl GameLoop {
                 sim::EventPayload::ShipDestroyed { ship, pos, .. } => {
                     self.history.mark_destroyed(*ship, ev.time, *pos);
                 }
-                sim::EventPayload::OrderConfirmed { id, owner, fleet, kind } => {
+                sim::EventPayload::OrderConfirmed {
+                    id,
+                    owner,
+                    fleet,
+                    kind,
+                } => {
                     self.sessions.send_to_player(
                         *owner,
                         ServerMsg::OrderConfirmed {
@@ -1318,63 +1434,6 @@ impl GameLoop {
         }
     }
 
-    /// Materialize each relay casualty exactly when its frozen owner-news
-    /// wavefront lands. Counts come from the owner's served picture at that
-    /// instant: true fleet positions must never leak into an obituary.
-    fn update_relay_loss_summaries(&mut self) {
-        let now = self.world.time;
-        let due: Vec<(usize, PlayerId, sim::Vec2, f64, sim::EntityId, sim::EmplacementKind)> =
-            self.gone_emplacements
-                .iter()
-                .enumerate()
-                .filter_map(|(index, gone)| {
-                    let learned_at = gone.owner_news_at?;
-                    (gone.summary.is_none() && now >= learned_at).then_some((
-                        index,
-                        gone.owner,
-                        gone.pos,
-                        learned_at,
-                        gone.id,
-                        gone.kind,
-                    ))
-                })
-                .collect();
-        for (index, owner, pos, learned_at, relay, kind) in due {
-            let Some(cc) = self.world.players.get(&owner).map(|corp| corp.command_center) else {
-                continue;
-            };
-            let sites = self.world.relay_network_known(owner, now);
-            let delays = sim::lane::DelayField {
-                lanes: &self.world.lanes,
-                sites: &sites,
-                c: self.world.config.c,
-            };
-            let death = self
-                .world
-                .comm_deaths
-                .iter()
-                .find(|death| death.id == relay && death.news_at.to_bits() == learned_at.to_bits())
-                .cloned()
-                .unwrap_or(sim::world::CommDeath {
-                    id: relay,
-                    owner,
-                    kind,
-                    site: sim::lane::CommSite {
-                        pos,
-                        throw: kind.throw(),
-                    },
-                    at: self.gone_emplacements[index].at,
-                    news_at: learned_at,
-                });
-            let served_positions = self
-                .history
-                .served_own_positions(owner, cc, &delays, now);
-            let pending = self.world.pending_commands(owner);
-            self.gone_emplacements[index].summary =
-                relay_loss_view(&death, &served_positions, &sites, &pending, now);
-        }
-    }
-
     /// Push every connection its own per-player delayed/fogged view, each
     /// computed from THAT player's command center (§6, §14). No player ever
     /// receives true positions or another player's view — the fairness
@@ -1394,7 +1453,8 @@ impl GameLoop {
                     .map(move |pending| (*owner, pending.id))
             })
             .collect();
-        self.observed_order_plans.retain(|key, _| active_orders.contains(key));
+        self.observed_order_plans
+            .retain(|key, _| active_orders.contains(key));
 
         let c = self.world.config.c;
         // §comms-v2: the delay field is PER PLAYER — covered relay
@@ -1429,11 +1489,6 @@ impl GameLoop {
         // The published rankings are identical for everyone: one signature.
         let rankings_sig = sig_of(&self.world.rankings);
         for player_id in self.sessions.online_players() {
-            // Presentation is built from the network this player has heard
-            // about. A dead relay remains in this set until its frozen obituary
-            // wavefront lands; authoritative delivery never uses this set.
-            let buoys = self.world.relay_network_known(player_id, now);
-            let delays = sim::lane::DelayField { lanes: &self.world.lanes, sites: &buoys, c };
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
             };
@@ -1445,9 +1500,10 @@ impl GameLoop {
             // participants, revealed by weapons fire) appears only once the light
             // of its start has reached THIS player's command center.
             let mut battles: Vec<crate::protocol::BattleView> = Vec::new();
-            let mut battle_reveal: std::collections::BTreeSet<sim::EntityId> = std::collections::BTreeSet::new();
+            let mut battle_reveal: std::collections::BTreeSet<sim::EntityId> =
+                std::collections::BTreeSet::new();
             for b in self.world.active_battles() {
-                let delay = b.pos.distance(cc) / c;
+                let delay = sim::transit::delay(b.pos, cc, c);
                 if now >= b.started_at + delay {
                     battle_reveal.extend(b.participants.iter().copied());
                     battles.push(crate::protocol::BattleView {
@@ -1477,7 +1533,7 @@ impl GameLoop {
                     battles.push(crate::protocol::BattleView {
                         id: cb.id,
                         pos: cb.pos,
-                        age: cb.pos.distance(cc) / c,
+                        age: sim::transit::delay(cb.pos, cc, c),
                         started_at: cb.started_at,
                         own: player_id == cb.a_owner || player_id == cb.d_owner,
                         participants: cb.participants.clone(),
@@ -1488,19 +1544,17 @@ impl GameLoop {
             // holders' dark fleets; Deep Scan resolves exact composition in-region).
             let veil_regions = self.world.active_veil_regions();
             let deep_scan_regions = self.world.deep_scan_regions(player_id);
-            // §coupled: this viewer's lane tripwires, resolved once per view.
-            let ears: Vec<sim::lane::Relay> = self
-                .world
-                .emplacements
-                .iter()
-                .filter(|e| {
-                    e.owner == player_id && e.kind == sim::EmplacementKind::HyperspaceSensor
-                })
-                .map(|e| self.world.lanes.relay_at(e.pos))
-                .collect();
             let mut ghosts = self.history.view_for_with_arrays(
-                player_id, cc, &delays, now, &arrays, &ears, &battle_reveal,
-                view::NodeEffects { veil: &veil_regions, deep_scan: &deep_scan_regions },
+                player_id,
+                cc,
+                c,
+                now,
+                &arrays,
+                &battle_reveal,
+                view::NodeEffects {
+                    veil: &veil_regions,
+                    deep_scan: &deep_scan_regions,
+                },
             );
             served_order_evidence.insert(
                 player_id,
@@ -1522,7 +1576,7 @@ impl GameLoop {
             // Structures are STATIONARY, so once a rival's is in coverage there is
             // nothing further to learn about where it is; the delay that matters is
             // the LOSS, handled below.
-            let coverage = self.history.coverage_for(player_id, cc, &delays, now, &arrays);
+            let coverage = self.history.coverage_for(player_id, cc, c, now, &arrays);
             let mut emplacements_view: Vec<crate::protocol::EmplacementView> = self
                 .world
                 .emplacements
@@ -1533,7 +1587,6 @@ impl GameLoop {
                     kind: e.kind,
                     pos: e.pos,
                     sensor_range: e.kind.sensor_range(),
-                    relay_throw: e.kind.throw(),
                     own: e.owner == player_id,
                 })
                 .collect();
@@ -1548,18 +1601,13 @@ impl GameLoop {
                 if !seen_standing {
                     continue;
                 }
-                let disappears_at = if g.owner == player_id {
-                    g.owner_news_at.unwrap_or_else(|| g.at + delays.between(g.pos, cc))
-                } else {
-                    g.at + delays.between(g.pos, cc)
-                };
+                let disappears_at = g.at + sim::transit::delay(g.pos, cc, c);
                 if now < disappears_at {
                     emplacements_view.push(crate::protocol::EmplacementView {
                         id: g.id,
                         kind: g.kind,
                         pos: g.pos,
                         sensor_range: g.kind.sensor_range(),
-                        relay_throw: g.kind.throw(),
                         own: g.owner == player_id,
                     });
                 }
@@ -1578,13 +1626,15 @@ impl GameLoop {
                     // consults it under) — expose it only there, so the client
                     // never offers a toggle that does nothing.
                     g.engage_freight = self.world.fleets.get(&g.id).and_then(|f| {
-                        matches!(f.order, sim::FleetOrder::Blockade { .. }).then_some(f.engage_freight)
+                        matches!(f.order, sim::FleetOrder::Blockade { .. })
+                            .then_some(f.engage_freight)
                     });
                     // §syndicates Part 3: OWNER-ONLY garrison status — if this fleet
                     // is stationed as an ally garrison, its host + fed state.
                     if let Some(host) = self.world.garrison_host_of(g.id) {
                         g.garrison_host = Some(host);
-                        g.garrison_fed = self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
+                        g.garrison_fed =
+                            self.world.fleets.get(&g.id).is_some_and(|f| f.garrison_fed);
                     }
                     // §upkeep: OWNER-ONLY supply state — an unsupplied fleet is
                     // immobilized, and the panel must say so or a refused order
@@ -1593,9 +1643,10 @@ impl GameLoop {
                     // §explore Part 2: OWNER-ONLY survey-dwell progress (0..1) for
                     // the progress ring — a rival never sees your order state.
                     g.survey_progress = self.world.fleets.get(&g.id).and_then(|f| match f.order {
-                        sim::FleetOrder::Survey { dwell_since: Some(since), .. } => {
-                            Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0))
-                        }
+                        sim::FleetOrder::Survey {
+                            dwell_since: Some(since),
+                            ..
+                        } => Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0)),
                         _ => None,
                     });
                 }
@@ -1660,18 +1711,32 @@ impl GameLoop {
                 &corp
                     .standing_orders
                     .iter()
-                    .map(|o| (o.id, &o.source, &o.dest, o.commodity, &o.trigger, &o.status, o.in_flight, o.sell_on_arrival))
+                    .map(|o| {
+                        (
+                            o.id,
+                            &o.source,
+                            &o.dest,
+                            o.commodity,
+                            &o.trigger,
+                            &o.status,
+                            o.in_flight,
+                            o.sell_on_arrival,
+                        )
+                    })
                     .collect::<Vec<_>>(),
             );
-            sections.insert(player_id, SectionData {
-                standing: corp.standing_orders.clone(),
-                standing_sig,
-                reports: battle_reports,
-                reports_sig,
-                captures: capture_reports,
-                captures_sig,
-            });
-            let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, &delays, now);
+            sections.insert(
+                player_id,
+                SectionData {
+                    standing: corp.standing_orders.clone(),
+                    standing_sig,
+                    reports: battle_reports,
+                    reports_sig,
+                    captures: capture_reports,
+                    captures_sig,
+                },
+            );
+            let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
             // §syndicates Part 2: each syndicate ally's relayable scout intel (their
             // command center is the relay source). The View chain-light-delays each
             // ally's snapshots to this viewer, provenance preserved.
@@ -1680,21 +1745,33 @@ impl GameLoop {
                 .allies_of(player_id)
                 .iter()
                 .filter_map(|a| {
-                    self.world
-                        .players
-                        .get(a)
-                        .map(|ac| view::AllyIntel { id: *a, cc: ac.command_center, intel: &ac.intel })
+                    self.world.players.get(a).map(|ac| view::AllyIntel {
+                        id: *a,
+                        cc: ac.command_center,
+                        intel: &ac.intel,
+                    })
                 })
                 .collect();
             let mut systems = view::filter_systems(
-                &self.world.systems, player_id, cc, &delays, now, &self.world.build_queue, self.world.tick, DT,
-                &corp.intel, &ally_intel, &corp.surveyed,
+                &self.world.systems,
+                player_id,
+                cc,
+                c,
+                now,
+                &self.world.build_queue,
+                self.world.tick,
+                DT,
+                &corp.intel,
+                &ally_intel,
+                &corp.surveyed,
             );
             // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
             // known) owner is a syndicate member as THIS viewer knows it. Composes
             // both light-gates; grants no owner-only data (Part 1 is tint only).
             for sv in systems.iter_mut() {
-                sv.ally = sv.owner.is_some_and(|o| self.world.known_ally(player_id, o, now));
+                sv.ally = sv
+                    .owner
+                    .is_some_and(|o| self.world.known_ally(player_id, o, now));
                 // §ground G4: the PRE-COMMIT LANDING ESTIMATE. Only for a
                 // besieger who actually has marines in orbit here — the person
                 // making the decision, and nobody else. It is sampled from the
@@ -1721,7 +1798,11 @@ impl GameLoop {
                         let o = sim::ground::project_landing(
                             marines,
                             sys.tier_sum(sim::StructureKind::Garrison),
-                            if sys.garrison_fed { sys.garrison_suppression } else { 1.0 },
+                            if sys.garrison_fed {
+                                sys.garrison_suppression
+                            } else {
+                                1.0
+                            },
                             self.world.config.battle_target_secs,
                             sys.id.0,
                             sim::ground::LANDING_ROLLOUTS,
@@ -1763,43 +1844,53 @@ impl GameLoop {
             let syndicate = corp
                 .syndicate
                 .and_then(|sid| self.world.syndicates.get(&sid))
-                .map(|s| Box::new(crate::protocol::SyndicateView {
-                    id: s.id,
-                    name: s.name.clone(),
-                    founder: s.founder,
-                    is_founder: s.founder == player_id,
-                    members: s
-                        .members
-                        .iter()
-                        .map(|m| crate::protocol::SyndicateMember {
-                            id: *m,
-                            name: self.world.players.get(m).map(|c| c.name.clone()).unwrap_or_default(),
-                        })
-                        .collect(),
-                    invited: s
-                        .invites
-                        .iter()
-                        .filter_map(|i| self.world.players.get(i).map(|c| c.name.clone()))
-                        .collect(),
-                    // §fitting: the shared doctrine-fit library (owner-only).
-                    fits: s
-                        .fits
-                        .iter()
-                        .map(|f| crate::protocol::FitView {
-                            name: f.name.clone(),
-                            kind: f.kind,
-                            modules: f.loadout.modules().to_vec(),
-                        })
-                        .collect(),
-                    // §ladder B4: the christened Titan (owner-only here).
-                    flagship_name: s.flagship_name.clone(),
-                }));
+                .map(|s| {
+                    Box::new(crate::protocol::SyndicateView {
+                        id: s.id,
+                        name: s.name.clone(),
+                        founder: s.founder,
+                        is_founder: s.founder == player_id,
+                        members: s
+                            .members
+                            .iter()
+                            .map(|m| crate::protocol::SyndicateMember {
+                                id: *m,
+                                name: self
+                                    .world
+                                    .players
+                                    .get(m)
+                                    .map(|c| c.name.clone())
+                                    .unwrap_or_default(),
+                            })
+                            .collect(),
+                        invited: s
+                            .invites
+                            .iter()
+                            .filter_map(|i| self.world.players.get(i).map(|c| c.name.clone()))
+                            .collect(),
+                        // §fitting: the shared doctrine-fit library (owner-only).
+                        fits: s
+                            .fits
+                            .iter()
+                            .map(|f| crate::protocol::FitView {
+                                name: f.name.clone(),
+                                kind: f.kind,
+                                modules: f.loadout.modules().to_vec(),
+                            })
+                            .collect(),
+                        // §ladder B4: the christened Titan (owner-only here).
+                        flagship_name: s.flagship_name.clone(),
+                    })
+                });
             let syndicate_invites: Vec<crate::protocol::SyndicateInviteView> = self
                 .world
                 .syndicates
                 .values()
                 .filter(|s| s.invites.contains(&player_id))
-                .map(|s| crate::protocol::SyndicateInviteView { id: s.id, name: s.name.clone() })
+                .map(|s| crate::protocol::SyndicateInviteView {
+                    id: s.id,
+                    name: s.name.clone(),
+                })
                 .collect();
             // §research R6: the viewer's OWN research picture (owner-only), present
             // only while affiliated (research is a syndicate institution).
@@ -1810,7 +1901,7 @@ impl GameLoop {
 
             // Lagged hub ticker: prices as of the light that has reached this
             // player's command center from the hub.
-            let staleness = hub.distance(cc) / c;
+            let staleness = sim::transit::delay(hub, cc, c);
             let lagged = self.prices.at(now - staleness);
             let prices = lagged
                 .map(|m| {
@@ -1852,7 +1943,10 @@ impl GameLoop {
                     .map(|account| &account.warehouse)
                     .unwrap_or(&corp.warehouse)
                     .iter()
-                    .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
+                    .map(|(commodity, units)| InvSlot {
+                        commodity: *commodity,
+                        units: *units,
+                    })
                     .collect(),
                 orders: if let Some(account) = known_account {
                     account
@@ -1887,7 +1981,12 @@ impl GameLoop {
                     .systems
                     .iter()
                     .filter(|s| s.owner == Some(player_id))
-                    .map(|s| s.stockpile.get(&sim::Commodity::Fuel).copied().unwrap_or(0.0))
+                    .map(|s| {
+                        s.stockpile
+                            .get(&sim::Commodity::Fuel)
+                            .copied()
+                            .unwrap_or(0.0)
+                    })
                     .sum(),
             };
 
@@ -1905,8 +2004,14 @@ impl GameLoop {
             // player MAY see (cheap — no round materialization); the send loop
             // below diffs each of their connections' cursors against this and
             // ships only the increments, on the reliable discrete lane.
-            let specs =
-                view::visible_record_specs(&self.world.battle_records, player_id, cc, &delays, now, &coverage, &|corp| {
+            let specs = view::visible_record_specs(
+                &self.world.battle_records,
+                player_id,
+                cc,
+                c,
+                now,
+                &coverage,
+                &|corp| {
                     // §ladder B4: resolve a side's christened Titan name.
                     self.world
                         .players
@@ -1914,12 +2019,20 @@ impl GameLoop {
                         .and_then(|p| p.syndicate)
                         .and_then(|sid| self.world.syndicates.get(&sid))
                         .and_then(|s| s.flagship_name.clone())
-                });
+                },
+            );
             record_specs.insert(player_id, specs);
             // §ground G2: which landings this player may see, at what fidelity.
             ground_specs.insert(
                 player_id,
-                view::visible_ground_specs(&self.world.ground_records, player_id, cc, &delays, now, &coverage),
+                view::visible_ground_specs(
+                    &self.world.ground_records,
+                    player_id,
+                    cc,
+                    c,
+                    now,
+                    &coverage,
+                ),
             );
             // §TCA: the Market Hub freight desk. Terms for every system this
             // player owns (the only valid destinations), plus their OWN lots.
@@ -1987,12 +2100,6 @@ impl GameLoop {
                         &self.observed_order_plans,
                         now,
                     ),
-                    relay_losses: self
-                        .gone_emplacements
-                        .iter()
-                        .filter(|gone| gone.owner == player_id)
-                        .filter_map(|gone| gone.summary.clone())
-                        .collect(),
                     battles,
                     syndicate,
                     syndicate_invites,
@@ -2003,7 +2110,9 @@ impl GameLoop {
             if !due.is_empty() {
                 reports.insert(
                     player_id,
-                    due.into_iter().map(|r| ServerMsg::Report { report: r }).collect(),
+                    due.into_iter()
+                        .map(|r| ServerMsg::Report { report: r })
+                        .collect(),
                 );
             }
 
@@ -2015,7 +2124,13 @@ impl GameLoop {
             if self.timeline_sent.get(&player_id).copied().unwrap_or(0) != jlen {
                 self.timeline_sent.insert(player_id, jlen);
                 let (entries, away_since) = self.timeline.digest(player_id);
-                timelines.insert(player_id, ServerMsg::Timeline { entries, away_since });
+                timelines.insert(
+                    player_id,
+                    ServerMsg::Timeline {
+                        entries,
+                        away_since,
+                    },
+                );
             }
         }
 
@@ -2031,7 +2146,13 @@ impl GameLoop {
         if !confirmation_events.is_empty() {
             let mut confirmed_by_owner: HashMap<PlayerId, HashSet<u64>> = HashMap::new();
             for event in &confirmation_events {
-                if let sim::EventPayload::OrderConfirmed { id, owner, fleet, kind } = &event.payload {
+                if let sim::EventPayload::OrderConfirmed {
+                    id,
+                    owner,
+                    fleet,
+                    kind,
+                } = &event.payload
+                {
                     confirmed_by_owner.entry(*owner).or_default().insert(*id);
                     self.observed_order_plans.remove(&(*owner, *id));
                     self.sessions.send_to_player(
@@ -2057,7 +2178,13 @@ impl GameLoop {
                 if self.timeline_sent.get(&owner).copied().unwrap_or(0) != jlen {
                     self.timeline_sent.insert(owner, jlen);
                     let (entries, away_since) = self.timeline.digest(owner);
-                    timelines.insert(owner, ServerMsg::Timeline { entries, away_since });
+                    timelines.insert(
+                        owner,
+                        ServerMsg::Timeline {
+                            entries,
+                            away_since,
+                        },
+                    );
                 }
             }
             self.persistence.submit(PersistJob::Events {
@@ -2181,7 +2308,9 @@ fn send_record_deltas(
     // Cursor writes staged here, applied only if the send lands.
     let mut staged: Vec<(sim::EntityId, RecordCursor)> = Vec::new();
     for spec in specs {
-        let Some(r) = records.get(&spec.id) else { continue };
+        let Some(r) = records.get(&spec.id) else {
+            continue;
+        };
         let participant = matches!(spec.fidelity, crate::protocol::BattleFidelity::Participant);
         let cur = info.sent.records.get(&spec.id);
         let is_new = cur.is_none();
@@ -2218,13 +2347,21 @@ fn send_record_deltas(
     // Exactly the entries that vanished from the old full-set View; if coverage
     // resumes, the empty cursor re-sends the record in full — as before.
     let visible: std::collections::HashSet<sim::EntityId> = specs.iter().map(|s| s.id).collect();
-    let removed: Vec<sim::EntityId> =
-        info.sent.records.keys().filter(|id| !visible.contains(id)).copied().collect();
+    let removed: Vec<sim::EntityId> = info
+        .sent
+        .records
+        .keys()
+        .filter(|id| !visible.contains(id))
+        .copied()
+        .collect();
 
     if updates.is_empty() && removed.is_empty() {
         return;
     }
-    let msg = ServerMsg::BattleRecords { updates, removed: removed.clone() };
+    let msg = ServerMsg::BattleRecords {
+        updates,
+        removed: removed.clone(),
+    };
     if info.outbound.try_send(msg).is_ok() {
         for (id, cursor) in staged {
             info.sent.records.insert(id, cursor);
@@ -2250,7 +2387,9 @@ fn send_ground_deltas(
     let mut updates: Vec<GroundRecordUpdate> = Vec::new();
     let mut staged: Vec<(sim::EntityId, RecordCursor)> = Vec::new();
     for spec in specs {
-        let Some(r) = records.get(&spec.id) else { continue };
+        let Some(r) = records.get(&spec.id) else {
+            continue;
+        };
         let participant = matches!(spec.fidelity, GroundFidelity::Participant);
         let cur = info.sent.ground_records.get(&spec.id);
         let is_new = cur.is_none();
@@ -2267,7 +2406,11 @@ fn send_ground_deltas(
                 header: is_new.then(|| view::ground_header(r, spec)),
                 new_rounds,
                 light_frontier_tick: spec.frontier_tick,
-                outcome: if send_outcome { spec.outcome.clone() } else { None },
+                outcome: if send_outcome {
+                    spec.outcome.clone()
+                } else {
+                    None
+                },
             });
             staged.push((
                 spec.id,
@@ -2280,13 +2423,21 @@ fn send_ground_deltas(
         }
     }
     let visible: std::collections::HashSet<sim::EntityId> = specs.iter().map(|s| s.id).collect();
-    let removed: Vec<sim::EntityId> =
-        info.sent.ground_records.keys().filter(|id| !visible.contains(id)).copied().collect();
+    let removed: Vec<sim::EntityId> = info
+        .sent
+        .ground_records
+        .keys()
+        .filter(|id| !visible.contains(id))
+        .copied()
+        .collect();
 
     if updates.is_empty() && removed.is_empty() {
         return;
     }
-    let msg = ServerMsg::GroundRecords { updates, removed: removed.clone() };
+    let msg = ServerMsg::GroundRecords {
+        updates,
+        removed: removed.clone(),
+    };
     if info.outbound.try_send(msg).is_ok() {
         for (id, cursor) in staged {
             info.sent.ground_records.insert(id, cursor);
@@ -2323,24 +2474,96 @@ fn build_options() -> Vec<BuildOptionView> {
     // Structures come from `StructureKind::ALL`, so a new one appears here for
     // free — a new SHIP does not, and has to be listed below.
     let ships = [
-        ("convoy", "Convoy", BuildKind::Ship { ship: ShipKind::Convoy }),
+        (
+            "convoy",
+            "Convoy",
+            BuildKind::Ship {
+                ship: ShipKind::Convoy,
+            },
+        ),
         // §emplacements: the crane. Communications and sensors are placed BY this hull —
         // built here, then dispatched to the site from the map.
-        ("builder", "Construction Ship", BuildKind::Ship { ship: ShipKind::Builder }),
-        ("raider", "Raider", BuildKind::Ship { ship: ShipKind::Raider }),
-        ("scout", "Scout", BuildKind::Ship { ship: ShipKind::Scout }),
-        ("corvette", "Corvette", BuildKind::Ship { ship: ShipKind::Corvette }),
-        ("colony", "Colony Ship", BuildKind::Ship { ship: ShipKind::Colony }),
+        (
+            "builder",
+            "Construction Ship",
+            BuildKind::Ship {
+                ship: ShipKind::Builder,
+            },
+        ),
+        (
+            "raider",
+            "Raider",
+            BuildKind::Ship {
+                ship: ShipKind::Raider,
+            },
+        ),
+        (
+            "scout",
+            "Scout",
+            BuildKind::Ship {
+                ship: ShipKind::Scout,
+            },
+        ),
+        (
+            "corvette",
+            "Corvette",
+            BuildKind::Ship {
+                ship: ShipKind::Corvette,
+            },
+        ),
+        (
+            "colony",
+            "Colony Ship",
+            BuildKind::Ship {
+                ship: ShipKind::Colony,
+            },
+        ),
         // §ladder: the warship ladder (research-gated hulls; the client shows
         // the gate copy, the sim enforces UnlockHull at BuildShip).
-        ("destroyer", "Destroyer", BuildKind::Ship { ship: ShipKind::Destroyer }),
-        ("cruiser", "Cruiser", BuildKind::Ship { ship: ShipKind::Cruiser }),
-        ("battleship", "Battleship", BuildKind::Ship { ship: ShipKind::Battleship }),
-        ("dreadnought", "Dreadnought", BuildKind::Ship { ship: ShipKind::Dreadnought }),
-        ("titan", "Titan", BuildKind::Ship { ship: ShipKind::Titan }),
+        (
+            "destroyer",
+            "Destroyer",
+            BuildKind::Ship {
+                ship: ShipKind::Destroyer,
+            },
+        ),
+        (
+            "cruiser",
+            "Cruiser",
+            BuildKind::Ship {
+                ship: ShipKind::Cruiser,
+            },
+        ),
+        (
+            "battleship",
+            "Battleship",
+            BuildKind::Ship {
+                ship: ShipKind::Battleship,
+            },
+        ),
+        (
+            "dreadnought",
+            "Dreadnought",
+            BuildKind::Ship {
+                ship: ShipKind::Dreadnought,
+            },
+        ),
+        (
+            "titan",
+            "Titan",
+            BuildKind::Ship {
+                ship: ShipKind::Titan,
+            },
+        ),
         // §ground: the troopship. Gated by a Garrison rather than a yard, but it
         // is an ordinary ship job otherwise.
-        ("transport", "Troop Transport", BuildKind::Ship { ship: ShipKind::Transport }),
+        (
+            "transport",
+            "Troop Transport",
+            BuildKind::Ship {
+                ship: ShipKind::Transport,
+            },
+        ),
         // §ground: the troopship. Gated by a Garrison rather than a yard, but it
         // is an ordinary ship job otherwise.
     ];
@@ -2355,20 +2578,33 @@ fn build_options() -> Vec<BuildOptionView> {
         )
     });
     ships
-    .into_iter()
-    .map(|(k, l, w)| (k.to_string(), l.to_string(), w))
-    .chain(StructureKind::ALL.into_iter().map(|k| (k.slug().to_string(), k.title().to_string(), BuildKind::Upgrade { upgrade: k })))
-    .chain(modules)
-    .map(|(key, label, what)| {
-        let r = sim::build::recipe_for(what);
-        BuildOptionView {
-            key,
-            label,
-            costs: r.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
-            build_secs: r.build_ticks as f64 / TICK_HZ as f64,
-        }
-    })
-    .collect()
+        .into_iter()
+        .map(|(k, l, w)| (k.to_string(), l.to_string(), w))
+        .chain(StructureKind::ALL.into_iter().map(|k| {
+            (
+                k.slug().to_string(),
+                k.title().to_string(),
+                BuildKind::Upgrade { upgrade: k },
+            )
+        }))
+        .chain(modules)
+        .map(|(key, label, what)| {
+            let r = sim::build::recipe_for(what);
+            BuildOptionView {
+                key,
+                label,
+                costs: r
+                    .costs
+                    .iter()
+                    .map(|(c, n)| StockSlot {
+                        commodity: *c,
+                        units: *n as u32,
+                    })
+                    .collect(),
+                build_secs: r.build_ticks as f64 / TICK_HZ as f64,
+            }
+        })
+        .collect()
 }
 
 /// §research R6: the gate progress bar for a SEALED node — the verb/metric the
@@ -2459,7 +2695,11 @@ fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::
     let active = rs.active.as_deref().and_then(|id| {
         sim::research::programme(id).map(|p| {
             let cost = sim::research::cost_of(id);
-            let eta_secs = if rate > 1e-9 { Some((cost - rs.progress).max(0.0) / rate) } else { None };
+            let eta_secs = if rate > 1e-9 {
+                Some((cost - rs.progress).max(0.0) / rate)
+            } else {
+                None
+            };
             ActiveResearchView {
                 id: id.to_string(),
                 name: p.name.to_string(),
@@ -2486,12 +2726,27 @@ fn research_view(world: &sim::World, sid: sim::SyndicateId) -> crate::protocol::
             } else {
                 "locked"
             };
-            let gate = if state == "locked" { gate_progress(p, rs, &metric, now) } else { None };
-            Some(ProgrammeDynView { id: id.to_string(), state: state.to_string(), gate })
+            let gate = if state == "locked" {
+                gate_progress(p, rs, &metric, now)
+            } else {
+                None
+            };
+            Some(ProgrammeDynView {
+                id: id.to_string(),
+                state: state.to_string(),
+                gate,
+            })
         })
         .collect();
 
-    ResearchView { active, queue: rs.queue.clone(), rate, stalled: rs.stalled, academies, programmes }
+    ResearchView {
+        active,
+        queue: rs.queue.clone(),
+        rate,
+        stalled: rs.stalled,
+        academies,
+        programmes,
+    }
 }
 
 /// Run the authoritative loop until all [`GameHandle`]s are dropped.
@@ -2506,7 +2761,13 @@ pub async fn run(
     // can clear the connection's in-flight flag (unbounded, but each in-flight
     // estimate emits exactly one id, and there is at most one per connection).
     let (estimate_done_tx, mut estimate_done_rx) = mpsc::unbounded_channel::<ConnId>();
-    let mut game = GameLoop::new(world, persistence, snapshot_every, status_tx, estimate_done_tx);
+    let mut game = GameLoop::new(
+        world,
+        persistence,
+        snapshot_every,
+        status_tx,
+        estimate_done_tx,
+    );
 
     let mut ticker = interval(Duration::from_secs_f64(DT));
     // If we ever fall behind, skip missed ticks rather than bursting to catch
@@ -2542,493 +2803,45 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sim::{
-        lane::{bake_for_tests, CommSite, Lane, LaneKind, LaneNetwork, WARP_FACTOR},
-        Vec2,
-    };
+    use sim::Vec2;
 
-    fn wide_relay(pos: Vec2) -> CommSite {
-        CommSite { pos, throw: 1_000_000.0 }
-    }
-
-    fn signal_bow() -> LaneNetwork {
-        let control = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(100_000.0, 60_000.0),
-            Vec2::new(200_000.0, 0.0),
-        ];
-        LaneNetwork::of(vec![Lane {
-            id: 42,
-            kind: LaneKind::Trunk,
-            name: "Signal Bow".into(),
-            samples: bake_for_tests(&control),
-            control,
-            half_width: 2_000.0,
-            tapers: false,
-        }])
-    }
-
-    fn signal_line() -> LaneNetwork {
-        let control = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(100_000.0, 0.0),
-            Vec2::new(200_000.0, 0.0),
-        ];
-        LaneNetwork::of(vec![Lane {
-            id: 43,
-            kind: LaneKind::Trunk,
-            name: "Signal Line".into(),
-            samples: bake_for_tests(&control),
-            control,
-            half_width: 2_000.0,
-            tapers: false,
-        }])
-    }
-
-    /// The live CommandSignal payload must retain the expanded lane curve, not
-    /// merely the solver's relay endpoints. This pins the server-side seam after
-    /// the lane solver: the client cannot draw geometry the wire discarded.
-    #[test]
-    fn command_signal_plan_sends_the_curved_hyperspace_route() {
-        let lanes = signal_bow();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(lane.length() * 0.05);
-        let buoy = lane.at(lane.length() * 0.35);
-        let hull = lane.at(lane.length() * 0.95);
-        let relays = [wide_relay(home), wide_relay(buoy)];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-
-        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true, None);
-        assert!(plan.hops.len() > 6, "the wire route should contain baked curve samples");
-        assert!(!plan.beyond_comms, "a route that lands on covered wire has no dark final leg");
-        assert!(
-            plan.hops.iter().map(|hop| hop.pos.y).fold(f64::NEG_INFINITY, f64::max) > 40_000.0,
-            "the wire route should follow the lane's bow rather than its endpoint chord",
-        );
-        assert!(
-            (plan.travel_time - field.to_coupled(home, hull)).abs() < 1e-9,
-            "the animation clock must come from the same outbound path",
-        );
-        assert!((plan.hops.last().unwrap().frac - 1.0).abs() < 1e-9);
-    }
-
-    /// The comet aims where the player's SERVED ghost and its served velocity
-    /// say the signal will meet the hull. For an inbound rider that is before
-    /// the sighting along the lane; targeting the sighting itself makes the
-    /// comet fly through the hull and land beyond it.
     #[test]
     fn command_signal_plan_ends_at_the_inbound_ghosts_meeting_point() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(lane.length() * 0.05);
-        let ghost_pos = lane.at(lane.length() * 0.95);
-        let ghost_vel = Vec2::new(-1_000.0, 0.0);
-        let relays = [wide_relay(home)];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-        let old_sighting_time = field.to_coupled(home, ghost_pos);
-
-        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
-        let total = plan.travel_time;
-        let final_hop = plan.hops.last().expect("a coupled route has drawable hops");
-        assert!(
-            final_hop.pos.distance(ghost_pos) > 1_000.0,
-            "the route must not end on the stale sighting",
-        );
-        assert!(
-            final_hop.pos.distance(ghost_pos + ghost_vel * total)
-                <= ghost_vel.length() * DT + 1e-6,
-            "the final hop is the iterated meeting point",
-        );
-        assert!(
-            total < old_sighting_time,
-            "an inbound ghost is met earlier ({total:.6}s vs sighting {old_sighting_time:.6}s)",
-        );
-        assert!(
-            (field.to_coupled(home, final_hop.pos) - total).abs() < 1e-9,
-            "the final hop's cumulative time is the quoted total",
-        );
-        assert!((final_hop.frac - 1.0).abs() < 1e-9);
-    }
-
-    /// Inside the 2D command bubble, a riding hull is the zero-throw endpoint of
-    /// the covered wire. Geometry and clock must describe that same ride.
-    #[test]
-    fn an_order_inside_the_circle_rides_the_wire() {
-        let lanes = signal_bow();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(lane.length() * 0.05);
-        let hull = lane.at(lane.length() * 0.95);
-        let relays = [wide_relay(home)];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-        let inbound = field.from_coupled(hull, home);
-
-        let plan = command_signal_plan(&field, home, hull, Vec2::ZERO, true, None);
-        let outbound = plan.travel_time;
-        let warp = home.distance(hull) / (field.c * WARP_FACTOR);
-        assert!(!plan.hops.is_empty(), "the order rides — the coupled hull is its terminal relay");
-        assert!(
-            outbound < warp * 0.5,
-            "far quicker than the warp chord ({outbound:.1}s vs {warp:.1}s)"
-        );
-        assert!(
-            (outbound - inbound).abs() <= inbound * 0.5,
-            "the two coupled channels are the same physics now ({outbound:.2}s vs {inbound:.2}s)"
-        );
-        assert!(
-            (plan.hops.last().unwrap().frac - 1.0).abs() < 1e-9,
-            "clock and route come from the same plan — no FTL chords"
-        );
-        assert!(!plan.beyond_comms);
+        let cc = Vec2::ZERO;
+        let ghost_pos = Vec2::new(20_000.0, 0.0);
+        let ghost_vel = Vec2::new(-100.0, 0.0);
+        let plan = command_signal_plan(400.0, cc, ghost_pos, ghost_vel);
+        let expected = ghost_pos + ghost_vel * plan.travel_time;
+        assert!(plan.meeting_point.distance(expected) < 1e-6);
+        assert!((sim::transit::delay(cc, expected, 400.0) - plan.travel_time).abs() <= sim::DT);
+        assert!(plan.meeting_point.x < ghost_pos.x);
+        assert!(plan.hops.is_empty());
     }
 
     #[test]
-    fn an_order_beyond_the_circle_flies_straight_at_warp() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(10_000.0);
-        let target = Vec2::new(150_000.0, 30_000.0);
-        let relays = [CommSite { pos: home, throw: 40_000.0 }];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-
-        let plan = command_signal_plan(&field, home, target, Vec2::ZERO, false, None);
-        let direct = home.distance(target) / (field.c * WARP_FACTOR);
-        assert!(plan.beyond_comms, "the direct chord is beyond the command bubble");
-        assert!(plan.hops.is_empty(), "outside means no partial lane assist");
-        assert!((plan.travel_time - direct).abs() < 1e-9);
-        assert_eq!(plan.meeting_point, target);
-    }
-
-    #[test]
-    fn the_plan_and_the_delivery_share_one_gate() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(10_000.0);
-        let ghost_pos = lane.at(145_000.0);
-        let ghost_vel = Vec2::new(500.0, 0.0);
-        let relays = [CommSite { pos: home, throw: 40_000.0 }];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-
-        let plan = command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
-        let (delivery_delay, delivery_point) =
-            field.command_meeting_delay(home, ghost_pos, ghost_vel, true, None, 1.0);
-        assert!(!sim::lane::in_comm_bubble(delivery_point, &relays, 0.0));
-        assert!(plan.hops.is_empty(), "the shared outside gate selects direct warp");
-        assert!((plan.travel_time - delivery_delay).abs() < 1e-9);
-        assert!(plan.meeting_point.distance(delivery_point) < 1e-9);
-    }
-
-    /// A dark rider's served plan is still player-known information. Ignoring
-    /// its finite terminus makes the visual solve chase the lane endpoint — the
-    /// live failure that quoted ~120 s while authoritative delivery, correctly
-    /// clamped to the route, landed around the expected shorter clock.
-    #[test]
-    fn the_comet_meeting_is_clamped_to_the_served_remaining_route() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(10_000.0);
-        let ghost_pos = lane.at(80_000.0);
-        let terminus = lane.at(100_000.0);
-        let ghost_vel = Vec2::new(5_000.0, 0.0);
-        let relays = [CommSite { pos: home, throw: 40_000.0 }];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-        let served_route = [terminus];
-
-        let bounded = command_signal_plan(
-            &field,
-            home,
-            ghost_pos,
-            ghost_vel,
-            true,
-            Some(&served_route),
-        );
-        let old_unbounded =
-            command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
-
-        assert!(bounded.meeting_point.distance(terminus) < 1e-6);
-        assert!((bounded.travel_time - 45.0).abs() < DT);
-        assert!(
-            old_unbounded.travel_time > bounded.travel_time * 2.0,
-            "dropping the served route reproduces the inflated comet clock ({:.1}s vs {:.1}s)",
-            old_unbounded.travel_time,
-            bounded.travel_time,
-        );
-    }
-
-    #[test]
-    fn a_dark_return_response_is_hull_time_to_the_circle_edge() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(10_000.0);
-        let ghost_pos = lane.at(80_000.0);
-        let terminus = lane.at(100_000.0);
-        let ghost_vel = Vec2::new(5_000.0, 0.0);
-        let relays = [CommSite { pos: home, throw: 40_000.0 }];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-        let served_route = [terminus];
-        let transit_speed = 100.0;
-        let depart = 20.0;
-
-        let (observed, _) = observed_order_plan(
-            &field,
-            home,
-            ghost_pos,
-            ghost_vel,
-            true,
-            Some(&served_route),
-            depart,
-            Some((home, transit_speed)),
-        );
-        let warp_speed = transit_speed * WARP_FACTOR;
-        let return_delay = lanes
-            .time_to_comm_bubble(
-                observed.meeting_point,
-                home,
-                warp_speed,
-                warp_speed * sim::lane::LANE_MULT,
-                &relays,
-            )
-            .expect("the home course enters the bubble");
-        let old_light_echo = field.between(observed.meeting_point, home);
-
-        assert!(observed.response_on_reentry);
-        assert!((observed.response_at - observed.arrives_at - return_delay).abs() < 1e-9);
-        assert!(
-            (return_delay - old_light_echo).abs() > 1.0,
-            "the edge-return clock must not silently remain the old light echo",
-        );
-    }
-
-    #[test]
-    fn the_orders_panel_clock_is_solved_from_the_ghost_not_the_truth() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let home = lane.at(lane.length() * 0.05);
-        let ghost_pos = lane.at(lane.length() * 0.90);
-        let true_pos = lane.at(lane.length() * 0.35);
-        let ghost_vel = Vec2::new(-2_000.0, 0.0);
-        let relays = [wide_relay(home)];
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &relays, c: 400.0 };
-        let depart = 73.0;
-
-        let (observed, signal) =
-            observed_order_plan(&field, home, ghost_pos, ghost_vel, true, None, depart, None);
-        let ghost_signal = command_signal_plan(&field, home, ghost_pos, ghost_vel, true, None);
-        assert!((observed.arrives_at - (depart + ghost_signal.travel_time)).abs() < 1e-9);
-        assert!(observed.meeting_point.distance(ghost_signal.meeting_point) < 1e-9);
-        assert!(
-            (observed.response_at
-                - (observed.arrives_at + field.between(observed.meeting_point, home)))
-                .abs()
-                < 1e-9,
-            "the response estimate returns from the same ghost-derived meeting point",
-        );
-        assert!((signal.travel_time - ghost_signal.travel_time).abs() < 1e-9);
-
-        let (truth_fed, _) =
-            observed_order_plan(&field, home, true_pos, ghost_vel, true, None, depart, None);
-        assert!(
-            (observed.arrives_at - truth_fed.arrives_at).abs() > 1.0
-                && (observed.response_at - truth_fed.response_at).abs() > 1.0,
-            "a ship long past the stale sighting would leak different clocks",
-        );
-
-        let newer_sighting = lane.at(lane.length() * 0.70);
-        let (refreshed, _) =
-            observed_order_plan(
-                &field,
-                home,
-                newer_sighting,
-                ghost_vel,
-                true,
-                None,
-                depart,
-                None,
-            );
-        assert!(
-            (refreshed.arrives_at - observed.arrives_at).abs() > 1.0,
-            "the estimate moves when, and only when, the served sighting moves",
-        );
-    }
-
-    #[test]
-    fn the_intent_path_starts_at_the_last_sighting_not_the_truth() {
-        let lanes = signal_line();
-        let lane = &lanes.lanes[0];
-        let ghost_pos = lane.at(lane.length() * 0.80);
-        let true_pos = lane.at(lane.length() * 0.30);
-        let dest = lane.at(lane.length() * 0.10);
-        let path = intended_route(&lanes, ghost_pos, dest, 100.0);
-        assert_eq!(path.first().copied(), Some(ghost_pos));
-        assert_eq!(path.last().copied(), Some(dest));
-        assert!(
-            path.first().unwrap().distance(true_pos) > 1_000.0,
-            "hidden true space must not move the start of the intended route",
-        );
-    }
-
-    #[test]
-    fn construct_and_target_chase_never_receive_intent_paths() {
-        assert!(has_fixed_intent_path(sim::event::OrderKind::Move, None));
-        assert!(has_fixed_intent_path(sim::event::OrderKind::Recall, None));
-        assert!(has_fixed_intent_path(sim::event::OrderKind::Withdraw, None));
-        assert!(!has_fixed_intent_path(sim::event::OrderKind::Construct, None));
-        assert!(!has_fixed_intent_path(
-            sim::event::OrderKind::Attack,
-            Some(sim::EntityId(9)),
-        ));
-        assert!(!has_fixed_intent_path(
-            sim::event::OrderKind::Raid,
-            Some(sim::EntityId(9)),
-        ));
-    }
-
-    #[test]
-    fn a_rival_view_never_receives_an_intent_path() {
-        let mut world = World::new(sim::SimConfig::for_players(0xC0_771, 4));
-        let owner = PlayerId(710);
-        let rival = PlayerId(711);
-        world.step(&[
-            Command::AddPlayer { id: owner, name: "Plotter".into() },
-            Command::AddPlayer { id: rival, name: "Observer".into() },
-        ]);
-        let fleet = *world
-            .fleets
-            .iter()
-            .find(|(_, fleet)| fleet.owner == owner)
-            .map(|(id, _)| id)
-            .unwrap();
-        let cc = world.players[&owner].command_center;
-        {
-            let fleet = world.fleets.get_mut(&fleet).unwrap();
-            fleet.pos = cc + Vec2::new(50_000.0, 0.0);
-            fleet.vel = Vec2::ZERO;
-            fleet.supplied = true;
-        }
-        let dest = cc;
-        let events = world.step(&[Command::MoveShip { player_id: owner, ship_id: fleet, dest }]);
-        let pending = world
-            .pending_commands(owner)
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| panic!("move should schedule an owner lifecycle; events={events:?}"));
-        let intent_path = vec![world.fleets[&fleet].pos, dest];
-        let plans = HashMap::from([(
-            (owner, pending.id),
-            ObservedOrderPlan {
-                arrives_at: pending.issued_at + 2.0,
-                response_at: pending.issued_at + 20.0,
-                response_on_reentry: false,
-                meeting_point: intent_path[0],
-                intent_path,
-                beyond_comms: false,
-            },
-        )]);
-
-        assert!(!pending_order_views(&world, owner, &plans, world.time)[0].intent_path.is_empty());
-        assert!(pending_order_views(&world, rival, &plans, world.time).is_empty());
-    }
-
-    fn known_loss_fixture() -> (World, PlayerId, sim::world::CommDeath, Vec<CommSite>) {
-        let mut world = World::new(sim::SimConfig::for_players(0xD3A7, 4));
-        let owner = PlayerId(880);
-        world.step(&[Command::AddPlayer { id: owner, name: "Light Law".into() }]);
-        let before = world.relay_network(owner);
-        assert_eq!(before.len(), 1, "fixture expects the granted starter relay");
-        let emplacement = world
-            .emplacements
-            .iter()
-            .find(|emplacement| emplacement.owner == owner && emplacement.kind.throw() > 0.0)
-            .cloned()
-            .unwrap();
-        world.emplacements.retain(|candidate| candidate.id != emplacement.id);
-        let at = world.time;
-        let death = sim::world::CommDeath {
-            id: emplacement.id,
-            owner,
-            kind: emplacement.kind,
-            site: before[0],
-            at,
-            news_at: at + 12.0,
-        };
-        world.comm_deaths.push(death.clone());
-        (world, owner, death, before)
-    }
-
-    #[test]
-    fn nothing_observable_changes_at_the_true_death_instant() {
-        let (world, owner, death, before) = known_loss_fixture();
-        let just_after = world.relay_network_known(owner, death.at + DT);
-        assert_eq!(just_after, before, "the picture retains the relay until its obituary arrives");
-        let probe = death.site.pos + Vec2::new(death.site.throw * 0.5, 0.0);
-        assert!(sim::lane::in_comm_bubble(probe, &before, 0.0));
-        assert!(sim::lane::in_comm_bubble(probe, &just_after, 0.0));
-        assert!(
-            !sim::lane::in_comm_bubble(probe, &world.relay_network(owner), 0.0),
-            "truth has changed, which gives the test teeth against a truth-gated view",
-        );
-    }
-
-    #[test]
-    fn the_owner_learns_everything_on_one_wavefront() {
-        let (world, owner, death, _) = known_loss_fixture();
-        let loss = sim::world::PendingCommandLossView {
-            relay: death.id,
-            at: death.at,
-            news_at: death.news_at,
-            break_pos: death.site.pos,
-        };
-        let pending = [sim::world::PendingCommandView {
-            id: 7,
-            fleet: sim::EntityId(77),
-            delivered_at: death.news_at + 20.0,
-            echo_at: death.news_at + 40.0,
-            issued_at: death.at - 1.0,
-            kind: sim::event::OrderKind::Move,
-            dest: None,
-            target: None,
-            emplacement: None,
-            response_on_reentry: false,
-            loss: Some(loss),
-        }];
-        let served = [death.site.pos];
-        let before = death.news_at - 1e-6;
-        assert!(world.relay_network_known(owner, before).contains(&death.site));
-        assert!(disclosed_order_loss(Some(loss), before).is_none());
-        assert!(relay_loss_view(&death, &served, &[], &pending, before).is_none());
-
-        let at = death.news_at;
-        assert!(!world.relay_network_known(owner, at).contains(&death.site));
-        assert!(disclosed_order_loss(Some(loss), at).is_some());
-        let toast = relay_loss_view(&death, &served, &[], &pending, at).unwrap();
-        assert_eq!(toast.learned_at, at);
-        assert_eq!((toast.fleets_beyond, toast.orders_lost), (1, 1));
-    }
-
-    #[test]
-    fn the_casualty_report_reads_the_served_picture_not_the_truth() {
-        let (_world, _owner, death, _) = known_loss_fixture();
-        let served_inside = death.site.pos;
-        let served_outside = death.site.pos + Vec2::new(death.site.throw + 1.0, 0.0);
-        // Deliberately opposite true positions would produce the opposite count;
-        // they are not an input to the casualty builder at all.
-        let _truth = [served_outside, served_inside];
-        let summary = relay_loss_view(
-            &death,
-            &[served_inside, served_outside],
-            &[],
-            &[],
-            death.news_at,
-        )
-        .unwrap();
-        assert_eq!(summary.fleets_beyond, 1);
+    fn outbound_signal_meeting_is_later_than_the_static_sighting() {
+        let cc = Vec2::ZERO;
+        let ghost_pos = Vec2::new(20_000.0, 0.0);
+        let ghost_vel = Vec2::new(100.0, 0.0);
+        let plan = command_signal_plan(400.0, cc, ghost_pos, ghost_vel);
+        assert!(plan.travel_time > sim::transit::delay(cc, ghost_pos, 400.0));
+        assert!(plan.meeting_point.x > ghost_pos.x);
     }
 
     #[test]
     fn an_expired_estimate_reads_presumed_never_confirmed() {
         let mut world = World::new(sim::SimConfig::for_players(0xE571, 4));
         let owner = PlayerId(881);
-        world.step(&[Command::AddPlayer { id: owner, name: "Presumption".into() }]);
-        let fleet = *world.fleets.iter().find(|(_, fleet)| fleet.owner == owner).unwrap().0;
+        world.step(&[Command::AddPlayer {
+            id: owner,
+            name: "Presumption".into(),
+        }]);
+        let fleet = *world
+            .fleets
+            .iter()
+            .find(|(_, fleet)| fleet.owner == owner)
+            .unwrap()
+            .0;
         let pos = world.players[&owner].command_center + Vec2::new(50_000.0, 0.0);
         {
             let ship = world.fleets.get_mut(&fleet).unwrap();
@@ -3048,140 +2861,37 @@ mod tests {
                 matches!(event.payload, sim::EventPayload::OrderConfirmed { id, .. } if id == pending.id)
             });
         }
-        assert!(!timer_confirmation, "an expired ordinary estimate is not evidence");
         assert!(
-            world.pending_commands(owner).iter().any(|order| order.id == pending.id),
+            !timer_confirmation,
+            "an expired ordinary estimate is not evidence"
+        );
+        assert!(
+            world
+                .pending_commands(owner)
+                .iter()
+                .any(|order| order.id == pending.id),
             "the ordinary lifecycle remains presumed until a compliance-era map sample is served",
         );
-        let plans = HashMap::from([((owner, pending.id), ObservedOrderPlan {
-            arrives_at: world.time - 2.0,
-            response_at: world.time - 1.0,
-            response_on_reentry: false,
-            meeting_point: pos,
-            intent_path: Vec::new(),
-            beyond_comms: false,
-        })]);
+        let plans = HashMap::from([(
+            (owner, pending.id),
+            ObservedOrderPlan {
+                arrives_at: world.time - 2.0,
+                response_at: world.time - 1.0,
+                intent_path: Vec::new(),
+            },
+        )]);
         let rows = pending_order_views(&world, owner, &plans, world.time + 100.0);
-        assert_eq!(rows.len(), 1, "an expired estimate remains an unconfirmed lifecycle");
-        assert!(!rows[0].lost, "only arrived evidence or disclosed destruction may make it terminal");
-    }
-
-    #[test]
-    fn a_dark_to_dark_move_replays_before_it_confirms() {
-        let mut world = World::new(sim::SimConfig::for_players(0xD4A7, 4));
-        world.lanes = signal_line();
-        let owner = PlayerId(882);
-        world.step(&[Command::AddPlayer { id: owner, name: "Dark rider".into() }]);
-        world.players.get_mut(&owner).unwrap().command_center = Vec2::ZERO;
-        for emplacement in world.emplacements.iter_mut().filter(|e| e.owner == owner) {
-            emplacement.pos = Vec2::ZERO;
-        }
-        let fleet = world
-            .fleets
-            .iter()
-            .find(|(_, fleet)| fleet.owner == owner && fleet.flagship_kind() == sim::ShipKind::Raider)
-            .map(|(id, _)| *id)
-            .expect("the opening raider");
-        let start = Vec2::new(150_000.0, 0.0);
-        let old_dest = Vec2::new(200_000.0, 0.0);
-        let new_dest = Vec2::new(120_000.0, 0.0);
-        let transit_speed = world.fleets[&fleet].transit_speed();
-        let route = world.lanes.route(
-            start,
-            old_dest,
-            transit_speed * sim::lane::WARP_FACTOR,
-            transit_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT,
+        assert_eq!(
+            rows.len(),
+            1,
+            "an expired estimate remains an unconfirmed lifecycle"
         );
-        {
-            let ship = world.fleets.get_mut(&fleet).unwrap();
-            ship.pos = start;
-            ship.vel = Vec2::new(transit_speed * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT, 0.0);
-            ship.order = sim::ship::FleetOrder::MoveTo { dest: old_dest };
-            ship.route = route;
-            ship.warp = true;
-            ship.drive_state = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
-            ship.regime = sim::lane::Regime::Hyperspace;
-            ship.fuel = 1.0e9;
-            ship.supplied = true;
-        }
-        let mut history = PositionHistory::for_world(&world);
-        history.record(&world);
-
-        let scheduled = world.step(&[Command::MoveShip {
-            player_id: owner,
-            ship_id: fleet,
-            dest: new_dest,
-        }]);
-        history.record(&world);
-        let order_id = scheduled
-            .iter()
-            .find_map(|event| match event.payload {
-                sim::EventPayload::OrderScheduled { id, fleet: target, .. } if target == fleet => Some(id),
-                _ => None,
-            })
-            .expect("the dark-to-dark order is scheduled");
-        let pending = world
-            .pending_commands(owner)
-            .into_iter()
-            .find(|pending| pending.id == order_id)
-            .expect("the order has an owner lifecycle");
-        assert!(!pending.response_on_reentry, "both endpoints remain outside the relay circle");
-
-        let mut early_confirmation = None;
-        let mut first_compliance = None;
-        for _ in 0..(400 * sim::TICK_HZ) {
-            let events = world.step(&[]);
-            history.record(&world);
-            if let Some(event) = events.iter().find(|event| {
-                matches!(event.payload, sim::EventPayload::OrderConfirmed { id, .. } if id == order_id)
-            }) {
-                early_confirmation = Some(event.time);
-            }
-            if world.tick.is_multiple_of(BROADCAST_EVERY) {
-                let sites = world.relay_network_known(owner, world.time);
-                let field = sim::lane::DelayField {
-                    lanes: &world.lanes,
-                    sites: &sites,
-                    c: world.config.c,
-                };
-                let ghosts = history.view_for(owner, Vec2::ZERO, &field, world.time);
-                let Some(ghost) = ghosts.iter().find(|ghost| ghost.id == fleet) else {
-                    continue;
-                };
-                let emission = world.time - ghost.age;
-                if emission + 1e-9 >= pending.delivered_at {
-                    first_compliance = Some((world.time, emission, ghost.pos));
-                    break;
-                }
-            }
-        }
-
-        let (served_at, emission, served_pos) = first_compliance.expect("slow compliance light eventually advances the map");
-        assert_ne!(served_pos, start, "the served dark marker must show the new flight advancing");
-        assert!(emission + 1e-9 >= pending.delivered_at);
         assert!(
-            early_confirmation.is_none(),
-            "confirmation at {:?} outran the first served compliance picture at {served_at}",
-            early_confirmation,
-        );
-        let confirmation = world.confirm_orders_from_served(owner, &[(fleet, emission)]);
-        assert_eq!(confirmation.len(), 1, "the first served compliance picture confirms exactly once");
-        assert!(matches!(
-            confirmation[0].payload,
-            sim::EventPayload::OrderConfirmed { id, .. } if id == order_id
-        ));
-        assert!(confirmation[0].time + 1e-9 >= served_at);
-        assert!(
-            world.pending_commands(owner).iter().all(|pending| pending.id != order_id),
-            "the lifecycle retires on the same served-map frontier",
+            !rows[0].lost,
+            "only arrived evidence or disclosed destruction may make it terminal"
         );
     }
 
-    /// The server-facing lifecycle source must expose the real command queue,
-    /// not collapse it to the latest entry for a fleet. Five seconds separates
-    /// these orders, but the first signal is still crossing space when the
-    /// second leaves; both remain identifiable until the existing delivery /
-    /// supersession / echo rules expire them.
     #[test]
     fn two_orders_to_one_fleet_are_reported_until_their_existing_expiry() {
         let mut world = World::new(sim::SimConfig::for_players(0x0DDE_2, 4));
@@ -3203,7 +2913,6 @@ mod tests {
             f.pos = pos;
             f.vel = Vec2::ZERO;
             f.order = sim::ship::FleetOrder::Idle;
-            f.route.clear();
         }
 
         let first_dest = pos + Vec2::new(5_000.0, 0.0);
@@ -3239,8 +2948,14 @@ mod tests {
 
         let queue = world.pending_commands(owner);
         assert_eq!(queue.len(), 2, "both outbound orders are reported");
-        assert_ne!(first_id, second_id, "each scheduled command has a stable distinct id");
-        assert_eq!(queue.iter().map(|p| p.id).collect::<Vec<_>>(), vec![first_id, second_id]);
+        assert_ne!(
+            first_id, second_id,
+            "each scheduled command has a stable distinct id"
+        );
+        assert_eq!(
+            queue.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![first_id, second_id]
+        );
         assert_eq!(queue[0].dest, Some(first_dest));
         assert_eq!(queue[1].dest, Some(second_dest));
         for p in &queue {
@@ -3263,7 +2978,11 @@ mod tests {
             world.step(&[]);
         }
         let after_supersession = world.pending_commands(owner);
-        assert_eq!(after_supersession.len(), 1, "the existing supersession expiry removes the older echo");
+        assert_eq!(
+            after_supersession.len(),
+            1,
+            "the existing supersession expiry removes the older echo"
+        );
         assert_eq!(after_supersession[0].id, second_id);
 
         let echo = after_supersession[0].echo_at;
@@ -3275,12 +2994,13 @@ mod tests {
             1,
             "the final row survives an expired estimate until the map serves compliance",
         );
-        let confirmed = world.confirm_orders_from_served(
-            owner,
-            &[(fleet, after_supersession[0].delivered_at)],
-        );
+        let confirmed =
+            world.confirm_orders_from_served(owner, &[(fleet, after_supersession[0].delivered_at)]);
         assert_eq!(confirmed.len(), 1);
-        assert!(world.pending_commands(owner).is_empty(), "served compliance retires the final row");
+        assert!(
+            world.pending_commands(owner).is_empty(),
+            "served compliance retires the final row"
+        );
     }
 
     /// The build CATALOGUE must offer every hull a corporation can actually
@@ -3297,12 +3017,21 @@ mod tests {
 
         // The hull slug is whatever the WIRE calls it — derived from serde, not
         // retyped here, so the catalogue key and the protocol can't drift apart.
-        let slug_of = |k: sim::ShipKind| serde_json::to_value(k).unwrap().as_str().unwrap().to_string();
+        let slug_of = |k: sim::ShipKind| {
+            serde_json::to_value(k)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
         for k in sim::ALL_SHIP_KINDS {
             let slug = slug_of(k);
             // The Authority's freighter is the ONE hull no corporation may lay.
             if k == sim::ShipKind::Freighter {
-                assert!(!keys.contains(slug.as_str()), "the Authority's carrier must never be offered");
+                assert!(
+                    !keys.contains(slug.as_str()),
+                    "the Authority's carrier must never be offered"
+                );
                 continue;
             }
             assert!(
@@ -3311,11 +3040,18 @@ mod tests {
             );
         }
         for k in sim::StructureKind::ALL {
-            assert!(keys.contains(k.slug()), "structure `{}` is missing from the catalogue", k.slug());
+            assert!(
+                keys.contains(k.slug()),
+                "structure `{}` is missing from the catalogue",
+                k.slug()
+            );
         }
         // And every offer must price out — a key with no recipe would render a
         // build button that can never be paid for.
-        assert!(opts.iter().all(|o| !o.costs.is_empty()), "every build option carries a cost");
+        assert!(
+            opts.iter().all(|o| !o.costs.is_empty()),
+            "every build option carries a cost"
+        );
     }
 
     fn concluded(started_at: f64, ended_at: f64, pos: Vec2) -> ConcludedBattle {
@@ -3341,23 +3077,35 @@ mod tests {
     fn concluded_icon_lingers_until_conclusion_light_matches_aftermath() {
         let c = 300.0;
         let cc = Vec2::new(0.0, 0.0);
-        // Battle 6000 su away → 20 s of light each way. It ran t=100..140.
+        // Battle 6000 su away → 4 s of warp light each way. It ran t=100..140.
         let pos = Vec2::new(6000.0, 0.0);
         let (started_at, ended_at) = (100.0, 140.0);
         let cb = concluded(started_at, ended_at, pos);
-        let delay = pos.distance(cc) / c; // 20 s
+        let delay = sim::transit::delay(pos, cc, c); // 4 s
         let aftermath_arrival = ended_at + delay; // when due_for delivers it
 
         // Just after the conclusion's light for the START has been seen but the
         // conclusion's light has NOT yet arrived: the in-progress icon still shows
         // (this is the window where the fleets used to wrongly re-appear).
-        assert!(cb.shows_in_progress(cc, c, ended_at + 5.0), "icon must persist through the light-in-flight gap");
-        assert!(cb.shows_in_progress(cc, c, aftermath_arrival - 0.001), "still in progress an instant before the aftermath");
+        assert!(
+            cb.shows_in_progress(cc, c, ended_at + 1.0),
+            "icon must persist through the light-in-flight gap"
+        );
+        assert!(
+            cb.shows_in_progress(cc, c, aftermath_arrival - 0.001),
+            "still in progress an instant before the aftermath"
+        );
 
         // At the aftermath's arrival the icon is gone (strict upper bound) — the
         // aftermath (delivered on `arrival <= now`) takes over on the same instant.
-        assert!(!cb.shows_in_progress(cc, c, aftermath_arrival), "icon flips off exactly as the aftermath lands");
-        assert!(!cb.shows_in_progress(cc, c, aftermath_arrival + 5.0), "and stays off after");
+        assert!(
+            !cb.shows_in_progress(cc, c, aftermath_arrival),
+            "icon flips off exactly as the aftermath lands"
+        );
+        assert!(
+            !cb.shows_in_progress(cc, c, aftermath_arrival + 5.0),
+            "and stays off after"
+        );
     }
 
     /// The linger is per-viewer and light-honest: a FAR command center keeps the
@@ -3368,13 +3116,19 @@ mod tests {
         let c = 300.0;
         let pos = Vec2::new(0.0, 0.0);
         let cb = concluded(0.0, 40.0, pos);
-        let near = Vec2::new(300.0, 0.0); // 1 s of light
-        let far = Vec2::new(9000.0, 0.0); // 30 s of light
+        let near = Vec2::new(300.0, 0.0); // 0.2 s of warp light
+        let far = Vec2::new(9000.0, 0.0); // 6 s of warp light
 
         // 41 s after start (1 s after true end): near viewer's conclusion light has
         // arrived (icon gone); the far viewer's has not (icon still shown).
-        assert!(!cb.shows_in_progress(near, c, 41.0), "near viewer already saw the conclusion");
-        assert!(cb.shows_in_progress(far, c, 41.0), "far viewer's conclusion light is still in flight");
+        assert!(
+            !cb.shows_in_progress(near, c, 41.0),
+            "near viewer already saw the conclusion"
+        );
+        assert!(
+            cb.shows_in_progress(far, c, 41.0),
+            "far viewer's conclusion light is still in flight"
+        );
     }
 
     /// A viewer whose START light never arrived before the battle ended (it began
@@ -3384,13 +3138,18 @@ mod tests {
     fn no_phantom_icon_when_start_light_never_arrived() {
         let c = 300.0;
         let cc = Vec2::new(0.0, 0.0);
-        // 6000 su away (20 s of light) but the battle lasted only 1 s (t=0..1).
+        // 6000 su away (4 s of warp light) but the battle lasted only 1 s (t=0..1).
         let cb = concluded(0.0, 1.0, Vec2::new(6000.0, 0.0));
-        // The visible window is [started_at + delay, ended_at + delay) = [20, 21):
-        // one honest second, shifted whole by the 20 s light delay. Before 20 the
-        // start-light hasn't landed (no phantom); from 21 the conclusion-light has.
-        assert!(!cb.shows_in_progress(cc, c, 19.999), "no icon before the start light arrives");
-        assert!(cb.shows_in_progress(cc, c, 20.5), "the honest 1 s sighting");
-        assert!(!cb.shows_in_progress(cc, c, 21.0), "gone once the conclusion light arrives");
+        // The visible window is [started_at + delay, ended_at + delay) = [4, 5):
+        // one honest second, shifted whole by warp-light delay.
+        assert!(
+            !cb.shows_in_progress(cc, c, 3.999),
+            "no icon before the start light arrives"
+        );
+        assert!(cb.shows_in_progress(cc, c, 4.5), "the honest 1 s sighting");
+        assert!(
+            !cb.shows_in_progress(cc, c, 5.0),
+            "gone once the conclusion light arrives"
+        );
     }
 }

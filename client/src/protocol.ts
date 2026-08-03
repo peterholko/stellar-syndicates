@@ -81,18 +81,6 @@ export interface GroundRecordView extends GroundRecordHeader {
   outcome: "taken" | "repulsed" | null;
 }
 
-/// §hyperspace: one lane's drawable centerline. Static and public — a lane is a
-/// visible feature of space, not intel — so it ships once in the Welcome galaxy.
-export interface LaneView {
-  id: number;
-  name: string;
-  /// Baked centerline. The ribbon is this swept by `half_width`.
-  points: Vec2[];
-  half_width: number;
-  /// Routes that fade into the frontier taper over their tail.
-  tapers: boolean;
-}
-
 export type ShipKind =
   | "convoy" | "raider" | "corvette" | "colony" | "scout"
   // §ladder: the research-gated warship ladder.
@@ -384,8 +372,6 @@ export interface GalaxyInfo {
   /// §node: a node's region radius (sim units) — for the holder's region ring.
   node_region_radius?: number;
   systems: SystemInfo[];
-  /// §hyperspace: the lane network, as drawable geometry. Static, sent once.
-  lanes?: LaneView[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
 }
 
@@ -684,12 +670,10 @@ export interface LoadoutStack {
 /// §emplacements: one structure standing in open space.
 export interface EmplacementView {
   id: string;
-  kind: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
+  kind: "deep_space_sensor";
   pos: Vec2;
-  /// The bubble it watches, 0 for a buoy.
+  /// The sensor radius it watches.
   sensor_range: number;
-  /// Lane-network arc reach, in su; 0 for non-communication structures.
-  relay_throw: number;
   /// Yours, or a rival's. A rival's appears only inside your sensor coverage,
   /// and only a rival's can be torn down.
   own?: boolean;
@@ -698,15 +682,14 @@ export interface EmplacementView {
 /// §course-plan: one step of an own fleet's planned flight.
 export interface PathPointView {
   pos: Vec2;
-  lane: boolean;
 }
 
 /// §course-change: the drive spin-up / shut-down state, as the sim models it.
 export type DriveStateView =
   | "thrusters"
-  | { spooling: { to: "thrusters" | "warp" | "hyperspace"; left: number } }
-  | { cruising: "thrusters" | "warp" | "hyperspace" }
-  | { dropping: { from: "thrusters" | "warp" | "hyperspace"; left: number } };
+  | { spooling: { to: "thrusters" | "warp"; left: number } }
+  | { cruising: "thrusters" | "warp" }
+  | { dropping: { from: "thrusters" | "warp"; left: number } };
 
 export interface GhostView {
   id: EntityId;
@@ -716,8 +699,6 @@ export interface GhostView {
   /** Factual velocity at the retarded sighting. */
   vel: Vec2;
   age: number;
-  /** True while this own fleet's served picture is inside a comm bubble. */
-  in_comms: boolean;
   own: boolean;
   /// §dock: the BERTH this sighting was taken at — `"hub"` for the Market Hub,
   /// otherwise the system's id — or absent if the fleet was under way (or
@@ -825,11 +806,10 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
-  | { type: "PreviewRoute"; ship_id: EntityId; dest: Vec2 }
   /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
   /// PARKED (fly it there first; no separate site point). The field is
   /// `emplacement`, not `kind` — the server's Command enum is tagged on that name.
-  | { type: "BuildEmplacement"; builder: EntityId; emplacement: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor" }
+  | { type: "BuildEmplacement"; builder: EntityId; emplacement: "deep_space_sensor" }
   /// §emplacements: send a COMBATANT fleet to tear down a rival's structure.
   | { type: "DemolishEmplacement"; fleet: EntityId; target: EntityId }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
@@ -1222,37 +1202,24 @@ export interface CaptureReportView {
 // its estimated phase from `sim_time`: SIGNAL OUTBOUND until `arrives_at`, then
 // PRESUMED DELIVERED until arrived evidence removes it. `response_at` is only an
 // estimate and may become overdue; it never confirms the order. Both are solved once from the
-// served ghost at issue — never authoritative fleet truth. For a dark fleet
-// ordered home, the response is its expected physical return to a comm-circle edge.
+// served ghost at issue — never authoritative fleet truth.
 export interface PendingOrderView {
   id: number;
   fleet_id: EntityId;
   issued_at: number;
   arrives_at: number;
   response_at: number;
-  /** Response estimate is physical travel back to an owned comm-bubble edge. */
-  response_on_reentry?: boolean;
   kind: OrderKind;
   dest?: Vec2;
   target_id?: EntityId;
-  emplacement?: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
+  emplacement?: "deep_space_sensor";
   /// Owner-only intended route from the served sighting to a fixed destination.
   /// Positions only: this line never claims the fleet advanced along it.
   intent_path?: Vec2[];
-  /** Final signal leg has left covered wire and is travelling at warp light. */
-  beyond_comms?: boolean;
   /** Terminal only after the relay-loss news wavefront reached this owner. */
   lost?: boolean;
   loss_relay?: EntityId;
   loss_break?: Vec2;
-}
-
-export interface RelayLossView {
-  id: EntityId;
-  kind: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
-  learned_at: number;
-  fleets_beyond: number;
-  orders_lost: number;
 }
 
 // Server → client.
@@ -1298,7 +1265,6 @@ export type ServerMsg =
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
-      relay_losses?: RelayLossView[];
       // §battles-take-time — ongoing battles visible to this player (light-gated).
       battles: BattleView[];
       /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
@@ -1349,12 +1315,10 @@ export type ServerMsg =
       ship_id: EntityId;
       depart_time: number;
       arrive_time: number;
-      /// §buoys: the relay path the order flies — hop positions with arrival
+      /// Optional path hops. Absent/empty means one straight leg.
       /// fractions of the whole window. Absent/empty = straight run.
       hops?: { pos: Vec2; frac: number }[];
-      beyond_comms?: boolean;
     }
   | { type: "OrderConfirmed"; order_id: number; ship_id: EntityId; kind: OrderKind }
-  | { type: "RoutePreview"; ship_id: EntityId; dest: Vec2; path: PathPointView[] }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)
   | { type: "Error"; message: string };

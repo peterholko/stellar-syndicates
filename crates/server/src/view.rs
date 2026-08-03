@@ -16,18 +16,10 @@
 //!   t + |p − cc| / c  ≤  now
 //! ```
 //!
-//! Define `arrival(t) = t + |p(t) − cc| / c`. Its derivative is
-//! `1 + d/dt|p−cc| / c ≥ 1 − |v|/c`, which is strictly positive whenever the
-//! object moves slower than light (all ships do, by construction). So
-//! On a fixed channel whose signal outruns the hull, `arrival` is **strictly
-//! increasing**. Rival bow waves and a tripwire channel seam can deliberately
-//! reorder arrivals, so the per-viewer frontier schedules each new report once
-//! and advances from a tiny arrival heap. Either way it never re-evaluates the
-//! thousands of reports accumulated during darkness.
-//! §comms-v3 makes one explicit own-fleet presentation exception inside an
-//! owned relay's 2D bubble: a delayed
-//! emission-time replay advances at true hull speed. Outside those bubbles, and
-//! for every rival, the strict arrival gate remains unchanged.
+//! Define `arrival(t) = t + |p(t) − cc| / warp_light`. Ordinary cruising
+//! keeps this increasing, while jump discontinuities can reorder reports. The
+//! per-viewer frontier therefore prices each new report once and advances from
+//! a small arrival heap; it never rescans the reports accumulated in darkness.
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -44,22 +36,12 @@ use sim::{
 };
 
 use crate::protocol::{
-    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView, BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity, GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot, SystemStateView,
+    AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView,
+    BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity,
+    GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack,
+    ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot,
+    SystemStateView,
 };
-
-/// §comms-v3: presentation bubbles use ordinary 2D distance, independently of
-/// the lane graph that carries the reports home. Outbound mode changes on the
-/// exact nominal crossing event; this band applies only to DARK→LIVE re-entry.
-const BUBBLE_HYST: f64 = 2_000.0;
-/// Seconds over which the live replay delay slews toward the current route.
-const D_SMOOTH_S: f64 = 5.0;
-/// A positive replay delay keeps the live picture behind simulation truth even
-/// when a relay and command center coincide.
-const LIVE_DELAY_FLOOR_S: f64 = 0.05;
-
-fn presentation_reentry_contains(pos: Vec2, sites: &[sim::lane::CommSite]) -> bool {
-    sim::lane::in_comm_bubble(pos, sites, -BUBBLE_HYST)
-}
 
 /// One recorded true state of a ship at a sim time.
 #[derive(Clone, Copy)]
@@ -71,7 +53,7 @@ struct Sample {
     /// Rides the per-sample history so the loudness is judged in the RETARDED
     /// frame — exactly like velocity — and can never leak or lag FTL.
     loud: bool,
-    /// §hyperspace: what the DRIVES were doing at this sample — cruising,
+    /// What the drives were doing at this sample — cruising,
     /// spinning up, or shutting down. The regime is read off it rather than
     /// stored alongside, so the badge and the phase cannot disagree.
     ///
@@ -81,11 +63,6 @@ struct Sample {
     /// warp velocity, and a fleet that had already stopped still
     /// claimed to be in hyperspace.
     drive: sim::ship::DriveState,
-    /// Whether this report was physically emitted inside the nominal 2D relay
-    /// bubble. This is a channel fact, separate from the track's served-picture
-    /// presentation mode: the final inside report keeps its fast route after the
-    /// picture changes to its dark hold.
-    in_comms: bool,
 }
 
 impl Sample {
@@ -99,7 +76,6 @@ impl Sample {
             vel: older.vel,
             loud: older.loud,
             drive: older.drive,
-            in_comms: older.in_comms,
         }
     }
 }
@@ -128,12 +104,6 @@ struct Track {
     /// exact count the `count_class` bucket exists to hide. Gated on coverage
     /// exactly like `composition`.
     damage_frac: f64,
-    /// Current served-picture presentation mode. Exit is the arrived nominal
-    /// crossing event; re-entry alone is hysteretic. Both advance only from
-    /// served light, so true hull position never flips a marker early.
-    in_comms: bool,
-    /// Smoothed report delay used as the emission horizon in live mode.
-    live_delay: f64,
     /// §dock: WHERE this fleet is berthed, if it is. Sampled per tick like any
     /// other track state, so a light-delayed sighting reports the dock as it was
     /// when the light left — a fleet you see berthed may have sailed since,
@@ -150,21 +120,10 @@ struct Track {
     /// have the buoy appear while the bar still read 60%. Your own installation
     /// work reports on its own channel; it is the SHIP's position that is dark.
     job: Option<crate::protocol::JobView>,
-    /// §course-plan: the fleet's flight plans, RETARDED-FRAME like everything
-    /// else — `(when it took effect, the legs)`. Serving the current plan beside
-    /// a delayed position was visibly wrong: a lane ship outruns its own report,
-    /// so the authoritative route was down to its final warp hop while the ghost
-    /// was still mid-lane, and the drawn path collapsed to a straight line the
-    /// ship was nowhere near. A plan is static between orders, so this is one
-    /// entry per order plus one for the arrival — consumption is a SUFFIX of the
-    /// stored plan and records nothing.
-    plans: VecDeque<(f64, Vec<(Vec2, bool)>)>,
+    /// The fleet's direct flight plans in force at each retarded sighting.
+    plans: VecDeque<(f64, Vec<Vec2>)>,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
-    /// Exact nominal-bubble crossings as `(emission time, state after crossing)`.
-    /// The mode gate indexes this tiny event stream instead of searching the
-    /// 30 Hz sample history for an entry/exit every time it considers a flip.
-    bubble_transitions: VecDeque<(f64, bool)>,
     /// Last sim time this track was updated (for pruning dead ships).
     last_seen: f64,
     /// Current cargo (convoys). Static for the demo patrol convoys, so sending
@@ -236,7 +195,7 @@ pub struct PositionHistory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FrontierPath {
-    /// The full per-view composite, including that viewer's wake ears.
+    /// The full per-view composite used for fog and detection.
     Composite,
     /// Owner-only helpers (`coverage_for`, order aim, presentation mode), whose
     /// established channel has no tripwire inputs.
@@ -256,63 +215,18 @@ struct ArrivedSample {
     arrival: f64,
 }
 
-const PASSIVE_ROUTE_EPOCH: u32 = 0;
-const ROUTE_RESEARCH_EVERY: u8 = 10;
-
-/// A report that has been emitted but has not yet reached this viewer. Fast and
-/// slow clocks are frozen exactly once. `route_epoch == 0` means the passive
-/// copy is the one currently filed in the heap; non-zero means validate the
-/// interned fast route when it reaches the frontier.
+/// A report that has been emitted but has not yet reached this viewer. Its
+/// straight warp-light arrival is priced exactly once.
 #[derive(Clone, Copy)]
 struct ScheduledCopy {
     sample: Sample,
-    route_epoch: u32,
-    frozen_fast: f64,
-    frozen_slow: f64,
+    arrival: f64,
 }
 
 impl ScheduledCopy {
     fn arrival(self) -> f64 {
-        if self.route_epoch == PASSIVE_ROUTE_EPOCH {
-            self.frozen_slow
-        } else {
-            self.frozen_fast
-        }
+        self.arrival
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RoutePassage {
-    relay: EntityId,
-    /// Seconds after emission by which this copy has cleared the relay's
-    /// indispensable stretch on the base route.
-    offset: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RouteChannel {
-    OwnFree,
-    OwnCoupled,
-    RivalWake,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum RouteStart {
-    Warp,
-    Lane { lane: u32, target_s: f64, anchor_s: f64 },
-}
-
-/// One interned physical route shared by adjacent scheduled copies. Pending
-/// entries carry only its small epoch id plus their two frozen clocks. The base
-/// passage offsets shift by the same first-leg delta as `frozen_fast`.
-#[derive(Debug, Clone)]
-struct FrozenRoute {
-    network_version: u64,
-    channel: RouteChannel,
-    base_fast_delay: f64,
-    start: RouteStart,
-    shape: Vec<(Option<u32>, Vec2)>,
-    passages: Vec<RoutePassage>,
 }
 
 #[derive(Clone, Copy)]
@@ -356,142 +270,30 @@ struct FrontierCursor {
     seen_through: Option<f64>,
     pending_by_arrival: BinaryHeap<Reverse<PendingArrival>>,
     pending_by_emission: BTreeMap<u64, ScheduledCopy>,
-    /// Interned routes are deliberately PER cursor: DirectOwn and Composite
-    /// have distinct cache identities. Do not merge them without designing a
-    /// shared key that includes every channel input.
-    routes: HashMap<u32, FrozenRoute>,
-    active_route: Option<u32>,
-    next_route_epoch: u32,
-    route_age: u8,
     #[cfg(test)]
     scheduled_evaluations: usize,
     endpoint: Option<(Vec2, f64)>,
 }
 
-#[derive(Clone)]
-struct CommEpoch {
-    at: f64,
-    version: u64,
-    sites: Vec<sim::lane::CommSite>,
-    site_ids: Vec<EntityId>,
-    raw_ears: Vec<sim::lane::Relay>,
-    ears: sim::lane::WakeEars,
-}
-
 #[derive(Default)]
 struct FrontierCache {
     cursors: HashMap<FrontierKey, FrontierCursor>,
-    /// Truth network snapshots captured at emission boundaries. New structures
-    /// affect only later reports; old light always prices against its own epoch.
-    comm_epochs: HashMap<PlayerId, VecDeque<CommEpoch>>,
-    /// Relay deaths are the only post-emission mutation of a fast copy: a death
-    /// may kill an uncleared path, while the slow warp copy remains immutable.
-    comm_deaths: Vec<sim::world::CommDeath>,
-    /// Scoped per viewer: one corporation's physical loss is not an
-    /// invalidation event for nine unrelated command networks.
-    death_versions: HashMap<PlayerId, u64>,
-    next_network_version: u64,
-}
-
-impl FrontierCache {
-    fn record_comm_state(&mut self, world: &World, horizon: f64) {
-        let now = world.time;
-        for (&viewer, corp) in &world.players {
-            let relay_sites: Vec<(EntityId, sim::lane::CommSite)> = world
-                .emplacements
-                .iter()
-                .filter(|emplacement| {
-                    emplacement.owner == viewer && emplacement.kind.throw() > 0.0
-                })
-                .map(|emplacement| {
-                    (
-                        emplacement.id,
-                        sim::lane::CommSite {
-                            pos: emplacement.pos,
-                            throw: emplacement.kind.throw(),
-                        },
-                    )
-                })
-                .collect();
-            let sites: Vec<sim::lane::CommSite> =
-                relay_sites.iter().map(|(_, site)| *site).collect();
-            let site_ids: Vec<EntityId> = relay_sites.iter().map(|(id, _)| *id).collect();
-            let raw_ears: Vec<sim::lane::Relay> = world
-                .emplacements
-                .iter()
-                .filter(|emplacement| {
-                    emplacement.owner == viewer
-                        && emplacement.kind == sim::EmplacementKind::HyperspaceSensor
-                })
-                .map(|emplacement| world.lanes.relay_at(emplacement.pos))
-                .collect();
-            let changed = self
-                .comm_epochs
-                .get(&viewer)
-                .and_then(|epochs| epochs.back())
-                .is_none_or(|epoch| {
-                    epoch.sites != sites
-                        || epoch.site_ids != site_ids
-                        || epoch.raw_ears != raw_ears
-                });
-            if changed {
-                self.next_network_version = self.next_network_version.wrapping_add(1).max(1);
-                let field = sim::lane::DelayField {
-                    lanes: &world.lanes,
-                    sites: &sites,
-                    c: world.config.c,
-                };
-                self.comm_epochs.entry(viewer).or_default().push_back(CommEpoch {
-                    at: now,
-                    version: self.next_network_version,
-                    ears: field.prepare_wake_ears(corp.command_center, &raw_ears),
-                    sites,
-                    site_ids,
-                    raw_ears,
-                });
-            }
-        }
-        for epochs in self.comm_epochs.values_mut() {
-            while epochs.len() > 1 && epochs[1].at <= now - horizon {
-                epochs.pop_front();
-            }
-        }
-        for death in &world.comm_deaths {
-            if self
-                .comm_deaths
-                .iter()
-                .any(|known| known.id == death.id && known.at.to_bits() == death.at.to_bits())
-            {
-                continue;
-            }
-            self.comm_deaths.push(death.clone());
-            let version = self.death_versions.entry(death.owner).or_default();
-            *version = version.wrapping_add(1).max(1);
-        }
-        self.comm_deaths
-            .retain(|death| now - death.at <= horizon);
-    }
 }
 
 /// The complete player-known kinematic picture used to aim an outbound order.
-/// `route` is the served plan in force at the sighting, consumed from that same
-/// sighting so the meeting solve never follows already-flown legs or true space.
+/// The served plan is consumed from this same sighting, never true space.
 pub struct ObservedSighting {
     pub pos: Vec2,
     pub vel: Vec2,
-    pub coupled: bool,
-    pub route: Vec<Vec2>,
 }
 
 impl PositionHistory {
     /// Create a history sized to a world's maximum possible light delay, with a
     /// safety margin.
     pub fn for_world(world: &World) -> Self {
-        // The slowest a signal can cross the galaxy: warp, off every
-        // lane. Sizing to bare `c` would be both wasteful and wrong — no signal
-        // travels that slowly once the overlay exists.
-        let max_delay = (2.0 * world.config.galaxy_radius)
-            / (world.config.c * sim::lane::WARP_FACTOR);
+        // Every report crosses the galaxy at straight warp-light speed.
+        let max_delay =
+            (2.0 * world.config.galaxy_radius) / (world.config.c * sim::transit::WARP_FACTOR);
         PositionHistory {
             tracks: HashMap::new(),
             horizon: max_delay * 1.25 + 1.0,
@@ -505,58 +307,30 @@ impl PositionHistory {
     pub fn record(&mut self, world: &World) {
         let now = world.time;
         let frontiers = self.frontiers.get_mut();
-        frontiers.record_comm_state(world, self.horizon);
         for (id, ship) in &world.fleets {
-            let sites_truth = world.relay_network(ship.owner);
-            let sites_known = world.relay_network_known(ship.owner, now);
-            let report_in_comms = sim::lane::in_comm_bubble(ship.pos, &sites_truth, 0.0);
-            let cc = world
-                .players
-                .get(&ship.owner)
-                .map_or(ship.pos, |corp| corp.command_center);
-            let known_delays = sim::lane::DelayField {
-                lanes: &world.lanes,
-                sites: &sites_known,
-                c: world.config.c,
-            };
             let track = match self.tracks.entry(*id) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Only a NEW track needs an initial routed replay delay. The
-                    // old `or_insert_with` setup computed this graph route before
-                    // testing occupancy, accidentally paying it for every ship on
-                    // every sim tick even though the closure almost never ran.
-                    let initial_delay = if ship.drive_state.stirs_the_lane() {
-                        known_delays.from_coupled(ship.pos, cc)
-                    } else {
-                        known_delays.between(ship.pos, cc)
-                    }
-                    .max(LIVE_DELAY_FLOOR_S);
-                    entry.insert(Track {
-                        owner: ship.owner,
-                        composition: BTreeMap::new(),
-                        flagship: ship.flagship_kind(),
-                        broadcasts: ship.broadcasts(),
-                        sensor_mult: ship.sensor_mult(),
-                        max_speed: ship.max_speed(),
-                        count_class: ship.count_class(),
-                        samples: VecDeque::new(),
-                        last_seen: now,
-                        cargo: None,
-                        passengers: Default::default(),
-                        loadouts: Default::default(),
-                        modules: Default::default(),
-                        route: None,
-                        gone: None,
-                        damage_frac: 0.0,
-                        in_comms: false,
-                        live_delay: initial_delay,
-                        docked: None,
-                        job: None,
-                        plans: VecDeque::new(),
-                        bubble_transitions: VecDeque::new(),
-                    })
-                }
+                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(Track {
+                    owner: ship.owner,
+                    composition: BTreeMap::new(),
+                    flagship: ship.flagship_kind(),
+                    broadcasts: ship.broadcasts(),
+                    sensor_mult: ship.sensor_mult(),
+                    max_speed: ship.max_speed(),
+                    count_class: ship.count_class(),
+                    samples: VecDeque::new(),
+                    last_seen: now,
+                    cargo: None,
+                    passengers: Default::default(),
+                    loadouts: Default::default(),
+                    modules: Default::default(),
+                    route: None,
+                    gone: None,
+                    damage_frac: 0.0,
+                    docked: None,
+                    job: None,
+                    plans: VecDeque::new(),
+                }),
             };
             track.owner = ship.owner;
             track.composition = ship.composition.clone();
@@ -569,29 +343,43 @@ impl PositionHistory {
             track.docked = world.dock_of(*id);
             use crate::protocol::{JobKind, JobView};
             let frac = |t0: f64, secs: f64| {
-                if secs > 0.0 { ((now - t0) / secs).clamp(0.0, 1.0) } else { 1.0 }
+                if secs > 0.0 {
+                    ((now - t0) / secs).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                }
             };
             track.job = match ship.order {
-                sim::ship::FleetOrder::Construct { emplacement, started: Some(t0), .. } => {
-                    let secs =
-                        sim::build::emplacement_recipe(emplacement).build_ticks as f64 * sim::config::DT;
-                    Some(JobView { kind: JobKind::Building, progress: frac(t0, secs) })
+                sim::ship::FleetOrder::Construct {
+                    emplacement,
+                    started: Some(t0),
+                    ..
+                } => {
+                    let secs = sim::build::emplacement_recipe(emplacement).build_ticks as f64
+                        * sim::config::DT;
+                    Some(JobView {
+                        kind: JobKind::Building,
+                        progress: frac(t0, secs),
+                    })
                 }
-                sim::ship::FleetOrder::Demolish { started: Some(t0), .. } => Some(JobView {
+                sim::ship::FleetOrder::Demolish {
+                    started: Some(t0), ..
+                } => Some(JobView {
                     kind: JobKind::Demolishing,
                     progress: frac(t0, sim::emplace::DEMOLISH_SECONDS),
                 }),
                 // Ordered but not yet on site (flying there): committed, no clock.
-                sim::ship::FleetOrder::Construct { started: None, .. } => {
-                    Some(JobView { kind: JobKind::Building, progress: 0.0 })
-                }
-                sim::ship::FleetOrder::Demolish { started: None, .. } => {
-                    Some(JobView { kind: JobKind::Demolishing, progress: 0.0 })
-                }
+                sim::ship::FleetOrder::Construct { started: None, .. } => Some(JobView {
+                    kind: JobKind::Building,
+                    progress: 0.0,
+                }),
+                sim::ship::FleetOrder::Demolish { started: None, .. } => Some(JobView {
+                    kind: JobKind::Demolishing,
+                    progress: 0.0,
+                }),
                 _ => None,
             };
-            let cur: Vec<(Vec2, bool)> =
-                ship.route.iter().map(|l| (l.to, l.lane.is_some())).collect();
+            let cur = order_path(&ship.order, ship.pos);
             let unchanged = track.plans.back().is_some_and(|(_, p)| {
                 // Consumption: the remaining legs are a SUFFIX of the plan in
                 // force — same flight, further along. An empty route is only
@@ -603,9 +391,7 @@ impl PositionHistory {
             if !unchanged {
                 track.plans.push_back((now, cur));
             }
-            while track.plans.len() > 1
-                && track.plans[1].0 <= now - self.horizon
-            {
+            while track.plans.len() > 1 && track.plans[1].0 <= now - self.horizon {
                 track.plans.pop_front();
             }
             track.last_seen = now;
@@ -620,49 +406,8 @@ impl PositionHistory {
                 vel: ship.vel,
                 loud: ship.surveying(),
                 drive: ship.drive_state,
-                in_comms: report_in_comms,
             };
-            if let Some(previous) = track.samples.back().copied()
-                && let Some(boundary) = nominal_bubble_crossing(previous, current, &sites_truth)
-            {
-                track
-                    .bubble_transitions
-                    .push_back((boundary.time, current.in_comms));
-                track.samples.push_back(boundary);
-            }
             track.samples.push_back(current);
-            // §comms-v3.1: advance the mode only after recording this frame, and
-            // only from what the CURRENT mode can serve at `now`. LIVE therefore
-            // runs its replay to the edge; DARK cannot re-enter until that report
-            // has physically arrived. The true hull sample above supplies channel
-            // history, never the presentation decision.
-            let FrontierCache {
-                cursors,
-                comm_epochs,
-                comm_deaths,
-                death_versions,
-                ..
-            } = &mut *frontiers;
-            let epochs = comm_epochs.get(&ship.owner);
-            let ledger_version = death_versions.get(&ship.owner).copied().unwrap_or(0);
-            let cursor = cursors
-                .entry(FrontierKey {
-                    viewer: ship.owner,
-                    track: *id,
-                    path: FrontierPath::DirectOwn,
-                })
-                .or_default();
-            update_presentation_mode_cached(
-                track,
-                cc,
-                &known_delays,
-                now,
-                epochs,
-                comm_deaths,
-                ship.owner,
-                cursor,
-                ledger_version,
-            );
             // Drop samples older than the horizon.
             while let Some(front) = track.samples.front() {
                 if now - front.time > self.horizon {
@@ -670,11 +415,6 @@ impl PositionHistory {
                 } else {
                     break;
                 }
-            }
-            while track.bubble_transitions.len() > 1
-                && track.bubble_transitions[1].0 <= now - self.horizon
-            {
-                track.bubble_transitions.pop_front();
             }
         }
         // §fleets: a fleet can leave true space WITHOUT being destroyed — a colony
@@ -704,8 +444,7 @@ impl PositionHistory {
         // (their last light has passed) — including destroyed ships once every
         // viewer's light has reached the destruction. Keeps memory bounded.
         let horizon = self.horizon;
-        self.tracks
-            .retain(|_, t| now - t.last_seen <= horizon);
+        self.tracks.retain(|_, t| now - t.last_seen <= horizon);
         frontiers
             .cursors
             .retain(|key, _| self.tracks.contains_key(&key.track));
@@ -744,8 +483,16 @@ impl PositionHistory {
     /// (Array-less convenience — production always goes through
     /// [`Self::view_for_with_arrays`]; the many fairness tests use this form.)
     #[cfg(test)]
-    pub fn view_for(&self, viewer: PlayerId, cc: Vec2, delays: &sim::lane::DelayField<'_>, now: f64) -> Vec<GhostView> {
-        self.view_for_with_arrays(viewer, cc, delays, now, &[], &[], &BTreeSet::new(), NodeEffects::default())
+    pub fn view_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<GhostView> {
+        self.view_for_with_arrays(
+            viewer,
+            cc,
+            c,
+            now,
+            &[],
+            &BTreeSet::new(),
+            NodeEffects::default(),
+        )
     }
 
     /// §emplacements: the viewer's SENSOR COVERAGE as `(center, radius)` sources
@@ -761,23 +508,14 @@ impl PositionHistory {
         &self,
         viewer: PlayerId,
         cc: Vec2,
-        delays: &sim::lane::DelayField<'_>,
+        c: f64,
         now: f64,
         arrays: &[(Vec2, f64)],
     ) -> Vec<(Vec2, f64)> {
         let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
         coverage.extend_from_slice(arrays);
         let mut frontiers = self.frontiers.borrow_mut();
-        let FrontierCache {
-            cursors,
-            comm_epochs,
-            comm_deaths,
-            death_versions,
-            ..
-        } = &mut *frontiers;
-        let epochs = comm_epochs.get(&viewer);
-        let ledger_version = death_versions.get(&viewer).copied().unwrap_or(0);
-        let wake_ears = sim::lane::WakeEars::default();
+        let cursors = &mut frontiers.cursors;
         for (id, track) in &self.tracks {
             if track.owner != viewer {
                 continue;
@@ -789,77 +527,11 @@ impl PositionHistory {
                     path: FrontierPath::DirectOwn,
                 })
                 .or_default();
-            if let Some(s) = serve_track_cached(
-                track,
-                cc,
-                delays,
-                now,
-                true,
-                &wake_ears,
-                epochs,
-                comm_deaths,
-                viewer,
-                cursor,
-                ledger_version,
-                0,
-            ) {
+            if let Some(s) = serve_track_cached(track, cc, c, now, cursor) {
                 coverage.push((s.pos, self.sensor_range * track.sensor_mult));
             }
         }
         coverage
-    }
-
-    /// Owner-only served positions at one command-center clock. Relay casualty
-    /// summaries use this exact picture — never authoritative fleet positions —
-    /// to count which markers the vanished bubble uniquely supported.
-    pub fn served_own_positions(
-        &self,
-        viewer: PlayerId,
-        cc: Vec2,
-        delays: &sim::lane::DelayField<'_>,
-        now: f64,
-    ) -> Vec<Vec2> {
-        let mut out = Vec::new();
-        let mut frontiers = self.frontiers.borrow_mut();
-        let FrontierCache {
-            cursors,
-            comm_epochs,
-            comm_deaths,
-            death_versions,
-            ..
-        } = &mut *frontiers;
-        let epochs = comm_epochs.get(&viewer);
-        let ledger_version = death_versions.get(&viewer).copied().unwrap_or(0);
-        let wake_ears = sim::lane::WakeEars::default();
-        for (id, track) in &self.tracks {
-            if track.owner != viewer {
-                continue;
-            }
-            let cursor = cursors
-                .entry(FrontierKey {
-                    viewer,
-                    track: *id,
-                    path: FrontierPath::DirectOwn,
-                })
-                .or_default();
-            if let Some(sample) = serve_track_cached(
-                track,
-                cc,
-                delays,
-                now,
-                true,
-                &wake_ears,
-                epochs,
-                comm_deaths,
-                viewer,
-                cursor,
-                ledger_version,
-                0,
-            ) {
-                out.push(sample.pos);
-            }
-        }
-        out
     }
 
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
@@ -878,12 +550,9 @@ impl PositionHistory {
         &self,
         viewer: PlayerId,
         cc: Vec2,
-        delays: &sim::lane::DelayField<'_>,
+        c: f64,
         now: f64,
         arrays: &[(Vec2, f64)],
-        // §coupled: the viewer's HYPERSPACE SENSORS resolved onto their lanes —
-        // the tripwires that hear rival traffic riding a listened lane.
-        ears: &[sim::lane::Relay],
         // Fleets FORCE-REVEALED by weapons fire (§battles-take-time): battle
         // participants whose battle-light has reached the viewer are shown at the
         // site even if dark and out of coverage — fighting means being seen.
@@ -906,17 +575,15 @@ impl PositionHistory {
             docked: Option<sim::DockSite>,
             /// §emplacements: build progress (served own-only).
             job: Option<crate::protocol::JobView>,
-            path: Vec<(Vec2, bool)>,
+            path: Vec<Vec2>,
             composition: &'a BTreeMap<ShipKind, u32>,
-            loadouts: &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
+            loadouts:
+                &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
             sample: Sample,
             cargo: Option<Cargo>,
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
-            /// Whether the owner's TRUE hull is currently inside a presentation
-            /// bubble. It is the only own-fleet marker mode sent to the client.
-            in_comms: bool,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
             /// detection to that pre-destruction frame so a *post*-destruction
@@ -931,30 +598,17 @@ impl PositionHistory {
         // its OWN radius — a developed array outsees a ship).
         let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
         coverage.extend_from_slice(arrays);
-        // §comms-v3.2: one routed ear→CC solve per listening post for this
-        // viewer/view. Every historical wake considered below then pays only
-        // nearest-lane projection and along-arc arithmetic.
-        let wake_ears = delays.prepare_wake_ears(cc, ears);
         let mut frontiers = self.frontiers.borrow_mut();
-        let FrontierCache {
-            cursors,
-            comm_epochs,
-            comm_deaths,
-            death_versions,
-            ..
-        } = &mut *frontiers;
-        let epochs = comm_epochs.get(&viewer);
-        let ledger_version = death_versions.get(&viewer).copied().unwrap_or(0);
+        let cursors = &mut frontiers.cursors;
         for (id, track) in &self.tracks {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
             // center; only THEN does it vanish. Before that, serve it normally.
             if let Some((dt, dpos)) = track.gone
-                && now >= dt + delays.between(dpos, cc)
+                && now >= dt + sim::transit::delay(dpos, cc, c)
             {
                 continue; // the destruction has been observed — it's gone
             }
-            let own = track.owner == viewer;
             let cursor = cursors
                 .entry(FrontierKey {
                     viewer,
@@ -962,20 +616,7 @@ impl PositionHistory {
                     path: FrontierPath::Composite,
                 })
                 .or_default();
-            let Some(sample) = serve_track_cached(
-                track,
-                cc,
-                delays,
-                now,
-                own,
-                &wake_ears,
-                epochs,
-                comm_deaths,
-                viewer,
-                cursor,
-                ledger_version,
-                0,
-            ) else {
+            let Some(sample) = serve_track_cached(track, cc, c, now, cursor) else {
                 continue; // dark — no light from this object has arrived yet
             };
             if track.owner == viewer {
@@ -1014,7 +655,6 @@ impl PositionHistory {
                 passengers: &track.passengers,
                 modules: &track.modules,
                 route: &track.route,
-                in_comms: own && track.in_comms,
                 destroyed_detected,
             });
         }
@@ -1036,11 +676,9 @@ impl PositionHistory {
                 // §node Veil: a dark fleet in its OWNER's active magnetar region is
                 // quieter — the SAME `signature` the sim pickets scale, kept in one
                 // place so concealment never desyncs between the two detection paths.
-                let veil = if nodes
-                    .veil
-                    .iter()
-                    .any(|(o, c)| *o == p.owner && c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS)
-                {
+                let veil = if nodes.veil.iter().any(|(o, c)| {
+                    *o == p.owner && c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS
+                }) {
                     sim::node::VEIL_SIGNATURE_MULT
                 } else {
                     1.0
@@ -1048,8 +686,14 @@ impl PositionHistory {
                 // §explore Part 2: ACTIVE SENSING IS LOUD — a fleet surveying at
                 // the retarded sample carries the survey multiplier, exactly the
                 // same factor the sim's pickets apply (parity, one seam).
-                let survey = if p.sample.loud { sim::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 };
-                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed) * veil * survey
+                let survey = if p.sample.loud {
+                    sim::explore::SURVEY_SIGNATURE_FACTOR
+                } else {
+                    1.0
+                };
+                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
+                    * veil
+                    * survey
             };
             let in_coverage = within_coverage(&coverage, p.sample.pos);
             // Weapons fire is LOUD: a battle participant whose battle-light has
@@ -1069,7 +713,11 @@ impl PositionHistory {
             }
             // What the viewer may READ off it: a seen dark fleet reveals all; a
             // broadcaster reveals cargo/composition only inside plain coverage.
-            let reveal = if p.broadcasts { own || in_coverage } else { true };
+            let reveal = if p.broadcasts {
+                own || in_coverage
+            } else {
+                true
+            };
             let detected = reveal;
 
             // ONE law governs ALL information — it travels at lightspeed with NO
@@ -1096,7 +744,11 @@ impl PositionHistory {
             let route = if is_convoy { p.route.clone() } else { None };
             // §economy Part 4: PASSENGERS obey the same tier-2 rule as cargo —
             // part of the manifest, shown exactly when the manifest is.
-            let passengers = if detected { p.passengers.clone() } else { Default::default() };
+            let passengers = if detected {
+                p.passengers.clone()
+            } else {
+                Default::default()
+            };
             let cargo = if detected {
                 p.cargo.map(|cg| CargoView {
                     commodity: cg.commodity,
@@ -1120,7 +772,10 @@ impl PositionHistory {
                 Some(
                     p.composition
                         .iter()
-                        .map(|(k, n)| CompCount { kind: *k, count: *n })
+                        .map(|(k, n)| CompCount {
+                            kind: *k,
+                            count: *n,
+                        })
                         .collect::<Vec<_>>(),
                 )
             } else {
@@ -1129,7 +784,11 @@ impl PositionHistory {
             // §roster: how BEATEN UP the fleet is rides the same reveal — a close
             // look tells you they're hurt, a distant bucket does not. A fraction
             // only: the roster never goes on the wire at any fidelity.
-            let damage = if own || detected || deep { Some(p.damage_frac) } else { None };
+            let damage = if own || detected || deep {
+                Some(p.damage_frac)
+            } else {
+                None
+            };
             // §dock: ungated — see `GhostView::docked`. "hub" or the system id.
             let docked = p.docked.map(|d| match d {
                 sim::DockSite::Hub => "hub".to_string(),
@@ -1156,7 +815,11 @@ impl PositionHistory {
             };
             // §modules Part B3: crate MANIFEST obeys the tier-2 manifest rule (like
             // passengers) — shown exactly when the rest of the manifest is.
-            let modules = if detected { p.modules.clone() } else { Default::default() };
+            let modules = if detected {
+                p.modules.clone()
+            } else {
+                Default::default()
+            };
 
             ghosts.push(GhostView {
                 docked,
@@ -1164,7 +827,7 @@ impl PositionHistory {
                 path: own.then(|| {
                     p.path
                         .iter()
-                        .map(|(pos, lane)| crate::protocol::PathPointView { pos: *pos, lane: *lane })
+                        .map(|pos| crate::protocol::PathPointView { pos: *pos })
                         .collect()
                 }),
                 drive: Some(p.sample.drive),
@@ -1175,7 +838,6 @@ impl PositionHistory {
                 pos: p.sample.pos,
                 vel: p.sample.vel,
                 age,
-                in_comms: p.in_comms,
                 own,
                 route,
                 cargo,
@@ -1220,27 +882,19 @@ impl PositionHistory {
     }
 
     /// The viewer's CURRENT SIGHTING of their own ship: position, velocity,
-    /// coupling, and the remaining portion of the plan in force in that same
+    /// and the remaining portion of the plan in force in that same
     /// retarded frame. These are the only inputs the order comet may use to solve
     /// its meeting point; the hidden true fleet never enters the graphic.
     pub fn observed_sighting(
         &self,
         ship_id: EntityId,
         cc: Vec2,
-        delays: &sim::lane::DelayField<'_>,
+        c: f64,
         now: f64,
     ) -> Option<ObservedSighting> {
         let track = self.tracks.get(&ship_id)?;
         let mut frontiers = self.frontiers.borrow_mut();
-        let FrontierCache {
-            cursors,
-            comm_epochs,
-            comm_deaths,
-            death_versions,
-            ..
-        } = &mut *frontiers;
-        let epochs = comm_epochs.get(&track.owner);
-        let ledger_version = death_versions.get(&track.owner).copied().unwrap_or(0);
+        let cursors = &mut frontiers.cursors;
         let cursor = cursors
             .entry(FrontierKey {
                 viewer: track.owner,
@@ -1248,32 +902,10 @@ impl PositionHistory {
                 path: FrontierPath::DirectOwn,
             })
             .or_default();
-        let sample = serve_track_cached(
-            track,
-            cc,
-            delays,
-            now,
-            true,
-            &sim::lane::WakeEars::default(),
-            epochs,
-            comm_deaths,
-            track.owner,
-            cursor,
-            ledger_version,
-            0,
-        )?;
-        let route = track
-            .plans
-            .iter()
-            .rev()
-            .find(|(t, _)| *t <= sample.time)
-            .map(|(_, plan)| remaining_plan_from_sighting(sample.pos, plan))
-            .unwrap_or_default();
+        let sample = serve_track_cached(track, cc, c, now, cursor)?;
         Some(ObservedSighting {
             pos: sample.pos,
             vel: sample.vel,
-            coupled: sample.drive.stirs_the_lane(),
-            route,
         })
     }
 
@@ -1331,7 +963,7 @@ pub fn filter_anchors(
     slots: &[HomeSlot],
     viewer: PlayerId,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
 ) -> Vec<AnchorView> {
     slots
@@ -1340,7 +972,7 @@ pub fn filter_anchors(
             let owner = match (slot.owner, slot.claimed_at) {
                 (Some(owner), _) if owner == viewer => Some(owner),
                 (Some(owner), Some(claimed_at)) => {
-                    let arrival = claimed_at + delays.between(slot.pos, cc);
+                    let arrival = claimed_at + sim::transit::delay(slot.pos, cc, c);
                     if arrival <= now {
                         Some(owner)
                     } else {
@@ -1387,7 +1019,7 @@ pub fn filter_systems(
     systems: &[StarSystem],
     viewer: PlayerId,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
     build_queue: &[sim::BuildJob],
     tick: u64,
@@ -1403,7 +1035,7 @@ pub fn filter_systems(
             let owner = match (sys.owner, sys.claimed_at) {
                 (Some(owner), _) if owner == viewer => Some(owner),
                 (Some(owner), Some(claimed_at)) => {
-                    let arrival = claimed_at + delays.between(sys.pos, cc);
+                    let arrival = claimed_at + sim::transit::delay(sys.pos, cc, c);
                     if arrival <= now {
                         Some(owner)
                     } else {
@@ -1418,7 +1050,10 @@ pub fn filter_systems(
                     .iter()
                     .filter_map(|(commodity, amount)| {
                         let units = amount.floor() as u32;
-                        (units >= 1).then_some(StockSlot { commodity: *commodity, units })
+                        (units >= 1).then_some(StockSlot {
+                            commodity: *commodity,
+                            units,
+                        })
                     })
                     .collect()
             });
@@ -1461,8 +1096,13 @@ pub fn filter_systems(
             // notice. Third parties get None (they see the fight via `battles`).
             let blockade = sys.blockade.and_then(|b| {
                 let by_me = b.by == viewer;
-                let owner_sees = own && now >= b.since + delays.between(sys.pos, cc);
-                (by_me || owner_sees).then_some(BlockadeStateView { by: b.by, since: b.since, by_me, siege_since: b.siege_since })
+                let owner_sees = own && now >= b.since + sim::transit::delay(sys.pos, cc, c);
+                (by_me || owner_sees).then_some(BlockadeStateView {
+                    by: b.by,
+                    since: b.since,
+                    by_me,
+                    siege_since: b.siege_since,
+                })
             });
             // §ground: what a landing here would have to beat. Same two-viewer
             // rule as the blockade, for the same reason — but NOT light-gated:
@@ -1483,7 +1123,11 @@ pub fn filter_systems(
                     // comparing two numbers (see `ground::break_even_marines`).
                     marines_needed: sim::ground::break_even_marines(
                         sys.tier_sum(sim::StructureKind::Garrison) as f64,
-                        if sys.garrison_fed { sys.garrison_suppression } else { 1.0 },
+                        if sys.garrison_fed {
+                            sys.garrison_suppression
+                        } else {
+                            1.0
+                        },
                     )
                     .ceil() as u32,
                     // §ground G4: filled in by the game loop, which has the
@@ -1505,24 +1149,62 @@ pub fn filter_systems(
                 // private intel. Gating it also avoids leaking an upgrade to a rival
                 // FASTER THAN LIGHT (the field would otherwise update the instant it
                 // lands, unlike the light-gated `owner`). Rivals see tier 0.
-                extractor_tier: if own { sys.tier(sim::StructureKind::MiningComplex) } else { 0 },
-                orbital_warehouse_tier: if own { sys.tier(sim::StructureKind::OrbitalWarehouse) } else { 0 },
-                shipyard_tier: if own { sys.tier(sim::StructureKind::Shipyard) } else { 0 },
-                sensor_tier: if own { sys.tier(sim::StructureKind::SensorArray) } else { 0 },
+                extractor_tier: if own {
+                    sys.tier(sim::StructureKind::MiningComplex)
+                } else {
+                    0
+                },
+                orbital_warehouse_tier: if own {
+                    sys.tier(sim::StructureKind::OrbitalWarehouse)
+                } else {
+                    0
+                },
+                shipyard_tier: if own {
+                    sys.tier(sim::StructureKind::Shipyard)
+                } else {
+                    0
+                },
+                sensor_tier: if own {
+                    sys.tier(sim::StructureKind::SensorArray)
+                } else {
+                    0
+                },
                 // A rival NEVER sees a platform in the View — it reveals itself
                 // only through engagement outcomes (delayed battle reports).
-                defense_tier: if own { sys.tier(sim::StructureKind::DefensePlatform) } else { 0 },
-                habitat_tier: if own { sys.tier(sim::StructureKind::Habitat) } else { 0 },
+                defense_tier: if own {
+                    sys.tier(sim::StructureKind::DefensePlatform)
+                } else {
+                    0
+                },
+                habitat_tier: if own {
+                    sys.tier(sim::StructureKind::Habitat)
+                } else {
+                    0
+                },
                 // A rival must never learn whether your colonies are starving.
                 // (§economy Part 2: `habitat_fed` is the legacy wire alias for
                 // "Well Supplied" — the client's amber tint keys off it.)
                 habitat_fed: own && sys.food_state == sim::FoodState::WellSupplied,
-                food_state: if own { sys.food_state } else { sim::FoodState::WellSupplied }.slug().to_string(),
+                food_state: if own {
+                    sys.food_state
+                } else {
+                    sim::FoodState::WellSupplied
+                }
+                .slug()
+                .to_string(),
                 population: if own { sys.population() } else { 0.0 },
                 // §economy Part 4: your talent is private intel.
-                specialists: if own { sys.specialists.clone() } else { Default::default() },
+                specialists: if own {
+                    sys.specialists.clone()
+                } else {
+                    Default::default()
+                },
                 // §modules Part B3: your armory (module ledger) is private intel.
-                modules: if own { sys.modules.clone() } else { Default::default() },
+                modules: if own {
+                    sys.modules.clone()
+                } else {
+                    Default::default()
+                },
                 // §bodies: the roster is PUBLIC geography (a star's worlds are
                 // visible from afar); deposits ride the survey ladder; the
                 // per-body owner block is owner-only — fog one level down.
@@ -1538,11 +1220,18 @@ pub fn filter_systems(
                         deposits: (own || surveyed.contains(&sys.id)).then(|| {
                             b.deposits
                                 .iter()
-                                .map(|d| DepositView { resource: d.resource, richness: d.richness, reserves: d.reserves })
+                                .map(|d| DepositView {
+                                    resource: d.resource,
+                                    richness: d.richness,
+                                    reserves: d.reserves,
+                                })
                                 .collect()
                         }),
                         structures: if own {
-                            b.structures.iter().map(|(k, t)| (k.slug().to_string(), *t)).collect()
+                            b.structures
+                                .iter()
+                                .map(|(k, t)| (k.slug().to_string(), *t))
+                                .collect()
                         } else {
                             Default::default()
                         },
@@ -1567,16 +1256,32 @@ pub fn filter_systems(
                 }),
                 // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
                 // owner-only (rivals: empty — production is private intel).
-                assignments: if own { assignment_views(sys) } else { Vec::new() },
+                assignments: if own {
+                    assignment_views(sys)
+                } else {
+                    Vec::new()
+                },
                 // §economy: idle-converter status for the system-view banner (owner-only).
-                converters: if own { converter_statuses(sys) } else { Vec::new() },
-                refinery_tier: if own { sys.tier(sim::StructureKind::FuelRefinery) } else { 0 },
+                converters: if own {
+                    converter_statuses(sys)
+                } else {
+                    Vec::new()
+                },
+                refinery_tier: if own {
+                    sys.tier(sim::StructureKind::FuelRefinery)
+                } else {
+                    0
+                },
                 slots_used: if own { slots_used } else { 0 },
                 slots_total: if own { sys.dev_slots() } else { 0 },
                 // Storage (§buildings step 2) — owner-only like everything above.
                 // `used` is floored to whole units to match the stockpile readout.
                 storage_cap: if own { sys.storage_cap() as u32 } else { 0 },
-                storage_used: if own { sys.storage_used().floor() as u32 } else { 0 },
+                storage_used: if own {
+                    sys.storage_used().floor() as u32
+                } else {
+                    0
+                },
                 // The viewer's OWN scout intel about this rival system (§scout
                 // part 2), delivered only once the capture's light — from where
                 // the scout stood — has reached the viewer's command center. It
@@ -1589,7 +1294,7 @@ pub fn filter_systems(
                     // Your OWN scout snapshot (direct, no provenance) — delivered
                     // once its light reached your command center — is authoritative.
                     let own_iv = intel.get(&sys.id).and_then(|snap| {
-                        let arrival = snap.observed_at + delays.between(snap.pos, cc);
+                        let arrival = snap.observed_at + sim::transit::delay(snap.pos, cc, c);
                         (arrival <= now).then_some(IntelView {
                             defense_tier: snap.defense_tier,
                             shipyard_tier: snap.shipyard_tier,
@@ -1607,9 +1312,11 @@ pub fn filter_systems(
                         let mut best: Option<IntelView> = None;
                         let mut best_obs = f64::NEG_INFINITY;
                         for a in allies {
-                            let Some(snap) = a.intel.get(&sys.id) else { continue };
-                            let t2 = snap.observed_at + delays.between(snap.pos, a.cc);
-                            let t3 = t2 + delays.between(a.cc, cc);
+                            let Some(snap) = a.intel.get(&sys.id) else {
+                                continue;
+                            };
+                            let t2 = snap.observed_at + sim::transit::delay(snap.pos, a.cc, c);
+                            let t3 = t2 + sim::transit::delay(a.cc, cc, c);
                             if now >= t3 && snap.observed_at > best_obs {
                                 best_obs = snap.observed_at;
                                 best = Some(IntelView {
@@ -1676,11 +1383,17 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
             let food = sim::production::food_factor(*kind, sys.food_state);
             let mut outputs: Vec<(Commodity, f64)> = Vec::new();
             if let Some(conv) = sim::production::converter_for(*kind) {
-                outputs.push((conv.output, conv.rate * throughput * staffing * skill * food));
+                outputs.push((
+                    conv.output,
+                    conv.rate * throughput * staffing * skill * food,
+                ));
             } else {
                 for d in &body.deposits {
                     if sim::production::extraction_structure(d.resource) == Some(*kind) {
-                        outputs.push((d.resource, d.richness * throughput * staffing * skill * food));
+                        outputs.push((
+                            d.resource,
+                            d.richness * throughput * staffing * skill * food,
+                        ));
                     }
                 }
             }
@@ -1746,10 +1459,17 @@ fn converter_statuses(sys: &sim::StarSystem) -> Vec<crate::protocol::ConverterSt
 /// Per-kind counts → wire form. `exact` is filled ONLY at participant fidelity;
 /// the [`CountClass`] bucket is always present, so a third party never learns a
 /// true count (the leak-safe fidelity spine).
-fn record_counts(m: &std::collections::BTreeMap<ShipKind, u32>, participant: bool) -> Vec<RecordCount> {
+fn record_counts(
+    m: &std::collections::BTreeMap<ShipKind, u32>,
+    participant: bool,
+) -> Vec<RecordCount> {
     m.iter()
         .filter(|(_, n)| **n > 0)
-        .map(|(k, n)| RecordCount { kind: *k, exact: participant.then_some(*n), class: CountClass::from_count(*n) })
+        .map(|(k, n)| RecordCount {
+            kind: *k,
+            exact: participant.then_some(*n),
+            class: CountClass::from_count(*n),
+        })
         .collect()
 }
 
@@ -1764,7 +1484,11 @@ fn record_note(n: &sim::RoundNote, participant: bool) -> Option<RoundNoteView> {
         comp,
     };
     Some(match n {
-        N::Joined { side, comp } => mk("joined", Some(*side), Some(record_counts(comp, participant))),
+        N::Joined { side, comp } => mk(
+            "joined",
+            Some(*side),
+            Some(record_counts(comp, participant)),
+        ),
         N::MutualDisengage => mk("mutual_disengage", None, None),
         N::RetreatTripped { side } if participant => mk("retreat_tripped", Some(*side), None),
         N::WithdrawOrdered { side } if participant => mk("withdraw_ordered", Some(*side), None),
@@ -1777,10 +1501,20 @@ fn record_note(n: &sim::RoundNote, participant: bool) -> Option<RoundNoteView> {
 fn record_round(rr: &sim::RoundRecord, participant: bool) -> RoundRecordView {
     RoundRecordView {
         tick: rr.tick,
-        counts: [record_counts(&rr.counts[0], participant), record_counts(&rr.counts[1], participant)],
-        kills: [record_counts(&rr.kills[0], participant), record_counts(&rr.kills[1], participant)],
+        counts: [
+            record_counts(&rr.counts[0], participant),
+            record_counts(&rr.counts[1], participant),
+        ],
+        kills: [
+            record_counts(&rr.kills[0], participant),
+            record_counts(&rr.kills[1], participant),
+        ],
         dealt: participant.then_some(rr.dealt),
-        notes: rr.notes.iter().filter_map(|n| record_note(n, participant)).collect(),
+        notes: rr
+            .notes
+            .iter()
+            .filter_map(|n| record_note(n, participant))
+            .collect(),
         // §T3: truth keyframes ride PARTICIPANT fidelity only (fog-safe — a
         // bucket observer never learns the arena's geometry).
         frame: if participant { rr.frame.clone() } else { None },
@@ -1801,11 +1535,11 @@ pub fn battle_record_views(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
     coverage: &[(Vec2, f64)],
 ) -> Vec<BattleRecordView> {
-    battle_record_views_named(records, viewer, cc, delays, now, coverage, &|_| None)
+    battle_record_views_named(records, viewer, cc, c, now, coverage, &|_| None)
 }
 
 /// §perf Part A: what a viewer may see of one record RIGHT NOW — the cheap
@@ -1841,14 +1575,14 @@ pub fn visible_record_specs(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
     coverage: &[(Vec2, f64)],
     flagship_of: &dyn Fn(PlayerId) -> Option<String>,
 ) -> Vec<RecordSpec> {
     let mut out = Vec::new();
     for r in records.values() {
-        let delay = delays.between(r.pos, cc);
+        let delay = sim::transit::delay(r.pos, cc, c);
         let arrived = |tick: u64| (tick as f64) * sim::DT + delay <= now;
         // The battle only exists to a viewer once its opening light arrived.
         if !arrived(r.started_tick) {
@@ -1886,9 +1620,15 @@ pub fn visible_record_specs(
             .filter(|t| arrived(*t))
             .and_then(|_| r.outcome.as_ref().map(|o| o.outcome));
         let name_of = |s: usize| {
-            (participant && r.sides[s].initial.get(&sim::ShipKind::Titan).copied().unwrap_or(0) > 0)
-                .then(|| flagship_of(r.sides[s].corp))
-                .flatten()
+            (participant
+                && r.sides[s]
+                    .initial
+                    .get(&sim::ShipKind::Titan)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0)
+            .then(|| flagship_of(r.sides[s].corp))
+            .flatten()
         };
         out.push(RecordSpec {
             id: r.id,
@@ -1928,13 +1668,13 @@ pub fn visible_ground_specs(
     records: &BTreeMap<sim::EntityId, sim::ground::GroundRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
     coverage: &[(Vec2, f64)],
 ) -> Vec<GroundSpec> {
     let mut out = Vec::new();
     for r in records.values() {
-        let delay = delays.between(r.pos, cc);
+        let delay = sim::transit::delay(r.pos, cc, c);
         let arrived = |tick: u64| (tick as f64) * sim::DT + delay <= now;
         if !arrived(r.started_tick) {
             continue;
@@ -1956,13 +1696,17 @@ pub fn visible_ground_specs(
             frontier = rr.tick;
             arrived_len += 1;
         }
-        let outcome = r.ended_tick.filter(|t| arrived(*t)).and(r.outcome).map(|o| {
-            match o {
-                sim::ground::GroundOutcome::Taken => "taken",
-                sim::ground::GroundOutcome::Repulsed => "repulsed",
-            }
-            .to_string()
-        });
+        let outcome = r
+            .ended_tick
+            .filter(|t| arrived(*t))
+            .and(r.outcome)
+            .map(|o| {
+                match o {
+                    sim::ground::GroundOutcome::Taken => "taken",
+                    sim::ground::GroundOutcome::Repulsed => "repulsed",
+                }
+                .to_string()
+            });
         out.push(GroundSpec {
             id: r.id,
             fidelity,
@@ -2048,12 +1792,16 @@ pub fn record_header(r: &sim::BattleRecord, spec: &RecordSpec) -> BattleRecordHe
         // §modules B5: fits ride PARTICIPANT fidelity only (fog-safe — a
         // distant bucket observer never learns what a side was carrying).
         loadouts: if participant {
-            r.sides[s].initial_loadouts.iter()
-                .flat_map(|(k, m)| m.iter().map(move |(key, n)| LoadoutStack {
-                    kind: *k,
-                    modules: sim::Loadout::from_key(key).modules().to_vec(),
-                    n: *n,
-                }))
+            r.sides[s]
+                .initial_loadouts
+                .iter()
+                .flat_map(|(k, m)| {
+                    m.iter().map(move |(key, n)| LoadoutStack {
+                        kind: *k,
+                        modules: sim::Loadout::from_key(key).modules().to_vec(),
+                        n: *n,
+                    })
+                })
                 .collect()
         } else {
             Vec::new()
@@ -2085,7 +1833,10 @@ pub fn record_rounds_range(
 ) -> Vec<RoundRecordView> {
     let to = to.min(r.rounds.len());
     let from = from.min(to);
-    r.rounds[from..to].iter().map(|rr| record_round(rr, participant)).collect()
+    r.rounds[from..to]
+        .iter()
+        .map(|rr| record_round(rr, participant))
+        .collect()
 }
 
 /// §ladder B4: the full builder — `flagship_of(corp)` resolves a side's
@@ -2100,12 +1851,12 @@ pub fn battle_record_views_named(
     records: &std::collections::BTreeMap<EntityId, sim::BattleRecord>,
     viewer: PlayerId,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
     coverage: &[(Vec2, f64)],
     flagship_of: &dyn Fn(PlayerId) -> Option<String>,
 ) -> Vec<BattleRecordView> {
-    visible_record_specs(records, viewer, cc, delays, now, coverage, flagship_of)
+    visible_record_specs(records, viewer, cc, c, now, coverage, flagship_of)
         .into_iter()
         .filter_map(|spec| {
             let r = records.get(&spec.id)?;
@@ -2160,21 +1911,47 @@ pub fn visible_manifest(
 /// Stable key string for a buildable thing (matches the client's build commands).
 pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
-        sim::BuildKind::Ship { ship: sim::ShipKind::Builder } => "builder",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Convoy } => "convoy",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Raider } => "raider",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Corvette } => "corvette",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Colony } => "colony",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Transport } => "transport",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Builder,
+        } => "builder",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Convoy,
+        } => "convoy",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Raider,
+        } => "raider",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Corvette,
+        } => "corvette",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Colony,
+        } => "colony",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Transport,
+        } => "transport",
         // §TCA: the Authority Freighter is never a corp build option — a defensive
         // key so the match stays total (absent from the client build menu).
-        sim::BuildKind::Ship { ship: sim::ShipKind::Freighter } => "freighter",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Scout } => "scout",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Destroyer } => "destroyer",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Cruiser } => "cruiser",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Battleship } => "battleship",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Dreadnought } => "dreadnought",
-        sim::BuildKind::Ship { ship: sim::ShipKind::Titan } => "titan",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Freighter,
+        } => "freighter",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Scout,
+        } => "scout",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Destroyer,
+        } => "destroyer",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Cruiser,
+        } => "cruiser",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Battleship,
+        } => "battleship",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Dreadnought,
+        } => "dreadnought",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::Titan,
+        } => "titan",
         sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
         // §economy Part 4: Academy courses key by profession slug.
         sim::BuildKind::Train { specialist } => specialist.slug(),
@@ -2200,7 +1977,8 @@ pub struct PriceHistory {
 
 impl PriceHistory {
     pub fn for_world(world: &World) -> Self {
-        let max_delay = (2.0 * world.config.galaxy_radius) / world.config.c;
+        let max_delay =
+            (2.0 * world.config.galaxy_radius) / sim::transit::signal_speed(world.config.c);
         PriceHistory {
             samples: VecDeque::new(),
             horizon: max_delay * 1.25 + 1.0,
@@ -2252,7 +2030,9 @@ impl PriceHistory {
 /// radii so ship bubbles (global range) and sensor-array bubbles (per-tier range)
 /// share one union — the single coverage predicate.
 pub(crate) fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
-    sources.iter().any(|(center, radius)| p.distance(*center) <= *radius)
+    sources
+        .iter()
+        .any(|(center, radius)| p.distance(*center) <= *radius)
 }
 
 /// The broadcast route (waypoints) implied by a ship's current order, if any.
@@ -2264,751 +2044,92 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
     }
 }
 
-/// Consume the untrimmed served plan from the served position. Track plans keep
-/// the route as it was when issued (later remaining legs are only a suffix), so
-/// replaying every waypoint would send a meeting solve backwards. This mirrors
-/// the map's projection rule: select the nearest plan segment and retain only
-/// the waypoint ahead of that projection plus its suffix. A newly-started route
-/// can still be approaching waypoint zero because `LaneNetwork::route` omits its
-/// origin; a projection clamped to the first segment's start therefore retains
-/// the whole plan.
-fn remaining_plan_from_sighting(pos: Vec2, plan: &[(Vec2, bool)]) -> Vec<Vec2> {
-    if plan.len() < 2 {
-        return plan.iter().map(|(point, _)| *point).collect();
+/// The direct destination geometry in force at this sample. Moving targets have
+/// no fixed plan to disclose; their eventual course remains a served sighting.
+fn order_path(order: &FleetOrder, _pos: Vec2) -> Vec<Vec2> {
+    match order {
+        FleetOrder::MoveTo { dest } => vec![*dest],
+        FleetOrder::Patrol {
+            waypoints, index, ..
+        } if !waypoints.is_empty() => (0..waypoints.len())
+            .map(|offset| waypoints[(index + offset) % waypoints.len()])
+            .collect(),
+        FleetOrder::Construct { site, .. }
+        | FleetOrder::Demolish { site, .. }
+        | FleetOrder::Blockade { station: site, .. }
+        | FleetOrder::Survey { station: site, .. } => vec![*site],
+        _ => Vec::new(),
     }
-
-    let mut best_distance = f64::INFINITY;
-    let mut best_next = 0;
-    let mut best_t = 0.0;
-    for next in 1..plan.len() {
-        let a = plan[next - 1].0;
-        let b = plan[next].0;
-        let ab = b - a;
-        let len2 = ab.dot(ab);
-        let t = if len2 > 1e-9 {
-            ((pos - a).dot(ab) / len2).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let projected = a + ab * t;
-        let distance = pos.distance(projected);
-        if distance < best_distance {
-            best_distance = distance;
-            best_next = next;
-            best_t = t;
-        }
-    }
-
-    if best_next == 1 && best_t <= 1e-9 {
-        best_next = 0;
-    }
-    plan[best_next..]
-        .iter()
-        .map(|(point, _)| *point)
-        .collect()
 }
 
-/// The latest sample whose light has reached `cc` by `now`. Fixed sub-signal
-/// channels have strictly increasing `arrival(t)`; rival bow waves and channel
-/// seams may reorder it. The cursor handles both by evaluating each report once
-/// when it is emitted, then consuming its cached arrival instead of rescanning.
-/// `own`: whether the viewer OWNS this track. §coupled — an own fleet riding a
-/// lane transmits its report through the lane it is in, so those samples travel
-/// at lane signal speed and its picture stays fresh even when the hull outruns
-/// warp-speed light. A RIVAL's fleet transmits nothing to this viewer: it is
-/// seen passively, so its lane transits still arrive ahead of the news of them
-/// — the bow wave stays a weapon, it just stops being friendly fire.
-/// `ears`: the viewer's HYPERSPACE SENSORS, resolved onto the lanes they sit
-/// in. §coupled — a rival hull riding a lane makes a wake in the medium, and a
-/// listening post on that lane hears it and reports home at lane speed. Passive
-/// light still governs everything the wire does not cover, so a raider that
-/// drops to warp and goes around stays quiet — slower, off the tripwire.
-/// §smooth-light: the widest arrival gap the serve-interpolation will bridge.
-/// Consecutive 30 Hz snapshots arrive ~one tick apart (compressed or stretched
-/// a little by the ship's motion along its signal path); anything wider is a
-/// channel seam or a bow-wave rush, where discrete serving is the honest form.
+/// The latest sample whose straight warp-light report has reached `cc` by `now`.
+/// Each emission is priced once and kept in the arrival heap. The heap is
+/// required even though cruising arrivals are monotone: a jump can make landing
+/// light overtake older departure light.
 const SMOOTH_BRACKET_MAX: f64 = 0.5;
 
-/// Insert the exact nominal-circle report when a tick segment crosses the union
-/// of owned comm bubbles. A 30 Hz endpoint alone can miss the rendered edge by a
-/// fastest-hull tick (hundreds of su); bisection makes the report that later pins
-/// the arrow agree with the circle rather than merely land near it.
-fn nominal_bubble_crossing(
-    older: Sample,
-    newer: Sample,
-    sites: &[sim::lane::CommSite],
-) -> Option<Sample> {
-    let (frac, _pos, _inside) = sim::lane::comm_bubble_crossing(
-        older.pos,
-        newer.pos,
-        older.in_comms,
-        newer.in_comms,
-        sites,
-    )?;
-    let mut boundary = Sample::interpolate(&older, &newer, frac);
-    boundary.in_comms = true;
-    Some(boundary)
-}
-
 #[cfg(test)]
-fn serve_track(
-    track: &Track,
-    cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    now: f64,
-    own: bool,
-    ears: &[sim::lane::Relay],
-) -> Option<Sample> {
-    let wake_ears = delays.prepare_wake_ears(cc, ears);
-    let mut cursor = FrontierCursor::default();
-    serve_track_cached(
-        track,
-        cc,
-        delays,
-        now,
-        own,
-        &wake_ears,
-        None,
-        &[],
-        track.owner,
-        &mut cursor,
-        1,
-        1,
-    )
+fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, c: f64, now: f64) -> Option<Sample> {
+    latest_observable_cached(samples, cc, c, now, &mut FrontierCursor::default())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn serve_track_cached(
     track: &Track,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
-    own: bool,
-    ears: &sim::lane::WakeEars,
-    epochs: Option<&VecDeque<CommEpoch>>,
-    deaths: &[sim::world::CommDeath],
-    viewer: PlayerId,
     cursor: &mut FrontierCursor,
-    relay_version: u64,
-    ear_version: u64,
 ) -> Option<Sample> {
-    if own && track.in_comms {
-        // LIVE is a delayed replay, not extrapolated truth: advance the emission
-        // horizon at one sim-second per sim-second using the eased route delay.
-        // Once that horizon reaches an exit event, hold the exact crossing report
-        // until its copy arrives home. It is therefore both the last LIVE picture
-        // and the first DARK hold; the mode change cannot move the marker.
-        let picture = latest_emitted(&track.samples, now - track.live_delay)?;
-        let exit = track
-            .bubble_transitions
-            .iter()
-            .rev()
-            .find(|(time, _)| *time <= picture.time + 1e-9)
-            .filter(|(_, in_comms)| !*in_comms);
-        exit.and_then(|(time, _)| latest_emitted(&track.samples, *time))
-            .or(Some(picture))
-    } else {
-        // DARK remains the strict arrival gate. The last report emitted inside
-        // the bubble retains its fast channel and therefore pins the arrow at
-        // the exit until the first post-exit warp report actually arrives.
-        latest_observable_cached(
-            &track.samples,
-            cc,
-            delays,
-            now,
-            own,
-            ears,
-            epochs,
-            deaths,
-            viewer,
-            cursor,
-            relay_version,
-            ear_version,
-        )
-    }
+    latest_observable_cached(&track.samples, cc, c, now, cursor)
 }
 
-/// Advance one own fleet's presentation mode in the frame the player actually
-/// sees. Each side asks its own serving path for a picture first: LIVE evaluates
-/// the delayed replay; DARK evaluates only reports whose light has arrived. This
-/// ordering is the anti-leak guarantee at both boundaries.
-#[cfg(test)]
-fn update_presentation_mode(
-    track: &mut Track,
-    cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    now: f64,
-) {
-    let mut cursor = FrontierCursor::default();
-    update_presentation_mode_cached(
-        track,
-        cc,
-        delays,
-        now,
-        None,
-        &[],
-        track.owner,
-        &mut cursor,
-        1,
-    );
-}
-
-fn update_presentation_mode_cached(
-    track: &mut Track,
-    cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    now: f64,
-    epochs: Option<&VecDeque<CommEpoch>>,
-    deaths: &[sim::world::CommDeath],
-    viewer: PlayerId,
-    cursor: &mut FrontierCursor,
-    relay_version: u64,
-) {
-    let wake_ears = sim::lane::WakeEars::default();
-    let Some(picture) = serve_track_cached(
-        track,
-        cc,
-        delays,
-        now,
-        true,
-        &wake_ears,
-        epochs,
-        deaths,
-        viewer,
-        cursor,
-        relay_version,
-        0,
-    ) else {
-        return;
-    };
-    let was_in_comms = track.in_comms;
-    let mut in_comms = was_in_comms;
-    if was_in_comms {
-        // Exit is one event, not a spatial band: once LIVE has served the exact
-        // crossing report, flip on the same frame its copy reaches command. The
-        // replay clamp above and DARK's arrival frontier then return one identical
-        // point on both sides of the mode change. Requiring both clocks prevents
-        // route-delay smoothing from disclosing the crossing before its light.
-        let exit_time = track
-            .bubble_transitions
-            .iter()
-            .rev()
-            .find(|(time, _)| *time <= picture.time + 1e-9)
-            .filter(|(_, in_comms)| !*in_comms)
-            .map(|(time, _)| *time);
-        if let Some(exit_time) = exit_time {
-            let arrived_time = latest_observable_cached(
-                &track.samples,
-                cc,
-                delays,
-                now,
-                true,
-                &wake_ears,
-                epochs,
-                deaths,
-                viewer,
-                cursor,
-                relay_version,
-                0,
-            )
-            .map(|sample| sample.time);
-            if arrived_time.is_some_and(|time| time + 1e-9 >= exit_time) {
-                in_comms = false;
-            }
-        }
-    } else {
-        // The band is deliberately one-way: DARK must reach the safely-inside
-        // report before the live replay resumes, preventing edge-skimming flap.
-        in_comms = presentation_reentry_contains(picture.pos, delays.sites);
-    }
-    if in_comms {
-        let target_delay = if picture.drive.stirs_the_lane() {
-            delays.from_coupled(picture.pos, cc)
-        } else {
-            delays.between(picture.pos, cc)
-        }
-        .max(LIVE_DELAY_FLOOR_S);
-        if !was_in_comms {
-            // Hysteresis is decided on the later, safely-inside DARK report, but
-            // the first LIVE frame lands on the nominal entry circle the player
-            // sees. That boundary report is already in the arrived stream (or the
-            // transition could not have fired), so this reveals nothing newer.
-            let entry_time = track
-                .bubble_transitions
-                .iter()
-                .rev()
-                .find(|(time, in_comms)| *time <= picture.time + 1e-9 && *in_comms)
-                .map(|(time, _)| *time);
-            track.live_delay = (now - entry_time.unwrap_or(picture.time)).max(LIVE_DELAY_FLOOR_S);
-        } else {
-            let alpha = 1.0 - (-sim::config::DT / D_SMOOTH_S).exp();
-            track.live_delay += (target_delay - track.live_delay) * alpha;
-            track.live_delay = track.live_delay.max(LIVE_DELAY_FLOOR_S);
-        }
-    }
-    track.in_comms = in_comms;
-}
-
-fn latest_emitted(samples: &VecDeque<Sample>, horizon: f64) -> Option<Sample> {
-    if samples.is_empty() {
-        return None;
-    }
-    // LIVE is indexed by emission time, not searched linearly from the oldest
-    // retained report. VecDeque's binary partition keeps this O(log history)
-    // with zero delay/routing work, regardless of the replay lag.
-    let newer = samples.partition_point(|sample| sample.time <= horizon);
-    match newer {
-        0 => samples.front().copied(),
-        n if n >= samples.len() => samples.back().copied(),
-        n => {
-            let older = &samples[n - 1];
-            let newer = &samples[n];
-            if newer.time > older.time + 1e-9 {
-                let frac = (horizon - older.time) / (newer.time - older.time);
-                Some(Sample::interpolate(older, newer, frac))
-            } else {
-                Some(*older)
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-fn latest_observable(
-    samples: &VecDeque<Sample>,
-    cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    now: f64,
-    own: bool,
-    ears: &[sim::lane::Relay],
-) -> Option<Sample> {
-    let wake_ears = delays.prepare_wake_ears(cc, ears);
-    latest_observable_cached(
-        samples,
-        cc,
-        delays,
-        now,
-        own,
-        &wake_ears,
-        None,
-        &[],
-        PlayerId(0),
-        &mut FrontierCursor::default(),
-        1,
-        1,
-    )
-}
-
-fn comm_epoch_at(epochs: Option<&VecDeque<CommEpoch>>, emitted_at: f64) -> Option<&CommEpoch> {
-    let epochs = epochs?;
-    let newer = epochs.partition_point(|epoch| epoch.at <= emitted_at + 1e-9);
-    if newer == 0 {
-        epochs.front()
-    } else {
-        epochs.get(newer - 1)
-    }
-}
-
-fn route_suffix_survives_without_site(
-    source: Vec2,
-    target: Vec2,
-    delay: f64,
-    hops: &[sim::lane::Hop],
-    sites: &[sim::lane::CommSite],
-    removed: usize,
-    elapsed: f64,
-    lanes: &sim::lane::LaneNetwork,
-    c: f64,
-) -> bool {
-    let mut surviving_sites = sites.to_vec();
-    surviving_sites.remove(removed);
-    let (position, lane) = sim::lane::signal_state_at(source, hops, elapsed);
-    let remaining = sim::lane::DelayField {
-        lanes,
-        sites: &surviving_sites,
-        c,
-    }
-    .remaining_signal(position, target, lane.is_some(), false);
-    remaining <= delay - elapsed + sim::DT + 1e-6
-}
-
-/// Convert the transient hop solve into the compact death dependency carried by
-/// an interned route. The binary search asks the old exact suffix predicate for
-/// the first instant at which losing each used relay no longer changes this
-/// copy. This work happens only on a route research, never per adjacent sample.
-#[allow(clippy::too_many_arguments)]
-fn freeze_route_passages(
-    source: Vec2,
-    target: Vec2,
-    delay: f64,
-    hops: &[sim::lane::Hop],
-    sites: &[sim::lane::CommSite],
-    site_ids: &[EntityId],
-    lanes: &sim::lane::LaneNetwork,
-    c: f64,
-) -> Vec<RoutePassage> {
-    let mut passages = Vec::new();
-    for (index, relay) in site_ids.iter().copied().enumerate().take(sites.len()) {
-        let probe = (sim::DT * 0.01).min(delay * 0.5);
-        if route_suffix_survives_without_site(
-            source, target, delay, hops, sites, index, probe, lanes, c,
-        ) {
-            continue;
-        }
-        let (mut lo, mut hi) = (probe, delay);
-        for _ in 0..32 {
-            let mid = (lo + hi) * 0.5;
-            if route_suffix_survives_without_site(
-                source, target, delay, hops, sites, index, mid, lanes, c,
-            ) {
-                hi = mid;
-            } else {
-                lo = mid;
-            }
-        }
-        passages.push(RoutePassage { relay, offset: hi });
-    }
-    passages
-}
-
-fn route_channel(sample: &Sample, own: bool, ears: &sim::lane::WakeEars) -> Option<RouteChannel> {
-    let riding = sample.drive.stirs_the_lane();
-    if own && sample.in_comms {
-        Some(if riding { RouteChannel::OwnCoupled } else { RouteChannel::OwnFree })
-    } else if !own && riding && !ears.is_empty() {
-        Some(RouteChannel::RivalWake)
-    } else {
-        None
-    }
-}
-
-fn route_start(
-    source: Vec2,
-    hops: &[sim::lane::Hop],
-    lanes: &sim::lane::LaneNetwork,
-) -> Option<RouteStart> {
-    let first = hops.iter().find(|hop| hop.t > 1e-9)?;
-    if let Some(lane_id) = first.lane {
-        let lane = lanes.lanes.iter().find(|lane| lane.id == lane_id)?;
-        let (anchor, offset) = lane.nearest(source)?;
-        if offset > lane.half_width_at(anchor.s) {
-            return None;
-        }
-        let (target, _) = lane.nearest(first.to)?;
-        Some(RouteStart::Lane {
-            lane: lane_id,
-            target_s: target.s,
-            anchor_s: anchor.s,
-        })
-    } else {
-        Some(RouteStart::Warp)
-    }
-}
-
-fn adjusted_fast_delay(
-    route: &FrozenRoute,
-    sample: &Sample,
-    channel: RouteChannel,
-    lanes: &sim::lane::LaneNetwork,
-    c: f64,
-) -> Option<f64> {
-    if route.channel != channel {
-        return None;
-    }
-    let delta = match route.start {
-        // Off-lane covered access slides along a relay's circle as the source
-        // moves; a fixed first waypoint is therefore not exact arithmetic.
-        // Conservatively research those samples until that geometry receives a
-        // proper cache key. Lane rides—the high-volume path—are exact below.
-        RouteStart::Warp => return None,
-        RouteStart::Lane { lane, target_s, anchor_s } => {
-            let lane = lanes.lanes.iter().find(|candidate| candidate.id == lane)?;
-            let (on, offset) = lane.nearest(sample.pos)?;
-            if offset > lane.half_width_at(on.s)
-                || (anchor_s - target_s).signum() != (on.s - target_s).signum()
-            {
-                return None;
-            }
-            let lane_speed = c * sim::lane::WARP_FACTOR * sim::lane::LANE_MULT;
-            ((on.s - target_s).abs() - (anchor_s - target_s).abs()) / lane_speed
-        }
-    };
-    Some((route.base_fast_delay + delta).max(0.0))
-}
-
-fn route_shape(hops: &[sim::lane::Hop]) -> Vec<(Option<u32>, Vec2)> {
-    let mut shape: Vec<(Option<u32>, Vec2)> = Vec::new();
-    for hop in hops {
-        if let Some(last) = shape.last_mut()
-            && last.0 == hop.lane
-        {
-            last.1 = hop.to;
-        } else {
-            shape.push((hop.lane, hop.to));
-        }
-    }
-    shape
-}
-
-fn same_route_shape(a: &[(Option<u32>, Vec2)], b: &[(Option<u32>, Vec2)]) -> bool {
-    a.len() == b.len()
-        && a.iter()
-            .zip(b)
-            .all(|((al, ap), (bl, bp))| al == bl && ap.distance(*bp) <= 1e-6)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn schedule_sample(
     sample: &Sample,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    own: bool,
-    ears: &sim::lane::WakeEars,
-    epochs: Option<&VecDeque<CommEpoch>>,
-    cursor: &mut FrontierCursor,
+    c: f64,
+    _cursor: &mut FrontierCursor,
 ) -> ScheduledCopy {
     #[cfg(test)]
     {
-        cursor.scheduled_evaluations += 1;
+        _cursor.scheduled_evaluations += 1;
     }
-    let epoch = comm_epoch_at(epochs, sample.time);
-    let epoch_field = sim::lane::DelayField {
-        lanes: delays.lanes,
-        sites: epoch.map_or(delays.sites, |epoch| epoch.sites.as_slice()),
-        c: delays.c,
-    };
-    let epoch_ears = epoch.map_or(ears, |epoch| &epoch.ears);
-    let network_version = epoch.map_or(0, |epoch| epoch.version);
-    let slow = sample.time + epoch_field.passive(sample.pos, cc);
-    let Some(channel) = route_channel(sample, own, epoch_ears) else {
-        cursor.active_route = None;
-        cursor.route_age = 0;
-        return ScheduledCopy {
-            sample: *sample,
-            route_epoch: PASSIVE_ROUTE_EPOCH,
-            frozen_fast: slow,
-            frozen_slow: slow,
-        };
-    };
-
-    if cursor.route_age < ROUTE_RESEARCH_EVERY
-        && let Some(route_epoch) = cursor.active_route
-        && let Some(route) = cursor.routes.get(&route_epoch)
-        && route.network_version == network_version
-        && let Some(fast_delay) = adjusted_fast_delay(
-            route,
-            sample,
-            channel,
-            delays.lanes,
-            delays.c,
-        )
-        && sample.time + fast_delay < slow
-    {
-        cursor.route_age += 1;
-        return ScheduledCopy {
-            sample: *sample,
-            route_epoch,
-            frozen_fast: sample.time + fast_delay,
-            frozen_slow: slow,
-        };
-    }
-
-    let fast = match channel {
-        RouteChannel::OwnCoupled => {
-            epoch_field.scheduled_from_coupled(sample.pos, cc)
-        }
-        RouteChannel::OwnFree => {
-            epoch_field.scheduled_between(sample.pos, cc)
-        }
-        RouteChannel::RivalWake => {
-            let Some(route) = epoch_field.scheduled_heard_prepared(sample.pos, epoch_ears) else {
-                cursor.active_route = None;
-                cursor.route_age = 0;
-                return ScheduledCopy {
-                    sample: *sample,
-                    route_epoch: PASSIVE_ROUTE_EPOCH,
-                    frozen_fast: slow,
-                    frozen_slow: slow,
-                };
-            };
-            route
-        }
-    };
-    let (fast_delay, fast_hops) = fast;
-    if sample.time + fast_delay >= slow {
-        cursor.active_route = None;
-        cursor.route_age = 0;
-        return ScheduledCopy {
-            sample: *sample,
-            route_epoch: PASSIVE_ROUTE_EPOCH,
-            frozen_fast: slow,
-            frozen_slow: slow,
-        };
-    }
-    let Some(start) = route_start(sample.pos, &fast_hops, delays.lanes) else {
-        cursor.active_route = None;
-        cursor.route_age = 0;
-        return ScheduledCopy {
-            sample: *sample,
-            route_epoch: PASSIVE_ROUTE_EPOCH,
-            frozen_fast: slow,
-            frozen_slow: slow,
-        };
-    };
-    let shape = route_shape(&fast_hops);
-    if let Some(route_epoch) = cursor.active_route
-        && let Some(route) = cursor.routes.get(&route_epoch)
-        && route.network_version == network_version
-        && route.channel == channel
-        && same_route_shape(&route.shape, &shape)
-    {
-        // The mandatory tenth-sample research confirmed the exact same route.
-        // Keep the interned dependency epoch and use the newly solved fast clock;
-        // old pending copies retain their own frozen clocks and base delta.
-        cursor.route_age = 1;
-        return ScheduledCopy {
-            sample: *sample,
-            route_epoch,
-            frozen_fast: sample.time + fast_delay,
-            frozen_slow: slow,
-        };
-    }
-    let passages = freeze_route_passages(
-        sample.pos,
-        cc,
-        fast_delay,
-        &fast_hops,
-        epoch_field.sites,
-        epoch.map_or(&[][..], |epoch| epoch.site_ids.as_slice()),
-        delays.lanes,
-        delays.c,
-    );
-    cursor.next_route_epoch = cursor.next_route_epoch.wrapping_add(1).max(1);
-    let route_epoch = cursor.next_route_epoch;
-    cursor.routes.insert(
-        route_epoch,
-        FrozenRoute {
-            network_version,
-            channel,
-            base_fast_delay: fast_delay,
-            start,
-            shape,
-            passages,
-        },
-    );
-    cursor.active_route = Some(route_epoch);
-    cursor.route_age = 1;
-    let frozen_fast = sample.time + fast_delay;
-    debug_assert!(
-        slow > frozen_fast,
-        "a filed fast copy must beat its frozen passive copy",
-    );
     ScheduledCopy {
         sample: *sample,
-        route_epoch,
-        frozen_fast,
-        frozen_slow: slow,
+        arrival: sample.time + sim::transit::delay(sample.pos, cc, c),
     }
 }
 
-fn route_broken(
-    copy: ScheduledCopy,
-    route: &FrozenRoute,
-    deaths: &[sim::world::CommDeath],
-    viewer: PlayerId,
-) -> bool {
-    let fast_delay = copy.frozen_fast - copy.sample.time;
-    let first_leg_shift = fast_delay - route.base_fast_delay;
-    route.passages.iter().any(|passage| {
-        let passage_at = copy.sample.time + passage.offset + first_leg_shift;
-        deaths.iter().any(|death| {
-            death.owner == viewer
-                && death.id == passage.relay
-                && death.at > copy.sample.time + 1e-9
-                && death.at < passage_at - 1e-9
-        })
-    })
-}
-
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn sample_arrival(
-    sample: &Sample,
-    cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
-    own: bool,
-    ears: &sim::lane::WakeEars,
-    epochs: Option<&VecDeque<CommEpoch>>,
-    deaths: &[sim::world::CommDeath],
-    viewer: PlayerId,
-) -> f64 {
-    let mut cursor = FrontierCursor::default();
-    let copy = schedule_sample(sample, cc, delays, own, ears, epochs, &mut cursor);
-    if copy.route_epoch != PASSIVE_ROUTE_EPOCH
-        && cursor
-            .routes
-            .get(&copy.route_epoch)
-            .is_some_and(|route| route_broken(copy, route, deaths, viewer))
-    {
-        copy.frozen_slow
-    } else {
-        copy.arrival()
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 fn latest_observable_cached(
     samples: &VecDeque<Sample>,
     cc: Vec2,
-    delays: &sim::lane::DelayField<'_>,
+    c: f64,
     now: f64,
-    own: bool,
-    ears: &sim::lane::WakeEars,
-    epochs: Option<&VecDeque<CommEpoch>>,
-    deaths: &[sim::world::CommDeath],
-    viewer: PlayerId,
     cursor: &mut FrontierCursor,
-    _relay_version: u64,
-    _ear_version: u64,
 ) -> Option<Sample> {
     if samples.is_empty() {
         return cursor.served.map(|served| served.sample);
     }
 
-    // A viewer's command center and c are stable in production, but keeping
-    // them in the channel identity preserves the read API for offline callers
-    // that compare two observer positions with the same player id.
-    let endpoint = (cc, delays.c);
+    let endpoint = (cc, c);
     let endpoint_changed = cursor.endpoint != Some(endpoint);
-    // Production view clocks are monotone. A retrospective offline query is a
-    // distinct calculation, not a served-picture regression.
     let time_regressed = now + 1e-9 < cursor.last_now;
     if endpoint_changed || time_regressed {
         cursor.served = None;
         cursor.seen_through = None;
         cursor.pending_by_arrival.clear();
         cursor.pending_by_emission.clear();
-        cursor.routes.clear();
-        cursor.active_route = None;
-        cursor.route_age = 0;
         cursor.endpoint = Some(endpoint);
     }
     cursor.last_now = now;
 
-    // Price each newly emitted report exactly once and retain its scheduled
-    // arrival. In the ordinary sub-signal-speed case this is the requested
-    // forward frontier (~3 reports per 10 Hz view). The heap is the behavior-
-    // preserving extension for rival bow waves/channel seams, whose arrivals
-    // can reorder: they still cost O(new reports), never O(pending darkness).
-    // A cold late-join ingests retained history once; all steady-state calls
-    // begin after `seen_through`. Front pruning needs no rebasing because that
-    // stable emission time is relocated with a delay-free binary partition.
+    // The cursor is O(new light), not O(retained darkness): every new report is
+    // priced once. Stable emission-time keys survive VecDeque front pruning, and
+    // the arrival heap preserves the two wavefronts around a future jump.
     let first_new = cursor.seen_through.map_or(0, |time| {
         samples.partition_point(|sample| sample.time <= time + 1e-9)
     });
-    for index in first_new..samples.len() {
-        let sample = samples[index];
-        let pending = schedule_sample(&sample, cc, delays, own, ears, epochs, cursor);
+    for sample in samples.iter().skip(first_new) {
+        let pending = schedule_sample(sample, cc, c, cursor);
         cursor
             .pending_by_emission
             .insert(sample.time.to_bits(), pending);
@@ -3018,30 +2139,12 @@ fn latest_observable_cached(
     }
     cursor.seen_through = samples.back().map(|sample| sample.time);
 
-    while cursor.pending_by_arrival.peek().is_some_and(|pending| {
-        pending.0.0.arrival() <= now
-    }) {
-        let mut pending = cursor.pending_by_arrival.pop().unwrap().0.0;
-        // §comms-v3.4: a physical death must not cause a truth-timed mass walk
-        // over hidden pending light — the hitch itself would be an observable
-        // event. Validate only when the fast copy naturally reaches the output
-        // frontier. Because every filed fast copy satisfies slow > fast, a
-        // broken copy can be re-filed at its frozen slow clock without missing
-        // an earlier ordering opportunity.
-        if pending.route_epoch != PASSIVE_ROUTE_EPOCH
-            && let Some(route) = cursor.routes.get(&pending.route_epoch)
-            && route_broken(pending, route, deaths, viewer)
-        {
-            debug_assert!(pending.frozen_slow > pending.frozen_fast);
-            pending.route_epoch = PASSIVE_ROUTE_EPOCH;
-            cursor
-                .pending_by_emission
-                .insert(pending.sample.time.to_bits(), pending);
-            cursor
-                .pending_by_arrival
-                .push(Reverse(PendingArrival(pending)));
-            continue;
-        }
+    while cursor
+        .pending_by_arrival
+        .peek()
+        .is_some_and(|pending| pending.0.0.arrival() <= now)
+    {
+        let pending = cursor.pending_by_arrival.pop().unwrap().0.0;
         cursor
             .pending_by_emission
             .remove(&pending.sample.time.to_bits());
@@ -3057,22 +2160,7 @@ fn latest_observable_cached(
         }
     }
 
-    // Route interning is bounded by pending light, not session length. The heap
-    // must remain: own warp returns and rival bow waves can reorder arrivals, so
-    // a monotone deque is explicitly invalid for this model.
-    let active = cursor.active_route;
-    cursor.routes.retain(|epoch, _| {
-        Some(*epoch) == active
-            || cursor
-                .pending_by_emission
-                .values()
-                .any(|copy| copy.route_epoch == *epoch)
-    });
-
     let served = cursor.served?;
-    // Same bracket arithmetic as the former newest→oldest scan, merely cached:
-    // continuous kinematics bridge adjacent arrivals; facts remain pinned to
-    // `served`, and wide channel seams remain the frozen dark arrow.
     let newer = cursor
         .pending_by_emission
         .range((
@@ -3109,945 +2197,35 @@ fn sample_at(samples: &VecDeque<Sample>, t_r: f64) -> Option<Sample> {
 
 #[cfg(test)]
 mod tests {
-    /// §hyperspace: a delay field for tests that predate lanes.
-    ///
-    /// These assert the LIGHT LAW — nothing is observable before its delay, no
-    /// leak, arrival is monotonic — not any particular signal speed. They derive
-    /// their probe times from `distance / c` by hand, so this hands them a field
-    /// whose EFFECTIVE signal speed is exactly `c`: an empty network (no lane
-    /// bonus) with the hyperspace factor divided back out.
-    ///
-    /// That keeps every one of those tests testing precisely what it was written
-    /// to test. Lane-aware delay has its own coverage in `sim::lane`, and the
-    /// playtest crossing target is pinned by `hub_to_rim_stays_about_twenty_seconds_off_lane`.
-    static NO_LANES: std::sync::LazyLock<sim::lane::LaneNetwork> =
-        std::sync::LazyLock::new(|| sim::lane::LaneNetwork::of(Vec::new()));
-    fn df(c: f64) -> sim::lane::DelayField<'static> {
-        sim::lane::DelayField { lanes: &NO_LANES, sites: &[], c: c / sim::lane::WARP_FACTOR }
-    }
-
     use super::*;
 
-    #[test]
-    fn the_observed_plan_is_consumed_from_the_same_served_sighting() {
-        let plan = vec![
-            (Vec2::new(10_000.0, 0.0), true),
-            (Vec2::new(20_000.0, 0.0), true),
-            (Vec2::new(30_000.0, 0.0), false),
-        ];
-        let remaining = remaining_plan_from_sighting(Vec2::new(16_000.0, 250.0), &plan);
-        assert_eq!(
-            remaining,
-            vec![Vec2::new(20_000.0, 0.0), Vec2::new(30_000.0, 0.0)]
-        );
-
-        let approaching_first =
-            remaining_plan_from_sighting(Vec2::new(5_000.0, 0.0), &plan);
-        assert_eq!(
-            approaching_first,
-            plan.iter().map(|(point, _)| *point).collect::<Vec<_>>(),
-            "the route planner omits its origin, so the first approach remains",
-        );
+    /// Preserve the older tests' convention that their local `c` is the
+    /// effective signal speed while production supplies the physical constant.
+    fn df(c: f64) -> f64 {
+        c / sim::transit::WARP_FACTOR
     }
 
-    /// §coupled: A HYPERSPACE SENSOR HEARS THE LANE. A rival hull riding a
-    /// listened lane makes a wake the post reports home at lane speed — so it
-    /// can no longer arrive ahead of the news of it past a tripwire. Without
-    /// the ear, passive light rules and the same rider stays dark.
     #[test]
-    fn a_rival_wake_still_needs_a_sensor() {
-        let ctrl =
-            vec![Vec2::new(0.0, 0.0), Vec2::new(150_000.0, 0.0), Vec2::new(300_000.0, 0.0)];
-        let lane = sim::lane::Lane {
-            id: 0,
-            kind: sim::lane::LaneKind::Trunk,
-            name: "Test".into(),
-            samples: sim::lane::bake_for_tests(&ctrl),
-            control: ctrl,
-            half_width: 6_000.0,
-            tapers: false,
-        };
-        let net = sim::lane::LaneNetwork::of(vec![lane]);
-        let c = 400.0;
-        let field = sim::lane::DelayField { lanes: &net, sites: &[], c };
-        let cc = Vec2::new(0.0, 0.0);
-        // The tripwire: a post on the lane 60k out, well inside listening range
-        // of the rider's approach.
-        let ear = net.relay_at(Vec2::new(60_000.0, 0.0));
-        assert!(!ear.on.is_empty(), "the post is coupled to the lane");
-
-        // A RIVAL riding inbound at 5,000 su/s against 2,000 su/s light.
-        let mut samples: VecDeque<Sample> = VecDeque::new();
-        let (mut t, mut x) = (0.0, 250_000.0);
-        while x > 30_000.0 {
-            samples.push_back(Sample {
-                time: t,
-                pos: Vec2::new(x, 0.0),
-                vel: Vec2::new(-5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: false,
-            });
-            t += 1.0;
-            x -= 5_000.0;
-        }
-        // Judge a beat after the run ends: the wake still had to reach the post
-        // and the post's report still crosses home at warp — the tripwire is
-        // not free intelligence, it is EARLIER intelligence.
-        let now = t + 10.0;
-        let ears = [ear];
-        let heard = latest_observable(&samples, cc, &field, now, false, &ears);
-        // A rival has no coded comm-structure channel. Only explicitly passing
-        // the dedicated raw-wake sensor creates this earlier observation.
-        let deaf = latest_observable(&samples, cc, &field, now, false, &[]);
-        let heard_age = now - heard.expect("the wire hears the rider").time;
-        let deaf_age = deaf.map(|s| now - s.time);
-        assert!(
-            deaf_age.is_none_or(|a| a > heard_age + 10.0),
-            "without the ear the same rider must be dark or far staler \
-             ({deaf_age:?} vs heard {heard_age:.1}s)",
-        );
-    }
-
-    fn relay_death_copy_fixture() -> (
-        sim::lane::LaneNetwork,
-        sim::lane::CommSite,
-        Vec2,
-        Vec2,
-        Sample,
-        f64,
-        Vec<sim::lane::Hop>,
-    ) {
-        let control = vec![Vec2::ZERO, Vec2::new(100_000.0, 0.0), Vec2::new(200_000.0, 0.0)];
-        let lanes = sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
-            id: 91,
-            kind: sim::lane::LaneKind::Trunk,
-            name: "Death ledger".into(),
-            samples: sim::lane::bake_for_tests(&control),
-            control,
-            half_width: 1_350.0,
-            tapers: false,
-        }]);
-        let site = sim::lane::CommSite {
-            pos: Vec2::new(100_000.0, 0.0),
-            throw: 80_000.0,
-        };
-        let source = Vec2::new(170_000.0, 20_000.0);
-        let cc = Vec2::new(30_000.0, 20_000.0);
-        let field = sim::lane::DelayField {
-            lanes: &lanes,
-            sites: &[site],
-            c: 400.0,
-        };
-        let (fast, hops) = field.scheduled_between(source, cc);
-        assert!(fast < field.passive(source, cc));
-        assert!(hops.first().is_some_and(|hop| hop.lane.is_none() && hop.t > 0.0));
-        assert!(hops.iter().any(|hop| hop.lane.is_some()));
+    fn straight_warp_light_is_the_only_gate() {
         let sample = Sample {
             time: 0.0,
-            pos: source,
+            pos: Vec2::new(2_000.0, 0.0),
             vel: Vec2::ZERO,
             loud: false,
-            drive: sim::ship::DriveState::Thrusters,
-            in_comms: true,
-        };
-        (lanes, site, source, cc, sample, fast, hops)
-    }
-
-    fn epoch(id: EntityId, site: sim::lane::CommSite) -> VecDeque<CommEpoch> {
-        VecDeque::from([CommEpoch {
-            at: 0.0,
-            version: 1,
-            sites: vec![site],
-            site_ids: vec![id],
-            raw_ears: Vec::new(),
-            ears: sim::lane::WakeEars::default(),
-        }])
-    }
-
-    #[test]
-    fn a_cleared_fast_copy_arrives_on_its_original_schedule() {
-        let (lanes, site, _source, cc, sample, fast, hops) = relay_death_copy_fixture();
-        let final_hop = hops.last().unwrap();
-        let prior = hops[hops.len() - 2].t;
-        assert!(final_hop.lane.is_none() && final_hop.t > prior);
-        let death = sim::world::CommDeath {
-            id: EntityId(901),
-            owner: PlayerId(1),
-            kind: sim::EmplacementKind::HyperspaceBuoy,
-            site,
-            at: (prior + final_hop.t) * 0.5,
-            news_at: 999.0,
-        };
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
-        let arrival = sample_arrival(
-            &sample,
-            cc,
-            &field,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epoch(death.id, site)),
-            &[death],
-            PlayerId(1),
-        );
-        assert!((arrival - fast).abs() < 1e-9, "cleared light keeps its frozen fast clock");
-    }
-
-    #[test]
-    fn an_uncleared_fast_copy_dies_and_its_slow_copy_delivers() {
-        let (lanes, site, source, cc, sample, fast, hops) = relay_death_copy_fixture();
-        let death = sim::world::CommDeath {
-            id: EntityId(902),
-            owner: PlayerId(1),
-            kind: sim::EmplacementKind::HyperspaceBuoy,
-            site,
-            at: hops[0].t * 0.5,
-            news_at: 999.0,
-        };
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
-        let slow = sample.time + field.passive(source, cc);
-        let epochs = epoch(death.id, site);
-        let arrival = sample_arrival(
-            &sample,
-            cc,
-            &field,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epochs),
-            std::slice::from_ref(&death),
-            PlayerId(1),
-        );
-        assert!((arrival - slow).abs() < 1e-9);
-        assert!(arrival > fast + 1.0);
-
-        // A report already served just before the ledger update remains a fact;
-        // invalidation may delay only the pending frontier, never rewind it.
-        let samples = VecDeque::from([sample]);
-        let mut cursor = FrontierCursor::default();
-        let before = latest_observable_cached(
-            &samples,
-            cc,
-            &field,
-            fast + 1e-6,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epochs),
-            &[],
-            PlayerId(1),
-            &mut cursor,
-            0,
-            0,
-        )
-        .unwrap();
-        let after = latest_observable_cached(
-            &samples,
-            cc,
-            &field,
-            fast + 2e-6,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epochs),
-            &[death],
-            PlayerId(1),
-            &mut cursor,
-            1,
-            0,
-        )
-        .unwrap();
-        assert_eq!(after.time, before.time, "death-ledger invalidation never rewinds served light");
-    }
-
-    fn pending_fingerprint(cursor: &FrontierCursor) -> Vec<(u64, u32, u64, u64)> {
-        cursor
-            .pending_by_emission
-            .iter()
-            .map(|(time, copy)| {
-                (
-                    *time,
-                    copy.route_epoch,
-                    copy.frozen_fast.to_bits(),
-                    copy.frozen_slow.to_bits(),
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn a_relay_death_touches_no_pending_copies() {
-        let (lanes, site, _source, cc, sample, _fast, hops) = relay_death_copy_fixture();
-        let relay = EntityId(903);
-        let epochs = epoch(relay, site);
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
-        let samples = VecDeque::from([sample]);
-        let mut cursor = FrontierCursor::default();
-        assert!(
-            latest_observable_cached(
-                &samples,
-                cc,
-                &field,
-                hops[0].t * 0.25,
-                true,
-                &sim::lane::WakeEars::default(),
-                Some(&epochs),
-                &[],
-                PlayerId(1),
-                &mut cursor,
-                0,
-                0,
-            )
-            .is_none()
-        );
-        let before = pending_fingerprint(&cursor);
-        let evaluations_before = cursor.scheduled_evaluations;
-        let death = sim::world::CommDeath {
-            id: relay,
-            owner: PlayerId(1),
-            kind: sim::EmplacementKind::HyperspaceBuoy,
-            site,
-            at: hops[0].t * 0.5,
-            news_at: 999.0,
-        };
-        assert!(
-            latest_observable_cached(
-                &samples,
-                cc,
-                &field,
-                death.at + 1e-6,
-                true,
-                &sim::lane::WakeEars::default(),
-                Some(&epochs),
-                std::slice::from_ref(&death),
-                PlayerId(1),
-                &mut cursor,
-                1,
-                0,
-            )
-            .is_none()
-        );
-        assert_eq!(
-            pending_fingerprint(&cursor),
-            before,
-            "a hidden physical death appends to the ledger but does no pending-copy work",
-        );
-        assert_eq!(
-            cursor.scheduled_evaluations,
-            evaluations_before,
-            "the death instant must not re-price a pending sample",
-        );
-    }
-
-    #[test]
-    fn a_broken_route_copy_reinserts_at_its_frozen_slow_arrival() {
-        let (lanes, site, source, cc, sample, fast, hops) = relay_death_copy_fixture();
-        let relay = EntityId(904);
-        let epochs = epoch(relay, site);
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
-        let slow = sample.time + field.passive(source, cc);
-        let death = sim::world::CommDeath {
-            id: relay,
-            owner: PlayerId(1),
-            kind: sim::EmplacementKind::HyperspaceBuoy,
-            site,
-            at: hops[0].t * 0.5,
-            news_at: 999.0,
+            drive: sim::ship::DriveState::default(),
         };
         let samples = VecDeque::from([sample]);
-        let mut cursor = FrontierCursor::default();
-        let at_fast = latest_observable_cached(
-            &samples,
-            cc,
-            &field,
-            fast + 1e-6,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epochs),
-            std::slice::from_ref(&death),
-            PlayerId(1),
-            &mut cursor,
-            1,
-            0,
-        );
-        assert!(at_fast.is_none(), "the dead fast copy cannot reach the served frontier");
-        let refiled = cursor.pending_by_emission.values().next().unwrap();
-        assert_eq!(refiled.route_epoch, PASSIVE_ROUTE_EPOCH);
-        assert_eq!(refiled.arrival().to_bits(), slow.to_bits());
-        let brute = sample_arrival(
-            &sample,
-            cc,
-            &field,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epochs),
-            std::slice::from_ref(&death),
-            PlayerId(1),
-        );
-        assert_eq!(refiled.arrival().to_bits(), brute.to_bits());
-        let served = latest_observable_cached(
-            &samples,
-            cc,
-            &field,
-            slow + 1e-6,
-            true,
-            &sim::lane::WakeEars::default(),
-            Some(&epochs),
-            std::slice::from_ref(&death),
-            PlayerId(1),
-            &mut cursor,
-            1,
-            0,
-        )
-        .expect("the immutable slow copy eventually arrives");
-        assert_eq!(served.time.to_bits(), sample.time.to_bits());
-    }
-
-    #[test]
-    fn route_epoch_pricing_matches_full_search() {
-        let (lanes, site, _source, cc, mut base, _fast, _hops) = relay_death_copy_fixture();
-        let epochs = epoch(EntityId(905), site);
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &[], c: 400.0 };
-        let ears = sim::lane::WakeEars::default();
-        let mut cursor = FrontierCursor::default();
-        let mut first_epoch = None;
-        base.pos = Vec2::new(170_000.0, 0.0);
-        base.drive = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
-        for i in 0..25 {
-            let mut sample = base;
-            sample.time = i as f64 / 30.0;
-            sample.pos = base.pos + Vec2::new(i as f64 * 8.0, 0.0);
-            let scheduled = schedule_sample(
-                &sample,
-                cc,
-                &field,
-                true,
-                &ears,
-                Some(&epochs),
-                &mut cursor,
-            );
-            let exact = sample_arrival(
-                &sample,
-                cc,
-                &field,
-                true,
-                &ears,
-                Some(&epochs),
-                &[],
-                PlayerId(1),
-            );
-            assert!(
-                (scheduled.arrival() - exact).abs() < 1e-8,
-                "route-epoch arithmetic diverged at adjacent sample {i}",
-            );
-            if i == 0 {
-                first_epoch = Some(scheduled.route_epoch);
-            } else if i < ROUTE_RESEARCH_EVERY as usize {
-                assert_eq!(scheduled.route_epoch, first_epoch.unwrap());
-            }
-        }
-
-        // A nominal bubble transition is a hard epoch boundary: the outside
-        // report is passive, and the next inside report must research afresh.
-        let mut outside = base;
-        outside.time = 1.0;
-        outside.in_comms = false;
-        let passive = schedule_sample(
-            &outside,
-            cc,
-            &field,
-            true,
-            &ears,
-            Some(&epochs),
-            &mut cursor,
-        );
-        assert_eq!(passive.route_epoch, PASSIVE_ROUTE_EPOCH);
-        let mut inside = outside;
-        inside.time += sim::DT;
-        inside.in_comms = true;
-        let researched = schedule_sample(
-            &inside,
-            cc,
-            &field,
-            true,
-            &ears,
-            Some(&epochs),
-            &mut cursor,
-        );
-        assert_ne!(researched.route_epoch, PASSIVE_ROUTE_EPOCH);
-
-        // A physical network epoch change is equally hard: reports emitted
-        // after the death cannot inherit a route researched while the relay
-        // still stood.
-        let changed_epochs = VecDeque::from([
-            CommEpoch {
-                at: 0.0,
-                version: 10,
-                sites: vec![site],
-                site_ids: vec![EntityId(905)],
-                raw_ears: Vec::new(),
-                ears: sim::lane::WakeEars::default(),
-            },
-            CommEpoch {
-                at: 2.0,
-                version: 11,
-                sites: Vec::new(),
-                site_ids: Vec::new(),
-                raw_ears: Vec::new(),
-                ears: sim::lane::WakeEars::default(),
-            },
-        ]);
-        let mut before_death = base;
-        before_death.time = 1.9;
-        let wired = schedule_sample(
-            &before_death,
-            cc,
-            &field,
-            true,
-            &ears,
-            Some(&changed_epochs),
-            &mut cursor,
-        );
-        assert_ne!(wired.route_epoch, PASSIVE_ROUTE_EPOCH);
-        let mut after_death = before_death;
-        after_death.time = 2.1;
-        let unwired = schedule_sample(
-            &after_death,
-            cc,
-            &field,
-            true,
-            &ears,
-            Some(&changed_epochs),
-            &mut cursor,
-        );
-        let exact_after = sample_arrival(
-            &after_death,
-            cc,
-            &field,
-            true,
-            &ears,
-            Some(&changed_epochs),
-            &[],
-            PlayerId(1),
-        );
-        assert_eq!(unwired.arrival().to_bits(), exact_after.to_bits());
-
-        // A hull leaving the researched lane cannot reuse its arc coordinate.
-        let mut changed_lane = base;
-        changed_lane.time = 3.0;
-        changed_lane.pos.y += 20_000.0;
-        let lane_break = schedule_sample(
-            &changed_lane,
-            cc,
-            &field,
-            true,
-            &ears,
-            Some(&epochs),
-            &mut cursor,
-        );
-        assert_ne!(lane_break.route_epoch, wired.route_epoch);
-    }
-
-
-    fn moving_samples(in_comms: bool) -> Vec<Sample> {
-        (0..=100)
-            .map(|i| {
-                let time = i as f64 * 0.1;
-                Sample {
-                    time,
-                    pos: Vec2::new(10_000.0 + 5_000.0 * time, 0.0),
-                    vel: Vec2::new(5_000.0, 0.0),
-                    loud: false,
-                    drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Warp),
-                    in_comms,
-                }
-            })
-            .collect()
-    }
-
-    #[test]
-    fn an_own_ship_in_the_bubble_replays_at_hull_speed() {
-        let mut track = track_from(moving_samples(true), PlayerId(1), ShipKind::Raider);
-        track.in_comms = true;
-        track.live_delay = 2.0;
-        let field = df(1_000.0);
-        let first = serve_track(&track, Vec2::ZERO, &field, 8.0, true, &[]).unwrap();
-        let second = serve_track(&track, Vec2::ZERO, &field, 9.0, true, &[]).unwrap();
-
-        assert!((second.pos.x - first.pos.x - 5_000.0).abs() < 1e-6);
-        assert!((second.time - first.time - 1.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn the_bubble_picture_still_trails_the_truth() {
-        let samples = moving_samples(true);
-        let truth = samples.last().unwrap().pos;
-        let mut track = track_from(samples, PlayerId(1), ShipKind::Raider);
-        track.in_comms = true;
-        track.live_delay = 2.0;
-        let served = serve_track(&track, Vec2::ZERO, &df(1_000.0), 10.0, true, &[]).unwrap();
-
-        assert!(served.pos.x < truth.x, "live presentation must never expose true position");
-        assert!((truth.x - served.pos.x - 10_000.0).abs() < 1e-6);
-    }
-
-    fn bubble_exit_fixture() -> (
-        Track,
-        sim::lane::LaneNetwork,
-        [sim::lane::CommSite; 1],
-    ) {
-        let control = vec![Vec2::ZERO, Vec2::new(100_000.0, 0.0), Vec2::new(200_000.0, 0.0)];
-        let lanes = sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
-            id: 72,
-            kind: sim::lane::LaneKind::Trunk,
-            name: "Bubble seam".into(),
-            samples: sim::lane::bake_for_tests(&control),
-            control,
-            half_width: 1_350.0,
-            tapers: false,
-        }]);
-        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 80_000.0 }];
-        let samples = vec![
-            Sample {
-                time: 0.0,
-                pos: Vec2::new(75_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: true,
-            },
-            Sample {
-                time: 1.0,
-                pos: Vec2::new(80_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: true,
-            },
-            Sample {
-                time: 2.0,
-                pos: Vec2::new(85_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-                in_comms: false,
-            },
-        ];
-        let mut track = track_from(samples, PlayerId(1), ShipKind::Raider);
-        track.in_comms = false;
-        (track, lanes, sites)
-    }
-
-    #[test]
-    fn an_exit_pins_the_arrow_at_the_boundary() {
-        let (track, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let boundary = track.samples[1];
-        let outside = track.samples[2];
-        let boundary_arrival = boundary.time + field.from_coupled(boundary.pos, Vec2::ZERO);
-        let outside_arrival = outside.time + field.passive(outside.pos, Vec2::ZERO);
-        assert!(outside_arrival > boundary_arrival + SMOOTH_BRACKET_MAX);
-
-        let served = serve_track(
-            &track,
-            Vec2::ZERO,
-            &field,
-            (boundary_arrival + outside_arrival) * 0.5,
-            true,
-            &[],
-        )
-        .unwrap();
-        assert_eq!(served.pos, boundary.pos);
-        assert_eq!(served.time, boundary.time);
-        assert!(
-            (served.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
-            "the dark arrow pins to the same nominal circle the client draws",
-        );
-    }
-
-    #[test]
-    fn a_tick_crossing_records_the_exact_nominal_circle() {
-        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 80_000.0 }];
-        let inside = Sample {
-            time: 1.0,
-            pos: Vec2::new(79_500.0, 0.0),
-            vel: Vec2::new(5_000.0, 0.0),
-            loud: false,
-            drive: sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace),
-            in_comms: true,
-        };
-        let outside = Sample { time: 1.1, pos: Vec2::new(80_500.0, 0.0), in_comms: false, ..inside };
-        let boundary = nominal_bubble_crossing(inside, outside, &sites).unwrap();
-
-        assert!(boundary.in_comms, "the edge report retains the fast inside channel");
-        assert!((boundary.time - 1.05).abs() < 1e-9);
-        assert!((boundary.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-7);
-    }
-
-    #[test]
-    fn reentry_lands_the_live_sprite_on_the_nominal_circle() {
-        let (_, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let drive = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
-        let samples = vec![
-            Sample {
-                time: 0.0,
-                pos: Vec2::new(85_000.0, 0.0),
-                vel: Vec2::new(-5_000.0, 0.0),
-                loud: false,
-                drive,
-                in_comms: false,
-            },
-            Sample {
-                time: 1.0,
-                pos: Vec2::new(80_000.0, 0.0),
-                vel: Vec2::new(-5_000.0, 0.0),
-                loud: false,
-                drive,
-                in_comms: true,
-            },
-            Sample {
-                time: 2.0,
-                pos: Vec2::new(75_000.0, 0.0),
-                vel: Vec2::new(-5_000.0, 0.0),
-                loud: false,
-                drive,
-                in_comms: true,
-            },
-        ];
-        let inner = samples[2];
-        let mut track = track_from(samples, PlayerId(1), ShipKind::Raider);
-        let inner_arrival = inner.time + field.from_coupled(inner.pos, Vec2::ZERO);
-
-        update_presentation_mode(&mut track, Vec2::ZERO, &field, inner_arrival + 1e-6);
-        assert!(track.in_comms, "the safely-inside report has arrived");
-        let served = serve_track(&track, Vec2::ZERO, &field, inner_arrival + 1e-6, true, &[])
-            .unwrap();
-        assert!((served.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6);
-    }
-
-    #[test]
-    fn beyond_the_bubble_serving_is_strictly_arrival_gated() {
-        let (track, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let outside = track.samples[2];
-        let outside_arrival = outside.time + field.passive(outside.pos, Vec2::ZERO);
-
-        let before = serve_track(&track, Vec2::ZERO, &field, outside_arrival - 1e-6, true, &[])
-            .unwrap();
-        assert!(before.time < outside.time);
-        let after = serve_track(&track, Vec2::ZERO, &field, outside_arrival + 1e-6, true, &[])
-            .unwrap();
-        assert_eq!(after.time, outside.time);
-        assert_eq!(after.pos, outside.pos);
-
-        let history = PositionHistory {
-            tracks: HashMap::from([(EntityId(1), track)]),
-            horizon: 1_000.0,
-            sensor_range: 1_000.0,
-            frontiers: RefCell::new(FrontierCache::default()),
-        };
-        let ghosts = history.view_for(PlayerId(1), Vec2::ZERO, &field, outside_arrival + 1e-6);
-        let wire = serde_json::to_value(&ghosts[0]).unwrap();
-        assert_eq!(wire["in_comms"], false);
-        assert!(wire.get("wake").is_none());
-        assert!(wire.get("vel_obs").is_none());
-    }
-
-    #[test]
-    fn a_dark_rider_advances_as_slow_light_arrives() {
-        let control = vec![Vec2::ZERO, Vec2::new(200_000.0, 0.0)];
-        let lanes = sim::lane::LaneNetwork::of(vec![sim::lane::Lane {
-            id: 73,
-            kind: sim::lane::LaneKind::Trunk,
-            name: "Dark replay".into(),
-            samples: sim::lane::bake_for_tests(&control),
-            control,
-            half_width: 1_350.0,
-            tapers: false,
-        }]);
-        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 20_000.0 }];
-        let drive = sim::ship::DriveState::Cruising(sim::lane::Regime::Hyperspace);
-        let samples = vec![
-            Sample {
-                time: 0.0,
-                pos: Vec2::new(100_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive,
-                in_comms: false,
-            },
-            Sample {
-                time: 1.0,
-                pos: Vec2::new(105_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive,
-                in_comms: false,
-            },
-            Sample {
-                time: 2.0,
-                pos: Vec2::new(110_000.0, 0.0),
-                vel: Vec2::new(5_000.0, 0.0),
-                loud: false,
-                drive,
-                in_comms: false,
-            },
-        ];
-        let first_arrival = samples[0].time
-            + Vec2::ZERO.distance(samples[0].pos) / (400.0 * sim::lane::WARP_FACTOR);
-        let last_arrival = samples[2].time
-            + Vec2::ZERO.distance(samples[2].pos) / (400.0 * sim::lane::WARP_FACTOR);
-        let history = history_with(track_from(samples, PlayerId(1), ShipKind::Raider));
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-
-        let first = history.view_for(
-            PlayerId(1),
-            Vec2::ZERO,
-            &field,
-            first_arrival + 1e-6,
-        )[0]
-            .clone();
-        let later = history.view_for(
-            PlayerId(1),
-            Vec2::ZERO,
-            &field,
-            last_arrival + 1e-6,
-        )[0]
-            .clone();
-
-        assert_eq!(first.pos, Vec2::new(100_000.0, 0.0));
-        assert_eq!(later.pos, Vec2::new(110_000.0, 0.0));
-        assert!(later.pos.x > first.pos.x, "the dark arrival frontier must advance, not pin forever");
-        assert!((later.age - (last_arrival + 1e-6 - 2.0)).abs() < 1e-8);
-    }
-
-    #[test]
-    fn reentry_hysteresis_still_prevents_flapping() {
-        let sites = [sim::lane::CommSite { pos: Vec2::ZERO, throw: 40_000.0 }];
-        assert!(!presentation_reentry_contains(Vec2::new(38_001.0, 0.0), &sites));
-        assert!(presentation_reentry_contains(Vec2::new(38_000.0, 0.0), &sites));
-
-        let mut live = false;
-        let mut dark_to_live = 0;
-        for radius in [
-            43_000.0,
-            40_200.0,
-            39_800.0,
-            40_100.0,
-            38_500.0,
-            38_001.0,
-            38_000.0,
-            38_150.0,
-            37_900.0,
-        ] {
-            if !live && presentation_reentry_contains(Vec2::new(radius, 0.0), &sites) {
-                live = true;
-                dark_to_live += 1;
-            }
-        }
+        assert!(latest_observable(&samples, Vec2::ZERO, 400.0, 0.99).is_none());
         assert_eq!(
-            dark_to_live, 1,
-            "edge-skimming may produce only one upgrade after a genuine inner-band crossing",
-        );
-    }
-
-    #[test]
-    fn the_flip_never_precedes_the_reports_arrival() {
-        let (mut before, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let boundary = before.samples[1];
-        let boundary_delay = field.from_coupled(boundary.pos, Vec2::ZERO);
-        let boundary_arrival = boundary.time + boundary_delay;
-        // Receding-delay smoothing can put the LIVE replay ahead of the report
-        // channel. Force that hard case: the replay has reached the crossing a
-        // full half-second before the nominal boundary report reaches home.
-        let optimistic_live_delay = boundary_delay - 1.5;
-        let outside_sample = before.samples[2];
-        let premature_candidate = outside_sample.time + optimistic_live_delay;
-        assert!(premature_candidate < boundary_arrival);
-
-        before.in_comms = true;
-        before.live_delay = optimistic_live_delay;
-        update_presentation_mode(&mut before, Vec2::ZERO, &field, premature_candidate);
-        assert!(
-            before.in_comms,
-            "the replay has exited, but its boundary report has not arrived yet",
-        );
-
-        let (mut at_flip, _, _) = bubble_exit_fixture();
-        at_flip.in_comms = true;
-        at_flip.live_delay = optimistic_live_delay;
-        let flip_time = boundary_arrival + 1e-6;
-        update_presentation_mode(&mut at_flip, Vec2::ZERO, &field, flip_time);
-        assert!(!at_flip.in_comms, "the crossing report has now reached command");
-        assert!(
-            flip_time >= boundary_arrival,
-            "a presentation flip may not disclose the exit before its report arrives",
-        );
-        let pinned = serve_track(&at_flip, Vec2::ZERO, &field, flip_time, true, &[]).unwrap();
-        assert_eq!(pinned.pos, boundary.pos);
-        assert!(
-            (pinned.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
-            "the morph lands on the drawn nominal circle",
-        );
-    }
-
-    #[test]
-    fn the_edge_handoff_is_a_single_frame() {
-        let (mut track, lanes, sites) = bubble_exit_fixture();
-        let field = sim::lane::DelayField { lanes: &lanes, sites: &sites, c: 400.0 };
-        let crossing = track.samples[1];
-        let crossing_delay = field.from_coupled(crossing.pos, Vec2::ZERO);
-        let crossing_arrival = crossing.time + crossing_delay;
-        track.in_comms = true;
-        track.live_delay = crossing_delay;
-
-        let last_live = serve_track(
-            &track,
-            Vec2::ZERO,
-            &field,
-            crossing_arrival,
-            true,
-            &[],
-        )
-        .unwrap();
-        assert_eq!(last_live.pos, crossing.pos);
-        assert_eq!(last_live.time, crossing.time);
-
-        update_presentation_mode(&mut track, Vec2::ZERO, &field, crossing_arrival);
-        assert!(
-            !track.in_comms,
-            "the crossing report itself must flip LIVE to DARK",
-        );
-        let first_dark = serve_track(
-            &track,
-            Vec2::ZERO,
-            &field,
-            crossing_arrival,
-            true,
-            &[],
-        )
-        .unwrap();
-        assert_eq!(first_dark.pos, crossing.pos);
-        assert_eq!(first_dark.time, crossing.time);
-        assert_eq!(last_live.pos, first_dark.pos);
-        assert!(
-            (first_dark.pos.distance(sites[0].pos) - sites[0].throw).abs() < 1e-6,
-            "the stationary handoff must occur on the rendered bubble edge",
+            latest_observable(&samples, Vec2::ZERO, 400.0, 1.0)
+                .unwrap()
+                .pos,
+            sample.pos
         );
     }
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
         let last = samples.last().map(|s| s.time).unwrap_or(0.0);
-        let bubble_transitions = samples
-            .windows(2)
-            .filter(|pair| pair[0].in_comms != pair[1].in_comms)
-            .map(|pair| {
-                if pair[1].in_comms {
-                    (pair[1].time, true)
-                } else {
-                    (pair[0].time, false)
-                }
-            })
-            .collect();
         let cargo = (kind == ShipKind::Convoy).then_some(sim::Cargo {
             commodity: sim::Commodity::Fuel,
             units: 100,
@@ -4063,13 +2241,10 @@ mod tests {
             max_speed: kind.max_speed(),
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
-            in_comms: false,
-            live_delay: LIVE_DELAY_FLOOR_S,
             docked: None,
             job: None,
             plans: VecDeque::new(),
             samples: samples.into(),
-            bubble_transitions,
             last_seen: last,
             cargo,
             passengers: Default::default(),
@@ -4089,7 +2264,13 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(x, y), vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos: Vec2::new(x, y),
+                vel,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         (EntityId(id), track_from(samples, owner, kind))
@@ -4135,7 +2316,6 @@ mod tests {
                 vel: Vec2::ZERO,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
-                in_comms: false,
             });
             t += 0.1;
         }
@@ -4143,15 +2323,18 @@ mod tests {
 
         // Light delay from X to cc ≈ 6000/300 = 20 s; the jump at t=10 cannot be
         // seen before ~t=30. At now=25 the viewer must still see X.
-        let g25 = &hist.view_for(PlayerId(99), cc, &df(c), 25.0)[0];
-        assert_eq!(g25.pos, x, "viewer saw the jump before its light arrived (LEAK)");
+        let g25 = &hist.view_for(PlayerId(99), cc, df(c), 25.0)[0];
+        assert_eq!(
+            g25.pos, x,
+            "viewer saw the jump before its light arrived (LEAK)"
+        );
 
         // Sanity: the shown sample's light really has arrived.
-        let arrival = (25.0 - g25.age) + df(c).between(g25.pos, cc);
+        let arrival = (25.0 - g25.age) + sim::transit::delay(g25.pos, cc, df(c));
         assert!(arrival <= 25.0 + 1e-9);
 
         // Much later (well after the jump's light could arrive), it sees Y.
-        let g_late = &hist.view_for(PlayerId(99), cc, &df(c), 40.0)[0];
+        let g_late = &hist.view_for(PlayerId(99), cc, df(c), 40.0)[0];
         assert_eq!(g_late.pos, y, "viewer never saw the jump even long after");
     }
 
@@ -4171,17 +2354,16 @@ mod tests {
                 vel: Vec2::new(0.0, 5.0),
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
-                in_comms: false,
             });
             t += 0.1;
         }
         let hist = history_with(track_from(samples.clone(), PlayerId(7), ShipKind::Convoy));
         let now = 45.0;
-        let g = &hist.view_for(PlayerId(99), cc, &df(c), now)[0];
+        let g = &hist.view_for(PlayerId(99), cc, df(c), now)[0];
 
         // The shown sample arrived.
         let shown_t = now - g.age;
-        let shown_arrival = shown_t + df(c).between(g.pos, cc);
+        let shown_arrival = shown_t + sim::transit::delay(g.pos, cc, df(c));
         assert!(shown_arrival <= now + 1e-9, "shown sample hasn't arrived");
 
         // The next newer sample has NOT arrived (it would be a leak to show it).
@@ -4189,8 +2371,11 @@ mod tests {
             .iter()
             .find(|s| s.time > shown_t + 1e-9)
             .expect("there is a newer sample");
-        let next_arrival = next.time + df(c).between(next.pos, cc);
-        assert!(next_arrival > now, "a newer sample had also arrived — not the boundary");
+        let next_arrival = next.time + sim::transit::delay(next.pos, cc, df(c));
+        assert!(
+            next_arrival > now,
+            "a newer sample had also arrived — not the boundary"
+        );
     }
 
     /// A nearer command center sees a fresher (smaller-age) picture than a far
@@ -4201,16 +2386,27 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 2.0, 0.0), vel: Vec2::new(2.0, 0.0), loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos: Vec2::new(t * 2.0, 0.0),
+                vel: Vec2::new(2.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
         let now = 50.0;
         let near = Vec2::new(100.0, 200.0);
         let far = Vec2::new(0.0, 9000.0);
-        let g_near = &hist.view_for(PlayerId(99), near, &df(c), now)[0];
-        let g_far = &hist.view_for(PlayerId(99), far, &df(c), now)[0];
-        assert!(g_near.age < g_far.age, "near {} should be fresher than far {}", g_near.age, g_far.age);
+        let g_near = &hist.view_for(PlayerId(99), near, df(c), now)[0];
+        let g_far = &hist.view_for(PlayerId(99), far, df(c), now)[0];
+        assert!(
+            g_near.age < g_far.age,
+            "near {} should be fresher than far {}",
+            g_near.age,
+            g_far.age
+        );
     }
 
     /// Anchor ownership is light-gated: you see your own claim instantly, but a
@@ -4223,21 +2419,47 @@ mod tests {
         let rival = PlayerId(8);
         let cc = Vec2::new(0.0, 0.0);
         let slots = vec![
-            HomeSlot { pos: Vec2::new(0.0, 0.0), owner: Some(me), claimed_at: Some(0.0), system: None },
+            HomeSlot {
+                pos: Vec2::new(0.0, 0.0),
+                owner: Some(me),
+                claimed_at: Some(0.0),
+                system: None,
+            },
             // Rival's anchor, 6000 units away → 20 s of light.
-            HomeSlot { pos: Vec2::new(6000.0, 0.0), owner: Some(rival), claimed_at: Some(0.0), system: None },
-            HomeSlot { pos: Vec2::new(0.0, 3000.0), owner: None, claimed_at: None, system: None },
+            HomeSlot {
+                pos: Vec2::new(6000.0, 0.0),
+                owner: Some(rival),
+                claimed_at: Some(0.0),
+                system: None,
+            },
+            HomeSlot {
+                pos: Vec2::new(0.0, 3000.0),
+                owner: None,
+                claimed_at: None,
+                system: None,
+            },
         ];
 
         // At t=10s, the rival's claim light (20 s away) has NOT arrived.
-        let v10 = filter_anchors(&slots, me, cc, &df(c), 10.0);
-        assert_eq!(v10[0].owner, Some(me), "own claim should be visible instantly");
-        assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
+        let v10 = filter_anchors(&slots, me, cc, df(c), 10.0);
+        assert_eq!(
+            v10[0].owner,
+            Some(me),
+            "own claim should be visible instantly"
+        );
+        assert_eq!(
+            v10[1].owner, None,
+            "rival claim leaked before its light arrived"
+        );
         assert_eq!(v10[2].owner, None);
 
         // At t=25s, the rival's claim light has arrived.
-        let v25 = filter_anchors(&slots, me, cc, &df(c), 25.0);
-        assert_eq!(v25[1].owner, Some(rival), "rival claim should be visible after light arrives");
+        let v25 = filter_anchors(&slots, me, cc, df(c), 25.0);
+        assert_eq!(
+            v25[1].owner,
+            Some(rival),
+            "rival claim should be visible after light arrives"
+        );
 
         // Positions are always present (static geography).
         assert_eq!(v10[1].pos, Vec2::new(6000.0, 0.0));
@@ -4257,7 +2479,8 @@ mod tests {
             id: EntityId(id),
             pos,
             name: name.into(),
-            bodies: vec![], legacy_deposits: vec![],
+            bodies: vec![],
+            legacy_deposits: vec![],
             claim_cost: 1000.0,
             owner,
             claimed_at,
@@ -4267,20 +2490,40 @@ mod tests {
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
             legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0,
+            legacy_defense_tier: 0,
+            defense_pool: 0.0,
             legacy_habitat_tier: 0,
             food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
-                blockade_prev: None,
-            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+            blockade_prev: None,
+            trait_: None,
+            cache_claimed: false,
+            legacy_structures: Default::default(),
+            legacy_population: 0.0,
+            legacy_assignments: Default::default(),
+            specialists: Default::default(),
         };
         let mut systems = vec![
-            mk(1, Vec2::new(0.0, 0.0), "MINE", Some(me), Some(0.0), &[(Commodity::Alloys, 12.7)]),
+            mk(
+                1,
+                Vec2::new(0.0, 0.0),
+                "MINE",
+                Some(me),
+                Some(0.0),
+                &[(Commodity::Alloys, 12.7)],
+            ),
             // Rival's claim 6000 su away → 20 s of light.
-            mk(2, Vec2::new(6000.0, 0.0), "RIVAL", Some(rival), Some(0.0), &[(Commodity::MetallicOre, 99.0)]),
+            mk(
+                2,
+                Vec2::new(6000.0, 0.0),
+                "RIVAL",
+                Some(rival),
+                Some(0.0),
+                &[(Commodity::MetallicOre, 99.0)],
+            ),
             mk(3, Vec2::new(0.0, 3000.0), "FREE", None, None, &[]),
         ];
         // §bodies: give each test system a roster so tiers land on bodies.
@@ -4305,95 +2548,271 @@ mod tests {
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
-            sim::BuildJob { id: 1, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Convoy }, complete_tick: 300, join: None, loadout: Default::default() },
-            sim::BuildJob { id: 2, owner: rival, system: EntityId(2), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Raider }, complete_tick: 300, join: None, loadout: Default::default() },
+            sim::BuildJob {
+                id: 1,
+                owner: me,
+                system: EntityId(1),
+                body_id: 0,
+                what: sim::BuildKind::Ship {
+                    ship: sim::ShipKind::Convoy,
+                },
+                complete_tick: 300,
+                join: None,
+                loadout: Default::default(),
+            },
+            sim::BuildJob {
+                id: 2,
+                owner: rival,
+                system: EntityId(2),
+                body_id: 0,
+                what: sim::BuildKind::Ship {
+                    ship: sim::ShipKind::Raider,
+                },
+                complete_tick: 300,
+                join: None,
+                loadout: Default::default(),
+            },
             // A second concurrent job of mine, finishing FIRST — the queue list
             // must come back completion-ordered (§build-progress).
-            sim::BuildJob { id: 3, owner: me, system: EntityId(1), body_id: 0, what: sim::BuildKind::Ship { ship: sim::ShipKind::Scout }, complete_tick: 200, join: None, loadout: Default::default() },
+            sim::BuildJob {
+                id: 3,
+                owner: me,
+                system: EntityId(1),
+                body_id: 0,
+                what: sim::BuildKind::Ship {
+                    ship: sim::ShipKind::Scout,
+                },
+                complete_tick: 200,
+                join: None,
+                loadout: Default::default(),
+            },
         ];
 
         // At t=10 s the rival's claim light (20 s) has NOT arrived.
-        let v10 = filter_systems(&systems, me, cc, &df(c), 10.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
-        assert!(v10[0].build.is_some(), "owner sees their own in-progress build");
-        assert!(v10[1].build.is_none(), "a rival's build state must never leak");
+        let v10 = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            10.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &[],
+            &BTreeSet::new(),
+        );
+        assert!(
+            v10[0].build.is_some(),
+            "owner sees their own in-progress build"
+        );
+        assert!(
+            v10[1].build.is_none(),
+            "a rival's build state must never leak"
+        );
         // The full queue list (§build-progress) follows the same fog rule and
         // comes back completion-ordered; `build` stays the soonest job.
         assert_eq!(v10[0].builds.len(), 2, "owner sees their whole build QUEUE");
         assert_eq!(v10[0].builds[0].key, "scout", "queue is completion-ordered");
         assert_eq!(v10[0].builds[1].key, "convoy");
-        assert_eq!(v10[0].build.as_ref().unwrap().key, "scout", "`build` = the soonest job");
-        assert!(v10[1].builds.is_empty(), "a rival's build queue must never leak");
+        assert_eq!(
+            v10[0].build.as_ref().unwrap().key,
+            "scout",
+            "`build` = the soonest job"
+        );
+        assert!(
+            v10[1].builds.is_empty(),
+            "a rival's build queue must never leak"
+        );
         assert_eq!(v10[0].owner, Some(me), "own claim is visible instantly");
-        assert_eq!(v10[1].owner, None, "rival claim leaked before its light arrived");
+        assert_eq!(
+            v10[1].owner, None,
+            "rival claim leaked before its light arrived"
+        );
         assert_eq!(v10[2].owner, None);
         // My stockpile is shown (whole units); the rival's is never shown.
         let mine = v10[0].stockpile.as_ref().expect("owner sees own stockpile");
         assert_eq!(mine.len(), 1);
         assert_eq!(mine[0].commodity, Commodity::Alloys);
         assert_eq!(mine[0].units, 12, "stockpile reported in whole units");
-        assert!(v10[1].stockpile.is_none(), "a rival's stockpile must never be shown");
+        assert!(
+            v10[1].stockpile.is_none(),
+            "a rival's stockpile must never be shown"
+        );
         assert!(v10[2].stockpile.is_none());
         // Development tier is owner-only too — the owner sees their own…
-        assert_eq!(v10[0].extractor_tier, 2, "owner sees their own development tier");
-        assert_eq!(v10[1].extractor_tier, 0, "a rival's tier must never leak (not even faster-than-light)");
+        assert_eq!(
+            v10[0].extractor_tier, 2,
+            "owner sees their own development tier"
+        );
+        assert_eq!(
+            v10[1].extractor_tier, 0,
+            "a rival's tier must never leak (not even faster-than-light)"
+        );
         // Development SLOTS follow the same owner-only rule (§buildings step 1):
         // used counts DISTINCT built structures (§economy: slots bound breadth,
         // tiers deepen in place) — MINE has 6 footprints; the queued job is a
         // SHIP, which holds no slot — and rivals see 0/0, never the budget.
-        assert_eq!(v10[0].slots_used, 6, "owner sees slots used (distinct structures; ships hold none)");
-        assert_eq!(v10[0].slots_total, systems[0].dev_slots(), "owner sees the slot budget");
-        assert_eq!((v10[1].slots_used, v10[1].slots_total), (0, 0), "a rival's slots never leak");
+        assert_eq!(
+            v10[0].slots_used, 6,
+            "owner sees slots used (distinct structures; ships hold none)"
+        );
+        assert_eq!(
+            v10[0].slots_total,
+            systems[0].dev_slots(),
+            "owner sees the slot budget"
+        );
+        assert_eq!(
+            (v10[1].slots_used, v10[1].slots_total),
+            (0, 0),
+            "a rival's slots never leak"
+        );
         assert_eq!((v10[2].slots_used, v10[2].slots_total), (0, 0));
         // Storage cap + fill (§buildings step 2) — owner-only on the same rule.
-        assert_eq!(v10[0].storage_cap, systems[0].storage_cap() as u32, "owner sees their cap");
+        assert_eq!(
+            v10[0].storage_cap,
+            systems[0].storage_cap() as u32,
+            "owner sees their cap"
+        );
         assert_eq!(v10[0].storage_used, 12, "owner sees fill in whole units");
         assert_eq!(v10[0].orbital_warehouse_tier, 0);
-        assert_eq!((v10[1].storage_cap, v10[1].storage_used, v10[1].orbital_warehouse_tier), (0, 0, 0), "a rival's storage never leaks");
+        assert_eq!(
+            (
+                v10[1].storage_cap,
+                v10[1].storage_used,
+                v10[1].orbital_warehouse_tier
+            ),
+            (0, 0, 0),
+            "a rival's storage never leaks"
+        );
         // Shipyard tier (§buildings step 3) — owner-only on the same rule.
-        assert_eq!(v10[0].shipyard_tier, systems[0].tier(sim::StructureKind::Shipyard), "owner sees their shipyard tier");
-        assert_eq!(v10[1].shipyard_tier, 0, "a rival's shipyard tier never leaks");
+        assert_eq!(
+            v10[0].shipyard_tier,
+            systems[0].tier(sim::StructureKind::Shipyard),
+            "owner sees their shipyard tier"
+        );
+        assert_eq!(
+            v10[1].shipyard_tier, 0,
+            "a rival's shipyard tier never leaks"
+        );
         // Sensor Array tier (§buildings step 2b) — owner-only on the same rule:
         // a rival must never learn where you can see.
-        assert_eq!(v10[0].sensor_tier, systems[0].tier(sim::StructureKind::SensorArray), "owner sees their sensor tier");
+        assert_eq!(
+            v10[0].sensor_tier,
+            systems[0].tier(sim::StructureKind::SensorArray),
+            "owner sees their sensor tier"
+        );
         assert_eq!(v10[1].sensor_tier, 0, "a rival's sensor tier never leaks");
         // Defense Platform tier (§buildings step 2c) — owner-only: a rival
         // weighing a raid learns fortification ONLY the hard way (via the
         // engagement outcome), never from the View.
-        assert_eq!(v10[0].defense_tier, systems[0].tier(sim::StructureKind::DefensePlatform), "owner sees their platform tier");
-        assert_eq!(v10[1].defense_tier, 0, "a rival's platform never leaks — deterrence is discovered by engagement");
+        assert_eq!(
+            v10[0].defense_tier,
+            systems[0].tier(sim::StructureKind::DefensePlatform),
+            "owner sees their platform tier"
+        );
+        assert_eq!(
+            v10[1].defense_tier, 0,
+            "a rival's platform never leaks — deterrence is discovered by engagement"
+        );
         // Habitat tier + colony life (§economy Part 2) — owner-only: a rival
         // must never learn you have colonies, their size, or whether they starve.
-        assert_eq!((v10[0].habitat_tier, v10[0].habitat_fed), (1, true), "owner sees their habitat + supply state");
-        assert_eq!((v10[0].food_state.as_str(), v10[0].population), ("well_supplied", 2.5), "owner sees their own colony's rung + population");
-        assert_eq!((v10[1].habitat_tier, v10[1].habitat_fed), (0, false), "a rival's habitat/supply never leaks");
-        assert_eq!((v10[1].food_state.as_str(), v10[1].population), ("well_supplied", 0.0), "a rival's STARVATION and population never leak (vacuous rung, zero pop)");
+        assert_eq!(
+            (v10[0].habitat_tier, v10[0].habitat_fed),
+            (1, true),
+            "owner sees their habitat + supply state"
+        );
+        assert_eq!(
+            (v10[0].food_state.as_str(), v10[0].population),
+            ("well_supplied", 2.5),
+            "owner sees their own colony's rung + population"
+        );
+        assert_eq!(
+            (v10[1].habitat_tier, v10[1].habitat_fed),
+            (0, false),
+            "a rival's habitat/supply never leaks"
+        );
+        assert_eq!(
+            (v10[1].food_state.as_str(), v10[1].population),
+            ("well_supplied", 0.0),
+            "a rival's STARVATION and population never leak (vacuous rung, zero pop)"
+        );
         // §economy Part 6: the whole colony readout obeys the same fog rule.
-        assert!(!v10[0].structures.is_empty() && v10[0].workforce.is_some(), "owner sees their structures + workforce");
-        assert!(v10[1].structures.is_empty() && v10[1].workforce.is_none() && v10[1].assignments.is_empty() && v10[1].specialists.is_empty(),
-            "a rival's structures/workforce/assignments/specialists never leak");
+        assert!(
+            !v10[0].structures.is_empty() && v10[0].workforce.is_some(),
+            "owner sees their structures + workforce"
+        );
+        assert!(
+            v10[1].structures.is_empty()
+                && v10[1].workforce.is_none()
+                && v10[1].assignments.is_empty()
+                && v10[1].specialists.is_empty(),
+            "a rival's structures/workforce/assignments/specialists never leak"
+        );
         // §bodies: the fog law ONE LEVEL DOWN — the rival's ROSTER is public
         // geography (worlds are visible from afar), but every per-body owner
         // field is scrubbed: no structures, no population, and (unsurveyed)
         // no deposits. The owner's own bodies carry all of it.
-        assert!(!v10[1].bodies.is_empty(), "the rival's roster itself is public geography");
+        assert!(
+            !v10[1].bodies.is_empty(),
+            "the rival's roster itself is public geography"
+        );
         for b in &v10[1].bodies {
-            assert!(b.structures.is_empty(), "a rival body's structures never leak");
+            assert!(
+                b.structures.is_empty(),
+                "a rival body's structures never leak"
+            );
             assert_eq!(b.population, 0.0, "a rival body's population never leaks");
-            assert!(b.deposits.is_none(), "unsurveyed per-body geology never leaks");
+            assert!(
+                b.deposits.is_none(),
+                "unsurveyed per-body geology never leaks"
+            );
         }
-        assert!(v10[0].bodies.iter().any(|b| !b.structures.is_empty()), "the owner sees their own bodies' structures");
-        assert!(v10[0].bodies.iter().all(|b| b.deposits.is_some()), "the owner knows their own geology, per body");
+        assert!(
+            v10[0].bodies.iter().any(|b| !b.structures.is_empty()),
+            "the owner sees their own bodies' structures"
+        );
+        assert!(
+            v10[0].bodies.iter().all(|b| b.deposits.is_some()),
+            "the owner knows their own geology, per body"
+        );
         // Refinery tier (§buildings step 3b) — owner-only on the same rule.
-        assert_eq!(v10[0].refinery_tier, systems[0].tier(sim::StructureKind::FuelRefinery), "owner sees their refinery tier");
+        assert_eq!(
+            v10[0].refinery_tier,
+            systems[0].tier(sim::StructureKind::FuelRefinery),
+            "owner sees their refinery tier"
+        );
         assert_eq!(v10[1].refinery_tier, 0, "a rival's refinery never leaks");
 
         // At t=25 s the rival's claim light has arrived — ownership now visible…
-        let v25 = filter_systems(&systems, me, cc, &df(c), 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let v25 = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            25.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &[],
+            &BTreeSet::new(),
+        );
         assert_eq!(v25[1].owner, Some(rival));
         // …but still NEVER their stockpile or development tier.
-        assert!(v25[1].stockpile.is_none(), "ownership visible, holdings still private");
-        assert_eq!(v25[1].extractor_tier, 0, "ownership visible, development tier still private");
-        assert_eq!((v25[1].slots_used, v25[1].slots_total), (0, 0), "ownership visible, slots still private");
+        assert!(
+            v25[1].stockpile.is_none(),
+            "ownership visible, holdings still private"
+        );
+        assert_eq!(
+            v25[1].extractor_tier, 0,
+            "ownership visible, development tier still private"
+        );
+        assert_eq!(
+            (v25[1].slots_used, v25[1].slots_total),
+            (0, 0),
+            "ownership visible, slots still private"
+        );
     }
 
     /// §explore R2 LEAK CHECK: the exact deposit table is CORP KNOWLEDGE — an
@@ -4409,12 +2828,29 @@ mod tests {
         let rival = PlayerId(8);
         let cc = Vec2::new(0.0, 0.0);
         let mk = |id, pos, o| StarSystem {
-            id: EntityId(id), pos, name: "S".into(),
-            bodies: vec![], legacy_deposits: vec![sim::Deposit { resource: Commodity::MetallicOre, richness: 2.5, reserves: None, accessibility: 0.5 }],
+            id: EntityId(id),
+            pos,
+            name: "S".into(),
+            bodies: vec![],
+            legacy_deposits: vec![sim::Deposit {
+                resource: Commodity::MetallicOre,
+                richness: 2.5,
+                reserves: None,
+                accessibility: 0.5,
+            }],
             claim_cost: 0.0,
-            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
-            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+            owner: o,
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            modules: Default::default(),
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
+            defense_pool: 0.0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
             legacy_refinery_tier: 0,
             blockade: None,
             garrison_fed: true,
@@ -4422,13 +2858,19 @@ mod tests {
             blockade_prev: None,
             // §explore Part 3: every test system carries a trait — the leak
             // assertions below prove it reaches ONLY its current owner.
-            trait_: Some(sim::explore::SystemTrait::BonusVein { commodity: Commodity::MetallicOre }), cache_claimed: false,
-            legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+            trait_: Some(sim::explore::SystemTrait::BonusVein {
+                commodity: Commodity::MetallicOre,
+            }),
+            cache_claimed: false,
+            legacy_structures: Default::default(),
+            legacy_population: 0.0,
+            legacy_assignments: Default::default(),
+            specialists: Default::default(),
         };
         let mut systems = vec![
-            mk(1, Vec2::new(0.0, 0.0), Some(me)),        // mine (never explicitly surveyed)
-            mk(2, Vec2::new(6000.0, 0.0), Some(rival)),  // rival's, unsurveyed by me
-            mk(3, Vec2::new(0.0, 3000.0), None),         // free frontier, SURVEYED by me
+            mk(1, Vec2::new(0.0, 0.0), Some(me)), // mine (never explicitly surveyed)
+            mk(2, Vec2::new(6000.0, 0.0), Some(rival)), // rival's, unsurveyed by me
+            mk(3, Vec2::new(0.0, 3000.0), None),  // free frontier, SURVEYED by me
         ];
         // §bodies: fold the legacy deposit onto the roster (the load path).
         for s in systems.iter_mut() {
@@ -4436,7 +2878,19 @@ mod tests {
         }
         let builds: Vec<sim::BuildJob> = Vec::new();
         let surveyed: BTreeSet<EntityId> = [EntityId(3)].into_iter().collect();
-        let v = filter_systems(&systems, me, cc, &df(c), 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &surveyed);
+        let v = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            1000.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &[],
+            &surveyed,
+        );
         // OWNER always sees own geology (holding is knowing).
         let mine = v[0].deposits.as_ref().expect("owner sees own geology");
         assert_eq!(mine.len(), 1);
@@ -4444,23 +2898,61 @@ mod tests {
         assert_eq!(mine[0].richness, 2.5);
         // An UNSURVEYED rival system carries NO deposit vec — even with its
         // ownership long visible (t=1000 s ≫ the 20 s light). Band only.
-        assert_eq!(v[1].owner, Some(rival), "ownership is visible (light arrived)");
-        assert!(v[1].deposits.is_none(), "unsurveyed geology must never leak");
+        assert_eq!(
+            v[1].owner,
+            Some(rival),
+            "ownership is visible (light arrived)"
+        );
+        assert!(
+            v[1].deposits.is_none(),
+            "unsurveyed geology must never leak"
+        );
         // A SURVEYED (unowned) frontier system reveals its exact table.
-        assert!(v[2].deposits.is_some(), "surveyed knowledge shows the exact table");
+        assert!(
+            v[2].deposits.is_some(),
+            "surveyed knowledge shows the exact table"
+        );
         // And the RIVAL's own view is gated on THEIR set: with an empty set they
         // see their own system but not my surveyed frontier one.
-        let rv = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), &df(c), 1000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
+        let rv = filter_systems(
+            &systems,
+            rival,
+            Vec2::new(6000.0, 0.0),
+            df(c),
+            1000.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &[],
+            &BTreeSet::new(),
+        );
         assert!(rv[1].deposits.is_some(), "the rival sees their own geology");
-        assert!(rv[2].deposits.is_none(), "MY survey knowledge never reaches the rival's wire");
+        assert!(
+            rv[2].deposits.is_none(),
+            "MY survey knowledge never reaches the rival's wire"
+        );
         // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
         // never a rival (even with ownership visible), never on an unowned
         // system (even one I surveyed: a survey grants geology, NOT the trait).
-        assert_eq!(v[0].trait_.as_deref(), Some("bonus_vein:metallic_ore"), "the owner sees their trait (with the vein commodity)");
+        assert_eq!(
+            v[0].trait_.as_deref(),
+            Some("bonus_vein:metallic_ore"),
+            "the owner sees their trait (with the vein commodity)"
+        );
         assert!(v[1].trait_.is_none(), "a rival's trait must never leak");
-        assert!(v[2].trait_.is_none(), "surveying does NOT reveal the trait (ownership does)");
-        assert!(rv[1].trait_.is_some(), "the rival sees their own system's trait");
-        assert!(rv[0].trait_.is_none(), "my trait never reaches the rival's wire");
+        assert!(
+            v[2].trait_.is_none(),
+            "surveying does NOT reveal the trait (ownership does)"
+        );
+        assert!(
+            rv[1].trait_.is_some(),
+            "the rival sees their own system's trait"
+        );
+        assert!(
+            rv[0].trait_.is_none(),
+            "my trait never reaches the rival's wire"
+        );
     }
 
     /// §TCA Phase 2: CHARTER STANDING is OWNER-ONLY. A rival learns of your
@@ -4477,27 +2969,49 @@ mod tests {
         let mut w = sim::World::new(sim::SimConfig::for_players(7, 4));
         let (me, rival) = (PlayerId(1), PlayerId(2));
         w.step(&[
-            sim::Command::AddPlayer { id: me, name: "Me".into() },
-            sim::Command::AddPlayer { id: rival, name: "Rival".into() },
+            sim::Command::AddPlayer {
+                id: me,
+                name: "Me".into(),
+            },
+            sim::Command::AddPlayer {
+                id: rival,
+                name: "Rival".into(),
+            },
         ]);
         w.players.get_mut(&rival).unwrap().tca_standing = -50.0; // deep outlaw
-        assert_eq!(sim::charter_status(w.players[&rival].tca_standing), sim::CharterStatus::Proscribed);
+        assert_eq!(
+            sim::charter_status(w.players[&rival].tca_standing),
+            sim::CharterStatus::Proscribed
+        );
 
         // The PUBLIC leaderboard is the one CROSS-CORP roster on the wire. Run to
         // a ledger close so it actually publishes, then check it names no standing.
         while w.rankings.is_empty() {
             w.step(&[]);
         }
-        assert!(w.rankings.iter().any(|r| r.player_id == rival), "the rival is on the public board");
+        assert!(
+            w.rankings.iter().any(|r| r.player_id == rival),
+            "the rival is on the public board"
+        );
         let rankings = serde_json::to_string(&w.rankings).unwrap();
-        assert!(!rankings.contains("standing"), "leak: the public board must not carry charter standing");
+        assert!(
+            !rankings.contains("standing"),
+            "leak: the public board must not carry charter standing"
+        );
         assert!(!rankings.contains("charter"), "leak: nor the derived band");
 
         // And my own view of the rival's corp record is not reachable: the only
         // per-corp standing read is keyed by the viewer's own id.
         let mine = w.players[&me].tca_standing;
-        assert_eq!(mine, sim::tca::TCA_STANDING_START, "my own standing is mine to see");
-        assert_ne!(mine, w.players[&rival].tca_standing, "the rival's is a different number entirely");
+        assert_eq!(
+            mine,
+            sim::tca::TCA_STANDING_START,
+            "my own standing is mine to see"
+        );
+        assert_ne!(
+            mine, w.players[&rival].tca_standing,
+            "the rival's is a different number entirely"
+        );
     }
 
     /// §TCA: an Authority freighter's MANIFEST is owner-only per ENTRY, gated by
@@ -4542,7 +3056,11 @@ mod tests {
 
         // FAR AWAY (not revealed): each shipper sees ONLY their own lot…
         let far_a = visible_manifest(&run, a, false);
-        assert_eq!(far_a.len(), 1, "a distant shipper reads only their own entry");
+        assert_eq!(
+            far_a.len(),
+            1,
+            "a distant shipper reads only their own entry"
+        );
         assert_eq!(far_a[0].owner, a);
         assert_eq!(far_a[0].units, 60);
         assert!(far_a[0].mine);
@@ -4558,11 +3076,26 @@ mod tests {
         // IN SENSOR RANGE (revealed): the manifest opens up, but ownership marking
         // stays honest — nobody else's lot is ever flagged as yours.
         let near_third = visible_manifest(&run, third, true);
-        assert_eq!(near_third.len(), 2, "a close observer reads the whole manifest");
-        assert!(near_third.iter().all(|e| !e.mine), "leak: no entry is ever mis-marked as the viewer's");
+        assert_eq!(
+            near_third.len(),
+            2,
+            "a close observer reads the whole manifest"
+        );
+        assert!(
+            near_third.iter().all(|e| !e.mine),
+            "leak: no entry is ever mis-marked as the viewer's"
+        );
         let near_a = visible_manifest(&run, a, true);
-        assert_eq!(near_a.iter().filter(|e| e.mine).count(), 1, "exactly one entry is mine");
-        assert_eq!(near_a.iter().filter(|e| e.owner == b).count(), 1, "and the rival's is visible up close");
+        assert_eq!(
+            near_a.iter().filter(|e| e.mine).count(),
+            1,
+            "exactly one entry is mine"
+        );
+        assert_eq!(
+            near_a.iter().filter(|e| e.owner == b).count(),
+            1,
+            "and the rival's is visible up close"
+        );
         // Deterministic order (shipment-id / BTreeMap order), so the wire is stable.
         assert_eq!(near_third[0].owner, a);
         assert_eq!(near_third[1].owner, b);
@@ -4582,43 +3115,91 @@ mod tests {
         let besieger = PlayerId(8);
         let third = PlayerId(9);
         let mut sys = StarSystem {
-            id: EntityId(1), pos: Vec2::new(6000.0, 0.0), name: "S".into(), bodies: vec![],
-            legacy_deposits: vec![], claim_cost: 0.0,
-            owner: Some(owner), claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
-            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+            id: EntityId(1),
+            pos: Vec2::new(6000.0, 0.0),
+            name: "S".into(),
+            bodies: vec![],
+            legacy_deposits: vec![],
+            claim_cost: 0.0,
+            owner: Some(owner),
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            modules: Default::default(),
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
+            defense_pool: 0.0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
             legacy_refinery_tier: 0,
-            blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+            blockade: Some(sim::Blockade {
+                by: besieger,
+                since: 100.0,
+                siege_since: None,
+            }),
             blockade_prev: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
-            trait_: None, cache_claimed: false, legacy_structures: Default::default(),
-            legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+            trait_: None,
+            cache_claimed: false,
+            legacy_structures: Default::default(),
+            legacy_population: 0.0,
+            legacy_assignments: Default::default(),
+            specialists: Default::default(),
         };
         // Two standing tiers on the habitable body — 50 marines to take it.
         sys.bodies.push(sim::Body {
-            id: 1, name: "S I".into(), kind: sim::BodyKind::Terrestrial, parent: None,
-            habitable: true, deposits: vec![],
+            id: 1,
+            name: "S I".into(),
+            kind: sim::BodyKind::Terrestrial,
+            parent: None,
+            habitable: true,
+            deposits: vec![],
             structures: [(sim::StructureKind::Garrison, 2)].into_iter().collect(),
-            population: 0.0, assignments: Default::default(),
+            population: 0.0,
+            assignments: Default::default(),
         });
         let systems = vec![sys];
         let cc = Vec2::new(0.0, 0.0);
         let builds = vec![];
         // Long after the onset light, so a light delay can't be what hides it.
         let q = |viewer| {
-            filter_systems(&systems, viewer, cc, &df(c), 5_000.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].ground
+            filter_systems(
+                &systems,
+                viewer,
+                cc,
+                df(c),
+                5_000.0,
+                &builds,
+                0,
+                sim::DT,
+                &BTreeMap::new(),
+                &[],
+                &BTreeSet::new(),
+            )[0]
+            .ground
         };
 
         let o = q(owner).expect("the owner always reads their own garrison");
         assert_eq!(o.garrison_tier, 2);
         assert!(o.garrison_fed);
-        assert_eq!(o.marines_needed, 50, "two unsuppressed tiers break even at 50 boots");
+        assert_eq!(
+            o.marines_needed, 50,
+            "two unsuppressed tiers break even at 50 boots"
+        );
 
         let b = q(besieger).expect("the besieger reads the ground their fleet is sitting on");
-        assert_eq!(b.marines_needed, 50, "both sides read the SAME number — no asymmetric lie");
+        assert_eq!(
+            b.marines_needed, 50,
+            "both sides read the SAME number — no asymmetric lie"
+        );
 
-        assert!(q(third).is_none(), "leak: a third party must never learn how defended this ground is");
+        assert!(
+            q(third).is_none(),
+            "leak: a third party must never learn how defended this ground is"
+        );
     }
 
     /// §ground G2: a LANDING RECORD carries the same three-tier fog as a battle
@@ -4633,12 +3214,27 @@ mod tests {
         let (atk, def, watcher, stranger) = (PlayerId(1), PlayerId(2), PlayerId(3), PlayerId(4));
         let pos = Vec2::new(600.0, 0.0);
         let a = GroundAssault::open(
-            EntityId(0xD001), 42, EntityId(9), pos, atk, def, EntityId(5), 80, 4, 0, 45.0,
+            EntityId(0xD001),
+            42,
+            EntityId(9),
+            pos,
+            atk,
+            def,
+            EntityId(5),
+            80,
+            4,
+            0,
+            45.0,
         );
         let mut rec = GroundRecord::open(&a, 0.5, 45.0);
         rec.rounds.push(GroundRound {
-            tick: 30, marines: 60, defenders: 70, suppression: 0.5,
-            marine_losses: 20, defender_losses: 30, notes: vec![GroundNote::Tipped],
+            tick: 30,
+            marines: 60,
+            defenders: 70,
+            suppression: 0.5,
+            marine_losses: 20,
+            defender_losses: 30,
+            notes: vec![GroundNote::Tipped],
         });
         let records: BTreeMap<sim::EntityId, GroundRecord> =
             [(rec.id, rec.clone())].into_iter().collect();
@@ -4646,18 +3242,26 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         // Long after the light, so nothing here is hidden by delay alone.
         let specs = |viewer, coverage: &[(Vec2, f64)]| {
-            visible_ground_specs(&records, viewer, cc, &df(300.0), 10_000.0, coverage)
+            visible_ground_specs(&records, viewer, cc, df(300.0), 10_000.0, coverage)
         };
         let covering = [(pos, 200.0)];
 
         // PARTICIPANTS — both sides, exact.
         for (who, attacking) in [(atk, true), (def, false)] {
             let s = specs(who, &[]);
-            assert_eq!(s.len(), 1, "a participant sees their own landing without needing sensors");
+            assert_eq!(
+                s.len(),
+                1,
+                "a participant sees their own landing without needing sensors"
+            );
             assert!(matches!(s[0].fidelity, GroundFidelity::Participant));
             assert_eq!(s[0].attacking, attacking);
             let h = ground_header(&records[&rec.id], &s[0]);
-            assert_eq!(h.marines_landed, Some(80), "a participant reads the true landing size");
+            assert_eq!(
+                h.marines_landed,
+                Some(80),
+                "a participant reads the true landing size"
+            );
             assert_eq!(h.defenders_initial, Some(100));
             let rounds = ground_rounds_range(&records[&rec.id], 0, s[0].arrived_len, true);
             assert_eq!(rounds[0].marines, Some(60));
@@ -4667,23 +3271,43 @@ mod tests {
 
         // A COVERING THIRD PARTY — the shape, never the numbers.
         let s = specs(watcher, &covering);
-        assert_eq!(s.len(), 1, "coverage of the site reveals that a landing is happening");
+        assert_eq!(
+            s.len(),
+            1,
+            "coverage of the site reveals that a landing is happening"
+        );
         assert!(matches!(s[0].fidelity, GroundFidelity::Bucket));
         let h = ground_header(&records[&rec.id], &s[0]);
-        assert_eq!(h.marines_landed, None, "leak: an onlooker must not learn the landing's size");
+        assert_eq!(
+            h.marines_landed, None,
+            "leak: an onlooker must not learn the landing's size"
+        );
         assert_eq!(h.defenders_initial, None, "leak: nor how many defended it");
         let rounds = ground_rounds_range(&records[&rec.id], 0, s[0].arrived_len, false);
         assert_eq!(rounds[0].marines, None, "leak: no exact troop counts");
         assert_eq!(rounds[0].defenders, None);
         assert_eq!(rounds[0].marine_losses, None, "leak: nor exact casualties");
         // ...but the SHAPE is legible, which is the point of the tier.
-        assert!((rounds[0].marines_frac - 0.75).abs() < 1e-9, "the landing is at 3/4 strength");
-        assert!((rounds[0].defenders_frac - 0.70).abs() < 1e-9, "the garrison at 7/10");
+        assert!(
+            (rounds[0].marines_frac - 0.75).abs() < 1e-9,
+            "the landing is at 3/4 strength"
+        );
+        assert!(
+            (rounds[0].defenders_frac - 0.70).abs() < 1e-9,
+            "the garrison at 7/10"
+        );
         assert_eq!(rounds[0].suppression, 0.5, "and the guns are not subtle");
-        assert_eq!(rounds[0].notes, vec!["tipped".to_string()], "the beats are visible too");
+        assert_eq!(
+            rounds[0].notes,
+            vec!["tipped".to_string()],
+            "the beats are visible too"
+        );
 
         // A STRANGER with no coverage — nothing at all.
-        assert!(specs(stranger, &[]).is_empty(), "leak: an uncovered stranger must not see the landing");
+        assert!(
+            specs(stranger, &[]).is_empty(),
+            "leak: an uncovered stranger must not see the landing"
+        );
         assert!(
             specs(stranger, &[(Vec2::new(50_000.0, 0.0), 100.0)]).is_empty(),
             "leak: coverage somewhere ELSE reveals nothing",
@@ -4701,27 +3325,64 @@ mod tests {
         let owner = PlayerId(7);
         let mk = |suppression: f64| {
             let mut sys = StarSystem {
-                id: EntityId(1), pos: Vec2::new(10.0, 0.0), name: "S".into(), bodies: vec![],
-                legacy_deposits: vec![], claim_cost: 0.0,
-                owner: Some(owner), claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
-                legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
-                legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
-                legacy_refinery_tier: 0, blockade: None, blockade_prev: None,
-                garrison_fed: true, garrison_suppression: suppression,
-                trait_: None, cache_claimed: false, legacy_structures: Default::default(),
-                legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+                id: EntityId(1),
+                pos: Vec2::new(10.0, 0.0),
+                name: "S".into(),
+                bodies: vec![],
+                legacy_deposits: vec![],
+                claim_cost: 0.0,
+                owner: Some(owner),
+                claimed_at: Some(0.0),
+                stockpile: BTreeMap::new(),
+                modules: Default::default(),
+                legacy_extractor_tier: 0,
+                legacy_depot_tier: 0,
+                legacy_shipyard_tier: 0,
+                legacy_sensor_tier: 0,
+                legacy_defense_tier: 0,
+                defense_pool: 0.0,
+                legacy_habitat_tier: 0,
+                food_state: Default::default(),
+                legacy_refinery_tier: 0,
+                blockade: None,
+                blockade_prev: None,
+                garrison_fed: true,
+                garrison_suppression: suppression,
+                trait_: None,
+                cache_claimed: false,
+                legacy_structures: Default::default(),
+                legacy_population: 0.0,
+                legacy_assignments: Default::default(),
+                specialists: Default::default(),
             };
             sys.bodies.push(sim::Body {
-                id: 1, name: "S I".into(), kind: sim::BodyKind::Terrestrial, parent: None,
-                habitable: true, deposits: vec![],
+                id: 1,
+                name: "S I".into(),
+                kind: sim::BodyKind::Terrestrial,
+                parent: None,
+                habitable: true,
+                deposits: vec![],
                 structures: [(sim::StructureKind::Garrison, 4)].into_iter().collect(),
-                population: 0.0, assignments: Default::default(),
+                population: 0.0,
+                assignments: Default::default(),
             });
             let systems = vec![sys];
-            filter_systems(&systems, owner, Vec2::new(0.0, 0.0), &df(300.0), 5_000.0, &[], 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0]
-                .ground
-                .expect("the owner reads their own ground")
-                .marines_needed
+            filter_systems(
+                &systems,
+                owner,
+                Vec2::new(0.0, 0.0),
+                df(300.0),
+                5_000.0,
+                &[],
+                0,
+                sim::DT,
+                &BTreeMap::new(),
+                &[],
+                &BTreeSet::new(),
+            )[0]
+            .ground
+            .expect("the owner reads their own ground")
+            .marines_needed
         };
         assert_eq!(mk(0.0), 100, "four unsuppressed tiers break even at 100");
         assert_eq!(mk(0.5), 71, "half pinned → 100·√0.5 ≈ 71, NOT 50");
@@ -4741,16 +3402,39 @@ mod tests {
         let besieger = PlayerId(8);
         let third = PlayerId(9);
         let mk = |id, pos, o| StarSystem {
-            id: EntityId(id), pos, name: "S".into(), bodies: vec![], legacy_deposits: vec![], claim_cost: 0.0,
-            owner: o, claimed_at: Some(0.0), stockpile: BTreeMap::new(), modules: Default::default(),
-            legacy_extractor_tier: 0, legacy_depot_tier: 0, legacy_shipyard_tier: 0, legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0, legacy_habitat_tier: 0, food_state: Default::default(),
+            id: EntityId(id),
+            pos,
+            name: "S".into(),
+            bodies: vec![],
+            legacy_deposits: vec![],
+            claim_cost: 0.0,
+            owner: o,
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            modules: Default::default(),
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
+            defense_pool: 0.0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
             legacy_refinery_tier: 0,
-            blockade: Some(sim::Blockade { by: besieger, since: 100.0, siege_since: None }),
+            blockade: Some(sim::Blockade {
+                by: besieger,
+                since: 100.0,
+                siege_since: None,
+            }),
             blockade_prev: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
-            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+            trait_: None,
+            cache_claimed: false,
+            legacy_structures: Default::default(),
+            legacy_population: 0.0,
+            legacy_assignments: Default::default(),
+            specialists: Default::default(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -4758,19 +3442,38 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let builds = vec![];
         let q = |viewer, now| {
-            filter_systems(&systems, viewer, cc, &df(c), now, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new())[0].blockade
+            filter_systems(
+                &systems,
+                viewer,
+                cc,
+                df(c),
+                now,
+                &builds,
+                0,
+                sim::DT,
+                &BTreeMap::new(),
+                &[],
+                &BTreeSet::new(),
+            )[0]
+            .blockade
         };
 
         // The BESIEGER sees it at once (by_me), regardless of light.
         let b = q(besieger, 100.5).expect("besieger sees their own blockade immediately");
         assert!(b.by_me && b.by == besieger);
         // The OWNER does NOT see it before the onset light arrives…
-        assert!(q(owner, 110.0).is_none(), "owner learns the blockade only by light");
+        assert!(
+            q(owner, 110.0).is_none(),
+            "owner learns the blockade only by light"
+        );
         // …and DOES once it has (t ≥ since + 20 s), not marked as theirs.
         let o = q(owner, 121.0).expect("owner sees the blockade after the onset light");
         assert!(!o.by_me && o.by == besieger);
         // A THIRD party never sees the blockade badge, even long after.
-        assert!(q(third, 500.0).is_none(), "leak: a non-participant must never see the blockade state");
+        assert!(
+            q(third, 500.0).is_none(),
+            "leak: a non-participant must never see the blockade state"
+        );
     }
 
     /// SCOUT INTEL delivery obeys light (§scout part 2): the snapshot is
@@ -4792,62 +3495,13 @@ mod tests {
             id: EntityId(1),
             pos: Vec2::new(6000.0, 0.0),
             name: "S".into(),
-            bodies: vec![], legacy_deposits: vec![],
+            bodies: vec![],
+            legacy_deposits: vec![],
             claim_cost: 1000.0,
             owner: Some(rival),
             claimed_at: Some(0.0),
-            stockpile: BTreeMap::new(), modules: Default::default(),
-            legacy_extractor_tier: 0,
-            legacy_depot_tier: 0,
-            legacy_shipyard_tier: 0,
-            legacy_sensor_tier: 0,
-            legacy_defense_tier: 0, defense_pool: 0.0,
-            legacy_habitat_tier: 0,
-            food_state: Default::default(),
-            legacy_refinery_tier: 0,
-            blockade: None,
-            garrison_fed: true,
-            garrison_suppression: 0.0,
-                blockade_prev: None,
-            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
-        }];
-        let mut intel = BTreeMap::new();
-        intel.insert(
-            EntityId(1),
-            sim::IntelSnapshot { defense_tier: 2, shipyard_tier: 1, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) },
-        );
-        let builds: Vec<sim::BuildJob> = vec![];
-
-        // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
-        let v10 = filter_systems(&systems, me, cc, &df(c), 10.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
-        assert!(v10[0].intel.is_none(), "intel must not appear before its light arrives");
-
-        // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
-        let v25 = filter_systems(&systems, me, cc, &df(c), 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
-        let iv = v25[0].intel.expect("intel delivered once its light arrives");
-        assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
-        assert!((iv.observed_at - 0.0).abs() < 1e-9, "a snapshot keeps its capture time — it ages");
-
-        // Leak checks: a viewer WITHOUT snapshots sees nothing…
-        let v_none = filter_systems(&systems, me, cc, &df(c), 25.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
-        assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
-        // …and the SCOUTED RIVAL's own view is untouched: their own system never
-        // carries intel (own => None), even if a stale map were passed in.
-        let v_rival = filter_systems(&systems, rival, Vec2::new(6000.0, 0.0), &df(c), 25.0, &builds, 0, sim::DT, &intel, &[], &BTreeSet::new());
-        assert!(v_rival[0].intel.is_none(), "the scouted side learns nothing — not even that it was scouted");
-    }
-
-    /// One rival-owned system at (6000,0) — the target of a scout snapshot.
-    fn rival_one_system(rival: PlayerId) -> Vec<StarSystem> {
-        vec![StarSystem {
-            id: EntityId(1),
-            pos: Vec2::new(6000.0, 0.0),
-            name: "S".into(),
-            bodies: vec![], legacy_deposits: vec![],
-            claim_cost: 1000.0,
-            owner: Some(rival),
-            claimed_at: Some(0.0),
-            stockpile: BTreeMap::new(), modules: Default::default(),
+            stockpile: BTreeMap::new(),
+            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -4860,8 +3514,138 @@ mod tests {
             blockade: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
-                blockade_prev: None,
-            trait_: None, cache_claimed: false, legacy_structures: Default::default(), legacy_population: 0.0, legacy_assignments: Default::default(), specialists: Default::default(),
+            blockade_prev: None,
+            trait_: None,
+            cache_claimed: false,
+            legacy_structures: Default::default(),
+            legacy_population: 0.0,
+            legacy_assignments: Default::default(),
+            specialists: Default::default(),
+        }];
+        let mut intel = BTreeMap::new();
+        intel.insert(
+            EntityId(1),
+            sim::IntelSnapshot {
+                defense_tier: 2,
+                shipyard_tier: 1,
+                enclave_tier: 0,
+                garrison_tier: 0,
+                observed_at: 0.0,
+                pos: Vec2::new(6000.0, 0.0),
+            },
+        );
+        let builds: Vec<sim::BuildJob> = vec![];
+
+        // t = 10 s: the report's light (20 s) hasn't arrived — nothing shown.
+        let v10 = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            10.0,
+            &builds,
+            0,
+            sim::DT,
+            &intel,
+            &[],
+            &BTreeSet::new(),
+        );
+        assert!(
+            v10[0].intel.is_none(),
+            "intel must not appear before its light arrives"
+        );
+
+        // t = 25 s: delivered — the stored snapshot, aging from observed_at = 0.
+        let v25 = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            25.0,
+            &builds,
+            0,
+            sim::DT,
+            &intel,
+            &[],
+            &BTreeSet::new(),
+        );
+        let iv = v25[0]
+            .intel
+            .expect("intel delivered once its light arrives");
+        assert_eq!((iv.defense_tier, iv.shipyard_tier), (2, 1));
+        assert!(
+            (iv.observed_at - 0.0).abs() < 1e-9,
+            "a snapshot keeps its capture time — it ages"
+        );
+
+        // Leak checks: a viewer WITHOUT snapshots sees nothing…
+        let v_none = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            25.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &[],
+            &BTreeSet::new(),
+        );
+        assert!(v_none[0].intel.is_none(), "no snapshot, no intel");
+        // …and the SCOUTED RIVAL's own view is untouched: their own system never
+        // carries intel (own => None), even if a stale map were passed in.
+        let v_rival = filter_systems(
+            &systems,
+            rival,
+            Vec2::new(6000.0, 0.0),
+            df(c),
+            25.0,
+            &builds,
+            0,
+            sim::DT,
+            &intel,
+            &[],
+            &BTreeSet::new(),
+        );
+        assert!(
+            v_rival[0].intel.is_none(),
+            "the scouted side learns nothing — not even that it was scouted"
+        );
+    }
+
+    /// One rival-owned system at (6000,0) — the target of a scout snapshot.
+    fn rival_one_system(rival: PlayerId) -> Vec<StarSystem> {
+        vec![StarSystem {
+            id: EntityId(1),
+            pos: Vec2::new(6000.0, 0.0),
+            name: "S".into(),
+            bodies: vec![],
+            legacy_deposits: vec![],
+            claim_cost: 1000.0,
+            owner: Some(rival),
+            claimed_at: Some(0.0),
+            stockpile: BTreeMap::new(),
+            modules: Default::default(),
+            legacy_extractor_tier: 0,
+            legacy_depot_tier: 0,
+            legacy_shipyard_tier: 0,
+            legacy_sensor_tier: 0,
+            legacy_defense_tier: 0,
+            defense_pool: 0.0,
+            legacy_habitat_tier: 0,
+            food_state: Default::default(),
+            legacy_refinery_tier: 0,
+            blockade: None,
+            garrison_fed: true,
+            garrison_suppression: 0.0,
+            blockade_prev: None,
+            trait_: None,
+            cache_claimed: false,
+            legacy_structures: Default::default(),
+            legacy_population: 0.0,
+            legacy_assignments: Default::default(),
+            specialists: Default::default(),
         }]
     }
 
@@ -4879,19 +3663,76 @@ mod tests {
         let builds: Vec<sim::BuildJob> = vec![];
         // The ALLY scouted the rival system (capture pos ~ the system): observed_at 0.
         let mut ally_map = BTreeMap::new();
-        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
-        let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
+        ally_map.insert(
+            EntityId(1),
+            sim::IntelSnapshot {
+                defense_tier: 3,
+                shipyard_tier: 2,
+                enclave_tier: 0,
+                garrison_tier: 0,
+                observed_at: 0.0,
+                pos: Vec2::new(6000.0, 0.0),
+            },
+        );
+        let allies = [AllyIntel {
+            id: ally,
+            cc: ally_cc,
+            intel: &ally_map,
+        }];
         // Chain: T2 = 6000/300 = 20 (ally learns), T3 = 20 + 12000/300 = 60 (I learn).
-        let v55 = filter_systems(&systems, me, cc, &df(c), 55.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
-        assert!(v55[0].intel.is_none(), "a relayed snapshot waits for the FULL chain (observed→ally→me)");
-        let v65 = filter_systems(&systems, me, cc, &df(c), 65.0, &builds, 0, sim::DT, &BTreeMap::new(), &allies, &BTreeSet::new());
+        let v55 = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            55.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &allies,
+            &BTreeSet::new(),
+        );
+        assert!(
+            v55[0].intel.is_none(),
+            "a relayed snapshot waits for the FULL chain (observed→ally→me)"
+        );
+        let v65 = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            65.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &allies,
+            &BTreeSet::new(),
+        );
         let iv = v65[0].intel.expect("relayed once the chain completes");
         assert_eq!((iv.defense_tier, iv.shipyard_tier), (3, 2));
-        assert_eq!(iv.relayed_by, Some(ally), "provenance names the reporting ally");
-        assert!((iv.observed_at - 0.0).abs() < 1e-9, "ages from the ORIGINAL observation, not the relay");
-        assert!((iv.relayed_at.unwrap() - 20.0).abs() < 1e-6, "T2 = the ally's own light delay");
-        assert!((iv.received_at.unwrap() - 60.0).abs() < 1e-6, "T3 = T2 + inter-command-center delay");
-        assert!(iv.received_at.unwrap() > 6000.0 / c, "relayed is staler than a direct sighting would be");
+        assert_eq!(
+            iv.relayed_by,
+            Some(ally),
+            "provenance names the reporting ally"
+        );
+        assert!(
+            (iv.observed_at - 0.0).abs() < 1e-9,
+            "ages from the ORIGINAL observation, not the relay"
+        );
+        assert!(
+            (iv.relayed_at.unwrap() - 20.0).abs() < 1e-6,
+            "T2 = the ally's own light delay"
+        );
+        assert!(
+            (iv.received_at.unwrap() - 60.0).abs() < 1e-6,
+            "T3 = T2 + inter-command-center delay"
+        );
+        assert!(
+            iv.received_at.unwrap() > 6000.0 / c,
+            "relayed is staler than a direct sighting would be"
+        );
     }
 
     /// The relay is ALLY-gated (a non-member gets nothing), and your OWN direct
@@ -4906,18 +3747,76 @@ mod tests {
         let systems = rival_one_system(rival);
         let builds: Vec<sim::BuildJob> = vec![];
         let mut ally_map = BTreeMap::new();
-        ally_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 3, shipyard_tier: 2, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
+        ally_map.insert(
+            EntityId(1),
+            sim::IntelSnapshot {
+                defense_tier: 3,
+                shipyard_tier: 2,
+                enclave_tier: 0,
+                garrison_tier: 0,
+                observed_at: 0.0,
+                pos: Vec2::new(6000.0, 0.0),
+            },
+        );
         // Non-member: no allies passed → nothing relayed, even long after the chain.
-        let v_non = filter_systems(&systems, me, cc, &df(c), 200.0, &builds, 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new());
-        assert!(v_non[0].intel.is_none(), "a non-member receives no relayed intel");
+        let v_non = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            200.0,
+            &builds,
+            0,
+            sim::DT,
+            &BTreeMap::new(),
+            &[],
+            &BTreeSet::new(),
+        );
+        assert!(
+            v_non[0].intel.is_none(),
+            "a non-member receives no relayed intel"
+        );
         // Own direct snapshot present AND ally relay present → OWN wins (no provenance).
         let mut own_map = BTreeMap::new();
-        own_map.insert(EntityId(1), sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 1, enclave_tier: 0, garrison_tier: 0, observed_at: 0.0, pos: Vec2::new(6000.0, 0.0) });
-        let allies = [AllyIntel { id: ally, cc: ally_cc, intel: &ally_map }];
-        let v = filter_systems(&systems, me, cc, &df(c), 200.0, &builds, 0, sim::DT, &own_map, &allies, &BTreeSet::new());
+        own_map.insert(
+            EntityId(1),
+            sim::IntelSnapshot {
+                defense_tier: 1,
+                shipyard_tier: 1,
+                enclave_tier: 0,
+                garrison_tier: 0,
+                observed_at: 0.0,
+                pos: Vec2::new(6000.0, 0.0),
+            },
+        );
+        let allies = [AllyIntel {
+            id: ally,
+            cc: ally_cc,
+            intel: &ally_map,
+        }];
+        let v = filter_systems(
+            &systems,
+            me,
+            cc,
+            df(c),
+            200.0,
+            &builds,
+            0,
+            sim::DT,
+            &own_map,
+            &allies,
+            &BTreeSet::new(),
+        );
         let iv = v[0].intel.expect("own intel delivered");
-        assert_eq!(iv.relayed_by, None, "your own direct scouting is authoritative — no relay provenance");
-        assert_eq!((iv.defense_tier, iv.shipyard_tier), (1, 1), "own snapshot values, not the ally's");
+        assert_eq!(
+            iv.relayed_by, None,
+            "your own direct scouting is authoritative — no relay provenance"
+        );
+        assert_eq!(
+            (iv.defense_tier, iv.shipyard_tier),
+            (1, 1),
+            "own snapshot values, not the ally's"
+        );
     }
 
     // Build a stationary ship sampled 10 Hz over [0,60] at `pos`.
@@ -4925,7 +3824,13 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 60.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos,
+                vel: Vec2::ZERO,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         track_from(samples, owner, kind)
@@ -4947,7 +3852,7 @@ mod tests {
         });
         let hist = history_with(track);
 
-        let g_own = &hist.view_for(owner, cc, &df(c), 50.0)[0];
+        let g_own = &hist.view_for(owner, cc, df(c), 50.0)[0];
         assert!(g_own.own);
         assert_eq!(
             g_own.job.map(|j| j.progress),
@@ -4955,9 +3860,12 @@ mod tests {
             "the owner sees how far along the work is"
         );
 
-        let g_rival = &hist.view_for(PlayerId(99), cc, &df(c), 50.0)[0];
+        let g_rival = &hist.view_for(PlayerId(99), cc, df(c), 50.0)[0];
         assert!(!g_rival.own);
-        assert_eq!(g_rival.job, None, "a rival reads nothing of the builder's work");
+        assert_eq!(
+            g_rival.job, None,
+            "a rival reads nothing of the builder's work"
+        );
     }
 
     /// Certainty tracks PROXIMITY to the command center, NOT ownership (§6). An
@@ -4971,10 +3879,13 @@ mod tests {
         let owner = PlayerId(7);
         let hist = history_with(still_track(Vec2::ZERO, owner, ShipKind::Raider));
 
-        let g_own = &hist.view_for(owner, cc, &df(c), 50.0)[0];
+        let g_own = &hist.view_for(owner, cc, df(c), 50.0)[0];
         // Own AND far ⇒ stale. No ownership exemption.
         assert!(g_own.own);
-        assert!(g_own.age > 0.0, "a distant own ship must be stale, not live");
+        assert!(
+            g_own.age > 0.0,
+            "a distant own ship must be stale, not live"
+        );
         // `df` normalises the field so its effective signal speed is exactly `c`
         // (see the helper's note), so the delay here is plain distance / c.
         let expected = 4000.0 / c;
@@ -4986,7 +3897,7 @@ mod tests {
 
         // An enemy raider on the SAME track is fogged identically. Ownership
         // changes only the `own` flag, nothing else.
-        let g_enemy = &hist.view_for(PlayerId(99), cc, &df(c), 50.0)[0];
+        let g_enemy = &hist.view_for(PlayerId(99), cc, df(c), 50.0)[0];
         assert!(!g_enemy.own);
         assert!(
             (g_own.age - g_enemy.age).abs() < 1e-9,
@@ -5003,8 +3914,8 @@ mod tests {
         let owner = PlayerId(7);
         let hist = history_with(still_track(Vec2::ZERO, owner, ShipKind::Raider));
 
-        let near = &hist.view_for(owner, Vec2::new(30.0, 0.0), &df(c), 50.0)[0];
-        let far = &hist.view_for(owner, Vec2::new(9000.0, 0.0), &df(c), 50.0)[0];
+        let near = &hist.view_for(owner, Vec2::new(30.0, 0.0), df(c), 50.0)[0];
+        let far = &hist.view_for(owner, Vec2::new(9000.0, 0.0), df(c), 50.0)[0];
 
         assert!(
             near.age < far.age,
@@ -5012,7 +3923,11 @@ mod tests {
             near.age,
             far.age
         );
-        assert!(near.age <= 0.2, "a ship right by the command center is near-live ({:.2}s)", near.age);
+        assert!(
+            near.age <= 0.2,
+            "a ship right by the command center is near-live ({:.2}s)",
+            near.age
+        );
     }
 
     // ---- Two-tier information model (broadcast + sensor range) ----
@@ -5025,9 +3940,12 @@ mod tests {
     #[test]
     fn convoy_broadcasts_but_cargo_is_hidden_out_of_range() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
         assert_eq!(view.len(), 1, "convoy should broadcast galaxy-wide");
-        assert!(view[0].cargo.is_none(), "cargo must be hidden outside sensor range");
+        assert!(
+            view[0].cargo.is_none(),
+            "cargo must be hidden outside sensor range"
+        );
     }
 
     /// A rival convoy within the viewer's sensor coverage reveals its cargo.
@@ -5035,9 +3953,12 @@ mod tests {
     fn convoy_cargo_revealed_within_sensor_range() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
         // Command center 200 su from the convoy → inside the 1000 su sensor range.
-        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         assert_eq!(view.len(), 1);
-        assert!(view[0].cargo.is_some(), "cargo must be revealed within sensor range");
+        assert!(
+            view[0].cargo.is_some(),
+            "cargo must be revealed within sensor range"
+        );
     }
 
     /// §economy Part 4 FOG: passengers are MANIFEST data — a broadcasting
@@ -5049,30 +3970,54 @@ mod tests {
     fn passengers_ride_the_two_tier_manifest_rule() {
         let mk = |x: f64| {
             let (id, mut track) = at(1, x, 0.0, RIVAL, ShipKind::Convoy);
-            track.passengers.insert(sim::SpecialistKind::NavalArchitect, 3);
+            track
+                .passengers
+                .insert(sim::SpecialistKind::NavalArchitect, 3);
             history_of(vec![(id, track)], 1000.0)
         };
         // 5000 su out, viewer at 300 su sensor range → OUT of coverage.
-        let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
-        assert_eq!(far.len(), 1, "the convoy itself broadcasts — identity is public");
-        assert!(far[0].passengers.is_empty(), "…but the PEOPLE aboard must never leak outside coverage");
+        let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
+        assert_eq!(
+            far.len(),
+            1,
+            "the convoy itself broadcasts — identity is public"
+        );
+        assert!(
+            far[0].passengers.is_empty(),
+            "…but the PEOPLE aboard must never leak outside coverage"
+        );
         assert!(far[0].cargo.is_none(), "(same rule as cargo)");
         // 200 su away → inside coverage: the manifest opens.
-        let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
-        assert_eq!(near[0].passengers.get(&sim::SpecialistKind::NavalArchitect), Some(&3), "sensors read the manifest — people included");
+        let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
+        assert_eq!(
+            near[0].passengers.get(&sim::SpecialistKind::NavalArchitect),
+            Some(&3),
+            "sensors read the manifest — people included"
+        );
     }
 
     // ---- §Part 4: speed-signature detection ----
 
     /// A dark raider track at `pos` with a constant velocity of `speed` (its
     /// signature depends on this retarded velocity). One raider by default.
-    fn dark_track(owner: PlayerId, pos: Vec2, speed: f64, comp: &[(ShipKind, u32)]) -> (EntityId, Track) {
+    fn dark_track(
+        owner: PlayerId,
+        pos: Vec2,
+        speed: f64,
+        comp: &[(ShipKind, u32)],
+    ) -> (EntityId, Track) {
         let mut track = fleet_track(owner, pos, comp);
         let vel = Vec2::new(speed, 0.0);
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos,
+                vel,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         track.samples = samples.into();
@@ -5087,10 +4032,32 @@ mod tests {
     fn dark_fleet_detected_at_full_speed_but_hidden_at_stealth() {
         let full = ShipKind::Raider.max_speed();
         let pos = Vec2::new(700.0, 0.0); // inside 1000, outside 0.4×1000 = 400
-        let hist_full = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 1)])], 1000.0);
-        let hist_creep = history_of(vec![dark_track(RIVAL, pos, full * sim::detection::STEALTH_FRACTION, &[(ShipKind::Raider, 1)])], 1000.0);
-        assert_eq!(hist_full.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).len(), 1, "at flank speed the raider is flagged");
-        assert!(hist_creep.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "creeping at stealth it reaches the sensor edge unseen");
+        let hist_full = history_of(
+            vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 1)])],
+            1000.0,
+        );
+        let hist_creep = history_of(
+            vec![dark_track(
+                RIVAL,
+                pos,
+                full * sim::detection::STEALTH_FRACTION,
+                &[(ShipKind::Raider, 1)],
+            )],
+            1000.0,
+        );
+        assert_eq!(
+            hist_full
+                .view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
+                .len(),
+            1,
+            "at flank speed the raider is flagged"
+        );
+        assert!(
+            hist_creep
+                .view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
+                .is_empty(),
+            "creeping at stealth it reaches the sensor edge unseen"
+        );
     }
 
     /// RETARDED-TIME signature (the correctness rule): a fleet that SPRINTED then
@@ -5107,8 +4074,18 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 8.0 {
-            let vel = if t < 3.0 { Vec2::new(full, 0.0) } else { Vec2::new(full * 0.2, 0.0) };
-            samples.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            let vel = if t < 3.0 {
+                Vec2::new(full, 0.0)
+            } else {
+                Vec2::new(full * 0.2, 0.0)
+            };
+            samples.push(Sample {
+                time: t,
+                pos,
+                vel,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Raider, 1)]);
@@ -5122,8 +4099,12 @@ mod tests {
             sensor_range: 950.0,
             frontiers: RefCell::new(FrontierCache::default()),
         };
-        let seen = hist.view_for(VIEWER, cc, &df(300.0), 6.0);
-        assert_eq!(seen.len(), 1, "the old full-speed flare is what arrives — detected on schedule");
+        let seen = hist.view_for(VIEWER, cc, df(300.0), 6.0);
+        assert_eq!(
+            seen.len(),
+            1,
+            "the old full-speed flare is what arrives — detected on schedule"
+        );
     }
 
     /// §battles-take-time: WEAPONS FIRE IS LOUD — a dark battle participant that
@@ -5134,14 +4115,36 @@ mod tests {
     fn weapons_fire_reveals_a_dark_participant_at_the_site() {
         let pos = Vec2::new(6000.0, 0.0); // far outside the 1000 su bubble
         let full = ShipKind::Raider.max_speed();
-        let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 2)])], 1000.0);
+        let hist = history_of(
+            vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 2)])],
+            1000.0,
+        );
         // Out of coverage → omitted entirely (the fog default).
-        assert!(hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "out of coverage, the dark fleet is hidden");
+        assert!(
+            hist.view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
+                .is_empty(),
+            "out of coverage, the dark fleet is hidden"
+        );
         // As a battle participant, weapons fire reveals it at the site, in full.
         let reveal: BTreeSet<EntityId> = [EntityId(1)].into_iter().collect();
-        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &reveal, NodeEffects::default());
-        assert_eq!(seen.len(), 1, "weapons fire reveals the dark participant at the battle site");
-        assert!(seen[0].composition.is_some(), "and its full composition is seen there");
+        let seen = hist.view_for_with_arrays(
+            VIEWER,
+            Vec2::ZERO,
+            df(300.0),
+            90.0,
+            &[],
+            &reveal,
+            NodeEffects::default(),
+        );
+        assert_eq!(
+            seen.len(),
+            1,
+            "weapons fire reveals the dark participant at the battle site"
+        );
+        assert!(
+            seen[0].composition.is_some(),
+            "and its full composition is seen there"
+        );
     }
 
     /// VIEW / SIM PARITY: the View's dark-fleet gating and the sim's shared
@@ -5149,11 +4152,17 @@ mod tests {
     #[test]
     fn view_matches_the_shared_detection_function() {
         let full = ShipKind::Raider.max_speed();
-        let comp: std::collections::BTreeMap<ShipKind, u32> = [(ShipKind::Raider, 3)].into_iter().collect();
+        let comp: std::collections::BTreeMap<ShipKind, u32> =
+            [(ShipKind::Raider, 3)].into_iter().collect();
         for dist in [300.0, 700.0, 1200.0, 2500.0] {
             let pos = Vec2::new(dist, 0.0);
-            let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], 1000.0);
-            let view_sees = !hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty();
+            let hist = history_of(
+                vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])],
+                1000.0,
+            );
+            let view_sees = !hist
+                .view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
+                .is_empty();
             // The sim's shared function, same coverage (just the CC bubble here).
             let sig = sim::detection::signature(&comp, full, ShipKind::Raider.max_speed());
             let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
@@ -5172,22 +4181,57 @@ mod tests {
         // the size bucket outside coverage.
         let comp = [(ShipKind::Convoy, 3), (ShipKind::Raider, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, pos, &comp))], 1000.0);
-        let base = hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0);
+        let base = hist.view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0);
         assert_eq!(base.len(), 1);
-        assert!(base[0].composition.is_none(), "outside coverage: bucket only, no exact composition");
+        assert!(
+            base[0].composition.is_none(),
+            "outside coverage: bucket only, no exact composition"
+        );
         // A Deep-Scan region over the fleet → exact composition, still ONE fleet.
         let deep = [pos];
-        let scanned = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
-            NodeEffects { veil: &[], deep_scan: &deep },
+        let scanned = hist.view_for_with_arrays(
+            VIEWER,
+            Vec2::ZERO,
+            df(300.0),
+            90.0,
+            &[],
+            &BTreeSet::new(),
+            NodeEffects {
+                veil: &[],
+                deep_scan: &deep,
+            },
         );
         assert_eq!(scanned.len(), 1, "deep scan reveals no NEW fleet");
-        assert!(scanned[0].composition.is_some(), "it upgrades the visible fleet's bucket to exact");
-        // A DARK, undetected raider in the same region stays hidden under deep scan.
-        let dark = history_of(vec![dark_track(RIVAL, pos, ShipKind::Raider.max_speed(), &[(ShipKind::Raider, 2)])], 1000.0);
-        let dscanned = dark.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
-            NodeEffects { veil: &[], deep_scan: &deep },
+        assert!(
+            scanned[0].composition.is_some(),
+            "it upgrades the visible fleet's bucket to exact"
         );
-        assert!(dscanned.is_empty(), "deep scan never conjures an undetected dark fleet");
+        // A DARK, undetected raider in the same region stays hidden under deep scan.
+        let dark = history_of(
+            vec![dark_track(
+                RIVAL,
+                pos,
+                ShipKind::Raider.max_speed(),
+                &[(ShipKind::Raider, 2)],
+            )],
+            1000.0,
+        );
+        let dscanned = dark.view_for_with_arrays(
+            VIEWER,
+            Vec2::ZERO,
+            df(300.0),
+            90.0,
+            &[],
+            &BTreeSet::new(),
+            NodeEffects {
+                veil: &[],
+                deep_scan: &deep,
+            },
+        );
+        assert!(
+            dscanned.is_empty(),
+            "deep scan never conjures an undetected dark fleet"
+        );
     }
 
     /// §node Veil LEAK CHECK: a dark fleet in its OWNER's Veil region is detected at
@@ -5202,21 +4246,53 @@ mod tests {
         // Just inside the full-sig radius (seen), but outside the halved one (hidden).
         let d = 0.75 * sensor * sig;
         let pos = Vec2::new(d, 0.0);
-        let hist = history_of(vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])], sensor);
-        assert!(!hist.view_for(VIEWER, Vec2::ZERO, &df(300.0), 90.0).is_empty(), "without a Veil, the fleet is detected");
+        let hist = history_of(
+            vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 3)])],
+            sensor,
+        );
+        assert!(
+            !hist
+                .view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
+                .is_empty(),
+            "without a Veil, the fleet is detected"
+        );
         // A Veil region (its owner's) over the fleet halves its signature → hidden.
         let veil = [(RIVAL, pos)];
-        let seen = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
-            NodeEffects { veil: &veil, deep_scan: &[] },
+        let seen = hist.view_for_with_arrays(
+            VIEWER,
+            Vec2::ZERO,
+            df(300.0),
+            90.0,
+            &[],
+            &BTreeSet::new(),
+            NodeEffects {
+                veil: &veil,
+                deep_scan: &[],
+            },
         );
-        assert!(seen.is_empty(), "the Veil shrinks the fleet's detection radius below its range");
+        assert!(
+            seen.is_empty(),
+            "the Veil shrinks the fleet's detection radius below its range"
+        );
         // A rival's Veil never quiets someone else's fleet: a mismatched-owner region
         // does nothing (the fleet is RIVAL's, the region is credited to VIEWER).
         let wrong = [(VIEWER, pos)];
-        let still = hist.view_for_with_arrays(VIEWER, Vec2::ZERO, &df(300.0), 90.0, &[], &[], &BTreeSet::new(),
-            NodeEffects { veil: &wrong, deep_scan: &[] },
+        let still = hist.view_for_with_arrays(
+            VIEWER,
+            Vec2::ZERO,
+            df(300.0),
+            90.0,
+            &[],
+            &BTreeSet::new(),
+            NodeEffects {
+                veil: &wrong,
+                deep_scan: &[],
+            },
         );
-        assert!(!still.is_empty(), "a Veil only quiets its OWN holder's fleets");
+        assert!(
+            !still.is_empty(),
+            "a Veil only quiets its OWN holder's fleets"
+        );
     }
 
     /// §explore Part 2 — SURVEY LOUDNESS: a dwelling (loud) scout is detected
@@ -5239,8 +4315,17 @@ mod tests {
             }
             history_of(vec![(EntityId(1), track)], sensor)
         };
-        assert!(mk(false).view_for(VIEWER, Vec2::ZERO, &df(300.0), 60.0).is_empty(), "a QUIET holding scout at d stays dark");
-        assert_eq!(mk(true).view_for(VIEWER, Vec2::ZERO, &df(300.0), 60.0).len(), 1, "the SAME scout DWELLING (loud) is detected — active sensing is loud");
+        assert!(
+            mk(false)
+                .view_for(VIEWER, Vec2::ZERO, df(300.0), 60.0)
+                .is_empty(),
+            "a QUIET holding scout at d stays dark"
+        );
+        assert_eq!(
+            mk(true).view_for(VIEWER, Vec2::ZERO, df(300.0), 60.0).len(),
+            1,
+            "the SAME scout DWELLING (loud) is detected — active sensing is loud"
+        );
     }
 
     /// Build a multi-kind fleet track sitting still at `pos`, deriving the same
@@ -5249,7 +4334,13 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 100.0 {
-            samples.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos,
+                vel: Vec2::ZERO,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         let mut f = sim::Fleet::single(EntityId(1), owner, comp[0].0, pos, FleetOrder::Idle, None);
@@ -5268,13 +4359,10 @@ mod tests {
             max_speed: f.max_speed(),
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
-            in_comms: false,
-            live_delay: LIVE_DELAY_FLOOR_S,
             docked: None,
             job: None,
             plans: VecDeque::new(),
             samples: samples.into(),
-            bubble_transitions: VecDeque::new(),
             last_seen: 100.0,
             cargo: None,
             passengers: Default::default(),
@@ -5294,7 +4382,11 @@ mod tests {
     fn fleet_damage_is_gated_on_coverage_and_never_ships_the_roster() {
         // A broadcasting wing, several hulls hurt by DIFFERENT amounts (only a
         // real roster can express that) — the track carries the aggregate.
-        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let comp = [
+            (ShipKind::Convoy, 3),
+            (ShipKind::Corvette, 2),
+            (ShipKind::Raider, 1),
+        ];
         let hurt = || {
             let mut t = fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp);
             // 0.30 of the formation's total hull is missing, spread unevenly.
@@ -5304,23 +4396,35 @@ mod tests {
 
         // OUTSIDE coverage: the bucket is present; damage is NOT.
         let hist = history_of(vec![(EntityId(1), hurt())], 1000.0);
-        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
-        assert!(far[0].composition.is_none(), "composition stays hidden outside coverage");
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
+        assert!(
+            far[0].composition.is_none(),
+            "composition stays hidden outside coverage"
+        );
         assert!(far[0].damage.is_none(), "…and so does how hurt they are");
 
         // INSIDE coverage: both revealed, and the damage is the aggregate.
         let hist = history_of(vec![(EntityId(1), hurt())], 1000.0);
-        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         assert!(near[0].composition.is_some(), "coverage reveals the makeup");
         let dmg = near[0].damage.expect("coverage reveals the damage");
-        assert!((dmg - 0.30).abs() < 1e-9, "the reported figure is the fleet's own aggregate");
+        assert!(
+            (dmg - 0.30).abs() < 1e-9,
+            "the reported figure is the fleet's own aggregate"
+        );
 
         // THE PAYLOAD ITSELF: one fraction, never the hulls. Serializing the
         // REVEALING view must expose no roster and no per-ship health — that
         // would hand a reader the exact count `count_class` exists to withhold.
         let json = serde_json::to_string(&near).unwrap();
-        assert!(!json.contains("\"ships\""), "the roster must never reach the wire");
-        assert!(!json.contains("\"hp\""), "per-hull health must never reach the wire");
+        assert!(
+            !json.contains("\"ships\""),
+            "the roster must never reach the wire"
+        );
+        assert!(
+            !json.contains("\"hp\""),
+            "per-hull health must never reach the wire"
+        );
     }
 
     /// LEAK CHECK (broadcasting fleet, outside coverage): the size BUCKET is
@@ -5329,14 +4433,39 @@ mod tests {
     #[test]
     fn broadcasting_fleet_shows_bucket_but_hides_composition_outside_coverage() {
         // 3 convoys + 2 corvettes + 1 raider = 6 ships (broadcasts: has convoys).
-        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
-        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
-        assert_eq!(view.len(), 1, "the broadcasting fleet is visible galaxy-wide");
+        let comp = [
+            (ShipKind::Convoy, 3),
+            (ShipKind::Corvette, 2),
+            (ShipKind::Raider, 1),
+        ];
+        let hist = history_of(
+            vec![(
+                EntityId(1),
+                fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp),
+            )],
+            1000.0,
+        );
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
+        assert_eq!(
+            view.len(),
+            1,
+            "the broadcasting fleet is visible galaxy-wide"
+        );
         let g = &view[0];
-        assert_eq!(g.count_class, CountClass::from_count(6), "size bucket always present");
-        assert_eq!(g.count_class, CountClass::FourToSeven, "6 ships → the 4–7 bucket");
-        assert!(g.composition.is_none(), "composition must NOT leak outside sensor coverage");
+        assert_eq!(
+            g.count_class,
+            CountClass::from_count(6),
+            "size bucket always present"
+        );
+        assert_eq!(
+            g.count_class,
+            CountClass::FourToSeven,
+            "6 ships → the 4–7 bucket"
+        );
+        assert!(
+            g.composition.is_none(),
+            "composition must NOT leak outside sensor coverage"
+        );
         assert_eq!(g.kind, ShipKind::Convoy, "drawn as its flagship");
     }
 
@@ -5344,12 +4473,25 @@ mod tests {
     /// is revealed within sensor range, and it matches the true makeup.
     #[test]
     fn composition_revealed_inside_sensor_coverage() {
-        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
-        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        let comp = [
+            (ShipKind::Convoy, 3),
+            (ShipKind::Corvette, 2),
+            (ShipKind::Raider, 1),
+        ];
+        let hist = history_of(
+            vec![(
+                EntityId(1),
+                fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp),
+            )],
+            1000.0,
+        );
         // Command center 200 su from the fleet → inside the 1000 su sensor range.
-        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         let g = &view[0];
-        let revealed = g.composition.as_ref().expect("composition revealed inside coverage");
+        let revealed = g
+            .composition
+            .as_ref()
+            .expect("composition revealed inside coverage");
         let got: BTreeMap<ShipKind, u32> = revealed.iter().map(|c| (c.kind, c.count)).collect();
         assert_eq!(got[&ShipKind::Convoy], 3);
         assert_eq!(got[&ShipKind::Corvette], 2);
@@ -5361,12 +4503,21 @@ mod tests {
     #[test]
     fn own_fleet_always_shows_exact_composition() {
         let comp = [(ShipKind::Convoy, 2), (ShipKind::Colony, 1)];
-        let hist = history_of(vec![(EntityId(1), fleet_track(VIEWER, Vec2::new(8000.0, 0.0), &comp))], 500.0);
+        let hist = history_of(
+            vec![(
+                EntityId(1),
+                fleet_track(VIEWER, Vec2::new(8000.0, 0.0), &comp),
+            )],
+            500.0,
+        );
         // Viewer's own fleet, far from the command center (out of the 500 su bubble).
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
         let g = &view[0];
         assert!(g.own);
-        assert!(g.composition.is_some(), "own fleet composition is always exact");
+        assert!(
+            g.composition.is_some(),
+            "own fleet composition is always exact"
+        );
     }
 
     /// A DARK fleet (raiders/scouts only) is omitted entirely outside coverage;
@@ -5375,14 +4526,26 @@ mod tests {
     #[test]
     fn dark_fleet_hidden_outside_but_full_composition_when_seen() {
         let comp = [(ShipKind::Raider, 4), (ShipKind::Scout, 1)];
-        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp))], 1000.0);
+        let hist = history_of(
+            vec![(
+                EntityId(1),
+                fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp),
+            )],
+            1000.0,
+        );
         // Outside coverage: omitted entirely.
-        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
-        assert!(far.is_empty(), "a dark fleet out of coverage must not appear at all");
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
+        assert!(
+            far.is_empty(),
+            "a dark fleet out of coverage must not appear at all"
+        );
         // Inside coverage: seen, with full composition.
-        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         assert_eq!(near.len(), 1);
-        assert!(near[0].composition.is_some(), "a seen dark fleet shows its full composition");
+        assert!(
+            near[0].composition.is_some(),
+            "a seen dark fleet shows its full composition"
+        );
         assert_eq!(near[0].count_class, CountClass::from_count(5));
     }
 
@@ -5391,10 +4554,23 @@ mod tests {
     #[test]
     fn count_bucket_contains_true_size_without_revealing_it() {
         let comp = [(ShipKind::Convoy, 20)]; // 20 broadcasting convoys, far away
-        let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, Vec2::new(6000.0, 0.0), &comp))], 800.0);
-        let g = &hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0)[0];
-        assert_eq!(g.count_class, CountClass::SixteenToThirty, "20 → the 16–30 bucket");
-        assert!(g.composition.is_none(), "the exact 20 is never revealed outside coverage");
+        let hist = history_of(
+            vec![(
+                EntityId(1),
+                fleet_track(RIVAL, Vec2::new(6000.0, 0.0), &comp),
+            )],
+            800.0,
+        );
+        let g = &hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0)[0];
+        assert_eq!(
+            g.count_class,
+            CountClass::SixteenToThirty,
+            "20 → the 16–30 bucket"
+        );
+        assert!(
+            g.composition.is_none(),
+            "the exact 20 is never revealed outside coverage"
+        );
     }
 
     /// A dark rival raider outside the viewer's sensor coverage must be OMITTED
@@ -5402,8 +4578,11 @@ mod tests {
     #[test]
     fn dark_raider_omitted_outside_sensor() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
-        assert!(view.is_empty(), "a dark raider out of sensor range must not appear at all");
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
+        assert!(
+            view.is_empty(),
+            "a dark raider out of sensor range must not appear at all"
+        );
     }
 
     /// The moment a rival raider enters sensor coverage it becomes a detected
@@ -5411,7 +4590,7 @@ mod tests {
     #[test]
     fn raider_detected_within_sensor() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         assert_eq!(view.len(), 1, "raider within sensor range is detected");
         assert!(!view[0].own);
     }
@@ -5433,16 +4612,27 @@ mod tests {
             1000.0,
         );
         // No array: the raider is omitted, the convoy's cargo hidden.
-        let blind = hist.view_for(VIEWER, cc, &df(300.0), 60.0);
+        let blind = hist.view_for(VIEWER, cc, df(300.0), 60.0);
         assert_eq!(blind.len(), 1, "only the broadcast convoy, no raider");
         assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
         // An owned array system near them (bubble 1200 su) covers both.
         let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
-        let seen = hist.view_for_with_arrays(VIEWER, cc, &df(300.0), 60.0, &arrays, &[], &BTreeSet::new(), NodeEffects::default());
+        let seen = hist.view_for_with_arrays(
+            VIEWER,
+            cc,
+            df(300.0),
+            60.0,
+            &arrays,
+            &BTreeSet::new(),
+            NodeEffects::default(),
+        );
         assert_eq!(seen.len(), 2, "the array detects the dark raider");
         let convoy = seen.iter().find(|g| g.kind == ShipKind::Convoy).unwrap();
         assert!(convoy.cargo.is_some(), "cargo revealed at array range");
-        assert!(seen.iter().any(|g| g.kind == ShipKind::Raider), "raider detected via the array");
+        assert!(
+            seen.iter().any(|g| g.kind == ShipKind::Raider),
+            "raider detected via the array"
+        );
     }
 
     /// A SCOUT (§scout) projects an OVERSIZED bubble (sensor_mult × range): a
@@ -5462,8 +4652,11 @@ mod tests {
             ],
             1000.0,
         );
-        let v = with_raider.view_for(VIEWER, cc, &df(300.0), 60.0);
-        assert!(!v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "an ordinary ship at 1400 su misses the dark raider");
+        let v = with_raider.view_for(VIEWER, cc, df(300.0), 60.0);
+        assert!(
+            !v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
+            "an ordinary ship at 1400 su misses the dark raider"
+        );
 
         let with_scout = history_of(
             vec![
@@ -5473,10 +4666,19 @@ mod tests {
             ],
             1000.0,
         );
-        let v = with_scout.view_for(VIEWER, cc, &df(300.0), 60.0);
-        assert!(v.iter().any(|g| g.kind == ShipKind::Raider && !g.own), "the scout's oversized bubble detects it");
-        let convoy = v.iter().find(|g| g.kind == ShipKind::Convoy && !g.own).unwrap();
-        assert!(convoy.cargo.is_some(), "…and reveals convoy cargo at scout range");
+        let v = with_scout.view_for(VIEWER, cc, df(300.0), 60.0);
+        assert!(
+            v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
+            "the scout's oversized bubble detects it"
+        );
+        let convoy = v
+            .iter()
+            .find(|g| g.kind == ShipKind::Convoy && !g.own)
+            .unwrap();
+        assert!(
+            convoy.cargo.is_some(),
+            "…and reveals convoy cargo at scout range"
+        );
     }
 
     /// A rival SCOUT runs DARK exactly like a raider: omitted entirely outside
@@ -5485,10 +4687,17 @@ mod tests {
     #[test]
     fn rival_scout_is_dark_outside_coverage() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Scout)], 1000.0);
-        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
-        assert!(far.is_empty(), "a dark scout out of coverage must not appear at all");
-        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), &df(300.0), 60.0);
-        assert_eq!(near.len(), 1, "inside coverage it's a detected contact like any dark ship");
+        let far = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
+        assert!(
+            far.is_empty(),
+            "a dark scout out of coverage must not appear at all"
+        );
+        let near = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
+        assert_eq!(
+            near.len(),
+            1,
+            "inside coverage it's a detected contact like any dark ship"
+        );
         assert_eq!(near[0].kind, ShipKind::Scout);
     }
 
@@ -5497,7 +4706,7 @@ mod tests {
     #[test]
     fn own_raider_is_always_visible() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, VIEWER, ShipKind::Raider)], 1000.0);
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
         assert_eq!(view.len(), 1, "own raider must always be visible");
         assert!(view[0].own);
     }
@@ -5516,21 +4725,50 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 10.0 {
-            samples.push(Sample { time: t, pos: dpos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos: dpos,
+                vel: Vec2::ZERO,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
-        let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
+        let mut hist = history_of(
+            vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))],
+            1e12,
+        );
         hist.mark_destroyed(EntityId(1), 10.0, dpos);
 
         // The near CC observes the destruction at 10 + 1 = 11.
-        assert_eq!(hist.view_for(VIEWER, near, &df(c), 10.5).len(), 1, "near still sees it alive just before its light");
-        assert_eq!(hist.view_for(VIEWER, near, &df(c), 11.5).len(), 0, "near sees it destroyed after the light arrives");
+        assert_eq!(
+            hist.view_for(VIEWER, near, df(c), 10.5).len(),
+            1,
+            "near still sees it alive just before its light"
+        );
+        assert_eq!(
+            hist.view_for(VIEWER, near, df(c), 11.5).len(),
+            0,
+            "near sees it destroyed after the light arrives"
+        );
 
         // The far CC observes it at 10 + 20 = 30 — so at t=25 it STILL sees the
         // ship alive (flying on old light) while the near CC already saw it die.
-        assert_eq!(hist.view_for(VIEWER, far, &df(c), 25.0).len(), 1, "far still sees the (already-dead) ship alive");
-        assert_eq!(hist.view_for(VIEWER, near, &df(c), 25.0).len(), 0, "...while near has long since seen it destroyed");
-        assert_eq!(hist.view_for(VIEWER, far, &df(c), 30.5).len(), 0, "far finally sees it destroyed when its light arrives");
+        assert_eq!(
+            hist.view_for(VIEWER, far, df(c), 25.0).len(),
+            1,
+            "far still sees the (already-dead) ship alive"
+        );
+        assert_eq!(
+            hist.view_for(VIEWER, near, df(c), 25.0).len(),
+            0,
+            "...while near has long since seen it destroyed"
+        );
+        assert_eq!(
+            hist.view_for(VIEWER, far, df(c), 30.5).len(),
+            0,
+            "far finally sees it destroyed when its light arrives"
+        );
     }
 
     /// A destroyed CONVOY (moving, broadcast-visible) keeps being served as a
@@ -5546,11 +4784,20 @@ mod tests {
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 20.0 {
-            samples.push(Sample { time: t, pos: Vec2::new(t * 10.0, 0.0), vel: Vec2::new(10.0, 0.0), loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            samples.push(Sample {
+                time: t,
+                pos: Vec2::new(t * 10.0, 0.0),
+                vel: Vec2::new(10.0, 0.0),
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         let dpos = Vec2::new(200.0, 0.0);
-        let mut hist = history_of(vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))], 1e12);
+        let mut hist = history_of(
+            vec![(EntityId(1), track_from(samples, RIVAL, ShipKind::Convoy))],
+            1e12,
+        );
         hist.mark_destroyed(EntityId(1), 20.0, dpos);
 
         // FAR viewer: 4500 su from the kill → 15 s of light → observed-destruction
@@ -5558,17 +4805,31 @@ mod tests {
         // across the entire [15, 35) interval and vanish only at 35.
         let far = Vec2::new(200.0, 4500.0); // |dpos-far| = 4500
         for now in [16.0, 25.0, 30.0, 34.5] {
-            assert_eq!(hist.view_for(VIEWER, far, &df(c), now).len(), 1,
-                "far viewer must still see the dead convoy flying on old light at t={now} (light lands at 35)");
+            assert_eq!(
+                hist.view_for(VIEWER, far, df(c), now).len(),
+                1,
+                "far viewer must still see the dead convoy flying on old light at t={now} (light lands at 35)"
+            );
         }
-        assert_eq!(hist.view_for(VIEWER, far, &df(c), 35.5).len(), 0,
-            "far viewer's convoy vanishes exactly when its destruction light arrives (t=35)");
+        assert_eq!(
+            hist.view_for(VIEWER, far, df(c), 35.5).len(),
+            0,
+            "far viewer's convoy vanishes exactly when its destruction light arrives (t=35)"
+        );
 
         // NEAR viewer: 600 su → 2 s of light → vanishes at t=22, 13 s before the
         // far viewer. ONE destruction, observed asymmetrically.
         let near = Vec2::new(200.0, 600.0); // |dpos-near| = 600
-        assert_eq!(hist.view_for(VIEWER, near, &df(c), 21.5).len(), 1, "near still sees it just before its light");
-        assert_eq!(hist.view_for(VIEWER, near, &df(c), 22.5).len(), 0, "near vanishes at t=22 while far waits until 35");
+        assert_eq!(
+            hist.view_for(VIEWER, near, df(c), 21.5).len(),
+            1,
+            "near still sees it just before its light"
+        );
+        assert_eq!(
+            hist.view_for(VIEWER, near, df(c), 22.5).len(),
+            0,
+            "near vanishes at t=22 while far waits until 35"
+        );
     }
 
     /// §fleets part 3: a colony ship CONSUMED on claim leaves true space without a
@@ -5585,7 +4846,10 @@ mod tests {
     fn consumed_colony_ship_ghost_vanishes_on_its_own_light() {
         let mut w = sim::World::new(sim::SimConfig::for_players(7, 4));
         let me = PlayerId(1);
-        w.step(&[sim::Command::AddPlayer { id: me, name: "Acme".into() }]);
+        w.step(&[sim::Command::AddPlayer {
+            id: me,
+            name: "Acme".into(),
+        }]);
         let c = w.config.c;
         // A settleable target: unclaimed AND not a reserved home site.
         let pos = w
@@ -5599,7 +4863,14 @@ mod tests {
         let cid = sim::EntityId(9_000_001);
         w.fleets.insert(
             cid,
-            sim::Fleet::single(cid, me, ShipKind::Colony, pos + Vec2::new(500.0, 0.0), sim::FleetOrder::Idle, None),
+            sim::Fleet::single(
+                cid,
+                me,
+                ShipKind::Colony,
+                pos + Vec2::new(500.0, 0.0),
+                sim::FleetOrder::Idle,
+                None,
+            ),
         );
         let mut hist = PositionHistory::for_world(&w);
         let t0 = w.time;
@@ -5607,7 +4878,10 @@ mod tests {
             w.step(&[]);
             hist.record(&w);
         }
-        assert!(w.fleets.contains_key(&cid), "out of claim range it just parks");
+        assert!(
+            w.fleets.contains_key(&cid),
+            "out of claim range it just parks"
+        );
 
         // Now set it on the system and record one tick there (the live loop records
         // every tick, so the last sample is always the true final position). The
@@ -5616,17 +4890,33 @@ mod tests {
         hist.record(&w);
         let t_claim = w.time;
         w.step(&[]);
-        assert!(!w.fleets.contains_key(&cid), "the colony ship is consumed on arrival");
+        assert!(
+            !w.fleets.contains_key(&cid),
+            "the colony ship is consumed on arrival"
+        );
         hist.record(&w);
 
         // A command center 3000 su away learns of the claim 3000/c seconds later.
         let cc = pos + Vec2::new(3000.0, 0.0);
         let delay = 3000.0 / c;
-        let sees = |now: f64| hist.view_for(me, cc, &df(c), now).iter().any(|g| g.id == cid);
-        assert!(sees(t_claim + delay - 0.5), "before the light lands the colony ship still flies on old light");
-        assert!(!sees(t_claim + delay + 0.5), "once the claim's light lands the consumed ship is gone from the map");
+        let sees = |now: f64| {
+            hist.view_for(me, cc, df(c), now)
+                .iter()
+                .any(|g| g.id == cid)
+        };
+        assert!(
+            sees(t_claim + delay - 0.5),
+            "before the light lands the colony ship still flies on old light"
+        );
+        assert!(
+            !sees(t_claim + delay + 0.5),
+            "once the claim's light lands the consumed ship is gone from the map"
+        );
         // And it stays gone — not merely skipped for one frame.
-        assert!(!sees(t_claim + delay + 60.0), "a consumed ship never comes back");
+        assert!(
+            !sees(t_claim + delay + 60.0),
+            "a consumed ship never comes back"
+        );
     }
 
     /// A far rival raider is dark, but if the viewer has an OWN ship near it, the
@@ -5641,9 +4931,12 @@ mod tests {
             1000.0,
         );
         // Command center far away; detection comes from the own ship's radius.
-        let view = hist.view_for(VIEWER, Vec2::new(0.0, 9000.0), &df(300.0), 60.0);
+        let view = hist.view_for(VIEWER, Vec2::new(0.0, 9000.0), df(300.0), 60.0);
         let raider = view.iter().find(|g| g.id == EntityId(1));
-        assert!(raider.is_some(), "own ship's sensor radius should detect the nearby raider");
+        assert!(
+            raider.is_some(),
+            "own ship's sensor radius should detect the nearby raider"
+        );
     }
 
     // ---- Raider destruction observed through the lightspeed frame (§6, RVR) ----
@@ -5662,7 +4955,13 @@ mod tests {
         let mut s = Vec::new();
         let mut t = 0.0;
         while t <= t_end + 1e-9 {
-            s.push(Sample { time: t, pos, vel: Vec2::ZERO, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            s.push(Sample {
+                time: t,
+                pos,
+                vel: Vec2::ZERO,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         s
@@ -5680,7 +4979,13 @@ mod tests {
             } else {
                 (start + unit * (speed * (t - t_turn)), unit * speed)
             };
-            s.push(Sample { time: t, pos, vel, loud: false, drive: sim::ship::DriveState::Thrusters, in_comms: false });
+            s.push(Sample {
+                time: t,
+                pos,
+                vel,
+                loud: false,
+                drive: sim::ship::DriveState::Thrusters,
+            });
             t += 0.1;
         }
         s
@@ -5694,10 +4999,20 @@ mod tests {
 
     // Walk `now` forward; return the first `now` at which `ship` disappears from the
     // viewer's view after having been visible (its observed-destruction instant).
-    fn vanish_time(hist: &PositionHistory, viewer: PlayerId, cc: Vec2, ship: EntityId, from: f64, to: f64) -> Option<f64> {
+    fn vanish_time(
+        hist: &PositionHistory,
+        viewer: PlayerId,
+        cc: Vec2,
+        ship: EntityId,
+        from: f64,
+        to: f64,
+    ) -> Option<f64> {
         let (mut now, mut seen) = (from, false);
         while now <= to {
-            let present = hist.view_for(viewer, cc, &df(300.0), now).iter().any(|g| g.id == ship);
+            let present = hist
+                .view_for(viewer, cc, df(300.0), now)
+                .iter()
+                .any(|g| g.id == ship);
             if present {
                 seen = true;
             } else if seen {
@@ -5717,7 +5032,7 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let p = Vec2::new(1500.0, 0.0); // dead rival, 5 s of light from cc
         let t = 10.0;
-        let honest = t + df(c).between(p, cc); // = 15.0
+        let honest = t + sim::transit::delay(p, cc, df(c)); // = 15.0
         // Own attacker sat at (1300,0) (4.33 s of light) until T, then recedes home.
         let attacker = recede_samples(Vec2::new(1300.0, 0.0), cc, 250.0, t, 25.0);
         let hist = history_of(
@@ -5728,14 +5043,20 @@ mod tests {
             250.0, // sensor range — tight, so the skew matters
         );
         // Sanity: before the destruction light, the dead rival IS visible.
-        assert!(hist.view_for(VIEWER, cc, &df(c), 13.0).iter().any(|g| g.id == EntityId(1)),
-            "dead rival should still be a ghost well before its light arrives");
+        assert!(
+            hist.view_for(VIEWER, cc, df(c), 13.0)
+                .iter()
+                .any(|g| g.id == EntityId(1)),
+            "dead rival should still be a ghost well before its light arrives"
+        );
         let vanish = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0)
             .expect("the dead rival must eventually be observed destroyed");
-        assert!(vanish >= honest - 0.15,
+        assert!(
+            vanish >= honest - 0.15,
             "FTL LEAK: dead rival raider vanished at {vanish:.2}s but its destruction light \
              only reaches the viewer at {honest:.2}s — the kill leaked {:.2}s faster than light",
-            honest - vanish);
+            honest - vanish
+        );
     }
 
     /// The viewer's OWN raider is the one destroyed (a rival won and recedes). The
@@ -5747,15 +5068,17 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let p = Vec2::new(1500.0, 0.0);
         let t = 10.0;
-        let honest = t + df(c).between(p, cc); // 15.0
+        let honest = t + sim::transit::delay(p, cc, df(c)); // 15.0
         let hist = history_of(
             vec![(EntityId(1), dead_track(still_samples(p, t), VIEWER, t, p))],
             250.0,
         );
         let vanish = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0)
             .expect("own dead raider must eventually be observed destroyed");
-        assert!((vanish - honest).abs() < 0.2,
-            "own dead raider should vanish at its light {honest:.2}s, got {vanish:.2}s");
+        assert!(
+            (vanish - honest).abs() < 0.2,
+            "own dead raider should vanish at its light {honest:.2}s, got {vanish:.2}s"
+        );
     }
 
     /// BOTH raiders destroyed at distinct distances. Each must vanish at ITS OWN
@@ -5767,20 +5090,33 @@ mod tests {
         let p_own = Vec2::new(1300.0, 0.0); // own dead raider, 4.33 s light
         let p_enemy = Vec2::new(1500.0, 0.0); // enemy dead raider, 5 s light (200 su apart)
         let t = 10.0;
-        let honest_own = t + df(c).between(p_own, cc); // 14.33
-        let honest_enemy = t + df(c).between(p_enemy, cc); // 15.0
+        let honest_own = t + sim::transit::delay(p_own, cc, df(c)); // 14.33
+        let honest_enemy = t + sim::transit::delay(p_enemy, cc, df(c)); // 15.0
         let hist = history_of(
             vec![
-                (EntityId(1), dead_track(still_samples(p_own, t), VIEWER, t, p_own)),
-                (EntityId(2), dead_track(still_samples(p_enemy, t), RIVAL, t, p_enemy)),
+                (
+                    EntityId(1),
+                    dead_track(still_samples(p_own, t), VIEWER, t, p_own),
+                ),
+                (
+                    EntityId(2),
+                    dead_track(still_samples(p_enemy, t), RIVAL, t, p_enemy),
+                ),
             ],
             250.0,
         );
-        let v_own = vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0).expect("own should vanish");
-        let v_enemy = vanish_time(&hist, VIEWER, cc, EntityId(2), 10.0, 16.0).expect("enemy should vanish");
-        assert!((v_own - honest_own).abs() < 0.2, "own dead vanish {v_own:.2} != light {honest_own:.2}");
-        assert!(v_enemy >= honest_enemy - 0.15,
-            "FTL LEAK: enemy dead raider vanished at {v_enemy:.2}s, light arrives {honest_enemy:.2}s");
+        let v_own =
+            vanish_time(&hist, VIEWER, cc, EntityId(1), 10.0, 16.0).expect("own should vanish");
+        let v_enemy =
+            vanish_time(&hist, VIEWER, cc, EntityId(2), 10.0, 16.0).expect("enemy should vanish");
+        assert!(
+            (v_own - honest_own).abs() < 0.2,
+            "own dead vanish {v_own:.2} != light {honest_own:.2}"
+        );
+        assert!(
+            v_enemy >= honest_enemy - 0.15,
+            "FTL LEAK: enemy dead raider vanished at {v_enemy:.2}s, light arrives {honest_enemy:.2}s"
+        );
     }
 
     /// EXISTENCE GUARD. A dead rival raider the viewer never had sensors on must
@@ -5792,13 +5128,18 @@ mod tests {
         let cc = Vec2::new(0.0, 0.0);
         let p = Vec2::new(1500.0, 0.0); // far outside the 250 su cc range; no own assets
         let hist = history_of(
-            vec![(EntityId(1), dead_track(still_samples(p, 10.0), RIVAL, 10.0, p))],
+            vec![(
+                EntityId(1),
+                dead_track(still_samples(p, 10.0), RIVAL, 10.0, p),
+            )],
             250.0,
         );
         let mut now = 0.0;
         while now <= 20.0 {
-            assert!(hist.view_for(VIEWER, cc, &df(c), now).is_empty(),
-                "a never-detected dead raider must never appear (existence leak at t={now:.1})");
+            assert!(
+                hist.view_for(VIEWER, cc, df(c), now).is_empty(),
+                "a never-detected dead raider must never appear (existence leak at t={now:.1})"
+            );
             now += 0.25;
         }
     }
@@ -5815,25 +5156,62 @@ mod tests {
     /// light delay is 3.0 s (round tick T unlocks at `T/30 + 3.0`).
     fn mk_record(id: EntityId, a: PlayerId, d: PlayerId, pos: Vec2) -> sim::BattleRecord {
         let sides = [
-            sim::SideRecord { corp: a, initial: kinds(&[(ShipKind::Raider, 2)]), initial_loadouts: Default::default(), posture: sim::EngagementPolicy::EngageAny, platform_tiers: 0 },
-            sim::SideRecord { corp: d, initial: kinds(&[(ShipKind::Corvette, 2)]), initial_loadouts: Default::default(), posture: sim::EngagementPolicy::Avoid, platform_tiers: 0 },
+            sim::SideRecord {
+                corp: a,
+                initial: kinds(&[(ShipKind::Raider, 2)]),
+                initial_loadouts: Default::default(),
+                posture: sim::EngagementPolicy::EngageAny,
+                platform_tiers: 0,
+            },
+            sim::SideRecord {
+                corp: d,
+                initial: kinds(&[(ShipKind::Corvette, 2)]),
+                initial_loadouts: Default::default(),
+                posture: sim::EngagementPolicy::Avoid,
+                platform_tiers: 0,
+            },
         ];
         let mut r = sim::BattleRecord::open(id, pos, None, false, 0, 20.0, sides);
         // Round at tick 15 with a reinforcement join (attacker side).
         r.accumulate(2.0, 1.0, &sim::Losses::default(), &sim::Losses::default());
-        r.note(sim::RoundNote::Joined { side: 0, comp: kinds(&[(ShipKind::Raider, 1)]) });
-        r.flush_if_due(15, [kinds(&[(ShipKind::Raider, 3)]), kinds(&[(ShipKind::Corvette, 2)])]);
+        r.note(sim::RoundNote::Joined {
+            side: 0,
+            comp: kinds(&[(ShipKind::Raider, 1)]),
+        });
+        r.flush_if_due(
+            15,
+            [
+                kinds(&[(ShipKind::Raider, 3)]),
+                kinds(&[(ShipKind::Corvette, 2)]),
+            ],
+        );
         // Round at tick 30 with a defender retreat beat.
         r.accumulate(2.0, 0.5, &sim::Losses::default(), &sim::Losses::default());
         r.note(sim::RoundNote::RetreatTripped { side: 1 });
-        r.flush_if_due(30, [kinds(&[(ShipKind::Raider, 3)]), kinds(&[(ShipKind::Corvette, 1)])]);
+        r.flush_if_due(
+            30,
+            [
+                kinds(&[(ShipKind::Raider, 3)]),
+                kinds(&[(ShipKind::Corvette, 1)]),
+            ],
+        );
         // Tail round at finalize (tick 45).
         r.accumulate(1.0, 0.0, &sim::Losses::default(), &sim::Losses::default());
-        r.finalize(45, sim::RaidOutcome::TargetDestroyed, [kinds(&[]), kinds(&[(ShipKind::Corvette, 2)])], [kinds(&[(ShipKind::Raider, 3)]), kinds(&[])]);
+        r.finalize(
+            45,
+            sim::RaidOutcome::TargetDestroyed,
+            [kinds(&[]), kinds(&[(ShipKind::Corvette, 2)])],
+            [kinds(&[(ShipKind::Raider, 3)]), kinds(&[])],
+        );
         r
     }
 
-    fn one_record(id: EntityId, a: PlayerId, d: PlayerId, pos: Vec2) -> BTreeMap<EntityId, sim::BattleRecord> {
+    fn one_record(
+        id: EntityId,
+        a: PlayerId,
+        d: PlayerId,
+        pos: Vec2,
+    ) -> BTreeMap<EntityId, sim::BattleRecord> {
         let mut m = BTreeMap::new();
         m.insert(id, mk_record(id, a, d, pos));
         m
@@ -5845,9 +5223,12 @@ mod tests {
         let cc = Vec2::ZERO;
         let pos = Vec2::new(3.0, 0.0); // delay = 3.0 s at c = 1.0
         let recs = one_record(EntityId(1), a, d, pos);
-        let view = |now: f64| battle_record_views(&recs, a, cc, &df(1.0), now, &[]);
+        let view = |now: f64| battle_record_views(&recs, a, cc, df(1.0), now, &[]);
         // Before the START light (tick 0 → 3.0 s): no record at all.
-        assert!(view(2.9).is_empty(), "the battle is unknown before its opening light");
+        assert!(
+            view(2.9).is_empty(),
+            "the battle is unknown before its opening light"
+        );
         // Start arrived, no rounds yet (tick 15 → 3.5 s).
         let v = view(3.2);
         assert_eq!(v.len(), 1);
@@ -5855,16 +5236,27 @@ mod tests {
         assert_eq!(v[0].light_frontier_tick, 0);
         assert!(v[0].outcome.is_none());
         // Round 1 arrived (3.5 s), not round 2 (tick 30 → 4.0 s).
-        assert_eq!(view(3.7)[0].rounds.len(), 1, "exactly the first round has arrived");
+        assert_eq!(
+            view(3.7)[0].rounds.len(),
+            1,
+            "exactly the first round has arrived"
+        );
         assert_eq!(view(3.7)[0].light_frontier_tick, 15);
         // Rounds 1+2 arrived, outcome (tick 45 → 4.5 s) not yet.
         let v = view(4.2);
         assert_eq!(v[0].rounds.len(), 2, "unarrived rounds are withheld");
-        assert!(v[0].outcome.is_none(), "the outcome waits for the final round's light");
+        assert!(
+            v[0].outcome.is_none(),
+            "the outcome waits for the final round's light"
+        );
         // Everything arrived.
         let v = view(5.0);
         assert_eq!(v[0].rounds.len(), 3, "the full timeline arrives");
-        assert_eq!(v[0].outcome, Some(sim::RaidOutcome::TargetDestroyed), "the outcome unlocks with the end light");
+        assert_eq!(
+            v[0].outcome,
+            Some(sim::RaidOutcome::TargetDestroyed),
+            "the outcome unlocks with the end light"
+        );
     }
 
     #[test]
@@ -5874,17 +5266,28 @@ mod tests {
         let pos = Vec2::new(3.0, 0.0);
         let recs = one_record(EntityId(1), a, d, pos);
         // Attacker's view, everything arrived, no coverage needed.
-        let v = &battle_record_views(&recs, a, cc, &df(1.0), 100.0, &[])[0];
+        let v = &battle_record_views(&recs, a, cc, df(1.0), 100.0, &[])[0];
         assert!(matches!(v.fidelity, BattleFidelity::Participant));
         assert_eq!(v.own_side, Some(0));
         // Own posture present, opponent's hidden (the owner-only law).
         assert_eq!(v.sides[0].posture, Some(sim::EngagementPolicy::EngageAny));
-        assert_eq!(v.sides[1].posture, None, "a participant never sees the OTHER side's posture");
+        assert_eq!(
+            v.sides[1].posture, None,
+            "a participant never sees the OTHER side's posture"
+        );
         // Exact counts + damage dealt + every beat are present.
         assert_eq!(v.sides[0].initial[0].exact, Some(2));
         assert!(v.rounds[0].dealt.is_some(), "participants see damage dealt");
-        let all_notes: Vec<&str> = v.rounds.iter().flat_map(|r| r.notes.iter()).map(|n| n.kind.as_str()).collect();
-        assert!(all_notes.contains(&"joined") && all_notes.contains(&"retreat_tripped"), "all beats present");
+        let all_notes: Vec<&str> = v
+            .rounds
+            .iter()
+            .flat_map(|r| r.notes.iter())
+            .map(|n| n.kind.as_str())
+            .collect();
+        assert!(
+            all_notes.contains(&"joined") && all_notes.contains(&"retreat_tripped"),
+            "all beats present"
+        );
     }
 
     #[test]
@@ -5896,18 +5299,38 @@ mod tests {
         // Coverage that includes the battle site → bucket access.
         let coverage = [(pos, 100.0)];
         // Far enough that light has fully arrived (|pos-cc| = 47, delay = 47 s).
-        let v = &battle_record_views(&recs, x, cc, &df(1.0), 1000.0, &coverage)[0];
+        let v = &battle_record_views(&recs, x, cc, df(1.0), 1000.0, &coverage)[0];
         assert!(matches!(v.fidelity, BattleFidelity::Bucket));
         assert_eq!(v.own_side, None);
         // No exact counts, no damage dealt, no posture leak.
-        assert_eq!(v.sides[0].initial[0].exact, None, "bucket fidelity hides exact counts");
+        assert_eq!(
+            v.sides[0].initial[0].exact, None,
+            "bucket fidelity hides exact counts"
+        );
         assert_eq!(v.sides[0].initial[0].class, CountClass::from_count(2));
-        assert!(v.sides.iter().all(|s| s.posture.is_none()), "no doctrine leaks to a third party");
-        assert!(v.rounds.iter().all(|r| r.dealt.is_none()), "no damage-dealt leaks to a third party");
+        assert!(
+            v.sides.iter().all(|s| s.posture.is_none()),
+            "no doctrine leaks to a third party"
+        );
+        assert!(
+            v.rounds.iter().all(|r| r.dealt.is_none()),
+            "no damage-dealt leaks to a third party"
+        );
         // Only join / mutual-disengage beats survive; the retreat beat is dropped.
-        let notes: Vec<&str> = v.rounds.iter().flat_map(|r| r.notes.iter()).map(|n| n.kind.as_str()).collect();
-        assert!(notes.contains(&"joined"), "the join beat survives bucketing");
-        assert!(!notes.contains(&"retreat_tripped"), "doctrine beats are stripped at bucket fidelity");
+        let notes: Vec<&str> = v
+            .rounds
+            .iter()
+            .flat_map(|r| r.notes.iter())
+            .map(|n| n.kind.as_str())
+            .collect();
+        assert!(
+            notes.contains(&"joined"),
+            "the join beat survives bucketing"
+        );
+        assert!(
+            !notes.contains(&"retreat_tripped"),
+            "doctrine beats are stripped at bucket fidelity"
+        );
     }
 
     #[test]
@@ -5917,7 +5340,10 @@ mod tests {
         let pos = Vec2::new(3.0, 0.0);
         let recs = one_record(EntityId(1), a, d, pos);
         // No coverage of the site → no access (only the news/wreck reach them).
-        let out = battle_record_views(&recs, x, cc, &df(1.0), 1000.0, &[]);
-        assert!(out.is_empty(), "a third party who can't sense the site gets no replay");
+        let out = battle_record_views(&recs, x, cc, df(1.0), 1000.0, &[]);
+        assert!(
+            out.is_empty(),
+            "a third party who can't sense the site gets no replay"
+        );
     }
 }

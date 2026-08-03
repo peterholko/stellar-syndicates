@@ -2,8 +2,8 @@
 
 import { Net } from "./net";
 import { Renderer } from "./render";
-import { ghostInTunnel, initialState, liveSimTime, syncRenderClock, type LinkStatus, type PendingIntent, type ViewState } from "./state";
-import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RelayLossView, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { initialState, liveSimTime, syncRenderClock, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -16,7 +16,7 @@ const state: ViewState = initialState();
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
 // Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 12;
+const EXPECTED_PROTOCOL_VERSION = 13;
 const CONTACT_STALE_AGE_S = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
@@ -597,7 +597,7 @@ function buildShipPanel(): void {
       updateShipPanel();
     } else if (act === "emplace" && state.selectedShipId) {
       const k = (e.target as HTMLElement).closest(".emplace-btn")?.getAttribute("data-kind") as
-        | "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor" | null;
+        | "deep_space_sensor" | null;
       if (k) {
         // §emplacements: BUILD WHERE THE SHIP IS PARKED — the player flies the
         // Construction Ship to the spot first, then this button raises the
@@ -605,11 +605,7 @@ function buildShipPanel(): void {
         // is mirrored here with its reason, because the server declines in
         // silence (a click that does nothing was the launch bug).
         const g = state.ghosts.find((x) => x.id === state.selectedShipId && x.own);
-        const pretty =
-          k === "hyperspace_buoy" ? "Hyperspace Buoy"
-          : k === "hyperspace_repeater" ? "Hyperspace Repeater"
-          : k === "deep_space_sensor" ? "Deep Space Sensor"
-          : "Hyperspace Sensor";
+        const pretty = "Deep Space Sensor";
         if (!g) {
           readout().innerHTML = `<span style="color:var(--warn)">That Construction Ship is gone — reselect one and try again.</span>`;
           return;
@@ -629,10 +625,7 @@ function buildShipPanel(): void {
         }
         net?.send({ type: "BuildEmplacement", builder: state.selectedShipId, emplacement: k });
         readout().innerHTML =
-          `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).` +
-            (k === "hyperspace_buoy" || k === "hyperspace_repeater"
-              ? ` <span class="dim">Every comm structure lights nearby lane wire for signals to enter, ride, and leave.</span>`
-              : "");
+          `<b>${pretty}</b> ordered — it rises where the ship is parked (signal outbound).`;
         updateShipPanel();
       }
     } else if (act === "split" && state.selectedShipId && net) {
@@ -739,10 +732,6 @@ const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
 // --- Deliberate map orders: preview first, transmit only on confirmation. ----
 let intentBarBuilt = false;
-
-function samePoint(a: Vec2 | undefined, b: Vec2 | undefined): boolean {
-  return !!a && !!b && Math.hypot(a.x - b.x, a.y - b.y) < 1e-6;
-}
 
 function intentTargetLabel(intent: PendingIntent): string {
   if (intent.verb === "raid" || intent.verb === "attack") {
@@ -853,9 +842,6 @@ function beginPendingIntent(intent: PendingIntent): void {
   renderer.stateVersion++;
   renderIntentBar();
   previewReadout(intent);
-  if (intent.verb === "move" && intent.dest && net) {
-    net.send({ type: "PreviewRoute", ship_id: intent.shipId, dest: intent.dest });
-  }
 }
 
 function moveOrderReadout(ship: GhostView, dest: Vec2): string {
@@ -990,20 +976,6 @@ function syncOrderLifecycles(list: PendingOrderView[], _simTime: number): void {
   }
 }
 
-const seenRelayLosses = new Set<string>();
-function notifyRelayLosses(losses: RelayLossView[]): void {
-  for (const loss of losses) {
-    const key = `${loss.id}:${loss.learned_at}`;
-    if (seenRelayLosses.has(key)) continue;
-    seenRelayLosses.add(key);
-    addTransientReport(
-      "⌁",
-      "bad",
-      `<b>Relay ${esc(loss.id)} lost</b> — ${loss.fleets_beyond} fleet${loss.fleets_beyond === 1 ? "" : "s"} beyond comms, ${loss.orders_lost} order${loss.orders_lost === 1 ? "" : "s"} lost`,
-    );
-  }
-}
-
 function latestPendingOrder(fleetId: string): PendingOrderView | undefined {
   const queue = state.pendingOrders.get(fleetId);
   return queue?.[queue.length - 1];
@@ -1025,56 +997,6 @@ function addTransientReport(iconText: string, cls: "good" | "bad", html: string)
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);
   return el;
-}
-
-// §comms-v4: tunnel transitions are observed facts, so their toast is keyed to
-// the same View that changes the map predicate—never a client timer or truth.
-const tunnelPresentation = new Map<string, boolean>();
-function notifyTunnelTransitions(ghosts: GhostView[]): void {
-  const present = new Set<string>();
-  for (const ghost of ghosts) {
-    if (!ghost.own) continue;
-    present.add(ghost.id);
-    const tunnel = ghostInTunnel(ghost);
-    const previous = tunnelPresentation.get(ghost.id);
-    tunnelPresentation.set(ghost.id, tunnel);
-    if (tunnel) {
-      // Capture once. Later arrived reports may advance `ghost.pos`, but the
-      // arrow is a bookmark of tunnel entry rather than a delayed position feed.
-      state.tunnelBookmarks[ghost.id] ??= {
-        pos: { ...ghost.pos },
-        vel: { ...ghost.vel },
-        reportedAt: state.simTime - ghost.age,
-        path: ghost.path?.map((point) => ({ pos: { ...point.pos }, lane: point.lane })) ?? null,
-      };
-    } else {
-      delete state.tunnelBookmarks[ghost.id];
-    }
-    if (previous !== true || tunnel) continue;
-
-    const flagship = ghost.kind === "titan" ? state.syndicate?.flagship_name?.trim() : "";
-    const ship = flagship || shipKindLabel(ghost.kind);
-    const where = `(${fmt(ghost.pos.x)} · ${fmt(ghost.pos.y)})`;
-    if (ghost.in_comms) {
-      addTransientReport(
-        "⌁",
-        "good",
-        `<b>Communications restored</b> — ${esc(ship)} re-entered the bubble at ${where}`,
-      );
-    } else {
-      addTransientReport(
-        "⌁",
-        "good",
-        `<b>Delayed report</b> — ${esc(ship)} left hyperspace at ${where}`,
-      );
-    }
-  }
-  for (const id of tunnelPresentation.keys()) {
-    if (!present.has(id)) {
-      tunnelPresentation.delete(id);
-      delete state.tunnelBookmarks[id];
-    }
-  }
 }
 
 // §battles-take-time: notify ONCE when a battle first becomes visible (light-
@@ -1119,11 +1041,7 @@ function orderObject(p: PendingOrderView): string {
     case "raid": return `Raid → ${target ? `rival ${shipKindLabel(target.kind)}` : "rival contact"}`;
     case "attack": return "Attack → rival contact";
     case "construct": {
-      const what = p.emplacement === "hyperspace_buoy" ? "Hyperspace Buoy"
-        : p.emplacement === "hyperspace_repeater" ? "Hyperspace Repeater"
-        : p.emplacement === "deep_space_sensor" ? "Deep Space Sensor"
-        : p.emplacement === "hyperspace_sensor" ? "Hyperspace Sensor"
-        : "structure";
+      const what = p.emplacement === "deep_space_sensor" ? "Deep Space Sensor" : "structure";
       return `Construct → ${what}`;
     }
     case "demolish": return `Demolish → ${emplacement ? label(emplacement.kind) : "rival structure"}`;
@@ -1152,15 +1070,10 @@ function ordersZone(g: GhostView): string {
       : `overdue ${orderEta(now - p.response_at)}`;
     const eta = outbound
       ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
-      : p.response_on_reentry
-        ? "awaiting response · ETA unknown"
-        : `awaiting response · ${responseEstimate}`;
-    const comms = p.beyond_comms ? " · beyond comms (warp)" : "";
-    const status = selected ? orderEtaRange(p.response_at, now) : `${eta}${comms}`;
+      : `awaiting response · ${responseEstimate}`;
+    const status = selected ? orderEtaRange(p.response_at, now) : eta;
     const tip = outbound
       ? `SIGNAL OUTBOUND — from the command center's served picture, this ${p.kind} order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
-      : p.response_on_reentry
-        ? "PRESUMED DELIVERED — the fleet must physically return to an owned communication-bubble edge before compliance can be confirmed; its arrival time is unknown."
       : `PRESUMED DELIVERED — awaiting compliance light; response ${responseEstimate}.`;
     return `<button class="sp-order${selected ? " is-selected" : ""}${outbound ? "" : " is-presumed"}" data-act="select-order" data-order-id="${p.id}" aria-pressed="${selected}" title="${esc(tip)}">` +
       `<span class="sp-order__phase" aria-hidden="true">${phase}</span>` +
@@ -1312,47 +1225,17 @@ function headingCell(g: GhostView): string {
   return stat("Heading", `<span class="sp-arrow" aria-hidden="true" style="transform:rotate(${deg.toFixed(0)}deg)">➤</span> ${sp.toFixed(0)} su/s`);
 }
 
-// §hyperspace: WHICH DRIVE is carrying the fleet — thrusters, warp, or the
-// hyperspace drive on a lane. Each is an order of magnitude apart, and until
-// this existed the only way to tell them apart was to watch how fast the sprite
-// crawled, which is unreadable at map zoom: a lane transit and a thruster crawl
-// both look like a dot.
-// Mirrors sim lane::HYPERLIMIT — the radius inside which no drive can light.
+// Mirrors sim transit::HYPERLIMIT — the radius inside which no drive can light.
 const HYPERLIMIT_SU = 900;
-// Mirrors sim c × WARP_FACTOR (400 × 5). Keep in sync: this is only the
-// player-facing one-way report delay from a known bookmark, never a route solve.
-const WARP_LIGHT_SU_S = 2_000;
 
-// §course-change: the DRIVE row — one of five values, in the sighting's own
-// retarded frame: Impulse, Warp, Hyperdrive spinning up, Hyperdrive engaged,
-// Hyperdrive shutting down. The warp drive's own (sub-2s) transitions read as
-// Impulse — that IS the speed being made — with the detail in the tooltip; the
-// hyperdrive's transitions get named because they are the game's doorway
-// moments (the lane starts and stops carrying this ship's reports on them).
+// The drive row is evaluated in the sighting's own retarded frame. Warp's
+// short spool/drop transitions read as impulse until cruise is established.
 function regimeCell(g: GhostView): string {
   const sp = g.speed ?? Math.hypot(g.vel.x, g.vel.y);
   const d = g.drive ?? "thrusters";
   const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
   const spooling = typeof d === "object" && "spooling" in d ? d.spooling : null;
   const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
-  if (spooling?.to === "hyperspace") {
-    const tip = `Hyperdrive spinning up — ${spooling.left.toFixed(1)}s to go. The fleet runs on impulse until it catches, and cannot change course until it does. It has not entered hyperspace yet.`;
-    return stat(
-      "Drive",
-      `<span class="dim" title="${esc(tip)}">Hyperdrive spinning up</span>`,
-    );
-  }
-  if (dropping?.from === "hyperspace") {
-    const tip = `Hyperdrive shutting down — ${dropping.left.toFixed(1)}s to go. Still wound into the lane until it is fully out; this shutdown is the last thing the lane transmits for the ship.`;
-    return stat(
-      "Drive",
-      `<span class="dim" title="${esc(tip)}">Hyperdrive shutting down</span>`,
-    );
-  }
-  if (cruising === "hyperspace") {
-    const tip = "Hyperdrive engaged, riding a lane: ten times warp. It only engages near a lane, and leaving the ribbon or turning off its heading drops the fleet out.";
-    return stat("Drive", `<span class="tone-up" title="${esc(tip)}">Hyperdrive engaged</span>`);
-  }
   if (cruising === "warp") {
     const tip = "Warp drive: five times impulse, and it flies anywhere — no lane needed, no heading to hold.";
     return stat("Drive", `<span title="${esc(tip)}">Warp</span>`);
@@ -1383,26 +1266,11 @@ function regimeCell(g: GhostView): string {
   return stat("Drive", `<span class="dim" title="${esc(tip)}">Impulse</span>`);
 }
 
-// §hyperspace: the DOMAIN row — which space the hull is in. REALSPACE is
-// ordinary space, where impulse and warp operate; HYPERSPACE is the lane
-// medium. The boundary follows the drive by design ruling: a hull is in
-// hyperspace from the moment its hyperdrive CATCHES until it is fully out —
-// so "Hyperspace" here is exactly the span in which the lane itself carries
-// the ship's reports home (spin-up is still the approach, in realspace).
-function domainCell(g: GhostView): string {
-  const d = g.drive ?? "thrusters";
-  const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
-  const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
-  const inHyper = cruising === "hyperspace" || dropping?.from === "hyperspace";
-  return inHyper
-    ? stat(
-        "Domain",
-        `<span class="tone-up" title="Inside the lane medium. While here, the lane itself carries this ship's reports home at hyperspace speed.">Hyperspace</span>`,
-      )
-    : stat(
-        "Domain",
-        `<span class="dim" title="Ordinary space — impulse and warp operate here, and reports travel home as warp-speed light.">Realspace</span>`,
-      );
+function domainCell(_g: GhostView): string {
+  return stat(
+    "Domain",
+    `<span class="dim" title="Ordinary space — impulse and warp operate here, and reports travel home as warp-speed light.">Realspace</span>`,
+  );
 }
 
 // Inferred activity for an OWN ship — there is NO server order field, so this reads
@@ -1649,14 +1517,10 @@ function updateShipPanel(): void {
       : "Authority Enforcement"
     : shipKindLabel(g.kind);
   const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
-  const stale = own ? !g.in_comms : g.age >= CONTACT_STALE_AGE_S;
-  const inTunnel = ghostInTunnel(g);
-  const bookmark = inTunnel ? state.tunnelBookmarks[g.id] : undefined;
-  const panelAge = bookmark ? Math.max(0, liveSimTime() - bookmark.reportedAt) : g.age;
-  const panelPos = bookmark?.pos ?? g.pos;
-  const panelGhost = bookmark
-    ? { ...g, pos: bookmark.pos, vel: bookmark.vel, speed: Math.hypot(bookmark.vel.x, bookmark.vel.y), age: panelAge }
-    : g;
+  const stale = g.age >= CONTACT_STALE_AGE_S;
+  const panelAge = g.age;
+  const panelPos = g.pos;
+  const panelGhost = g;
   const roleLore = own ? shipRoleLore(g) : "";
 
   const head =
@@ -1667,13 +1531,7 @@ function updateShipPanel(): void {
   // Information AGE is the headline stat (the game's identity: you always know HOW
   // OLD this sighting is).
   const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${panelAge.toFixed(1)}s ago</dd></div>`;
-  // Every panel row states the same served picture the map draws. LIVE and DARK
-  // differ in presentation, never in whether these coordinates are player-known.
-  const posTip = inTunnel
-    ? "The last position report received before or during this fleet's unseen hyperspace transit."
-    : g.in_comms
-      ? "Where the delayed live replay currently puts this fleet."
-      : "Where the latest arrived report puts it. Outside comms this picture advances only when new light arrives.";
+  const posTip = "Where the latest arrived warp-light report puts this fleet.";
   const posCell =
     `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
     `<dd>${fmt(panelPos.x)} · ${fmt(panelPos.y)}</dd></div>`;
@@ -1681,43 +1539,12 @@ function updateShipPanel(): void {
     [ageCell, regimeCell(panelGhost), domainCell(panelGhost), headingCell(panelGhost), posCell],
     "sp-status-strip",
   );
-  const tunnelOrder = inTunnel
-    ? [...(state.pendingOrders.get(g.id) ?? [])].reverse().find((order) => !order.lost)
-    : undefined;
-  const targetPos = tunnelOrder?.target_id
-    ? state.ghosts.find((target) => target.id === tunnelOrder.target_id)?.pos
-      ?? state.galaxy?.systems.find((system) => system.id === tunnelOrder.target_id)?.pos
-      ?? state.emplacements.find((site) => site.id === tunnelOrder.target_id)?.pos
-    : undefined;
-  const knownDest = tunnelOrder?.dest
-    ?? targetPos
-    ?? state.orders[g.id]
-    ?? bookmark?.path?.[bookmark.path.length - 1]?.pos
-    ?? g.path?.[g.path.length - 1]?.pos;
-  const knownOrder = tunnelOrder
-    ? orderObject(tunnelOrder)
-    : knownDest
-      ? "Move → known destination"
-      : "No destination recorded";
-  const reportDelay = bookmark && state.commandCenter
-    ? Math.hypot(bookmark.pos.x - state.commandCenter.x, bookmark.pos.y - state.commandCenter.y) / WARP_LIGHT_SU_S
-    : null;
-  const tunnelNotice = inTunnel
-    ? `<div class="sp-note" title="This arrow is the last served tunnel-entry bookmark, not a live position. It will be replaced when arrived light reports a drive drop or bubble re-entry.">` +
-      `<b>IN HYPERSPACE — beyond comms</b>` +
-      `<div class="sp-line"><span class="dim">Last known order</span> · ${esc(knownOrder)}</div>` +
-      `<div class="sp-line"><span class="dim">Destination</span> · ${knownDest ? esc(orderPoint(knownDest)) : "unknown"}</div>` +
-      `<div class="sp-line"><span class="dim">Last report</span> · ${panelAge.toFixed(1)}s ago</div>` +
-      (reportDelay === null ? "" : `<div class="sp-line"><span class="dim">Report delay</span> · reports from this position take ~${Math.ceil(reportDelay)}s</div>`) +
-      `</div>`
-    : "";
-
   // Preserve an in-progress dockside load selection/qty across the rebuild (the
   // fresh <input> would otherwise snap back to its default 50, the fresh <select>
   // to its first option) — the panel still rebuilds ~10 Hz to keep the age live.
   const prevQty = (root.querySelector(".lg-qty") as HTMLInputElement | null)?.value;
   const prevCom = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value;
-  setHtml(root, head + `<div class="sp-body">${tunnelNotice}${strip}${own ? ownBody(g) : rivalBody(g)}</div>`);
+  setHtml(root, head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`);
   if (prevQty !== undefined) {
     const q = root.querySelector(".lg-qty") as HTMLInputElement | null;
     if (q) q.value = prevQty;
@@ -2857,9 +2684,7 @@ function updateOngoingBattlePanel(): void {
           const inTransit = now < pend.arrives_at;
           const timing = inTransit
             ? `▸${fmtCountdown(pend.arrives_at - now)}`
-            : pend.response_on_reentry
-              ? "◂unknown"
-              : `◂${fmtCountdown(pend.response_at - now)}`;
+            : `◂${fmtCountdown(pend.response_at - now)}`;
           echo = ` <span class="fs-echo">${timing}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
@@ -3860,8 +3685,7 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
       if (!g.own) continue;
       if (engagedIds.has(g.id)) continue;
       if (g.docked) continue;
-      const pickPos = ghostInTunnel(g) ? state.tunnelBookmarks[g.id]?.pos ?? g.pos : g.pos;
-      const s = renderer.worldToScreen(pickPos);
+      const s = renderer.worldToScreen(g.pos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the MARKER's current on-screen size (formation sprite
       // included), so it grows with the sprite in the deep-zoom native-size band;
@@ -3877,10 +3701,8 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
       }
     }
 
-    // §emplacements: STRUCTURES ARE OBJECTS ON THE MAP, not scenery — a buoy or
-    // sensor takes a click, through the same candidate cycling everything else
-    // uses (so a buoy sitting on a lane beside a parked crane doesn't swallow
-    // the ship's click).
+    // Structures are map objects, not scenery: a sensor participates in the
+    // same candidate cycling as fleets and systems.
     //
     // With one of your ARMED fleets selected, clicking a RIVAL structure orders
     // its demolition — the same grammar as "raider + click a rival contact =
@@ -4080,10 +3902,7 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
 // the server charges silently, so the honest refusal has to live here. Keep
 // in lockstep with the Rust recipes.
 const EMPLACE_KITS: Record<string, [Commodity, number][]> = {
-  hyperspace_buoy: [["alloys", 50], ["electronics", 100], ["fuel", 30]],
-  hyperspace_repeater: [["alloys", 15], ["electronics", 15], ["fuel", 10]],
   deep_space_sensor: [["alloys", 60], ["electronics", 120], ["fuel", 40]],
-  hyperspace_sensor: [["alloys", 50], ["electronics", 90], ["fuel", 30]],
 };
 
 // Pretty "40 Alloys + 60 Electronics + 30 Fuel" for tooltips and refusals.
@@ -4130,14 +3949,8 @@ function emplacementLabel(kind: string): string {
 // the same sentence the build button promises, so a structure explains itself
 // when clicked months after it was placed.
 const EMPLACEMENT_BLURB: Record<string, string> = {
-  hyperspace_buoy:
-    "The long-throw comm relay. Its 80,000 su coverage lights lane wire for signals to enter, ride, and leave.",
-  hyperspace_repeater:
-    "The short-throw comm relay. Its 40,000 su coverage has the same full signal function as a buoy, at lower cost.",
   deep_space_sensor:
     "A stationary picket. Watches its bubble like a ship's sensors and reports home at warp speed.",
-  hyperspace_sensor:
-    "A tripwire coupled to its lane. Hears rival traffic riding past and reports home at lane speed — riders can go quiet by dropping to warp and going around.",
 };
 
 // §emplacements: the SELECTED STRUCTURE panel. Structures are stationary and
@@ -4159,16 +3972,12 @@ function updateEmplacementPanel(): void {
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
   const stats = statStrip([
     `<div class="stat"><dt>Position</dt><dd>${fmt(e.pos.x)} · ${fmt(e.pos.y)}</dd></div>`,
-    e.sensor_range > 0
-      ? `<div class="stat" title="Everything inside this radius is watched from here."><dt>Watches</dt><dd>${fmt(e.sensor_range)} su</dd></div>`
-      : `<div class="stat" title="A buoy carries signals; it does not watch."><dt>Watches</dt><dd class="dim">—</dd></div>`,
+    `<div class="stat" title="Everything inside this radius is watched from here."><dt>Watches</dt><dd>${fmt(e.sensor_range)} su</dd></div>`,
   ], "sp-status-strip sp-status-strip--emplacement");
   const body =
     `<div class="sp-line dim">${esc(EMPLACEMENT_BLURB[e.kind] ?? "")}</div>` +
     (mine
-      ? (e.kind === "hyperspace_buoy" || e.kind === "hyperspace_repeater")
-        ? `<div class="sp-line dim">Comm structures light up the lanes around them. They also hear the coded carrier of your own hyperspace drives farther along that lane; dedicated sensors hear everyone.</div>`
-        : ""
+      ? ""
       : // A rival's: say how to be rid of it. The verb lives on the map, in the
         // same grammar as raiding, so the panel teaches rather than adds a button.
         `<div class="sp-line dim">Seen from inside your sensor coverage. Select an <b>armed fleet</b>, ` +
@@ -4182,10 +3991,7 @@ function updateEmplacementPanel(): void {
 // says what the current spot allows, so a refusal is never a surprise.
 function emplaceSection(g: GhostView): string {
   const kinds: [string, string, string][] = [
-    ["hyperspace_buoy", "Hyperspace Buoy", "The expensive 80,000 su comm relay. Signals enter, ride, and leave anywhere in its covered lane arc. Must stand inside a lane."],
-    ["hyperspace_repeater", "Hyperspace Repeater", "The cheap 40,000 su comm relay. Same full signal function as a buoy, with shorter reach. Must stand inside a lane."],
     ["deep_space_sensor", "Deep Space Sensor", "A stationary picket. Watches like a ship's sensors and reports home at warp. Stands anywhere."],
-    ["hyperspace_sensor", "Hyperspace Sensor", "A tripwire coupled to its lane: hears rival traffic riding it and reports home at lane speed. Riders can go quiet by dropping to warp and going around. Must stand inside a lane."],
   ];
   // Busy = MID-CONSTRUCT (`build_progress`, own-only from the wire), an order signal
   // still in its lifecycle (pendingOrders — server-managed, so it EXPIRES),
@@ -4195,16 +4001,13 @@ function emplaceSection(g: GhostView): string {
   const busy = !!g.job || state.pendingOrders.has(g.id) || Math.hypot(g.vel.x, g.vel.y) >= 0.5;
   // The spot's verdict, computed where the ship stands (it is parked when the
   // buttons are live, so the light-delayed position IS the position).
-  const laneOk = !renderer.siteError("hyperspace_buoy", g.pos, state);
   const openOk = !renderer.siteError("deep_space_sensor", g.pos, state);
   const note = busy
     ? `<div class="sp-line dim">${g.job ? "Committed to the current job; new construction unlocks when it finishes." : "Under way — it builds where it stops, once idle."}</div>`
     : `<div class="sp-line dim">Builds at this spot. ${
-        laneOk
-          ? "In a hyperspace lane — everything can stand here."
-          : openOk
-            ? "Open space — sensors only; move into a lane band for buoys, repeaters, and tripwires."
-            : "Too close to another structure — move on a little."
+        openOk
+          ? "Open space — the sensor can stand here."
+          : "Too close to another structure — move on a little."
       }</div>`;
   const btns = kinds
     .map(
@@ -5165,7 +4968,7 @@ function buildDetailHtml(o: BuildOpt, dyn: SystemStateView, body: BodyView, pool
       `<span class="bp-cost-c">${commodityIcon(c.commodity as Commodity, "sm")} ${esc(label(c.commodity))}</span>` +
       `<span class="bp-cost-n">${c.units} <span class="bp-cost-have">have ${has}</span></span></div>`;
   }).join("");
-  // §hyperspace: the sensor bubble is no longer drawn on the map — a single ring
+  // The sensor bubble is not drawn on the map — a single ring
   // claimed a certainty detection never had (`bubble × signature` means a quiet
   // raider is caught at 0.4× it and a loud fleet well outside it). So the Sensor
   // Array REPORTS its reach as a number instead, here, where the decision to
@@ -5524,7 +5327,7 @@ function systemFleetsSection(sys: SystemInfo, fleets: GhostView[]): string {
     const speed = Math.hypot(g.vel.x, g.vel.y);
     const status = dockedAtSystem(g, sys.id) ? "docked" : speed > 1 ? "under way" : "holding";
     const tone = status === "docked" ? "accent" : status === "holding" ? "positive" : "neutral";
-    const stale = !g.in_comms
+    const stale = g.age >= CONTACT_STALE_AGE_S
       ? `<span class="sysfleet__seen is-stale">Seen ${g.age.toFixed(1)}s ago</span>`
       : "";
     const flagship = g.kind === "titan" ? state.syndicate?.flagship_name?.trim() : null;
@@ -7490,8 +7293,6 @@ function join(): void {
       switch (msg.type) {
         case "Welcome":
           marketReservations.length = 0;
-          tunnelPresentation.clear();
-          state.tunnelBookmarks = {};
           // Wire protocol check (§FLEETS bumped to 2): warn if the server speaks a
           // newer dialect than this build — the View shape may have drifted.
           if (typeof msg.protocol_version === "number" && msg.protocol_version !== EXPECTED_PROTOCOL_VERSION) {
@@ -7571,7 +7372,6 @@ function join(): void {
           // standing orders / reports / rankings arrive via "Sections" — both
           // on the reliable lane, only when changed. State keeps the last copy.)
           state.syndicate = msg.syndicate ?? null;
-          notifyTunnelTransitions(msg.ghosts);
           state.syndicateInvites = msg.syndicate_invites ?? [];
           // §perf Part B: the wire carries only the DYNAMIC research slice —
           // join it onto the static Welcome catalog for the panel's full shape.
@@ -7579,7 +7379,6 @@ function join(): void {
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
-          notifyRelayLosses(msg.relay_losses ?? []);
           // A move order is DONE when its ship is SEEN parked at the ordered
           // destination. Without this sweep the record lived forever, and
           // everything keyed on it stayed stale after arrival: the activity
@@ -7694,7 +7493,6 @@ function join(): void {
             arrive: msg.arrive_time,
             pOut: 0,
             hops: msg.hops ?? [],
-            beyondComms: msg.beyond_comms ?? false,
           });
           break;
         }
@@ -7705,18 +7503,6 @@ function join(): void {
             "good",
             `<b>Order confirmed</b> — ${esc(label(msg.kind))} response light arrived`,
           );
-          break;
-        }
-        case "RoutePreview": {
-          // Replies are immediate but still asynchronous. A second destination,
-          // cancel, or ship change makes an older reply stale; never resurrect it.
-          const intent = state.pendingIntent;
-          if (intent?.verb === "move"
-            && intent.shipId === msg.ship_id
-            && samePoint(intent.dest, msg.dest)) {
-            intent.path = msg.path;
-            renderer.stateVersion++;
-          }
           break;
         }
         case "Report": {
