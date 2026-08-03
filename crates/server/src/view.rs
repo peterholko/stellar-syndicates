@@ -2187,8 +2187,14 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
 /// **light-delayed** from the hub (§9). The Exchange ticker is a lightspeed
 /// broadcast; far from the hub you read an old copy. Mirrors [`PositionHistory`]
 /// but for the (single, shared) hub.
+pub struct MarketTickerSample {
+    pub prices: BTreeMap<Commodity, f64>,
+    pub available_buy: BTreeMap<Commodity, u32>,
+    pub available_sell: BTreeMap<Commodity, u32>,
+}
+
 pub struct PriceHistory {
-    samples: VecDeque<(f64, BTreeMap<Commodity, f64>)>,
+    samples: VecDeque<(f64, MarketTickerSample)>,
     horizon: f64,
 }
 
@@ -2203,7 +2209,20 @@ impl PriceHistory {
 
     pub fn record(&mut self, world: &World) {
         let now = world.time;
-        self.samples.push_back((now, world.market.prices().clone()));
+        self.samples.push_back((
+            now,
+            MarketTickerSample {
+                prices: world.market.prices().clone(),
+                available_buy: Commodity::ALL
+                    .into_iter()
+                    .map(|commodity| (commodity, world.market.available_to_buy(commodity)))
+                    .collect(),
+                available_sell: Commodity::ALL
+                    .into_iter()
+                    .map(|commodity| (commodity, world.market.available_to_sell(commodity)))
+                    .collect(),
+            },
+        ));
         while let Some((t, _)) = self.samples.front() {
             if now - t > self.horizon {
                 self.samples.pop_front();
@@ -2215,16 +2234,16 @@ impl PriceHistory {
 
     /// The hub prices as of `target` sim-time (the latest sample whose time is
     /// `≤ target`). Falls back to the oldest sample if `target` predates history.
-    pub fn at(&self, target: f64) -> Option<&BTreeMap<Commodity, f64>> {
-        let mut best: Option<&BTreeMap<Commodity, f64>> = None;
-        for (t, prices) in &self.samples {
+    pub fn at(&self, target: f64) -> Option<&MarketTickerSample> {
+        let mut best: Option<&MarketTickerSample> = None;
+        for (t, sample) in &self.samples {
             if *t <= target {
-                best = Some(prices);
+                best = Some(sample);
             } else {
                 break;
             }
         }
-        best.or_else(|| self.samples.front().map(|(_, p)| p))
+        best.or_else(|| self.samples.front().map(|(_, sample)| sample))
     }
 }
 

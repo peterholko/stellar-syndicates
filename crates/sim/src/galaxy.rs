@@ -143,7 +143,7 @@ pub struct StarSystem {
     pub blockade: Option<Blockade>,
     /// §TCA: the PREVIOUS blockade window `(since, lifted_at)` — a two-state
     /// history so a DISTANT observer can answer "was this system blockaded at
-    /// retarded time T?" across the light-delay window. The Charterhouse uses it
+    /// retarded time T?" across the light-delay window. The Market Hub uses it
     /// to decide whether to accept freight bookings on its own (light-delayed)
     /// knowledge: it keeps refusing until the LIFT's light reaches the hub, and
     /// keeps accepting until the ONSET's light does. Mirrors the two-state
@@ -792,6 +792,8 @@ pub fn claim_cost_for(deposits: &[Deposit]) -> f64 {
 /// Generate `count` home-anchor slots evenly spaced around a ring at
 /// `ring_frac · radius`, with small seeded jitter so they aren't perfectly
 /// regular.
+pub const HOME_SLOT_RADIAL_JITTER_FRAC: f64 = 0.08;
+
 pub fn generate_home_slots(rng: &mut Rng, radius: f64, ring_frac: f64, count: u32) -> Vec<HomeSlot> {
     let count = count.max(1);
     let base = radius * ring_frac;
@@ -800,7 +802,7 @@ pub fn generate_home_slots(rng: &mut Rng, radius: f64, ring_frac: f64, count: u3
         let base_angle = std::f64::consts::TAU * (i as f64) / (count as f64);
         // Jitter angle by up to ±¼ of the slot spacing, radius by ±8%.
         let ang_jitter = rng.range(-1.0, 1.0) * (std::f64::consts::TAU / count as f64) * 0.25;
-        let r_jitter = base * rng.range(-0.08, 0.08);
+        let r_jitter = base * rng.range(-HOME_SLOT_RADIAL_JITTER_FRAC, HOME_SLOT_RADIAL_JITTER_FRAC);
         let pos = Vec2::from_polar(base_angle + ang_jitter, base + r_jitter);
         slots.push(HomeSlot {
             pos,

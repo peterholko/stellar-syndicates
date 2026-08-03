@@ -53,33 +53,41 @@ pub enum Command {
         raider_id: EntityId,
     },
 
-    /// Buy at market on the CHARTERHOUSE Exchange (§9, §TCA): instant settlement at
-    /// the true standing price (credits debited now); the goods land in the corp's
-    /// Charterhouse WAREHOUSE. Nothing crosses space — moving goods out to a system
+    /// Buy on the GLOBAL MARKET (§9, §TCA): instant settlement across the true
+    /// quantity-aware curve (credits debited now); the goods land in the corp's
+    /// Market Warehouse. Nothing crosses space — moving goods out to a system
     /// is the separate, explicit act of TCA freight or a player convoy.
     MarketBuy {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
         units: u32,
+        /// Reject atomically if the quantity-aware average execution price is
+        /// above this bound. `None` preserves old saved-command compatibility.
+        #[serde(default)]
+        max_unit_price: Option<f64>,
         /// §TCA: ONE-CHECKBOX composition — on a successful purchase, immediately
         /// attempt a [`Command::BookFreightOut`] of the whole lot to this owned
         /// system. If that booking soft-rejects (unowned, unaffordable fee, …) the
         /// goods simply stay in the warehouse and the owner gets the reject notice.
-        /// `None` = leave the lot at the Charterhouse. serde default so old clients
+        /// `None` = leave the lot at the Market Hub. serde default so old clients
         /// and pre-feature commands still parse.
         #[serde(default)]
         ship_to: Option<EntityId>,
     },
 
-    /// Sell at market (§9, §TCA): draws ONLY from the corp's Charterhouse
-    /// WAREHOUSE and settles instantly at the standing price — the goods are
+    /// Sell at market (§9, §TCA): draws ONLY from the corp's Market Warehouse
+    /// and settles instantly across the quantity-aware curve — the goods are
     /// already at the Exchange, so there is no crossing and no price-on-arrival
-    /// gamble. Home goods are not a valid source: ship them to the Charterhouse
+    /// gamble. Home goods are not a valid source: ship them to the Market Hub
     /// first. Soft-rejects (free, owner-only notice) if the warehouse is short.
     MarketSell {
         player_id: PlayerId,
         commodity: crate::cargo::Commodity,
         units: u32,
+        /// Reject atomically if the quantity-aware average proceeds fall below
+        /// this bound. `None` preserves old saved-command compatibility.
+        #[serde(default)]
+        min_unit_price: Option<f64>,
     },
 
     /// Place a resting limit order (§9). It clears in the periodic uniform-price
@@ -96,9 +104,16 @@ pub enum Command {
         limit_price: f64,
     },
 
+    /// Cancel one of this corporation's resting limit orders. The still-reserved
+    /// credits or escrowed Market Warehouse goods are returned in full.
+    CancelLimitOrder {
+        player_id: PlayerId,
+        order_id: u64,
+    },
+
     /// BOOK OUTBOUND FREIGHT (§TCA): hand `units` of a commodity to the Terran
     /// Charter Authority's scheduled common carrier for delivery from the
-    /// CHARTERHOUSE WAREHOUSE to one of the corp's OWNED systems. The goods are
+    /// MARKET WAREHOUSE to one of the corp's OWNED systems. The goods are
     /// escrowed out of the warehouse and the fee is charged NOW (a pure credit
     /// sink — destroyed, never refunded); the shipment then waits for the next
     /// scheduled departure. Bookings beyond a departure's per-corp cap are not
@@ -115,12 +130,12 @@ pub enum Command {
 
     /// BOOK INBOUND FREIGHT (§TCA): the reverse leg — the Authority collects
     /// `units` from one of the corp's OWNED systems' stockpiles and carries them to
-    /// the Charterhouse warehouse. The goods are escrowed out of the stockpile
+    /// the Market Warehouse. The goods are escrowed out of the stockpile
     /// immediately (they sit "awaiting pickup" inside the shipment) and the fee is
     /// charged now. If the system is CAPTURED before pickup the queued shipment is
     /// forfeit to nobody — deleted, with an owner notice. `sell_on_arrival` sells
-    /// the lot at the Exchange the moment it lands at the Charterhouse, at that
-    /// tick's standing price (market price only in v1 — no limit variant).
+    /// the lot at the Exchange the moment it lands at the Market Hub, at that
+    /// tick's quantity-aware market price (market order only — no limit variant).
     BookFreightIn {
         player_id: PlayerId,
         system: EntityId,
@@ -130,19 +145,17 @@ pub enum Command {
         sell_on_arrival: bool,
     },
 
-    /// Dispatch convoys to carry a claimed system's accumulated production to the
-    /// hub to sell (§9). One raidable convoy per stockpiled commodity, flying the
-    /// dangerous, fog-blind frontier→hub crossing; each sells on arrival at the
-    /// price-on-arrival. Ignored unless the player owns the system and it has
-    /// production to ship.
+    /// Book Authority pickup for a claimed system's accumulated production (§9).
+    /// Each whole non-Fuel lot enters the ordinary inbound freight queue with
+    /// sell-on-arrival, paying the same fee and timetable as a manual booking.
     ShipProduction {
         player_id: PlayerId,
         system_id: EntityId,
     },
 
-    /// SUPPLY A SYSTEM: move `units` of `commodity` from the corp's HUB WAREHOUSE
-    /// inventory into an OWNED system's stockpile, carried by a sub-light,
-    /// raidable convoy. This is the bridge from the market pool (what buys fill)
+    /// Legacy SUPPLY A SYSTEM command: book ordinary Authority freight from the
+    /// corp's Market Warehouse into an OWNED system's stockpile. This is the
+    /// bridge from the market pool (what buys fill)
     /// to a system's production stockpile (what converters/refineries consume and
     /// the system view shows). Ignored unless the player owns the target system
     /// and holds at least `units` of the commodity at HQ.
@@ -442,7 +455,7 @@ pub enum Command {
     // take the risk, and it costs no fee. Every one of these requires the fleet to
     // be the player's, IDLE, unengaged, and within `ship::DOCK_RADIUS` of the
     // dock — loading is dockside work. All soft-reject, free, owner-only.
-    /// Move goods from the corp's CHARTERHOUSE WAREHOUSE into a fleet's hold.
+    /// Move goods from the corp's MARKET WAREHOUSE into a fleet's hold.
     /// Tops up an existing load of the same commodity; a hold already carrying a
     /// DIFFERENT good soft-rejects (a player hull stays single-commodity).
     HubLoad {
@@ -452,7 +465,7 @@ pub enum Command {
         units: u32,
     },
 
-    /// Empty a fleet's hold into the corp's Charterhouse warehouse.
+    /// Empty a fleet's hold into the corp's Market Warehouse.
     HubUnload { player_id: PlayerId, fleet_id: EntityId },
 
     /// Move goods from one of the corp's OWNED systems' stockpiles into a
@@ -468,11 +481,11 @@ pub enum Command {
     /// Empty a fleet's hold into one of the corp's OWNED systems' stockpiles.
     SystemUnload { player_id: PlayerId, fleet_id: EntityId, system: EntityId },
 
-    /// HAUL TO THE CHARTERHOUSE: send a loaded fleet of the player's to the hub on
+    /// HAUL TO THE MARKET HUB: send a loaded fleet of the player's to the hub on
     /// a [`crate::ship::TradeMission::DeliverToWarehouse`] run — deposit into the
-    /// warehouse on arrival, optionally selling the lot at the standing price. The
+    /// warehouse on arrival, optionally selling the lot on the integrated market curve. The
     /// fleet SURVIVES the delivery (it is the player's hull) and goes Idle there.
-    HaulToCharterhouse {
+    HaulToMarketHub {
         player_id: PlayerId,
         fleet_id: EntityId,
         #[serde(default)]
@@ -484,7 +497,7 @@ pub enum Command {
     /// The credits are BURNED (a sink, like the freight fee), and the purchase is
     /// clamped to the ceiling — you are only ever charged for points actually
     /// restored. INSTANT, like its siblings `MarketBuy`/`BookFreightOut`: paying
-    /// the Charterhouse is a settlement, and settlement is correlation (§3), not a
+    /// the Market Hub is a settlement, and settlement is correlation (§3), not a
     /// courier. Soft-rejects (free, owner-only) if the treasury can't cover it.
     PayReinstatement {
         player_id: PlayerId,

@@ -1,7 +1,7 @@
 //! Integration tests for the two invariants the whole design leans on, driven
 //! across the §TCA freight machinery: (1) two runs of one seed agree byte for
 //! byte; (2) a mid-flight snapshot round-trips and keeps stepping identically;
-//! (3) a PRE-FEATURE snapshot — every field the Charterhouse/TCA work added
+//! (3) a PRE-FEATURE snapshot — every field the Market Hub/TCA work added
 //! stripped — still loads. Born as a completeness-audit probe and kept because
 //! nothing else exercises determinism through booked freight end to end.
 
@@ -30,8 +30,8 @@ fn drive(w: &mut World, ticks: u64) {
     for t in 0..ticks {
         let mut cmds = Vec::new();
         if t % 37 == 0 {
-            cmds.push(Command::MarketBuy { player_id: a, commodity: Fuel, units: 20, ship_to: None });
-            cmds.push(Command::MarketBuy { player_id: b, commodity: Alloys, units: 15, ship_to: None });
+            cmds.push(Command::MarketBuy { player_id: a, commodity: Fuel, units: 20, max_unit_price: None, ship_to: None });
+            cmds.push(Command::MarketBuy { player_id: b, commodity: Alloys, units: 15, max_unit_price: None, ship_to: None });
         }
         if t % 101 == 5 {
             let sys = w.players[&a].home_system.unwrap();

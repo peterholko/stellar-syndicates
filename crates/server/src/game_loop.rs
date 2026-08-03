@@ -10,7 +10,7 @@
 //!      from M3: the delayed/fogged view);
 //!   4. hands events and periodic snapshots to the off-hot-path persistence task.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
@@ -312,6 +312,95 @@ struct ConcludedBattle {
     participants: Vec<sim::EntityId>,
 }
 
+/// The Market Hub account picture carried by light to one corporation. Only
+/// fields whose source is the hub live here; system Fuel remains a separate
+/// owner-local summary in `WalletView`.
+#[derive(Debug, Clone, PartialEq)]
+struct MarketAccountSample {
+    credits: f64,
+    valuation: f64,
+    warehouse: BTreeMap<sim::Commodity, u32>,
+    orders: Vec<sim::market::LimitOrder>,
+}
+
+/// Change-compressed hub-account history. Recording only when truth changes
+/// keeps the cost proportional to economic events rather than tick count, while
+/// retaining one sample before the light horizon makes every delayed lookup
+/// total across quiet periods.
+struct MarketAccountHistory {
+    samples: HashMap<PlayerId, VecDeque<(f64, MarketAccountSample)>>,
+    horizon: f64,
+}
+
+impl MarketAccountHistory {
+    fn for_world(world: &World) -> Self {
+        let max_delay = (2.0 * world.config.galaxy_radius) / world.config.c;
+        Self { samples: HashMap::new(), horizon: max_delay * 1.25 + 1.0 }
+    }
+
+    fn record(&mut self, world: &World) {
+        let now = world.time;
+        for (&player, corp) in &world.players {
+            let sample = MarketAccountSample {
+                credits: corp.credits,
+                valuation: corp.valuation,
+                warehouse: corp.warehouse.clone(),
+                orders: world.book.iter().filter(|o| o.player == player).cloned().collect(),
+            };
+            let history = self.samples.entry(player).or_default();
+            if history.back().is_none_or(|(_, previous)| previous != &sample) {
+                history.push_back((now, sample));
+            }
+            let cutoff = now - self.horizon;
+            while history.len() > 1 && history.get(1).is_some_and(|(t, _)| *t <= cutoff) {
+                history.pop_front();
+            }
+        }
+    }
+
+    fn at(&self, player: PlayerId, target: f64) -> Option<&MarketAccountSample> {
+        let history = self.samples.get(&player)?;
+        history
+            .iter()
+            .rev()
+            .find(|(time, _)| *time <= target)
+            .or_else(|| history.front())
+            .map(|(_, sample)| sample)
+    }
+}
+
+struct ScheduledTradeReport {
+    arrives_at: f64,
+    trade: sim::TradeEvent,
+}
+
+fn system_pos(world: &World, id: sim::EntityId) -> Option<sim::Vec2> {
+    world.systems.iter().find(|system| system.id == id).map(|system| system.pos)
+}
+
+/// Where the fact represented by an economy receipt physically occurred. Most
+/// Exchange administration originates at the Market Hub; local loading,
+/// delivery and automation originates at the named system. This position is the
+/// one source for both live receipt delay and the retained check-in timeline.
+pub(crate) fn trade_report_origin(world: &World, trade: &sim::TradeEvent) -> sim::Vec2 {
+    match *trade {
+        sim::TradeEvent::Delivered { system: Some(id), .. }
+        | sim::TradeEvent::SupplyDiverted { system: id, .. }
+        | sim::TradeEvent::StorageOverflow { system: id, .. }
+        | sim::TradeEvent::AutoDispatched { source: id, .. }
+        | sim::TradeEvent::Loaded { system: Some(id), .. }
+        | sim::TradeEvent::Unloaded { system: Some(id), .. } => {
+            system_pos(world, id).unwrap_or(world.hub)
+        }
+        sim::TradeEvent::FreightMoved {
+            system,
+            stage: sim::FreightStage::CollectedForPickup | sim::FreightStage::DeliveredToSystem,
+            ..
+        } => system_pos(world, system).unwrap_or(world.hub),
+        _ => world.hub,
+    }
+}
+
 impl ConcludedBattle {
     /// Should a command center at `cc` still see this battle's IN-PROGRESS icon at
     /// wall-time `now`? True on the half-open window `[started_at + delay,
@@ -337,6 +426,12 @@ struct GameLoop {
     /// Lagged hub-price ticker history (§9) — each player reads prices delayed
     /// by their light-distance from the hub.
     prices: PriceHistory,
+    /// Market Warehouse balances and resting orders as actually known after the
+    /// Market Hub's report reaches each command center.
+    market_accounts: MarketAccountHistory,
+    /// Owner-facing economy receipts travel from the physical event site rather
+    /// than being pushed straight from simulation truth.
+    trade_reports: Vec<ScheduledTradeReport>,
     /// Delayed delivery of discrete reports (raid outcomes) — each player learns
     /// them on their own clock (§8).
     reports: ReportScheduler,
@@ -382,11 +477,15 @@ impl GameLoop {
     ) -> Self {
         let history = PositionHistory::for_world(&world);
         let prices = PriceHistory::for_world(&world);
+        let mut market_accounts = MarketAccountHistory::for_world(&world);
+        market_accounts.record(&world);
         GameLoop {
             world,
             sessions: Sessions::new(),
             history,
             prices,
+            market_accounts,
+            trade_reports: Vec::new(),
             reports: ReportScheduler::new(),
             timeline: Timeline::new(),
             timeline_sent: HashMap::new(),
@@ -504,6 +603,39 @@ impl GameLoop {
             tick: self.world.tick,
             sim_time: self.world.time,
         });
+    }
+
+    fn schedule_trade_reports(&mut self, events: &[sim::Event]) {
+        for event in events {
+            let sim::EventPayload::Trade(trade) = &event.payload else {
+                continue;
+            };
+            let Some(corp) = self.world.players.get(&trade.player()) else {
+                continue;
+            };
+            let origin = trade_report_origin(&self.world, trade);
+            let delay = origin.distance(corp.command_center) / self.world.config.c;
+            self.trade_reports.push(ScheduledTradeReport {
+                arrives_at: event.time + delay,
+                trade: *trade,
+            });
+        }
+    }
+
+    fn deliver_trade_reports(&mut self) {
+        let now = self.world.time;
+        let mut waiting = Vec::with_capacity(self.trade_reports.len());
+        for report in self.trade_reports.drain(..) {
+            if report.arrives_at <= now + 1e-9 {
+                self.sessions.send_to_player(
+                    report.trade.player(),
+                    ServerMsg::Trade { trade: report.trade },
+                );
+            } else {
+                waiting.push(report);
+            }
+        }
+        self.trade_reports = waiting;
     }
 
     fn handle_input(&mut self, input: GameInput) {
@@ -805,9 +937,9 @@ impl GameLoop {
                         self.pending.push(Command::RecallRaid { player_id, raider_id });
                     }
                 }
-                ClientMsg::MarketBuy { commodity, units, ship_to } => {
+                ClientMsg::MarketBuy { commodity, units, max_unit_price, ship_to } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MarketBuy { player_id, commodity, units, ship_to });
+                        self.pending.push(Command::MarketBuy { player_id, commodity, units, max_unit_price, ship_to });
                     }
                 }
                 ClientMsg::HubLoad { fleet_id, commodity, units } => {
@@ -830,9 +962,9 @@ impl GameLoop {
                         self.pending.push(Command::SystemUnload { player_id, fleet_id, system });
                     }
                 }
-                ClientMsg::HaulToCharterhouse { fleet_id, sell_on_arrival } => {
+                ClientMsg::HaulToMarketHub { fleet_id, sell_on_arrival } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::HaulToCharterhouse { player_id, fleet_id, sell_on_arrival });
+                        self.pending.push(Command::HaulToMarketHub { player_id, fleet_id, sell_on_arrival });
                     }
                 }
                 ClientMsg::PayReinstatement { points } => {
@@ -855,9 +987,9 @@ impl GameLoop {
                         self.pending.push(Command::BookFreightIn { player_id, system, commodity, units, sell_on_arrival });
                     }
                 }
-                ClientMsg::MarketSell { commodity, units } => {
+                ClientMsg::MarketSell { commodity, units, min_unit_price } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::MarketSell { player_id, commodity, units });
+                        self.pending.push(Command::MarketSell { player_id, commodity, units, min_unit_price });
                     }
                 }
                 ClientMsg::PlaceLimitOrder { side, commodity, units, limit_price } => {
@@ -869,6 +1001,11 @@ impl GameLoop {
                             units,
                             limit_price,
                         });
+                    }
+                }
+                ClientMsg::CancelLimitOrder { order_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::CancelLimitOrder { player_id, order_id });
                     }
                 }
                 ClientMsg::ShipProduction { system_id } => {
@@ -1120,6 +1257,7 @@ impl GameLoop {
         self.history.record(&self.world);
         self.update_relay_loss_summaries();
         self.prices.record(&self.world);
+        self.market_accounts.record(&self.world);
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
         self.reports.ingest(&events);
@@ -1128,14 +1266,14 @@ impl GameLoop {
         // for ALL players, online or off (offline buffering is the whole point).
         self.timeline.ingest(&events, &self.world);
         self.timeline.promote(self.world.time);
+        self.schedule_trade_reports(&events);
+        self.deliver_trade_reports();
         for ev in &events {
             match &ev.payload {
-                // Route economy news to the owning player immediately (their own
-                // action / a delivery at their doorstep).
-                sim::EventPayload::Trade(te) => {
-                    self.sessions
-                        .send_to_player(te.player(), ServerMsg::Trade { trade: *te });
-                }
+                // Economy receipts are scheduled above from their physical
+                // origin. Sending one here would reveal Market Hub truth before
+                // its light and duplicate the eventual receipt.
+                sim::EventPayload::Trade(_) => {}
                 // A ship was destroyed in true space: tell the view filter so it
                 // keeps serving the ghost until each player's light arrives, then
                 // vanishes it (delayed, per-viewer — never FTL).
@@ -1676,15 +1814,22 @@ impl GameLoop {
             let lagged = self.prices.at(now - staleness);
             let prices = lagged
                 .map(|m| {
-                    m.iter()
-                        .map(|(commodity, price)| PriceView { commodity: *commodity, price: *price })
+                    m.prices
+                        .iter()
+                        .map(|(commodity, price)| PriceView {
+                            commodity: *commodity,
+                            price: *price,
+                            available_buy: m.available_buy.get(commodity).copied().unwrap_or(0),
+                            available_sell: m.available_sell.get(commodity).copied().unwrap_or(0),
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
             let market = MarketView { prices, staleness };
 
-            // The player's own wallet — fresh (their local treasury + holdings +
-            // resting limit orders).
+            // Market account truth is emitted at the physical hub, just like its
+            // ticker. Serving credits, warehouse or resting orders fresh would
+            // disclose a fill before the settlement receipt's light arrived.
             // §TCA Phase 2: the player's own charter standing. The BAND is always
             // derived (never stored), so this can't desync from the sim.
             let standing = corp.tca_standing;
@@ -1699,28 +1844,42 @@ impl GameLoop {
                 reinstate_cost_per_point: sim::tca::TCA_REINSTATE_FEE_PER_POINT,
             };
 
+            let known_account = self.market_accounts.at(player_id, now - staleness);
             let wallet = WalletView {
-                credits: corp.credits,
-                valuation: corp.valuation,
-                // §TCA: goods at the hub — what the Exchange trades against.
-                warehouse: corp
-                    .warehouse
+                credits: known_account.map_or(corp.credits, |account| account.credits),
+                valuation: known_account.map_or(corp.valuation, |account| account.valuation),
+                warehouse: known_account
+                    .map(|account| &account.warehouse)
+                    .unwrap_or(&corp.warehouse)
                     .iter()
                     .map(|(commodity, units)| InvSlot { commodity: *commodity, units: *units })
                     .collect(),
-                orders: self
-                    .world
-                    .book
-                    .iter()
-                    .filter(|o| o.player == player_id)
-                    .map(|o| OrderView {
-                        id: o.id,
-                        side: o.side,
-                        commodity: o.commodity,
-                        units: o.units,
-                        limit_price: o.limit_price,
-                    })
-                    .collect(),
+                orders: if let Some(account) = known_account {
+                    account
+                        .orders
+                        .iter()
+                        .map(|o| OrderView {
+                            id: o.id,
+                            side: o.side,
+                            commodity: o.commodity,
+                            units: o.units,
+                            limit_price: o.limit_price,
+                        })
+                        .collect()
+                } else {
+                    self.world
+                        .book
+                        .iter()
+                        .filter(|o| o.player == player_id)
+                        .map(|o| OrderView {
+                            id: o.id,
+                            side: o.side,
+                            commodity: o.commodity,
+                            units: o.units,
+                            limit_price: o.limit_price,
+                        })
+                        .collect()
+                },
                 // The fleet's fuel reserve: sum Fuel across this player's systems
                 // (owner-only — read off systems we own, so it never leaks).
                 fuel_total: self
@@ -1762,7 +1921,7 @@ impl GameLoop {
                 player_id,
                 view::visible_ground_specs(&self.world.ground_records, player_id, cc, &delays, now, &coverage),
             );
-            // §TCA: the Charterhouse freight desk. Terms for every system this
+            // §TCA: the Market Hub freight desk. Terms for every system this
             // player owns (the only valid destinations), plus their OWN lots.
             let freight = crate::protocol::FreightView {
                 next_departure: self.world.next_freight_departure(),

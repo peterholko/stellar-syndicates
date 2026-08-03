@@ -151,15 +151,19 @@ su); a **Hyperspace Repeater** is the cheap short-throw size (40,000 su). Home i
 each corporation begins with one ordinary, destructible buoy on the lane nearest home.
 
 Own fleets have three presentation states, all decided in the picture the command center can
-actually see. **Live:** while the served delayed replay remains inside a comm structure's 2D
-throw-radius bubble (with a small hysteresis band), the full sprite advances at true hull
-speed. **Dark:** once that replay exits, a heading arrow pins to the final report at the
-nominal circle and advances only when strictly arrival-gated warp-light reports reach home.
-**Re-entry:** only when that dark stream delivers a report back inside the bubble does the
-stale arrow streak to the newly served edge position and become the full sprite. True hull
-position never flips the marker early. The live replay is deliberately mildly optimistic for
-a receding own fleet; that accepted presentation exception never applies outside a bubble or
-to rivals.
+actually see. **LIT:** inside a comm bubble, the served delayed replay draws the full sprite.
+**DELAYED:** beyond comms in realspace, strictly arrived warp-light reports draw the frozen
+heading arrow and its slow movie. **TUNNEL:** hyperspace beyond your wire leaves a dim arrow
+bookmarked at the last served entry point — selectable, but stationary and never a claim about
+the fleet's current position — alongside its known intent line until arrived light reports a
+drive drop or bubble re-entry. The outbound crossing is one edge event at the nominal circle;
+re-entry still uses the inner hysteresis boundary, and true hull position never flips either
+presentation early. The live replay is deliberately mildly optimistic for a receding own fleet; that
+accepted presentation exception never applies outside a bubble or to rivals.
+
+**Reception is universal:** a ship receives truespace orders regardless of which of those
+three pictures the command center can draw. The tunnel is one-way glass for observation, not
+a block on command delivery, meeting solves, confirmation, or ship autonomy.
 
 The same 2D bubble is the binary boundary for **outbound orders**. If the order's solved
 meeting point is inside any owned comm circle, it may ride the covered wire; if the meeting
@@ -185,7 +189,7 @@ in any direction.
 |---|---|---|
 | Galaxy radius | `4000 × √players` su | area scales with player count, so the dark between homes stays proportional |
 | System count | `12 + 4 × players` | |
-| Home ring | 0.62 × radius | one pre-generated home slot per player |
+| Home ring | ≈74,074 su base; 80,000 su outer edge | one pre-generated home slot per player; ±8% radial jitter never exceeds one long-throw buoy |
 | System placement | area-uniform in `[0.12R, 0.96R]` | no zones, no structured regions |
 | Speed of light | 400 su/s | |
 | Sensor bubble | 2200 su | ≈28% of a 4-player galaxy radius |
@@ -354,10 +358,11 @@ where an order sits in its round trip:
 | Phase | Until | Reads as |
 |---|---|---|
 | In transit | `delivered_at` | pure intention — the fleet does not know yet |
-| Awaiting echo | `echo_at = delivered_at + distance(delivery point → command center)/c` | executing, unconfirmed |
+| Awaiting response | A dark fleet on a fixed return course: estimated travel to the first owned comm-circle edge. Otherwise: the confirming signal's return time. | executing, unconfirmed |
 | Confirmed | — | observed |
 
-Confirmation fires exactly at `echo_at`. A fleet destroyed before then drops silently
+The internal legacy field remains named `echo_at` for snapshot compatibility, but its
+meaning is now the expected response above. A fleet destroyed before then drops silently
 rather than producing a phantom confirmation.
 
 ### 6.3 Who sees what
@@ -556,10 +561,9 @@ than a yard; one belongs to the Authority and can never be built.
 | **Troop Transport** | 40 marines; unarmed and slow — an invasion everyone sees coming | Garrison 1 | yes | 2 / 1 |
 | **Freighter** | the Authority's scheduled common carrier — never buildable | — | yes | 0 / 0 |
 
-\* The 250-unit capacity bounds the *manual* load commands only. The auto-spawned trade
-convoys — production shipments and standing-order dispatches — predate any capacity rule and
-are deliberately left uncapped, since retrofitting the limit there would silently change
-existing economy behaviour.
+\* The 250-unit capacity applies to both manual loading and standing logistics. A standing
+order selects a real idle cargo fleet at its source and ships at most that fleet's capacity;
+it never spawns a disposable hull. Authority freight has its own 400-unit-per-departure cap.
 
 **The capital ladder buys presence and role, never efficiency.** Combat weight per
 Armaments spent peaks at Destroyer/Cruiser and strictly declines through Battleship,
@@ -811,6 +815,13 @@ still hurt when you get back.
 
 ## 9. The Market & the Terran Charter Authority
 
+Version 1 has **one Global Market at one physical Market Hub**. Every corporation has one
+private **Market Warehouse** there. Price discovery and the order book are deliberately
+separate from that location: if later playtests add several physical Market Hubs, they can
+share this same Global Market while warehouses, freight queues, and travel risk remain local
+to each hub. No regional arbitrage is implied until that second topology is deliberately
+chosen.
+
 ### 9.1 Execution versus information
 
 **Execution is instant everywhere.** Committing a trade collapses your settlement key's
@@ -821,14 +832,28 @@ clearing-batch wait on a market order, anywhere.
 is the hub-to-command-center light delay, and it is disclosed as such. This applies at
 home too — commanding from your home star system does not exempt you from the hub's light
 delay. The displayed price is a guide; execution happens at the true current price.
+Treasury, Market Warehouse, resting-order state, and trade receipts are hub facts too: the
+command center sees their last-arrived report, not fresh server truth. The client
+pessimistically reserves its own newly issued orders while that report is in flight, so it
+does not visibly offer committed credits or goods twice; that reservation is explicitly an
+estimate, never authority.
 
-Prices walk with flow along a simple elasticity curve (1600 units of flow moves a price by
-about 100%), mean-revert toward a base at 2% per drift step with a little noise, and never
-fall below 0.5.
+Prices walk with flow along an **integrated exponential curve** (depth 1600). A large order
+therefore costs exactly the same as slices totalling the same quantity: slicing cannot evade
+price impact. Buys pay 1% above the walked mid and sells receive 1% below it, so an immediate
+round trip always loses the two-sided spread while retracing the mid. Prices mean-revert
+toward a base at 2% per drift step with a little noise and never fall below 0.5.
+
+Sol is a bootstrap counterparty, not an infinite faucet or sink. Each commodity begins with
+1600 units of immediate external supply and 1600 units of immediate external demand.
+Corporate buys consume supply; corporate sells consume demand; counter-flow restores the
+opposite side, and each side replenishes by 8 units per one-second market update. These
+quantities travel on the same delayed ticker as price. An oversized market order rejects
+atomically; a player can reduce the lot or rest a player-to-player limit order instead.
 
 ### 9.2 Trade and haulage are separate acts
 
-The Exchange settles against your **Charterhouse warehouse**, a private stock you hold at
+The Exchange settles against your **Market Warehouse**, a private stock you hold at
 the station. A buy deposits into it; a sell and a sell-side limit escrow draw only from it.
 **Nothing about a trade moves goods across space, in either direction.** Both sides are
 therefore symmetric and price-certain: the goods are already at the Exchange, so there is
@@ -843,19 +868,23 @@ optional "deliver to system X" that books Authority freight for the lot the inst
 settles, and if the booking cannot be honoured the goods simply stay in the warehouse and
 you are told why.
 
-**There are exactly two places a corporation's goods can sit:** the Charterhouse
-warehouse, and an owned system's stockpile. An earlier third store — a per-corp pool at
+**There are exactly two places a corporation's goods can sit:** its Market Warehouse,
+and an owned system's stockpile. An earlier third store — a per-corp pool at
 the home anchor — was retired: it lost its purpose when the Exchange moved onto the
 warehouse and survived only as a dead-end pocket goods could enter and never leave. Its
 inflows now land in the home *system's* stockpile, a real place the player already manages.
 
-**Order types.** Market orders execute instantly against the standing price. Limit orders
+**Order types.** Market orders execute instantly against the quantity-aware curve. The client
+attaches a default stale-price protection band (buy at most 10% above its observed average;
+sell at least 10% below); crossing the bound rejects the entire order with nothing spent.
+Limit orders
 rest and clear in a periodic uniform-price call auction every 20 s — the anti-sniping
 mechanism, since within a clearing arrival order is irrelevant and everyone clears at one
-price. Scoping the batch to limit orders only is what preserves the instant market-order
-feel. A limit order placed against a stale book is accepted as-is: there is deliberately
-no stale-price protection, only the Pillar-2 requirement that the UI always show *that*
-the data is stale and *how* stale.
+price. Player self-trades are excluded; prints outside ±25% of the current Global Market
+reference rest rather than manipulating the reference, and cancelling an order returns its
+remaining credit or Market Warehouse escrow in full. The auction transfers player escrow;
+it does not consume Sol's finite immediate-liquidity pools. Scoping the batch to limit orders
+only is what preserves the instant market-order feel.
 
 ### 9.3 Where the danger lives
 
@@ -871,30 +900,33 @@ logistics game:
 | | **Authority freight** | **Your own convoy** |
 |---|---|---|
 | Who flies it | the Authority's scheduled carrier | a hull you built and loaded |
-| Cost | a fee, charged at booking and destroyed | free — you already own the ship |
+| Cost | a fee, charged at booking and destroyed | no booking fee — you built, fuel, and risk the ship |
 | Timing | fixed 120 s timetable; 400 units per corp per departure | whenever you like |
 | Risk | someone else's hull, but your goods are aboard, and it can be raided | yours to escort, route, and lose |
 | Reward | — | counts as trade throughput on the leaderboard |
 
 Neither is strictly better. Freight is the low-attention default that keeps a distracted
 empire running; flying it yourself is cheaper, faster to schedule, and the only way to
-escort what matters.
+escort what matters. Standing logistics also needs a real idle cargo fleet berthed at its
+source; automation commands that hull and never manufactures or consumes one. “Ship
+production” uses booked Authority freight, paying the same fee and queue as a manual booking.
 
 ### 9.4 The Authority
 
 The **Terran Charter Authority** is the home-galaxy body on the far side of the wormhole
-that issued every charter. It operates the **Charterhouse** — the hub station and its
+that issued every charter. It operates the **Market Hub** — the hub station and its
 Exchange — and a scheduled common-carrier freight service. It is a neutral institution,
 not a player: it holds no territory, never appears in rankings, and takes no side. It owns
 physical freighter hulls through a sentinel id, exactly as the pirate enclaves do.
 
-- **The warehouse** is the Exchange's only counterparty. No capacity limit and no storage
+- **The Market Warehouse** is the Exchange's only corporate inventory. No capacity limit and no storage
   fee, for now.
 - **Scheduled freight** books a lot outbound (warehouse → an owned system) or inbound (an
   owned system → warehouse, optionally sold the moment it lands). Goods are escrowed and
   the fee charged at booking; the fee is a pure credit sink, destroyed rather than paid to
   anyone, and never refunded. It has an ad-valorem part (6% of value) and a distance part
-  (1e-4 per unit per su), so long hauls cost more. Departures run one freighter per
+  (`1e-4 / GALAXY_SCALE` per unit per su), so long hauls cost more without the 50× map
+  rescale turning freight into more than the cargo's value. Departures run one freighter per
   destination that has anything waiting in either direction. An oversized lot is never
   refused; it rides several consecutive departures. **The terms are the Authority's price
   list** — both the fee and the cap are uniform across destinations, and nothing the
@@ -908,13 +940,14 @@ physical freighter hulls through a sentinel id, exactly as the pirate enclaves d
   its storage is full — rides back to your warehouse rather than being destroyed.
   Deliberately friendlier than the convoy cargo-lost rule. Freight also respects the
   storage cap, so it cannot smuggle goods past a limit convoys obey.
-- **Light-honest refusals.** The Charterhouse refuses bookings to a system it *believes*
+- **Light-honest refusals.** The Market Hub refuses bookings to a system it *believes*
   blockaded, on its own light-delayed knowledge: it keeps accepting until the blockade's
   light reaches the hub and keeps refusing until the lift's does. Freight already in flight
   carries on — it launched on information that was true when it left.
-- **Sovereignty.** No engagement may open within 900 su of the Charterhouse, for either
+- **Sovereignty.** No engagement may open within 900 su of the Market Hub, for either
   party. Fleeing into it is sanctuary, by design.
-- **Sol's off-map industry** lists all twelve commodities from day one, plus specialist
+- **Sol's off-map industry** lists all twelve commodities from day one through the finite
+  supply/demand pools above, plus specialist
   contracts at 800 credits and modules at a 2× premium. This is the bootstrap: early
   Machinery comes from Sol, and the intended arc is extract → sell raws → buy Machinery →
   build industry → make your own.
@@ -949,7 +982,7 @@ ever-steeper bill. A corporation in Good Standing pays *exactly* nothing, which 
 keeps the economy's clearing invariants untouched.
 
 **Citations arrive at *c*.** Killing a freighter changes nothing at the scene. The incident
-travels to the Charterhouse at lightspeed; only on arrival does standing move and a public
+travels to the Market Hub at lightspeed; only on arrival does standing move and a public
 bulletin issue naming the culprit, which then radiates outward to every player at *c*. A
 spree deep on the frontier drags a visible light cone of consequences toward the map's
 center behind you. The reputational hit and the legal one ride the same wavefront.
@@ -1670,12 +1703,11 @@ settlement is exactly lossless everywhere. In particular, a player at home reads
 delayed by their home→hub light time — there is no coherence-peak exemption from lag. Coherence
 survives as flavour for why homes are bright spots.
 
-**Smaller gaps.** No fill-price range or "abort if fill exceeds X" guard on market orders (the
-staleness is disclosed, the guard is not built). No settlement-key resource economy (§3). No
-warehouse capacity or storage fee. `Endpoint::Hub` cannot be a standing-order *source*.
-Standing-order convoys are still free auto-spawned hulls rather than booked Authority freight.
-Salvage and boarding are defined as capability flags with hidden catalog entries and no
-enforcement.
+**Smaller gaps.** No settlement-key resource economy (§3). No Market Warehouse capacity or
+storage fee. `Endpoint::Hub` cannot be a standing-order *source*. Multiple physical Market
+Hubs are only an architectural next step: v1 has one hub and one Market Warehouse per
+corporation. Salvage and boarding are defined as capability flags with hidden catalog entries
+and no enforcement.
 
 ---
 
@@ -1692,11 +1724,11 @@ battle duration is *emergent* from the step cadence and the to-hit/damage calibr
 not be forced back to a target by retuning the calibration constant, because that constant is
 what preserves the engine's other invariants.
 
-**Market microstructure.** How an instant market order walks the posted price along the
-elasticity curve is implemented; what the periodic limit clearing should do to a price that has
-*already* moved from instant flow all interval is not settled (re-anchor to a fresh equilibrium,
-or process resting limits at the current walked price?). Related: what strategic role limit
-orders ultimately play — bets on future movement, or slippage-splitting for large orders.
+**Market microstructure.** Instant flow walks an integrated curve and periodic player-to-player
+limit clearing leaves Sol's reference unchanged. The open question is what strategic role limit
+orders ultimately play — bets on future movement, or a way to source volume after one side of
+Sol's finite immediate pool is exhausted — and whether those pools' capacity/refill should vary
+by commodity after playtest telemetry.
 
 **Home assault balance,** if conquest is ever built (§20). Too easy and the game becomes a rush
 where the economic and expansion layers never matter; too hard and the conflict layer is

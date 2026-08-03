@@ -62,6 +62,7 @@ MAX_PLAYERS=12 cargo run --release -p server
 | `PORT` | 8080 | HTTP + WebSocket listen port |
 | `GALAXY_SEED` | `0xC0FFEE` | deterministic generation seed |
 | `MAX_PLAYERS` | 4 | sizes the galaxy (radius scales as `4000 × √players`) |
+| `HOME_RING_SU` | one hyperspace-buoy throw | optional absolute home-ring radius override; useful for replaying archived layouts |
 | `DATABASE_URL` | unset | Postgres DSN; unset means an in-memory no-op stub |
 | `SNAPSHOT_EVERY_TICKS` | 300 | full-world snapshot cadence (10 s at 30 Hz) |
 | `RUST_LOG` | — | e.g. `info` |
@@ -113,7 +114,7 @@ physical, telegraphed, and raidable. Site structures on individual planets and m
 their production lines with workforce and specialists, feed the population, and chain raw
 extraction into processed and advanced goods.
 
-**Trade.** The Charterhouse Exchange settles instantly against your warehouse at the hub, but
+**Trade.** The Global Market settles instantly against your warehouse at the hub, but
 its price ticker is light-delayed, so you commit to the true price rather than the one you
 read. Hauling is a separate, explicit act on the **Warehouse** tab, where you pick the
 carrier for each lot: book Authority freight (a fee, a fixed timetable, someone else's hull,
@@ -278,7 +279,7 @@ drive a second player for manual and visual testing.
   physical now (send a colony ship). The production and geology-gradient assertions in it are
   still valid ideas worth re-testing through the new path.
 - `economy_smoke.mjs` expects a market buy to spawn a delivery convoy. Buys deposit into the
-  Charterhouse warehouse now and move nothing; its ticker-staleness and instant-settlement
+  Market Warehouse now and move nothing; its ticker-staleness and instant-settlement
   assertions still hold.
 - `m2_smoke.mjs` describes flip-and-burn movement, which was removed for constant per-kind
   speeds. It still verifies that the galaxy generates and fleets move.

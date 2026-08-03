@@ -2,8 +2,8 @@
 
 import { Net } from "./net";
 import { Renderer } from "./render";
-import { GHOST_STALE_AGE_S, ghostPositionChannel, initialState, type LinkStatus, type PendingIntent, type ViewState } from "./state";
-import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { ghostInTunnel, initialState, liveSimTime, syncRenderClock, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type RelayLossView, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
@@ -16,7 +16,8 @@ const state: ViewState = initialState();
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
 // Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 8;
+const EXPECTED_PROTOCOL_VERSION = 12;
+const CONTACT_STALE_AGE_S = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
 const joinBtn = $("join-btn") as HTMLButtonElement;
@@ -32,7 +33,14 @@ function setHud(): void {
     state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
   $("hud-online").textContent = state.link === "online" ? String(state.corpsInView) : "—";
   $("hud-ships").textContent = state.link === "online" ? String(state.ghosts.length) : "—";
-  $("hud-credits").textContent = state.wallet ? `${Math.round(state.wallet.credits).toLocaleString()}` : "—";
+  const reserved = reservedMarketCredits();
+  const hudCredits = $("hud-credits");
+  hudCredits.textContent = state.wallet
+    ? `${reserved > 0 ? "~" : ""}${Math.round(spendableMarketCredits()).toLocaleString()}`
+    : "—";
+  hudCredits.title = reserved > 0
+    ? `${fmt(state.wallet!.credits)} last reported · ${fmt(reserved)} reserved by orders awaiting the Market Hub report`
+    : "Last-arrived Market Hub account report";
   $("hud-equity").textContent = state.wallet ? `${Math.round(state.wallet.valuation).toLocaleString()}` : "—";
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
@@ -232,13 +240,6 @@ function morphElement(target: Element, source: Element): void {
 
 // --- Renderer --------------------------------------------------------------
 const renderer = new Renderer();
-renderer.onCommsReacquired = (ghost) => {
-  addTransientReport(
-    "⌁",
-    "good",
-    `<b>COMMS RE-ESTABLISHED</b> — ${esc(shipKindLabel(ghost.kind))}`,
-  );
-};
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
@@ -271,7 +272,7 @@ async function startRenderer(): Promise<void> {
 // The signal is dropped once the order reaches the ship — from then on the ship's
 // reaction is seen directly on the map (no inbound/response animation).
 function updateSignals(): void {
-  const estSimNow = state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
+  const estSimNow = liveSimTime();
   state.commandSignals = state.commandSignals.filter((s) => {
     if (estSimNow >= s.arrive) return false; // order has arrived — the comet is done
     const outSpan = s.arrive - s.depart;
@@ -347,17 +348,12 @@ const HULL_MASS: Record<ShipKind, number> = {
   builder: 2500,
 };
 const CARGO_MASS_PER_UNIT = 28;
-// Mirrors `ShipKind::Convoy.max_speed()` — the cruise of the hull a `StockSystem`
-// run spawns at the hub, so the Warehouse tab can quote an honest own-convoy ETA
-// beside the Authority's (whose legs the server sends as `secs_out`/`secs_round`,
-// computed from the slower Freighter hull).
-const CONVOY_SPEED_UI = 40;
 // §dock: mirrors `ship::DOCK_RADIUS` — how close a fleet must be to a
-// dock (the Charterhouse, or one of your systems) to load or unload.
+// dock (the Market Hub, or one of your systems) to load or unload.
 const LOGISTICS_RANGE_UI = 260;
 // §TCA Phase 2: mirrors `tca::TCA_STANDING_LOSS_PER_INCIDENT` — used only for the
 // client-side "projected status" preview on hostile orders. A forecast, never a
-// promise: the real citation lands when its light reaches the Charterhouse.
+// promise: the real citation lands when its light reaches the Market Hub.
 const TCA_INCIDENT_LOSS_UI = 10;
 const shipMass = (g: GhostView) =>
   HULL_MASS[g.kind] + (g.own && g.cargo ? g.cargo.units * CARGO_MASS_PER_UNIT : 0);
@@ -588,6 +584,9 @@ function buildShipPanel(): void {
         renderer.stateVersion++;
         updateShipPanel();
       }
+    } else if (act === "dismiss-lost-order") {
+      const id = Number((b as HTMLElement).dataset.orderId);
+      if (Number.isFinite(id)) net?.send({ type: "DismissLostOrder", order_id: id });
     } else if (act === "toggle-policy" && state.selectedShipId) {
       if (expandedShipPolicies.has(state.selectedShipId)) expandedShipPolicies.delete(state.selectedShipId);
       else expandedShipPolicies.add(state.selectedShipId);
@@ -685,7 +684,7 @@ function buildShipPanel(): void {
         }
       } else {
         const sell = !!(root.querySelector(".lg-sell") as HTMLInputElement | null)?.checked;
-        net.send({ type: "HaulToCharterhouse", fleet_id, sell_on_arrival: sell });
+        net.send({ type: "HaulToMarketHub", fleet_id, sell_on_arrival: sell });
       }
     }
   });
@@ -964,16 +963,10 @@ function confirmPendingIntent(): void {
   clearPendingIntent(true);
 }
 
-// --- §order-lifecycle: IN TRANSIT → RESPONSE EXPECTED → CONFIRMED ------------
+// --- §order-lifecycle: SIGNAL OUTBOUND → PRESUMED DELIVERED → CONFIRMED -------
 // Below this, phases collapse to ~instant (a fleet near the command center) —
 // suppress the noisy sub-second states.
 const LIFECYCLE_MIN_S = 1.5;
-
-// Live sim-time, extrapolated from the last View's wall-clock stamp so the
-// countdowns tick smoothly between messages.
-function liveSimTime(): number {
-  return state.simTime + (performance.now() - state.lastViewWallMs) / 1000;
-}
 
 // Replace the tracked lifecycles from the View. The wire is a flat owner-only
 // list; group it per fleet for panel/map lookup and preserve oldest-first order.
@@ -988,8 +981,26 @@ function syncOrderLifecycles(list: PendingOrderView[], _simTime: number): void {
     queue.sort((a, b) => a.issued_at - b.issued_at || a.id - b.id);
   }
   state.pendingOrders = next;
+  const lost = new Set(list.filter((order) => order.lost).map((order) => order.id));
+  if (lost.size) {
+    state.commandSignals = state.commandSignals.filter((signal) => !lost.has(signal.orderId));
+  }
   if (state.selectedOrderId !== null && !list.some((p) => p.id === state.selectedOrderId)) {
     state.selectedOrderId = null;
+  }
+}
+
+const seenRelayLosses = new Set<string>();
+function notifyRelayLosses(losses: RelayLossView[]): void {
+  for (const loss of losses) {
+    const key = `${loss.id}:${loss.learned_at}`;
+    if (seenRelayLosses.has(key)) continue;
+    seenRelayLosses.add(key);
+    addTransientReport(
+      "⌁",
+      "bad",
+      `<b>Relay ${esc(loss.id)} lost</b> — ${loss.fleets_beyond} fleet${loss.fleets_beyond === 1 ? "" : "s"} beyond comms, ${loss.orders_lost} order${loss.orders_lost === 1 ? "" : "s"} lost`,
+    );
   }
 }
 
@@ -1016,6 +1027,56 @@ function addTransientReport(iconText: string, cls: "good" | "bad", html: string)
   return el;
 }
 
+// §comms-v4: tunnel transitions are observed facts, so their toast is keyed to
+// the same View that changes the map predicate—never a client timer or truth.
+const tunnelPresentation = new Map<string, boolean>();
+function notifyTunnelTransitions(ghosts: GhostView[]): void {
+  const present = new Set<string>();
+  for (const ghost of ghosts) {
+    if (!ghost.own) continue;
+    present.add(ghost.id);
+    const tunnel = ghostInTunnel(ghost);
+    const previous = tunnelPresentation.get(ghost.id);
+    tunnelPresentation.set(ghost.id, tunnel);
+    if (tunnel) {
+      // Capture once. Later arrived reports may advance `ghost.pos`, but the
+      // arrow is a bookmark of tunnel entry rather than a delayed position feed.
+      state.tunnelBookmarks[ghost.id] ??= {
+        pos: { ...ghost.pos },
+        vel: { ...ghost.vel },
+        reportedAt: state.simTime - ghost.age,
+        path: ghost.path?.map((point) => ({ pos: { ...point.pos }, lane: point.lane })) ?? null,
+      };
+    } else {
+      delete state.tunnelBookmarks[ghost.id];
+    }
+    if (previous !== true || tunnel) continue;
+
+    const flagship = ghost.kind === "titan" ? state.syndicate?.flagship_name?.trim() : "";
+    const ship = flagship || shipKindLabel(ghost.kind);
+    const where = `(${fmt(ghost.pos.x)} · ${fmt(ghost.pos.y)})`;
+    if (ghost.in_comms) {
+      addTransientReport(
+        "⌁",
+        "good",
+        `<b>Communications restored</b> — ${esc(ship)} re-entered the bubble at ${where}`,
+      );
+    } else {
+      addTransientReport(
+        "⌁",
+        "good",
+        `<b>Delayed report</b> — ${esc(ship)} left hyperspace at ${where}`,
+      );
+    }
+  }
+  for (const id of tunnelPresentation.keys()) {
+    if (!present.has(id)) {
+      tunnelPresentation.delete(id);
+      delete state.tunnelBookmarks[id];
+    }
+  }
+}
+
 // §battles-take-time: notify ONCE when a battle first becomes visible (light-
 // gated by the server). Keyed by a coarse location so it re-fires only for a
 // genuinely new battle after an old one ends.
@@ -1038,6 +1099,15 @@ function notifyNewBattles(battles: import("./protocol").BattleView[]): void {
 }
 
 const orderEta = (secs: number): string => `~${Math.max(0, Math.ceil(secs))}s`;
+const ORDER_ETA_FUDGE_LO = 0.10; // Tunable: optimistic side of the served estimate band.
+const ORDER_ETA_FUDGE_HI = 0.25; // Tunable: covers drive-drop and route variance.
+function orderEtaRange(responseAt: number, now: number): string {
+  const delta = responseAt - now;
+  if (delta <= 0) return "overdue · unconfirmed";
+  const lo = Math.max(0, Math.ceil(delta * (1 - ORDER_ETA_FUDGE_LO)));
+  const hi = Math.max(lo, Math.ceil(delta * (1 + ORDER_ETA_FUDGE_HI)));
+  return `ETA range ~${lo}–${hi}s`;
+}
 const orderPoint = (p: Vec2): string =>
   `(${Math.round(p.x).toLocaleString()} · ${Math.round(p.y).toLocaleString()})`;
 
@@ -1066,23 +1136,59 @@ function orderObject(p: PendingOrderView): string {
 
 function ordersZone(g: GhostView): string {
   const queue = state.pendingOrders.get(g.id) ?? [];
-  if (!queue.length) return "";
   const now = liveSimTime();
-  const rows = queue.map((p) => {
+  const lifecycleRows = queue.map((p) => {
+    if (p.lost) {
+      return `<div class="sp-order sp-order--lost" title="This directed signal was upstream of a destroyed relay when the route broke. It will never arrive; issue a replacement manually.">` +
+        `<span class="sp-order__phase" aria-hidden="true">×</span>` +
+        `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>LOST — relay destroyed</small></span>` +
+        `<button class="sp-order__dismiss" data-act="dismiss-lost-order" data-order-id="${p.id}" aria-label="Dismiss lost order">Dismiss</button></div>`;
+    }
     const outbound = now < p.arrives_at;
     const selected = state.selectedOrderId === p.id;
     const phase = outbound ? "◈" : "◔";
+    const responseEstimate = now <= p.response_at
+      ? `ETA ${orderEta(p.response_at - now)}`
+      : `overdue ${orderEta(now - p.response_at)}`;
     const eta = outbound
-      ? `signal outbound · estimated arrival ${orderEta(p.arrives_at - now)}`
-      : `response expected · estimate ${orderEta(p.response_at - now)}`;
-    const comms = p.beyond_comms ? " · beyond comms · light speed" : "";
+      ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
+      : p.response_on_reentry
+        ? "awaiting response · ETA unknown"
+        : `awaiting response · ${responseEstimate}`;
+    const comms = p.beyond_comms ? " · beyond comms (warp)" : "";
+    const status = selected ? orderEtaRange(p.response_at, now) : `${eta}${comms}`;
     const tip = outbound
       ? `SIGNAL OUTBOUND — from the command center's served picture, this ${p.kind} order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
-      : `RESPONSE EXPECTED — estimated compliance light in ${orderEta(p.response_at - now)}.`;
-    return `<button class="sp-order${selected ? " is-selected" : ""}" data-act="select-order" data-order-id="${p.id}" aria-pressed="${selected}" title="${esc(tip)}">` +
+      : p.response_on_reentry
+        ? "PRESUMED DELIVERED — the fleet must physically return to an owned communication-bubble edge before compliance can be confirmed; its arrival time is unknown."
+      : `PRESUMED DELIVERED — awaiting compliance light; response ${responseEstimate}.`;
+    return `<button class="sp-order${selected ? " is-selected" : ""}${outbound ? "" : " is-presumed"}" data-act="select-order" data-order-id="${p.id}" aria-pressed="${selected}" title="${esc(tip)}">` +
       `<span class="sp-order__phase" aria-hidden="true">${phase}</span>` +
-      `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>${eta}${comms}</small></span></button>`;
+      `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small${selected ? ` class="is-estimate"` : ""}>${status}</small></span></button>`;
   }).join("");
+
+  // A pending lifecycle ends when the response reaches command, not when the
+  // resulting flight ends. Keep those two ideas separate: the served plan is
+  // the current order, and the local destination record survives until the
+  // served fleet is seen parked there. If a replacement signal is outbound,
+  // this also leaves the old served course visible beside the new lifecycle.
+  const localDest = state.orders[g.id];
+  const trackingMove = !!localDest || queue.some((p) => p.kind === "move");
+  const servedDest = trackingMove && g.path?.length
+    ? g.path[g.path.length - 1].pos
+    : undefined;
+  const currentDest = servedDest ?? localDest;
+  const representedByLifecycle = currentDest && queue.some((p) =>
+    p.kind === "move" && !!p.dest
+      && Math.hypot(p.dest.x - currentDest.x, p.dest.y - currentDest.y) < 1,
+  );
+  const currentRow = currentDest && !representedByLifecycle
+    ? `<div class="sp-order sp-order--current" title="CURRENT ORDER — remains in force until the served fleet arrives at this destination.">` +
+      `<span class="sp-order__phase" aria-hidden="true">→</span>` +
+      `<span class="sp-order__copy"><b>${esc(`Move → ${orderPoint(currentDest)}`)}</b><small>current order · under way</small></span></div>`
+    : "";
+  const rows = lifecycleRows + currentRow;
+  if (!rows) return "";
   return shipZone("Orders", rows, "sp-zone--orders");
 }
 
@@ -1124,19 +1230,13 @@ function supplyLine(g: GhostView): string {
 /// fleet is real intel. An AGGREGATE: the per-hull roster never leaves the sim.
 function damageLine(g: GhostView): string {
   const d = g.damage ?? 0;
-  const wake = g.own && ghostPositionChannel(g, state.simTime).fidelity === "wake";
-  if (d <= 0.001) {
-    return wake
-      ? `<div class="sp-line"><span class="dim">hull <b>100%</b> — pristine</span> <small class="dim">full telemetry · ${g.age.toFixed(1)}s old</small></div>`
-      : "";
-  }
+  if (d <= 0.001) return "";
   const pct = Math.round(d * 100);
   const tone = d > 0.5 ? "negative" : d > 0.2 ? "warn" : "dim";
   const word = d > 0.5 ? "crippled" : d > 0.2 ? "mauled" : "scratched";
   const who = g.own ? "Dock at an Ordnance Foundry to repair." : "A wounded formation is the best target on the map.";
-  const age = wake ? ` <small class="dim">full telemetry · ${g.age.toFixed(1)}s old</small>` : "";
   return `<div class="sp-line"><span class="${tone}" title="${esc(pct + "% of this formation's hull is gone. Damage persists between battles until a foundry services it. " + who)}">` +
-    `hull <b>${100 - pct}%</b> — ${word}</span>${age}</div>`;
+    `hull <b>${100 - pct}%</b> — ${word}</span></div>`;
 }
 
 // full composition for own fleets and rivals inside sensor coverage; a bucket-only
@@ -1219,6 +1319,9 @@ function headingCell(g: GhostView): string {
 // both look like a dot.
 // Mirrors sim lane::HYPERLIMIT — the radius inside which no drive can light.
 const HYPERLIMIT_SU = 900;
+// Mirrors sim c × WARP_FACTOR (400 × 5). Keep in sync: this is only the
+// player-facing one-way report delay from a known bookmark, never a route solve.
+const WARP_LIGHT_SU_S = 2_000;
 
 // §course-change: the DRIVE row — one of five values, in the sighting's own
 // retarded frame: Impulse, Warp, Hyperdrive spinning up, Hyperdrive engaged,
@@ -1286,13 +1389,7 @@ function regimeCell(g: GhostView): string {
 // hyperspace from the moment its hyperdrive CATCHES until it is fully out —
 // so "Hyperspace" here is exactly the span in which the lane itself carries
 // the ship's reports home (spin-up is still the approach, in realspace).
-function domainCell(g: GhostView, wake = false): string {
-  if (wake) {
-    return stat(
-      "Domain",
-      `<span class="tone-up" title="A fresh coded-drive wake proves this hull is coupled to the lane medium.">Hyperspace</span>`,
-    );
-  }
+function domainCell(g: GhostView): string {
   const d = g.drive ?? "thrusters";
   const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
   const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
@@ -1552,11 +1649,14 @@ function updateShipPanel(): void {
       : "Authority Enforcement"
     : shipKindLabel(g.kind);
   const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
-  const channel = own
-    ? ghostPositionChannel(g, state.simTime)
-    : { fidelity: "full" as const, pos: g.pos, vel: g.vel, t: state.simTime - g.age, age: g.age };
-  const stale = channel.fidelity === "dark";
-  const wake = channel.fidelity === "wake";
+  const stale = own ? !g.in_comms : g.age >= CONTACT_STALE_AGE_S;
+  const inTunnel = ghostInTunnel(g);
+  const bookmark = inTunnel ? state.tunnelBookmarks[g.id] : undefined;
+  const panelAge = bookmark ? Math.max(0, liveSimTime() - bookmark.reportedAt) : g.age;
+  const panelPos = bookmark?.pos ?? g.pos;
+  const panelGhost = bookmark
+    ? { ...g, pos: bookmark.pos, vel: bookmark.vel, speed: Math.hypot(bookmark.vel.x, bookmark.vel.y), age: panelAge }
+    : g;
   const roleLore = own ? shipRoleLore(g) : "";
 
   const head =
@@ -1566,38 +1666,58 @@ function updateShipPanel(): void {
 
   // Information AGE is the headline stat (the game's identity: you always know HOW
   // OLD this sighting is).
-  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${wake ? "wake · " : ""}${channel.age.toFixed(1)}s ago</dd></div>`;
-  // POSITION = the LAST KNOWN COORDINATES: where the light that just arrived
-  // puts this fleet. How far it may have flown SINCE is not restated as a
-  // number — that was the deleted uncertainty radius, which multiplied age by
-  // thruster speed and so lied about anything riding a lane. Seen (above) and
-  // Drive (beside) are the honest pair: how old the picture is, and what speed
-  // the hull was making when it left.
-  const posTip =
-    wake
-      ? "Where the latest coded-drive wake puts it. This is arrived kinematics only; drive detail, damage, activity, and plan remain on the older full-telemetry sighting."
-      : channel.age < 1
-        ? "Where this sighting puts it — near enough to your command center to be effectively live."
-        : "Where it was when this light left it. Read it with Seen and Drive: it has flown on since, at whatever speed its drives were making.";
+  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${panelAge.toFixed(1)}s ago</dd></div>`;
+  // Every panel row states the same served picture the map draws. LIVE and DARK
+  // differ in presentation, never in whether these coordinates are player-known.
+  const posTip = inTunnel
+    ? "The last position report received before or during this fleet's unseen hyperspace transit."
+    : g.in_comms
+      ? "Where the delayed live replay currently puts this fleet."
+      : "Where the latest arrived report puts it. Outside comms this picture advances only when new light arrives.";
   const posCell =
     `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
-    `<dd>${fmt(channel.pos.x)} · ${fmt(channel.pos.y)}</dd></div>`;
-  const positionGhost: GhostView = { ...g, pos: channel.pos, vel: channel.vel };
-  const fullDrive = regimeCell(g);
-  const driveCell = wake
-    ? fullDrive.replace("</dd>", ` <small class="dim">full · ${g.age.toFixed(1)}s old</small></dd>`)
-    : fullDrive;
+    `<dd>${fmt(panelPos.x)} · ${fmt(panelPos.y)}</dd></div>`;
   const strip = statStrip(
-    [ageCell, driveCell, domainCell(g, wake), headingCell(positionGhost), posCell],
+    [ageCell, regimeCell(panelGhost), domainCell(panelGhost), headingCell(panelGhost), posCell],
     "sp-status-strip",
   );
+  const tunnelOrder = inTunnel
+    ? [...(state.pendingOrders.get(g.id) ?? [])].reverse().find((order) => !order.lost)
+    : undefined;
+  const targetPos = tunnelOrder?.target_id
+    ? state.ghosts.find((target) => target.id === tunnelOrder.target_id)?.pos
+      ?? state.galaxy?.systems.find((system) => system.id === tunnelOrder.target_id)?.pos
+      ?? state.emplacements.find((site) => site.id === tunnelOrder.target_id)?.pos
+    : undefined;
+  const knownDest = tunnelOrder?.dest
+    ?? targetPos
+    ?? state.orders[g.id]
+    ?? bookmark?.path?.[bookmark.path.length - 1]?.pos
+    ?? g.path?.[g.path.length - 1]?.pos;
+  const knownOrder = tunnelOrder
+    ? orderObject(tunnelOrder)
+    : knownDest
+      ? "Move → known destination"
+      : "No destination recorded";
+  const reportDelay = bookmark && state.commandCenter
+    ? Math.hypot(bookmark.pos.x - state.commandCenter.x, bookmark.pos.y - state.commandCenter.y) / WARP_LIGHT_SU_S
+    : null;
+  const tunnelNotice = inTunnel
+    ? `<div class="sp-note" title="This arrow is the last served tunnel-entry bookmark, not a live position. It will be replaced when arrived light reports a drive drop or bubble re-entry.">` +
+      `<b>IN HYPERSPACE — beyond comms</b>` +
+      `<div class="sp-line"><span class="dim">Last known order</span> · ${esc(knownOrder)}</div>` +
+      `<div class="sp-line"><span class="dim">Destination</span> · ${knownDest ? esc(orderPoint(knownDest)) : "unknown"}</div>` +
+      `<div class="sp-line"><span class="dim">Last report</span> · ${panelAge.toFixed(1)}s ago</div>` +
+      (reportDelay === null ? "" : `<div class="sp-line"><span class="dim">Report delay</span> · reports from this position take ~${Math.ceil(reportDelay)}s</div>`) +
+      `</div>`
+    : "";
 
   // Preserve an in-progress dockside load selection/qty across the rebuild (the
   // fresh <input> would otherwise snap back to its default 50, the fresh <select>
   // to its first option) — the panel still rebuilds ~10 Hz to keep the age live.
   const prevQty = (root.querySelector(".lg-qty") as HTMLInputElement | null)?.value;
   const prevCom = (root.querySelector(".lg-com") as HTMLSelectElement | null)?.value;
-  setHtml(root, head + `<div class="sp-body">${strip}${own ? ownBody(g) : rivalBody(g)}</div>`);
+  setHtml(root, head + `<div class="sp-body">${tunnelNotice}${strip}${own ? ownBody(g) : rivalBody(g)}</div>`);
   if (prevQty !== undefined) {
     const q = root.querySelector(".lg-qty") as HTMLInputElement | null;
     if (q) q.value = prevQty;
@@ -2735,7 +2855,12 @@ function updateOngoingBattlePanel(): void {
         let echo = "";
         if (pend && pend.response_at - pend.arrives_at >= LIFECYCLE_MIN_S) {
           const inTransit = now < pend.arrives_at;
-          echo = ` <span class="fs-echo">${inTransit ? "▸" : "◂"}${fmtCountdown((inTransit ? pend.arrives_at : pend.response_at) - now)}</span>`;
+          const timing = inTransit
+            ? `▸${fmtCountdown(pend.arrives_at - now)}`
+            : pend.response_on_reentry
+              ? "◂unknown"
+              : `◂${fmtCountdown(pend.response_at - now)}`;
+          echo = ` <span class="fs-echo">${timing}</span>`;
         }
         return `<button class="wd-btn" data-act="withdraw" data-fleet="${g.id}" title="Break off ${esc(compStr(g))} and flee home — light-delayed">` +
           `↩ ${svgIcon(SHIP_ICON[g.kind], "sm")}<span class="fs-echo">${esc(compStr(g))}</span>${echo}</button>`;
@@ -3734,10 +3859,9 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     for (const g of state.ghosts) {
       if (!g.own) continue;
       if (engagedIds.has(g.id)) continue;
-      const channel = ghostPositionChannel(g, state.simTime);
-      const fullT = state.simTime - g.age;
-      if (g.docked && channel.t <= fullT + 1e-6) continue;
-      const s = renderer.worldToScreen(channel.pos);
+      if (g.docked) continue;
+      const pickPos = ghostInTunnel(g) ? state.tunnelBookmarks[g.id]?.pos ?? g.pos : g.pos;
+      const s = renderer.worldToScreen(pickPos);
       const d = Math.hypot(s.x - sx, s.y - sy);
       // Hit radius tracks the MARKER's current on-screen size (formation sprite
       // included), so it grows with the sprite in the deep-zoom native-size band;
@@ -5400,7 +5524,7 @@ function systemFleetsSection(sys: SystemInfo, fleets: GhostView[]): string {
     const speed = Math.hypot(g.vel.x, g.vel.y);
     const status = dockedAtSystem(g, sys.id) ? "docked" : speed > 1 ? "under way" : "holding";
     const tone = status === "docked" ? "accent" : status === "holding" ? "positive" : "neutral";
-    const stale = g.age >= GHOST_STALE_AGE_S
+    const stale = !g.in_comms
       ? `<span class="sysfleet__seen is-stale">Seen ${g.age.toFixed(1)}s ago</span>`
       : "";
     const flagship = g.kind === "titan" ? state.syndicate?.flagship_name?.trim() : null;
@@ -5458,9 +5582,9 @@ function buildSystemTab(): void {
         }
         net.send({ type: "ShipProduction", system_id: sid });
         readout().innerHTML =
-          `Shipping <b>${manifest.map((s) => `${s.units} ${esc(label(s.commodity))}`).join(", ")}</b> → hub — ` +
-          `one raidable convoy per commodity, selling on arrival. ` +
-          `<span class="dim">Fuel stays as the reserve; a fuel-short convoy is held (see the Log).</span>`;
+          `Booking Authority pickup for <b>${manifest.map((s) => `${s.units} ${esc(label(s.commodity))}`).join(", ")}</b> → Market Warehouse — ` +
+          `ordinary fees and departure queues apply; each lot sells on arrival. ` +
+          `<span class="dim">Fuel stays as the reserve; this creates no corporate hull.</span>`;
         break;
       }
       case "standing": {
@@ -5854,10 +5978,10 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
   setTimeout(() => el.classList.add("fade"), 15000);
 }
 
-// --- Hub Exchange (§9) — MARKET tab: a price board with observed-history
+// --- Global Market (§9) — MARKET tab: a price board with observed-history
 // sparklines + honest staleness, and a buy/sell composer that surfaces the
-// buy(instant)/sell(raidable convoy, clears on arrival) asymmetry. Inspired by
-// Stellar Charters' Exchange. UI-only: same messages, same lagged-price model. --
+// integrated curve, finite external liquidity, and the separate physical
+// freight decision. UI-only: same messages, same lagged-price model. ----------
 const COMMODITIES: Commodity[] = [
   "metallic_ore", "rare_elements", "silicates", "volatiles", "biomass",
   "alloys", "electronics", "polymers", "fuel", "provisions",
@@ -5866,6 +5990,53 @@ const COMMODITIES: Commodity[] = [
 
 // The composer's local selection (the board is the master list, this the detail).
 const composer: { side: Side; commodity: Commodity } = { side: "buy", commodity: "fuel" };
+
+type MarketReservation = {
+  kind: "market" | "limit";
+  side: Side;
+  commodity: Commodity;
+  units: number;
+  credits: number;
+  issuedAt: number;
+};
+
+// Settlement is instant at the Market Hub, but the account report is not. Keep
+// the player's own just-issued commitments as a pessimistic local overlay until
+// the delayed receipt arrives; this prevents the stale wallet from offering the
+// same credits or goods twice without pretending the estimate is server truth.
+const marketReservations: MarketReservation[] = [];
+function pruneMarketReservations(): void {
+  const ttl = Math.max(5, (state.market?.staleness ?? 0) + 2);
+  const now = liveSimTime();
+  for (let i = marketReservations.length - 1; i >= 0; i--) {
+    if (now - marketReservations[i].issuedAt > ttl) marketReservations.splice(i, 1);
+  }
+}
+function reservedMarketCredits(): number {
+  pruneMarketReservations();
+  return marketReservations.reduce((sum, reservation) => sum + reservation.credits, 0);
+}
+function spendableMarketCredits(): number {
+  return Math.max(0, (state.wallet?.credits ?? 0) - reservedMarketCredits());
+}
+function reserveMarketOrder(reservation: Omit<MarketReservation, "issuedAt">): void {
+  marketReservations.push({ ...reservation, issuedAt: liveSimTime() });
+}
+function settleMarketReservation(trade: TradeEvent): void {
+  let kind: MarketReservation["kind"] | null = null;
+  let side: Side | null = null;
+  let commodity: Commodity | null = null;
+  if (trade.event === "Bought") [kind, side, commodity] = ["market", "buy", trade.commodity];
+  else if (trade.event === "Sold") [kind, side, commodity] = ["market", "sell", trade.commodity];
+  else if (trade.event === "LimitPlaced") [kind, side, commodity] = ["limit", trade.side, trade.commodity];
+  else if (trade.event === "Rejected") commodity = trade.commodity;
+  else return;
+  const index = marketReservations.findIndex((reservation) =>
+    reservation.commodity === commodity
+      && (kind === null || reservation.kind === kind)
+      && (side === null || reservation.side === side));
+  if (index >= 0) marketReservations.splice(index, 1);
+}
 
 // Accumulate the OBSERVED hub prices into a per-commodity rolling history (the
 // sparkline data source). Fog-safe: it only ever stores the lagged prices the
@@ -5886,9 +6057,9 @@ let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
 // §market-ux: the old FREIGHT and SUPPLY tabs were one decision split across two
-// panes — both moved goods between the hub warehouse and a system, differing only
-// in WHO flew it. They are now the single WAREHOUSE tab, with that difference
-// expressed as the carrier toggle (see `freightCarrier`).
+// panes — both move goods between the Market Warehouse and a system. The desk
+// books Authority freight; actual owned hulls are loaded and commanded through
+// their fleet panels so the UI can never imply that a free hull was created.
 type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
 let marketTab: MarketTab = "exchange";
 function setMarketTab(tab: MarketTab): void {
@@ -5961,6 +6132,12 @@ function buildMarketPanel(): void {
     renderMarketBoard();
     renderComposer();
   });
+  $("market-orders").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("[data-cancel-limit]") as HTMLElement | null;
+    const orderId = Number(b?.dataset.cancelLimit);
+    if (!b || !net || !Number.isFinite(orderId)) return;
+    net.send({ type: "CancelLimitOrder", order_id: orderId });
+  });
   $("mk-side").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
     if (!b?.dataset.side) return;
@@ -5976,22 +6153,9 @@ function buildMarketPanel(): void {
   // --- §TCA + §market-ux: the WAREHOUSE tab's shipping composer ---
   const frCom = $("fr-commodity") as HTMLSelectElement;
   frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
-  // The CARRIER choice: the Authority's scheduled hull, or one of yours. Same
-  // goods, same destination, different cost/timing/risk — the logistics game.
-  $("fr-carrier").addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
-    if (!b?.dataset.carrier) return;
-    freightCarrier = b.dataset.carrier as FreightCarrier;
-    // Your own convoy only sails OUTBOUND from here: hauling goods IN with your own
-    // hull needs a fleet at the far end (load it there, then Haul to Charterhouse),
-    // which is the fleet panel's job. Snap the direction rather than offer a dead end.
-    if (freightCarrier === "own") freightDir = "outbound";
-    renderWarehouseDesk();
-  });
   $("fr-dir").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
     if (!b?.dataset.dir) return;
-    if (freightCarrier === "own" && b.dataset.dir === "inbound") return; // disabled — see above
     freightDir = b.dataset.dir as ShipmentDir;
     renderWarehouseDesk();
   });
@@ -6005,13 +6169,7 @@ function buildMarketPanel(): void {
     if (!system) return;
     const commodity = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
     const units = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
-    if (freightCarrier === "own") {
-      // StockSystem: a convoy of yours leaves the Charterhouse now, sub-light and
-      // raidable, and deposits into the system's stockpile on arrival.
-      net.send({ type: "StockSystem", system_id: system, commodity, units });
-      $("fr-feedback").textContent =
-        `Convoy away: ${units} ${label(commodity)} → ${systemName(system)} — your hull, sub-light and raidable.`;
-    } else if (freightDir === "outbound") {
+    if (freightDir === "outbound") {
       net.send({ type: "BookFreightOut", system, commodity, units });
       $("fr-feedback").textContent = `Booking sent: ${units} ${label(commodity)} → ${systemName(system)}.`;
     } else {
@@ -6028,12 +6186,48 @@ function buildMarketPanel(): void {
     const limitPrice = Number(($("mk-limit") as HTMLInputElement).value);
     if (limitOn && limitPrice > 0) {
       net.send({ type: "PlaceLimitOrder", side: composer.side, commodity: c, units: qty, limit_price: limitPrice });
+      reserveMarketOrder({
+        kind: "limit",
+        side: composer.side,
+        commodity: c,
+        units: composer.side === "sell" ? qty : 0,
+        credits: composer.side === "buy" ? qty * limitPrice : 0,
+      });
     } else {
+      const observed = state.market?.prices.find((p) => p.commodity === c)?.price;
+      if (observed === undefined) {
+        $("mk-feedback").textContent = "No observed market quote is available yet.";
+        return;
+      }
+      const quotedAverage = marketAverageQuote(observed, qty, composer.side);
+      const protectionPrice = quotedAverage * (composer.side === "buy"
+        ? 1 + MARKET_PROTECTION_FRAC
+        : 1 - MARKET_PROTECTION_FRAC);
       net.send(
         composer.side === "buy"
-          ? { type: "MarketBuy", commodity: c, units: qty, ship_to: shipToValue() }
-          : { type: "MarketSell", commodity: c, units: qty },
+          ? {
+              type: "MarketBuy",
+              commodity: c,
+              units: qty,
+              max_unit_price: protectionPrice,
+              ship_to: shipToValue(),
+            }
+          : {
+              type: "MarketSell",
+              commodity: c,
+              units: qty,
+              min_unit_price: protectionPrice,
+            },
       );
+      reserveMarketOrder({
+        kind: "market",
+        side: composer.side,
+        commodity: c,
+        units: composer.side === "sell" ? qty : 0,
+        credits: composer.side === "buy"
+          ? qty * protectionPrice * (1 + (state.charter?.market_penalty_frac ?? 0))
+          : 0,
+      });
     }
     $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${label(c)}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
   });
@@ -6044,28 +6238,31 @@ function buildMarketPanel(): void {
 function renderMarketBoard(): void {
   if (!state.market) return;
   const priceOf = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
-  // §TCA: the Exchange settles against the CHARTERHOUSE WAREHOUSE, so the held
+  // §TCA: the Exchange settles against the MARKET WAREHOUSE, so the held
   // column has to be the warehouse — showing a system stockpile here would offer a
   // player a sell the sim will soft-reject as InsufficientWarehouseStock.
-  const heldOf = new Map((state.wallet?.warehouse ?? []).map((i) => [i.commodity, i.units]));
   const stale = state.market.staleness > 0.5;
   setHtml($("market-board"), COMMODITIES.map((c) => {
+    const quote = state.market!.prices.find((row) => row.commodity === c);
     const p = priceOf.get(c);
     const hist = state.priceHistory[c] ?? [];
     const tr = trend(hist);
     const active = composer.commodity === c ? "is-active" : "";
     const priceTxt = p === undefined ? `<span class="is-stale">—</span>` : `${stale ? "~" : ""}${p.toFixed(2)}`;
-    return `<button class="board__row ${active}" data-resource="${c}" title="your observed price history">` +
+    const liquidity = quote
+      ? `Observed immediate liquidity: buy up to ${quote.available_buy}, sell up to ${quote.available_sell}. This picture is ${state.market!.staleness.toFixed(1)}s old.`
+      : "No market report has arrived yet.";
+    return `<button class="board__row ${active}" data-resource="${c}" title="${esc(liquidity)}">` +
       `<span class="dep-ico">${commodityIcon(c, "md")}</span>` +
       `<span class="b-name">${label(c)}</span>` +
       spark(hist.length ? hist : (p !== undefined ? [p, p] : [0, 0])) +
       `<span class="b-price ${stale ? "is-stale" : ""}">${priceTxt} <span class="b-trend ${tr.tone}">${tr.glyph}</span></span>` +
-      `<span class="b-held">${heldOf.get(c) ?? 0}</span></button>`;
+      `<span class="b-held">${warehouseUnits(c)}</span></button>`;
   }).join(""));
 }
 
 // §economy Part 6 → §market-ux: SOL SPECIALIST CONTRACTS, now a Market TAB of
-// their own — five professions at the standing price; the contractor ships to
+// their own — five professions at the posted contract price; the contractor ships to
 // the player's HOME on a normal raidable personnel convoy (price-certain,
 // delivery-risky). Wire slugs stay raw in data-hire; names come from label().
 const SPECIALISTS: { slug: string; icon: IconKey; blurb: string }[] = [
@@ -6077,7 +6274,7 @@ const SPECIALISTS: { slug: string; icon: IconKey; blurb: string }[] = [
 ];
 function renderSpecialistsPane(): void {
   const cost = state.galaxy?.specialist_hire_cost ?? 800;
-  const credits = state.wallet?.credits ?? 0;
+  const credits = spendableMarketCredits();
   const rows = SPECIALISTS.map((s) =>
     `<div class="board__row" title="A specialist multiplies affine production lines ×1.75 when posted. The personnel convoy from Sol is sub-light and raidable.">` +
     `<span class="dep-ico">${icon(s.icon, "sm")}</span>` +
@@ -6099,7 +6296,7 @@ function renderSpecialistsPane(): void {
 // prices (the sim's own basis), shown "~" because the server prices on execution.
 // The home ledger count gates Sell (you can only sell what you hold at home).
 function renderModulesPane(): void {
-  const credits = state.wallet?.credits ?? 0;
+  const credits = spendableMarketCredits();
   const home = state.systems.find((s) => s.owner === state.playerId);
   const ledger = home?.modules ?? {};
   const rows = MODULE_ALL.map((m) => {
@@ -6122,12 +6319,27 @@ function renderModulesPane(): void {
     rows;
 }
 
+// Mirrors sim::market's quantity integration so the stale quote includes the
+// order's OWN impact. The server is authoritative; this only derives the default
+// ±10% protection sent with the order and the preview shown to the player.
+const MARKET_DEPTH = 1600;
+const MARKET_HALF_SPREAD = 0.01;
+const MARKET_PROTECTION_FRAC = 0.10;
+function marketAverageQuote(mid: number, units: number, side: Side): number {
+  const x = units / MARKET_DEPTH;
+  if (side === "buy") {
+    return mid * MARKET_DEPTH * Math.expm1(x) / units * (1 + MARKET_HALF_SPREAD);
+  }
+  return mid * MARKET_DEPTH * (1 - Math.exp(-x)) / units * (1 - MARKET_HALF_SPREAD);
+}
+
 // The composer preview surfaces the buy/sell asymmetry in plain language — the
 // honest-fog centerpiece (teaches the lightspeed economy, not shipping fees).
 function renderComposer(): void {
   if (!state.market) return;
   const c = composer.commodity;
   const price = state.market.prices.find((p) => p.commodity === c)?.price;
+  const liquidity = state.market.prices.find((p) => p.commodity === c);
   $("mk-sel").textContent = label(c);
   document.querySelectorAll<HTMLElement>("#mk-side button").forEach((b) => b.classList.toggle("is-active", b.dataset.side === composer.side));
   const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
@@ -6137,45 +6349,53 @@ function renderComposer(): void {
     $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${label(c)}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
   } else if (composer.side === "buy") {
+    const average = price === undefined ? undefined : marketAverageQuote(price, qty, "buy");
     const penFrac = state.charter?.market_penalty_frac ?? 0;
-    const pen = price !== undefined ? qty * price * penFrac : 0;
+    const pen = average !== undefined ? qty * average * penFrac : 0;
     const penNote = pen > 0.005 ? ` <span class="warn">(incl. ${fmt(pen)} Cr charter penalty)</span>` : "";
-    const cost = price !== undefined ? fmt(qty * price * (1 + penFrac)) : "?";
+    const cost = average !== undefined ? fmt(qty * average * (1 + penFrac)) : "?";
+    const bound = average !== undefined ? (average * (1 + MARKET_PROTECTION_FRAC)).toFixed(2) : "?";
     const to = shipToValue();
     const dest = to ? ` → booked onto Authority freight for <b>${esc(systemName(to))}</b>` : "";
-    $("mk-preview").innerHTML = `<span title="Settles instantly at the standing price; the goods land in your hub warehouse. Nothing crosses space unless you ship it.">Settles <b>now</b> ~<span class="accent">${cost} Cr</span>${penNote} → your <b>warehouse</b>${dest}</span>`;
+    const poolNote = liquidity && qty > liquidity.available_buy
+      ? ` <span class="warn">· observed supply ${liquidity.available_buy}</span>`
+      : "";
+    $("mk-preview").innerHTML = `<span title="Quantity impact is included. The order cancels if its true average exceeds the protected bound. Sol liquidity is finite and the displayed pool is light-delayed.">Observed estimate <b>~${cost} Cr</b>${penNote}${poolNote} · protected ≤ <span class="accent">${bound}/u</span> → your <b>Market Warehouse</b>${dest}</span>`;
     submit.textContent = `Buy ${qty} ${label(c)}`;
   } else {
+    const average = price === undefined ? undefined : marketAverageQuote(price, qty, "sell");
     const held = warehouseUnits(c);
     const penFrac = state.charter?.market_penalty_frac ?? 0;
-    const pen = price !== undefined ? qty * (price ?? 0) * penFrac : 0;
+    const pen = average !== undefined ? qty * average * penFrac : 0;
     const penNote = pen > 0.005 ? ` <span class="warn">(after ${fmt(pen)} Cr charter penalty)</span>` : "";
-    const gain = price !== undefined ? fmt(qty * price * (1 - penFrac)) : "?";
+    const gain = average !== undefined ? fmt(qty * average * (1 - penFrac)) : "?";
+    const bound = average !== undefined ? (average * (1 - MARKET_PROTECTION_FRAC)).toFixed(2) : "?";
     const short = held < qty;
+    const poolNote = liquidity && qty > liquidity.available_sell
+      ? ` <span class="warn">· observed demand ${liquidity.available_sell}</span>`
+      : "";
     $("mk-preview").innerHTML = short
-      ? `<span class="warn" title="Selling draws ONLY from your hub warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
-      : `<span title="The goods are already at the Exchange, so it settles instantly at the standing price — no crossing, no price-on-arrival gamble.">Settles <b>now</b> from your warehouse ~<span class="accent">${gain} Cr</span>${penNote}</span>`;
+      ? `<span class="warn" title="Selling draws ONLY from your Market Warehouse. Ship goods in first — Authority freight or one of your own convoys.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
+      : `<span title="Quantity impact is included. The order cancels if its true average falls below the protected bound. Sol liquidity is finite and the displayed pool is light-delayed.">Observed proceeds <b>~${gain} Cr</b>${penNote}${poolNote} · protected ≥ <span class="accent">${bound}/u</span> from your Market Warehouse</span>`;
     submit.textContent = `Sell ${qty} ${label(c)}`;
   }
   // The ship-to selector is a BUY-only composition.
   ($("mk-shipto-row") as HTMLElement).style.display = composer.side === "buy" && !limitOn ? "flex" : "none";
 }
 
-// --- §TCA: the Charterhouse warehouse, freight desk, and shipment queue -------
+// --- §TCA: the Market Warehouse, freight desk, and shipment queue -------
 
 /// Which way the shipping composer is currently moving goods.
 let freightDir: ShipmentDir = "outbound";
-/// §market-ux: WHO flies the lot — the Authority's scheduled carrier, or one of
-/// your own convoys. The two channels of §9: a fee and a timetable against free
-/// and immediate, with the risk moving from someone else's hull onto yours.
-type FreightCarrier = "tca" | "own";
-let freightCarrier: FreightCarrier = "tca";
-
-/// Units of `c` in the player's Charterhouse warehouse.
+/// Units of `c` in the player's Market Warehouse.
 function warehouseUnits(c: Commodity): number {
-  return state.wallet?.warehouse?.find((w) => w.commodity === c)?.units ?? 0;
+  const reported = state.wallet?.warehouse?.find((w) => w.commodity === c)?.units ?? 0;
+  const reserved = marketReservations
+    .filter((reservation) => reservation.commodity === c)
+    .reduce((sum, reservation) => sum + reservation.units, 0);
+  return Math.max(0, reported - reserved);
 }
-/// The chosen `ship_to` destination on a buy (null = leave it at the Charterhouse).
+/// The chosen `ship_to` destination on a buy (null = leave it at the Market Hub).
 function shipToValue(): EntityId | null {
   const v = ($("mk-shipto") as HTMLSelectElement | null)?.value ?? "";
   return v ? (v as EntityId) : null;
@@ -6203,7 +6423,9 @@ function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): vo
 /// The warehouse table — commodity × units, the Exchange's only stock, and the
 /// master list for the shipping composer below it (click a row to load it).
 function renderWarehouse(): void {
-  const rows = (state.wallet?.warehouse ?? []).filter((w) => w.units > 0);
+  const rows = (state.wallet?.warehouse ?? [])
+    .map((holding) => ({ ...holding, units: warehouseUnits(holding.commodity) }))
+    .filter((holding) => holding.units > 0);
   const picked = ($("fr-commodity") as HTMLSelectElement | null)?.value ?? "";
   $("wh-table").innerHTML = rows.length
     ? rows.map((w) =>
@@ -6214,41 +6436,28 @@ function renderWarehouse(): void {
 }
 
 /// The Warehouse tab's shipping composer: the live cost, the EXACT departure, and
-/// the ETA for whichever CARRIER is selected — all from server-sent terms, so the
-/// player commits with full knowledge of both channels.
+/// the Authority ETA and fee from server-sent terms.
 function renderWarehouseDesk(): void {
   const f = state.freight;
   if (!f) return;
   fillSystemSelect($("fr-system") as HTMLSelectElement, null);
-  const own = freightCarrier === "own";
-  // Your own convoy is OUTBOUND-only from here (the inbound leg needs a fleet at
-  // the far end — the fleet panel's Haul to Charterhouse). Keep the button visible
-  // but disabled, so the constraint reads as a rule rather than a missing feature.
-  const dir = own ? "outbound" : freightDir;
-  document.querySelectorAll<HTMLElement>("#fr-carrier button").forEach((b) =>
-    b.classList.toggle("is-active", (b.dataset.carrier === "own") === own));
+  const dir = freightDir;
   document.querySelectorAll<HTMLButtonElement>("#fr-dir button").forEach((b) => {
     b.classList.toggle("is-active", b.dataset.dir === dir);
-    const blocked = own && b.dataset.dir === "inbound";
-    b.disabled = blocked;
-    b.title = blocked
-      ? "Your own hulls haul goods IN from a fleet at the far end: load it at the system, then Haul to Charterhouse from the fleet panel."
-      : "";
+    b.disabled = false;
   });
   // Sell-on-arrival is an Authority inbound option only — nothing else can land a
   // lot at the Exchange without a hull of yours already being there.
-  ($("fr-sell-row") as HTMLElement).style.display = !own && dir === "inbound" ? "flex" : "none";
+  ($("fr-sell-row") as HTMLElement).style.display = dir === "inbound" ? "flex" : "none";
 
   const sysId = ($("fr-system") as HTMLSelectElement).value as EntityId;
   const t = f.terms.find((x) => String(x.system) === String(sysId));
   const c = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
   const qty = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
   const submit = $("fr-submit") as HTMLButtonElement;
-  submit.textContent = own ? "Send convoy" : "Book freight";
+  submit.textContent = "Book freight";
   if (!t) {
-    $("fr-preview").innerHTML = own
-      ? `<span class="dim">Claim a system before you can ship goods to one.</span>`
-      : `<span class="dim">You hold no systems the Authority can serve.</span>`;
+    $("fr-preview").innerHTML = `<span class="dim">You hold no systems the Authority can serve.</span>`;
     submit.disabled = true;
     return;
   }
@@ -6259,18 +6468,6 @@ function renderWarehouseDesk(): void {
   const short = dir === "outbound" && qty > held
     ? ` · <span class="warn" title="The warehouse is the source for any outbound lot. A short holding soft-rejects: nothing is charged and nothing is lost.">you hold ${fmt(held)}</span>`
     : "";
-
-  if (own) {
-    // A `StockSystem` convoy leaves at once and cruises at the Convoy speed — no
-    // fee, no timetable, and the crossing risk is yours.
-    const flight = t.distance / CONVOY_SPEED_UI;
-    $("fr-preview").innerHTML =
-      `<span class="positive" title="You already own the hull — there is no Authority fee to pay.">Free</span> · ` +
-      `departs <b>now</b> · arrives ~<b>${fmtDur(flight)}</b>` +
-      ` · <span class="warn" title="Your convoy broadcasts under the Convention and can be raided the whole way. Escort it if the lot matters.">your hull · raidable</span>` +
-      short;
-    return;
-  }
 
   const price = state.market?.prices.find((p) => p.commodity === c)?.price ?? 0;
   // §TCA Phase 2: the Authority charges base fee × the charter TARIFF — quote
@@ -6292,7 +6489,7 @@ function renderWarehouseDesk(): void {
     short;
 }
 
-/// The shipment queue — your lots, waiting at the Charterhouse or aboard a hull.
+/// The shipment queue — your lots, waiting at the Market Hub or aboard a hull.
 function renderShipmentQueue(): void {
   const ships = state.freight?.shipments ?? [];
   $("fr-queue").innerHTML = ships.length
@@ -6319,7 +6516,8 @@ function renderRestingOrders(): void {
   const orders = state.wallet?.orders ?? [];
   setHtml($("market-orders"), orders.length
     ? `<div class="deps-head">Resting limit orders</div>` +
-      orders.map((o) => `<div class="ord">${badge(o.side === "buy" ? "positive" : "warn", `${o.side} ${o.units} ${label(o.commodity)} @ ${o.limit_price.toFixed(1)}`)}</div>`).join("")
+      orders.map((o) => `<div class="ord">${badge(o.side === "buy" ? "positive" : "warn", `${o.side} ${o.units} ${label(o.commodity)} @ ${o.limit_price.toFixed(1)}`)}` +
+        `<button class="o-rm" data-cancel-limit="${o.id}" title="Cancel and return remaining escrow">Cancel</button></div>`).join("")
     : "");
 }
 
@@ -6341,6 +6539,7 @@ function updateMarket(): void {
   if (ae && mp.contains(ae) && (ae.tagName === "INPUT" || ae.tagName === "SELECT")) return;
   const sig = JSON.stringify([
     state.wallet.credits, state.wallet.warehouse, state.wallet.fuel_total,
+    marketReservations.map((reservation) => [reservation.kind, reservation.side, reservation.commodity, reservation.units, reservation.credits]),
     state.charter, state.freight,
     state.systems.map((s) => [s.id, s.owner]),
     marketTab, Math.floor(state.simTime),
@@ -6353,7 +6552,7 @@ function updateMarket(): void {
   fresh.textContent = stale > 0.5 ? `~${stale.toFixed(0)}s stale` : "live";
   fresh.title = "Last-synced ticker — light-delayed";
   $("market-wallet").innerHTML = statStrip([
-    stat("Credits", `${fmt(state.wallet.credits)} Cr`, "is-accent"),
+    stat("Credits", `${reservedMarketCredits() > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr`, "is-accent"),
     stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
   ]);
   renderMarketBoard();
@@ -6368,16 +6567,17 @@ function updateMarket(): void {
 }
 
 function addTradeNews(t: TradeEvent): void {
+  settleMarketReservation(t);
   const log = $("reports-log");
   let text = "";
   switch (t.event) {
     case "Bought":
-      text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your hub warehouse.`
+      text = `Bought ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)} — held in your Market Warehouse.`
         + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
       break;
     case "Delivered": text = t.system
       ? `Delivery arrived: +${t.units} ${label(t.commodity)} — stocked at ${systemName(t.system)}.`
-      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your hub warehouse.`;
+      : `Delivery arrived: +${t.units} ${label(t.commodity)} — into your Market Warehouse.`;
       break;
     case "StockDispatched": text = `Supply convoy away: ${t.units} ${label(t.commodity)} → ${systemName(t.system)} (raidable).`; break;
     case "SellDispatched": text = `Sell convoy away: ${t.units} ${label(t.commodity)} crossing to the hub.`; break;
@@ -6389,6 +6589,9 @@ function addTradeNews(t: TradeEvent): void {
     case "LimitFilled":
       text = `Limit ${t.side} filled in batch: ${t.units} ${label(t.commodity)} @ ${t.unit_price.toFixed(2)}.`
         + (t.penalty ? ` (charter penalty ${fmt(t.penalty)} Cr)` : "");
+      break;
+    case "LimitCancelled":
+      text = `Cancelled limit ${t.side}: ${t.units} ${label(t.commodity)} @ ${t.limit_price.toFixed(2)} — escrow returned.`;
       break;
     case "AutoDispatched": text = `⚙ Standing order #${t.rule_id} shipped ${t.units} ${label(t.commodity)} (auto, raidable).`; break;
     case "SupplyDiverted": {
@@ -6473,7 +6676,7 @@ function buildStandingPanel(): void {
   const syncForm = () => {
     const amt = $("so-amount") as HTMLInputElement;
     ($("so-floor-row") as HTMLElement).style.display = trig.value === "percent_surplus" ? "flex" : "none";
-    // §TCA: the sell-on-arrival choice only means anything for a Charterhouse rule.
+    // §TCA: the sell-on-arrival choice only means anything for a Market Hub rule.
     const destIsHub = (($("so-dest") as HTMLSelectElement).value || "") === "hub";
     ($("so-sell-row") as HTMLElement).style.display = destIsHub ? "flex" : "none";
     amt.title = trig.value === "above_threshold" ? "threshold (units)"
@@ -6509,7 +6712,7 @@ function buildStandingPanel(): void {
       id: 0, source: { kind: "system", id: source }, dest, commodity, trigger,
       status: "active", next_eval_tick: 0, in_flight: null,
       // §TCA: a Hub rule sells on arrival by default (today's behaviour); the
-      // Charterhouse panel exposes the stockpile-instead option.
+      // Market Hub panel exposes the stockpile-instead option.
       sell_on_arrival: ($("so-sell") as HTMLInputElement).checked,
     };
     net.send({ type: "SetStandingOrder", order });
@@ -6718,7 +6921,7 @@ function landingOddsLine(o: LandingOddsView | null | undefined): string {
 /// counting it can neither invent intel nor lose any. The galaxy map stops
 /// drawing these sprites and this count takes their place — the same
 /// information, in a form you can actually read when six convoys are stacked on
-/// one star. `site` is a system id, or "hub" for the Charterhouse.
+/// one star. `site` is a system id, or "hub" for the Market Hub.
 function berthed(site: string): GhostView[] {
   return state.ghosts.filter((g) => dockedAtSystem(g, site));
 }
@@ -6961,7 +7164,7 @@ function computeInbox(): InboxItem[] {
       push({ key, weight: INBOX_W.storageFull, tone: "warn", icon: "storage",
         headline: `${systemName(s.id)} — storage FULL (${s.storage_used}/${s.storage_cap})`,
         stakes: "Production idles at the cap. Ship goods out, automate it, or build an Orbital Warehouse (nothing is lost).",
-        actions: [{ label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, { label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics }, { label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
+        actions: [{ label: "Book pickup", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, { label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics }, { label: "Focus", run: () => inboxFocusSystem(s.id), primary: true }, dismissAct(key)] });
     }
     if (s.population > 0 && !s.habitat_fed) {
       const key = `habitat:${s.id}`;
@@ -6993,7 +7196,7 @@ function computeInbox(): InboxItem[] {
       push({ key, weight: INBOX_W.idleStockpile, tone: "info", icon: "market",
         headline: `${systemName(s.id)} — ${total} units idle`,
         stakes: "No standing order ships from here — automate it so it works while you're away.",
-        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Ship → hub", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, dismissAct(key)] });
+        actions: [{ label: "Auto-supply", icon: "doctrine", run: inboxOpenLogistics, primary: true }, { label: "Book pickup", icon: "cargo", run: () => { if (net) net.send({ type: "ShipProduction", system_id: s.id }); } }, dismissAct(key)] });
     }
     // A DEVELOPED-but-idle system (a claimed frontier with nothing built/building).
     if ((s.slots_total ?? 0) > 0 && (s.slots_used ?? 0) === 0 && (s.builds?.length ?? 0) === 0) {
@@ -7123,7 +7326,7 @@ function nextDecisionLabel(): string {
     if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
   }
   for (const queue of state.pendingOrders.values()) {
-    for (const p of queue) consider(p.response_at, "an order response is expected");
+    for (const p of queue) if (!p.lost) consider(p.response_at, "an order response is expected");
   }
   // §explore Part 4: an in-flight survey DWELL — its completion is often the
   // soonest thing worth waiting for (owner-only live progress, honest estimate).
@@ -7286,6 +7489,9 @@ function join(): void {
     onMessage: (msg) => {
       switch (msg.type) {
         case "Welcome":
+          marketReservations.length = 0;
+          tunnelPresentation.clear();
+          state.tunnelBookmarks = {};
           // Wire protocol check (§FLEETS bumped to 2): warn if the server speaks a
           // newer dialect than this build — the View shape may have drifted.
           if (typeof msg.protocol_version === "number" && msg.protocol_version !== EXPECTED_PROTOCOL_VERSION) {
@@ -7295,6 +7501,7 @@ function join(): void {
           state.name = msg.name;
           state.tickHz = msg.tick_hz;
           state.tick = msg.tick;
+          syncRenderClock(msg.sim_time);
           state.simTime = msg.sim_time;
           state.galaxy = msg.galaxy;
           // §perf Part B: the static tables that used to ride every View.
@@ -7347,6 +7554,7 @@ function join(): void {
           // its dirty-gated galaxy geometry (systems/anchors) rebuilds this frame.
           renderer.stateVersion++;
           state.tick = msg.tick;
+          syncRenderClock(msg.sim_time);
           state.simTime = msg.sim_time;
           state.commandCenter = msg.command_center;
           state.anchors = msg.anchors;
@@ -7363,6 +7571,7 @@ function join(): void {
           // standing orders / reports / rankings arrive via "Sections" — both
           // on the reliable lane, only when changed. State keeps the last copy.)
           state.syndicate = msg.syndicate ?? null;
+          notifyTunnelTransitions(msg.ghosts);
           state.syndicateInvites = msg.syndicate_invites ?? [];
           // §perf Part B: the wire carries only the DYNAMIC research slice —
           // join it onto the static Welcome catalog for the panel's full shape.
@@ -7370,6 +7579,7 @@ function join(): void {
           noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
           notifyNewBattles(msg.battles);
           syncOrderLifecycles(msg.pending_orders, msg.sim_time);
+          notifyRelayLosses(msg.relay_losses ?? []);
           // A move order is DONE when its ship is SEEN parked at the ordered
           // destination. Without this sweep the record lived forever, and
           // everything keyed on it stayed stale after arrival: the activity
@@ -7399,7 +7609,6 @@ function join(): void {
           // Light-respecting "corps in view": distinct owners we can actually
           // see (self + rivals whose light has arrived). Never a raw count.
           state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
-          state.lastViewWallMs = performance.now();
           state.link = "online";
           break;
         case "BattleRecords": {
@@ -7489,6 +7698,15 @@ function join(): void {
           });
           break;
         }
+        case "OrderConfirmed": {
+          state.commandSignals = state.commandSignals.filter((signal) => signal.orderId !== msg.order_id);
+          addTransientReport(
+            "✓",
+            "good",
+            `<b>Order confirmed</b> — ${esc(label(msg.kind))} response light arrived`,
+          );
+          break;
+        }
         case "RoutePreview": {
           // Replies are immediate but still asynchronous. A second destination,
           // cancel, or ship change makes an older reply stale; never resurrect it.
@@ -7569,8 +7787,8 @@ setHud();
 
 
 /// §TCA Part 5: dockside LOGISTICS for one of the player's own convoys — load and
-/// unload across the Charterhouse warehouse or an owned system's stockpile, and
-/// the haul order that sends a loaded hull to the Charterhouse. Only offered when
+/// unload across the Market Warehouse or an owned system's stockpile, and
+/// the haul order that sends a loaded hull to the Market Hub. Only offered when
 /// the fleet is actually alongside a dock and idle; the sim soft-rejects anything
 /// else, but there is no point showing a button that will only ever be refused.
 /// Does this fleet lift cargo? UI mirror of the sim's `Fleet::cargo_capacity()`:
@@ -7613,7 +7831,7 @@ function logisticsSection(g: GhostView): string {
   }
   if (g.cargo && !atHub) {
     rows.push(
-      `<div class="sp-line"><button class="act act--primary" data-act="haul" title="Send this loaded hull to the Wormhole Hub. It deposits into your warehouse on arrival — and, if you tick sell, clears at that tick's standing price. The fleet SURVIVES and goes idle there.">Haul to the hub</button> ` +
+      `<div class="sp-line"><button class="act act--primary" data-act="haul" title="Send this loaded hull to the Market Hub. It deposits into your Market Warehouse on arrival — and, if you tick sell, clears on that tick's quantity-aware curve. The fleet SURVIVES and goes idle there.">Haul to the hub</button> ` +
       `<label class="lim" title="Sell the lot at the Exchange the moment it lands."><input type="checkbox" class="lg-sell" /> sell on arrival</label></div>`,
     );
   }
@@ -7628,7 +7846,7 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
   const where = t.system ? systemName(t.system) : null;
   switch (t.reason.reason) {
     case "insufficient_warehouse_stock":
-      return `Your hub warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your convoys).`;
+      return `Your Market Warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your convoys).`;
     case "not_your_system":
       return `The Authority serves your own colonies only — ${where ?? "that system"} isn't yours.`;
     case "insufficient_system_stock":
@@ -7652,7 +7870,13 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
     case "charter_revoked":
       return `Your charter is REVOKED — the Exchange is closed to you. Your warehouse is still yours to fetch from; pay reinstatement to trade again.`;
     case "cant_afford":
-      return `Reinstatement costs ${fmt(t.reason.cost)} credits — more than your treasury.`;
+      return t.units === 0
+        ? `Reinstatement costs ${fmt(t.reason.cost)} credits — more than your treasury.`
+        : `This purchase needs ${fmt(t.reason.cost)} credits including penalties — more than your treasury.`;
+    case "price_protection":
+      return `Price protection stopped the order: your bound was ${t.reason.bound.toFixed(2)}, but the true average price was ${t.reason.actual.toFixed(2)}. Nothing traded.`;
+    case "market_liquidity":
+      return `The Global Market can clear only ${t.reason.available} units immediately. Nothing traded — reduce the lot or place a limit order.`;
   }
 }
 
@@ -7661,7 +7885,7 @@ function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
 // A top-navbar destination of its own (⚖ / `C`), beside Syndicate: the charter is
 // WHO YOU ARE to the Authority, not something you shop for, so it no longer rides
 // along in a Market tab. The Market's Freight tab still books the carrier this
-// standing prices. Re-rendered only when the charter CHANGES (a signature guard),
+// market terms. Re-rendered only when the charter CHANGES (a signature guard),
 // so a half-typed reinstatement figure is never wiped by a 10 Hz View.
 let lastFactionSig = "";
 function openFaction(): void {
@@ -7730,7 +7954,7 @@ function updateFactionPanel(): void {
     `<div class="mkt-orders">${rows}</div>` +
     cost +
     pay +
-    `<div class="fp-note">The Authority issued your charter and runs the Hub Exchange. Standing is a legal status, not a reputation: each band names a tariff on Authority freight and a cut of every Exchange trade. Citations land only when their light reaches the Charterhouse; standing regenerates in the meantime.</div>`,
+    `<div class="fp-note">The Authority issued your charter and runs the Hub Exchange. Standing is a legal status, not a reputation: each band names a tariff on Authority freight and a cut of every Exchange trade. Citations land only when their light reaches the Market Hub; standing regenerates in the meantime.</div>`,
   );
   if (shortfall > 0) syncReinstateCost();
 }
@@ -7755,7 +7979,7 @@ function syncReinstateCost(): void {
 
 /// §TCA Phase 2: the projected band after `loss` more standing — the client-side
 /// forecast behind the "this will be cited" confirmations. A PREVIEW, not a
-/// promise: the citation only lands when its light reaches the Charterhouse, and
+/// promise: the citation only lands when its light reaches the Market Hub, and
 /// standing regenerates in the meantime.
 function projectedBand(loss: number): string {
   const ch = state.charter;

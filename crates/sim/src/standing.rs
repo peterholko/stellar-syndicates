@@ -78,7 +78,7 @@ pub struct StandingOrder {
     #[serde(default)]
     pub in_flight: Option<EntityId>,
     /// §TCA Part 5: for a rule delivering to [`Endpoint::Hub`], whether the convoy
-    /// SELLS its cargo on arrival at the Charterhouse or simply deposits it into
+    /// SELLS its cargo on arrival at the Market Hub or simply deposits it into
     /// the corp's warehouse to trade later. Meaningless for the other endpoints.
     /// `#[serde(default = ...)]` = **true**, so every order written before the
     /// warehouse existed keeps today's sell-on-arrival behaviour byte-for-byte.

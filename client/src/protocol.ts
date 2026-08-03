@@ -403,6 +403,8 @@ export interface CargoView {
 export interface PriceView {
   commodity: Commodity;
   price: number;
+  available_buy: number;
+  available_sell: number;
 }
 
 // The hub ticker, light-delayed from the hub (§9). `staleness` = how old.
@@ -429,14 +431,14 @@ export interface OrderView {
 export interface WalletView {
   credits: number;
   valuation: number; // equity / net worth (slow §9 close)
-  /// §TCA: goods at the CHARTERHOUSE — the only stock the Exchange trades against.
+  /// §TCA: goods at the MARKET HUB — the only stock the Exchange trades against.
   warehouse: InvSlot[];
   orders: OrderView[];
   fuel_total: number; // §step1 — total Fuel across owned systems (fleet reserve)
 }
 
-// --- §TCA: the Charterhouse freight desk ------------------------------------
-/// Which way a booked lot moves, relative to the Charterhouse.
+// --- §TCA: the Market Hub freight desk ------------------------------------
+/// Which way a booked lot moves, relative to the Market Hub.
 export type ShipmentDir = "outbound" | "inbound";
 
 /// One of the viewer's own lots — queued for a departure or aboard a freighter.
@@ -449,7 +451,7 @@ export interface ShipmentView {
   sell_on_arrival: boolean;
   fee_paid: number;
   booked_at: number;
-  aboard: boolean; // false = still queued at the Charterhouse
+  aboard: boolean; // false = still queued at the Market Hub
 }
 
 /// The Authority's terms for one owned destination. EXACT, not estimated — the
@@ -518,6 +520,7 @@ export type TradeEvent =
   | { event: "Sold"; player: PlayerId; commodity: Commodity; units: number; unit_price: number; penalty?: number }
   | { event: "LimitPlaced"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { event: "LimitFilled"; player: PlayerId; side: Side; commodity: Commodity; units: number; unit_price: number; penalty?: number }
+  | { event: "LimitCancelled"; player: PlayerId; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { event: "AutoDispatched"; player: PlayerId; commodity: Commodity; units: number; source: EntityId; rule_id: number }
   | { event: "SupplyDiverted"; player: PlayerId; commodity: Commodity; units: number; system: EntityId; action: DivertAction }
   | { event: "StorageOverflow"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
@@ -542,7 +545,9 @@ export type TradeRejectReason =
   | { reason: "cargo_mismatch" }
   | { reason: "charter_suspended" }
   | { reason: "charter_revoked" }
-  | { reason: "cant_afford"; cost: number };
+  | { reason: "cant_afford"; cost: number }
+  | { reason: "price_protection"; bound: number; actual: number }
+  | { reason: "market_liquidity"; available: number };
 
 /// Where a freight lot got to.
 export type FreightStage =
@@ -576,7 +581,7 @@ export interface StandingOrder {
   status: OrderStatus;
   next_eval_tick: number;
   in_flight: EntityId | null;
-  /// §TCA: for a `hub` destination, sell on arrival at the Charterhouse or just
+  /// §TCA: for a `hub` destination, sell on arrival at the Market Hub or just
   /// deposit into the warehouse. Defaults TRUE server-side for legacy orders.
   sell_on_arrival: boolean;
 }
@@ -703,24 +708,18 @@ export type DriveStateView =
   | { cruising: "thrusters" | "warp" | "hyperspace" }
   | { dropping: { from: "thrusters" | "warp" | "hyperspace"; left: number } };
 
-export interface WakeFixView {
-  pos: Vec2;
-  vel: Vec2;
-  /** Sim time when this coded-drive kinematic fix was emitted. */
-  t: number;
-}
-
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
   kind: ShipKind;
   pos: Vec2;
+  /** Factual velocity at the retarded sighting. */
   vel: Vec2;
   age: number;
-  /** Owner-only wake kinematics; never a telemetry update. */
-  wake?: WakeFixView | null;
+  /** True while this own fleet's served picture is inside a comm bubble. */
+  in_comms: boolean;
   own: boolean;
-  /// §dock: the BERTH this sighting was taken at — `"hub"` for the Charterhouse,
+  /// §dock: the BERTH this sighting was taken at — `"hub"` for the Market Hub,
   /// otherwise the system's id — or absent if the fleet was under way (or
   /// loitering somewhere it does not control, which is what keeps a blockading
   /// or invading fleet on the galaxy map).
@@ -835,7 +834,7 @@ export type ClientMsg =
   | { type: "DemolishEmplacement"; fleet: EntityId; target: EntityId }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
-  | { type: "MarketBuy"; commodity: Commodity; units: number; ship_to?: EntityId | null }
+  | { type: "MarketBuy"; commodity: Commodity; units: number; max_unit_price?: number | null; ship_to?: EntityId | null }
   // §TCA: book Authority freight, and the player-convoy logistics verbs.
   | { type: "BookFreightOut"; system: EntityId; commodity: Commodity; units: number }
   | { type: "BookFreightIn"; system: EntityId; commodity: Commodity; units: number; sell_on_arrival: boolean }
@@ -843,15 +842,17 @@ export type ClientMsg =
   | { type: "HubUnload"; fleet_id: EntityId }
   | { type: "SystemLoad"; fleet_id: EntityId; system: EntityId; commodity: Commodity; units: number }
   | { type: "SystemUnload"; fleet_id: EntityId; system: EntityId }
-  | { type: "HaulToCharterhouse"; fleet_id: EntityId; sell_on_arrival: boolean }
+  | { type: "HaulToMarketHub"; fleet_id: EntityId; sell_on_arrival: boolean }
   | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
   | { type: "PayReinstatement"; points: number }
-  | { type: "MarketSell"; commodity: Commodity; units: number }
+  | { type: "MarketSell"; commodity: Commodity; units: number; min_unit_price?: number | null }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
+  | { type: "CancelLimitOrder"; order_id: number }
   | { type: "ShipProduction"; system_id: EntityId }
   | { type: "StockSystem"; system_id: EntityId; commodity: Commodity; units: number }
   | { type: "SetStandingOrder"; order: StandingOrder }
   | { type: "ClearStandingOrder"; order_id: number }
+  | { type: "DismissLostOrder"; order_id: number }
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   // `join` (optional): a fleet docked at that system for the finished ship to
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
@@ -1218,15 +1219,19 @@ export interface CaptureReportView {
 }
 
 // One of the player's in-flight order lifecycles (OWNER-ONLY). The client derives
-// its estimated phase from `sim_time`: IN TRANSIT until `arrives_at`, then awaits
-// the estimated response until `response_at`. Both are solved once from the
-// served ghost at issue — never authoritative fleet truth.
+// its estimated phase from `sim_time`: SIGNAL OUTBOUND until `arrives_at`, then
+// PRESUMED DELIVERED until arrived evidence removes it. `response_at` is only an
+// estimate and may become overdue; it never confirms the order. Both are solved once from the
+// served ghost at issue — never authoritative fleet truth. For a dark fleet
+// ordered home, the response is its expected physical return to a comm-circle edge.
 export interface PendingOrderView {
   id: number;
   fleet_id: EntityId;
   issued_at: number;
   arrives_at: number;
   response_at: number;
+  /** Response estimate is physical travel back to an owned comm-bubble edge. */
+  response_on_reentry?: boolean;
   kind: OrderKind;
   dest?: Vec2;
   target_id?: EntityId;
@@ -1236,6 +1241,18 @@ export interface PendingOrderView {
   intent_path?: Vec2[];
   /** Final signal leg has left covered wire and is travelling at warp light. */
   beyond_comms?: boolean;
+  /** Terminal only after the relay-loss news wavefront reached this owner. */
+  lost?: boolean;
+  loss_relay?: EntityId;
+  loss_break?: Vec2;
+}
+
+export interface RelayLossView {
+  id: EntityId;
+  kind: "hyperspace_buoy" | "hyperspace_repeater" | "deep_space_sensor" | "hyperspace_sensor";
+  learned_at: number;
+  fleets_beyond: number;
+  orders_lost: number;
 }
 
 // Server → client.
@@ -1273,7 +1290,7 @@ export type ServerMsg =
       emplacements?: EmplacementView[];
       market: MarketView;
       wallet: WalletView;
-      /// §TCA: the Charterhouse freight desk — timetable, per-destination terms,
+      /// §TCA: the Market Hub freight desk — timetable, per-destination terms,
       /// and YOUR own shipment queue. Owner-only, fresh.
       freight: FreightView;
       /// §TCA Phase 2: YOUR charter standing and band. Owner-only.
@@ -1281,6 +1298,7 @@ export type ServerMsg =
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
+      relay_losses?: RelayLossView[];
       // §battles-take-time — ongoing battles visible to this player (light-gated).
       battles: BattleView[];
       /// §syndicates Part 1: the viewer's OWN syndicate roster (null if none).
@@ -1336,6 +1354,7 @@ export type ServerMsg =
       hops?: { pos: Vec2; frac: number }[];
       beyond_comms?: boolean;
     }
+  | { type: "OrderConfirmed"; order_id: number; ship_id: EntityId; kind: OrderKind }
   | { type: "RoutePreview"; ship_id: EntityId; dest: Vec2; path: PathPointView[] }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)
   | { type: "Error"; message: string };

@@ -24,7 +24,7 @@ use sim::{
 /// evidence confirmations, and dismissing a learned loss are now on the wire.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -64,7 +64,7 @@ pub enum ClientMsg {
     /// Recall a raider (break off, return home). May arrive too late (§8).
     RecallRaid { raider_id: EntityId },
 
-    /// Buy at the Charterhouse Exchange (§9, §TCA): instant settlement into the
+    /// Buy at the Global Market (§9, §TCA): instant settlement into the
     /// corp's warehouse. `ship_to` optionally hands the lot straight to Authority
     /// freight for one of the corp's owned systems (the one-checkbox composition);
     /// serde default so older clients still parse.
@@ -72,21 +72,28 @@ pub enum ClientMsg {
         commodity: Commodity,
         units: u32,
         #[serde(default)]
+        max_unit_price: Option<f64>,
+        #[serde(default)]
         ship_to: Option<EntityId>,
     },
 
-    /// Sell at the Charterhouse Exchange (§9, §TCA): draws from the corp's
+    /// Sell at the Global Market (§9, §TCA): draws from the corp's
     /// warehouse and settles instantly at the standing price.
-    MarketSell { commodity: Commodity, units: u32 },
+    MarketSell {
+        commodity: Commodity,
+        units: u32,
+        #[serde(default)]
+        min_unit_price: Option<f64>,
+    },
 
-    /// §TCA Part 5: player-convoy logistics — load/unload across the Charterhouse
+    /// §TCA Part 5: player-convoy logistics — load/unload across the Market Hub
     /// warehouse or an owned system's stockpile, and the haul order that sends a
-    /// loaded hull to the Charterhouse (optionally selling on arrival).
+    /// loaded hull to the Market Hub (optionally selling on arrival).
     HubLoad { fleet_id: EntityId, commodity: Commodity, units: u32 },
     HubUnload { fleet_id: EntityId },
     SystemLoad { fleet_id: EntityId, system: EntityId, commodity: Commodity, units: u32 },
     SystemUnload { fleet_id: EntityId, system: EntityId },
-    HaulToCharterhouse {
+    HaulToMarketHub {
         fleet_id: EntityId,
         #[serde(default)]
         sell_on_arrival: bool,
@@ -115,6 +122,8 @@ pub enum ClientMsg {
 
     /// Place a resting limit order; it clears in the periodic batch (§9).
     PlaceLimitOrder { side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+    /// Cancel one of the issuing corporation's resting limit orders.
+    CancelLimitOrder { order_id: u64 },
 
     /// Ship a claimed system's accumulated production to the hub to sell (§9) —
     /// spawns raidable convoys from the system.
@@ -304,6 +313,10 @@ pub struct OrderView {
 pub struct PriceView {
     pub commodity: Commodity,
     pub price: f64,
+    /// Delayed ticker view of Sol units available for an immediate corp buy.
+    pub available_buy: u32,
+    /// Delayed ticker view of Sol demand available for an immediate corp sell.
+    pub available_sell: u32,
 }
 
 /// The hub Exchange as the player sees it — prices **light-delayed** from the
@@ -323,8 +336,8 @@ pub struct InvSlot {
     pub units: u32,
 }
 
-/// The player's own treasury + holdings + resting limit orders (own state,
-/// shown fresh).
+/// The player's last-arrived Market Hub account report: treasury, Market
+/// Warehouse holdings, and resting limit orders share the ticker's light delay.
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletView {
     pub credits: f64,
@@ -342,7 +355,7 @@ pub struct WalletView {
 
 /// §TCA Phase 2: the viewer's own CHARTER STANDING with the Authority, and the
 /// band it derives. OWNER-ONLY — your legal standing is between you and the
-/// Charterhouse; rivals learn of your offenses only from the PUBLIC citations
+/// Market Hub; rivals learn of your offenses only from the PUBLIC citations
 /// that travel at lightspeed, never by reading your record.
 #[derive(Debug, Clone, Serialize)]
 pub struct CharterView {
@@ -393,7 +406,7 @@ pub struct ShipmentView {
     pub sell_on_arrival: bool,
     pub fee_paid: f64,
     pub booked_at: f64,
-    /// `false` = still queued at the Charterhouse; `true` = aboard a freighter.
+    /// `false` = still queued at the Market Hub; `true` = aboard a freighter.
     pub aboard: bool,
 }
 
@@ -404,7 +417,7 @@ pub struct ShipmentView {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct FreightTermsView {
     pub system: EntityId,
-    /// Charterhouse → system distance (sim units).
+    /// Market Hub → system distance (sim units).
     pub distance: f64,
     /// Max units this corp may load to this destination per departure. Uniform
     /// across destinations — nothing the colony builds changes the Authority's terms.
@@ -415,7 +428,7 @@ pub struct FreightTermsView {
     pub secs_round: f64,
 }
 
-/// §TCA: the Charterhouse freight desk — the timetable, the fee formula's inputs,
+/// §TCA: the Market Hub freight desk — the timetable, the fee formula's inputs,
 /// the viewer's own shipment queue. Owner-only.
 #[derive(Debug, Clone, Serialize)]
 pub struct FreightView {
@@ -1596,7 +1609,7 @@ pub struct GhostView {
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the
-    /// Charterhouse, otherwise the system's id — or null if the fleet was under
+    /// Market Hub, otherwise the system's id — or null if the fleet was under
     /// way (or loitering somewhere it does not control).
     ///
     /// Deliberately NOT gated behind the composition reveal, unlike `cargo` or
@@ -1792,7 +1805,7 @@ pub enum ServerMsg {
         /// rivals learn of offenses only through public citations, never by
         /// reading a corporation's record.
         charter: CharterView,
-        /// §TCA: the Charterhouse freight desk — timetable, terms per owned
+        /// §TCA: the Market Hub freight desk — timetable, terms per owned
         /// destination, and the player's OWN shipment queue. Owner-only, fresh
         /// (it is the player's own administration, like the wallet).
         freight: FreightView,

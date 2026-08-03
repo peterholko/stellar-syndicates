@@ -10,7 +10,7 @@
 >   was invisible at async cadence and its `t ≈ 2√(d/a)` law defeated the mental arithmetic a
 >   prediction game needs (see GAME_DESIGN §7).
 > - **M5's buy/sell asymmetry** (buys spawning free delivery convoys, sells clearing at
->   price-on-arrival) was replaced by the Charterhouse warehouse: trades are symmetric and
+>   price-on-arrival) was replaced by the Market Warehouse: trades are symmetric and
 >   price-certain, and hauling is a separate explicit act (GAME_DESIGN §9).
 > - Its `§16 (milestones)` reference points at a GDD section that is now fleet doctrine.
 >
@@ -135,12 +135,11 @@ Goal: the core conflict, between real players.
 Goal: the complete market — this is a major milestone; build it in sub-steps and commit between them.
 - **The hub Exchange** shared by all players. **Instant execution** (settlement) with **lagged price
   information** (§9): players away from the hub see stale prices; execution is immediate.
-- **Market orders** (instant at standing price) AND **limit orders** that rest and clear in a **periodic
+- **Market orders** (instant on a protected, quantity-aware curve) AND **limit orders** that rest and clear in a **periodic
   batch / uniform-price call auction** (the anti-sniping mechanism, §9).
-- **Orders carry intent + destination** (§9): buys spawn delivery convoys (hub → player); sells spawn
-  convoys (player → hub, sell on arrival). These convoys are raidable — tying the economy to the raiding
-  loop.
-- The **buy/sell asymmetry** (§9): sellers clear at price-on-arrival, not a locked launch price.
+- Trade settles against each corporation's **Market Warehouse**. Moving goods is a separate explicit
+  choice between booked Authority freight and a real player-owned convoy; both physical channels are
+  raidable, and neither is conjured by the trade itself.
 - **Equity / corporate valuations** (§9) updating on a slow cadence (avoid share-price noise).
 - A real resource/credit economy so players have goals and pressure on each other.
 - **Checkpoint(s):** players trade at the shared hub (market + limit orders, batch clearing), goods

@@ -361,10 +361,19 @@
       #ship-panel .sp-order:last-child { margin-bottom: 0; }
       #ship-panel .sp-order:hover, #ship-panel .sp-order:focus-visible { border-color: rgba(197,107,255,0.7); outline: none; }
       #ship-panel .sp-order.is-selected { border-color: #c56bff; background: rgba(197,107,255,0.12); box-shadow: inset 2px 0 #c56bff; }
+      #ship-panel .sp-order.is-presumed { opacity: 0.72; }
+      #ship-panel .sp-order--lost { grid-template-columns: 22px minmax(0, 1fr) auto; border-color: rgba(255,122,107,0.38); cursor: default; }
+      #ship-panel .sp-order--lost:hover { border-color: rgba(255,122,107,0.38); }
+      #ship-panel .sp-order--lost .sp-order__phase, #ship-panel .sp-order--lost .sp-order__copy small { color: var(--negative); }
+      #ship-panel .sp-order__dismiss { padding: 3px 6px; color: var(--dim); background: transparent; border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 9px; cursor: pointer; }
+      #ship-panel .sp-order__dismiss:hover, #ship-panel .sp-order__dismiss:focus-visible { color: var(--ink); border-color: var(--negative); outline: none; }
+      #ship-panel .sp-order--current { cursor: default; }
+      #ship-panel .sp-order--current:hover { border-color: rgba(79,195,255,0.12); }
       #ship-panel .sp-order__phase { color: #c56bff; font-size: 17px; line-height: 1; text-align: center; }
       #ship-panel .sp-order__copy { min-width: 0; line-height: 1.25; }
       #ship-panel .sp-order__copy b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
       #ship-panel .sp-order__copy small { display: block; margin-top: 3px; color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+      #ship-panel .sp-order__copy small.is-estimate { color: #ffae5c; }
       #ship-panel .sp-job { margin-top: 9px; }
       #ship-panel .sp-job__meta { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; font-variant-numeric: tabular-nums; }
       #ship-panel .sp-fuel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 6px; background: rgba(20,26,40,0.5); }
@@ -652,7 +661,7 @@
       .mkt-orders .ord .o-rm { margin-left: auto; color: var(--dim); cursor: pointer; }
 
       /* ---- top navbar destinations (hub-wide, in the HUD) ---- */
-      .hud-nav { display: flex; gap: 6px; align-items: center; }
+      .hud-nav { display: flex; gap: 6px; align-items: stretch; }
       .hud-btn { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; background: rgba(79,195,255,0.08); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; font: inherit; font-size: 11px; letter-spacing: 0.3px; padding: 3px 9px; white-space: nowrap; }
       .hud-btn:hover { border-color: var(--accent); color: var(--accent); }
       .hud-btn.is-active { background: var(--accent); color: #04121d; font-weight: 700; border-color: var(--accent); }
@@ -1284,10 +1293,10 @@
             </div>
             <div class="so-row" id="so-floor-row"><label>%→keep</label><input id="so-floor" type="number" step="1" min="0" value="50" title="percent (1-100) and floor to leave behind" /></div>
             <div class="so-row"><label>To</label><select id="so-dest"></select></div>
-            <div class="so-row" id="so-sell-row"><label>On arrival</label><label class="so-check" title="Hub deliveries only: SELL the lot at the standing price on arrival, or leave it in your warehouse to trade later."><input id="so-sell" type="checkbox" checked /> sell at the hub</label></div>
+            <div class="so-row" id="so-sell-row"><label>On arrival</label><label class="so-check" title="Market Hub deliveries only: SELL the lot on the quantity-aware market curve at arrival, or leave it in your Market Warehouse to trade later."><input id="so-sell" type="checkbox" checked /> sell at the hub</label></div>
             <button id="so-add">Add standing order</button>
           </div>
-          <div class="mhint dim">Rules run on the server — online or off. Each spawns a raidable convoy when it fires; at most one in flight per rule. You set policy; geography + raids do the rest.</div>
+          <div class="mhint dim">Rules run on the server — online or off. Each needs a real idle cargo fleet at its source and commands that hull when it fires; at most one run per rule. You set policy; geography + raids do the rest.</div>
         </div>
 
         <!-- DOCTRINE tab — fleet doctrine (§16), constrained policy, runs offline. -->
@@ -1346,8 +1355,7 @@
         <button data-mtab="modules" role="tab">Modules</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="mhint" style="margin-bottom:6px">Trades your <b>hub warehouse</b> — goods held here at the Wormhole Hub. Buys land in the warehouse; sells draw from it. Nothing about a trade moves goods across space: your goods sit in exactly two kinds of place, this warehouse and each owned system's stockpile, and moving them between the two is the separate act on the <b>Warehouse</b> tab.</div>
-        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your hub warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
+        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your Market Warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
         <div id="market-board"></div>
         <div class="composer">
           <div class="composer__row"><label>Order</label>
@@ -1381,8 +1389,8 @@
           <div class="composer__row"><label>Carrier</label>
             <div class="seg" id="fr-carrier">
               <button data-carrier="tca" class="is-active" title="The Terran Charter Authority's scheduled common carrier. Costs a fee (charged now and destroyed), rides a fixed timetable, and can carry goods BOTH ways. The freighter is a real, raidable hull — but it isn't yours to lose.">Authority freight</button>
-              <button data-carrier="own" title="One of your own convoys, sailing from the Charterhouse the moment you send it. Free and immediate, but outbound only, and it is your hull crossing raidable space.">Your own convoy</button>
             </div>
+            <span class="dim" title="To haul personally, select a real cargo fleet at this hub, load it, and issue its route from the fleet panel.">Owned hulls are managed from their fleet panel.</span>
           </div>
           <div class="composer__row"><label>Direction</label>
             <div class="seg" id="fr-dir"><button data-dir="outbound" class="is-active">Warehouse → system</button><button data-dir="inbound">System → warehouse</button></div>
@@ -1390,7 +1398,7 @@
           <div class="composer__row"><label>System</label><select id="fr-system"></select></div>
           <div class="composer__row"><label>Goods</label><select id="fr-commodity"></select>
             <label>Qty</label><input type="number" id="fr-qty" min="1" value="100" /></div>
-          <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Exchange the moment it lands at the hub, at that tick's standing price."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
+          <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Global Market the moment it lands at the Market Hub, on that tick's quantity-aware curve."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
           <div class="composer__preview" id="fr-preview"></div>
           <button class="act act--primary" id="fr-submit">Book freight</button>
           <div class="mhint" id="fr-feedback"></div>

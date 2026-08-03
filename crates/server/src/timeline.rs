@@ -9,8 +9,8 @@
 //! orders; this module owns only the historical *timeline*.)
 //!
 //! The timeline is a RETAINED, per-player journal that records discrete news at
-//! the moment it BECAME OBSERVABLE to that player — own economy/automation on
-//! their own clock (instant), distant battles and rival claims **light-delayed**
+//! the moment it BECAME OBSERVABLE to that player — economy/automation from its
+//! physical Market Hub or system origin, distant battles and rival claims **light-delayed**
 //! to their command center (the same retarded-time rule as [`crate::reports`] and
 //! the view filter). Crucially it is populated for offline players too, so the
 //! "since you were away" digest is real. It is ephemeral awareness state (not part
@@ -63,10 +63,18 @@ impl Timeline {
             sim::lane::DelayField { lanes: &world.lanes, sites: &[], c: world.config.c };
         for e in events {
             match &e.payload {
-                // Own economy / automation — observable on your own clock now.
+                // Own economy / automation uses the SAME physical origin and
+                // wavefront as the live receipt. Otherwise an offline digest
+                // could disclose a fill or delivery before the normal UI did.
                 EventPayload::Trade(te) => {
                     if let Some((sev, text)) = trade_entry(te, world) {
-                        self.push(te.player(), e.time, sev, text);
+                        let player = te.player();
+                        let Some(cc) = world.players.get(&player).map(|corp| corp.command_center) else {
+                            continue;
+                        };
+                        let origin = crate::game_loop::trade_report_origin(world, te);
+                        let observe = e.time + origin.distance(cc) / world.config.c;
+                        self.push(player, observe, sev, text);
                     }
                 }
                 // A battle — each side learns the SAME outcome when its light
@@ -90,7 +98,7 @@ impl Timeline {
                     }
                 }
                 // §TCA Phase 2: a CITATION is a PUBLIC bulletin from the
-                // Charterhouse. Everyone learns it light-delayed from the hub — the
+                // Market Hub. Everyone learns it light-delayed from the hub — the
                 // reputational hit rides the same wavefront as the legal one. The
                 // culprit reads it as an indictment; everyone else reads it as
                 // intelligence about who is worth avoiding (or hiring).
@@ -125,7 +133,7 @@ impl Timeline {
                         self.push(p, observe, sev, text);
                     }
                 }
-                // §TCA Phase 2: ENFORCEMENT bulletins, public from the Charterhouse
+                // §TCA Phase 2: ENFORCEMENT bulletins, public from the Market Hub
                 // on the same light-gating as a citation. The announcement's light
                 // outruns the squadron — that IS the target's lead time.
                 EventPayload::EnforcementDispatched { target, system, pos } => {
@@ -1007,6 +1015,18 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                          more than your treasury holds."
                     ),
                 ),
+                sim::TradeRejectReason::PriceProtection { bound, actual } => (
+                    Warn,
+                    format!(
+                        "Market order protected: observed bound {bound:.2}, true average price {actual:.2}. Nothing traded."
+                    ),
+                ),
+                sim::TradeRejectReason::MarketLiquidity { available } => (
+                    Warn,
+                    format!(
+                        "The Global Market can clear only {available} {com} immediately. Nothing traded — reduce the lot or place a limit order."
+                    ),
+                ),
                 sim::TradeRejectReason::CharterSuspended => (
                     Bad,
                     format!(
@@ -1166,7 +1186,7 @@ mod tests {
         (w, a, b)
     }
 
-    /// §TCA Phase 2: a CITATION is a PUBLIC bulletin from the Charterhouse, and
+    /// §TCA Phase 2: a CITATION is a PUBLIC bulletin from the Market Hub, and
     /// every player — culprit and bystander alike — learns it LIGHT-DELAYED from
     /// the hub. A distant third party hears about it later than a near one, and
     /// the culprit's own copy reads as an indictment rather than gossip.
@@ -1229,7 +1249,7 @@ mod tests {
     }
 
     #[test]
-    fn own_economy_news_is_observable_immediately() {
+    fn own_market_news_arrives_from_the_market_hub() {
         let (w, a, _b) = world_with_two();
         let mut tl = Timeline::new();
         let ev = Event::new(
@@ -1244,8 +1264,11 @@ mod tests {
         );
         tl.ingest(&[ev], &w);
         tl.promote(w.time);
+        assert_eq!(tl.journal_len(a), 0, "the sale cannot outrun its Market Hub receipt");
+        let arrives = w.time + w.hub.distance(w.players[&a].command_center) / w.config.c;
+        tl.promote(arrives + 1e-6);
         let (entries, _away) = tl.digest(a);
-        assert_eq!(entries.len(), 1, "own sale should journal at once");
+        assert_eq!(entries.len(), 1, "own sale journals when its hub light arrives");
         assert!(entries[0].text.contains("Sold 12 metallic ore"));
     }
 
@@ -1278,20 +1301,21 @@ mod tests {
         // Player A was last online at t = 5.
         tl.mark_seen(a, 5.0);
         // While "away", two automation events occur and become observable.
+        let mut last_arrival: f64 = 0.0;
         for (t, units) in [(10.0_f64, 3u32), (20.0, 4)] {
-            let ev = Event::new(
-                t,
-                EventPayload::Trade(TradeEvent::AutoDispatched {
-                    player: a,
-                    commodity: Commodity::Fuel,
-                    units,
-                    source: EntityId(1),
-                    rule_id: 1,
-                }),
-            );
+            let trade = TradeEvent::AutoDispatched {
+                player: a,
+                commodity: Commodity::Fuel,
+                units,
+                source: EntityId(1),
+                rule_id: 1,
+            };
+            let origin = crate::game_loop::trade_report_origin(&w, &trade);
+            last_arrival = last_arrival.max(t + origin.distance(w.players[&a].command_center) / w.config.c);
+            let ev = Event::new(t, EventPayload::Trade(trade));
             tl.ingest(&[ev], &w);
         }
-        tl.promote(25.0); // time has marched on while A was gone
+        tl.promote(last_arrival + 1.0); // both report wavefronts have marched on
         let (entries, away_since) = tl.digest(a);
         assert_eq!(entries.len(), 2, "events buffered while offline");
         assert_eq!(away_since, 5.0, "away boundary is the last-online time");

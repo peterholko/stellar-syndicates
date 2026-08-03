@@ -8,31 +8,55 @@ import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
-// One threshold for every own-fleet "the picture has gone dark" treatment:
-// panel styling, map marker, and reacquisition semantics must agree.
-export const GHOST_STALE_AGE_S = 8;
+const CLOCK_MAX_SLEW = 0.05; // Tunable: at most ±5% catch-up / fall-back.
+const CLOCK_GAIN = 3.3; // Tunable: unconstrained errors converge in roughly 0.3 s.
+const CLOCK_SNAP_S = 1.0; // Tunable: reconnect/restart/tab-wake discontinuity.
 
-export type GhostFidelity = "full" | "wake" | "dark";
+let renderClockReady = false;
+let renderClockSim = 0;
+let renderClockWallMs = 0;
+let renderClockRate = 1;
 
-/// The one position-channel ruling shared by map and panel. Full telemetry wins
-/// while fresh; otherwise a fresh wake supplies kinematics only; in darkness the
-/// freshest arrived position remains as the stale marker—never client truth.
-export function ghostPositionChannel(
-  ghost: GhostView,
-  simTime: number,
-): { fidelity: GhostFidelity; pos: Vec2; vel: Vec2; t: number; age: number } {
-  const fullT = simTime - ghost.age;
-  const wakeAge = ghost.wake ? Math.max(0, simTime - ghost.wake.t) : Infinity;
-  if (ghost.age < GHOST_STALE_AGE_S) {
-    return { fidelity: "full", pos: ghost.pos, vel: ghost.vel, t: fullT, age: ghost.age };
+/// The one continuous render clock. Snapping it to every 10 Hz View leaked
+/// transport jitter straight into pixels: displacement = clock error × object
+/// speed × zoom, most visibly on the deliberately un-eased order comet. Normal
+/// View error is absorbed by a bounded positive slew, so this clock is monotonic
+/// by construction. A >1 s discontinuity instead hard-snaps on purpose, covering
+/// reconnects, server restarts, and a tab waking after a long suspension.
+export function syncRenderClock(simTime: number, wallMs = performance.now()): void {
+  if (!renderClockReady) {
+    renderClockReady = true;
+    renderClockSim = simTime;
+    renderClockWallMs = wallMs;
+    renderClockRate = 1;
+    return;
   }
-  if (ghost.wake && wakeAge < GHOST_STALE_AGE_S) {
-    return { fidelity: "wake", pos: ghost.wake.pos, vel: ghost.wake.vel, t: ghost.wake.t, age: wakeAge };
-  }
-  if (ghost.wake && ghost.wake.t > fullT) {
-    return { fidelity: "dark", pos: ghost.wake.pos, vel: ghost.wake.vel, t: ghost.wake.t, age: wakeAge };
-  }
-  return { fidelity: "dark", pos: ghost.pos, vel: ghost.vel, t: fullT, age: ghost.age };
+
+  const current = liveSimTime(wallMs);
+  const error = simTime - current;
+  renderClockSim = Math.abs(error) > CLOCK_SNAP_S ? simTime : current;
+  renderClockWallMs = wallMs;
+  renderClockRate = Math.abs(error) > CLOCK_SNAP_S
+    ? 1
+    : 1 + Math.max(-CLOCK_MAX_SLEW, Math.min(CLOCK_MAX_SLEW, error * CLOCK_GAIN));
+}
+
+export function liveSimTime(wallMs = performance.now()): number {
+  if (!renderClockReady) return 0;
+  const elapsed = Math.max(0, (wallMs - renderClockWallMs) / 1000);
+  return renderClockSim + elapsed * renderClockRate;
+}
+
+/// §comms-v4: an own fleet gets the stationary tunnel presentation only when
+/// the PLAYER'S served picture says both that it is beyond every comm bubble
+/// and that its hyperdrive is still stirring the lane. Age never enters this
+/// predicate: the arrived drive fact alone decides the presentation.
+export function ghostInTunnel(ghost: GhostView): boolean {
+  if (!ghost.own || ghost.in_comms) return false;
+  const drive = ghost.drive;
+  if (!drive || typeof drive === "string") return false;
+  return ("cruising" in drive && drive.cruising === "hyperspace")
+    || ("dropping" in drive && drive.dropping.from === "hyperspace");
 }
 
 // The OUTBOUND command signal: the violet comet of an order crossing space from
@@ -92,6 +116,15 @@ export interface ViewState {
   /// keyed by system id, paired with the static `galaxy.systems` geology.
   systems: SystemStateView[];
   ghosts: GhostView[];
+  /// §comms-v4.1: the first served point at which each own coupled fleet was
+  /// seen beyond comms. Position, heading, emission clock, and known plan are
+  /// frozen together: this is a stationary map bookmark, not a position feed.
+  tunnelBookmarks: Record<string, {
+    pos: Vec2;
+    vel: Vec2;
+    reportedAt: number;
+    path: PathPointView[] | null;
+  }>;
   /// §emplacements: your own structures standing in open space.
   emplacements: EmplacementView[];
   market: MarketView | null;
@@ -104,7 +137,7 @@ export interface ViewState {
   /// Sim-time of the last price-history sample, to throttle accumulation.
   lastPriceSampleAt: number;
   wallet: WalletView | null;
-  /// §TCA: the Charterhouse freight desk — timetable, per-destination terms, and
+  /// §TCA: the Market Hub freight desk — timetable, per-destination terms, and
   /// the player's OWN shipment queue. Owner-only, fresh from the View.
   freight: FreightView | null;
   /// §TCA Phase 2: the player's OWN charter standing and band.
@@ -154,10 +187,6 @@ export interface ViewState {
   /// Whether `awaySince` has been latched this session (so live re-sends don't
   /// move the boundary).
   awaySet: boolean;
-  /// Wall-clock ms when the last View arrived, for smooth extrapolation
-  /// between the ~10 Hz server updates and the 60 fps render.
-  lastViewWallMs: number;
-
   // Interaction.
   selectedShipId: string | null;
   /// Currently selected star system (for the claim / ship-production panel).
@@ -198,6 +227,7 @@ export function initialState(): ViewState {
     anchors: [],
     systems: [],
     ghosts: [],
+    tunnelBookmarks: {},
     emplacements: [],
     market: null,
     priceHistory: {},
@@ -224,7 +254,6 @@ export function initialState(): ViewState {
     timeline: [],
     awaySince: 0,
     awaySet: false,
-    lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,
     selectedEmplacementId: null,

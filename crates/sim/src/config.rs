@@ -44,8 +44,9 @@ pub struct SimConfig {
     /// space between homes stays proportional across 4–12 players (§4).
     pub galaxy_radius: f64,
 
-    /// Fraction of `galaxy_radius` at which home anchors sit (a ring of bright
-    /// spots between the hub and the rim).
+    /// Fraction of `galaxy_radius` at which home anchors sit. The default is
+    /// derived from one long-throw hyperspace buoy, so the physical distance is
+    /// stable even when player count changes the galaxy radius.
     pub home_ring_frac: f64,
 
     /// Number of procedurally-placed star systems (M2).
@@ -126,7 +127,12 @@ impl SimConfig {
             // depend on c); only information delays shrink ~25%, freshening intel.
             c: 400.0,
             galaxy_radius,
-            home_ring_frac: 0.62,
+            // One starter-buoy throw from the Market Hub. Divide the nominal
+            // ring by the generator's outward jitter so even its outermost home
+            // remains within the buoy's physical 80,000-su reach.
+            home_ring_frac: crate::emplace::EmplacementKind::HyperspaceBuoy.throw()
+                / (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC)
+                / galaxy_radius,
             system_count: 12 + player_count * 4,
             // Local sensor bubbles (~28% of galaxy radius): coverage is islands
             // around your assets, so most of the dark between homes is blind to
@@ -223,5 +229,20 @@ mod light_invariant_tests {
             "expected comfortable (>3×) margin, got {:.3}",
             playtest.light_ratio()
         );
+    }
+
+    #[test]
+    fn every_jittered_home_ring_stays_within_one_buoy_throw() {
+        let buoy_throw = crate::emplace::EmplacementKind::HyperspaceBuoy.throw();
+        for players in [1, 4, 12] {
+            let cfg = SimConfig::for_players(1, players);
+            let outermost_home = cfg.galaxy_radius
+                * cfg.home_ring_frac
+                * (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC);
+            assert!(
+                (outermost_home - buoy_throw).abs() < 1e-9,
+                "{players} players: outer home {outermost_home} != buoy throw {buoy_throw}",
+            );
+        }
     }
 }

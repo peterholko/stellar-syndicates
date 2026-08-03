@@ -95,7 +95,7 @@ pub enum ShipKind {
     /// client — an insidious wrong-value bug, not an error.
     Builder,
     /// THE AUTHORITY FREIGHTER (§TCA): the scheduled common-carrier hull the
-    /// TERRAN CHARTER AUTHORITY runs between the Charterhouse and the colonies.
+    /// TERRAN CHARTER AUTHORITY runs between the Market Hub and the colonies.
     /// Owned ONLY by the [`crate::ids::PlayerId::TCA`] sentinel — NOT buildable by
     /// any corporation ([`Self::is_buildable`] is false), so it sits outside the
     /// warship ladder entirely. Broadcasts like a convoy (a declared common
@@ -116,10 +116,8 @@ pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 /// this × the convoys aboard, so the "capacity scales with the number of convoys"
 /// rule finally has a number. Tunable, playtest placeholder.
 ///
-/// NOTE: this bounds the MANUAL load commands (`HubLoad` / `SystemLoad`) only.
-/// The auto-spawned trade convoys (`ShipProduction`, standing orders) predate any
-/// capacity rule and are deliberately left alone — retrofitting the cap there
-/// would silently change existing economy behaviour, which is not this phase's job.
+/// This also bounds standing logistics: automation selects a real idle cargo
+/// fleet at the source and caps its lot to the fleet's aggregate hold.
 pub const CARGO_UNITS_PER_CONVOY: u32 = 250;
 
 impl ShipKind {
@@ -605,13 +603,13 @@ pub fn marine_capacity(kind: ShipKind) -> u32 {
     }
 }
 
-/// §dock: WHERE a fleet is berthed. The Charterhouse is not a system (it has no
+/// §dock: WHERE a fleet is berthed. The Market Hub is not a system (it has no
 /// id — it is a fixed point in the galaxy), so a plain `Option<EntityId>` can't
 /// name it without conflating "berthed at the hub" with "not berthed at all".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DockSite {
-    /// The Terran Charterhouse at the wormhole hub — the galaxy's busiest dock,
+    /// The Terran Market Hub at the wormhole hub — the galaxy's busiest dock,
     /// and the one place every corporation's traffic converges.
     Hub,
     /// A star system this fleet's owner (or an ally) holds.
@@ -763,11 +761,10 @@ pub enum FleetOrder {
     },
 }
 
-/// What a trade convoy does when it reaches its destination (§9). A buy spawns a
-/// delivery convoy (hub → home) that deposits cargo on arrival; a sell spawns a
-/// convoy (home → hub) that sells the cargo at the price-on-arrival; a standing
-/// logistics order (§15) can also spawn a convoy that deposits cargo into another
-/// system's stockpile.
+/// What a physical cargo fleet does when it reaches its destination (§9).
+/// Ordinary market settlement itself moves no hull. Player loading, legacy
+/// one-way deliveries, and standing logistics can attach one of these missions;
+/// a standing order always assigns a real player fleet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeMission {
@@ -777,11 +774,11 @@ pub enum TradeMission {
     /// system→system supply convoy; §15). Cargo is lost if the destination is no
     /// longer owned by the convoy's owner when it arrives (no gifting rivals).
     DeliverToSystem { system: EntityId },
-    /// §TCA Part 5: HAUL TO THE CHARTERHOUSE — a PLAYER-owned convoy carrying its
+    /// §TCA Part 5: HAUL TO THE MARKET HUB — a PLAYER-owned convoy carrying its
     /// own cargo to the hub, where it deposits into the owner's warehouse and
-    /// (optionally) sells the lot at that tick's standing price. Unlike the legacy
+    /// (optionally) sells the lot at that tick's quantity-aware execution price. Unlike the legacy
     /// `SellAtHub`, the fleet SURVIVES: it is the player's hull, so it goes Idle at
-    /// the Charterhouse ready for its next job. This is the player-owned half of
+    /// the Market Hub ready for its next job. This is the player-owned half of
     /// the two logistics channels; TCA freight is the other.
     DeliverToWarehouse { sell_on_arrival: bool },
 }
@@ -1109,9 +1106,10 @@ pub struct Fleet {
     /// default `false` so every old snapshot loads with today's behaviour.
     #[serde(default)]
     pub engage_freight: bool,
-    /// §TCA Part 5: this hull was AUTO-SPAWNED for one trade run (a standing-order
-    /// dispatch, a production shipment, a purchase delivery) and is CONSUMED when
-    /// it arrives — exactly as every auto trade convoy always has been. A hull the
+    /// §TCA Part 5: this hull was AUTO-SPAWNED for one special one-way delivery and
+    /// is CONSUMED when it arrives. Standing orders and ordinary commodity
+    /// shipments no longer set this flag: they use a real player hull or Authority
+    /// freight. A hull the
     /// player actually owns and loaded is not disposable: it survives its delivery
     /// and goes Idle, ready for the next job. Without this, repointing the hub
     /// endpoint at the surviving `DeliverToWarehouse` mission would quietly turn
@@ -1612,9 +1610,11 @@ impl Fleet {
         // A fleet that ARRIVES inside a ribbon with its hyperspace drive already
         // engaged holds that coupling while idle. Dropping it merely because the
         // current order finished made the ship's command latency jump while the
-        // player was choosing its next order. This does not light a drive for an
-        // idle ship that was already on thrusters, and gravity wells still force
-        // every drive down.
+        // player was choosing its next order. The world's standing navigation
+        // doctrine makes the one required exception after this step: an idle
+        // player fleet beyond every comm bubble drops automatically. This does
+        // not light a drive for an idle ship that was already on thrusters, and
+        // gravity wells still force every drive down.
         let holding_lane = matches!(
             self.drive_state,
             DriveState::Cruising(crate::lane::Regime::Hyperspace)

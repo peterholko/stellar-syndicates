@@ -31,7 +31,7 @@ its physical report.
 | `GroundRecords` | PHYSICS | Same arrival-frontier rule as battle records in `visible_ground_specs`. Clean. |
 | `Report` | EVENT | `DelayedReports::due_for` releases a participant report only at its priced arrival. The concluded-battle icon is retained to the same wavefront. Clean. |
 | `Timeline` | mixed | Each payload is classified in the event table below. Promotion itself is arrival/deadline keyed and clean; some inputs deliberately use true-time “own clock.” |
-| `Trade` | mixed EVENT / local CONTROL | Sent directly on the tick of every `TradeEvent`. Hub buys/sells/rejections/bookings can be local, but remote delivery/diversion/overflow/freight milestones are policy conflicts. Recommendation: split local Charterhouse actions from positioned remote outcomes, then serve the latter from one delayed owner-event ledger used by both this message and owner state. |
+| `Trade` | mixed EVENT / local CONTROL | Sent directly on the tick of every `TradeEvent`. Hub buys/sells/rejections/bookings can be local, but remote delivery/diversion/overflow/freight milestones are policy conflicts. Recommendation: split local Market Hub actions from positioned remote outcomes, then serve the latter from one delayed owner-event ledger used by both this message and owner state. |
 | `CommandSignal` | ESTIMATE | Immediate acknowledgement and animation derived from the served ghost and player-known network. It predicts the outbound meeting; it is not evidence that the order arrived. Clean. |
 | `OrderConfirmed` | EVENT | Server-event-driven only. Re-entry now emits at the exact nominal boundary and arrives through the same priced wavefront as the boundary picture. **Fixed v3.5.** |
 | `RoutePreview` | ESTIMATE | Immediate decision aid derived from the served sighting and public lanes. Clean. |
@@ -97,7 +97,7 @@ its physical report.
 | `FlagshipDestroyed` | EVENT | Rival timeline delayed; owner headline and syndicate flagship state immediate. Policy conflict; recommend wreck-to-owner/syndicate arrival. |
 | `BuildStarted`, `BuildRejected`, `SystemUpgraded` | mixed CONTROL / EVENT | Request acceptance/rejection can be local only if validation is command-center knowledge; remote start/completion and live system state are policy conflicts. |
 | `ColonyHeld`, `IntelGathered` | EVENT | Positioned owner timeline/report gates. Clean. |
-| `SpecialistHired`, `ModulesPurchased`, `ModulesSold` | CONTROL | Charterhouse contract/settlement; clean if defined at the hub. |
+| `SpecialistHired`, `ModulesPurchased`, `ModulesSold` | CONTROL | Market Hub contract/settlement; clean if defined at the hub. |
 | `SpecialistTrained`, `ModuleBuilt`, `ShipsRefitted`, `FleetRepaired`, `ModulesDelivered`, `SpecialistsDelivered` | EVENT | Remote completion/delivery currently own-clock. Policy conflict; recommend positioned system report + served system/hull state. |
 | `AssaultHeld`, `AssaultBegan`, `AssaultRepulsed` | EVENT | Positioned timeline/ground records are delayed where mapped; authoritative ground state remains a policy conflict. |
 | `GarrisonSupplyStateChanged`, `FleetSupplyChanged` | EVENT | Current owner state (and some notices) is immediate. Policy conflict; recommend system/hull sample channel. |
@@ -115,7 +115,7 @@ its physical report.
 | `PlatformEngaged` | EVENT | Positioned owner notice delayed, attacker learns through normal battle report. Clean. |
 | `FuelShortfall` | mixed | If refusal is decided at command issuance it is CONTROL; if caused by remote fleet/system truth it is EVENT. Current immediate owner notice is a policy conflict; recommendation: distinguish validation-site causes in the payload. |
 | `BlockadeEstablished`, `BlockadeLifted` | EVENT | Defender delayed; besieger/current state immediate. Participant policy conflict above. |
-| `Citation`, `EnforcementDispatched`, `EnforcementWithdrawn` | EVENT | Public Charterhouse bulletin, delayed from the hub to every command center. Clean. |
+| `Citation`, `EnforcementDispatched`, `EnforcementWithdrawn` | EVENT | Public Market Hub bulletin, delayed from the hub to every command center. Clean. |
 | `OrderRejected` | CONTROL / EVENT | Sovereign-zone validation can be local; remote unsupplied refusal depends on fleet truth. Policy conflict; recommendation: local reject for command-known facts, otherwise fleet response light. |
 | `SystemCaptured` | EVENT | Participant reports/timeline delayed; ownership/management state conflict above. |
 

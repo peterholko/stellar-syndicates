@@ -10,6 +10,7 @@
 //! * `PORT`         — HTTP/WS listen port (default 8080)
 //! * `GALAXY_SEED`  — u64 seed for deterministic generation (default 0xC0FFEE)
 //! * `MAX_PLAYERS`  — sizes the galaxy (default 4)
+//! * `HOME_RING_SU`  — optional absolute home-ring radius override
 //! * `DATABASE_URL` — Postgres DSN; if unset/unreachable, persistence is a
 //!   no-op stub and the server still runs.
 
@@ -70,6 +71,13 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn env_positive_f64(key: &str) -> Option<f64> {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v: &f64| v.is_finite() && *v > 0.0)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Logging: respect RUST_LOG, default to info.
@@ -82,7 +90,13 @@ async fn main() -> anyhow::Result<()> {
     let seed = env_u64("GALAXY_SEED", 0xC0FFEE);
     let max_players = env_u64("MAX_PLAYERS", 4) as u32;
 
-    let config = SimConfig::for_players(seed, max_players);
+    let mut config = SimConfig::for_players(seed, max_players);
+    // Keep playtest maps reproducible across home-spacing revisions. The normal
+    // default is one buoy throw; HOME_RING_SU can restore an archived layout or
+    // stage a different spacing without changing any other seeded geography.
+    if let Some(home_ring_su) = env_positive_f64("HOME_RING_SU") {
+        config.home_ring_frac = (home_ring_su / config.galaxy_radius).clamp(0.01, 0.96);
+    }
 
     // Persistence (off the hot path). Falls back to an in-memory stub if no DB.
     // If a snapshot exists, the galaxy is restored from it (surviving a restart).
@@ -101,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
             info!(
                 seed = config.seed,
                 galaxy_radius = config.galaxy_radius,
+                home_ring_su = config.galaxy_radius * config.home_ring_frac,
                 c = config.c,
                 max_players,
                 "initialising fresh galaxy"
