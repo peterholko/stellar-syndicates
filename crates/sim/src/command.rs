@@ -334,8 +334,8 @@ pub enum Command {
         counts: std::collections::BTreeMap<crate::ship::ShipKind, u32>,
     },
 
-    /// §emplacements: raise a structure in OPEN SPACE — a hyperspace buoy or a
-    /// deep space sensor — WHERE THE NAMED CONSTRUCTION SHIP IS PARKED. The
+    /// §emplacements: raise a Deep Space Sensor in OPEN SPACE WHERE THE NAMED
+    /// CONSTRUCTION SHIP IS PARKED. The
     /// player flies the ship to the spot first (an ordinary move order), then
     /// this order builds in place; there is no separate map-picked site, so a
     /// stale client position can never divert the build.
@@ -357,7 +357,7 @@ pub enum Command {
     /// runs; the world's demolition resolver owns the clock.
     ///
     /// Refused for your own structures and your allies' — you cannot shoot a
-    /// friend's relay — and for hulls with no teeth (a crane cannot wreck).
+    /// friend's sensor — and for hulls with no teeth (a crane cannot wreck).
     DemolishEmplacement {
         player_id: PlayerId,
         /// The fleet doing the wrecking — named, like the builder in

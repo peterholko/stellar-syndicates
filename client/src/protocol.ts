@@ -694,6 +694,21 @@ export type DriveStateView =
   | { cruising: "thrusters" | "warp" }
   | { dropping: { from: "thrusters" | "warp"; left: number } };
 
+export interface JumpSpoolView {
+  /** Seconds remaining when this delayed report left the fleet. */
+  remaining: number;
+  waiting_for_fuel: boolean;
+}
+
+export interface JumpPresumptionView {
+  /** Steady-state information delay at the player-authored destination. */
+  information_delay: number;
+  /** Seconds until destination-origin light is expected to reach command. */
+  report_in: number;
+  /** Direction of the instantaneous relocation, used by the arrow marker. */
+  heading: Vec2;
+}
+
 export interface GhostView {
   id: EntityId;
   owner: PlayerId;
@@ -717,6 +732,10 @@ export interface GhostView {
   /// is DERIVED from this rather than sent beside it — a cruising drive names
   /// its layer; anything mid-transition is on thrusters until it catches.
   drive?: DriveStateView;
+  /** Owner-only jump spool telemetry from this same retarded sighting. */
+  jump_spool?: JumpSpoolView | null;
+  /** Player-known destination awaiting destination-origin confirmation light. */
+  jump_presumed?: JumpPresumptionView | null;
   /// Speed at that retarded moment (su/s).
   speed?: number;
   // Convoys broadcast a route (waypoints); raiders don't (null).
@@ -1220,7 +1239,7 @@ export interface PendingOrderView {
   /// Owner-only intended route from the served sighting to a fixed destination.
   /// Positions only: this line never claims the fleet advanced along it.
   intent_path?: Vec2[];
-  /** Terminal only after the relay-loss news wavefront reached this owner. */
+  /** Terminal only after jump-loss evidence reached this owner. */
   lost?: boolean;
   loss_relay?: EntityId;
   loss_break?: Vec2;

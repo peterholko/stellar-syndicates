@@ -19,12 +19,12 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 14 by §jump-v1: the
-/// jump-drive intent and its public range/spool/well constants are now on the
-/// wire.
+/// The client↔server wire protocol version. BUMPED to 16 by §jump-presumption:
+/// own ghosts distinguish a player-known jump destination from its later
+/// destination-origin confirmation light.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 16;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -199,7 +199,7 @@ pub enum ClientMsg {
         order_id: u32,
     },
 
-    /// Remove one terminal LOST fleet-order row after its relay-loss news has
+    /// Remove one terminal LOST fleet-order row after its jump-loss news has
     /// arrived. The sim accepts only an owned order already marked lost.
     DismissLostOrder {
         order_id: u64,
@@ -1336,7 +1336,7 @@ pub struct PendingOrderView {
     /// Positions only: this line never claims the fleet has advanced along it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intent_path: Vec<Vec2>,
-    /// Terminal only after the relay-destruction news reaches this owner. Before
+    /// Terminal only after the jump-loss evidence reaches this owner. Before
     /// that same wavefront the sim may already know the truth, but the field is
     /// deliberately false and the row continues its ordinary estimate.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1358,7 +1358,7 @@ pub struct BattleView {
     /// reinforcements join the same entity, so the id (and the icon) is stable.
     pub id: EntityId,
     pub pos: Vec2,
-    /// Light delay of the battle sighting (seconds) — `distance(pos, cc) / c`.
+    /// Straight warp-light delay of the battle sighting (seconds).
     pub age: f64,
     /// Sim-time the battle began (for the panel's observed-elapsed readout).
     pub started_at: f64,
@@ -1636,6 +1636,29 @@ pub struct JobView {
     pub progress: f64,
 }
 
+/// Owner-only jump-drive state at the retarded sighting. `remaining` is the
+/// spool time that remained WHEN THIS REPORT LEFT the fleet; the client must
+/// replay it as served, not subtract the report age and reveal current truth.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct JumpSpoolView {
+    pub remaining: f64,
+    pub waiting_for_fuel: bool,
+}
+
+/// Owner-only presentation of a jump whose departure report has arrived before
+/// any report emitted at its destination. The destination is player-authored,
+/// so its position is known; the marker remains explicitly provisional until
+/// destination light catches up.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct JumpPresumptionView {
+    /// The steady-state information delay at the new location.
+    pub information_delay: f64,
+    /// Seconds until the first destination-origin report is expected to arrive.
+    pub report_in: f64,
+    /// Direction of the instantaneous relocation, for the map arrow.
+    pub heading: Vec2,
+}
+
 /// One hop of an order signal's path. `frac` is the hop's
 /// arrival as a fraction of the signal's whole travel window, so the client
 /// animates the comet with no speed constants of its own and the last hop is
@@ -1715,6 +1738,16 @@ pub struct GhostView {
     /// Light-delayed with the rest of the sighting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drive: Option<sim::ship::DriveState>,
+    /// Owner-only jump spool telemetry from this same retarded frame. Kept
+    /// separate from `drive`: `DriveState` governs realspace motion, while a
+    /// jump spool is a stationary, world-managed fleet order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_spool: Option<JumpSpoolView>,
+    /// Owner-only provisional jump bookmark. Present only when departure light
+    /// has reached command before destination light; absent when the new delay
+    /// is equal or shorter, because there is no information gap to depict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_presumed: Option<JumpPresumptionView>,
     /// Speed at the retarded moment (sim units / s) — the magnitude of `vel`,
     /// sent alongside it so the panel does not have to recompute what the server
     /// already knows.
@@ -1724,7 +1757,7 @@ pub struct GhostView {
     /// position. `None` for raiders (they don't broadcast).
     pub route: Option<Vec<Vec2>>,
     /// §course-plan: OWN fleets only — the remaining legs of the flight the sim
-    /// is actually flying, lane-tagged. Rivals get `None`: your flight plan is
+    /// is actually flying through realspace. Rivals get `None`: your flight plan is
     /// yours. (Current-state like `docked`, with the same staleness caveat.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<PathPointView>>,

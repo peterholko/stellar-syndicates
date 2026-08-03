@@ -791,7 +791,7 @@ impl Timeline {
                 // §node: an EXOTIC system AWAKENED — announced GALAXY-WIDE,
                 // light-delayed from the node to each observer's command center (the
                 // awakening TIME is public, but news of the event still travels at
-                // c). Same delivery as a rival claim.
+                // straight warp light). Same delivery as a rival claim.
                 EventPayload::NodeAwakened { system, pos, bonus } => {
                     let name = system_name(world, *system);
                     for (&p, corp) in &world.players {
@@ -1752,8 +1752,8 @@ mod tests {
         for who in [culprit, near, far] {
             assert_eq!(seen(&tl, who), 0, "no bulletin before its light arrives");
         }
-        let near_at = issued + 600.0 / c;
-        let far_at = issued + 6000.0 / c;
+        let near_at = issued + sim::transit::delay(hub, w.players[&near].command_center, c);
+        let far_at = issued + sim::transit::delay(hub, w.players[&far].command_center, c);
         assert!(near_at < far_at, "the test geometry must actually differ");
 
         // The NEAR bystander is informed first, and the bulletin NAMES the culprit.
@@ -1805,7 +1805,7 @@ mod tests {
             0,
             "the sale cannot outrun its Market Hub receipt"
         );
-        let arrives = w.time + w.hub.distance(w.players[&a].command_center) / w.config.c;
+        let arrives = w.time + sim::transit::delay(w.hub, w.players[&a].command_center, w.config.c);
         tl.promote(arrives + 1e-6);
         let (entries, _away) = tl.digest(a);
         assert_eq!(
@@ -1862,8 +1862,8 @@ mod tests {
                 rule_id: 1,
             };
             let origin = crate::game_loop::trade_report_origin(&w, &trade);
-            last_arrival =
-                last_arrival.max(t + origin.distance(w.players[&a].command_center) / w.config.c);
+            last_arrival = last_arrival
+                .max(t + sim::transit::delay(origin, w.players[&a].command_center, w.config.c));
             let ev = Event::new(t, EventPayload::Trade(trade));
             tl.ingest(&[ev], &w);
         }

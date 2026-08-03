@@ -14,8 +14,8 @@ use crate::math::Vec2;
 #[serde(rename_all = "snake_case")]
 pub enum EmplacementKind {
     /// A stationary sensor picket. Watches like a ship's sensors would and sends
-    /// what it sees home at warp — so it shortens the *observation* leg rather
-    /// than the transmission, which is the half a buoy cannot help with.
+    /// what it sees home at warp — so it shortens the *observation* leg without
+    /// modifying the transmission medium.
     DeepSpaceSensor,
 }
 
@@ -26,8 +26,7 @@ impl EmplacementKind {
         "Deep Space Sensor"
     }
 
-    /// The bubble a deep space sensor projects. Zero for communications sites,
-    /// which carry signals but do not watch.
+    /// The bubble a deep space sensor projects.
     pub fn sensor_range(self) -> f64 {
         DEEP_SPACE_SENSOR_RANGE
     }
@@ -62,13 +61,13 @@ pub enum SiteError {
 pub const CONSTRUCT_RADIUS: f64 = 600.0;
 
 /// §emplacements: seconds a combatant must hold station on a RIVAL structure to
-/// tear it down. Shorter than even the 25s repeater build — wrecking is easier
-/// than raising — but long enough that the victim's picket, or the news itself,
+/// tear it down. Wrecking is easier than raising, but the hold is long enough
+/// that the victim's picket, or the news itself,
 /// has a chance to matter. The same `CONSTRUCT_RADIUS` bounds the work.
 pub const DEMOLISH_SECONDS: f64 = 20.0;
 
-/// How close two emplacements may be. Stops a player stacking a dozen relay
-/// sites on one spot, which would be free redundancy rather than a network.
+/// How close two emplacements may be. Stops a player stacking a dozen sensors
+/// on one spot for free redundancy.
 pub const MIN_SPACING: f64 = 12_000.0;
 
 /// Is `pos` a legal site for `kind`, given the network and what is already out
@@ -89,7 +88,7 @@ mod tests {
     use super::*;
 
     /// A SENSOR GOES ANYWHERE. The frontier is exactly where a picket earns its
-    /// keep, so requiring a lane would forbid the only siting that matters.
+    /// keep, so open-space siting is the point of the structure.
     #[test]
     fn a_deep_space_sensor_goes_anywhere() {
         let nowhere = Vec2::new(2_000_000.0, 0.0);

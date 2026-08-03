@@ -73,13 +73,14 @@ const COL_NODE = 0xb98cff;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
-const COL_ROUTE = 0x8fe3a0; // own flight plan (green, legible over blue lane bands)
+const COL_ROUTE = 0x8fe3a0; // own flight plan (green, legible on the dark map)
 const COL_INTENT_ROUTE = 0x70ad7d; // pending intent, dimmer than an observed flight plan
 const COL_ROUTE_PREVIEW = 0xc3f7cc; // prospective route, lighter than the committed plan
-const COL_IMPULSE_BOUNDARY = 0xf0a64a; // gravity-well edge, warm against lane blue
+const COL_IMPULSE_BOUNDARY = 0xf0a64a; // gravity-well edge, warm against route green
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
+const COL_DELAYED = 0xe2ad62; // presumed own jump, awaiting destination light
 // Ships render in their NATURAL art — no per-syndicate body tint (a future
 // ownership indicator is TBD). This neutral is only the primitive fallback hull
 // shown before the sprite art loads; it must NOT imply ownership.
@@ -87,6 +88,8 @@ const COL_SHIP_NEUTRAL = 0xc9d6e8;
 
 const MAX_EXTRAPOLATE_S = 0.4;
 const FADE_AGE_S = 45; // staleness at which an enemy ghost is most faded
+const PRESUMED_ARROW_SCALE = 2; // fixed-screen bookmark, matching the old dark-arrow grammar
+const DELAY_ICON_PX = 36; // fixed screen px; source resolution is for high-DPI crispness
 
 // --- Zoom limits, as multiples of the fit-to-galaxy scale (so they scale with
 // galaxy size). MIN ≈ fit (whole galaxy visible, a touch looser); MAX resolves
@@ -103,6 +106,8 @@ interface GhostSprite {
   cone: Graphics;
   body: Graphics; // primitive triangle — fallback until the ship sprite loads
   sprite: Sprite; // the ship art (rotated to heading, tinted by ownership)
+  delayIcon: Sprite; // yellow delayed-information cue beside a presumed jump
+  delayTooltip: Container; // canvas hover explanation for that cue
   label: Text;
   ring: Graphics; // selection ring
   pip: Graphics; // ownership tag (cyan = yours, red = rival) — the friend/foe cue
@@ -394,6 +399,7 @@ export class Renderer {
   private texIconFreighter: Texture | null = null;
   private texIconRaider: Texture | null = null;
   private texIconCorvette: Texture | null = null;
+  private texCommsDelay: Texture | null = null;
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
@@ -584,6 +590,11 @@ export class Renderer {
     this.texIconFreighter = iconFreighter;
     this.texIconRaider = iconRaider;
     this.texIconCorvette = iconCorvette;
+    // UI-sized beside the presumed-jump arrow: map zoom moves the bookmark but
+    // never scales this familiar delayed-communication symbol.
+    const commsDelay = await load("/art/ui_icons/png/128/concept-communication-delay.png");
+    if (commsDelay) commsDelay.source.autoGenerateMipmaps = true;
+    this.texCommsDelay = commsDelay;
     // Fleet formation sprites (family × tier); each independent, missing ones
     // fall back to the single-ship sprite so a bad file never breaks fleets.
     const families: FleetFamily[] = ["freighter", "raider", "corvette", "scout"];
@@ -1932,6 +1943,39 @@ export class Renderer {
       const sprite = new Sprite(Texture.EMPTY);
       sprite.anchor.set(0.5);
       sprite.visible = false;
+      const delayIcon = new Sprite(Texture.EMPTY);
+      delayIcon.anchor.set(0.5);
+      delayIcon.visible = false;
+      delayIcon.eventMode = "static";
+      delayIcon.cursor = "help";
+      const delayTooltip = new Container();
+      delayTooltip.eventMode = "none";
+      delayTooltip.visible = false;
+      const delayTipText = new Text({
+        text: "Extremely Delayed Information",
+        style: new TextStyle({
+          fill: 0xffd56a,
+          fontFamily: "ui-monospace, monospace",
+          fontSize: 10,
+          lineHeight: 13,
+        }),
+      });
+      const delayTipPadX = 7;
+      const delayTipPadY = 5;
+      const delayTipW = delayTipText.width + delayTipPadX * 2;
+      const delayTipH = delayTipText.height + delayTipPadY * 2;
+      const delayTipBg = new Graphics()
+        .roundRect(0, 0, delayTipW, delayTipH, 4)
+        .fill({ color: 0x080b12, alpha: 0.96 })
+        .stroke({ width: 1, color: COL_DELAYED, alpha: 0.65 });
+      delayTipText.position.set(delayTipPadX, delayTipPadY);
+      delayTooltip.addChild(delayTipBg, delayTipText);
+      delayIcon.on("pointerover", () => {
+        if (delayIcon.visible) delayTooltip.visible = true;
+      });
+      delayIcon.on("pointerout", () => {
+        delayTooltip.visible = false;
+      });
       const label = new Text({ text: "", style: new TextStyle({ fill: COL_OTHER, fontFamily: "ui-monospace, monospace", fontSize: 9 }) });
       label.anchor.set(0, 0.5);
       const pip = new Graphics();
@@ -1941,9 +1985,9 @@ export class Renderer {
       const badgeText = new Text({ text: "", style: new TextStyle({ fill: 0xffffff, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "bold" }) });
       badgeText.anchor.set(0.5, 0.5);
       // Pip is topmost so the friend/foe tag is never hidden by the sprite/label.
-      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip);
+      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip, delayIcon, delayTooltip);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, sprite, label, ring, pip, badge, badgeText, seen: true };
+      sp = { container, cone, body, sprite, delayIcon, delayTooltip, label, ring, pip, badge, badgeText, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
@@ -2147,9 +2191,10 @@ export class Renderer {
     const sp = this.ghostSprite(ghost.id);
     sp.seen = true;
     const own = ghost.own;
+    const presumedJump = own ? ghost.jump_presumed ?? null : null;
     const liveSim = liveSimTime();
     const servedPinned = own && this.servedStreamPinned(ghost, state.simTime);
-    const target = servedPinned
+    const target = presumedJump || servedPinned
       ? { x: ghost.pos.x, y: ghost.pos.y }
       : { x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt };
     const prev = sp.shown;
@@ -2169,7 +2214,8 @@ export class Renderer {
     const s = this.worldToScreen(sp.shown);
     sp.container.position.set(s.x, s.y);
 
-    const angle = Math.atan2(ghost.vel.y, ghost.vel.x);
+    const heading = presumedJump?.heading ?? ghost.vel;
+    const angle = Math.atan2(heading.y, heading.x);
 
     // §fog: NO UNCERTAINTY CIRCLE. There used to be one here — radius
     // `age x hull speed` — drawn when you selected a contact. It was deleted
@@ -2180,6 +2226,24 @@ export class Renderer {
     // for. `sp.cone` still carries the survey ring, pending badge, threat ring
     // and signature flare below.
     sp.cone.clear();
+    // A successful departure report may beat every report emitted at the new
+    // location. The player authored that destination, so draw it as a stationary
+    // arrow—but keep the yellow delay cue until destination light confirms it.
+    sp.delayIcon.visible = presumedJump !== null && this.texCommsDelay !== null;
+    if (!sp.delayIcon.visible) sp.delayTooltip.visible = false;
+    if (sp.delayIcon.visible && this.texCommsDelay) {
+      if (sp.delayIcon.texture !== this.texCommsDelay) sp.delayIcon.texture = this.texCommsDelay;
+      sp.delayIcon.scale.set(DELAY_ICON_PX / this.texCommsDelay.width);
+      sp.delayIcon.position.set(-22, 18);
+      sp.delayIcon.alpha = 0.95;
+      const tipW = sp.delayTooltip.width;
+      const tipH = sp.delayTooltip.height;
+      const desiredLeft = s.x - 22 - tipW / 2;
+      const clampedLeft = Math.max(6, Math.min(this.viewW - tipW - 6, desiredLeft));
+      const above = -tipH - 8;
+      const tipY = s.y + above >= 6 ? above : 42;
+      sp.delayTooltip.position.set(clampedLeft - s.x, tipY);
+    }
     // §explore Part 2: SURVEY PROGRESS RING — owner-only (the field is only ever
     // sent for own fleets): an arc filling clockwise as the dwell runs, in the
     // scout's own cyan. A rival sees none of this — only the louder signature.
@@ -2267,7 +2331,7 @@ export class Renderer {
     // Selection ring.
     sp.ring.clear();
     if (state.selectedShipId === ghost.id) {
-      sp.ring.circle(0, 0, 13).stroke({ width: 1.5, color: 0xffffff, alpha: 0.8 });
+      sp.ring.circle(0, 0, presumedJump ? 18 : 13).stroke({ width: 1.5, color: 0xffffff, alpha: 0.8 });
     }
 
     // The ship BODY: a top-down sprite rotated to heading, sized by kind (convoy
@@ -2290,7 +2354,20 @@ export class Renderer {
     const marker = this.fleetMarker(ghost);
     sp.body.clear();
     sp.body.scale.set(1);
-    if (marker) {
+    if (presumedJump) {
+      // The chevron is a bookmark, not hull art: it states the expected place
+      // while withholding the full ship until destination-origin light arrives.
+      sp.sprite.visible = false;
+      sp.body.scale.set(PRESUMED_ARROW_SCALE);
+      sp.body
+        .moveTo(6, 0)
+        .lineTo(-4, -4.5)
+        .moveTo(6, 0)
+        .lineTo(-4, 4.5)
+        .stroke({ width: 1.8, color: COL_DELAYED, alpha: 0.78 });
+      sp.body.circle(-1.5, 0, 1.2).fill({ color: COL_DELAYED, alpha: 0.78 });
+      sp.body.rotation = angle;
+    } else if (marker) {
       sp.sprite.visible = true;
       if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
       // Size vs zoom: a small indicator through normal zoom, ramping to
@@ -2367,6 +2444,10 @@ export class Renderer {
       txt = `SCOUT  ${stale}`;
       col = COL_OTHER;
       lalpha = 0.9;
+    } else if (own && presumedJump) {
+      txt = `PRESUMED  Δ${presumedJump.information_delay.toFixed(0)}s  report ${Math.ceil(presumedJump.report_in)}s`;
+      col = COL_DELAYED;
+      lalpha = 0.9;
     } else if (own) {
       // Own ships are light-delayed too now — always surface staleness so the fog
       // reads as "reporting from Xs ago," not a glitch. Convoys also show cargo.
@@ -2401,7 +2482,9 @@ export class Renderer {
     const exact = fleetExactCount(ghost);
     let badgeStr = "";
     let estimate = false;
-    if (exact !== null) {
+    if (presumedJump) {
+      badgeStr = "";
+    } else if (exact !== null) {
       if (exact > 1) badgeStr = String(exact);
     } else if (ghost.count_class !== "one") {
       badgeStr = countClassLabel(ghost.count_class);

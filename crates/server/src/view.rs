@@ -13,7 +13,7 @@
 //! command center `cc` at wall-time `now` iff its light has arrived:
 //!
 //! ```text
-//!   t + |p − cc| / c  ≤  now
+//!   t + |p − cc| / warp_light  ≤  now
 //! ```
 //!
 //! Define `arrival(t) = t + |p(t) − cc| / warp_light`. Ordinary cruising
@@ -53,6 +53,21 @@ struct Sample {
     /// hold the previous sample or show this one, but must never synthesize the
     /// physically nonexistent space between them.
     jump: bool,
+    /// Where the discontinuity report originated. A successful jump is learned
+    /// when light from the DEPARTURE reaches command; the commanded destination
+    /// is already player-known, so that event may snap the served marker there.
+    jump_origin: Option<Vec2>,
+    /// Serving-only flag: departure light has established the player-authored
+    /// destination, but no report emitted there has arrived yet. Never recorded
+    /// on the shared truth track; only a viewer-local scheduled copy sets it.
+    jump_presumed: bool,
+    /// Serving-only rival tombstone: light from the observed departure has
+    /// arrived, so the old contact must disappear, but its unobserved destination
+    /// must not be disclosed. A later destination report can reacquire it.
+    jump_departed: bool,
+    /// Start of an active jump spool at this emission, plus its served fuel-hold
+    /// state. Owner-only when projected onto the wire.
+    jump_spool: Option<(f64, bool)>,
     /// §explore Part 2: was the fleet ACTIVELY SURVEYING (loud) at this sample?
     /// Rides the per-sample history so the loudness is judged in the RETARDED
     /// frame — exactly like velocity — and can never leak or lag FTL.
@@ -63,9 +78,8 @@ struct Sample {
     ///
     /// Per-sample for the same reason `loud` is: it must be read in the RETARDED
     /// frame. Carried on the track instead, it reported the CURRENT regime beside
-    /// a light-delayed speed, so a convoy showed "hyperspace lane" next to an
-    /// warp velocity, and a fleet that had already stopped still
-    /// claimed to be in hyperspace.
+    /// a light-delayed speed, so drive badges could disagree with the motion the
+    /// player was actually being shown.
     drive: sim::ship::DriveState,
 }
 
@@ -79,6 +93,10 @@ impl Sample {
             // kinematic continuum is interpolated between recorded ticks.
             vel: older.vel,
             jump: false,
+            jump_origin: None,
+            jump_presumed: false,
+            jump_departed: false,
+            jump_spool: older.jump_spool,
             loud: older.loud,
             drive: older.drive,
         }
@@ -122,7 +140,7 @@ struct Track {
     /// system builds get (`BuildStateView::complete_time` is `now + remaining`,
     /// undelayed), and the same treatment the `emplacements` list gets. Those
     /// three have to agree: a retarded bar beside an undelayed structure would
-    /// have the buoy appear while the bar still read 60%. Your own installation
+    /// have the sensor appear while the bar still read 60%. Your own installation
     /// work reports on its own channel; it is the SHIP's position that is dark.
     job: Option<crate::protocol::JobView>,
     /// The fleet's direct flight plans in force at each retarded sighting.
@@ -184,11 +202,8 @@ pub struct PositionHistory {
     tracks: HashMap<EntityId, Track>,
     /// How many seconds of history to retain. Must exceed the largest possible
     /// information delay so every long-lived object always has an observable
-    /// sample. §hyperspace: that bound is the galaxy diameter over the SLOWEST
-    /// signal route, which is warp — not bare `c`. Signals always
-    /// couple into the overlay, so nothing ever crawls at `c` across interstellar
-    /// distance, and sizing to `c` would retain 5× more history than any viewer
-    /// can ever read.
+    /// sample. The bound is the galaxy diameter over straight warp light; keeping
+    /// more cannot make an older sample newly observable.
     horizon: f64,
     /// Sensor detection radius each of a player's assets projects (config).
     sensor_range: f64,
@@ -268,6 +283,9 @@ struct FrontierCursor {
     /// served picture is derived from this and the emission-time pending map; it
     /// is never stored as a new fact or fed back into the frontier.
     served: Option<ArrivedSample>,
+    /// Latest non-provisional report. A presumed jump marker must not project
+    /// sensor coverage from a place whose own light has not arrived yet.
+    confirmed: Option<ArrivedSample>,
     /// New reports are priced once as they are emitted, then wait here until
     /// their arrival. The heap advances by arrival time (covering bow-wave and
     /// channel-seam reordering); the emission-time map supplies the exact next
@@ -412,11 +430,29 @@ impl PositionHistory {
                 .samples
                 .back()
                 .is_some_and(|previous| ship.last_jump.is_some_and(|at| at >= previous.time));
+            let jump_origin = jumped.then(|| {
+                track
+                    .samples
+                    .back()
+                    .map(|sample| sample.pos)
+                    .unwrap_or(ship.pos)
+            });
+            let jump_spool = match ship.order {
+                sim::ship::FleetOrder::Jump {
+                    spool_started: Some(started),
+                    ..
+                } => Some((started, ship.stalled)),
+                _ => None,
+            };
             let current = Sample {
                 time: now,
                 pos: ship.pos,
                 vel: ship.vel,
                 jump: jumped,
+                jump_origin,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool,
                 loud: ship.surveying(),
                 drive: ship.drive_state,
             };
@@ -540,8 +576,15 @@ impl PositionHistory {
                     path: FrontierPath::DirectOwn,
                 })
                 .or_default();
-            if let Some(s) = serve_track_cached(track, cc, c, now, cursor) {
-                coverage.push((s.pos, self.sensor_range * track.sensor_mult));
+            if let Some(s) = serve_track_cached(track, cc, c, now, cursor, true) {
+                let coverage_pos = if s.jump_presumed {
+                    cursor
+                        .confirmed
+                        .map_or(s.pos, |confirmed| confirmed.sample.pos)
+                } else {
+                    s.pos
+                };
+                coverage.push((coverage_pos, self.sensor_range * track.sensor_mult));
             }
         }
         coverage
@@ -629,13 +672,30 @@ impl PositionHistory {
                     path: FrontierPath::Composite,
                 })
                 .or_default();
-            let Some(sample) = serve_track_cached(track, cc, c, now, cursor) else {
+            let Some(sample) = serve_track_cached(track, cc, c, now, cursor, track.owner == viewer)
+            else {
                 continue; // dark — no light from this object has arrived yet
             };
+            if sample.jump_departed {
+                // The rival has received the departure event, not the authored
+                // destination. Remove the old contact now; destination-origin
+                // light may reacquire it later through the ordinary filter.
+                debug_assert_ne!(track.owner, viewer);
+                continue;
+            }
             if track.owner == viewer {
                 // Each own fleet projects its best bubble — a scout aboard gives
-                // an oversized one (`sensor_mult`: mobile vision).
-                coverage.push((sample.pos, self.sensor_range * track.sensor_mult));
+                // an oversized one (`sensor_mult`: mobile vision). A presumed
+                // destination is only a map bookmark, so coverage stays on the
+                // last destination-origin report until new light arrives.
+                let coverage_pos = if sample.jump_presumed {
+                    cursor
+                        .confirmed
+                        .map_or(sample.pos, |confirmed| confirmed.sample.pos)
+                } else {
+                    sample.pos
+                };
+                coverage.push((coverage_pos, self.sensor_range * track.sensor_mult));
             }
             // For a destroyed DARK fleet (raiders/scouts only), decide visibility
             // in the ghost's OWN retarded frame (the world as the arriving light
@@ -744,12 +804,10 @@ impl PositionHistory {
             //
             // There used to be a derived `uncertainty = age × max_speed` here, sent
             // to draw a circle of "could be anywhere in this". It was deleted: the
-            // hull speed it multiplied is the THRUSTER speed, so for a hull riding a
-            // lane at 50x it understated the reachable distance fifty-fold — and no
-            // circle can be honest in a galaxy where speed depends on whether you
-            // are standing on a road. Age plus the sighting's drive state say the
-            // same thing without the lie, and the intercept estimate answers the
-            // question the circle was reached for.
+            // hull speed it multiplied was only one possible future speed and could
+            // not represent a later warp, spool, stop, or jump. Age plus the
+            // sighting's drive state say the same thing without the lie, and the
+            // intercept estimate answers the question the circle was reached for.
             let age = now - p.sample.time;
             let is_convoy = p.flagship == ShipKind::Convoy;
             // Convoy fleets broadcast their route; cargo only within sensor
@@ -844,6 +902,28 @@ impl PositionHistory {
                         .collect()
                 }),
                 drive: Some(p.sample.drive),
+                jump_spool: if own {
+                    p.sample.jump_spool.map(|(started, waiting_for_fuel)| {
+                        crate::protocol::JumpSpoolView {
+                            remaining: (sim::transit::JUMP_SPOOL_S - (p.sample.time - started))
+                                .max(0.0),
+                            waiting_for_fuel,
+                        }
+                    })
+                } else {
+                    None
+                },
+                jump_presumed: if own && p.sample.jump_presumed {
+                    let origin = p.sample.jump_origin.unwrap_or(p.sample.pos);
+                    let destination_delay = sim::transit::delay(p.sample.pos, cc, c);
+                    Some(crate::protocol::JumpPresumptionView {
+                        information_delay: destination_delay,
+                        report_in: (p.sample.time + destination_delay - now).max(0.0),
+                        heading: (p.sample.pos - origin).normalized(),
+                    })
+                } else {
+                    None
+                },
                 speed: p.sample.vel.length(),
                 id: p.id,
                 owner: p.owner,
@@ -852,7 +932,7 @@ impl PositionHistory {
                 vel: p.sample.vel,
                 age,
                 own,
-                jumped: p.sample.jump,
+                jumped: p.sample.jump && !p.sample.jump_presumed,
                 route,
                 cargo,
                 passengers,
@@ -916,7 +996,7 @@ impl PositionHistory {
                 path: FrontierPath::DirectOwn,
             })
             .or_default();
-        let sample = serve_track_cached(track, cc, c, now, cursor)?;
+        let sample = serve_track_cached(track, cc, c, now, cursor, true)?;
         Some(ObservedSighting {
             pos: sample.pos,
             vel: sample.vel,
@@ -2076,15 +2156,16 @@ fn order_path(order: &FleetOrder, _pos: Vec2) -> Vec<Vec2> {
     }
 }
 
-/// The latest sample whose straight warp-light report has reached `cc` by `now`.
-/// Each emission is priced once and kept in the arrival heap. The heap is
-/// required even though cruising arrivals are monotone: a jump can make landing
-/// light overtake older departure light.
+/// The latest player-visible sample at `cc` by `now`. Each physical report is
+/// priced once and kept in the arrival heap; an owner's farther jump may add one
+/// lightweight departure-proven copy of the same sample: a provisional bookmark
+/// for its owner, or a destination-free contact tombstone for anyone else. The
+/// heap is required because those jump wavefronts arrive separately.
 const SMOOTH_BRACKET_MAX: f64 = 0.5;
 
 #[cfg(test)]
 fn latest_observable(samples: &VecDeque<Sample>, cc: Vec2, c: f64, now: f64) -> Option<Sample> {
-    latest_observable_cached(samples, cc, c, now, &mut FrontierCursor::default())
+    latest_observable_cached(samples, cc, c, now, &mut FrontierCursor::default(), true)
 }
 
 fn serve_track_cached(
@@ -2093,8 +2174,9 @@ fn serve_track_cached(
     c: f64,
     now: f64,
     cursor: &mut FrontierCursor,
+    own_destination_known: bool,
 ) -> Option<Sample> {
-    latest_observable_cached(&track.samples, cc, c, now, cursor)
+    latest_observable_cached(&track.samples, cc, c, now, cursor, own_destination_known)
 }
 
 fn schedule_sample(
@@ -2113,12 +2195,46 @@ fn schedule_sample(
     }
 }
 
+/// If departure light beats destination light, schedule one early copy. The
+/// owner authored the destination and receives a provisional bookmark there;
+/// every other observer receives only a tombstone that removes the old contact.
+/// Neither copy confirms the jump. When the new delay is equal or shorter,
+/// destination light wins and no intermediate presentation is needed.
+fn schedule_early_jump_copy(
+    sample: &Sample,
+    cc: Vec2,
+    c: f64,
+    own_destination_known: bool,
+) -> Option<ScheduledCopy> {
+    let origin = sample.jump_origin?;
+    let departure_arrival = sample.time + sim::transit::delay(origin, cc, c);
+    let destination_arrival = sample.time + sim::transit::delay(sample.pos, cc, c);
+    if departure_arrival + 1e-9 >= destination_arrival {
+        return None;
+    }
+    let mut early = *sample;
+    if own_destination_known {
+        early.jump_presumed = true;
+    } else {
+        // A rival learns only that the contact left the observed origin. Keep
+        // the destination entirely out of this served copy.
+        early.pos = origin;
+        early.vel = Vec2::ZERO;
+        early.jump_departed = true;
+    }
+    Some(ScheduledCopy {
+        sample: early,
+        arrival: departure_arrival,
+    })
+}
+
 fn latest_observable_cached(
     samples: &VecDeque<Sample>,
     cc: Vec2,
     c: f64,
     now: f64,
     cursor: &mut FrontierCursor,
+    own_destination_known: bool,
 ) -> Option<Sample> {
     if samples.is_empty() {
         return cursor.served.map(|served| served.sample);
@@ -2129,6 +2245,7 @@ fn latest_observable_cached(
     let time_regressed = now + 1e-9 < cursor.last_now;
     if endpoint_changed || time_regressed {
         cursor.served = None;
+        cursor.confirmed = None;
         cursor.seen_through = None;
         cursor.pending_by_arrival.clear();
         cursor.pending_by_emission.clear();
@@ -2150,6 +2267,11 @@ fn latest_observable_cached(
         cursor
             .pending_by_arrival
             .push(Reverse(PendingArrival(pending)));
+        if let Some(early) = schedule_early_jump_copy(sample, cc, c, own_destination_known) {
+            cursor
+                .pending_by_arrival
+                .push(Reverse(PendingArrival(early)));
+        }
     }
     cursor.seen_through = samples.back().map(|sample| sample.time);
 
@@ -2160,19 +2282,35 @@ fn latest_observable_cached(
         .is_some_and(|pending| pending.0.0.arrival() <= now)
     {
         let pending = cursor.pending_by_arrival.pop().unwrap().0.0;
-        cursor
-            .pending_by_emission
-            .remove(&pending.sample.time.to_bits());
+        if !pending.sample.jump_presumed && !pending.sample.jump_departed {
+            cursor
+                .pending_by_emission
+                .remove(&pending.sample.time.to_bits());
+        }
         let arrived = ArrivedSample {
             sample: pending.sample,
             arrival: pending.arrival(),
         };
-        if cursor
-            .served
-            .is_none_or(|served| arrived.sample.time > served.sample.time)
-        {
-            crossed_jump |= arrived.sample.jump;
+        let supersedes = cursor.served.is_none_or(|served| {
+            arrived.sample.time > served.sample.time
+                || (arrived.sample.time == served.sample.time
+                    && (served.sample.jump_presumed || served.sample.jump_departed)
+                    && !arrived.sample.jump_presumed
+                    && !arrived.sample.jump_departed)
+        });
+        if supersedes {
+            crossed_jump |= arrived.sample.jump
+                && !arrived.sample.jump_presumed
+                && !arrived.sample.jump_departed;
             cursor.served = Some(arrived);
+        }
+        if !arrived.sample.jump_presumed
+            && !arrived.sample.jump_departed
+            && cursor
+                .confirmed
+                .is_none_or(|confirmed| arrived.sample.time > confirmed.sample.time)
+        {
+            cursor.confirmed = Some(arrived);
         }
     }
     // A 10 Hz view can consume several 30 Hz reports in one broadcast. If any
@@ -2237,6 +2375,10 @@ mod tests {
             pos: Vec2::new(2_000.0, 0.0),
             vel: Vec2::ZERO,
             jump: false,
+            jump_origin: None,
+            jump_presumed: false,
+            jump_departed: false,
+            jump_spool: None,
             loud: false,
             drive: sim::ship::DriveState::default(),
         };
@@ -2295,6 +2437,10 @@ mod tests {
                 pos: Vec2::new(x, y),
                 vel,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2347,6 +2493,10 @@ mod tests {
                 pos: if at_y { y } else { x },
                 vel: Vec2::ZERO,
                 jump,
+                jump_origin: jump.then_some(x),
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2360,14 +2510,11 @@ mod tests {
         let tangent_cc = Vec2::new(6000.0, 0.0);
         let before = samples.iter().rfind(|sample| sample.pos == x).unwrap();
         let landing = samples.iter().find(|sample| sample.jump).unwrap();
-        let arrival_gap = (landing.time + sim::transit::delay(landing.pos, tangent_cc, df(c)))
+        let arrival_gap = (landing.time
+            + sim::transit::delay(landing.jump_origin.unwrap(), tangent_cc, df(c)))
             - (before.time + sim::transit::delay(before.pos, tangent_cc, df(c)));
         assert!(arrival_gap > 0.0 && arrival_gap < SMOOTH_BRACKET_MAX);
-        for cc in [
-            Vec2::new(0.0, -6000.0),
-            tangent_cc,
-            Vec2::new(0.0, 6000.0), // landing light overtakes the last departure copy
-        ] {
+        for cc in [Vec2::new(0.0, -6000.0), tangent_cc, Vec2::new(0.0, 6000.0)] {
             for n in 0..=1800 {
                 let now = n as f64 * 0.025;
                 if let Some(served) = latest_observable(&deque, cc, df(c), now) {
@@ -2381,7 +2528,7 @@ mod tests {
         }
         let hist = history_with(track_from(samples, PlayerId(7), ShipKind::Raider));
 
-        // Light delay from X to cc ≈ 6000/300 = 20 s; the jump at t=10 cannot be
+        // Departure light from X to cc takes 20 s; the jump at t=10 cannot be
         // seen before ~t=30. At now=25 the viewer must still see X.
         let g25 = &hist.view_for(PlayerId(99), cc, df(c), 25.0)[0];
         assert_eq!(
@@ -2399,7 +2546,7 @@ mod tests {
     }
 
     #[test]
-    fn a_real_jump_holds_then_snaps_and_confirms_on_the_same_served_evidence() {
+    fn a_real_jump_holds_then_presumes_then_confirms_on_destination_light() {
         let owner = PlayerId(7);
         let mut world = World::new(sim::SimConfig::for_players(8_181, 4));
         world.step(&[sim::Command::AddPlayer {
@@ -2420,16 +2567,24 @@ mod tests {
                     .iter()
                     .all(|system| pos.distance(system.pos) >= sim::transit::HYPERLIMIT)
         };
+        // Exact playtest clock: source is 5 s of warp light from command, then
+        // the hull jumps the full 50k directly farther away. Destination light
+        // takes 30 s. Departure light therefore places a provisional arrow at
+        // t≈20; destination light replaces it with the ship at t≈45.
         let (source, dest) = [
-            Vec2::new(5_000.0, 5_000.0),
-            Vec2::new(-5_000.0, 5_000.0),
-            Vec2::new(5_000.0, -5_000.0),
-            Vec2::new(-5_000.0, -5_000.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(0.0, -1.0),
+            Vec2::new(1.0, 1.0).normalized(),
+            Vec2::new(-1.0, 1.0).normalized(),
+            Vec2::new(1.0, -1.0).normalized(),
+            Vec2::new(-1.0, -1.0).normalized(),
         ]
         .into_iter()
-        .filter_map(|offset| {
-            let source = cc + offset;
-            let dest = source + Vec2::new(30_000.0, 10_000.0);
+        .filter_map(|outward| {
+            let source = cc + outward * 10_000.0;
+            let dest = source + outward * sim::transit::JUMP_RANGE;
             (clear(source) && clear(dest)).then_some((source, dest))
         })
         .next()
@@ -2445,6 +2600,7 @@ mod tests {
 
         let mut history = PositionHistory::for_world(&world);
         history.record(&world);
+        let issued_at = world.time;
         world.step(&[sim::Command::JumpShip {
             player_id: owner,
             ship_id: fleet,
@@ -2457,9 +2613,16 @@ mod tests {
             .find(|pending| pending.fleet == fleet)
             .expect("jump copy scheduled")
             .delivered_at;
+        let outbound = sim::transit::delay(cc, source, world.config.c);
+        let inbound = sim::transit::delay(source, cc, world.config.c);
+        let expected_spool_view = delivered_at + inbound;
 
         let mut true_jump = None;
-        let mut first_landing_view = None;
+        let mut first_spool_view = None;
+        let mut first_spool_remaining = None;
+        let mut last_spool_remaining = None;
+        let mut first_presumed_view = None;
+        let mut first_confirmed_view = None;
         let mut confirmed_at = None;
         for _ in 0..(90 * sim::config::TICK_HZ) {
             let events = world.step(&[]);
@@ -2494,8 +2657,37 @@ mod tests {
                 "the served map smeared the jump through {:?}",
                 ghost.pos
             );
-            if ghost.pos == dest && first_landing_view.is_none() {
-                first_landing_view = Some(world.time);
+            if let Some(spool) = ghost.jump_spool {
+                assert!(
+                    world.time + 1e-9 >= expected_spool_view,
+                    "jump spool leaked before its departure light arrived"
+                );
+                assert_eq!(ghost.pos, source, "spool telemetry belongs at departure");
+                if first_spool_view.is_none() {
+                    first_spool_view = Some(world.time);
+                    first_spool_remaining = Some(spool.remaining);
+                }
+                last_spool_remaining = Some(spool.remaining);
+            }
+            if ghost.pos == dest && ghost.jump_presumed.is_some() && first_presumed_view.is_none() {
+                assert!(
+                    ghost.jump_spool.is_none(),
+                    "the jump frame retires the spool"
+                );
+                assert!(!ghost.jumped, "a presumption cannot confirm its own jump");
+                let presumed = ghost.jump_presumed.unwrap();
+                assert!((presumed.information_delay - 30.0).abs() < 1e-9);
+                assert!(
+                    (presumed.report_in - 25.0).abs() <= 5.0 * sim::config::DT,
+                    "five seconds of destination light are already in flight"
+                );
+                first_presumed_view = Some(world.time);
+            } else if ghost.pos == dest
+                && ghost.jump_presumed.is_none()
+                && first_confirmed_view.is_none()
+            {
+                assert!(ghost.jumped, "destination light carries the jump evidence");
+                first_confirmed_view = Some(world.time);
             }
             let emission = world.time - ghost.age;
             let confirmations =
@@ -2512,12 +2704,110 @@ mod tests {
         }
 
         let true_jump = true_jump.expect("the hull jumped");
-        let first_landing_view = first_landing_view.expect("landing light arrived");
-        let expected_light = true_jump + sim::transit::delay(dest, cc, world.config.c);
-        assert!(first_landing_view + 1e-9 >= expected_light);
-        assert!(first_landing_view <= expected_light + 3.0 * sim::config::DT);
-        assert_eq!(confirmed_at, Some(first_landing_view));
+        assert!((outbound - 5.0).abs() < 1e-9);
+        assert!((delivered_at - (issued_at + 5.0)).abs() <= sim::config::DT);
+
+        let first_spool_view = first_spool_view.expect("spool telemetry arrived");
+        assert!(first_spool_view + 1e-9 >= expected_spool_view);
+        assert!(first_spool_view <= expected_spool_view + 3.0 * sim::config::DT);
+        assert!(
+            first_spool_remaining.unwrap() >= sim::transit::JUMP_SPOOL_S - 3.0 * sim::config::DT,
+            "the command center replays the delayed ten-second spool"
+        );
+        assert!(
+            last_spool_remaining.unwrap() <= 3.0 * sim::config::DT,
+            "the delayed replay counts all the way down before the map snap"
+        );
+
+        let first_presumed_view = first_presumed_view.expect("departure light arrived");
+        let expected_departure_light = true_jump + inbound;
+        assert!(first_presumed_view + 1e-9 >= expected_departure_light);
+        assert!(first_presumed_view <= expected_departure_light + 3.0 * sim::config::DT);
+        assert!((first_presumed_view - (issued_at + 20.0)).abs() <= 5.0 * sim::config::DT);
+
+        let first_confirmed_view = first_confirmed_view.expect("destination light arrived");
+        let destination_delay = sim::transit::delay(dest, cc, world.config.c);
+        let expected_destination_light = true_jump + destination_delay;
+        assert!(first_confirmed_view + 1e-9 >= expected_destination_light);
+        assert!(first_confirmed_view <= expected_destination_light + 3.0 * sim::config::DT);
+        assert!(
+            (first_confirmed_view - first_presumed_view - (destination_delay - inbound)).abs()
+                <= 5.0 * sim::config::DT,
+            "the arrow lasts only for the increase in information delay"
+        );
+        assert_eq!(confirmed_at, Some(first_confirmed_view));
         assert!(delivered_at + sim::transit::JUMP_SPOOL_S <= true_jump + sim::config::DT);
+    }
+
+    #[test]
+    fn a_farther_jump_bookmarks_for_its_owner_but_vanishes_for_a_rival() {
+        let cc = Vec2::ZERO;
+        let c = 400.0;
+        let sample = |origin: Vec2, destination: Vec2| Sample {
+            time: 12.0,
+            pos: destination,
+            vel: Vec2::ZERO,
+            jump: true,
+            jump_origin: Some(origin),
+            jump_presumed: false,
+            jump_departed: false,
+            jump_spool: None,
+            loud: false,
+            drive: sim::ship::DriveState::Thrusters,
+        };
+
+        let farther = sample(Vec2::new(6_000.0, 0.0), Vec2::new(40_000.0, 0.0));
+        let presumed = schedule_early_jump_copy(&farther, cc, c, true)
+            .expect("a longer destination delay creates a provisional bookmark");
+        assert!(presumed.sample.jump_presumed);
+        assert_eq!(presumed.arrival, farther.time + 3.0);
+
+        let mut departure = farther;
+        departure.time -= sim::config::DT;
+        departure.pos = farther.jump_origin.unwrap();
+        departure.jump = false;
+        departure.jump_origin = None;
+        let samples = VecDeque::from([departure, farther]);
+        let now = presumed.arrival + sim::config::DT;
+        let mut owner_cursor = FrontierCursor::default();
+        let owner_picture =
+            latest_observable_cached(&samples, cc, c, now, &mut owner_cursor, true).unwrap();
+        assert!(owner_picture.jump_presumed);
+        assert_eq!(owner_picture.pos, farther.pos);
+        assert_eq!(
+            owner_cursor.confirmed.unwrap().sample.pos,
+            departure.pos,
+            "the presumed destination cannot move the fleet's sensor coverage"
+        );
+        let rival_picture =
+            latest_observable_cached(&samples, cc, c, now, &mut FrontierCursor::default(), false)
+                .unwrap();
+        assert!(!rival_picture.jump_presumed);
+        assert!(rival_picture.jump_departed);
+        assert_eq!(
+            rival_picture.pos, departure.pos,
+            "the rival tombstone carries only the observed departure"
+        );
+
+        let history = history_with(track_from(
+            samples.iter().copied().collect(),
+            PlayerId(7),
+            ShipKind::Raider,
+        ));
+        assert!(
+            history.view_for(PlayerId(99), cc, c, now).is_empty(),
+            "departure light removes the rival marker instead of aging it in place"
+        );
+        let destination_arrival = farther.time + sim::transit::delay(farther.pos, cc, c);
+        let reacquired =
+            history.view_for(PlayerId(99), cc, c, destination_arrival + sim::config::DT);
+        assert_eq!(reacquired[0].pos, farther.pos);
+
+        let closer = sample(Vec2::new(40_000.0, 0.0), Vec2::new(6_000.0, 0.0));
+        assert!(
+            schedule_early_jump_copy(&closer, cc, c, true).is_none(),
+            "destination light already wins, so a presumed arrow would be false"
+        );
     }
 
     /// The shown sample is exactly the boundary: it has arrived, and the next
@@ -2535,6 +2825,10 @@ mod tests {
                 pos: Vec2::new(0.0, t * 5.0),
                 vel: Vec2::new(0.0, 5.0),
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2574,6 +2868,10 @@ mod tests {
                 pos: Vec2::new(t * 2.0, 0.0),
                 vel: Vec2::new(2.0, 0.0),
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4013,6 +4311,10 @@ mod tests {
                 pos,
                 vel: Vec2::ZERO,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4201,6 +4503,10 @@ mod tests {
                 pos,
                 vel,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4270,6 +4576,10 @@ mod tests {
                 pos,
                 vel,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4526,6 +4836,10 @@ mod tests {
                 pos,
                 vel: Vec2::ZERO,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4918,6 +5232,10 @@ mod tests {
                 pos: dpos,
                 vel: Vec2::ZERO,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4978,6 +5296,10 @@ mod tests {
                 pos: Vec2::new(t * 10.0, 0.0),
                 vel: Vec2::new(10.0, 0.0),
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -5150,6 +5472,10 @@ mod tests {
                 pos,
                 vel: Vec2::ZERO,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -5175,6 +5501,10 @@ mod tests {
                 pos,
                 vel,
                 jump: false,
+                jump_origin: None,
+                jump_presumed: false,
+                jump_departed: false,
+                jump_spool: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });

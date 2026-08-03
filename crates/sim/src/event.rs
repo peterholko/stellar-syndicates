@@ -23,7 +23,7 @@ pub enum OrderKind {
     Move,
     Jump,
     /// §emplacements: a CONSTRUCT order — send a builder to a site and put a
-    /// buoy or sensor there.
+    /// sensor there.
     Construct,
     /// §emplacements: a DEMOLISH order — send a combatant to a rival's structure
     /// and tear it down.
@@ -185,11 +185,6 @@ pub enum EventPayload {
     /// rival combatant. Like [`EventPayload::ShipDestroyed`], this is a
     /// per-player DELAYED disappearance: it is gone from true space now, but
     /// the owner keeps seeing it until the news reaches their command center.
-    ///
-    /// Deliciously self-punishing for a buoy: killing a relay makes the report
-    /// of its own death travel slower, because the network that would have
-    /// carried it is what just died. Nothing special-cases that — it falls out
-    /// of pricing the delay against the network as it stands AFTER the loss.
     EmplacementDestroyed {
         emplacement: EntityId,
         owner: PlayerId,

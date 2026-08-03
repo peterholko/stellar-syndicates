@@ -963,12 +963,10 @@ pub fn generate_home_system(
         // Orbital Warehouse/Habitat/industry doesn't require a market round-trip. (The
         // Fuel movement seed lands on join.) All Tunable.
         //
-        // §emplacements: the kit also funds the INFRASTRUCTURE OPENING the
-        // starting Construction Ship exists for. One buoy on home's lane
-        // completes the first relay link; the reserve funds a second buoy to
-        // extend it. Two buoy kits cost 80 Alloys + 120 Electronics + 60 Fuel;
-        // a Deep Space Sensor costs 60/120/40. Electronics 150 and Alloys 100
-        // cover either opening while later kits ride the market. Without this
+        // §emplacements: the kit also funds the Deep Space Sensor opening the
+        // starting Construction Ship exists for. A sensor costs 60/120/40;
+        // Electronics 150 and Alloys 100 cover the opening while later kits
+        // ride the market. Without this
         // seed the home has ZERO Electronics and every emplacement order is
         // refused at spawn.
         stockpile: [

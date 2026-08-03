@@ -54,9 +54,8 @@ pub struct SimConfig {
     /// space between homes stays proportional across 4–12 players (§4).
     pub galaxy_radius: f64,
 
-    /// Fraction of `galaxy_radius` at which home anchors sit. The default is
-    /// derived from one long-throw hyperspace buoy, so the physical distance is
-    /// stable even when player count changes the galaxy radius.
+    /// Fraction of `galaxy_radius` at which home anchors sit. The default keeps
+    /// the physical home ring stable even when player count changes the radius.
     pub home_ring_frac: f64,
 
     /// Number of procedurally-placed star systems (M2).
@@ -118,13 +117,10 @@ impl SimConfig {
         let cfg = SimConfig {
             seed,
             max_players: player_count,
-            // c chosen so crossing a 4-player galaxy (radius 8000) gives a
-            // home→hub light-delay of ~12 s — dramatic but playable. Raised from
-            // 300 → 400 (playtest: raiders felt "faster than light," intel/orders
-            // uselessly stale) so light comfortably outruns every hull: at the
-            // fastest ship (scout, 115) the ratio is 3.48×, well above the 2.0
-            // floor ([`C_SPEED_RATIO`]). Ship trip-times are unchanged (they don't
-            // depend on c); only information delays shrink ~25%, freshening intel.
+            // Base c becomes 2,000 su/s straight warp light after WARP_FACTOR.
+            // On the preserved chart this prices home→hub at roughly 37–40 s
+            // and the longest hub→rim reports near 200 s. At the fastest warp
+            // hull the ratio remains 3.48×, above [`C_SPEED_RATIO`].
             c: 400.0,
             galaxy_radius,
             // Preserve the lane-era chart geometry exactly. The 80,000-su

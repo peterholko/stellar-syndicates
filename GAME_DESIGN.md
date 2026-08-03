@@ -143,34 +143,23 @@ instant (it changes only your own private policy). Redirecting a ship mid-flight
 lightspeed. Seeing a distant price or enemy: lightspeed. A defense platform firing on
 whatever enters its radius: instant, because it is a fixed point acting locally.
 
-Corporations can build a faster physical communications network on the hyperspace lanes.
-**Comm structures light up the lanes around them:** every structure is a full relay, so a
-signal may enter, ride, or leave anywhere in its covered arc, including through overlapping
-coverage at lane junctions. A **Hyperspace Buoy** is the expensive long-throw size (80,000
-su); a **Hyperspace Repeater** is the cheap short-throw size (40,000 su). Home is not a relay;
-each corporation begins with one ordinary, destructible buoy on the lane nearest home.
+Every novel report and every directed order travels on one **straight warp-light chord**.
+Its speed is `c × WARP_FACTOR` (2,000 su/s with the shipped tunables). There is no faster
+wire, relay graph, lane coupling, or ownership exception. A command aimed at a moving fleet
+is solved from the player's served sighting; the sim applies it to the true receiver only
+when that same physical signal arrives. Results become facts for the player only when their
+own light reaches the command center.
 
-Own fleets have three presentation states, all decided in the picture the command center can
-actually see. **LIT:** inside a comm bubble, the served delayed replay draws the full sprite.
-**DELAYED:** beyond comms in realspace, strictly arrived warp-light reports draw the frozen
-heading arrow and its slow movie. **TUNNEL:** hyperspace beyond your wire leaves a dim arrow
-bookmarked at the last served entry point — selectable, but stationary and never a claim about
-the fleet's current position — alongside its known intent line until arrived light reports a
-drive drop or bubble re-entry. The outbound crossing is one edge event at the nominal circle;
-re-entry still uses the inner hysteresis boundary, and true hull position never flips either
-presentation early. The live replay is deliberately mildly optimistic for a receding own fleet; that
-accepted presentation exception never applies outside a bubble or to rivals.
-
-**Reception is universal:** a ship receives truespace orders regardless of which of those
-three pictures the command center can draw. The tunnel is one-way glass for observation, not
-a block on command delivery, meeting solves, confirmation, or ship autonomy.
-
-The same 2D bubble is the binary boundary for **outbound orders**. If the order's solved
-meeting point is inside any owned comm circle, it may ride the covered wire; if the meeting
-point is outside every circle, the command center sends one direct warp-light chord with no
-partial lane assist. Inbound own-fleet reports retain their per-emission channel, and lane-arc
-coverage still governs how an inside report rides home. Dedicated Hyperspace Sensors still
-hear rival wakes through their separate tripwire path; a hull never extends relay coverage.
+Jump drives do not create an epistemic exception. A fleet may relocate faster than its news,
+so departure and arrival can reach an observer out of emission order. The served picture is
+therefore an arrival-ordered reconstruction: it holds the last arrived position, then snaps
+across the discontinuity when the successful departure event's light arrives. Because the
+destination was authored by the player, that earlier wavefront may place a clearly provisional
+arrow there; destination-origin light replaces it with the ship and confirms the jump. The
+arrow exists only when the new information delay is longer, and lasts for exactly the increase
+in delay. Other observers do not know the authored destination: departure light removes their
+old contact, and destination light may reacquire it later through ordinary detection.
+Confirmation is evidence already served on that map, never a parallel timer.
 
 This principle is *generative* — players internalize it once and can then predict the
 behaviour of any new situation.
@@ -187,12 +176,12 @@ in any direction.
 
 | Knob | Value | Note |
 |---|---|---|
-| Galaxy radius | `4000 × √players` su | area scales with player count, so the dark between homes stays proportional |
+| Galaxy radius | `200,000 × √players` su | area scales with player count; four-player charts have a 400,000 su radius |
 | System count | `12 + 4 × players` | |
-| Home ring | ≈74,074 su base; 80,000 su outer edge | one pre-generated home slot per player; ±8% radial jitter never exceeds one long-throw buoy |
+| Home ring | 80,000 su nominal outer ring | one pre-generated home slot per player; the lane-era chart distance is preserved literally |
 | System placement | area-uniform in `[0.12R, 0.96R]` | no zones, no structured regions |
-| Speed of light | 400 su/s | |
-| Sensor bubble | 2200 su | ≈28% of a 4-player galaxy radius |
+| Base `c` / warp-light signal | 400 / 2,000 su/s | information travels at `c × WARP_FACTOR` |
+| Sensor bubble | 110,000 su | ≈28% of a 4-player galaxy radius |
 | Tick rate | 30 Hz | fixed timestep, `dt = 1/30` |
 
 **The light-game invariant.** Light must comfortably outrun the fastest hull, or intel and
@@ -358,25 +347,25 @@ where an order sits in its round trip:
 | Phase | Until | Reads as |
 |---|---|---|
 | In transit | `delivered_at` | pure intention — the fleet does not know yet |
-| Awaiting response | A dark fleet on a fixed return course: estimated travel to the first owned comm-circle edge. Otherwise: the confirming signal's return time. | executing, unconfirmed |
-| Confirmed | — | observed |
+| Awaiting response | the served-picture estimate for compliance light reaching the command center | executing, unconfirmed |
+| Confirmed | the first served fleet sample emitted at or after delivery; a jump specifically requires its flagged landing discontinuity | observed on the map |
 
-The internal legacy field remains named `echo_at` for snapshot compatibility, but its
-meaning is now the expected response above. A fleet destroyed before then drops silently
-rather than producing a phantom confirmation.
+The internal legacy field remains named `echo_at` for snapshot compatibility, but it is only
+an estimate. It can become overdue without confirming anything. The serving pipeline alone
+emits confirmation, so a row cannot outrun the picture and a destroyed fleet cannot produce a
+phantom response.
 
 ### 6.3 Who sees what
 
-Your assets stream sensor data to your command center continuously, each feed delayed by
-that asset's light-distance. This produces two correct fog regimes: **your own forces**
-appear as a delayed-but-coherent picture, like a broadcast on a known tape delay; **rival
-forces** are seen only through your assets' feeds, sharp while you hold contact and
-decaying into a growing uncertainty cone the moment it is lost.
+Your assets stream sensor data to your command center continuously, each sample delayed by
+its straight warp-light distance. **Your own forces** appear as an always-addressable but
+retarded picture. **Rival forces** are present only when their emitted light was detectable
+by one of your assets; dark contacts disappear outside that served coverage.
 
-Positional uncertainty is `age × speed` and applies to **your own fleets as well as
-rivals'**. There is no FTL tether to your own ships: a distant fleet of yours is exactly
-as uncertain as a rival's at the same distance. Certainty tracks proximity to your command
-center, never ownership.
+Potential positional uncertainty is still `age × speed` and applies to **your own fleets as
+well as rivals'**. The UI reports the sighting age rather than drawing a precision shape that
+drive changes could invalidate. There is no FTL tether to your own ships: certainty tracks
+the light path to your command center, never ownership.
 
 **Broadcast versus dark.** Under the Galactic Convention, civilian and capital hulls
 broadcast identity and position galaxy-wide (light-delayed): convoys, corvettes, colony
@@ -411,8 +400,8 @@ formation speed for roughly double the trip time and the corresponding drop in s
 Pursuit is always Full.
 
 **Sensor coverage** is the union of bubbles from your command center, every one of your
-fleets (a Scout projects 1.5×, i.e. 3300 su), and every Sensor Array on a system you own
-(2200 su at tier 1, +880 per tier after). One coverage function feeds all three consumers:
+fleets (a Scout projects 1.5×, i.e. 165,000 su), and every Sensor Array on a system you own
+(110,000 su at tier 1, +44,000 per tier after). One coverage function feeds all three consumers:
 the view filter, picket sensing, and the client's rendering.
 
 ### 6.4 The intel ladder
@@ -443,9 +432,9 @@ never-detected scout leaves no trace.
 You always know precisely how stale your information is; the UI declares it everywhere.
 You never know exactly what changed in the gap. This is the line between an honest
 universe you reason about under defined uncertainty and a game that hides things. The map
-renders staleness as a visible property — uncertainty cones that swell between
-observations and snap tight on reacquisition — so blindness is something you *see as
-shape*, not a number you read.
+renders staleness in the marker and its declared Seen age. A jump landing is intentionally a
+snap with a reacquisition pulse: the discontinuity is the honest shape of newly arrived
+information, not a motion tween through space the fleet never crossed.
 
 A loss must always trace to a decision you made, never to the game concealing something
 it should have shown.
@@ -464,6 +453,26 @@ defeated the mental arithmetic a lightspeed-prediction game needs. The convoy-ve
 feel it was meant to produce is now expressed as a flat speed gap instead of an
 acceleration-and-mass one. Constant speeds also make the whole information model tractable:
 uncertainty is exactly `age × speed`.
+
+A generated **hyperspace lane and relay layer** was also built, playtested, and removed.
+Its wide procedural corridors contradicted gravity-well geometry, its junction routing was
+hard to read, and relay coverage turned the information rule into a collection of special
+cases. The experiment remains in repository history at `18a1a20`; the live game has no lane
+terrain, buoys, repeaters, coupled signals, or hyperspace transit regime.
+
+**Jump drive (Tunable).** A fleet composed entirely of Raiders and Scouts can jump up to
+`JUMP_RANGE = 50,000 su`. It must remain stationary through an uninterrupted
+`JUMP_SPOOL_S = 10 s`; a new order or an engagement cancels the spool. Origin and target must
+both be at least `HYPERLIMIT = 900 su` from every star system and the Market Hub. The jump
+charges the same fuel as traversing that distance at warp (`raw distance × mass` divided by
+`JUMP_FUEL_FACTOR = WARP_FACTOR`); a dry fleet holds the spool until refuelled. The relocation
+is instantaneous physics but ordinary information: observers keep the departure picture
+and replay its delayed spool telemetry until the successful departure event's light arrives,
+then place a provisional arrow at the player-known destination if its information delay is
+longer. Destination-origin light replaces the arrow with the ship and confirms the jump. Any
+rival observer instead loses the old marker when departure light arrives and learns no new
+position until ordinary destination light and detection permit it. Any order copy already
+flying toward the old position is lost; orders issued after the jump remain valid.
 
 | Kind | Speed (su/s) | Hull mass |
 |---|---|---|
@@ -1520,10 +1529,10 @@ X could not have known Y at time T.*
 **The client** renders the per-player filtered stream with Pixi.js — a WebGL-accelerated 2D
 scene, chosen because the map is continuous space with many simultaneously moving elements.
 It holds no authoritative state and performs no game logic. The visual grammar of the
-information model lives here: staleness as fade, contacts as last-known markers with
-uncertainty cones that grow between observations and snap tight on reacquisition.
+information model lives here: explicit Information Delay, last-arrived markers, and a snap/pulse when
+light reveals a genuine jump discontinuity.
 
-The wire protocol is versioned (currently 7) and announced at join so a stale client can
+The wire protocol is versioned (currently 16) and announced at join so a stale client can
 detect a newer server. Static tables — the charter band ladder, the research catalog — ship
 once in the welcome message rather than riding every update; slow-moving per-player sections
 are signature-gated and re-sent only on change; battle records stream incrementally.
@@ -1666,20 +1675,13 @@ none either, since it moves nothing and would otherwise be farmable risk-free.
 
 These are design commitments the code does not implement. Nothing depends on them.
 
-**Warp lanes (player-built infrastructure).** The design called for buildable speed-up
-corridors that work by reducing a ship's effective mass, so one cause generates both a speed
-bonus and a fuel saving, with the benefit scaling with mass — transformative for convoys,
-marginal for raiders, making convoys lane-dependent and raiders open-space roamers by physics
-rather than by rule. Lanes would also restore chokepoint control: a built lane is a known,
-fixed, preferred corridor, which is exactly where a raider lies in wait, giving raiding both
-camping and pursuit flavours. Lanes were to be public-access (building one partly benefits
-your rivals and partly endangers you — free-rider dynamics as a feature, not a bug), with
-every player starting with one home→hub lane.
-
-**None of this exists.** There is no lane type, no construction, and no mass reduction, and
-the fuel-and-speed model it rested on has changed: acceleration was removed (§7), so
-"mass-reduction raises acceleration" no longer has a mechanism. Any lane implementation would
-need a new speed rule.
+**Player-built mass-reduction roads.** Generated hyperspace lanes are retired history, not an
+unbuilt feature: they existed as public geography and were removed in §7. A separate design
+for player-built, public-access corridors has never been implemented. It proposed reducing a
+ship's effective mass so a road gives heavy convoys a larger speed/fuel benefit than light
+raiders and creates visible trade chokepoints. There is currently no road type, construction
+verb, mass reduction, or starting home→hub road. Because acceleration was removed, any future
+version needs a new speed rule rather than reviving the deleted lane code.
 
 **The movable command center.** The design has you relocating your command center onto a
 capital ship or a forward system in the mid-to-late game, so you see a contested front fresher
@@ -1712,6 +1714,13 @@ and no enforcement.
 ---
 
 ## 21. Open Design Questions
+
+**Jump-flash detection.** Today a jump has no special sensor flash: a rival learns the
+departure or arrival only if the ordinary retarded detection rule would reveal that sample.
+Should spooling, departure, or arrival emit a loud but light-delayed transient that briefly
+betrays a dark Raider/Scout beyond normal coverage? If added, it must be a positioned event on
+the same arrival pipeline—not an instant alert—and its counterplay must justify weakening the
+dark fleet identity.
 
 **Balance, everywhere.** Every number in this document is a first-pass playtest value. The
 constants are grouped into `Tunable` blocks per subsystem specifically so one edit re-paces a

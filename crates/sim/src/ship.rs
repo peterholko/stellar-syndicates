@@ -2,8 +2,7 @@
 //!
 //! Two types embody the §7 convoy-vs-raider dial — not a special rule, just
 //! different acceleration / top-speed. Convoys are slow and heavy; raiders are
-//! fast and light and can run a convoy down. (The lane mass-reduction effect of
-//! §7/§10 lands in a later milestone.)
+//! fast and light and can run a convoy down.
 //!
 //! Every ship moves under flip-and-burn and acts on a standing **order**; the
 //! world advances each ship once per tick. There is no real-time piloting — the
@@ -83,7 +82,7 @@ pub enum ShipKind {
     /// from barracks, not slipways.
     Transport,
     /// §emplacements: the CONSTRUCTION SHIP — the working hull that puts
-    /// hyperspace buoys and deep space sensors where they stand. Emplacements
+    /// deep space sensors where they stand. Emplacements
     /// are not conjured at a yard and teleported out; a builder is ordered to
     /// the site, holds there for the assembly, and is FREED when it finishes —
     /// it is the crane, not the kit, so one hull serves a whole programme and
@@ -882,10 +881,8 @@ pub enum DriveState {
     /// Under way at `Regime` speed, locked on its current course.
     Cruising(crate::transit::Regime),
     /// Shutting down to thrusters. Still moving, still unable to steer.
-    /// `from` is the drive being shut down — a HYPERSPACE drive winding down is
-    /// still wound into the lane medium, so its shutdown is the last thing the
-    /// lane transmits for it (§coupled); a warp drive's drop stirs nothing.
-    /// serde default = Warp so pre-`from` snapshots load harmlessly.
+    /// `from` preserves the exact transition duration; serde defaults it to Warp
+    /// so pre-`from` snapshots load harmlessly.
     Dropping {
         #[serde(default = "crate::transit::Regime::warp")]
         from: crate::transit::Regime,
@@ -973,22 +970,16 @@ pub struct Fleet {
     /// fleets are fully manned, which is what they were).
     #[serde(default)]
     pub marines_spent: u32,
-    /// §hyperspace: is the WARP DRIVE lit?
+    /// Is the WARP DRIVE lit? Warp works anywhere outside a gravity well and is
+    /// a state a fleet is in rather than a separate map layer.
     ///
-    /// Warp is the middle of the three drives — thrusters, warp, hyperspace —
-    /// and the only one that works anywhere: it is an overlay on the same
-    /// coordinates, so this is a state a fleet is in rather than a place it went.
-    /// The HYPERSPACE drive is not a flag here because it is not a free choice:
-    /// it only bites near a lane, so whether it is engaged is a fact about where
-    /// the fleet is, read back through `Regime`.
-    ///
-    /// Warp off is the pre-hyperspace game exactly: slow, and quiet — since
+    /// Warp off is slow and quiet — since
     /// signature already scales with speed (§6.3), going dark and going slow are
     /// the same act. serde default = false, so pre-feature fleets load on
     /// thrusters.
     #[serde(default)]
     pub warp: bool,
-    /// §hyperspace: FUEL IN THE TANKS. Carried, not drawn.
+    /// FUEL IN THE TANKS. Carried, not drawn.
     ///
     /// This used to live in system stockpiles, and a moving fleet reached back
     /// to whichever of its owner's systems could pay — from any distance, every
@@ -1014,12 +1005,12 @@ pub struct Fleet {
     /// through, not an instantaneous re-aim.
     #[serde(default)]
     pub drive_state: DriveState,
-    /// §hyperspace: which layer this fleet is moving through, as of the last
+    /// Which cruise regime this fleet was moving through, as of the last
     /// tick it moved. Recorded rather than re-derived so the badge the map shows
     /// is the regime the fleet was actually flown at.
     #[serde(default)]
     pub regime: crate::transit::Regime,
-    /// §hyperspace: this fleet has run dry and is holding. A latch, so the
+    /// This fleet has run dry and is holding. A latch, so the
     /// owner-only notice fires once per stall rather than thirty times a second.
     /// Cleared the tick it is refuelled.
     #[serde(default)]
@@ -1563,8 +1554,8 @@ impl Fleet {
         taken
     }
 
-    /// How far this fleet can still go at `factor` (1 normal, H open, H×LANE on
-    /// an aligned lane). Distance, not time — what a range ring is drawn from.
+    /// How far this fleet can still go at `factor` (1 on thrusters,
+    /// `WARP_FACTOR` in warp). Distance, not time — what a range ring draws.
     pub fn range_at(&self, factor: f64) -> f64 {
         let per_second = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0);
         if per_second <= 1e-12 {
@@ -1647,9 +1638,7 @@ impl Fleet {
         // the way out, turns, and re-enters — and each transition takes time.
         // That is what makes a reversal cost something, and it replaces the old
         // bounded-turn-rate model, which decided the same question by geometry
-        // and lost: past the alignment gate a hull's speed fell tenfold and its
-        // turning circle with it, so a Titan could come about inside a ribbon it
-        // was supposedly far too big to turn in.
+        // and lost: threshold crossings changed both speed and turn geometry.
         let want = if drive && !env.in_well(self.pos) {
             crate::transit::Regime::Warp
         } else {
@@ -1720,8 +1709,7 @@ impl Fleet {
             // ...and so does any change of COURSE. In warp nothing is steering,
             // so wanting to go somewhere other than where you are pointed is not
             // something you can act on — you drop out, come about on thrusters,
-            // and light it again. A fleet on a LANE is exempt: there the road is
-            // steering, and a road bending is not the ship changing its mind.
+            // and light it again.
             DriveState::Cruising(crate::transit::Regime::Warp)
                 if off_course > crate::transit::COURSE_LOCK_RAD =>
             {
@@ -1746,12 +1734,8 @@ impl Fleet {
             crate::transit::Regime::Thrusters => 1.0,
         };
         let speed = self.transit_speed() * factor;
-        // WHO IS STEERING. On thrusters, the fleet. On a lane, the LANE — a road
-        // bending is not the ship changing course, it is the ship being carried
-        // along one, so a fleet riding a ribbon follows it freely. Everywhere
-        // else the course is locked: in warp there is nothing to follow and no
-        // authority to turn with, so the fleet flies the line it committed to
-        // when it lit the drive.
+        // WHO IS STEERING. On thrusters, the fleet. In warp the course is locked,
+        // so the fleet flies the line it committed to when it lit the drive.
         let steered = self.drive_state.can_steer();
         let radius = if steered { 0.0 } else { f64::INFINITY };
 

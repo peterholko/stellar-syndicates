@@ -791,7 +791,7 @@ pub const PLATFORM_TIER_DEFENSE: f64 = 3.0;
 /// Bubble radius of a tier-1 array — matches the global ship/CC bubble, so one
 /// tier buys a ship's worth of standing vision at the system. Tunable.
 ///
-/// §hyperspace: scaled with the galaxy, exactly as `config.sensor_range` is.
+/// Scaled with the galaxy, exactly as `config.sensor_range` is.
 /// Left absolute it would have projected 2,200 against a 110,000 fleet bubble —
 /// the building would have been worthless, and the panel that now reports its
 /// reach as a number would have been reporting a lie.

@@ -92,8 +92,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut config = SimConfig::for_players(seed, max_players);
     // Keep playtest maps reproducible across home-spacing revisions. The normal
-    // default is one buoy throw; HOME_RING_SU can restore an archived layout or
-    // stage a different spacing without changing any other seeded geography.
+    // default preserves the established chart; HOME_RING_SU can restore an
+    // archived layout or stage a different spacing without changing any other
+    // seeded geography.
     if let Some(home_ring_su) = env_positive_f64("HOME_RING_SU") {
         config.home_ring_frac = (home_ring_su / config.galaxy_radius).clamp(0.01, 0.96);
     }

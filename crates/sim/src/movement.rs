@@ -53,16 +53,14 @@ pub fn advance_toward(pos: Vec2, dest: Vec2, speed: f64, dt: f64) -> MoveStep {
     }
 }
 
-/// §hyperspace: advance toward `dest` under a BOUNDED TURN RATE.
+/// Advance toward `dest` under a BOUNDED TURN RATE.
 ///
 /// Speed is unchanged — this is emphatically not the flip-and-burn model §7
 /// removed, which varied speed over time and gave travel a √-shaped law. Only
 /// heading is rate-limited, at `speed·dt / min_radius` radians per tick.
 ///
-/// It is load-bearing rather than flavour: at lane speed a hull's turning circle
-/// is wider than the ribbon, so **coming about inside a lane is physically
-/// impossible** and a reversal necessarily means leaving, arcing through open
-/// hyperspace, and re-entering. That cost is geometry, not a rule.
+/// The live fleet state machine normally passes either a finite thruster turn
+/// radius or infinity for a locked warp course.
 pub fn advance_turning(
     pos: Vec2,
     vel: Vec2,
@@ -150,7 +148,7 @@ pub fn intercept_point(p: Vec2, speed: f64, t: Vec2, vt: Vec2) -> Option<Vec2> {
 
 /// The chase AIM POINT (§8, §14.1). The pursuer:
 ///   1. forms a light-delayed read of where the target IS — the position its
-///      arriving light shows, `target_pos − target_vel·(range/c)`. The delay
+///      arriving light shows, `target_pos − target_vel·warp_light_delay`. The delay
 ///      here is the PURSUER'S OWN light lag to its target — sub-second in a
 ///      local fight — not the command center's. A fleet hunts on its own
 ///      sensors; only ORDERS and NEWS cross the galaxy slowly;
@@ -160,9 +158,8 @@ pub fn intercept_point(p: Vec2, speed: f64, t: Vec2, vt: Vec2) -> Option<Vec2> {
 /// Pure aim: the FLIGHT belongs to `Fleet::advance`, on the same drive
 /// machinery as every other order. Pass `c = INFINITY` for true-present aim.
 pub fn chase_aim(pos: Vec2, speed: f64, target_pos: Vec2, target_vel: Vec2, c: f64) -> Vec2 {
-    let range = (target_pos - pos).length();
     let obs_delay = if c.is_finite() && c > 1e-9 {
-        range / c
+        crate::transit::delay(pos, target_pos, c)
     } else {
         0.0
     };

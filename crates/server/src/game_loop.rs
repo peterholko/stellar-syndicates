@@ -1339,7 +1339,7 @@ impl GameLoop {
             }
         }
         // Drop concluded battles whose conclusion light has reached even the
-        // farthest possible viewer (galaxy diameter / c) — their icon has flipped
+        // farthest possible viewer (galaxy diameter / warp light) — their icon has flipped
         // to aftermath everywhere, so nothing more references them.
         if !self.concluded_battles.is_empty() {
             let max_delay = 2.0 * self.world.config.galaxy_radius
@@ -1471,9 +1471,8 @@ impl GameLoop {
             .retain(|key, _| active_orders.contains(key));
 
         let c = self.world.config.c;
-        // §comms-v2: the delay field is PER PLAYER — covered relay
-        // infrastructure is owned and cuttable, so a rival's sites carry
-        // nothing of yours. Built inside the loop rather than shared across it.
+        // Every corporation gets its own retarded picture, priced from that
+        // corporation's command center over the shared straight-light model.
         let now = self.world.time;
         let tick = self.world.tick;
         let hub = self.world.hub;
@@ -1607,9 +1606,7 @@ impl GameLoop {
             // …plus the ones already TORN DOWN whose news has not reached this
             // command center. The wreck keeps standing on the map exactly as a
             // destroyed ship's ghost keeps flying: learning of a demolition is
-            // itself information, and it travels at signal speed. For a buoy the
-            // report crawls, because the relay that would have carried it is the
-            // thing that just died.
+            // itself information, and it travels at straight warp-light speed.
             for g in &self.gone_emplacements {
                 let seen_standing = g.owner == player_id || view::within_coverage(&coverage, g.pos);
                 if !seen_standing {
@@ -3083,9 +3080,9 @@ mod tests {
     }
 
     /// The in-progress icon of a concluded battle lingers until the CONCLUSION's
-    /// light arrives — `ended_at + |pos − cc| / c` — which is exactly when the
+    /// warp light arrives — `ended_at + transit::delay(pos, cc)` — exactly when the
     /// per-participant aftermath report lands (`ReportScheduler::due_for` gates on
-    /// `event_time + dist/c`, and `event_time == ended_at`). So the icon flips to
+    /// same report wavefront arrives (`event_time == ended_at`). So the icon flips to
     /// aftermath on ONE wavefront: no FTL early-vanish, no gap where the suppressed
     /// participant fleets re-appear. (The bug: the icon used to vanish at true
     /// `ended_at`, `delay` seconds before the aftermath, exposing the stale fleets.)

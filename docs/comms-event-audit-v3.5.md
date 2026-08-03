@@ -1,5 +1,33 @@
 # Communications event audit (v3.5)
 
+> **Superseded by §jump-v1.** The tables below are retained as the historical audit of the
+> relay/bubble build. They must not be read as a description of the live transport model.
+
+## §jump-v1 revision
+
+The physical rule is now singular: every report and directed order takes a straight
+warp-light chord between its event/receiver and the viewer's command center. The following
+v3.5 surfaces were removed with the hyperspace layer:
+
+- comm-bubble edge modes and their LIVE/DELAYED/TUNNEL presentation;
+- re-entry confirmation and nominal bubble-crossing reports;
+- relay-death pricing, frozen fast/slow copies, casualty disclosure, relay circles, and wire;
+- lane-assisted `CommandSignal`/`RoutePreview` hops (the comet uses the straight served solve).
+
+The live jump-specific audit is:
+
+| Surface | Class | §jump-v1 rule |
+|---|---|---|
+| `FleetJumped` | PHYSICS | Persistence/audit event only. It is never pushed directly to a client; the map's per-viewer served position history is the sole presentation. |
+| `JumpFailed` | EVENT | Positioned at the fleet and promoted to its owner only after the failure's straight warp light reaches the command center. |
+| `OrderKind::Jump` confirmation | EVENT | Requires the owner view to serve the flagged landing sample whose emission is at/after order delivery. The analytic spool/response clock remains estimate-only. |
+| Jump position serving | PHYSICS | A flagged discontinuity sample is never interpolated across. The observer sees exactly the last arrived departure position or the arrived landing position, never a fictional point between them. Arrival ordering, not emission ordering, governs the frontier. |
+| In-flight order loss | EVENT | A copy already aimed at the departure point can be lost when the fleet jumps. The lifecycle becomes LOST only through the served loss evidence; no relay-casualty path remains. |
+
+Everything not explicitly revised above retains the audit's general epistemic rule: an
+event-facing surface must share the same arrival wavefront as the player-visible evidence,
+while command-center controls and clearly labelled estimates may be immediate.
+
 This is the durable audit of every server-to-client message and every owner-facing
 state family as of `§comms-v3.5`. Its rule is stricter than ordinary access control:
 private truth is still a leak if a remote change reaches the command center before

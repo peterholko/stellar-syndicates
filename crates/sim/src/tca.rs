@@ -46,7 +46,7 @@ pub const TCA_SHIPMENT_CAP: u32 = 400;
 pub const TCA_FREIGHT_FEE_FRAC: f64 = 0.06;
 
 /// The DISTANCE part of the freight fee: credits per cargo unit per CURRENT
-/// world-space su. The economy was tuned before the map's 50× hyperspace scale;
+/// world-space su. The economy was tuned before the map's 50× galaxy scale;
 /// normalizing by that scale preserves the intended landed-cost curve instead
 /// of making an ordinary home shipment cost more than its cargo. The client is
 /// served this already-normalized coefficient.

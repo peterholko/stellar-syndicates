@@ -162,6 +162,8 @@ pub struct IntelSnapshot {
 /// recall-as-return-home).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrderLoss {
+    /// Legacy field name retained by the wire; this now identifies the fleet
+    /// whose jump made the in-flight copy miss.
     relay: EntityId,
     at: f64,
     news_at: f64,
@@ -181,8 +183,8 @@ struct PendingOrder {
     #[serde(default = "default_player")]
     owner: PlayerId,
     /// Sim time the response is estimated. For a dark fleet ordered back across a
-    /// comm circle this is its physical edge crossing; otherwise it is the old
-    /// analytic light-return estimate. Neither value is confirmation evidence;
+    /// jump this is the analytic compliance-light estimate. It is never
+    /// confirmation evidence;
     /// the legacy field name preserves snapshots and panel countdowns.
     #[serde(default)]
     echo_at: f64,
@@ -199,8 +201,8 @@ struct PendingOrder {
     target: Option<EntityId>,
     #[serde(default)]
     emplacement: Option<crate::emplace::EmplacementKind>,
-    /// Set at the true break instant, but withheld from the owner's wire view
-    /// until `news_at` — the loss and the relay casualty share one wavefront.
+    /// Set at the true jump instant, but withheld from the owner's wire view
+    /// until the loss evidence reaches the command center.
     #[serde(default)]
     loss: Option<PendingOrderLoss>,
 }
@@ -306,6 +308,7 @@ pub struct PendingCommandView {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PendingCommandLossView {
+    /// Legacy wire name; identifies the fleet whose jump broke the copy.
     pub relay: EntityId,
     pub at: f64,
     pub news_at: f64,
@@ -589,7 +592,7 @@ pub struct World {
     /// its only consumer today). One purpose per stream is the rule: a new
     /// randomized subsystem takes `Rng::keyed(seed, "its-name")`, never a share
     /// of this one, so adding or removing a draw in one feature can never
-    /// re-roll another. Galaxy gen, traits, pirates and lanes already derive
+    /// re-roll another. Galaxy gen, traits, and pirates already derive
     /// their own; joining draws nothing at all — and a test pins that.
     rng: crate::rng::Rng,
     /// Ongoing BATTLES (§battles-take-time) — persistent, observable engagement
@@ -1300,7 +1303,7 @@ impl World {
     /// nothing). The
     /// client ticks SIGNAL-OUTBOUND / PRESUMED-DELIVERED copy from the two
     /// timestamps. Neither estimate is evidence; only `OrderConfirmed` retires
-    /// the row, while a disclosed relay break makes it terminal LOST.
+    /// the row, while disclosed jump-loss evidence makes it terminal LOST.
     /// §contestable-territory Part 2: how long an unbroken, defense-suppressed
     /// siege must run before a colony ship can capture — derived from the config
     /// battle timescale so one knob scales both. Surfaced to the client so it can
@@ -1584,7 +1587,7 @@ impl World {
     /// gate the View uses to tint ally systems/fleets. The viewer knows their OWN
     /// membership instantly; `owner`'s membership is known only once the light from
     /// `owner`'s command center has reached the viewer's (`syndicate_since +
-    /// dist/c`), and until then the viewer's picture is `owner`'s PRIOR membership
+    /// straight warp-light delay`), and until then the viewer's picture is `owner`'s PRIOR membership
     /// — so a fresh join isn't seen early and a fresh betrayal isn't seen early.
     pub fn known_ally(&self, viewer: PlayerId, owner: PlayerId, now: f64) -> bool {
         if viewer == owner {
@@ -1593,8 +1596,8 @@ impl World {
         let (Some(v), Some(o)) = (self.players.get(&viewer), self.players.get(&owner)) else {
             return false;
         };
-        let dist = o.command_center.distance(v.command_center);
-        let known = if now >= o.syndicate_since + dist / self.config.c {
+        let delay = crate::transit::delay(o.command_center, v.command_center, self.config.c);
+        let known = if now >= o.syndicate_since + delay {
             o.syndicate
         } else {
             o.syndicate_prev
@@ -2043,7 +2046,7 @@ impl World {
                 ship.vel = Vec2::ZERO; // anchored — the battle holds it in place
                 continue;
             }
-            // §hyperspace: PAY BEFORE YOU MOVE, out of the fleet's own bunkers.
+            // PAY BEFORE YOU MOVE, out of the fleet's own bunkers.
             //
             // The order matters and used to be the other way round: the fleet
             // moved, then a stockpile was charged, and a failed charge only
@@ -2618,7 +2621,7 @@ impl World {
         // the shared speed-signature rule) — never the corp's arrays (that would be
         // a command-center round trip).
         let visible = |ppos: Vec2, bubble: f64, s: &Snap| -> bool {
-            let seen_pos = s.pos - s.vel * (ppos.distance(s.pos) / c);
+            let seen_pos = s.pos - s.vel * crate::transit::delay(ppos, s.pos, c);
             if s.broadcasts {
                 ppos.distance(seen_pos) <= bubble
             } else {
@@ -4557,7 +4560,7 @@ impl World {
                 self.pending_survey_reports.push(SurveyReport {
                     recipient: owner,
                     system,
-                    arrive_at: now + pos.distance(cc) / c,
+                    arrive_at: now + crate::transit::delay(pos, cc, c),
                     relay: false,
                     origin: owner,
                 });
@@ -4740,7 +4743,7 @@ impl World {
     /// knowledge). When the SURVEYOR'S OWN leg lands, fan out ALLY-RELAY legs to
     /// the origin's allies AT THAT MOMENT (`owner cc → ally cc`, the same
     /// chain-delay shape the §syndicates scout-intel relay uses: observed → own
-    /// cc → ally cc, each leg at c). Deterministic + async-fair.
+    /// cc → ally cc, each leg at straight warp light). Deterministic + async-fair.
     fn deliver_survey_reports(&mut self) {
         let now = self.time;
         let c = self.config.c;
@@ -4762,7 +4765,7 @@ impl World {
                         self.pending_survey_reports.push(SurveyReport {
                             recipient: ally,
                             system: r.system,
-                            arrive_at: now + occ.distance(acc) / c,
+                            arrive_at: now + crate::transit::delay(occ, acc, c),
                             relay: true,
                             origin: r.origin,
                         });
@@ -5542,7 +5545,7 @@ impl World {
                 ship_id,
                 dest,
             } => {
-                // §hyperspace: fuel is burned PER TICK as the journey is flown
+                // Fuel is burned PER TICK as the journey is flown
                 // (see `integrate_movement`), not charged up front — a course
                 // change mid-flight would otherwise over-charge for a route never
                 // completed.
@@ -5706,7 +5709,7 @@ impl World {
                 if !self.fleet_supplied_for_orders(*raider_id, *player_id, events) {
                     return;
                 }
-                // §hyperspace: fuel is burned PER TICK as the journey is flown, so
+                // Fuel is burned PER TICK as the journey is flown, so
                 // this is a WARNING, not a charge and not a gate (§9.5 — a cost a
                 // player can knowingly pay; none is a wall).
                 if !self.can_cover_fuel(*player_id, origin, cost) {
@@ -6584,7 +6587,7 @@ impl World {
                     return;
                 }
                 // TEETH REQUIRED: wrecking is a combat act. A crane or a convoy
-                // parked on a buoy does nothing to it.
+                // parked on a sensor does nothing to it.
                 let Some(fleet_id) = self
                     .fleets
                     .get(fleet)
@@ -6948,7 +6951,7 @@ impl World {
                 if !self.fleet_supplied_for_orders(*fleet_id, *player_id, events) {
                     return;
                 }
-                // §hyperspace: fuel is burned PER TICK as the journey is flown, so
+                // Fuel is burned PER TICK as the journey is flown, so
                 // this is a WARNING, not a charge and not a gate (§9.5 — a cost a
                 // player can knowingly pay; none is a wall).
                 if !self.can_cover_fuel(*player_id, origin, cost) {
@@ -7005,7 +7008,7 @@ impl World {
                 if !self.fleet_supplied_for_orders(*fleet_id, *player_id, events) {
                     return;
                 }
-                // §hyperspace: fuel is burned PER TICK as the journey is flown, so
+                // Fuel is burned PER TICK as the journey is flown, so
                 // this is a WARNING, not a charge and not a gate (§9.5 — a cost a
                 // player can knowingly pay; none is a wall).
                 if !self.can_cover_fuel(*player_id, origin, cost) {
@@ -7083,7 +7086,7 @@ impl World {
                 if !self.fleet_supplied_for_orders(*fleet_id, *player_id, events) {
                     return;
                 }
-                // §hyperspace: fuel is burned PER TICK as the journey is flown, so
+                // Fuel is burned PER TICK as the journey is flown, so
                 // this is a WARNING, not a charge and not a gate (§9.5 — a cost a
                 // player can knowingly pay; none is a wall).
                 if !self.can_cover_fuel(*player_id, origin, cost) {
@@ -7143,10 +7146,8 @@ impl World {
             .map(|s| (s.pos, s.sensor_bubble() * radius))
             // §emplacements: DEEP SPACE SENSORS join the same union. A picket is
             // an array that happens to be nowhere in particular, and it is what
-            // shortens the OBSERVATION leg — the half a buoy cannot help with,
-            // since a buoy only makes the trip home faster once you have seen
-            // something. Same research widening; a buoy contributes nothing,
-            // because relaying is not watching.
+            // shortens the OBSERVATION leg without altering the straight-light
+            // trip home. Same research widening as every other sensor source.
             .chain(
                 self.emplacements
                     .iter()
@@ -11536,7 +11537,7 @@ impl World {
         if culprits.is_empty() {
             return;
         }
-        let arrive_at = self.time + pos.distance(self.hub) / self.config.c;
+        let arrive_at = self.time + crate::transit::delay(pos, self.hub, self.config.c);
         self.pending_citations.push(crate::tca::Citation {
             pos,
             occurred_at: self.time,
@@ -11549,7 +11550,7 @@ impl World {
 
     /// Apply every incident whose light has now reached the Market Hub: dock each
     /// culprit the FULL flat loss (no splitting) and issue a PUBLIC citation from
-    /// the hub, which then radiates to every player at c through the ordinary
+    /// the hub, which then radiates to every player at straight warp light through the ordinary
     /// light-gating. Deterministic: the queue drains in push order.
     fn resolve_citations(&mut self, events: &mut Vec<Event>) {
         let now = self.time;
@@ -11586,7 +11587,7 @@ impl World {
 
     /// §TCA: was `system` blockaded as far as an observer at `from` can KNOW right
     /// now? The observer reads the system as it was at RETARDED time
-    /// `now - dist/c`, so a fresh blockade isn't known until its light arrives, and
+    /// `now - straight warp-light delay`, so a fresh blockade isn't known until its light arrives, and
     /// a lifted one still looks blockaded until the lift's light does. Used by the
     /// Market Hub to accept or refuse freight bookings on its own honest,
     /// light-delayed knowledge — never on instant omniscience.
@@ -11594,7 +11595,7 @@ impl World {
         let Some(sys) = self.systems.iter().find(|s| s.id == system) else {
             return false;
         };
-        let seen_at = now - sys.pos.distance(from) / self.config.c;
+        let seen_at = now - crate::transit::delay(sys.pos, from, self.config.c);
         if let Some(b) = sys.blockade
             && seen_at >= b.since
         {
@@ -12774,7 +12775,7 @@ impl World {
     /// Could this owner cover `cost` from a system in reach of `origin`? Pure —
     /// spends nothing. Used for the player's WARNING and for automation's hard
     /// check, so both ask exactly the question `charge_fuel` would answer.
-    /// §hyperspace: CAN A DISPATCH ACTUALLY MAKE THE TRIP?
+    /// CAN A DISPATCH ACTUALLY MAKE THE TRIP?
     ///
     /// A range question now, not a treasury one. It used to ask whether any
     /// system the player owned held `cost` fuel, which made sense only while a
@@ -12798,7 +12799,7 @@ impl World {
     /// §emplacements: RUN THE WORKSITES. A builder holding at its site starts
     /// the clock; when the recipe's build time has elapsed the emplacement
     /// stands and the builder is freed. The site is re-checked at completion —
-    /// the network cannot move, but a rival's buoy may have claimed the spot
+    /// the network cannot move, but a rival's sensor may have claimed the spot
     /// while the builder was in transit — and a refused deployment REFUNDS the
     /// kit to the nearest owned system (§5.1: suspended or returned, never
     /// destroyed).
@@ -12951,7 +12952,7 @@ impl World {
         }
     }
 
-    /// §hyperspace: TOP UP THE BUNKERS of every docked fleet.
+    /// TOP UP THE BUNKERS of every docked fleet.
     ///
     /// Fuel is carried, so it has to be picked up somewhere, and "somewhere" is
     /// wherever the fleet is actually parked — a system its owner or an ally
@@ -13103,9 +13104,8 @@ impl World {
         let nearest = self.nearest_system(home).unwrap_or(hub);
 
         // §emplacements: the player STARTS WITH A CONSTRUCTION SHIP, not a
-        // convoy. The opening act of the hyperspace game is infrastructure —
-        // a home-to-buoy comms link, a tripwire on the approach — and the hull
-        // that does it should be in hand from the first minute rather than gated
+        // convoy. A deep-space sensor picket is an opening option, and the hull
+        // that builds it should be in hand from the first minute rather than gated
         // behind the first 50s build. The opening cargo haul went with the
         // convoy: a builder lifts nothing, so the introduction to the market is
         // now buying your first freighter, not watching one arrive pre-loaded.
@@ -13133,8 +13133,8 @@ impl World {
         // It used to open on a standing home↔hub patrol, so a fresh player's
         // first sight of their own map was a hull already under way on a route
         // they never set — it reads as the ship wandering off on its own. The
-        // patrol also burned the opening fuel seed continuously (§hyperspace,
-        // see `FUEL_HOME_SEED`) for a lap nobody asked for. Patrol is a verb
+        // patrol also burned the opening fuel seed continuously (see
+        // `FUEL_HOME_SEED`) for a lap nobody asked for. Patrol is a verb
         // the player can pick when they want a picket; it is not a state to
         // wake up in.
         //
@@ -23372,7 +23372,7 @@ mod tests {
     /// under warp used to outrun every pursuer, because the chase step moved at
     /// raw hull speed while the prey's `advance` lit its warp drive — predators
     /// were the only fleets in the game denied the drive. Deep space, far from
-    /// every lane and well: the faster hull must close and make contact.
+    /// every well: the faster hull must close and make contact.
     #[test]
     fn a_warping_prey_cannot_outrun_a_warping_pursuer() {
         let mut w = test_world();
@@ -23389,7 +23389,7 @@ mod tests {
         ]);
         let convoy = find_ship(&mut w, d, ShipKind::Convoy);
         let raider = find_ship(&mut w, a, ShipKind::Raider);
-        // Empty deep space: no lanes, no systems, no gravity wells out here.
+        // Empty deep space: no systems or gravity wells out here.
         let start = Vec2::new(900_000.0, 900_000.0);
         {
             let f = w.fleets.get_mut(&convoy).unwrap();
@@ -24746,9 +24746,9 @@ mod tests {
             raider_id: raider,
             target_id: convoy,
         }]);
-        // The commit's light reaches the far raider at ~10 s (dist 4000 / c 400),
-        // and it makes contact ~2 s later. The recall is issued well before that
-        // contact, but its own ~10 s light can't beat the raider to the kill.
+        // The commit's warp-light reaches the far raider at ~2 s, and it makes
+        // contact shortly afterward. A later recall still cannot beat the raider
+        // to the kill once the attack is under way.
         let mut recalled = false;
         let outcome = run_until_raid(&mut w, 120, |w| {
             if !recalled && w.time > 4.0 {
@@ -26314,7 +26314,7 @@ mod tests {
             crate::tca::CitationOffense::FreightRaided,
             "an Intercept is piracy"
         );
-        let expect_arrival = c.occurred_at + c.pos.distance(w.hub) / w.config.c;
+        let expect_arrival = c.occurred_at + crate::transit::delay(c.pos, w.hub, w.config.c);
         assert!(
             (c.arrive_at - expect_arrival).abs() < 1e-9,
             "arrival is exactly the light-travel time"
@@ -26786,7 +26786,8 @@ mod tests {
         }]);
         let colony = near_hub_colony(&mut w, id, 1200.0);
         let c = w.config.c;
-        let lag = 1200.0 / c; // hub <- colony light delay
+        let colony_pos = w.systems.iter().find(|s| s.id == colony).unwrap().pos;
+        let lag = crate::transit::delay(w.hub, colony_pos, c);
 
         // A blockade begins at t = 100.
         {
@@ -30901,10 +30902,11 @@ mod tests {
         ]);
         ally(&mut w, a, b);
         let since = w.players[&b].syndicate_since;
-        let delay = w.players[&a]
-            .command_center
-            .distance(w.players[&b].command_center)
-            / w.config.c;
+        let delay = crate::transit::delay(
+            w.players[&a].command_center,
+            w.players[&b].command_center,
+            w.config.c,
+        );
         assert!(
             delay > DT,
             "homes are far enough apart for a measurable light delay"
@@ -33395,7 +33397,7 @@ mod tests {
             dwell_since: Some(w.time),
         };
         let cc = w.players[&id].command_center;
-        let delay = pos.distance(cc) / w.config.c;
+        let delay = crate::transit::delay(pos, cc, w.config.c);
         assert!(
             delay > 1.0,
             "the frontier prize is far enough for a measurable delay ({delay:.1}s)"

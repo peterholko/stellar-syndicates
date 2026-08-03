@@ -193,7 +193,7 @@ impl ReportScheduler {
     pub fn due_for(&mut self, player: PlayerId, cc: Vec2, c: f64, now: f64) -> Vec<RaidReport> {
         let mut out = Vec::new();
         for r in &mut self.pending {
-            let arrival = r.event_time + r.pos.distance(cc) / c;
+            let arrival = r.event_time + sim::transit::delay(r.pos, cc, c);
             if arrival > now {
                 continue; // light hasn't reached this player yet
             }
@@ -251,7 +251,7 @@ impl ReportScheduler {
         // transient toast — the timeline carries the notice; this feeds the
         // marker/panel). Strictly per-participant.
         for cap in &mut self.pending_captures {
-            let arrival = cap.event_time + cap.pos.distance(cc) / c;
+            let arrival = cap.event_time + sim::transit::delay(cap.pos, cc, c);
             if arrival > now {
                 continue;
             }
@@ -360,21 +360,21 @@ mod tests {
         let captor = PlayerId(2);
         let third = PlayerId(3);
         let pos = Vec2::new(0.0, 0.0);
-        let old_cc = Vec2::new(300.0, 0.0); // 1 s away
-        let cap_cc = Vec2::new(6000.0, 0.0); // 20 s away
+        let old_cc = Vec2::new(300.0, 0.0); // 0.2 s of warp light away
+        let cap_cc = Vec2::new(6000.0, 0.0); // 4 s of warp light away
         let third_cc = Vec2::new(600.0, 0.0); // near, but NOT a participant
 
         let mut sched = ReportScheduler::new();
         sched.ingest(&[capture_event(100.0, old_owner, captor, pos)]);
 
-        // Old owner (1 s) learns first; the captor (20 s) not yet.
+        // Old owner (0.2 s) learns first; the captor (4 s) not yet.
         sched.due_for(old_owner, old_cc, c, 101.5);
         sched.due_for(captor, cap_cc, c, 101.5);
         let lost_id = {
             let lost = sched.retained_captures_for(old_owner);
             assert_eq!(lost.len(), 1);
             assert!(!lost[0].captor, "the old owner's report reads as a LOSS");
-            assert!((lost[0].arrival_time - 101.0).abs() < 1e-9);
+            assert!((lost[0].arrival_time - 100.2).abs() < 1e-9);
             assert_eq!(
                 lost[0].plunder.first().map(|s| s.units),
                 Some(42),
@@ -388,7 +388,7 @@ mod tests {
         );
 
         // The captor's light arrives → their own report, same battle id.
-        sched.due_for(captor, cap_cc, c, 121.0);
+        sched.due_for(captor, cap_cc, c, 105.0);
         {
             let took = sched.retained_captures_for(captor);
             assert_eq!(took.len(), 1);
@@ -410,13 +410,13 @@ mod tests {
         let atk = PlayerId(1);
         let def = PlayerId(2);
         let pos = Vec2::new(0.0, 0.0); // raid happened at origin
-        let atk_cc = Vec2::new(300.0, 0.0); // 1 s of light away
-        let def_cc = Vec2::new(6000.0, 0.0); // 20 s of light away
+        let atk_cc = Vec2::new(300.0, 0.0); // 0.2 s of warp light away
+        let def_cc = Vec2::new(6000.0, 0.0); // 4 s of warp light away
 
         let mut sched = ReportScheduler::new();
         sched.ingest(&[raid_event(100.0, atk, def, pos)]);
 
-        // At t=101.5: attacker's light (1 s) has arrived; defender's (20 s) not.
+        // At t=101.5: attacker's light has arrived; defender's has not.
         assert_eq!(
             sched.due_for(atk, atk_cc, c, 101.5).len(),
             1,
@@ -431,11 +431,11 @@ mod tests {
         // Attacker doesn't get it twice.
         assert_eq!(sched.due_for(atk, atk_cc, c, 130.0).len(), 0);
 
-        // At t=121: defender's light has arrived.
-        let d = sched.due_for(def, def_cc, c, 121.0);
+        // At t=105: defender's light has arrived.
+        let d = sched.due_for(def, def_cc, c, 105.0);
         assert_eq!(d.len(), 1, "defender should now have learned");
         assert!(
-            (d[0].age - 21.0).abs() < 1e-6,
+            (d[0].age - 5.0).abs() < 1e-6,
             "report age should be the light delay"
         );
     }
@@ -449,21 +449,21 @@ mod tests {
         let def = PlayerId(2);
         let third = PlayerId(3);
         let pos = Vec2::new(0.0, 0.0);
-        let atk_cc = Vec2::new(300.0, 0.0); // 1 s away
-        let def_cc = Vec2::new(6000.0, 0.0); // 20 s away
+        let atk_cc = Vec2::new(300.0, 0.0); // 0.2 s of warp light away
+        let def_cc = Vec2::new(6000.0, 0.0); // 4 s of warp light away
         let third_cc = Vec2::new(600.0, 0.0); // near — but NOT a participant
 
         let mut sched = ReportScheduler::new();
         sched.ingest(&[raid_event(100.0, atk, def, pos)]);
 
         // Before anyone's light arrives: nothing retained anywhere.
-        sched.due_for(atk, atk_cc, c, 100.5);
+        sched.due_for(atk, atk_cc, c, 100.1);
         assert!(
             sched.retained_for(atk).is_empty(),
             "not retained before the light arrives"
         );
 
-        // Attacker's light arrives → retained for the attacker, with arrival = event + 1 s.
+        // Attacker's light arrives → retained with its exact warp-light timestamp.
         sched.due_for(atk, atk_cc, c, 101.5);
         let (a_id, a_arrival) = {
             let a = sched.retained_for(atk);
@@ -472,10 +472,10 @@ mod tests {
             (a[0].id, a[0].arrival_time)
         };
         assert!(
-            (a_arrival - 101.0).abs() < 1e-9,
+            (a_arrival - 100.2).abs() < 1e-9,
             "arrival stamp = event + THEIR light delay"
         );
-        // The defender (20 s away) has NOT learned yet — nothing retained.
+        // The defender (4 s away) has NOT learned yet — nothing retained.
         sched.due_for(def, def_cc, c, 101.5);
         assert!(
             sched.retained_for(def).is_empty(),
@@ -483,11 +483,11 @@ mod tests {
         );
 
         // Defender's light arrives → their copy, stamped with THEIR arrival.
-        sched.due_for(def, def_cc, c, 121.0);
+        sched.due_for(def, def_cc, c, 105.0);
         {
             let d = sched.retained_for(def);
             assert_eq!(d.len(), 1);
-            assert!((d[0].arrival_time - 120.0).abs() < 1e-9);
+            assert!((d[0].arrival_time - 104.0).abs() < 1e-9);
             assert!(matches!(d[0].you, Role::Defender));
             assert_eq!(d[0].id, a_id, "both sides retain the SAME battle id");
         }

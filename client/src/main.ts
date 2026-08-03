@@ -14,9 +14,9 @@ const state: ViewState = initialState();
 
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
-// PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
-// Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 14;
+// PROTOCOL_VERSION. v16 distinguishes a presumed jump destination from its
+// later destination-origin confirmation light; see crates/server/src/protocol.rs.
+const EXPECTED_PROTOCOL_VERSION = 16;
 const CONTACT_STALE_AGE_S = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
@@ -1152,7 +1152,9 @@ function ordersZone(g: GhostView): string {
         ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
         : spooling
           ? `spooling ~${Math.max(0, Math.ceil(spoolEnd - now))}s (est)`
-          : `presumed jumped · awaiting light`
+          : g.jump_presumed
+            ? `presumed jumped · report ~${orderEta(g.jump_presumed.report_in)}`
+            : `presumed jumped · awaiting light`
       : outbound
         ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
         : `awaiting response · ${responseEstimate}`;
@@ -1162,7 +1164,9 @@ function ordersZone(g: GhostView): string {
         ? `SIGNAL OUTBOUND — this jump order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
         : spooling
           ? `SPOOLING — estimated from the served picture; movement or combat can interrupt it.`
-          : `PRESUMED JUMPED — awaiting the arrival light that proves the discontinuity.`
+          : g.jump_presumed
+            ? `PRESUMED JUMPED — departure light proves the jump; destination light is expected in about ${orderEta(g.jump_presumed.report_in)}.`
+            : `PRESUMED JUMPED — awaiting the destination light that confirms the discontinuity.`
       : outbound
         ? `SIGNAL OUTBOUND — from the command center's served picture, this ${p.kind} order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
         : `PRESUMED DELIVERED — awaiting compliance light; response ${responseEstimate}.`;
@@ -1336,6 +1340,22 @@ function regimeCell(g: GhostView): string {
   const cruising = typeof d === "object" && "cruising" in d ? d.cruising : null;
   const spooling = typeof d === "object" && "spooling" in d ? d.spooling : null;
   const dropping = typeof d === "object" && "dropping" in d ? d.dropping : null;
+  if (g.jump_presumed) {
+    const report = Math.max(0, Math.ceil(g.jump_presumed.report_in));
+    const tip = `The departure report proves the jump occurred, but no report emitted at the destination has arrived yet. Expected in about ${report}s.`;
+    return stat("Drive", `<span style="color:var(--warn)" title="${esc(tip)}">Jump complete · awaiting report</span>`);
+  }
+  if (g.jump_spool) {
+    const reported = Math.max(0, g.jump_spool.remaining);
+    const age = Math.max(0, g.age);
+    if (g.jump_spool.waiting_for_fuel) {
+      const tip = `Delayed jump telemetry (${age.toFixed(1)}s old): the spool completed but the fleet was waiting for fuel when this report left.`;
+      return stat("Drive", `<span style="color:var(--warn)" title="${esc(tip)}">Jump Drive Ready · awaiting fuel</span>`);
+    }
+    const seconds = Math.max(1, Math.ceil(reported));
+    const tip = `Delayed jump telemetry (${age.toFixed(1)}s old): ${reported.toFixed(1)}s remained when this report left. The map snaps when departure light reaches command.`;
+    return stat("Drive", `<span style="color:var(--warn)" title="${esc(tip)}">Jump Drive Spooling · ${seconds}s</span>`);
+  }
   if (cruising === "warp") {
     const tip = "Warp drive: five times impulse, and it flies anywhere — no lane needed, no heading to hold.";
     return stat("Drive", `<span title="${esc(tip)}">Warp</span>`);
@@ -1378,6 +1398,8 @@ function domainCell(_g: GhostView): string {
 function ownActivity(g: GhostView): string {
   const a = (key: IconKey, label: string, tip: string) => `${icon(key, "sm", tip)} <b>${label}</b>`;
   if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "signal outbound", "Your command is still crossing space to this fleet.");
+  if (g.jump_presumed) return a("delay", "presumed at jump destination", "Awaiting the first report emitted at the new location.");
+  if (g.jump_spool) return a("move", g.jump_spool.waiting_for_fuel ? "jump ready · awaiting fuel" : "jump drive spooling", "Delayed telemetry from this fleet's jump drive.");
   if (g.job) {
     const pct = Math.round(g.job.progress * 100);
     return g.job.kind === "demolishing"
@@ -1397,9 +1419,8 @@ function shipZone(title: string, body: string, modifier = ""): string {
 }
 
 function jobProgress(g: GhostView): string {
-  // Jump spool intentionally does not enter JobView: that channel describes a
-  // current sim job, while this panel must infer jump progress only from the
-  // owner-visible order clock until served landing light confirms the event.
+  // Jump spool stays separate from JobView: it is delayed fleet telemetry shown
+  // in the Drive row, while this channel describes committed construction work.
   if (!g.job) return "";
   const pct = Math.max(0, Math.min(100, g.job.progress * 100));
   const wrecking = g.job.kind === "demolishing";
@@ -1622,8 +1643,8 @@ function updateShipPanel(): void {
       : "Authority Enforcement"
     : shipKindLabel(g.kind);
   const ownTag = own ? badge("accent", "yours") : g.tca ? badge("neutral", "neutral") : badge("negative", "rival");
-  const stale = g.age >= CONTACT_STALE_AGE_S;
-  const panelAge = g.age;
+  const informationDelay = g.jump_presumed?.information_delay ?? g.age;
+  const stale = informationDelay >= CONTACT_STALE_AGE_S;
   const panelPos = g.pos;
   const panelGhost = g;
   const roleLore = own ? shipRoleLore(g) : "";
@@ -1633,10 +1654,12 @@ function updateShipPanel(): void {
     `<h2${roleLore ? ` title="${esc(roleLore)}"` : ""}>${svgIcon(g.kind === "convoy" || g.kind === "freighter" ? "concept-convoy" : "concept-fleet", "md")} ${esc(title)}${roleLore ? ` <span class="sp-role-info" aria-label="Role information" title="${esc(roleLore)}">ⓘ</span>` : ""}</h2></div><div class="panel-title__right">${ownTag}</div></div>` +
     `<button class="sp-close" data-act="close" title="Deselect (Esc)" aria-label="Deselect">✕</button></div>`;
 
-  // Information AGE is the headline stat (the game's identity: you always know HOW
-  // OLD this sighting is).
-  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Seen</dt><dd>${panelAge.toFixed(1)}s ago</dd></div>`;
-  const posTip = "Where the latest arrived warp-light report puts this fleet.";
+  // Information delay is the headline stat. For a presumed jump this is the
+  // delay at the authored destination, not the age of its departure proof.
+  const ageCell = `<div class="stat sp-age ${stale ? "is-stale" : ""}"><dt>Information Delay</dt><dd>${informationDelay.toFixed(1)}s</dd></div>`;
+  const posTip = g.jump_presumed
+    ? "Player-authored jump destination. Departure light proves the jump, but destination-origin light has not arrived yet."
+    : "Where the latest arrived warp-light report puts this fleet.";
   const posCell =
     `<div class="stat" title="${esc(posTip)}"><dt>Position</dt>` +
     `<dd>${fmt(panelPos.x)} · ${fmt(panelPos.y)}</dd></div>`;
@@ -5475,7 +5498,7 @@ function systemFleetsSection(sys: SystemInfo, fleets: GhostView[]): string {
     const status = dockedAtSystem(g, sys.id) ? "docked" : speed > 1 ? "under way" : "holding";
     const tone = status === "docked" ? "accent" : status === "holding" ? "positive" : "neutral";
     const stale = g.age >= CONTACT_STALE_AGE_S
-      ? `<span class="sysfleet__seen is-stale">Seen ${g.age.toFixed(1)}s ago</span>`
+      ? `<span class="sysfleet__seen is-stale">Information delay ${g.age.toFixed(1)}s</span>`
       : "";
     const flagship = g.kind === "titan" ? state.syndicate?.flagship_name?.trim() : null;
     const name = flagship || `${shipKindLabel(g.kind)} fleet`;
