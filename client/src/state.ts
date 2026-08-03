@@ -62,7 +62,7 @@ export interface CommandSignal {
   hops: { pos: Vec2; frac: number }[];
 }
 
-export type OrderVerb = "move" | "raid" | "attack" | "blockade" | "demolish" | "survey";
+export type OrderVerb = "move" | "jump" | "raid" | "attack" | "blockade" | "demolish" | "survey";
 
 /// A map order the player is comparing but has not committed. This lives in
 /// module state (not the 10 Hz rebuilt DOM), so replacing/cancelling an intent

@@ -567,6 +567,9 @@ impl GameLoop {
                             hub: self.world.hub,
                             radius: self.world.config.galaxy_radius,
                             c: self.world.config.c,
+                            jump_range: sim::transit::JUMP_RANGE,
+                            jump_spool_s: sim::transit::JUMP_SPOOL_S,
+                            hyperlimit: sim::transit::HYPERLIMIT,
                             sensor_range: self.world.config.sensor_range,
                             raider_speed: sim::ShipKind::Raider.max_speed(),
                             // Array-bubble tunables so the client renders its own
@@ -654,6 +657,17 @@ impl GameLoop {
                     // Attach the issuing player (the sim enforces ownership).
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::MoveShip {
+                            player_id,
+                            ship_id,
+                            dest,
+                        });
+                    }
+                }
+                ClientMsg::JumpShip { ship_id, dest } => {
+                    // As with ordinary movement, the player supplies intent and
+                    // the sim judges the true fleet when its signal arrives.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::JumpShip {
                             player_id,
                             ship_id,
                             dest,

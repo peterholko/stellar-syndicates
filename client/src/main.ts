@@ -16,7 +16,7 @@ const state: ViewState = initialState();
 // Wire protocol version this build speaks — kept in sync with the server's
 // PROTOCOL_VERSION. (v6 = §research: the per-player view gained the Programme
 // Boards research state; see crates/server/src/protocol.rs.)
-const EXPECTED_PROTOCOL_VERSION = 13;
+const EXPECTED_PROTOCOL_VERSION = 14;
 const CONTACT_STALE_AGE_S = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
@@ -587,6 +587,9 @@ function buildShipPanel(): void {
     } else if (act === "dismiss-lost-order") {
       const id = Number((b as HTMLElement).dataset.orderId);
       if (Number.isFinite(id)) net?.send({ type: "DismissLostOrder", order_id: id });
+    } else if (act === "jump" && state.selectedShipId) {
+      const fleet = state.ghosts.find((g) => g.id === state.selectedShipId && g.own);
+      if (fleet && jumpCapable(fleet)) armJumpAiming(fleet);
     } else if (act === "toggle-policy" && state.selectedShipId) {
       if (expandedShipPolicies.has(state.selectedShipId)) expandedShipPolicies.delete(state.selectedShipId);
       else expandedShipPolicies.add(state.selectedShipId);
@@ -685,6 +688,7 @@ function buildShipPanel(): void {
 function selectShip(id: string): void {
   if (state.selectedShipId !== id) {
     clearPendingIntent();
+    clearJumpAiming(true);
     state.selectedOrderId = null;
   }
   state.selectedShipId = id;
@@ -699,6 +703,7 @@ function selectShip(id: string): void {
 // ship, since both answer "what is this thing I clicked".
 function selectEmplacement(id: string): void {
   clearPendingIntent();
+  clearJumpAiming(true);
   state.selectedOrderId = null;
   state.selectedEmplacementId = id;
   state.selectedShipId = null;
@@ -710,6 +715,7 @@ function selectEmplacement(id: string): void {
 }
 function deselectShip(): void {
   clearPendingIntent();
+  clearJumpAiming(true);
   state.selectedOrderId = null;
   state.selectedShipId = null;
   state.selectedEmplacementId = null;
@@ -732,6 +738,47 @@ const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
 
 // --- Deliberate map orders: preview first, transmit only on confirmation. ----
 let intentBarBuilt = false;
+let jumpAiming: string | null = null;
+
+function jumpCapable(g: GhostView): boolean {
+  const composition = g.composition ?? [];
+  return g.own && composition.length > 0
+    && composition.every((c) => c.kind === "raider" || c.kind === "scout");
+}
+
+function clearJumpAiming(preserveReadout = false): void {
+  if (jumpAiming === null) return;
+  jumpAiming = null;
+  renderer.jumpAimingShipId = null;
+  renderer.stateVersion++;
+  if (!preserveReadout) {
+    readout().innerHTML = `<span class="dim">Jump aiming cancelled.</span>`;
+  }
+}
+
+function armJumpAiming(ship: GhostView): void {
+  if (!state.galaxy || !jumpCapable(ship)) return;
+  clearPendingIntent(true);
+  jumpAiming = ship.id;
+  renderer.jumpAimingShipId = ship.id;
+  renderer.stateVersion++;
+  updateShipPanel();
+  readout().innerHTML = `<b>Jump drive armed.</b> Pick a point within ` +
+    `<b>${Math.round(state.galaxy.jump_range).toLocaleString()} su</b>. ` +
+    `<span class="dim">Both ends must be clear of gravity wells · Esc cancels.</span>`;
+}
+
+function gravityWellAt(pos: Vec2): string | null {
+  const galaxy = state.galaxy;
+  if (!galaxy) return null;
+  if (Math.hypot(pos.x - galaxy.hub.x, pos.y - galaxy.hub.y) < galaxy.hyperlimit) {
+    return "the Market Hub's gravity well";
+  }
+  const system = galaxy.systems.find((s) =>
+    Math.hypot(pos.x - s.pos.x, pos.y - s.pos.y) < galaxy.hyperlimit,
+  );
+  return system ? `${system.name}'s gravity well` : null;
+}
 
 function intentTargetLabel(intent: PendingIntent): string {
   if (intent.verb === "raid" || intent.verb === "attack") {
@@ -756,6 +803,12 @@ function intentSummary(intent: PendingIntent): string {
   let summary = "";
   switch (intent.verb) {
     case "move": summary = `Move ${shipName} → ${target} · signal ~${signal}`; break;
+    case "jump": {
+      const spool = state.galaxy?.jump_spool_s ?? 10;
+      const point = intent.dest ? orderPoint(intent.dest) : "destination";
+      summary = `Jump ${shipName} → ${point} — ~${spool.toFixed(0)} s spool, then instant relocation · signal ~${signal}`;
+      break;
+    }
     case "raid": summary = `RAID ${target} — intercept and steal cargo · signal ~${signal}`; break;
     case "attack": summary = `ATTACK ${target} — full battle, destroys it · signal ~${signal}`; break;
     case "blockade": summary = `BLOCKADE ${target} — strangle its logistics · signal ~${signal}`; break;
@@ -815,6 +868,13 @@ function previewReadout(intent: PendingIntent): void {
       readout().innerHTML = `Prospective route for your <b>${esc(ship ? shipKindLabel(ship.kind) : "fleet")}</b>. ` +
         `<span class="dim">Compare the lighter dashed course with the solid current route, then confirm or cancel.</span>`;
       break;
+    case "jump": {
+      const range = state.galaxy?.jump_range ?? 50_000;
+      readout().innerHTML = `Jump preview from the fleet's <b>light-delayed sighting</b>. ` +
+        `<span class="dim">The dashed circle is the estimated ${Math.round(range).toLocaleString()} su reach; ` +
+        `the sim checks the true fleet, fuel, range, and gravity wells when the signal arrives.</span>`;
+      break;
+    }
     case "raid":
       readout().innerHTML = `Raid preview: pursue <b>${esc(target)}</b> to intercept and steal cargo. ` +
         `<span class="dim">The target will be pursued from its true position when the order arrives.</span>`;
@@ -864,6 +924,14 @@ function moveOrderReadout(ship: GhostView, dest: Vec2): string {
       : "");
 }
 
+function jumpOrderReadout(ship: GhostView): string {
+  const out = ship.age;
+  const spool = state.galaxy?.jump_spool_s ?? 10;
+  return `Jump order away to <b>${esc(shipKindLabel(ship.kind))}</b>. ` +
+    `It should reach the fleet in <b>~${out.toFixed(0)}s</b>, spool for <b>~${spool.toFixed(0)}s</b>, then relocate instantly. ` +
+    `<span class="dim">You see the departure and arrival only when their light reaches your command center.</span>`;
+}
+
 function confirmPendingIntent(): void {
   const intent = state.pendingIntent;
   const ship = intent ? state.ghosts.find((g) => g.id === intent.shipId && g.own) : undefined;
@@ -886,6 +954,14 @@ function confirmPendingIntent(): void {
       net.send({ type: "MoveShip", ship_id: ship.id, dest: intent.dest });
       state.orders[ship.id] = intent.dest;
       readout().innerHTML = moveOrderReadout(ship, intent.dest);
+      break;
+    case "jump":
+      if (!intent.dest) break;
+      net.send({ type: "JumpShip", ship_id: ship.id, dest: intent.dest });
+      // A jump has no traversed route. Do not let an older client-local move
+      // line claim that this fleet is still flying through the intervening map.
+      delete state.orders[ship.id];
+      readout().innerHTML = jumpOrderReadout(ship);
       break;
     case "raid":
       if (!intent.targetId) break;
@@ -1038,6 +1114,7 @@ function orderObject(p: PendingOrderView): string {
   const emplacement = p.target_id ? state.emplacements.find((e) => e.id === p.target_id) : undefined;
   switch (p.kind) {
     case "move": return `Move → ${p.dest ? orderPoint(p.dest) : "destination"}`;
+    case "jump": return `Jump → ${p.dest ? orderPoint(p.dest) : "destination"}`;
     case "raid": return `Raid → ${target ? `rival ${shipKindLabel(target.kind)}` : "rival contact"}`;
     case "attack": return "Attack → rival contact";
     case "construct": {
@@ -1057,24 +1134,38 @@ function ordersZone(g: GhostView): string {
   const now = liveSimTime();
   const lifecycleRows = queue.map((p) => {
     if (p.lost) {
-      return `<div class="sp-order sp-order--lost" title="This directed signal was upstream of a destroyed relay when the route broke. It will never arrive; issue a replacement manually.">` +
+      return `<div class="sp-order sp-order--lost" title="The fleet jumped away before this signal reached its old position. It will never arrive; issue a replacement manually.">` +
         `<span class="sp-order__phase" aria-hidden="true">×</span>` +
-        `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>LOST — relay destroyed</small></span>` +
+        `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small>LOST — the fleet jumped away before the signal arrived</small></span>` +
         `<button class="sp-order__dismiss" data-act="dismiss-lost-order" data-order-id="${p.id}" aria-label="Dismiss lost order">Dismiss</button></div>`;
     }
     const outbound = now < p.arrives_at;
     const selected = state.selectedOrderId === p.id;
+    const spoolEnd = p.arrives_at + (state.galaxy?.jump_spool_s ?? 10);
+    const spooling = p.kind === "jump" && !outbound && now < spoolEnd;
     const phase = outbound ? "◈" : "◔";
     const responseEstimate = now <= p.response_at
       ? `ETA ${orderEta(p.response_at - now)}`
       : `overdue ${orderEta(now - p.response_at)}`;
-    const eta = outbound
-      ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
-      : `awaiting response · ${responseEstimate}`;
-    const status = selected ? orderEtaRange(p.response_at, now) : eta;
-    const tip = outbound
-      ? `SIGNAL OUTBOUND — from the command center's served picture, this ${p.kind} order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
-      : `PRESUMED DELIVERED — awaiting compliance light; response ${responseEstimate}.`;
+    const eta = p.kind === "jump"
+      ? outbound
+        ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
+        : spooling
+          ? `spooling ~${Math.max(0, Math.ceil(spoolEnd - now))}s (est)`
+          : `presumed jumped · awaiting light`
+      : outbound
+        ? `signal outbound · ETA ${orderEta(p.arrives_at - now)}`
+        : `awaiting response · ${responseEstimate}`;
+    const status = selected && p.kind !== "jump" ? orderEtaRange(p.response_at, now) : eta;
+    const tip = p.kind === "jump"
+      ? outbound
+        ? `SIGNAL OUTBOUND — this jump order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
+        : spooling
+          ? `SPOOLING — estimated from the served picture; movement or combat can interrupt it.`
+          : `PRESUMED JUMPED — awaiting the arrival light that proves the discontinuity.`
+      : outbound
+        ? `SIGNAL OUTBOUND — from the command center's served picture, this ${p.kind} order should reach the fleet in ${orderEta(p.arrives_at - now)}.`
+        : `PRESUMED DELIVERED — awaiting compliance light; response ${responseEstimate}.`;
     return `<button class="sp-order${selected ? " is-selected" : ""}${outbound ? "" : " is-presumed"}" data-act="select-order" data-order-id="${p.id}" aria-pressed="${selected}" title="${esc(tip)}">` +
       `<span class="sp-order__phase" aria-hidden="true">${phase}</span>` +
       `<span class="sp-order__copy"><b>${esc(orderObject(p))}</b><small${selected ? ` class="is-estimate"` : ""}>${status}</small></span></button>`;
@@ -1123,6 +1214,15 @@ function postureSection(g: GhostView): string {
     `<button class="act${cur === m ? " is-on" : ""}" data-act="posture" data-mode="${m}" title="${esc(hint)}">${esc(label)}</button>`;
   // Short labels; each posture's full description is its button tooltip (§UX-diet).
   return `<div class="sp-sec">${icon("posture", "sm")} Posture</div><div class="sp-line">${POSTURE_META.map((p) => btn(p.key, p.label, p.hint)).join(" ")}</div>`;
+}
+
+function jumpSection(g: GhostView): string {
+  if (!jumpCapable(g) || !state.galaxy) return "";
+  const armed = jumpAiming === g.id;
+  return `<div class="sp-line"><button class="act${armed ? " is-on" : ""}" data-act="jump" ` +
+    `title="Arm the jump drive and choose a served-picture destination. The sim validates the true fleet when the light-delayed order arrives.">` +
+    `Jump drive · J</button></div>` +
+    `<div class="sp-line dim">Pick a point within ${Math.round(state.galaxy.jump_range).toLocaleString()} su — both ends must be clear of gravity wells.</div>`;
 }
 
 // Flagship precedence (drawn/named order) — also the composition display order.
@@ -1297,6 +1397,9 @@ function shipZone(title: string, body: string, modifier = ""): string {
 }
 
 function jobProgress(g: GhostView): string {
+  // Jump spool intentionally does not enter JobView: that channel describes a
+  // current sim job, while this panel must infer jump progress only from the
+  // owner-visible order clock until served landing light confirms the event.
   if (!g.job) return "";
   const pct = Math.max(0, Math.min(100, g.job.progress * 100));
   const wrecking = g.job.kind === "demolishing";
@@ -1365,8 +1468,9 @@ function managementZone(g: GhostView): string {
     (open ? `<div class="sp-fold__body">${controls}</div>` : "") + `</section>`;
 }
 
-// OWN ship: NOW first, then what it carries, then contextual verbs and the two
-// deliberately quiet disclosure zones. No command shortcuts live in this panel.
+// OWN ship: NOW first, then orders, payload, and contextual verbs. The jump
+// drive is deliberately exposed here because it is an explicit two-step map
+// command, not a standing policy toggle.
 function ownBody(g: GhostView): string {
   const payload: string[] = [compositionSection(g)];
   if (hauls(g)) {
@@ -1385,6 +1489,7 @@ function ownBody(g: GhostView): string {
   return nowZone(g) +
     ordersZone(g) +
     shipZone("Payload", payload.join("")) +
+    (jumpCapable(g) ? shipZone("Jump drive", jumpSection(g), "sp-zone--jump") : "") +
     (g.kind === "builder" ? shipZone("Construct", emplaceSection(g), "sp-zone--construct") : "") +
     standingPolicyZone(g) +
     managementZone(g);
@@ -3612,6 +3717,42 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     // §aftermath-select: any fresh map click drops the concluded-battle marker
     // ring; the aftermath/capture branches below re-set it if they hit a marker.
     renderer.selectedBattleMarkerId = null;
+    // Jump aiming owns the next map click, including clicks over systems. The
+    // preview is anchored to the SERVED ghost and public well geometry only;
+    // truth is deliberately left to the sim when the order arrives.
+    if (jumpAiming && state.galaxy) {
+      const ship = state.ghosts.find((g) => g.id === jumpAiming && g.own);
+      if (!ship || !jumpCapable(ship)) {
+        clearJumpAiming(true);
+        updateShipPanel();
+        readout().innerHTML = `<span style="color:var(--warn)">That fleet is no longer available for a jump.</span>`;
+        return;
+      }
+      const dest = renderer.screenToWorld(sx, sy);
+      const distance = Math.hypot(dest.x - ship.pos.x, dest.y - ship.pos.y);
+      const originWell = gravityWellAt(ship.pos);
+      const destinationWell = gravityWellAt(dest);
+      if (distance > state.galaxy.jump_range + 1e-6) {
+        readout().innerHTML = `<span style="color:var(--warn)"><b>Out of jump range.</b> ` +
+          `${Math.round(distance).toLocaleString()} su from the served sighting; maximum ` +
+          `${Math.round(state.galaxy.jump_range).toLocaleString()} su.</span>`;
+        return;
+      }
+      if (originWell) {
+        readout().innerHTML = `<span style="color:var(--warn)"><b>Cannot spool here.</b> ` +
+          `The served sighting is inside ${esc(originWell)}.</span>`;
+        return;
+      }
+      if (destinationWell) {
+        readout().innerHTML = `<span style="color:var(--warn)"><b>Cannot jump there.</b> ` +
+          `The destination is inside ${esc(destinationWell)}.</span>`;
+        return;
+      }
+      clearJumpAiming(true);
+      updateShipPanel();
+      beginPendingIntent({ shipId: ship.id, verb: "jump", dest });
+      return;
+    }
     // §contestable-territory Part 1: BLOCKADE PREVIEW. With one of your RAIDER
     // fleets selected, clicking a rival-owned system proposes a blockade there —
     // the raider's second verb, mirroring "click a rival contact to raid." Runs
@@ -4134,14 +4275,17 @@ function installInteraction(): void {
   $("zoom-out").addEventListener("click", () => renderer.viewMode.type === "battle" ? closeBattleViewer() : renderer.zoomByFactor(1 / 1.3));
   $("zoom-reset").addEventListener("click", () => renderer.viewMode.type === "battle" ? closeBattleViewer() : renderer.resetView());
 
-  // Keyboard: Enter/Esc commit or cancel a map-order preview; R recalls the
-  // selected raider; M toggles the Hub Exchange panel.
+  // Keyboard: Enter/Esc commit or cancel a map-order preview; J arms a selected
+  // jump-capable fleet; R recalls the selected raider; M opens the market.
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
     const selShip = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
     if (e.key === "Enter" && state.pendingIntent) {
       e.preventDefault();
       confirmPendingIntent();
+    } else if ((e.key === "j" || e.key === "J") && selShip?.own && jumpCapable(selShip)) {
+      e.preventDefault();
+      armJumpAiming(selShip);
     } else if ((e.key === "r" || e.key === "R") && selShip?.own && net) {
       net.send({ type: "RecallRaid", raider_id: selShip.id });
       delete state.raids[selShip.id]; // break off the intercept estimate
@@ -4170,7 +4314,10 @@ function installInteraction(): void {
     } else if (e.key === "Escape") {
       // A prospective order is the topmost map interaction: cancel it without
       // also closing the selection/panels beneath it.
-      if (state.pendingIntent) {
+      if (jumpAiming) {
+        clearJumpAiming();
+        updateShipPanel();
+      } else if (state.pendingIntent) {
         clearPendingIntent();
       } else if (renderer.isSystemScrubbing()) {
         renderer.cancelSystemScrub();

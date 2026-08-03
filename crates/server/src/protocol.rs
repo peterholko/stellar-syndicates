@@ -19,12 +19,12 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 11 by §comms-v3.3:
-/// terminal relay-loss orders, relay casualty summaries, explicit arrived-
-/// evidence confirmations, and dismissing a learned loss are now on the wire.
+/// The client↔server wire protocol version. BUMPED to 14 by §jump-v1: the
+/// jump-drive intent and its public range/spool/well constants are now on the
+/// wire.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +40,14 @@ pub enum ClientMsg {
     /// Order one of the player's own ships to a destination. Travels at light
     /// speed to the ship (§6); the server attaches the issuing player.
     MoveShip {
+        ship_id: EntityId,
+        dest: Vec2,
+    },
+
+    /// Order a jump-capable fleet to spool and relocate. The sim validates the
+    /// true fleet, fuel, range, and both gravity-well endpoints when this
+    /// light-delayed command arrives.
+    JumpShip {
         ship_id: EntityId,
         dest: Vec2,
     },
@@ -761,6 +769,12 @@ pub struct GalaxyInfo {
     pub radius: f64,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,
+    /// Public jump-drive geometry and timing. These mirror the sim constants so
+    /// the client can preview an honest, served-picture estimate; the sim still
+    /// decides legality against truth when the command arrives.
+    pub jump_range: f64,
+    pub jump_spool_s: f64,
+    pub hyperlimit: f64,
     /// Sensor detection radius each of the player's assets projects — lets the
     /// client draw its sensor coverage around its own ships + command center.
     pub sensor_range: f64,
@@ -2040,6 +2054,20 @@ pub fn player_id_from_name(name: &str) -> PlayerId {
 #[cfg(test)]
 mod wire_contract {
     use super::*;
+
+    #[test]
+    fn jump_ship_parses_off_the_wire() {
+        let raw = r#"{"type":"JumpShip","ship_id":"33","dest":{"x":42000.0,"y":-7000.0}}"#;
+        let msg: ClientMsg =
+            serde_json::from_str(raw).expect("the client's literal jump message must parse");
+        match msg {
+            ClientMsg::JumpShip { ship_id, dest } => {
+                assert_eq!(ship_id, sim::EntityId(33));
+                assert_eq!(dest, sim::Vec2::new(42_000.0, -7_000.0));
+            }
+            other => panic!("parsed into the wrong variant: {other:?}"),
+        }
+    }
 
     /// §emplacements: the EXACT JSON the client's build-here button sends must
     /// parse. This variant was missing at launch — the client spoke, the

@@ -337,6 +337,9 @@ export interface GalaxyInfo {
   hub: Vec2;
   radius: number;
   c: number; // speed of light, sim units / s
+  jump_range: number; // maximum point-to-point jump distance (su)
+  jump_spool_s: number; // uninterrupted spool before instantaneous relocation
+  hyperlimit: number; // gravity-well exclusion radius at both jump endpoints
   sensor_range: number; // detection radius each of your assets projects
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
   /// The sensor-bubble multiplier a SCOUT projects over the standard ship
@@ -806,6 +809,7 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
+  | { type: "JumpShip"; ship_id: EntityId; dest: Vec2 }
   /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
   /// PARKED (fly it there first; no separate site point). The field is
   /// `emplacement`, not `kind` — the server's Command enum is tagged on that name.
@@ -1067,7 +1071,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
+export type OrderKind = "move" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids

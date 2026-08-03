@@ -113,6 +113,12 @@ interface GhostSprite {
   shown?: { x: number; y: number };
 }
 
+interface ReacquireFx {
+  oldPos: Vec2;
+  newPos: Vec2;
+  startedMs: number;
+}
+
 // §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
 // system's geometry (glow, ownership rings, blockade/enclave/node dashes,
 // selection ring, dot fallback) exactly as the old per-frame Graphics did; the
@@ -151,8 +157,9 @@ const HYPERLIMIT_SU = 900;
 const EMPLACEMENT_PX = 34;
 const EMPLACEMENT_MAX_PX = 96;
 const SMOOTH_RATE = 9.0; // e-folds per second
-// Rivals may snap across genuinely discontinuous newly arrived information;
-// ordinary own-fleet corrections remain eased.
+const REACQUIRE_FX_MS = 500; // Tunable: served jump snap arrival pulse.
+// Any fleet may snap across genuinely discontinuous newly arrived information;
+// ordinary corrections remain eased.
 const SMOOTH_SNAP_SU = 4_000;
 const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
@@ -322,6 +329,10 @@ export class Renderer {
   // of removeChildren()+new every frame). Eliminates the per-frame allocation
   // churn — the drawn output is identical, only the object churn is gone.
   private orderGfx = new Graphics(); // convoy order lines (pooled)
+  private jumpEstimateText = new Text({
+    text: "est.",
+    style: new TextStyle({ fill: COL_ROUTE_PREVIEW, fontFamily: "ui-monospace, monospace", fontSize: 9 }),
+  });
   private anchorGfx = new Graphics(); // anchor circles (pooled)
   private ccGfx = new Graphics(); // command-center pulse (pooled)
   private homeText: Text | null = null; // the viewer's "HOME" seat label (pooled)
@@ -347,6 +358,8 @@ export class Renderer {
   selectedBattleMarkerId: number | null = null;
   private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
+  private reacquireGfx = new Graphics();
+  private reacquireFx: ReacquireFx[] = [];
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
   private interceptLabels = new Map<string, Text>();
@@ -422,6 +435,9 @@ export class Renderer {
   // and, for the systems layer, when an animated system (rival breath / blockade
   // pulse) is on screen. Idle frames with none of these do no geometry work.
   stateVersion = 0;
+  /// Fleet whose next map click chooses a jump destination. Presentation state
+  /// owned by main.ts; the range ring always anchors to its served ghost.
+  jumpAimingShipId: string | null = null;
   private lastStateVersion = -1;
   private lastSelShip: string | null = null;
   private lastSelSystem: string | null = null;
@@ -458,6 +474,7 @@ export class Renderer {
       this.orderLayer,
       this.interceptGfx, // soft intercept estimate, under the ghosts it guides
       this.aftermathLayer, // §battle-aftermath markers, under the ghosts
+      this.reacquireGfx, // served jump discontinuity, beneath the fresh marker
       this.ghostsLayer,
       this.signalsLayer,
     );
@@ -466,7 +483,9 @@ export class Renderer {
     // layers (drawn via clear()+redraw, never re-allocated per frame). Child order
     // preserves the old draw order: anchor circles, then HOME label, then the
     // command-center pulse on top.
-    this.orderLayer.addChild(this.orderGfx);
+    this.jumpEstimateText.anchor.set(0.5, 1);
+    this.jumpEstimateText.visible = false;
+    this.orderLayer.addChild(this.orderGfx, this.jumpEstimateText);
     this.homeText = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
     this.homeText.anchor.set(0.5, 1);
     this.homeText.visible = false;
@@ -1586,6 +1605,7 @@ export class Renderer {
     // output is identical. Runs every frame — order lines follow the moving ghosts.
     const g = this.orderGfx;
     g.clear();
+    this.jumpEstimateText.visible = false;
     // A pending intent is static, owner-only PLAN geometry rooted in the last
     // served sighting. It remains until a served sample at/after delivery makes
     // the fleet's actual flight plan observable; it never advances a marker.
@@ -1670,6 +1690,45 @@ export class Renderer {
     // directly. Every prospective leg uses a short 3/3 dash, visibly
     // distinct from the current route's longer 6/5 warp dashes.
     const intent = state.pendingIntent;
+    const jumpShipId = intent?.verb === "jump" ? intent.shipId : this.jumpAimingShipId;
+    const jumpGhost = jumpShipId
+      ? state.ghosts.find((candidate) => candidate.id === jumpShipId && candidate.own)
+      : undefined;
+    if (jumpGhost && state.galaxy) {
+      const origin = this.worldToScreen(jumpGhost.pos);
+      const rangePx = state.galaxy.jump_range * this.scale;
+      // The reach is explicitly estimated: it is centered on the served
+      // sighting, not the fleet's hidden true position when the order arrives.
+      dashedCircle(g, origin.x, origin.y, rangePx, 10);
+      g.stroke({ width: 1.2, color: COL_ROUTE_PREVIEW, alpha: 0.55 });
+      this.jumpEstimateText.visible = true;
+      this.jumpEstimateText.position.set(origin.x, origin.y - rangePx - 3);
+
+      // Warm well circles are feedback, not new terrain: both ends of a jump
+      // must lie outside the public HYPERLIMIT geometry.
+      const wells = [state.galaxy.hub, ...state.galaxy.systems.map((system) => system.pos)];
+      for (const well of wells) {
+        if (Math.hypot(well.x - jumpGhost.pos.x, well.y - jumpGhost.pos.y)
+            > state.galaxy.jump_range + state.galaxy.hyperlimit) continue;
+        const center = this.worldToScreen(well);
+        g.circle(center.x, center.y, state.galaxy.hyperlimit * this.scale)
+          .stroke({ width: 1, color: COL_IMPULSE_BOUNDARY, alpha: 0.22 });
+      }
+
+      if (intent?.verb === "jump" && intent.dest) {
+        const target = this.worldToScreen(intent.dest);
+        const distance = Math.hypot(intent.dest.x - jumpGhost.pos.x, intent.dest.y - jumpGhost.pos.y);
+        const inWell = wells.some((well) =>
+          Math.hypot(intent.dest!.x - well.x, intent.dest!.y - well.y) < state.galaxy!.hyperlimit,
+        );
+        const valid = distance <= state.galaxy.jump_range && !inWell;
+        dashedLine(g, origin.x, origin.y, target.x, target.y, 5, 5);
+        g.stroke({ width: 1.35, color: valid ? COL_ROUTE_PREVIEW : COL_THREAT, alpha: 0.82 });
+        dashedCircle(g, target.x, target.y, 8, 6);
+        g.stroke({ width: 1.6, color: valid ? COL_ROUTE_PREVIEW : COL_THREAT, alpha: 0.95 });
+      }
+    }
+    if (intent?.verb === "jump") return;
     if (!intent?.dest) return;
     const ghost = state.ghosts.find((x) => x.id === intent.shipId && x.own);
     if (!ghost) return;
@@ -1903,6 +1962,45 @@ export class Renderer {
     return pinned;
   }
 
+  private spawnReacquisition(oldPos: Vec2, newPos: Vec2): void {
+    this.reacquireFx.push({
+      oldPos: { ...oldPos },
+      newPos: { ...newPos },
+      startedMs: performance.now(),
+    });
+  }
+
+  private updateReacquisitions(): void {
+    const now = performance.now();
+    const g = this.reacquireGfx;
+    g.clear();
+    for (let i = this.reacquireFx.length - 1; i >= 0; i--) {
+      const fx = this.reacquireFx[i];
+      const t = clamp01((now - fx.startedMs) / REACQUIRE_FX_MS);
+      if (t >= 1) {
+        this.reacquireFx.splice(i, 1);
+        continue;
+      }
+      const oldScreen = this.worldToScreen(fx.oldPos);
+      const newScreen = this.worldToScreen(fx.newPos);
+      const eased = t * t * (3 - 2 * t);
+      const head = {
+        x: oldScreen.x + (newScreen.x - oldScreen.x) * eased,
+        y: oldScreen.y + (newScreen.y - oldScreen.y) * eased,
+      };
+      g.moveTo(oldScreen.x, oldScreen.y).lineTo(head.x, head.y).stroke({
+        width: 2.2,
+        color: COL_OWN,
+        alpha: 0.45 * (1 - t),
+      });
+      g.circle(head.x, head.y, 4 + 10 * t).stroke({
+        width: 1.2,
+        color: COL_OWN,
+        alpha: 0.55 * (1 - t),
+      });
+    }
+  }
+
   /// §zoom-continuum: the smoothstep shared by two distinct size bands.
   /// Machines use the default 12→24 interval and freeze thereafter; bodies pass
   /// 72→96 explicitly. Zero-slope endpoints make either interval seamless.
@@ -2060,7 +2158,8 @@ export class Renderer {
     } else {
       const jump = Math.hypot(target.x - prev.x, target.y - prev.y);
       const snapAt = Math.max(SMOOTH_SNAP_SU, Math.hypot(ghost.vel.x, ghost.vel.y) * SMOOTH_SNAP_S);
-      if (!own && jump > snapAt) {
+      if (jump > snapAt) {
+        if (own) this.spawnReacquisition(prev, target);
         sp.shown = { ...target };
       } else {
         const k = 1 - Math.exp(-SMOOTH_RATE * Math.max(this.frameDt, 1 / 240));
@@ -2455,6 +2554,7 @@ export class Renderer {
           this.ghosts.delete(id);
         }
       }
+      this.updateReacquisitions();
 
       this.drawOrders(state, orderFleetIds);
       this.drawIntercepts(state, ghostById);
