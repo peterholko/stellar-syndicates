@@ -55,6 +55,36 @@ impl Timeline {
         // Every notice rides its own straight warp-light wavefront.
         for e in events {
             match &e.payload {
+                EventPayload::JumpFailed {
+                    owner,
+                    fleet,
+                    pos,
+                    reason,
+                } => {
+                    if let Some(cc) = world.players.get(owner).map(|corp| corp.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let why = match reason {
+                            sim::JumpFailReason::NotAJumpFleet => {
+                                "the formation no longer consists entirely of jump-capable hulls"
+                            }
+                            sim::JumpFailReason::OriginInGravityWell => {
+                                "the fleet is inside a gravity well"
+                            }
+                            sim::JumpFailReason::TargetInGravityWell => {
+                                "the destination is inside a gravity well"
+                            }
+                            sim::JumpFailReason::OutOfRange => {
+                                "the destination is beyond jump range"
+                            }
+                        };
+                        self.push(
+                            *owner,
+                            observe,
+                            TimelineSeverity::Warn,
+                            format!("Jump failed for fleet {fleet}: {why}."),
+                        );
+                    }
+                }
                 // Own economy / automation uses the SAME physical origin and
                 // wavefront as the live receipt. Otherwise an offline digest
                 // could disclose a fill or delivery before the normal UI did.
@@ -385,6 +415,12 @@ impl Timeline {
                             "Order refused: the fleet is out of Provisions and cannot set out. \
                              Ship food to a system near it — it keeps its guns and its current \
                              order, and moves again the moment it is fed."
+                                .to_string(),
+                        sim::OrderRejectReason::NotAJumpFleet =>
+                            "Order refused: only all-Raider or all-Scout formations carry jump drives."
+                                .to_string(),
+                        sim::OrderRejectReason::TargetInGravityWell =>
+                            "Order refused: jump destinations must be outside every system and Market Hub gravity well."
                                 .to_string(),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);

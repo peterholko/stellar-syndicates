@@ -34,6 +34,13 @@ pub enum Command {
         dest: Vec2,
     },
 
+    /// Spool and jump a dark fleet to a fixed realspace point.
+    JumpShip {
+        player_id: PlayerId,
+        ship_id: EntityId,
+        dest: Vec2,
+    },
+
     /// Commit one of the player's raiders to intercept a target ship (§8). Like
     /// any novel command to a mobile asset, it travels at light speed: the
     /// raider only begins pursuing once the order's outbound light reaches it.

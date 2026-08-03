@@ -63,7 +63,7 @@ pub use doctrine::{
     RetreatThreshold,
 };
 pub use event::{
-    BuildRejectReason, DivertAction, Event, EventPayload, FreightStage, OrderKind,
+    BuildRejectReason, DivertAction, Event, EventPayload, FreightStage, JumpFailReason, OrderKind,
     OrderRejectReason, RaidOutcome, TradeEvent, TradeRejectReason,
 };
 pub use explore::{RichnessBand, SURVEY_INITIAL_RADIUS};

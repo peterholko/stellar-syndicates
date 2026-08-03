@@ -206,8 +206,14 @@ impl ShipKind {
                 // §ground: a troop convoy is a declared civilian-escort formation
                 // — an invasion cannot be a surprise.
                 | ShipKind::Transport
+                | ShipKind::Builder
                 | ShipKind::Freighter
         )
+    }
+
+    /// Jump drives are carried only by the two dark reconnaissance/strike hulls.
+    pub fn has_jump_drive(self) -> bool {
+        matches!(self, ShipKind::Raider | ShipKind::Scout)
     }
 
     /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
@@ -695,6 +701,12 @@ pub enum FleetOrder {
     MoveTo {
         dest: Vec2,
     },
+    /// Hold position while the world validates and manages the 10-second spool.
+    Jump {
+        dest: Vec2,
+        #[serde(default)]
+        spool_started: Option<f64>,
+    },
     /// Cycle forever through a list of waypoints, dwelling briefly at each.
     /// (M2 demo behaviour so the shared world is visibly alive; real
     /// player-issued orders arrive in M4/M5.)
@@ -933,6 +945,10 @@ pub struct Fleet {
     pub pos: Vec2,
     pub vel: Vec2,
     pub order: FleetOrder,
+    /// True-time stamp of the last discontinuous relocation. The view samples
+    /// this in commit 3; no player-facing surface reads it directly.
+    #[serde(default)]
+    pub last_jump: Option<f64>,
     /// Cargo carried (convoys only; raiders carry none). Broadcast withholds
     /// this — it is revealed by sensor range, not by the Convention. Capacity
     /// scales with the number of convoys aboard; existing single-convoy rules
@@ -1130,6 +1146,7 @@ impl Fleet {
             pos,
             vel: Vec2::ZERO,
             order,
+            last_jump: None,
             cargo,
             mission: None,
             defense: None,
@@ -1473,6 +1490,11 @@ impl Fleet {
         self.composition.keys().any(|k| k.broadcasts())
     }
 
+    /// A mixed formation jumps only when every hull carries a drive.
+    pub fn can_jump(&self) -> bool {
+        !self.composition.is_empty() && self.composition.keys().all(|k| k.has_jump_drive())
+    }
+
     /// §explore: is this fleet ACTIVELY SURVEYING (in the dwell window)? Drives
     /// the loudness multiplier through the one shared signature path — true only
     /// while the dwell clock runs, never during the approach.
@@ -1617,7 +1639,7 @@ impl Fleet {
         } else {
             Vec2::ZERO
         };
-        let under_way = !matches!(self.order, FleetOrder::Idle);
+        let under_way = !matches!(self.order, FleetOrder::Idle | FleetOrder::Jump { .. });
         let drive = self.warp || (under_way && !env.in_well(self.pos));
         // §course-change: DRIVE THE STATE MACHINE, then read speed off it.
         //
@@ -1636,6 +1658,7 @@ impl Fleet {
         // How far the course it WANTS is from the course it is ON.
         let aim = match self.order {
             FleetOrder::MoveTo { dest } => dest - self.pos,
+            FleetOrder::Jump { .. } => Vec2::ZERO,
             FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => {
                 site - self.pos
             }
@@ -1735,6 +1758,9 @@ impl Fleet {
         match &mut self.order {
             FleetOrder::Idle => {
                 // Holds station. (Already at rest.)
+                self.vel = Vec2::ZERO;
+            }
+            FleetOrder::Jump { .. } => {
                 self.vel = Vec2::ZERO;
             }
             FleetOrder::MoveTo { dest } => {
@@ -1905,6 +1931,13 @@ mod tests {
         // Raiders and/or scouts only → dark.
         assert!(!fleet(&[(ShipKind::Raider, 3)], None).broadcasts());
         assert!(!fleet(&[(ShipKind::Raider, 2), (ShipKind::Scout, 1)], None).broadcasts());
+    }
+
+    #[test]
+    fn jump_drive_kinds_are_exactly_the_dark_kinds() {
+        for kind in ALL_SHIP_KINDS {
+            assert_eq!(kind.has_jump_drive(), !kind.broadcasts(), "{kind:?}");
+        }
     }
 
     #[test]

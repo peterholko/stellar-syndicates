@@ -235,7 +235,7 @@ fn pending_order_subject(
     Option<crate::emplace::EmplacementKind>,
 ) {
     match order {
-        FleetOrder::MoveTo { dest } => (Some(*dest), None, None),
+        FleetOrder::MoveTo { dest } | FleetOrder::Jump { dest, .. } => (Some(*dest), None, None),
         FleetOrder::Intercept { target } | FleetOrder::Attack { target } => {
             (None, Some(*target), None)
         }
@@ -1837,6 +1837,10 @@ impl World {
         self.resolve_surveys(&mut events);
         self.deliver_survey_reports();
 
+        // Jump resolution is a true-space local action after movement/combat.
+        // Its only player disclosure is the ordinary served light history.
+        self.resolve_jumps(&mut events);
+
         // 4c. ORDER LIFECYCLE (§order-lifecycle): after this tick's destruction is
         //     settled, advance exact re-entry responses and drop entries for fleets
         //     just lost. Ordinary confirmation belongs to the server's served-map
@@ -2050,7 +2054,9 @@ impl World {
             // Sentinels (pirate packs, Authority freighters) own no economy to
             // fuel from and are not part of anyone's logistics, so they run on
             // their own terms.
-            if !ship.owner.is_sentinel() && !matches!(ship.order, FleetOrder::Idle) {
+            if !ship.owner.is_sentinel()
+                && !matches!(ship.order, FleetOrder::Idle | FleetOrder::Jump { .. })
+            {
                 let cost = crate::fuel::fuel_tick(ship.mass(), ship.transit_speed(), DT);
                 if ship.fuel + 1e-9 < cost {
                     ship.vel = Vec2::ZERO;
@@ -4556,6 +4562,176 @@ impl World {
         }
     }
 
+    fn in_gravity_well(&self, pos: Vec2) -> bool {
+        pos.distance(self.hub) < crate::transit::HYPERLIMIT
+            || self
+                .systems
+                .iter()
+                .any(|system| pos.distance(system.pos) < crate::transit::HYPERLIMIT)
+    }
+
+    fn jump_failure_for(&self, fleet: &Fleet, dest: Vec2) -> Option<crate::event::JumpFailReason> {
+        use crate::event::JumpFailReason;
+        if !fleet.can_jump() {
+            Some(JumpFailReason::NotAJumpFleet)
+        } else if self.in_gravity_well(fleet.pos) {
+            Some(JumpFailReason::OriginInGravityWell)
+        } else if self.in_gravity_well(dest) {
+            Some(JumpFailReason::TargetInGravityWell)
+        } else if fleet.pos.distance(dest) > crate::transit::JUMP_RANGE + 1e-9 {
+            Some(JumpFailReason::OutOfRange)
+        } else {
+            None
+        }
+    }
+
+    /// Resolve the hull-local jump spool. Validation happens at the fleet, not
+    /// at issue time, so remote truth cannot return an instantaneous range or
+    /// origin verdict. Engagement aborts silently because the battle is the news.
+    fn resolve_jumps(&mut self, events: &mut Vec<Event>) {
+        let now = self.time;
+        let engaged: std::collections::BTreeSet<EntityId> = self
+            .engagements
+            .values()
+            .flat_map(|battle| {
+                battle
+                    .attackers
+                    .iter()
+                    .chain(battle.defenders.iter())
+                    .copied()
+            })
+            .collect();
+        let ids: Vec<EntityId> = self.fleets.keys().copied().collect();
+
+        for id in ids {
+            let Some((dest, spool_started)) = self.fleets.get(&id).and_then(|fleet| {
+                if let FleetOrder::Jump {
+                    dest,
+                    spool_started,
+                } = fleet.order
+                {
+                    Some((dest, spool_started))
+                } else {
+                    None
+                }
+            }) else {
+                continue;
+            };
+
+            if engaged.contains(&id) {
+                if let Some(fleet) = self.fleets.get_mut(&id) {
+                    fleet.order = FleetOrder::Idle;
+                    fleet.vel = Vec2::ZERO;
+                }
+                continue;
+            }
+
+            let failure = self
+                .fleets
+                .get(&id)
+                .and_then(|fleet| self.jump_failure_for(fleet, dest));
+            if let Some(reason) = failure {
+                let Some(fleet) = self.fleets.get_mut(&id) else {
+                    continue;
+                };
+                let owner = fleet.owner;
+                let pos = fleet.pos;
+                fleet.order = FleetOrder::Idle;
+                fleet.vel = Vec2::ZERO;
+                events.push(Event::new(
+                    now,
+                    EventPayload::JumpFailed {
+                        owner,
+                        fleet: id,
+                        pos,
+                        reason,
+                    },
+                ));
+                continue;
+            }
+
+            let Some(started) = spool_started else {
+                if let Some(fleet) = self.fleets.get_mut(&id) {
+                    fleet.order = FleetOrder::Jump {
+                        dest,
+                        spool_started: Some(now),
+                    };
+                    fleet.vel = Vec2::ZERO;
+                }
+                continue;
+            };
+            if now - started + 1e-9 < crate::transit::JUMP_SPOOL_S {
+                continue;
+            }
+
+            let (owner, from, cost, short) = {
+                let fleet = self.fleets.get(&id).expect("jump fleet exists");
+                let cost = crate::fuel::fuel_cost(fleet.pos.distance(dest), fleet.mass())
+                    / crate::transit::JUMP_FUEL_FACTOR;
+                (fleet.owner, fleet.pos, cost, fleet.fuel + 1e-9 < cost)
+            };
+            if short {
+                let fleet = self.fleets.get_mut(&id).expect("jump fleet exists");
+                fleet.vel = Vec2::ZERO;
+                if !fleet.stalled {
+                    fleet.stalled = true;
+                    events.push(Event::new(
+                        now,
+                        EventPayload::FuelShortfall {
+                            owner,
+                            needed: cost,
+                            kind: crate::fuel::ShortfallKind::Jump,
+                        },
+                    ));
+                }
+                continue;
+            }
+
+            {
+                let fleet = self.fleets.get_mut(&id).expect("jump fleet exists");
+                fleet.fuel -= cost;
+                fleet.stalled = false;
+                fleet.pos = dest;
+                fleet.vel = Vec2::ZERO;
+                fleet.drive_state = crate::ship::DriveState::Thrusters;
+                fleet.regime = crate::transit::Regime::Thrusters;
+                fleet.order = FleetOrder::Idle;
+                fleet.last_jump = Some(now);
+            }
+            events.push(Event::new(
+                now,
+                EventPayload::FleetJumped {
+                    owner,
+                    fleet: id,
+                    from,
+                    to: dest,
+                },
+            ));
+
+            // A command copy already flying toward the old hull position misses
+            // physically. The loss itself becomes known only when light from the
+            // departure reaches the owner's command center. Orders issued after
+            // this instant solve against the landing and are not touched.
+            let Some(cc) = self.players.get(&owner).map(|corp| corp.command_center) else {
+                continue;
+            };
+            let news_at = now + crate::transit::delay(from, cc, self.config.c);
+            for order in self.pending_orders.iter_mut().filter(|order| {
+                order.ship_id == id
+                    && order.loss.is_none()
+                    && order.apply_time > now
+                    && order.issued_at <= now
+            }) {
+                order.loss = Some(PendingOrderLoss {
+                    relay: id,
+                    at: now,
+                    news_at,
+                    break_pos: from,
+                });
+            }
+        }
+    }
+
     /// §explore Part 2: deliver survey-report legs whose light has arrived —
     /// INSERT the system into the recipient's `surveyed` set (permanent R2
     /// knowledge). When the SURVEYOR'S OWN leg lands, fan out ALLY-RELAY legs to
@@ -5406,6 +5582,69 @@ impl World {
                     *ship_id,
                     FleetOrder::MoveTo { dest: *dest },
                     crate::event::OrderKind::Move,
+                    events,
+                );
+            }
+            Command::JumpShip {
+                player_id,
+                ship_id,
+                dest,
+            } => {
+                let Some(ship) = self.fleets.get(ship_id) else {
+                    return;
+                };
+                if ship.owner != *player_id {
+                    return;
+                }
+                if !self.fleet_supplied_for_orders(*ship_id, *player_id, events) {
+                    return;
+                }
+                if !ship.can_jump() {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::OrderRejected {
+                            owner: *player_id,
+                            fleet: *ship_id,
+                            target: None,
+                            reason: crate::event::OrderRejectReason::NotAJumpFleet,
+                        },
+                    ));
+                    return;
+                }
+                if self.in_gravity_well(*dest) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::OrderRejected {
+                            owner: *player_id,
+                            fleet: *ship_id,
+                            target: None,
+                            reason: crate::event::OrderRejectReason::TargetInGravityWell,
+                        },
+                    ));
+                    return;
+                }
+                // Range is deliberately NOT checked here: the remote hull decides
+                // from its execution-time position after the order arrives.
+                let raw_cost = crate::fuel::fuel_cost(ship.pos.distance(*dest), ship.mass());
+                let jump_cost = raw_cost / crate::transit::JUMP_FUEL_FACTOR;
+                if !self.can_cover_fuel(*player_id, ship.pos, jump_cost) {
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::FuelShortfall {
+                            owner: *player_id,
+                            needed: jump_cost,
+                            kind: crate::fuel::ShortfallKind::Jump,
+                        },
+                    ));
+                }
+                self.schedule_for_owner(
+                    *player_id,
+                    *ship_id,
+                    FleetOrder::Jump {
+                        dest: *dest,
+                        spool_started: None,
+                    },
+                    crate::event::OrderKind::Jump,
                     events,
                 );
             }
@@ -33770,6 +34009,363 @@ mod tests {
         assert!(
             w3.systems.iter().all(|s| s.trait_.is_none()),
             "a pre-feature snapshot loads trait-less"
+        );
+    }
+
+    fn jump_fixture(kind: ShipKind) -> (World, PlayerId, EntityId, Vec2, Vec2) {
+        let mut w = test_world();
+        w.enclaves.clear();
+        let owner = PlayerId(77);
+        w.step(&[Command::AddPlayer {
+            id: owner,
+            name: "Jumper".into(),
+        }]);
+        clear_opening_traffic(&mut w);
+        let id = player_ship(&mut w, owner, kind);
+        let from = Vec2::new(1_000_000.0, 0.0);
+        let to = from + Vec2::new(20_000.0, 0.0);
+        let fleet = w.fleets.get_mut(&id).unwrap();
+        fleet.reset_to(kind, 1);
+        fleet.pos = from;
+        fleet.vel = Vec2::ZERO;
+        fleet.order = FleetOrder::Idle;
+        fleet.fuel = 10_000.0;
+        fleet.stalled = false;
+        (w, owner, id, from, to)
+    }
+
+    fn direct_jump(w: &mut World, id: EntityId, dest: Vec2) {
+        w.fleets.get_mut(&id).unwrap().order = FleetOrder::Jump {
+            dest,
+            spool_started: None,
+        };
+    }
+
+    #[test]
+    fn jump_spool_fires_on_the_first_tick_at_ten_seconds() {
+        let (mut w, owner, id, from, to) = jump_fixture(ShipKind::Raider);
+        direct_jump(&mut w, id, to);
+        let spool_begins = w.time;
+        let mut jumped_at = None;
+        for _ in 0..(12 * crate::config::TICK_HZ) {
+            for event in w.step(&[]) {
+                if matches!(event.payload, EventPayload::FleetJumped { fleet, .. } if fleet == id) {
+                    jumped_at = Some(event.time);
+                }
+            }
+            if jumped_at.is_some() {
+                break;
+            }
+            assert_eq!(w.fleets[&id].pos, from, "spooling never creeps");
+        }
+        let expected = spool_begins + crate::transit::JUMP_SPOOL_S;
+        let jumped_at = jumped_at.expect("the spool fires");
+        assert!((jumped_at - expected).abs() < 1e-9);
+        assert_eq!(w.fleets[&id].pos, to);
+        assert!((w.fleets[&id].last_jump.unwrap() - expected).abs() < 1e-9);
+        assert!(matches!(w.fleets[&id].order, FleetOrder::Idle));
+        assert!(matches!(
+            w.fleets[&id].drive_state,
+            crate::ship::DriveState::Thrusters
+        ));
+        assert!(w.fleets[&id].owner == owner);
+    }
+
+    #[test]
+    fn jump_kind_gate_applies_at_issue_and_again_during_spool() {
+        let (mut w, owner, id, _from, to) = jump_fixture(ShipKind::Convoy);
+        let events = w.step(&[Command::JumpShip {
+            player_id: owner,
+            ship_id: id,
+            dest: to,
+        }]);
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::OrderRejected {
+                reason: crate::event::OrderRejectReason::NotAJumpFleet,
+                ..
+            }
+        )));
+
+        let (mut w, _owner, id, from, to) = jump_fixture(ShipKind::Raider);
+        direct_jump(&mut w, id, to);
+        w.step(&[]); // starts the spool
+        w.fleets.get_mut(&id).unwrap().add(ShipKind::Convoy, 1);
+        let events = w.step(&[]);
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::JumpFailed {
+                reason: crate::event::JumpFailReason::NotAJumpFleet,
+                ..
+            }
+        )));
+        assert_eq!(w.fleets[&id].pos, from);
+        assert!(matches!(w.fleets[&id].order, FleetOrder::Idle));
+    }
+
+    #[test]
+    fn jump_issue_rejects_public_target_facts_but_not_remote_range() {
+        let (mut w, owner, id, from, _to) = jump_fixture(ShipKind::Raider);
+        let rejected = w.step(&[Command::JumpShip {
+            player_id: owner,
+            ship_id: id,
+            dest: w.hub,
+        }]);
+        assert!(rejected.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::OrderRejected {
+                reason: crate::event::OrderRejectReason::TargetInGravityWell,
+                ..
+            }
+        )));
+
+        let beyond_range = from + Vec2::new(crate::transit::JUMP_RANGE + 10_000.0, 0.0);
+        let accepted = w.step(&[Command::JumpShip {
+            player_id: owner,
+            ship_id: id,
+            dest: beyond_range,
+        }]);
+        assert!(
+            accepted.iter().any(|event| matches!(
+                event.payload,
+                EventPayload::OrderScheduled { fleet, .. } if fleet == id
+            )),
+            "range is execution-time truth, so the copy must leave command"
+        );
+        assert!(!accepted.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::OrderRejected { .. } | EventPayload::JumpFailed { .. }
+        )));
+    }
+
+    #[test]
+    fn jump_execution_reports_each_geometry_failure() {
+        let cases = [
+            (
+                crate::event::JumpFailReason::OriginInGravityWell,
+                true,
+                false,
+            ),
+            (
+                crate::event::JumpFailReason::TargetInGravityWell,
+                false,
+                true,
+            ),
+            (crate::event::JumpFailReason::OutOfRange, false, false),
+        ];
+        for (expected, origin_well, target_well) in cases {
+            let (mut w, _owner, id, clear_from, clear_to) = jump_fixture(ShipKind::Scout);
+            let from = if origin_well { w.hub } else { clear_from };
+            let to = if target_well {
+                w.hub
+            } else if expected == crate::event::JumpFailReason::OutOfRange {
+                from + Vec2::new(crate::transit::JUMP_RANGE + 1.0, 0.0)
+            } else {
+                clear_to
+            };
+            w.fleets.get_mut(&id).unwrap().pos = from;
+            direct_jump(&mut w, id, to);
+            let events = w.step(&[]);
+            assert!(
+                events.iter().any(|event| matches!(
+                    event.payload,
+                    EventPayload::JumpFailed { reason, .. } if reason == expected
+                )),
+                "missing {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn jump_spool_aborts_when_an_engagement_reaches_the_fleet() {
+        let (mut w, _owner, jumper, from, to) = jump_fixture(ShipKind::Raider);
+        assert!(
+            !w.in_sovereign_zone(from),
+            "fixture must be outside hub sanctuary"
+        );
+        let rival = PlayerId(88);
+        w.step(&[Command::AddPlayer {
+            id: rival,
+            name: "Rival".into(),
+        }]);
+        direct_jump(&mut w, jumper, to);
+        let attacker = squad(
+            &mut w,
+            rival,
+            from + Vec2::new(5.0, 0.0),
+            ShipKind::Raider,
+            1,
+            FleetOrder::Intercept { target: jumper },
+        );
+        w.fleets.get_mut(&attacker).unwrap().fuel = 10_000.0;
+        assert!(
+            run_until(&mut w, 2, |world| world.engagements.values().any(
+                |battle| {
+                    battle.attackers.contains(&jumper) || battle.defenders.contains(&jumper)
+                }
+            )),
+            "the pursuer reaches the spooling fleet"
+        );
+        assert!(matches!(w.fleets[&jumper].order, FleetOrder::Idle));
+        assert_eq!(w.fleets[&jumper].pos, from);
+    }
+
+    #[test]
+    fn a_dry_jump_holds_then_fires_when_fed_and_debits_once() {
+        let (mut w, _owner, id, from, to) = jump_fixture(ShipKind::Raider);
+        let cost = crate::fuel::fuel_cost(from.distance(to), w.fleets[&id].mass())
+            / crate::transit::JUMP_FUEL_FACTOR;
+        w.fleets.get_mut(&id).unwrap().fuel = 0.0;
+        direct_jump(&mut w, id, to);
+        let mut shortfalls = 0;
+        for _ in 0..(11 * crate::config::TICK_HZ) {
+            shortfalls += w
+                .step(&[])
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event.payload,
+                        EventPayload::FuelShortfall {
+                            kind: crate::fuel::ShortfallKind::Jump,
+                            ..
+                        }
+                    )
+                })
+                .count();
+        }
+        assert_eq!(shortfalls, 1, "dry latch reports once");
+        assert_eq!(w.fleets[&id].pos, from);
+        assert!(matches!(w.fleets[&id].order, FleetOrder::Jump { .. }));
+        w.fleets.get_mut(&id).unwrap().fuel = cost + 3.0;
+        let events = w.step(&[]);
+        assert!(events.iter().any(
+            |event| matches!(event.payload, EventPayload::FleetJumped { fleet, .. } if fleet == id)
+        ));
+        assert_eq!(w.fleets[&id].pos, to);
+        assert!((w.fleets[&id].fuel - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn teleport_distance_never_accrues_propulsion_ly() {
+        use crate::research::Verb;
+        let (mut w, owner, id, _from, to) = jump_fixture(ShipKind::Raider);
+        w.step(&[Command::CreateSyndicate {
+            player_id: owner,
+            name: "Jump Test".into(),
+        }]);
+        let sid = w.players[&owner].syndicate.unwrap();
+        let before = w.syndicates[&sid].research.verb(Verb::LyFlown);
+        direct_jump(&mut w, id, to);
+        assert!(run_until(&mut w, 12, |world| world.fleets[&id]
+            .last_jump
+            .is_some()));
+        assert_eq!(w.syndicates[&sid].research.verb(Verb::LyFlown), before);
+        assert_eq!(w.syndicates[&sid].research.verb(Verb::WarshipLyFlown), 0.0);
+    }
+
+    #[test]
+    fn jumping_loses_only_orders_already_flying_to_the_departure() {
+        let (mut w, owner, id, from, to) = jump_fixture(ShipKind::Raider);
+        let mut events = Vec::new();
+        w.schedule_for_owner(
+            owner,
+            id,
+            FleetOrder::MoveTo {
+                dest: from + Vec2::new(1_000.0, 0.0),
+            },
+            crate::event::OrderKind::Move,
+            &mut events,
+        );
+        assert!(w.pending_orders[0].apply_time > w.time + crate::transit::JUMP_SPOOL_S);
+        direct_jump(&mut w, id, to);
+        assert!(run_until(&mut w, 12, |world| world.fleets[&id]
+            .last_jump
+            .is_some()));
+        let loss = w.pending_orders[0]
+            .loss
+            .as_ref()
+            .expect("old aimed copy is lost");
+        let expected_news = w.fleets[&id].last_jump.unwrap()
+            + crate::transit::delay(from, w.players[&owner].command_center, w.config.c);
+        assert!((loss.news_at - expected_news).abs() < 1e-6);
+        assert_eq!(loss.break_pos, from);
+
+        let mut later = Vec::new();
+        w.schedule_for_owner(
+            owner,
+            id,
+            FleetOrder::MoveTo {
+                dest: to + Vec2::new(1_000.0, 0.0),
+            },
+            crate::event::OrderKind::Move,
+            &mut later,
+        );
+        assert!(w.pending_orders.last().unwrap().loss.is_none());
+    }
+
+    #[test]
+    fn a_later_order_delivered_during_spool_cancels_the_jump() {
+        let (mut w, owner, id, from, to) = jump_fixture(ShipKind::Raider);
+        direct_jump(&mut w, id, to);
+        w.step(&[]);
+        assert!(matches!(
+            w.fleets[&id].order,
+            FleetOrder::Jump {
+                spool_started: Some(_),
+                ..
+            }
+        ));
+
+        let mut scheduled = Vec::new();
+        w.schedule_for_owner(
+            owner,
+            id,
+            FleetOrder::MoveTo {
+                dest: from + Vec2::new(2_000.0, 0.0),
+            },
+            crate::event::OrderKind::Move,
+            &mut scheduled,
+        );
+        w.pending_orders.last_mut().unwrap().apply_time = w.time;
+        let events = w.step(&[]);
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::OrderApplied { ship_id } if ship_id == id
+        )));
+        assert!(matches!(w.fleets[&id].order, FleetOrder::MoveTo { .. }));
+        assert_eq!(w.fleets[&id].last_jump, None);
+    }
+
+    #[test]
+    fn a_pursuer_replots_after_its_target_jumps() {
+        let (mut w, _owner, target, from, to) = jump_fixture(ShipKind::Raider);
+        let rival = PlayerId(88);
+        w.step(&[Command::AddPlayer {
+            id: rival,
+            name: "Rival".into(),
+        }]);
+        let hunter = squad(
+            &mut w,
+            rival,
+            from + Vec2::new(0.0, 100_000.0),
+            ShipKind::Raider,
+            1,
+            FleetOrder::Intercept { target },
+        );
+        w.fleets.get_mut(&hunter).unwrap().fuel = 10_000.0;
+        direct_jump(&mut w, target, to);
+        assert!(run_until(&mut w, 12, |world| {
+            world.fleets[&target].last_jump.is_some()
+        }));
+        let before = w.fleets[&hunter].vel;
+        w.step(&[]);
+        assert!(matches!(
+            w.fleets[&hunter].order,
+            FleetOrder::Intercept { target: chased } if chased == target
+        ));
+        assert_ne!(
+            w.fleets[&hunter].vel, before,
+            "chase_aim replots toward the discontinuous landing"
         );
     }
 }

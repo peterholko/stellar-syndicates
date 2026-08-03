@@ -14,9 +14,15 @@ pub const TICK_HZ: u32 = 30;
 pub const DT: f64 = 1.0 / TICK_HZ as f64;
 
 /// THE LIGHT-GAME INVARIANT (playtest-driven): light must comfortably outrun the
-/// fastest ship, or intel and orders arrive uselessly stale and raiders feel
-/// "faster than light." Every preset must satisfy
+/// fastest cruising ship, or intel and orders arrive uselessly stale. Every
+/// preset must satisfy
 /// `c ≥ C_SPEED_RATIO × fastest_ship_speed()`.
+///
+/// This is deliberately a cruise-speed guardrail. Chained jump-drive skips can
+/// average about 5,000 su/s and outrun 2,000 su/s warp light; the information
+/// model remains honest because each event still arrives on its own wavefront,
+/// and the view's arrival heap may therefore serve those wavefronts out of
+/// emission order.
 ///
 /// Default **2.0** — "at least twice, maybe more." Raising it is trivial: bump
 /// this one number and every preset is re-checked at construction

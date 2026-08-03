@@ -8,6 +8,7 @@
 use sim::command::Command;
 use sim::config::SimConfig;
 use sim::ids::PlayerId;
+use sim::math::Vec2;
 use sim::world::World;
 
 fn build(seed: u64) -> World {
@@ -26,6 +27,26 @@ fn build(seed: u64) -> World {
             name: "Beta".into(),
         },
     ]);
+    // Put one dark hull in clean nearby space so the periodic JumpShip below
+    // exercises pending, spool, teleport and last_jump state in both nets.
+    let jump_id = w
+        .fleets
+        .iter()
+        .find(|(_, fleet)| fleet.owner == a && fleet.can_jump())
+        .map(|(id, _)| *id)
+        .expect("the opening roster has a jump hull");
+    let cc = w.players[&a].command_center;
+    let safe = cc + Vec2::new(5_000.0, 5_000.0);
+    assert!(safe.distance(w.hub) >= sim::transit::HYPERLIMIT);
+    assert!(
+        w.systems
+            .iter()
+            .all(|system| safe.distance(system.pos) >= sim::transit::HYPERLIMIT)
+    );
+    let fleet = w.fleets.get_mut(&jump_id).unwrap();
+    fleet.pos = safe;
+    fleet.vel = Vec2::ZERO;
+    fleet.fuel = 10_000.0;
     w
 }
 
@@ -69,6 +90,35 @@ fn drive(w: &mut World, ticks: u64) {
                 units: 12,
                 sell_on_arrival: true,
             });
+        }
+        if t % 997 == 11
+            && let Some((ship_id, fleet)) = w
+                .fleets
+                .iter()
+                .find(|(_, fleet)| fleet.owner == a && fleet.can_jump())
+        {
+            let candidates = [
+                Vec2::new(20_000.0, 0.0),
+                Vec2::new(0.0, 20_000.0),
+                Vec2::new(-20_000.0, 0.0),
+                Vec2::new(0.0, -20_000.0),
+            ];
+            if let Some(dest) = candidates
+                .into_iter()
+                .map(|offset| fleet.pos + offset)
+                .find(|dest| {
+                    dest.distance(w.hub) >= sim::transit::HYPERLIMIT
+                        && w.systems
+                            .iter()
+                            .all(|system| dest.distance(system.pos) >= sim::transit::HYPERLIMIT)
+                })
+            {
+                cmds.push(Command::JumpShip {
+                    player_id: a,
+                    ship_id: *ship_id,
+                    dest,
+                });
+            }
         }
         w.step(&cmds);
     }

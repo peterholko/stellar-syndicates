@@ -18,6 +18,8 @@ use crate::cargo::Commodity;
 pub enum ShortfallKind {
     /// A player-issued ship move.
     Move,
+    /// A discrete jump-drive relocation.
+    Jump,
     /// A player-issued raid intercept.
     Raid,
     /// A production "ship to hub" convoy.
@@ -28,6 +30,7 @@ impl ShortfallKind {
     pub fn label(self) -> &'static str {
         match self {
             ShortfallKind::Move => "fleet move",
+            ShortfallKind::Jump => "jump",
             ShortfallKind::Raid => "raid",
             ShortfallKind::Shipment => "shipment",
         }

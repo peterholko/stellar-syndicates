@@ -21,6 +21,11 @@ pub const WARP_DROP_S: f64 = 1.0;
 /// the hull can turn on thrusters before spooling again.
 pub const COURSE_LOCK_RAD: f64 = 0.09;
 
+/// Jump-drive playtest tunables.
+pub const JUMP_SPOOL_S: f64 = 10.0;
+pub const JUMP_RANGE: f64 = 50_000.0;
+pub const JUMP_FUEL_FACTOR: f64 = WARP_FACTOR;
+
 /// Radius of a gravity well. Warp and jump drives cannot operate inside it.
 pub const HYPERLIMIT: f64 = 900.0;
 

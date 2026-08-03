@@ -21,6 +21,7 @@ use crate::ship::ShipKind;
 #[serde(rename_all = "snake_case")]
 pub enum OrderKind {
     Move,
+    Jump,
     /// §emplacements: a CONSTRUCT order — send a builder to a site and put a
     /// buoy or sensor there.
     Construct,
@@ -44,6 +45,7 @@ impl OrderKind {
     pub fn label(self) -> &'static str {
         match self {
             OrderKind::Move => "move",
+            OrderKind::Jump => "jump",
             OrderKind::Construct => "construct",
             OrderKind::Demolish => "demolish",
             OrderKind::Raid => "raid",
@@ -82,6 +84,23 @@ pub enum EventPayload {
     /// and took effect.
     OrderApplied {
         ship_id: EntityId,
+    },
+
+    /// Persistence/audit hook only. The jump itself reaches players through the
+    /// ordinary served position history, never through this true-time event.
+    FleetJumped {
+        owner: PlayerId,
+        fleet: EntityId,
+        from: crate::math::Vec2,
+        to: crate::math::Vec2,
+    },
+    /// A delivered jump failed at the hull. Timeline serving light-delays this
+    /// positioned result to its owner.
+    JumpFailed {
+        owner: PlayerId,
+        fleet: EntityId,
+        pos: crate::math::Vec2,
+        reason: JumpFailReason,
     },
 
     /// OWNER-ONLY reporting seam: a validated player order entered the
@@ -1007,6 +1026,17 @@ pub enum OrderRejectReason {
     /// lost: the fleet keeps its guns and its current course, and the order can
     /// simply be re-issued once food reaches it.
     Unsupplied,
+    NotAJumpFleet,
+    TargetInGravityWell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JumpFailReason {
+    NotAJumpFleet,
+    OriginInGravityWell,
+    TargetInGravityWell,
+    OutOfRange,
 }
 
 impl Event {
